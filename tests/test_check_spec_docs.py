@@ -1195,6 +1195,102 @@ def test_revision_log_malformed_entry_is_flagged_with_its_line() -> None:
     assert any("attest-v0.1.md" in e and "line" in e and "revision-log entry" in e for e in errors)
 
 
+# --- P1.1b witness-policy normative contract --------------------------------
+
+
+def _p11b_witness_docs() -> tuple[str, str]:
+    """The P1.1b contract is checked against its normative documents, not a
+    reduced fixture: its purpose is to keep exact authority and phase-boundary
+    language from drifting after the amendment lands."""
+    return (
+        (SPEC_DIR / "attest-v0.2.md").read_text(encoding="utf-8"),
+        (SPEC_DIR / "attest-versioning.md").read_text(encoding="utf-8"),
+    )
+
+
+def test_p11b_witness_contract_is_complete() -> None:
+    spec_v02, versioning = _p11b_witness_docs()
+
+    assert check_spec_docs.check_p11b_witness_contract(spec_v02, versioning) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "old", "new", "document", "expected"),
+    (
+        (
+            "domain separation",
+            '`0xff || UTF8("attest-cosignature-ml-dsa-65-v1")`',
+            '`0xff || UTF8("attest-ml-dsa-65-v1")`',
+            "spec",
+            '0xff || UTF8("attest-cosignature-ml-dsa-65-v1")',
+        ),
+        (
+            "type 0x06 exclusion",
+            "C2SP type `0x06` MUST NOT count",
+            "C2SP type `0x06` may count",
+            "spec",
+            "C2SP type `0x06` MUST NOT count",
+        ),
+        (
+            "evidence authority boundary",
+            "Evidence MUST NOT carry epoch contents",
+            "Evidence carries epoch contents",
+            "spec",
+            "Evidence MUST NOT carry epoch contents",
+        ),
+        (
+            "direct conflict limb",
+            "Direct conflict: `X` appears in the pin's `affiliated_domains`.",
+            "Direct conflict: omitted.",
+            "spec",
+            "Direct conflict",
+        ),
+        (
+            "transitive conflict limb",
+            "Transitive conflict: the pin's `control_group` equals the `control_group`",
+            "Transitive conflict: omitted.",
+            "spec",
+            "Transitive conflict",
+        ),
+        (
+            "inclusive compromise cutoff",
+            "`T <= compromised_after` retains its standing",
+            "`T < compromised_after` retains its standing",
+            "spec",
+            "T <= compromised_after",
+        ),
+        (
+            "committee ceiling before crypto",
+            "before any Ed25519 or ML-DSA-65 signature verification",
+            "after signature verification",
+            "spec",
+            "before any Ed25519 or ML-DSA-65 signature verification",
+        ),
+        (
+            "phase boundary",
+            "## 17. Stage 3: issuer-mediated transfer",
+            "## 18. Stage 4",
+            "spec",
+            "forbidden Stage 4 heading",
+        ),
+    ),
+)
+def test_p11b_witness_contract_rejects_required_negative_mutations(
+    name: str, old: str, new: str, document: str, expected: str
+) -> None:
+    spec_v02, versioning = _p11b_witness_docs()
+    if document == "spec":
+        assert old in spec_v02, name
+        spec_v02 = spec_v02.replace(old, new, 1)
+    else:
+        assert old in versioning, name
+        versioning = versioning.replace(old, new, 1)
+
+    errors = check_spec_docs.check_p11b_witness_contract(spec_v02, versioning)
+
+    assert any(expected in error for error in errors), (name, errors)
+
+
 # --- receipt_id §5.1 prose <-> schema.receipt_id.pattern drift guard ---------
 
 
