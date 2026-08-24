@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -26,7 +27,7 @@ from attest_bridge.model import ConfigError
 from conftest import DISPLAY_NAME, ISSUER, KID, LEGAL_TEXT, LEGAL_TEXT_SHA256
 from test_bridge_stripe_adapter import make_session_completed_event
 
-from attest import keys, pq
+from attest import bundle, keys, pq
 from attest import verify as verify_mod
 
 _STRIPE_ENV_VAR = "STRIPE_WEBHOOK_SECRET_T8_CLI_TEST"  # env var NAME, not a secret
@@ -828,7 +829,7 @@ def _ledger_path_of(config_path: Path) -> Path:
     raise AssertionError("config has no ledger_path")
 
 
-def test_itch_dry_run_issues_verifiable_receipt_without_touching_production_ledger(
+def test_itch_dry_run_writes_the_pair_and_the_shareable_half_is_salt_free(
     tmp_path: Path,
     hybrid_keys: pq.HybridSigningKeys,
     key_manifest: dict[str, Any],
@@ -840,6 +841,7 @@ def test_itch_dry_run_issues_verifiable_receipt_without_touching_production_ledg
     ledger_path = _ledger_path_of(config_path)
     assert not ledger_path.exists()
     out_path = tmp_path / "dry-run.attest"
+    private_path = tmp_path / "dry-run.private.attest"
 
     rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
 
@@ -848,15 +850,17 @@ def test_itch_dry_run_issues_verifiable_receipt_without_touching_production_ledg
     assert "ledger: throwaway" in stdout
     # The whole point of the command: the merchant's real Ledger is never opened.
     assert not ledger_path.exists()
+    assert out_path.exists()
+    assert private_path.exists()
     assert stat.S_IMODE(out_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(private_path.stat().st_mode) == 0o600
 
-    envelope_bytes = out_path.read_bytes()
-    result = verify_mod.verify(envelope_bytes, trust_store)
-    assert result.ok is True
+    receipt, salt, salt_b64u = _dry_run_pair(out_path, private_path)
+    receipt_bytes = json.dumps(receipt).encode("utf-8")
+    assert verify_mod.verify(receipt_bytes, trust_store).ok is True
 
-    salt = keys.b64u_decode(json.loads(envelope_bytes)["delivery"]["salt"])
     proven = verify_mod.verify(
-        envelope_bytes,
+        receipt_bytes,
         trust_store,
         disclosure=verify_mod.Disclosure(
             identifier=cli._DRY_RUN_BUYER_EMAIL, identifier_type="email", salt=salt
@@ -865,13 +869,93 @@ def test_itch_dry_run_issues_verifiable_receipt_without_touching_production_ledg
     assert proven.binding == "proven"
     # A real address can never be the signed identity of a dry-run receipt.
     not_proven = verify_mod.verify(
-        envelope_bytes,
+        receipt_bytes,
         trust_store,
         disclosure=verify_mod.Disclosure(
             identifier="merchant@example.com", identifier_type="email", salt=salt
         ),
     )
     assert not_proven.binding == "not_proven"
+
+    # The salt may live only in the private half. Scanning the shareable
+    # container's bytes would prove nothing — members are DEFLATE-compressed —
+    # so every member is decompressed and searched.
+    with zipfile.ZipFile(out_path) as zf:
+        members = zf.namelist()
+        assert members
+        for member in members:
+            content = zf.read(member)
+            assert salt_b64u.encode() not in content
+            assert salt not in content
+
+
+# -- itch-dry-run: the §14.1/§14.2 pair ------------------------------------
+#
+# The dry run used to write the stored envelope — salt and all — to
+# `itch-dry-run-receipt.attest`, a name §14.1 reserves for the salt-free half.
+# It now writes the pair, and `--out` names the SHAREABLE one.
+
+
+def _dry_run_pair(out_path: Path, private_path: Path) -> tuple[dict[str, Any], bytes, str]:
+    """Import the pair the dry run wrote; return (receipt, salt bytes, salt b64u)."""
+    imported = bundle.import_bundle(out_path, private_path)
+    assert len(imported.receipts) == 1
+    receipt = imported.receipts[0]
+    receipt_id = receipt["payload"]["receipt_id"]
+    with zipfile.ZipFile(private_path) as zf:
+        salt_b64u = json.loads(zf.read("salts.json"))[receipt_id]
+    return receipt, imported.salts[receipt_id], salt_b64u
+
+
+def test_itch_dry_run_out_ending_in_private_attest_is_refused(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--out` is the shareable half. A `--out` already wearing the private
+    suffix would make the two halves swap names, and the name is the only
+    guard the web verifier has — so it is refused, not silently renamed."""
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "confused.private.attest"
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
+
+    assert rc == 2
+    assert "config error" in capsys.readouterr().err
+    assert not out_path.exists()
+
+
+def test_itch_dry_run_stdout_names_both_files_and_the_import_verify_flow(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+    private_path = tmp_path / "dry-run.private.attest"
+
+    assert cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)]) == 0
+
+    stdout = capsys.readouterr().out
+    resolved_out = str(out_path.resolve())
+    resolved_private = str(private_path.resolve())
+    assert resolved_out in stdout
+    private_at = stdout.index(resolved_private)
+    # The merchant is told which of the two must never leave their machine,
+    # after the path it refers to.
+    assert "never share" in stdout[private_at:].lower()
+
+    # The verify hint is the real import+verify flow the guides document, not
+    # a `attest verify <bundle>` that would fail on a zip.
+    assert f"attest import --bundle {resolved_out}" in stdout
+    assert f"--private {resolved_private}" in stdout
+    assert "--out-dir" in stdout
+    assert "attest verify" in stdout
+    assert "--trust-dir" in stdout
 
 
 def test_itch_dry_run_settled_purchase_is_processed_by_the_poller(
@@ -909,6 +993,16 @@ def test_itch_dry_run_rejects_out_equal_to_or_symlinked_to_production_ledger(
     link_path.symlink_to(ledger_path)
 
     assert cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(link_path)]) == 2
+    assert ledger_path.read_bytes() == before
+
+    # The private half is DERIVED from `--out`, so it never passes under the
+    # guard on its own name — it has to be guarded too, or a symlink planted
+    # at the derived path would write the salt straight through to the Ledger.
+    derived_out = tmp_path / "derived.attest"
+    derived_private = tmp_path / "derived.private.attest"
+    derived_private.symlink_to(ledger_path)
+
+    assert cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(derived_out)]) == 2
     assert ledger_path.read_bytes() == before
 
 
@@ -1142,12 +1236,13 @@ def test_itch_dry_run_send_email_delivers_to_recipient_not_signed_buyer(
     assert _RecordingDelivery.legal_texts == {LEGAL_TEXT_SHA256: LEGAL_TEXT}
 
     # The SMTP recipient is not the signed identity: the receipt still commits
-    # to the synthetic `.invalid` buyer.
-    envelope_bytes = out_path.read_bytes()
-    salt = keys.b64u_decode(json.loads(envelope_bytes)["delivery"]["salt"])
+    # to the synthetic `.invalid` buyer. Read back through the pair, which is
+    # what the dry run now writes.
+    receipt, salt, _ = _dry_run_pair(out_path, tmp_path / "dry-run.private.attest")
+    receipt_bytes = json.dumps(receipt).encode("utf-8")
     assert (
         verify_mod.verify(
-            envelope_bytes,
+            receipt_bytes,
             trust_store,
             disclosure=verify_mod.Disclosure(
                 identifier=cli._DRY_RUN_BUYER_EMAIL, identifier_type="email", salt=salt
@@ -1157,7 +1252,7 @@ def test_itch_dry_run_send_email_delivers_to_recipient_not_signed_buyer(
     )
     assert (
         verify_mod.verify(
-            envelope_bytes,
+            receipt_bytes,
             trust_store,
             disclosure=verify_mod.Disclosure(
                 identifier="merchant@example.com", identifier_type="email", salt=salt
@@ -1196,8 +1291,13 @@ def test_itch_dry_run_send_email_failure_is_rc_1_but_receipt_file_survives(
 
     assert rc == 1
     assert "email: FAILED (smtp auth failed)" in capsys.readouterr().out
-    # A failed SMTP test must not cost the merchant the receipt they just proved.
-    assert verify_mod.verify(out_path.read_bytes(), trust_store).ok is True
+    # A failed SMTP test must not cost the merchant the receipt they just
+    # proved — and that receipt is two files now, not one.
+    private_path = tmp_path / "dry-run.private.attest"
+    assert out_path.exists()
+    assert private_path.exists()
+    receipt, _, _ = _dry_run_pair(out_path, private_path)
+    assert verify_mod.verify(json.dumps(receipt).encode("utf-8"), trust_store).ok is True
 
 
 # -- itch-dry-run: docs and OI-4 wording -----------------------------------

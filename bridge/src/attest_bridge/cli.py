@@ -38,7 +38,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
-from attest import issue, validate
+from attest import bundle, issue, validate
 from attest_bridge.catalog import ProductCatalog, ProductTemplate
 from attest_bridge.config import load_config
 from attest_bridge.core import IssuingCore
@@ -47,12 +47,15 @@ from attest_bridge.http import BridgeDeps, make_app
 from attest_bridge.itch_adapter import ItchAdapter, ItchPoller
 from attest_bridge.ledger import Ledger
 from attest_bridge.model import ClaimQueueFull, ConfigError
+from attest_bridge.pair import build_pair
 from attest_bridge.shopify_adapter import ShopifyAdapter
 from attest_bridge.signing import load_issuer
 from attest_bridge.stripe_adapter import StripeAdapter
 
 _RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 _RC_OK = 0
+_SHAREABLE_SUFFIX = ".attest"
+_PRIVATE_SUFFIX = ".private.attest"
 _RC_CONFIG_ERROR = 2
 _RC_INCOMPLETE = 1
 
@@ -243,6 +246,26 @@ def _guard_dry_run_out_path(out_path: Path, *, ledger_path: Path) -> Path:
             f"--out {str(out_path)!r} is the same file as ledger_path — refusing to overwrite it"
         )
     return resolved_out
+
+
+def _private_dry_run_out_path(out_path: Path) -> Path:
+    """Derive the private half's path from `--out`, which names the SHAREABLE one.
+
+    `foo.attest` -> `foo.private.attest`; a `--out` with no `.attest` suffix
+    just gains one. A `--out` that ALREADY ends in `.private.attest` is
+    refused rather than quietly renamed: the suffix is the only guard the web
+    verifier has, and a run that produced `x.private.attest` (shareable) next
+    to `x.private.private.attest` (secret) would invert exactly the signal the
+    buyer is taught to read.
+    """
+    text = str(out_path)
+    if text.endswith(_PRIVATE_SUFFIX):
+        raise ConfigError(
+            f"--out {text!r} ends in {_PRIVATE_SUFFIX} — that suffix names the private half, "
+            "which this command derives on its own; pass the shareable path instead"
+        )
+    stem = text[: -len(_SHAREABLE_SUFFIX)] if text.endswith(_SHAREABLE_SUFFIX) else text
+    return Path(stem + _PRIVATE_SUFFIX)
 
 
 def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path) -> None:
@@ -640,7 +663,13 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
         catalog = ProductCatalog(config.products)
         product_key = _resolve_itch_dry_run_product(catalog, args.game_id)
         template = catalog.resolve(product_key)
-        out_path = _guard_dry_run_out_path(Path(args.out), ledger_path=config.ledger_path)
+        requested_out = Path(args.out)
+        # Both paths get the same guard: the private one is DERIVED, so it
+        # never passes under a guard on its own name, and a symlink planted
+        # there would write the salt straight through to the Ledger.
+        private_requested = _private_dry_run_out_path(requested_out)
+        out_path = _guard_dry_run_out_path(requested_out, ledger_path=config.ledger_path)
+        private_path = _guard_dry_run_out_path(private_requested, ledger_path=config.ledger_path)
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return _RC_CONFIG_ERROR
@@ -677,10 +706,27 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
             return _RC_INCOMPLETE
 
         try:
+            # `config.legal_texts` is always populated (V-A.2 made
+            # `legal_text_path` mandatory), so a BundleError here is a real
+            # defect in the envelope, not a missing-config accident. Its
+            # message is a hardcoded precondition string, never payload text.
+            pair = build_pair(
+                json.loads(stored.envelope_json), stored.receipt_id, config.legal_texts
+            )
+        except bundle.BundleError as exc:
+            print(f"config error: {exc}", file=sys.stderr)
+            return _RC_CONFIG_ERROR
+
+        try:
+            # Shareable first: if the second write fails, what is left on disk
+            # carries no secret. Both go through the unchanged 0600 no-follow
+            # writer — stricter than the shareable half needs, which is the
+            # safe direction to be wrong in.
             _write_receipt_file_no_follow(
-                out_path,
-                stored.envelope_json.encode("utf-8"),
-                ledger_path=config.ledger_path,
+                out_path, pair.shareable, ledger_path=config.ledger_path
+            )
+            _write_receipt_file_no_follow(
+                private_path, pair.private, ledger_path=config.ledger_path
             )
         except ConfigError as exc:
             print(f"config error: {exc}", file=sys.stderr)
@@ -721,11 +767,19 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
         print(f"product: {product_key} ({template.title})")
         print(f"buyer: {_DRY_RUN_BUYER_EMAIL} (signed synthetic identity)")
         print(f"claim: {status} (receipts issued: {issued})")
-        print(f"receipt: {out_path} (mode 0600 - carries the buyer-binding salt)")
+        print(f"receipt: {out_path} (mode 0600 - safe to share)")
+        print(
+            f"private: {private_path} (mode 0600 - carries the buyer-binding salt, "
+            "never share it)"
+        )
         print(email_line)
         print("ledger: throwaway, deleted on exit - the production Ledger was never opened")
         print("verify offline:")
-        print(f"  attest verify {out_path} --trust-dir <dir-containing-key-manifest.json>")
+        print(f"  attest import --bundle {out_path} --private {private_path} --out-dir ./imported")
+        print(
+            f"  attest verify ./imported/receipts/{stored.receipt_id}.attest.json "
+            "--trust-dir ./imported/trust"
+        )
     return rc
 
 
