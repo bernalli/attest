@@ -6,6 +6,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-08-24
+
 ### Changed
 
 - **Breaking (CLI):** outputs whose loss is irrecoverable — key seeds
