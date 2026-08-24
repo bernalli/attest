@@ -84,3 +84,73 @@ describe('trustStoreFromManifestBytes', () => {
     expect(trustStoreFromManifestBytes(new TextEncoder().encode('not json'))).toBeNull()
   })
 })
+
+// A bare envelope that still carries `delivery.salt` is exactly what `attest
+// disclose` produces and what the mail integration point hands over by
+// design (§13), so refusing it outright would break both and would take away
+// the one place a holder can safely check their own file — verification is
+// entirely client-side and the bytes never leave the machine. The measured
+// bug was the SILENCE, not the acceptance: the verifier judged the NAME and
+// said nothing about the content.
+describe('intake: the salted-envelope notice', () => {
+  const salted = (withManifest: boolean): Uint8Array => {
+    const env = loadsStrict(envelopeBytes()) as JsonObject
+    const delivery: JsonObject = withManifest
+      ? { issuer_manifest: keyManifest().manifest, salt: 'c2FsdHktbWNzYWx0ZmFjZQ' }
+      : { salt: 'c2FsdHktbWNzYWx0ZmFjZQ' }
+    return canonicalBytes({ ...env, delivery } as JsonObject)
+  }
+
+  it('verifies a salted bare envelope but says it is bearer proof', () => {
+    const r = intake('receipt.attest.json', salted(true))
+    if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
+    expect(r.notices).toBeDefined()
+    expect(r.notices!.join(' ')).toMatch(/never/i)
+    expect(r.notices!.join(' ')).toMatch(/salt/)
+    // Still verified, not refused: the warning is additive.
+    expect(runVerify(r.jobs[0].envelopeBytes, r.jobs[0].trustStore).result.signature).toBe('valid')
+  })
+
+  it('keeps the notice on the needs-manifest path', () => {
+    const r = intake('receipt.attest.json', salted(false))
+    if (r.kind !== 'needs-manifest') throw new Error(`expected needs-manifest, got ${r.kind}`)
+    expect(r.notices).toBeDefined()
+    expect(r.notices!.join(' ')).toMatch(/never/i)
+  })
+
+  it('names the salted member of a bundle built by someone else', () => {
+    // Our own exporter never writes a salted member into a `.attest`, but the
+    // guard is on the CONTENT, so a third party's bundle gets judged too.
+    const { issuer, manifest } = keyManifest()
+    const blob: JsonObject = { issuer, key_manifests: [manifest], artifact_manifests: [] }
+    const zip = zipSync({
+      ['receipts/R1.attest.json']: salted(false),
+      [`manifests/${issuer}.json`]: canonicalBytes(blob),
+    })
+    const r = intake('library.attest', zip)
+    if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
+    expect(r.notices).toBeDefined()
+    expect(r.notices!.join(' ')).toContain('R1')
+    expect(r.notices!.join(' ')).toMatch(/never/i)
+  })
+
+  it('says nothing about a salt-free receipt', () => {
+    const { manifest } = keyManifest()
+    const env = loadsStrict(envelopeBytes()) as JsonObject
+    const clean: JsonObject = { ...env, delivery: { issuer_manifest: manifest } }
+    const r = intake('receipt.attest.json', canonicalBytes(clean))
+    if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
+    expect(r.notices ?? []).toHaveLength(0)
+  })
+
+  it('leaves both refusals exactly as they were', () => {
+    // By name (intake.ts) ...
+    expect(intake('x.private.attest', salted(true)).kind).toBe('rejected')
+    // ... and by content (bundle.ts): a zip carrying salts.json is refused
+    // outright, notice or no notice.
+    const priv = zipSync({ ['salts.json']: new TextEncoder().encode('{}') })
+    const r = intake('x.attest', priv)
+    expect(r.kind).toBe('rejected')
+    if (r.kind === 'rejected') expect(r.reason).toMatch(/private/i)
+  })
+})

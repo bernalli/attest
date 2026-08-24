@@ -141,7 +141,11 @@ attest-bridge itch-dry-run --config bridge.toml
 This enqueues a claim for `itch-dry-run@example.invalid`, ticks a local
 poller against an in-process fake itch API, normalizes a synthetic *settled*
 purchase, signs a receipt for your real `[products.itch_<game_id>]` mapping,
-records it in a throwaway Ledger, and writes the receipt file mode `0600`.
+records it in a throwaway Ledger, and writes the receipt as the same pair a
+buyer gets: `itch-dry-run-receipt.attest` (shareable — salt removed) and
+`itch-dry-run-receipt.private.attest` (the secret half), both mode `0600`.
+`--out` names the shareable one; the private path is derived from it, and a
+`--out` already ending in `.private.attest` is refused rather than renamed.
 Your configured `ledger_path` is never opened, and the fake API exists only
 inside this command — no config key or environment variable can point the
 `serve` poller at it.
@@ -154,10 +158,12 @@ not configurable: `--email` is only an SMTP recipient, and only together with
 attest-bridge itch-dry-run --config bridge.toml --send-email --email you@your-domain.example
 ```
 
-Verify the receipt offline:
+Verify the receipt offline — the command prints these two lines itself:
 
 ```sh
-attest verify itch-dry-run-receipt.attest --trust-dir <dir-containing-key-manifest.json>
+attest import --bundle itch-dry-run-receipt.attest \
+  --private itch-dry-run-receipt.private.attest --out-dir ./imported
+attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
 ```
 
 What this proves: your catalog mapping, key loading, signing, verifier

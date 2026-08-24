@@ -1025,12 +1025,30 @@ def test_itch_claim_form_and_post_404_when_itch_not_configured(
 
 
 def test_salt_bearing_download_docs_set_umask_before_curl_output() -> None:
+    """Every `curl -o` in a guide writes a file that may carry the buyer's
+    binding salt, so it must run under a restrictive umask.
+
+    Scoped to the enclosing fenced block rather than to the immediately
+    preceding LINE: one `umask 077` covers every command in the block it
+    opens, and downloading a §14.1/§14.2 pair is two curls under one umask.
+    Backslash continuations are joined first — the old line-adjacency form
+    silently skipped any `curl` whose `-o` sat on a continuation line, which
+    is the easiest way to write one.
+    """
     docs_root = Path(__file__).parents[1] / "docs"
+    checked = 0
     for path in docs_root.glob("*.md"):
         text = path.read_text(encoding="utf-8")
-        for match in re.finditer(r"curl\b[^\n]*\s-o\s", text):
-            preceding_lines = text[: match.start()].rstrip().splitlines()
-            assert preceding_lines[-1] == "umask 077"
+        for block in re.findall(r"^```[a-z]*\n(.*?)^```", text, re.MULTILINE | re.DOTALL):
+            lines = block.replace("\\\n", " ").splitlines()
+            umask_at = next(
+                (i for i, line in enumerate(lines) if line.strip() == "umask 077"), None
+            )
+            for index, line in enumerate(lines):
+                if re.search(r"curl\b.*\s-o\s", line):
+                    checked += 1
+                    assert umask_at is not None and umask_at < index, (path.name, line)
+    assert checked > 0
 
 
 # -- itch-import CLI ------------------------------------------------------------

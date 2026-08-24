@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from attest_bridge import delivery as delivery_mod
+from attest_bridge import pair as pair_mod
 from attest_bridge.config import DeliveryConfig
 from attest_bridge.delivery import (
     MAX_DELIVERY_ATTEMPTS,
@@ -319,7 +319,7 @@ def test_bundle_workdir_is_owner_only_and_removed_on_success_and_failure(
     afterwards — on the sent path, on an SMTP failure, and on a bundle failure.
     """
     seen: list[tuple[Path, int]] = []
-    real_factory = delivery_mod._TMPDIR_FACTORY
+    real_factory = pair_mod._TMPDIR_FACTORY
 
     class _RecordingTmpDir:
         def __init__(self) -> None:
@@ -333,7 +333,7 @@ def test_bundle_workdir_is_owner_only_and_removed_on_success_and_failure(
         def __exit__(self, *exc_info: object) -> None:
             self._inner.__exit__(*exc_info)
 
-    monkeypatch.setattr(delivery_mod, "_TMPDIR_FACTORY", _RecordingTmpDir)
+    monkeypatch.setattr(pair_mod, "_TMPDIR_FACTORY", _RecordingTmpDir)
 
     fakes: list[_FakeSMTP] = []
     assert _send(_config(), _fake_factory(fakes)).status == "sent"
@@ -402,16 +402,17 @@ def test_send_body_names_the_private_file_and_warns_not_to_forward() -> None:
     assert "https://merchant.example.com/attest/what-is-this" in text
 
 
-def test_send_body_does_not_offer_the_download_link_as_the_shareable_file() -> None:
+def test_send_body_describes_the_download_link_as_the_pair_page() -> None:
     """The body must not teach the rule and then break it two lines later.
 
-    The download route serves the bare salt-bearing envelope under the
-    SHAREABLE name `receipt-<id>.attest` (`http.py:128-137`), so a buyer who
-    follows the link gets the secret under the safe-looking name — exactly what
-    the attachment warning exists to prevent. Until that route serves a pair
-    too, the body must say what the link actually hands over. Asserting the
-    warning sits AFTER the link, not merely somewhere in the message: order is
-    the requirement, a caveat above the link is one a reader never reaches.
+    This pin's predecessor existed because the download route served the bare
+    salt-bearing envelope under the SHAREABLE name `receipt-<id>.attest`, so
+    the body had to warn that following the link handed over the secret. Its
+    own docstring said "until that route serves a pair too" — V-A.3 is that,
+    and the pin evolves rather than disappears: the link now goes to a page
+    offering the SAME two files, and the body must say so, still naming the
+    private half and still warning AFTER the link. A caveat above the link is
+    one a reader never reaches.
     """
     fakes: list[_FakeSMTP] = []
     _send(_config(), _fake_factory(fakes))
@@ -421,16 +422,23 @@ def test_send_body_does_not_offer_the_download_link_as_the_shareable_file() -> N
     lowered = text.lower()
 
     link_at = text.index("https://receipts.example.com/r/tok_abc123")
-    caveat_at = lowered.index("keep it as private", link_at)
-    assert caveat_at > link_at
-    # The link's own paragraph must tie the download back to the private file,
-    # so the buyer has one rule to remember and not two conflicting ones.
-    assert ".private.attest" in text[link_at:]
-    # And it must not call the download shareable anywhere around the link: an
-    # ordering assertion alone would stay green if the text said "download the
-    # shareable file here" and only walked it back afterwards.
-    assert "shareable" not in lowered[link_at:]
-    assert "safe to share" not in lowered[link_at:]
+    tail = text[link_at:]
+
+    # The page is described as the same pair, by name, after the link.
+    assert f"{_SLUG}-{_RECEIPT_ID}.attest" in tail
+    private_at = tail.index(f"{_SLUG}-{_RECEIPT_ID}.private.attest")
+    assert "never" in tail[private_at:].lower()
+
+    # The claim that used to be true and now is false must be gone: the link
+    # is no longer a single file with the secret inside it.
+    for lie in ("single file", "both parts together", "secret included"):
+        assert lie not in lowered
+
+    # Exactly one of the two files is safe to share, and the claim must be
+    # anchored to that FILENAME rather than to the download as a whole — and
+    # settled before the private half is introduced.
+    shareable_at = tail.index(f"{_SLUG}-{_RECEIPT_ID}.attest")
+    assert shareable_at < tail.lower().index("safe to share") < private_at
 
 
 def test_send_never_puts_the_smtp_password_in_the_outgoing_message() -> None:
