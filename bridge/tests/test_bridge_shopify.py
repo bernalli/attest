@@ -124,7 +124,8 @@ def test_wants_true_for_orders_paid_and_paid_status() -> None:
 
 
 @pytest.mark.parametrize(
-    "status", ["pending", "authorized", "refunded", "voided", "partially_paid"]
+    "status",
+    ["pending", "authorized", "refunded", "partially_refunded", "voided", "partially_paid"],
 )
 def test_wants_false_for_any_status_that_is_not_paid(status: str) -> None:
     adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
@@ -471,7 +472,34 @@ def test_unpaid_order_is_acknowledged_without_issuing(shopify_deps: BridgeDeps) 
     assert status.startswith("200")
     assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is None
     assert shopify_deps.ledger.unresolved_dead_letters() == []
-    assert shopify_deps.ledger.seen_event("shopify", str(_ORDER_ID)) is True
+    # NOT marked seen: the event key is the order id, and "not paid yet" is not
+    # a terminal state for an order — see the lifecycle test below.
+    assert shopify_deps.ledger.seen_event("shopify", str(_ORDER_ID)) is False
+
+
+def test_an_unpaid_delivery_does_not_suppress_the_paid_one_that_follows(
+    shopify_deps: BridgeDeps,
+) -> None:
+    """The ordinary Shopify lifecycle, not an attack: the same order id arrives
+    first unpaid and then paid. Marking the unpaid one terminal would close the
+    door on the receipt."""
+    first = _post_webhook(shopify_deps, make_order(financial_status="pending"))
+    second = _post_webhook(shopify_deps, make_order(financial_status="paid"))
+
+    assert first[0].startswith("200")
+    assert second[0].startswith("200")
+    assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is not None
+
+
+def test_a_cancelled_delivery_does_not_suppress_a_later_paid_one(
+    shopify_deps: BridgeDeps,
+) -> None:
+    """Same shape through the cancellation guard."""
+    _post_webhook(shopify_deps, make_order(cancelled_at="2026-08-24T12:00:00-05:00"))
+    status, _, _ = _post_webhook(shopify_deps, make_order())
+
+    assert status.startswith("200")
+    assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is not None
 
 
 def test_unexpected_core_failure_returns_500_and_does_not_acknowledge(

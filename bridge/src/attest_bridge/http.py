@@ -382,11 +382,19 @@ def _handle_shopify_webhook(
         if deps.ledger.seen_event("shopify", event_id):
             return _json_response(start_response, "200 OK", {"ok": True})
         if not actionable:
+            # Acknowledged so Shopify stops redelivering THIS body, but
+            # deliberately NOT marked seen. The event key here is the order id,
+            # and an order is not an event: the same id arrives again as it
+            # moves through its lifecycle, and "not paid yet" is not a terminal
+            # state. Marking it would make an `orders/create` seen first close
+            # the door on the `orders/paid` that follows, and the receipt would
+            # be lost to a perfectly ordinary sequence rather than an attack.
+            # Re-parsing a repeated non-actionable body costs nothing and
+            # issues nothing.
             deps.log.info(
                 "shopify order %s: not actionable (unpaid or cancelled)",
                 purchase_id_for_log(event_id),
             )
-            deps.ledger.mark_event("shopify", event_id, now=_now_rfc3339())
             return _json_response(start_response, "200 OK", {"ok": True})
         assert purchase is not None
         try:
