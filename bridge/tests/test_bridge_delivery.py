@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from attest_bridge import delivery as delivery_mod
+from attest_bridge import pair as pair_mod
 from attest_bridge.config import DeliveryConfig
 from attest_bridge.delivery import (
     MAX_DELIVERY_ATTEMPTS,
@@ -319,7 +319,7 @@ def test_bundle_workdir_is_owner_only_and_removed_on_success_and_failure(
     afterwards — on the sent path, on an SMTP failure, and on a bundle failure.
     """
     seen: list[tuple[Path, int]] = []
-    real_factory = delivery_mod._TMPDIR_FACTORY
+    real_factory = pair_mod._TMPDIR_FACTORY
 
     class _RecordingTmpDir:
         def __init__(self) -> None:
@@ -333,7 +333,7 @@ def test_bundle_workdir_is_owner_only_and_removed_on_success_and_failure(
         def __exit__(self, *exc_info: object) -> None:
             self._inner.__exit__(*exc_info)
 
-    monkeypatch.setattr(delivery_mod, "_TMPDIR_FACTORY", _RecordingTmpDir)
+    monkeypatch.setattr(pair_mod, "_TMPDIR_FACTORY", _RecordingTmpDir)
 
     fakes: list[_FakeSMTP] = []
     assert _send(_config(), _fake_factory(fakes)).status == "sent"
