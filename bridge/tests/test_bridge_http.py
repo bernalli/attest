@@ -851,9 +851,7 @@ def test_stripe_receipt_landing_links_via_session_id_not_download_token(
     assert _salt_b64u(issued) not in page
 
 
-def test_stripe_receipt_parts_serve_the_same_pair(
-    deps: BridgeDeps, issued: StoredReceipt
-) -> None:
+def test_stripe_receipt_parts_serve_the_same_pair(deps: BridgeDeps, issued: StoredReceipt) -> None:
     app = make_app(deps)
     name = _pair_name(issued)
 
