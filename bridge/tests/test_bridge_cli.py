@@ -13,11 +13,12 @@ import json
 import stat
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from attest_bridge import cli
 from attest_bridge.catalog import ProductCatalog, ProductTemplate
+from attest_bridge.delivery import DeliveryResult
 from attest_bridge.itch_adapter import ItchAdapter, ItchApiError
 from attest_bridge.ledger import Ledger
 from attest_bridge.model import ConfigError
@@ -850,3 +851,236 @@ def test_itch_dry_run_uses_only_throwaway_ledger_instances(
     assert opened
     resolved_ledger = ledger_path.resolve()
     assert all(path.resolve() != resolved_ledger for path in opened)
+
+
+# -- itch-dry-run: fail-closed modes and SMTP opt-in ------------------------
+
+
+def test_itch_dry_run_rc_2_without_itch_section(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_itch_dry_run_config(
+        tmp_path, hybrid_keys, key_manifest, monkeypatch, extra_toml=""
+    )
+
+    assert cli.main(["itch-dry-run", "--config", str(config_path)]) == 2
+
+
+def test_itch_dry_run_rc_2_when_catalog_has_no_itch_product(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_itch_dry_run_config(
+        tmp_path, hybrid_keys, key_manifest, monkeypatch, products_toml=_PRICE_TEST_PRODUCT
+    )
+
+    assert cli.main(["itch-dry-run", "--config", str(config_path)]) == 2
+
+
+def test_itch_dry_run_rc_2_on_unknown_game_id_names_what_exists(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--game-id", "999999"])
+
+    assert rc == 2
+    assert "itch_123456" in capsys.readouterr().err
+
+
+def test_itch_dry_run_requires_game_id_when_config_maps_two_games(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_itch_dry_run_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        monkeypatch,
+        products_toml=_ITCH_GAME_PRODUCT + _SECOND_ITCH_GAME_PRODUCT,
+    )
+
+    assert cli.main(["itch-dry-run", "--config", str(config_path)]) == 2
+    assert (
+        cli.main(
+            [
+                "itch-dry-run",
+                "--config",
+                str(config_path),
+                "--game-id",
+                "654321",
+                "--out",
+                str(tmp_path / "d.attest"),
+            ]
+        )
+        == 0
+    )
+
+
+def test_itch_dry_run_email_without_send_email_is_rc_2(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `--email` is not a buyer-identity override, and refusing it says so.
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--email", "merchant@example.com"])
+
+    assert rc == 2
+
+
+def test_itch_dry_run_send_email_requires_explicit_recipient(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+
+    assert cli.main(["itch-dry-run", "--config", str(config_path), "--send-email"]) == 2
+
+
+def test_itch_dry_run_reports_actual_dead_letter_reason_when_issuance_fails(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+    real_core = cli.IssuingCore
+
+    def failing_core(**kwargs: Any) -> Any:
+        core = real_core(**kwargs)
+
+        def boom(purchase: object) -> None:
+            raise RuntimeError("simulated signing failure")
+
+        core.process = boom  # type: ignore[method-assign]
+        return core
+
+    monkeypatch.setattr(cli, "IssuingCore", failing_core)
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
+
+    assert rc == 1
+    stderr = capsys.readouterr().err
+    assert "no receipt issued" in stderr
+    # Not just "it failed": the merchant must read WHY.
+    assert "simulated signing failure" in stderr
+    assert not out_path.exists()
+
+
+class _RecordingDelivery:
+    sent: ClassVar[list[dict[str, Any]]] = []
+    result: ClassVar[DeliveryResult] = DeliveryResult(status="sent", detail=None)
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+
+    def send(self, **kwargs: Any) -> DeliveryResult:
+        _RecordingDelivery.sent.append(kwargs)
+        return _RecordingDelivery.result
+
+
+def test_itch_dry_run_send_email_delivers_to_recipient_not_signed_buyer(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    trust_store: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+    _RecordingDelivery.sent = []
+    _RecordingDelivery.result = DeliveryResult(status="sent", detail=None)
+    monkeypatch.setattr(cli, "Delivery", _RecordingDelivery)
+
+    rc = cli.main(
+        [
+            "itch-dry-run",
+            "--config",
+            str(config_path),
+            "--out",
+            str(out_path),
+            "--send-email",
+            "--email",
+            "merchant@example.com",
+        ]
+    )
+
+    assert rc == 0
+    assert len(_RecordingDelivery.sent) == 1
+    assert _RecordingDelivery.sent[0]["to_email"] == "merchant@example.com"
+
+    # The SMTP recipient is not the signed identity: the receipt still commits
+    # to the synthetic `.invalid` buyer.
+    envelope_bytes = out_path.read_bytes()
+    salt = keys.b64u_decode(json.loads(envelope_bytes)["delivery"]["salt"])
+    assert (
+        verify_mod.verify(
+            envelope_bytes,
+            trust_store,
+            disclosure=verify_mod.Disclosure(
+                identifier=cli._DRY_RUN_BUYER_EMAIL, identifier_type="email", salt=salt
+            ),
+        ).binding
+        == "proven"
+    )
+    assert (
+        verify_mod.verify(
+            envelope_bytes,
+            trust_store,
+            disclosure=verify_mod.Disclosure(
+                identifier="merchant@example.com", identifier_type="email", salt=salt
+            ),
+        ).binding
+        == "not_proven"
+    )
+
+
+def test_itch_dry_run_send_email_failure_is_rc_1_but_receipt_file_survives(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    trust_store: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+    _RecordingDelivery.sent = []
+    _RecordingDelivery.result = DeliveryResult(status="failed", detail="smtp auth failed")
+    monkeypatch.setattr(cli, "Delivery", _RecordingDelivery)
+
+    rc = cli.main(
+        [
+            "itch-dry-run",
+            "--config",
+            str(config_path),
+            "--out",
+            str(out_path),
+            "--send-email",
+            "--email",
+            "merchant@example.com",
+        ]
+    )
+
+    assert rc == 1
+    assert "email: FAILED (smtp auth failed)" in capsys.readouterr().out
+    # A failed SMTP test must not cost the merchant the receipt they just proved.
+    assert verify_mod.verify(out_path.read_bytes(), trust_store).ok is True

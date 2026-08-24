@@ -642,6 +642,33 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
             print(f"config error: {exc}", file=sys.stderr)
             return _RC_CONFIG_ERROR
 
+        rc = _RC_OK
+        email_line = "email: skipped (re-run with --send-email --email <your-address> to test SMTP)"
+        if args.send_email:
+            # Delivery is driven from here, not through `core.process`: the core
+            # sends to `stored.buyer_email`, which must stay the synthetic signed
+            # identity. The SMTP recipient is a separate thing on purpose.
+            result = Delivery(config.delivery).send(
+                to_email=args.email,
+                receipt_id=stored.receipt_id,
+                work_title=template.title,
+                envelope=json.loads(stored.envelope_json),
+                download_url=f"{config.public_base_url}/r/{stored.download_token}",
+                info_url=config.delivery.info_url if config.delivery is not None else None,
+            )
+            if result.status == "sent":
+                ledger.mark_delivered("itch", _DRY_RUN_PURCHASE_ID, at=_now_rfc3339())
+                email_line = (
+                    f"email: sent to {args.email} (signed buyer remains {_DRY_RUN_BUYER_EMAIL})"
+                )
+            elif result.status == "failed":
+                detail = result.detail if result.detail is not None else "delivery failed"
+                ledger.record_delivery_failure("itch", _DRY_RUN_PURCHASE_ID, detail)
+                email_line = f"email: FAILED ({detail}); receipt file kept"
+                rc = _RC_INCOMPLETE
+            else:
+                email_line = f"email: skipped ({result.status})"
+
         claim = ledger.get_claim(token)
         issued = claim.receipts_issued if claim is not None else 0
         status = claim.status if claim is not None else "unknown"
@@ -651,11 +678,11 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
         print(f"buyer: {_DRY_RUN_BUYER_EMAIL} (signed synthetic identity)")
         print(f"claim: {status} (receipts issued: {issued})")
         print(f"receipt: {out_path} (mode 0600 - carries the buyer-binding salt)")
-        print("email: skipped (re-run with --send-email --email <your-address> to test SMTP)")
+        print(email_line)
         print("ledger: throwaway, deleted on exit - the production Ledger was never opened")
         print("verify offline:")
         print(f"  attest verify {out_path} --trust-dir <dir-containing-key-manifest.json>")
-    return _RC_OK
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:
