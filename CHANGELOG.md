@@ -6,6 +6,23 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (CLI):** outputs whose loss is irrecoverable — key seeds
+  (`keygen --seed-out`/`--mldsa-out`), issuer key manifests
+  (`manifest init`/`rotate --out`), issued envelopes and salts
+  (`issue --out`/`--salt-out`), transfer and revocation records
+  (`transfer record --out`/`--revocation-out`), exported `.private.attest`,
+  and imported trust-store files and `salts.json` — now refuse to overwrite an
+  existing file whose content differs from what would be written (exit 2,
+  naming the path and the reason), under a single write-if-absent-or-identical
+  rule. Byte-identical rewrites still succeed, so re-running `attest import`
+  on the same bundle stays idempotent. Every affected command gains `--force`
+  to restore the old truncating behavior explicitly. Derivable outputs
+  (`--pub-out`, artifact manifests, the shareable `.attest`, imported
+  receipts/proofs/legal texts, `log prove`/`log anchor` evidence, and the
+  bridge's `itch-dry-run` receipt) are deliberately not gated.
+
 ## [0.5.0] — 2026-08-24
 
 ### Added

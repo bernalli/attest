@@ -1860,7 +1860,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     # owned by another change in flight); the export tests pin that the two
     # agree, so a naming change fails loudly instead of silently unguarding it.
     #
-    # The shareable `<name>.attest` is overwrite-unguarded by design: it is
+    # Overwrite-unguarded by design: the shareable `<name>.attest` is
     # recomputable from inputs that all remain on local disk (2026-08-24
     # destructive-output-paths plan).
     guarded_private_path = args.out_dir / f"{args.name}.private.attest"
