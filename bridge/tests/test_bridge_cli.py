@@ -10,12 +10,17 @@ a synthetic stand-in.
 from __future__ import annotations
 
 import json
+import stat
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 from attest_bridge import cli
+from attest_bridge.catalog import ProductCatalog, ProductTemplate
+from attest_bridge.itch_adapter import ItchAdapter, ItchApiError
 from attest_bridge.ledger import Ledger
+from attest_bridge.model import ConfigError
 from conftest import DISPLAY_NAME, ISSUER, KID
 from test_bridge_stripe_adapter import make_session_completed_event
 
@@ -525,3 +530,121 @@ def test_redact_tokens_hides_stripe_session_capability_from_access_log() -> None
         redacted = cli._redact_tokens(request)
         assert "cs_live_secret" not in redacted
         assert "session_id=<redacted>" in redacted
+
+
+# -- itch-dry-run helpers (V-A.1-bis) --------------------------------------
+
+
+def test_itch_dry_run_purchase_normalizes_to_the_fixed_invalid_buyer() -> None:
+    # The dry run signs a receipt with the merchant's real key, so the buyer
+    # identity it commits to must never be a real address: it is pinned to the
+    # reserved `.invalid` TLD and is not configurable.
+    raw = cli._itch_dry_run_purchase("123456", now=datetime(2026, 8, 24, 12, 0, tzinfo=UTC))
+    normalized = ItchAdapter(api_key="itch-key").normalize(raw, email=cli._DRY_RUN_BUYER_EMAIL)
+
+    assert normalized.platform == "itch"
+    assert normalized.platform_purchase_id == cli._DRY_RUN_PURCHASE_ID
+    assert normalized.product_key == "itch_123456"
+    assert normalized.buyer_identifier == cli._DRY_RUN_BUYER_EMAIL
+    assert cli._DRY_RUN_BUYER_EMAIL.endswith(".invalid")
+    assert normalized.buyer_pubkey is None
+    assert normalized.purchased_at == "2026-08-24T12:00:00Z"
+
+
+def _itch_catalog(*game_ids: str) -> ProductCatalog:
+    return ProductCatalog(
+        {
+            f"itch_{game_id}": ProductTemplate(
+                title=f"Nebula Drifters {game_id}",
+                publisher="Example Games Store",
+                identifiers={"itch_game_id": game_id},
+                artifact_series="merchant.example.com/works/nebula-drifters",
+                terms_uri="https://merchant.example.com/attest/license-templates/standard-v1",
+                legal_text_sha256=_LEGAL_TEXT_SHA256,
+            )
+            for game_id in game_ids
+        }
+    )
+
+
+def test_resolve_itch_dry_run_product_picks_the_only_itch_product() -> None:
+    assert cli._resolve_itch_dry_run_product(_itch_catalog("123456"), None) == "itch_123456"
+
+
+def test_resolve_itch_dry_run_product_rejects_no_itch_product() -> None:
+    catalog = ProductCatalog({})
+    with pytest.raises(ConfigError):
+        cli._resolve_itch_dry_run_product(catalog, None)
+
+
+def test_resolve_itch_dry_run_product_requires_game_id_when_ambiguous() -> None:
+    catalog = _itch_catalog("123456", "654321")
+    with pytest.raises(ConfigError) as excinfo:
+        cli._resolve_itch_dry_run_product(catalog, None)
+    # The merchant must be told which keys exist, never given a guess.
+    assert "itch_123456" in str(excinfo.value)
+    assert "itch_654321" in str(excinfo.value)
+
+
+def test_resolve_itch_dry_run_product_selects_and_validates_explicit_game_id() -> None:
+    catalog = _itch_catalog("123456", "654321")
+    assert cli._resolve_itch_dry_run_product(catalog, "654321") == "itch_654321"
+    with pytest.raises(ConfigError):
+        cli._resolve_itch_dry_run_product(catalog, "999999")
+
+
+def test_dry_run_fake_api_validates_game_id_buyer_email_and_authorization() -> None:
+    # A fake that answers every request would keep the happy path green even if
+    # the poller asked for the wrong game or the wrong buyer: the fake is part
+    # of the assertion, not scenery.
+    raw = cli._itch_dry_run_purchase("123456", now=datetime(2026, 8, 24, 12, 0, tzinfo=UTC))
+    http_get = cli._dry_run_http_get(
+        raw, game_id="123456", buyer_email=cli._DRY_RUN_BUYER_EMAIL, api_key="itch-key"
+    )
+    adapter = ItchAdapter(api_key="itch-key", http_get=http_get)
+
+    assert adapter.fetch_purchases("123456", cli._DRY_RUN_BUYER_EMAIL) == [raw]
+
+    with pytest.raises(ItchApiError):
+        adapter.fetch_purchases("999999", cli._DRY_RUN_BUYER_EMAIL)
+    with pytest.raises(ItchApiError):
+        adapter.fetch_purchases("123456", "someone-else@example.invalid")
+    wrong_key = ItchAdapter(api_key="wrong-key", http_get=http_get)
+    with pytest.raises(ItchApiError):
+        wrong_key.fetch_purchases("123456", cli._DRY_RUN_BUYER_EMAIL)
+
+
+def test_guard_dry_run_out_rejects_production_ledger_path_and_symlink(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "ledger.sqlite3"
+    Ledger(ledger_path)
+
+    with pytest.raises(ConfigError):
+        cli._guard_dry_run_out_path(ledger_path, ledger_path=ledger_path)
+
+    link_path = tmp_path / "receipt-link.attest"
+    link_path.symlink_to(ledger_path)
+    with pytest.raises(ConfigError):
+        cli._guard_dry_run_out_path(link_path, ledger_path=ledger_path)
+
+    ok_path = tmp_path / "receipt.attest"
+    assert cli._guard_dry_run_out_path(ok_path, ledger_path=ledger_path) == ok_path.resolve()
+
+
+def test_write_receipt_file_no_follow_refuses_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "target.attest"
+    target.write_bytes(b"original")
+    link = tmp_path / "link.attest"
+    link.symlink_to(target)
+
+    with pytest.raises(ConfigError):
+        cli._write_receipt_file_no_follow(link, b"replacement")
+
+    assert target.read_bytes() == b"original"
+
+
+def test_write_receipt_file_no_follow_writes_mode_0600(tmp_path: Path) -> None:
+    out = tmp_path / "receipt.attest"
+    cli._write_receipt_file_no_follow(out, b"envelope")
+
+    assert out.read_bytes() == b"envelope"
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600

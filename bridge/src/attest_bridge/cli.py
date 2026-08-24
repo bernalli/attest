@@ -17,14 +17,16 @@ import argparse
 import csv
 import json
 import logging
+import os
 import re
 import socketserver
 import sys
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlparse
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from attest import issue, validate
@@ -117,6 +119,131 @@ def _build_parser() -> argparse.ArgumentParser:
     itch_import_parser.add_argument("csv_path")
 
     return parser
+
+
+# -- itch-dry-run helpers --------------------------------------------------
+#
+# A fixed, clearly-synthetic purchase id: real itch purchase ids are numeric,
+# so a dry-run artifact is identifiable at a glance and can never collide with
+# a real purchase in the `(platform, purchase_id)` key space.
+_DRY_RUN_PURCHASE_ID = "itch-dry-run-1"
+# Reserved TLD (RFC 2606): non-deliverable by construction. This is the buyer
+# identity the receipt COMMITS TO, and it is not configurable — `--email` is
+# only ever an SMTP recipient, never a signed identity.
+_DRY_RUN_BUYER_EMAIL = "itch-dry-run@example.invalid"
+_DRY_RUN_DEFAULT_OUT = "itch-dry-run-receipt.attest"
+_ITCH_PRODUCT_PREFIX = "itch_"
+
+
+def _resolve_itch_dry_run_product(catalog: ProductCatalog, game_id: str | None) -> str:
+    """Pick which `[products.itch_<game_id>]` the dry run issues for.
+
+    Never guesses: zero itch products, an unknown `--game-id`, or an ambiguous
+    catalog without `--game-id` are all `ConfigError`, naming what exists.
+    """
+    itch_keys = [key for key in catalog.keys() if key.startswith(_ITCH_PRODUCT_PREFIX)]
+    if not itch_keys:
+        raise ConfigError(
+            "no [products.itch_<game_id>] mapping in this config — "
+            "the dry run issues for a real catalog entry, never a guessed one"
+        )
+    if game_id is not None:
+        product_key = f"{_ITCH_PRODUCT_PREFIX}{game_id}"
+        if product_key not in itch_keys:
+            raise ConfigError(
+                f"no product mapping for {product_key!r}; configured: {', '.join(itch_keys)}"
+            )
+        return product_key
+    if len(itch_keys) > 1:
+        raise ConfigError(f"--game-id is required: this config maps {', '.join(itch_keys)}")
+    return itch_keys[0]
+
+
+def _itch_dry_run_purchase(game_id: str, *, now: datetime) -> dict[str, Any]:
+    """One synthetic itch purchase row, in the API's documented shape.
+
+    `status` is `"settled"` on purpose: the poller skips only `refunded` and
+    `canceled` (`itch_adapter._SKIP_STATUSES`), so this row must be one the
+    real filter processes.
+    """
+    return {
+        "id": _DRY_RUN_PURCHASE_ID,
+        "game_id": game_id,
+        "email": _DRY_RUN_BUYER_EMAIL,
+        "status": "settled",
+        "created_at": now.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+        "price": "$0.00",
+        "currency": "USD",
+    }
+
+
+def _dry_run_http_get(
+    purchase: dict[str, Any], *, game_id: str, buyer_email: str, api_key: str
+) -> Callable[[str, dict[str, str]], bytes]:
+    """The in-process fake itch API, injected through `ItchAdapter(http_get=…)`.
+
+    It validates the request instead of answering everything: a fake that
+    returned the purchase for any URL would leave the happy path green even if
+    the poller asked for the wrong game, the wrong buyer, or with the wrong
+    key. `ItchAdapter.fetch_purchases` wraps whatever this raises in
+    `ItchApiError`, exactly as a live non-200 response would be.
+    """
+
+    def http_get(url: str, headers: dict[str, str]) -> bytes:
+        parsed = urlparse(url)
+        if parsed.path != f"/games/{game_id}/purchases":
+            raise ValueError(f"dry-run fake API: unexpected path {parsed.path!r}")
+        if parse_qs(parsed.query).get("email") != [buyer_email]:
+            raise ValueError("dry-run fake API: unexpected buyer email in query")
+        if headers.get("Authorization") != f"Bearer {api_key}":
+            raise ValueError("dry-run fake API: unexpected Authorization header")
+        return json.dumps({"purchases": [purchase]}).encode("utf-8")
+
+    return http_get
+
+
+def _guard_dry_run_out_path(out_path: Path, *, ledger_path: Path) -> Path:
+    """Refuse any `--out` that could clobber the merchant's production Ledger.
+
+    Containment of the Ledger on the constructor side is not enough: the
+    receipt writer opens `--out` for truncation, so a path that IS the ledger
+    — or a symlink resolving to it — would destroy it.
+    """
+    resolved_out = out_path.expanduser().resolve(strict=False)
+    resolved_ledger = ledger_path.expanduser().resolve(strict=False)
+    if resolved_out == resolved_ledger:
+        raise ConfigError(
+            f"--out {str(out_path)!r} is the configured ledger_path — refusing to overwrite it"
+        )
+    if out_path.is_symlink():
+        raise ConfigError(
+            f"--out {str(out_path)!r} is a symlink — refusing to write the receipt through it"
+        )
+    if out_path.exists() and ledger_path.exists() and out_path.samefile(ledger_path):
+        raise ConfigError(
+            f"--out {str(out_path)!r} is the same file as ledger_path — refusing to overwrite it"
+        )
+    return resolved_out
+
+
+def _write_receipt_file_no_follow(path: Path, data: bytes) -> None:
+    """Write the receipt at mode 0600 without following a symlink at `path`.
+
+    The envelope carries `delivery.salt`, a buyer-binding secret, so the file
+    is owner-only; `O_NOFOLLOW` makes "the target was a link to something
+    else" a hard failure rather than a silent write elsewhere.
+    """
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:  # pragma: no cover - POSIX-only platforms in CI
+        raise ConfigError("O_NOFOLLOW is unavailable on this platform — refusing to write")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | no_follow
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise ConfigError(f"cannot write receipt to {str(path)!r}: {exc}") from exc
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+    os.chmod(path, 0o600)
 
 
 def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
