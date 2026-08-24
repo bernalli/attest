@@ -152,19 +152,32 @@ Edit `bridge.local.toml`:
 - `manifest_path` → `./key-manifest.json`
 - `ledger_path` → `./ledger.sqlite3` (a fresh local Ledger — the bridge
   creates this file itself, 0600, the first time it starts)
+- **comment out `api_key_env` under `[stripe]`** for this local run. With an
+  API key configured, the bridge always calls Stripe's real API to enforce the
+  single-line-item invariant (step 3) — even when `attest_product_key`
+  metadata already supplies the product — and the synthetic event below is not
+  a real Checkout Session, so a throwaway key gets a `401` and the webhook is
+  dead-lettered instead of issuing. The synthetic event carries the metadata
+  key, which is all this local run needs. Put `api_key_env` back before
+  step 5; from step 6 on, real sessions and a real key make the fetch work.
 
 `bridge.toml` itself stays untouched, ready for step 5.
 
-Set the two Stripe env vars this config references. Throwaway values are
-fine for a local check — `check-config` only verifies a variable is *set*,
-not that it holds a real Stripe credential — except `STRIPE_WEBHOOK_SECRET`,
-whose exact value the synthetic webhook test below signs with, so it has to
-match what you export here:
+Set the Stripe env vars this config references. `check-config` only verifies
+a variable is *set*, not that it holds a real Stripe credential, so a
+throwaway value passes it — but `STRIPE_WEBHOOK_SECRET`'s exact value is what
+the synthetic webhook test below signs with, so it has to match what you
+export here:
 
 ```sh
 export STRIPE_WEBHOOK_SECRET=whsec_testsecret123
-export STRIPE_API_KEY=sk_test_dummy
+export STRIPE_API_KEY=sk_test_dummy   # only for check-config; unused once api_key_env is commented out
 ```
+
+Keep `STRIPE_API_KEY` exported if you want `check-config` to report
+`stripe: configured` against the untouched `bridge.toml` from step 3; with
+`api_key_env` commented out of `bridge.local.toml`, the local run below never
+reads it.
 
 Now validate config, keys, and product catalog in one shot — this catches a
 typo'd path or a malformed product table before it becomes a 500 on your
@@ -349,6 +362,16 @@ downloaded and the manifest you published in step 2.
 > (an issuer key-transparency log a receipt can be corroborated against),
 > that's the separate `attest log` CLI (`init` / `append` /
 > `sign-checkpoint`), run out-of-band; the bridge doesn't wire it up for you.
+
+> **A rotated or wrong API key fails loudly, not silently.** If
+> `stripe.api_key_env` holds a key Stripe rejects (4xx), the event is
+> dead-lettered with the reason `stripe api returned <code> fetching line
+> items…: check stripe.api_key_env` and the webhook answers 200 — Stripe stops
+> redelivering something that would fail identically every time. Fix the key,
+> then replay it with `attest-bridge retry-failed`; nothing was issued and
+> nothing was lost. A *transient* failure (rate limit, Stripe outage, network)
+> is the opposite case on purpose: it surfaces as a 500 so Stripe redelivers
+> and the receipt still gets issued on its own retry.
 
 The local synthetic-webhook test that exercises this same pipeline
 end-to-end — no real Stripe account needed — is step 4, above, not repeated

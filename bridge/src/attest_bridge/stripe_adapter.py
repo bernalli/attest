@@ -30,6 +30,7 @@ import hashlib
 import hmac
 import json
 import time
+import urllib.error
 from collections.abc import Callable
 from typing import Any
 
@@ -54,6 +55,15 @@ _LINE_ITEMS_URL = "https://api.stripe.com/v1/checkout/sessions/{session_id}/line
 
 class StripeSignatureError(BridgeError):
     """The inbound webhook signature failed verification — reject before parsing."""
+
+
+class StripeApiError(BridgeError):
+    """A TRANSIENT failure calling Stripe's API (rate limit, Stripe-side error,
+    network). Deliberately not a `PurchaseRejected`: the webhook layer
+    dead-letters that class and answers 200, which is right for permanently-bad
+    input and wrong here — a transient failure must surface as a 500 so Stripe
+    redelivers the event and the receipt still gets issued (`_http.py`'s
+    "each adapter maps to its own *ApiError", as `ItchApiError` already does)."""
 
 
 def verify_stripe_signature(
@@ -270,7 +280,31 @@ class StripeAdapter:
             )
         url = _LINE_ITEMS_URL.format(session_id=session_id)
         headers = {"Authorization": f"Bearer {self._api_key}"}
-        body = self._http_get(url, headers)
+        try:
+            body = self._http_get(url, headers)
+        except urllib.error.HTTPError as exc:
+            # 4xx (bad or rotated key, revoked permissions, unknown session) is a
+            # configuration fault, not a transient one: retrying re-sends the same
+            # request to the same rejection. Dead-letter it with a readable reason
+            # so `retry-failed` can replay the event once the merchant fixes the
+            # config — never let it escape as a bare HTTPError (a 500 plus a
+            # traceback, which Stripe then retries on a schedule nobody wants).
+            # 429 is the exception: rate limiting IS transient.
+            if 400 <= exc.code < 500 and exc.code != 429:
+                raise PurchaseRejected(
+                    f"stripe api returned {exc.code} fetching line items for session "
+                    f"{purchase_id_for_log(session_id)}: check stripe.api_key_env "
+                    "(a test-mode or rotated key is the usual cause)"
+                ) from exc
+            raise StripeApiError(
+                f"stripe api returned {exc.code} fetching line items for session "
+                f"{purchase_id_for_log(session_id)}"
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise StripeApiError(
+                f"stripe api unreachable fetching line items for session "
+                f"{purchase_id_for_log(session_id)}: {exc.reason}"
+            ) from exc
         data = json.loads(body)
         if not isinstance(data, dict):
             raise PurchaseRejected(
