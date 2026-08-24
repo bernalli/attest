@@ -534,6 +534,54 @@ def test_success_issues_receipt_marks_event_and_returns_200(
 # -- policy row: IssueError/ConfigError/unexpected Exception -> 500 -----
 
 
+def _stripe_adapter_whose_line_items_raise(status: int) -> StripeAdapter:
+    def line_items(url: str, headers: dict[str, str]) -> bytes:
+        import urllib.error
+
+        raise urllib.error.HTTPError(url, status, "err", {}, None)  # type: ignore[arg-type]
+
+    return StripeAdapter(webhook_secret=_WEBHOOK_SECRET, api_key="sk_test", http_get=line_items)
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_transient_stripe_api_failure_returns_500_without_dead_lettering(
+    deps: BridgeDeps, frozen_now: int, status: int
+) -> None:
+    """The asymmetry that protects a receipt, asserted at the WSGI boundary and
+    not only in the adapter: a transient Stripe API failure must surface as a
+    500 so Stripe redelivers. Dead-lettering it would acknowledge the event,
+    stop redelivery, and lose the receipt until someone noticed."""
+    deps.stripe = _stripe_adapter_whose_line_items_raise(status)
+    event = make_session_completed_event(session_id="cs_transient", metadata={})
+
+    http_status, _, _ = _signed_webhook(deps, event)
+
+    assert http_status.startswith("500")
+    assert deps.ledger.seen_event("stripe", event["id"]) is False
+    assert deps.ledger.unresolved_dead_letters() == []
+    assert deps.ledger.get_receipt("stripe", "cs_transient") is None
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_permanent_stripe_api_failure_dead_letters_and_returns_200(
+    deps: BridgeDeps, frozen_now: int, status: int
+) -> None:
+    """The other half of the same invariant: a misconfigured or revoked API key
+    never fixes itself by redelivery, so it is acknowledged once with a readable
+    reason and replayed later with `retry-failed`."""
+    deps.stripe = _stripe_adapter_whose_line_items_raise(status)
+    event = make_session_completed_event(session_id="cs_permanent", metadata={})
+
+    http_status, _, _ = _signed_webhook(deps, event)
+
+    assert http_status.startswith("200")
+    assert deps.ledger.seen_event("stripe", event["id"]) is True
+    dead_letters = deps.ledger.unresolved_dead_letters()
+    assert len(dead_letters) == 1
+    assert str(status) in dead_letters[0].reason
+    assert deps.ledger.get_receipt("stripe", "cs_permanent") is None
+
+
 def test_unexpected_core_exception_returns_500_and_does_not_mark_event(
     deps: BridgeDeps, frozen_now: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -26,6 +26,7 @@ side effect other than "already"/none):
 | `PurchaseRejected` / `UnmappedProduct`        | 200  | yes (+ dead letter) |
 | Duplicate purchase (receipt exists)          | 200  | yes        |
 | Success                                       | 200  | yes        |
+| `StripeApiError` (transient upstream failure) | 500  | NO — fail closed, Stripe retries |
 | `IssueError`/`ConfigError`/unexpected `Exception` | 500 | NO — fail closed, Stripe retries |
 
 The 500 row is the one that matters most: a signing/config/unexpected
@@ -250,6 +251,15 @@ def _handle_stripe_webhook(
             deps.ledger.mark_event("stripe", event_id, now=_now_rfc3339())
             deps.log.error("stripe event %s: dead-lettered", event_id)
             return _json_response(start_response, "200 OK", {"ok": True})
+    except Exception:
+        # Transient upstream failure (a Stripe API error, a network fault) or an
+        # unexpected one: fail closed exactly as the post-lock row does. NEVER
+        # mark_event and never dead-letter — Stripe must redeliver, or the
+        # receipt is lost. Without this row the exception escaped the app and
+        # only the WSGI server turned it into a 500, so the guarantee lived
+        # outside the bridge.
+        deps.log.exception("stripe event %s: unexpected error, not acknowledged", event_id)
+        return _plain_response(start_response, "500 Internal Server Error", b"internal error")
 
     with lock:
         if deps.ledger.seen_event("stripe", event_id):
