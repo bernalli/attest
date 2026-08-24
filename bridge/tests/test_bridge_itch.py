@@ -516,7 +516,11 @@ def test_exhausted_claim_after_core_failure_has_recovery_dead_letter(
     assert len(dead_letters) == 1
     assert dead_letters[0].platform == "itch"
     assert dead_letters[0].purchase_id is None
-    assert dead_letters[0].reason == "claim abandoned after 1 issuance/storage failures"
+    # The generic prefix alone would leave the operator with "something failed":
+    # the reason that actually caused the abandonment must survive to the
+    # dead letter, or the dry run (and production triage) reports nothing usable.
+    assert dead_letters[0].reason.startswith("claim abandoned after 1 issuance/storage failures")
+    assert "unexpected signing failure" in dead_letters[0].reason
 
     deps = BridgeDeps(
         config=replace(itch_bridge_config, itch=None),

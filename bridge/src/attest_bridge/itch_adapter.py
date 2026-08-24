@@ -249,7 +249,7 @@ class ItchPoller:
         now_rfc3339 = now.strftime(_RFC3339)
         for claim in self._ledger.due_claims(now_rfc3339):
             try:
-                completed = self._drain_claim(claim, now_rfc3339)
+                completed, failure_detail = self._drain_claim(claim, now_rfc3339)
             except ItchApiError as exc:
                 self._defer_or_exhaust(claim, now, api_failure=True, detail=str(exc))
                 continue
@@ -264,19 +264,24 @@ class ItchPoller:
                 self._defer_or_exhaust(claim, now)
                 continue
             if not completed:
-                self._defer_or_exhaust(claim, now)
+                self._defer_or_exhaust(claim, now, detail=failure_detail)
                 continue
             self._ledger.complete_claim(claim.token)
 
-    def _drain_claim(self, claim: Claim, now_rfc3339: str) -> bool:
+    def _drain_claim(self, claim: Claim, now_rfc3339: str) -> tuple[bool, str | None]:
         """Fetch the claim's live purchases and issue for the actionable ones.
         Every API-confirmed purchase is independently processed, so one
         malformed purchase cannot prevent a later purchase in the same
         response from being issued and emailed.
+        Returns `(completed, retryable_detail)`: the detail is the reason a
+        retryable issuance/storage failure happened, carried out of here so an
+        exhausted claim's dead letter says WHY instead of only that something
+        failed.
         Raises ItchApiError on API failure."""
         purchases = self._adapter.fetch_purchases(claim.game_id, claim.email)
         completed = False
         retryable_failure = False
+        retryable_detail: str | None = None
         for raw in purchases:
             if not isinstance(raw, dict):
                 _log.warning(
@@ -322,7 +327,7 @@ class ItchPoller:
                 )
                 completed = True
                 continue
-            except Exception:
+            except Exception as exc:
                 # Do not let one transient signing/storage failure starve a
                 # second purchase returned for this same claim. The claim stays
                 # pending for retry after the remaining rows are attempted.
@@ -330,11 +335,19 @@ class ItchPoller:
                     "itch poller: failed purchase %s; continuing", purchase_id_for_log(purchase_id)
                 )
                 retryable_failure = True
+                # Scrubbed before it can be stored: this string ends up in a
+                # persisted dead letter. The API key cannot appear here (the
+                # core never sees it), the buyer's address can.
+                retryable_detail = _scrub(
+                    str(exc) or exc.__class__.__name__,
+                    email=claim.email,
+                    api_key="",
+                )
                 continue
             completed = True
             if not outcome.duplicate:
                 self._ledger.add_claim_receipts(claim.token, 1)
-        return completed and not retryable_failure
+        return (completed and not retryable_failure), retryable_detail
 
     def _defer_or_exhaust(
         self, claim: Claim, now: datetime, *, api_failure: bool = False, detail: str | None = None
