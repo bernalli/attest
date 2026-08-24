@@ -17,7 +17,7 @@ def test_sorts_keys_by_utf16_code_units() -> None:
 
 
 def test_string_escapes_match_rfc8785() -> None:
-    assert canon.dumps({"a": "\b\t\n\f\r\"\\\x01"}) == '{"a":"\\b\\t\\n\\f\\r\\\"\\\\\\u0001"}'
+    assert canon.dumps({"a": '\b\t\n\f\r"\\\x01'}) == '{"a":"\\b\\t\\n\\f\\r\\"\\\\\\u0001"}'
 
 
 def test_no_whitespace_and_stable_nesting() -> None:

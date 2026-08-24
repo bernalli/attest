@@ -483,7 +483,7 @@ def _render_pair_landing(
     shareable_href, private_href = (html.escape(href, quote=True) for href in hrefs)
     name = html.escape(pair.name)
     body = (
-        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        '<!doctype html><html><head><meta charset="utf-8">'
         "<title>Your receipt</title></head><body>"
         "<h1>Your receipt</h1>"
         "<p>Your receipt is two files. Download both.</p>"
