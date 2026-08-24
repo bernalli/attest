@@ -437,3 +437,77 @@ def test_wants_false_for_other_event_types() -> None:
 def test_wants_false_when_payment_status_is_not_paid() -> None:
     event = _event(_session(payment_status="unpaid"))
     assert _adapter().wants(event) is False
+
+
+# --- Stripe API transport failures (asymmetry with ItchApiError, found by running
+# the documented local-test path in docs/setup-stripe.md end to end) ---
+
+
+def _http_error(status: int) -> Any:
+    """An `HTTPError` shaped like the one `urlopen` raises on a non-2xx."""
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        "https://api.stripe.com/v1/checkout/sessions/cs_test_123/line_items",
+        status,
+        "err",
+        {},  # type: ignore[arg-type]
+        None,
+    )
+
+
+def _raising_http_get(exc: BaseException) -> Any:
+    def _get(_url: str, _headers: dict[str, str]) -> bytes:
+        raise exc
+
+    return _get
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+def test_line_items_client_error_is_purchase_rejected_not_a_bare_httperror(status: int) -> None:
+    """A bad/rotated API key must dead-letter with a readable reason, never
+    escape as an unhandled `HTTPError` (which the WSGI layer turns into a 500
+    plus a traceback, and Stripe then retries forever)."""
+    session = _session(metadata={"attest_product_key": "price_TEST"})
+
+    with pytest.raises(PurchaseRejected) as exc_info:
+        _adapter(
+            api_key="sk_test_merchant_key",
+            http_get=_raising_http_get(_http_error(status)),
+        ).normalize(_event(session))
+
+    assert "stripe api" in str(exc_info.value).lower()
+    assert str(status) in str(exc_info.value)
+
+
+@pytest.mark.parametrize("status", [408, 409, 424, 429, 500, 502, 503])
+def test_line_items_transient_error_is_stripe_api_error(status: int) -> None:
+    """Timeouts, conflicts, external-dependency failures, rate limiting and
+    Stripe-side errors are all transient: they must NOT be dead-lettered as
+    permanently-bad input, because that stops Stripe redelivering and can lose
+    the receipt. They surface as `StripeApiError`, which the webhook layer lets
+    become a 500 so Stripe redelivers."""
+    from attest_bridge.stripe_adapter import StripeApiError
+
+    session = _session(metadata={"attest_product_key": "price_TEST"})
+
+    with pytest.raises(StripeApiError):
+        _adapter(
+            api_key="sk_test_merchant_key",
+            http_get=_raising_http_get(_http_error(status)),
+        ).normalize(_event(session))
+
+
+def test_line_items_network_failure_is_stripe_api_error() -> None:
+    """Same for a transport failure with no HTTP status at all."""
+    import urllib.error
+
+    from attest_bridge.stripe_adapter import StripeApiError
+
+    session = _session(metadata={"attest_product_key": "price_TEST"})
+
+    with pytest.raises(StripeApiError):
+        _adapter(
+            api_key="sk_test_merchant_key",
+            http_get=_raising_http_get(urllib.error.URLError("connection refused")),
+        ).normalize(_event(session))
