@@ -36,6 +36,7 @@ from attest_bridge.http import BridgeDeps, make_app
 from attest_bridge.itch_adapter import ItchAdapter, ItchPoller
 from attest_bridge.ledger import Ledger
 from attest_bridge.model import ClaimQueueFull, ConfigError
+from attest_bridge.shopify_adapter import ShopifyAdapter
 from attest_bridge.signing import load_issuer
 from attest_bridge.stripe_adapter import StripeAdapter
 
@@ -82,9 +83,11 @@ class _ThreadingWSGIServer(socketserver.ThreadingMixIn, WSGIServer):
     daemon thread, started in `_cmd_serve`) but needs no additional lock:
     it is the only code path that ever processes `platform="itch"`
     purchases (no itch webhook exists), so it can never race the webhook
-    lock above, which only ever guards `platform="stripe"` work — the two
-    platforms are disjoint in the Ledger's `(platform, purchase_id)` key
-    space. See `itch_adapter.py`'s `ItchPoller` docstring for the full
+    lock above, which only ever guards webhook-delivered work — today
+    `platform="stripe"` and `platform="shopify"`. All three platforms are
+    disjoint in the Ledger's `(platform, purchase_id)` key space, and the two
+    webhook rails share the single app lock, so they serialize against each
+    other as well. See `itch_adapter.py`'s `ItchPoller` docstring for the full
     argument.
     """
 
@@ -139,6 +142,11 @@ def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
         if config.stripe is not None
         else None
     )
+    shopify = (
+        ShopifyAdapter(webhook_secret=config.shopify.webhook_secret)
+        if config.shopify is not None
+        else None
+    )
     itch = ItchAdapter(api_key=config.itch.api_key) if config.itch is not None else None
     return BridgeDeps(
         config=config,
@@ -148,6 +156,7 @@ def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
         log=log,
         itch=itch,
         delivery=delivery,
+        shopify=shopify,
     )
 
 
@@ -283,6 +292,8 @@ def _cmd_check_config(args: argparse.Namespace) -> int:
     print(f"public_base_url: {config.public_base_url}")
     print(f"products: {', '.join(catalog.keys()) or '(none)'}")
     print(f"stripe: {'configured' if config.stripe is not None else 'not configured'}")
+    print(f"shopify: {'configured' if config.shopify is not None else 'not configured'}")
+    print(f"itch: {'configured' if config.itch is not None else 'not configured'}")
     print(f"delivery: {'smtp' if config.delivery is not None else 'download-link-only'}")
     return _RC_OK
 
@@ -310,6 +321,33 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
                 log.warning(
                     "retry-failed: itch dead letter %d still failing: %s", dead_letter.id, exc
                 )
+                continue
+            deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+            resolved += 1
+            continue
+        if dead_letter.platform == "shopify":
+            # The stored `raw_json` is the whole signed order, so replay
+            # re-drives the same `wants`/`normalize` path the webhook took —
+            # no signature to re-verify, because the body was already
+            # authenticated when it was stored.
+            if deps.shopify is None:
+                log.warning(
+                    "retry-failed: shopify dead letter %d needs a [shopify] section to replay",
+                    dead_letter.id,
+                )
+                continue
+            try:
+                order = json.loads(dead_letter.raw_json)
+                if not deps.shopify.wants(order):
+                    log.info(
+                        "retry-failed: shopify dead letter %d is not actionable", dead_letter.id
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
+                deps.core.process(deps.shopify.normalize(order))
+            except Exception:  # still bad input, or a transient failure — leave unresolved
+                log.warning("retry-failed: shopify dead letter %d still failing", dead_letter.id)
                 continue
             deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
             resolved += 1
