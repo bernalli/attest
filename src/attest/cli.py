@@ -1896,17 +1896,47 @@ def _cmd_import(args: argparse.Namespace) -> int:
 
     receipts_dir = args.out_dir / "receipts"
     trust_dir = args.out_dir / "trust"
+
+    # Two-phase: precompute the protected files and guard every one of them
+    # before the first write, so a bundle that conflicts on its trust anchors
+    # or its salts cannot leave a half-imported directory behind. The identity
+    # clause is what keeps re-importing the same bundle idempotent.
+    trust_writes: list[tuple[Path, str]] = []
+    for issuer, chain in imported.trust_store.chains.items():
+        for version_manifest in chain:
+            version = version_manifest.get("manifest_version", 0)
+            trust_path = trust_dir / f"{_safe_name(issuer)}.v{version}.json"
+            trust_text = _json_text(version_manifest)
+            _ensure_overwrite_allowed(
+                trust_path, trust_text, label="import: trust-store file", force=args.force
+            )
+            trust_writes.append((trust_path, trust_text))
+
+    salts_path = args.out_dir / "salts.json"
+    salts_text: str | None = None
+    salts_existed = False
+    if imported.salts:
+        salts_payload = {rid: keys.b64u(s) for rid, s in imported.salts.items()}
+        # Serialization kept exactly as before (no sort_keys): the guard must
+        # compare the bytes this command actually writes.
+        salts_text = json.dumps(salts_payload, indent=2)
+        salts_existed = _ensure_overwrite_allowed(
+            salts_path, salts_text, label="import: salts file", force=args.force
+        )
+
+    # Overwrite-unguarded by design: an imported receipt is re-extractable from
+    # the bundle the holder still holds (2026-08-24 destructive-output-paths plan).
     for envelope in imported.receipts:
         receipt_id = envelope["payload"]["receipt_id"]
         _write_json_file(receipts_dir / f"{receipt_id}.attest.json", envelope)
 
-    for issuer, chain in imported.trust_store.chains.items():
-        for version_manifest in chain:
-            version = version_manifest.get("manifest_version", 0)
-            _write_json_file(trust_dir / f"{_safe_name(issuer)}.v{version}.json", version_manifest)
+    for trust_path, trust_text in trust_writes:
+        _write_json_text(trust_path, trust_text)
 
     if imported.artifact_manifests:
         artifacts_dir = args.out_dir / "artifact-manifests"
+        # Overwrite-unguarded by design: re-extractable from the bundle and not
+        # loggable, like `manifest artifacts` (2026-08-24 plan).
         for series, versions in imported.artifact_manifests.items():
             for am in versions:
                 version = am.get("version", 0)
@@ -1915,15 +1945,21 @@ def _cmd_import(args: argparse.Namespace) -> int:
     if imported.legal_texts:
         legal_dir = args.out_dir / "legal"
         legal_dir.mkdir(parents=True, exist_ok=True)
+        # Overwrite-unguarded by design: content-addressed — the filename IS the
+        # SHA-256 of the content and import_bundle validates it, so any overwrite
+        # here can only be byte-identical (2026-08-24 plan).
         for digest, content in imported.legal_texts.items():
             (legal_dir / f"{digest}.txt").write_bytes(content)
 
-    if imported.salts:
-        salts_payload = {rid: keys.b64u(s) for rid, s in imported.salts.items()}
-        _write_secret_text(args.out_dir / "salts.json", json.dumps(salts_payload, indent=2))
+    if salts_text is not None:
+        _write_secret_text(
+            salts_path, salts_text, exclusive=not salts_existed, label="import: salts file"
+        )
 
     if imported.proofs:
         proofs_dir = args.out_dir / "proofs"
+        # Overwrite-unguarded by design: evidence is rederivable from the log
+        # (`log prove`) or re-extractable from the bundle (2026-08-24 plan).
         for receipt_id, evidence in imported.proofs.items():
             _write_json_file(proofs_dir / f"{receipt_id}.json", evidence)
 

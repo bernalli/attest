@@ -603,9 +603,7 @@ def test_transfer_record_refuses_an_existing_out(tmp_path: Path, capsys: CapSys)
     assert out.read_text(encoding="utf-8") != "a previously logged transfer record"
 
 
-def test_transfer_record_refuses_an_existing_revocation_out(
-    tmp_path: Path, capsys: CapSys
-) -> None:
+def test_transfer_record_refuses_an_existing_revocation_out(tmp_path: Path, capsys: CapSys) -> None:
     """Same record_sha256 discipline, and for refund_window the effect depends
     on the log standing of that exact record (spec v0.2 section 15, item 5)."""
     seed = _make_keypair(tmp_path, "issuer")
@@ -721,3 +719,205 @@ def test_export_guard_path_matches_the_path_bundle_export_returns(
     report = json.loads(capsys.readouterr().out)
     assert report["private"] == str(out_dir / f"{_BUNDLE_NAME}.private.attest")
     assert report["attest"] == str(out_dir / f"{_BUNDLE_NAME}.attest")
+
+
+# --- import -----------------------------------------------------------------
+
+
+def _export_bundle(
+    tmp_path: Path,
+    manifest_path: Path,
+    envelope_path: Path,
+    name: str,
+) -> tuple[Path, Path]:
+    """Export one bundle into its own directory; return (shareable, private)."""
+    legal_text_path = tmp_path / "legal.txt"
+    legal_text_path.write_bytes(b"attest-test-legal-text-v1")
+    mirror_policy_path = tmp_path / "mirror-policy.txt"
+    mirror_policy_path.write_bytes(b"attest-test-mirror-policy-v1")
+    out_dir = tmp_path / f"bundle_{name}"
+    rc = cli.main(
+        [
+            "export",
+            "--receipt",
+            str(envelope_path),
+            "--key-manifest",
+            str(manifest_path),
+            "--legal-text",
+            str(legal_text_path),
+            "--legal-text",
+            str(mirror_policy_path),
+            "--out-dir",
+            str(out_dir),
+            "--name",
+            name,
+        ]
+    )
+    assert rc == 0
+    return out_dir / f"{name}.attest", out_dir / f"{name}.private.attest"
+
+
+def test_import_refuses_a_conflicting_trust_anchor(tmp_path: Path, capsys: CapSys) -> None:
+    """Trust anchors are pinned TOFU: a *different* bundle rewriting
+    `<issuer>.vN.json` is exactly the attack this refusal blocks."""
+    seed = _make_keypair(tmp_path, "issuer")
+    manifest_a = tmp_path / "manifest-a.json"
+    assert cli.main(_manifest_init_argv(seed, manifest_a)) == 0
+    manifest_b = tmp_path / "manifest-b.json"
+    assert cli.main(_manifest_init_argv(seed, manifest_b, issued_at="2026-03-01T00:00:00Z")) == 0
+
+    payload_a = _write_payload(tmp_path, "pa.json", receipt_id="01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    envelope_a = tmp_path / "envelope-a.json"
+    assert cli.main(_issue_argv(seed, payload_a, envelope_a)) == 0
+    payload_b = _write_payload(tmp_path, "pb.json", receipt_id="01ARZ3NDEKTSV4RRFFQ69G5FAW")
+    envelope_b = tmp_path / "envelope-b.json"
+    assert cli.main(_issue_argv(seed, payload_b, envelope_b)) == 0
+
+    bundle_a, _ = _export_bundle(tmp_path, manifest_a, envelope_a, "a")
+    bundle_b, _ = _export_bundle(tmp_path, manifest_b, envelope_b, "b")
+
+    out_dir = tmp_path / "imported"
+    assert cli.main(["import", "--bundle", str(bundle_a), "--out-dir", str(out_dir)]) == 0
+    trust_file = out_dir / "trust" / f"{cli._safe_name(_ISSUER)}.v1.json"
+    pinned = trust_file.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    rc = cli.main(["import", "--bundle", str(bundle_b), "--out-dir", str(out_dir)])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "import: trust-store file" in err
+    assert str(trust_file) in err
+    assert "refusing to overwrite" in err
+    assert trust_file.read_text(encoding="utf-8") == pinned
+    # Two-phase: every guard ran before the first write, so the second bundle's
+    # receipt was never extracted either.
+    assert not (out_dir / "receipts" / "01ARZ3NDEKTSV4RRFFQ69G5FAW.attest.json").exists()
+
+    assert (
+        cli.main(["import", "--bundle", str(bundle_b), "--out-dir", str(out_dir), "--force"]) == 0
+    )
+    assert trust_file.read_text(encoding="utf-8") != pinned
+
+
+def _salted_bundle(
+    tmp_path: Path, seed: Path, manifest_path: Path, name: str, receipt_id: str, salt: bytes
+) -> tuple[Path, Path]:
+    payload = _write_payload(tmp_path, f"payload-{name}.json", receipt_id=receipt_id)
+    salt_path = tmp_path / f"salt-{name}.b64u"
+    salt_path.write_text(keys.b64u(salt), encoding="utf-8")
+    envelope = tmp_path / f"envelope-{name}.json"
+    assert cli.main(_issue_argv(seed, payload, envelope, salt=salt_path)) == 0
+    return _export_bundle(tmp_path, manifest_path, envelope, name)
+
+
+def test_import_refuses_a_conflicting_salts_file(tmp_path: Path, capsys: CapSys) -> None:
+    """`salts.json` lives at a fixed path: a second, different bundle would
+    destroy the first bundle's bearer secrets."""
+    seed = _make_keypair(tmp_path, "issuer")
+    manifest_path = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, manifest_path)) == 0
+    bundle_a, private_a = _salted_bundle(
+        tmp_path, seed, manifest_path, "a", "01ARZ3NDEKTSV4RRFFQ69G5FAV", bytes(range(16))
+    )
+    bundle_b, private_b = _salted_bundle(
+        tmp_path, seed, manifest_path, "b", "01ARZ3NDEKTSV4RRFFQ69G5FAW", bytes(16)
+    )
+
+    out_dir = tmp_path / "imported"
+    argv_a = [
+        "import",
+        "--bundle",
+        str(bundle_a),
+        "--private",
+        str(private_a),
+        "--out-dir",
+        str(out_dir),
+    ]
+    assert cli.main(argv_a) == 0
+    salts_file = out_dir / "salts.json"
+    pinned = salts_file.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    argv_b = [
+        "import",
+        "--bundle",
+        str(bundle_b),
+        "--private",
+        str(private_b),
+        "--out-dir",
+        str(out_dir),
+    ]
+    rc = cli.main(argv_b)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "import: salts file" in err
+    assert str(salts_file) in err
+    assert "refusing to overwrite" in err
+    assert salts_file.read_text(encoding="utf-8") == pinned
+    assert not (out_dir / "receipts" / "01ARZ3NDEKTSV4RRFFQ69G5FAW.attest.json").exists()
+
+    assert cli.main([*argv_b, "--force"]) == 0
+    assert salts_file.read_text(encoding="utf-8") != pinned
+
+
+def test_reimporting_the_same_bundle_stays_idempotent(tmp_path: Path, capsys: CapSys) -> None:
+    """The key regression: the documented recovery flow re-imports the same
+    bundle pair, and the identity clause must let it through untouched."""
+    seed = _make_keypair(tmp_path, "issuer")
+    manifest_path = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, manifest_path)) == 0
+    bundle_path, private_path = _salted_bundle(
+        tmp_path, seed, manifest_path, "a", "01ARZ3NDEKTSV4RRFFQ69G5FAV", bytes(range(16))
+    )
+
+    out_dir = tmp_path / "imported"
+    argv = [
+        "import",
+        "--bundle",
+        str(bundle_path),
+        "--private",
+        str(private_path),
+        "--out-dir",
+        str(out_dir),
+    ]
+    assert cli.main(argv) == 0
+    before = {
+        path.relative_to(out_dir).as_posix(): path.read_bytes()
+        for path in sorted(out_dir.rglob("*"))
+        if path.is_file()
+    }
+    capsys.readouterr()
+
+    assert cli.main(argv) == 0
+    after = {
+        path.relative_to(out_dir).as_posix(): path.read_bytes()
+        for path in sorted(out_dir.rglob("*"))
+        if path.is_file()
+    }
+    assert after == before
+    assert stat.S_IMODE((out_dir / "salts.json").stat().st_mode) == 0o600
+
+
+def test_import_rewrites_a_corrupted_receipt(tmp_path: Path, capsys: CapSys) -> None:
+    """Classification pin: an imported receipt is re-extractable from the
+    bundle the holder still has, so it stays unguarded and a re-import is a
+    recovery path rather than a refusal."""
+    seed = _make_keypair(tmp_path, "issuer")
+    manifest_path = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, manifest_path)) == 0
+    receipt_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    payload = _write_payload(tmp_path, "payload.json", receipt_id=receipt_id)
+    envelope = tmp_path / "envelope.json"
+    assert cli.main(_issue_argv(seed, payload, envelope)) == 0
+    bundle_path, _ = _export_bundle(tmp_path, manifest_path, envelope, "a")
+
+    out_dir = tmp_path / "imported"
+    argv = ["import", "--bundle", str(bundle_path), "--out-dir", str(out_dir)]
+    assert cli.main(argv) == 0
+    receipt_file = out_dir / "receipts" / f"{receipt_id}.attest.json"
+    intact = receipt_file.read_text(encoding="utf-8")
+    receipt_file.write_text("corrupted", encoding="utf-8")
+    capsys.readouterr()
+
+    assert cli.main(argv) == 0
+    assert receipt_file.read_text(encoding="utf-8") == intact
