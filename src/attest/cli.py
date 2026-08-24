@@ -237,13 +237,47 @@ def _read_json(path: Path, *, max_bytes: int | None = None, input_name: str = "J
         raise CliUsageError(f"invalid JSON in {path}: {exc}") from exc
 
 
-def _write_json_file(path: Path, obj: Any, *, secret: bool = False) -> None:
-    text = json.dumps(obj, indent=2, sort_keys=True)
+def _json_text(obj: Any) -> str:
+    """The canonical on-disk serialization for every JSON file this CLI writes.
+
+    Deterministic on purpose: the overwrite guard compares the bytes it would
+    write against the bytes already on disk, so a legitimate re-run producing
+    the same object must produce the same file.
+    """
+    return json.dumps(obj, indent=2, sort_keys=True)
+
+
+def _write_json_text(
+    path: Path,
+    text: str,
+    *,
+    secret: bool = False,
+    exclusive: bool = False,
+    label: str = "output file",
+) -> None:
     if secret:
-        _write_secret_text(path, text)
+        _write_secret_text(path, text, exclusive=exclusive, label=label)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def _write_json_file(path: Path, obj: Any, *, secret: bool = False) -> None:
+    _write_json_text(path, _json_text(obj), secret=secret)
+
+
+def _write_guarded_json(
+    path: Path, obj: Any, *, label: str, force: bool, secret: bool = False
+) -> None:
+    """Serialize once, apply the overwrite guard, then write.
+
+    For a command with a single protected output. Commands with several build
+    all their contents and run all their guards first (see `_cmd_issue`), so
+    that a refusal on the second output cannot leave the first one written.
+    """
+    text = _json_text(obj)
+    existed = _ensure_overwrite_allowed(path, text, label=label, force=force)
+    _write_json_text(path, text, secret=secret, exclusive=not existed, label=label)
 
 
 def _write_secret_text(
@@ -711,7 +745,7 @@ def _cmd_manifest_init(args: argparse.Namespace) -> int:
             "built manifest does not self-verify; check that --seed and --mldsa-key are "
             "a valid matching keypair"
         )
-    _write_json_file(args.out, manifest)
+    _write_guarded_json(args.out, manifest, label="--out", force=args.force)
     _print_json({"out": str(args.out), "issuer": args.issuer, "manifest_version": 1})
     return EXIT_OK
 
@@ -823,7 +857,7 @@ def _cmd_manifest_rotate(args: argparse.Namespace) -> int:
             "in it and the version must increment by one"
         )
 
-    _write_json_file(args.out, manifest)
+    _write_guarded_json(args.out, manifest, label="--out", force=args.force)
     _print_json(
         {
             "out": str(args.out),
@@ -897,6 +931,9 @@ def _cmd_manifest_artifacts(args: argparse.Namespace) -> int:
             "built artifact manifest does not self-verify against --in; check that "
             "--signing-seed, --mldsa-key, issuer, signer status, and released-at match it"
         )
+    # Overwrite-unguarded by design: an artifact manifest is recomputable from
+    # its inputs and is not loggable (spec v0.2 sections 13 and 15), so an
+    # equivalent re-sign is always acceptable (2026-08-24 destructive-output-paths plan).
     _write_json_file(args.out, manifest)
     _print_json(
         {
@@ -1952,6 +1989,7 @@ def build_parser() -> argparse.ArgumentParser:
         "and manifest signature hybrid",
     )
     p.add_argument("--out", required=True, type=Path)
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_manifest_init)
 
     p = manifest_sub.add_parser(
@@ -1994,6 +2032,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="ML-DSA-65 leg of the signing key; makes the manifest signature hybrid",
     )
     p.add_argument("--out", required=True, type=Path)
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_manifest_rotate)
 
     p = manifest_sub.add_parser("artifacts", help="Build and sign an artifact manifest")
@@ -2043,6 +2082,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="ML-DSA-65 key file (from `keygen --hybrid`); required with --attest-version 0.2",
     )
     p.add_argument("--out", required=True, type=Path, help="output envelope JSON path")
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_issue)
 
     p_transfer = sub.add_parser("transfer", help="Issuer-mediated transfer operations (v0.2 §17)")
@@ -2094,6 +2134,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--out", required=True, type=Path, help="output signed transfer record JSON path"
     )
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_transfer_record)
 
     p_log = sub.add_parser(
@@ -2244,12 +2285,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--out-dir", required=True, type=Path)
     p.add_argument("--name", required=True)
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_export)
 
     p = sub.add_parser("import", help="Reconstruct receipts + a trust store from a .attest bundle")
     p.add_argument("--bundle", required=True, type=Path)
     p.add_argument("--private", type=Path, default=None, help=".private.attest sibling, for salts")
     p.add_argument("--out-dir", required=True, type=Path)
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_import)
 
     p = sub.add_parser("inspect", help="Pretty-print an envelope and warn on shareability issues")

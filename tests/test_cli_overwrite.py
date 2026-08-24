@@ -250,3 +250,154 @@ def test_keygen_overwrites_an_existing_pub_out(tmp_path: Path, capsys: CapSys) -
 
     assert cli.main(_keygen_argv(tmp_path, "id")) == 0
     assert pub_out.read_text(encoding="utf-8") != "stale-public-key"
+
+
+# --- manifest init / rotate -------------------------------------------------
+
+_ISSUER = "store.example.com"
+_KID = f"{_ISSUER}/keys/test-1#ed25519-1"
+_VALID_FROM = "2026-01-01T00:00:00Z"
+
+
+def _make_keypair(tmp_path: Path, name: str) -> Path:
+    assert cli.main(_keygen_argv(tmp_path, name)) == 0
+    return tmp_path / f"{name}.seed"
+
+
+def _make_hybrid_keypair(tmp_path: Path, name: str) -> tuple[Path, Path]:
+    assert cli.main(_keygen_argv(tmp_path, name, hybrid=True)) == 0
+    return tmp_path / f"{name}.seed", tmp_path / f"{name}.mldsa"
+
+
+def _manifest_init_argv(
+    seed: Path,
+    out: Path,
+    *,
+    issued_at: str = _VALID_FROM,
+    mldsa_key: Path | None = None,
+    force: bool = False,
+) -> list[str]:
+    argv = [
+        "manifest",
+        "init",
+        "--issuer",
+        _ISSUER,
+        "--kid",
+        _KID,
+        "--seed",
+        str(seed),
+        "--valid-from",
+        _VALID_FROM,
+        "--issued-at",
+        issued_at,
+        "--out",
+        str(out),
+    ]
+    if mldsa_key is not None:
+        argv += ["--mldsa-key", str(mldsa_key)]
+    if force:
+        argv.append("--force")
+    return argv
+
+
+def test_manifest_init_refuses_a_different_manifest(tmp_path: Path, capsys: CapSys) -> None:
+    """A published trust root is the anchor other people already pinned."""
+    seed = _make_keypair(tmp_path, "issuer")
+    out = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, out)) == 0
+    first = out.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    rc = cli.main(_manifest_init_argv(seed, out, issued_at="2026-03-01T00:00:00Z"))
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--out" in err
+    assert str(out) in err
+    assert "refusing to overwrite" in err
+    assert out.read_text(encoding="utf-8") == first
+
+
+def test_manifest_init_reruns_identically_without_force(tmp_path: Path, capsys: CapSys) -> None:
+    """Identity clause: Ed25519 signatures are deterministic and the JSON is
+    sorted, so re-running with identical arguments rewrites the same bytes."""
+    seed = _make_keypair(tmp_path, "issuer")
+    out = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, out)) == 0
+    first = out.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    assert cli.main(_manifest_init_argv(seed, out)) == 0
+    assert out.read_text(encoding="utf-8") == first
+
+
+def test_manifest_init_hybrid_rerun_refuses(tmp_path: Path, capsys: CapSys) -> None:
+    """ML-DSA-65 signing is hedged (randomized), so even a byte-for-byte
+    identical invocation produces a different signature and is refused."""
+    seed, mldsa_key = _make_hybrid_keypair(tmp_path, "issuer")
+    out = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, out, mldsa_key=mldsa_key)) == 0
+    first = out.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    rc = cli.main(_manifest_init_argv(seed, out, mldsa_key=mldsa_key))
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--out" in err
+    assert str(out) in err
+    assert "refusing to overwrite" in err
+    assert out.read_text(encoding="utf-8") == first
+
+
+def test_manifest_init_force_replaces(tmp_path: Path, capsys: CapSys) -> None:
+    seed = _make_keypair(tmp_path, "issuer")
+    out = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, out)) == 0
+    first = out.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    rc = cli.main(_manifest_init_argv(seed, out, issued_at="2026-03-01T00:00:00Z", force=True))
+    assert rc == 0
+    assert out.read_text(encoding="utf-8") != first
+
+
+def test_manifest_rotate_refuses_an_existing_out(tmp_path: Path, capsys: CapSys) -> None:
+    """A rotation is a link in the continuity chain v(N) -> v(N+1)."""
+    seed = _make_keypair(tmp_path, "issuer")
+    manifest = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, manifest)) == 0
+    new_pub = tmp_path / "next.pub"
+    assert cli.main(_keygen_argv(tmp_path, "next")) == 0
+    rotated = tmp_path / "manifest.v2.json"
+    rotated.write_text("a previously rotated manifest", encoding="utf-8")
+    capsys.readouterr()
+
+    argv = [
+        "manifest",
+        "rotate",
+        "--in",
+        str(manifest),
+        "--signing-kid",
+        _KID,
+        "--signing-seed",
+        str(seed),
+        "--new-kid",
+        f"{_ISSUER}/keys/test-2#ed25519-1",
+        "--new-pub",
+        str(new_pub),
+        "--valid-from",
+        "2026-02-01T00:00:00Z",
+        "--issued-at",
+        "2026-02-01T00:00:00Z",
+        "--out",
+        str(rotated),
+    ]
+    rc = cli.main(argv)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--out" in err
+    assert str(rotated) in err
+    assert "refusing to overwrite" in err
+    assert rotated.read_text(encoding="utf-8") == "a previously rotated manifest"
+
+    assert cli.main([*argv, "--force"]) == 0
+    assert rotated.read_text(encoding="utf-8") != "a previously rotated manifest"
