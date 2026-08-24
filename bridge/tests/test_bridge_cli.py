@@ -653,34 +653,40 @@ def test_guard_dry_run_out_rejects_production_ledger_path_and_symlink(tmp_path: 
     assert cli._guard_dry_run_out_path(ok_path, ledger_path=ledger_path) == ok_path.resolve()
 
 
-def test_write_receipt_file_no_follow_refuses_symlink(tmp_path: Path) -> None:
+def test_write_receipt_file_no_follow_replaces_a_symlink_instead_of_following_it(
+    tmp_path: Path,
+) -> None:
+    # The bytes land in a fresh temp file and arrive by rename, which replaces
+    # the directory entry: the symlink is dropped, its target never written.
     target = tmp_path / "target.attest"
     target.write_bytes(b"original")
     link = tmp_path / "link.attest"
     link.symlink_to(target)
 
-    with pytest.raises(ConfigError):
-        cli._write_receipt_file_no_follow(
-            link, b"replacement", ledger_path=tmp_path / "ledger.sqlite3"
-        )
+    cli._write_receipt_file_no_follow(link, b"replacement")
 
     assert target.read_bytes() == b"original"
+    assert not link.is_symlink()
+    assert link.read_bytes() == b"replacement"
+    assert stat.S_IMODE(link.stat().st_mode) == 0o600
 
 
 def test_write_receipt_file_no_follow_writes_mode_0600(tmp_path: Path) -> None:
     out = tmp_path / "receipt.attest"
-    cli._write_receipt_file_no_follow(out, b"envelope", ledger_path=tmp_path / "ledger.sqlite3")
+    cli._write_receipt_file_no_follow(out, b"envelope")
 
     assert out.read_bytes() == b"envelope"
     assert stat.S_IMODE(out.stat().st_mode) == 0o600
+    assert [p.name for p in tmp_path.iterdir()] == ["receipt.attest"]  # no temp left behind
 
 
 def test_write_receipt_file_no_follow_is_never_world_readable_while_holding_the_salt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Tightening the mode AFTER writing leaves a window where an existing 0644
-    # file already holds the buyer-binding salt. The mode must be right before
-    # the first byte is written, not after the last.
+    # Tightening the mode AFTER writing leaves a window where the file already
+    # holds the buyer-binding salt while the world can read it. The mode must be
+    # right before the first byte is written, not after the last — and `O_CREAT`
+    # alone does not deliver it, because the umask filters its mode argument.
     out = tmp_path / "receipt.attest"
     out.write_bytes(b"stale")
     out.chmod(0o644)
@@ -693,42 +699,45 @@ def test_write_receipt_file_no_follow_is_never_world_readable_while_holding_the_
 
     monkeypatch.setattr(cli.os, "fdopen", recording_fdopen)
 
-    cli._write_receipt_file_no_follow(out, b"envelope", ledger_path=tmp_path / "ledger.sqlite3")
+    cli._write_receipt_file_no_follow(out, b"envelope")
 
     assert observed == [0o600]
     assert out.read_bytes() == b"envelope"
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600
 
 
-def test_write_receipt_file_no_follow_refuses_a_path_that_became_the_ledger(
+def test_write_receipt_file_no_follow_never_writes_through_a_path_that_became_the_ledger(
     tmp_path: Path,
 ) -> None:
-    # Simulates the TOCTOU the path guard alone cannot close: by the time the
-    # file is opened, `path` is a hard link to the production Ledger. The check
-    # must happen on the open file descriptor, and before truncation.
+    # The TOCTOU the path guard alone cannot close: by the time the write runs,
+    # `path` is a hard link to the production Ledger. No descriptor check is
+    # needed to survive it — the rename replaces that directory entry, so the
+    # ledger's inode is never opened, never truncated, never written.
     ledger_path = tmp_path / "ledger.sqlite3"
     ledger_path.write_bytes(b"SQLite format 3\x00production")
     hardlink = tmp_path / "receipt.attest"
     os.link(ledger_path, hardlink)
 
-    with pytest.raises(ConfigError):
-        cli._write_receipt_file_no_follow(hardlink, b"envelope", ledger_path=ledger_path)
+    cli._write_receipt_file_no_follow(hardlink, b"envelope")
 
     assert ledger_path.read_bytes() == b"SQLite format 3\x00production"
+    assert hardlink.read_bytes() == b"envelope"
+    assert ledger_path.stat().st_ino != hardlink.stat().st_ino
 
 
 def test_write_receipt_file_no_follow_leaves_the_ledger_mode_untouched(tmp_path: Path) -> None:
-    # Refusing to WRITE the ledger is not enough if we have already changed its
-    # permissions on the way: prove identity before touching the descriptor.
+    # Not writing the ledger is not enough if we have already changed its
+    # permissions on the way: the fresh temp file is the only inode touched.
     ledger_path = tmp_path / "ledger.sqlite3"
     ledger_path.write_bytes(b"production")
     ledger_path.chmod(0o644)
     hardlink = tmp_path / "receipt.attest"
     os.link(ledger_path, hardlink)
 
-    with pytest.raises(ConfigError):
-        cli._write_receipt_file_no_follow(hardlink, b"envelope", ledger_path=ledger_path)
+    cli._write_receipt_file_no_follow(hardlink, b"envelope")
 
     assert stat.S_IMODE(ledger_path.stat().st_mode) == 0o644
+    assert ledger_path.read_bytes() == b"production"
 
 
 def test_write_receipt_file_no_follow_closes_the_descriptor_when_fdopen_fails(
@@ -749,12 +758,14 @@ def test_write_receipt_file_no_follow_closes_the_descriptor_when_fdopen_fails(
     monkeypatch.setattr(cli.os, "open", recording_open)
     monkeypatch.setattr(cli.os, "fdopen", failing_fdopen)
 
-    with pytest.raises(OSError):
-        cli._write_receipt_file_no_follow(out, b"envelope", ledger_path=tmp_path / "ledger.sqlite3")
+    with pytest.raises(ConfigError):
+        cli._write_receipt_file_no_follow(out, b"envelope")
 
     assert len(opened_fds) == 1
     with pytest.raises(OSError):
         os.fstat(opened_fds[0])  # a leaked descriptor would still be valid here
+    assert list(tmp_path.iterdir()) == []  # the temp file is not left behind
+    assert not out.exists()
 
 
 # -- itch-dry-run command --------------------------------------------------
@@ -1056,44 +1067,48 @@ def test_itch_dry_run_rejects_private_path_hardlinked_to_a_third_file(
     assert third_path.read_bytes() == b"third file must not receive salts.json"
 
 
-def test_itch_dry_run_refuses_private_alias_planted_after_the_path_guard(
+def test_itch_dry_run_survives_private_alias_planted_after_the_path_guard(
     tmp_path: Path,
     hybrid_keys: pq.HybridSigningKeys,
     key_manifest: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The pair guard runs on paths, long before the writes; an attacker who can
     write in the output directory can plant the hard link AFTER the guard, while
-    the dry run is still signing and zipping. The descriptor-level check in the
-    private write is what must catch it: the checked inode, not the checked
-    path, is what the bytes land on."""
+    the dry run is still signing and zipping. No check can win that race — every
+    predicate photographs an instant — so the writer stops racing: each half is
+    written to a fresh `O_EXCL` temp file in the destination directory and
+    renamed into place, and a rename REPLACES a directory entry instead of
+    writing through it. The planted alias is therefore dropped, not fed: the two
+    halves land on distinct inodes, and only the private one carries the salt."""
     config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
     out_path = tmp_path / "dry-run.attest"
     private_path = tmp_path / "dry-run.private.attest"
     real_pair_write = cli._write_dry_run_pair_no_follow
 
     def plant_alias_then_write(
-        out_p: Path, shareable: bytes, private_p: Path, private: bytes, *, ledger_path: Path
+        out_p: Path, shareable: bytes, private_p: Path, private: bytes
     ) -> None:
         # The path guard has already run and seen a clean directory. Recreate
         # the original finding's state now, inside the TOCTOU window.
         out_p.write_bytes(b"placeholder the attacker pre-created")
         os.link(out_p, private_p)
-        real_pair_write(out_p, shareable, private_p, private, ledger_path=ledger_path)
+        real_pair_write(out_p, shareable, private_p, private)
 
     monkeypatch.setattr(cli, "_write_dry_run_pair_no_follow", plant_alias_then_write)
 
     rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
 
-    stderr = capsys.readouterr().err
-    assert rc == 2
-    assert "alias" in stderr
-    assert str(private_path.resolve()) in stderr
-    # The shareable name must never end up holding the private zip: whatever is
-    # on disk under that name must not contain salts.json.
-    if out_path.exists():
-        assert b"salts.json" not in out_path.read_bytes()
+    assert rc == 0
+    out_stat = os.stat(out_path)
+    private_stat = os.stat(private_path)
+    assert (out_stat.st_dev, out_stat.st_ino) != (private_stat.st_dev, private_stat.st_ino)
+    with zipfile.ZipFile(out_path) as shareable_zip:
+        assert "salts.json" not in shareable_zip.namelist()
+    with zipfile.ZipFile(private_path) as private_zip:
+        assert "salts.json" in private_zip.namelist()
+    assert stat.S_IMODE(out_stat.st_mode) == 0o600
+    assert stat.S_IMODE(private_stat.st_mode) == 0o600
 
 
 def test_itch_dry_run_removes_new_shareable_when_private_write_fails(
@@ -1108,10 +1123,10 @@ def test_itch_dry_run_removes_new_shareable_when_private_write_fails(
     private_path = tmp_path / "dry-run.private.attest"
     real_write = cli._write_receipt_file_no_follow
 
-    def fail_private_write(path: Path, data: bytes, **kwargs: Any) -> os.stat_result:
+    def fail_private_write(path: Path, data: bytes) -> None:
         if path == private_path.resolve():
             raise ConfigError(f"cannot write receipt to {str(path)!r}: simulated private failure")
-        return real_write(path, data, **kwargs)
+        real_write(path, data)
 
     monkeypatch.setattr(cli, "_write_receipt_file_no_follow", fail_private_write)
 
