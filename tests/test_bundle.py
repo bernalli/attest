@@ -503,6 +503,25 @@ def test_disclose_raises_when_no_key_manifest_matches_signing_kid(tmp_path: Path
         bundle.disclose([envelope], [], {receipt_id: SALT_A}, receipt_id, tmp_path)
 
 
+def test_disclose_refuses_a_symlinked_out_path(tmp_path: Path) -> None:
+    """`disclose()` is a library entry point, not only the CLI's callee: the
+    symlink refusal has to live here too. `Path.is_dir()` follows links, so
+    without the guard an `out` symlinked at a directory someone else controls
+    would route the write to `<their dir>/<receipt_id>.attest.json` — a fresh
+    leaf that no final-file check can catch — handing them `delivery.salt`."""
+    receipt_id = "01J1V5B4M9Z8QWERTY1234568G"
+    envelope = _envelope(receipt_id=receipt_id, salt=SALT_A)
+    attacker_dir = tmp_path / "attacker-controlled"
+    attacker_dir.mkdir()
+    out = tmp_path / "share"
+    out.symlink_to(attacker_dir, target_is_directory=True)
+
+    with pytest.raises(bundle.BundleError, match="is a symlink"):
+        bundle.disclose([envelope], [_key_manifest()], {receipt_id: SALT_A}, receipt_id, out)
+
+    assert list(attacker_dir.iterdir()) == []
+
+
 # --- import: decompression size-cap (zip-bomb hardening) ----------------------
 
 
