@@ -126,6 +126,28 @@ def test_fetch_purchases_non_200_raises_itch_api_error() -> None:
         adapter.fetch_purchases("123456", "buyer@example.com")
 
 
+def test_fetch_purchases_error_message_carries_neither_the_email_nor_the_api_key() -> None:
+    """The message is built from an exception this module does not control, and
+    the request URL carries the buyer's address while the key travels in a
+    header. Anything that echoes either must be scrubbed where the message is
+    built — every consumer downstream logs or stores it verbatim."""
+
+    def echoing_http_get(url: str, headers: dict[str, str]) -> bytes:
+        raise RuntimeError(f"connection reset for {url} with {headers['Authorization']}")
+
+    adapter = ItchAdapter(api_key="sk_itch_secret_value", http_get=echoing_http_get)
+
+    with pytest.raises(ItchApiError) as exc_info:
+        adapter.fetch_purchases("123456", "buyer@example.com")
+
+    message = str(exc_info.value)
+    assert "buyer@example.com" not in message
+    assert "buyer%40example.com" not in message
+    assert "sk_itch_secret_value" not in message
+    assert "<redacted-email>" in message
+    assert "<redacted-api-key>" in message
+
+
 def test_fetch_purchases_bad_json_raises_itch_api_error() -> None:
     def fake(url: str, headers: dict[str, str]) -> bytes:
         return b"not json at all"
@@ -578,11 +600,15 @@ def test_claim_is_exhausted_after_reaching_max_attempts(
     assert claim is not None
     assert claim.status == "exhausted"
     assert ledger.due_claims((now + timedelta(seconds=1000)).strftime(_RFC3339)) == []
-    assert "game 123456 (attempt 1); abandoning claim" in caplog.text
+    assert "game 123456 (attempt 1)" in caplog.text
+    assert "abandoning claim" in caplog.text
     assert "key" not in caplog.text
     assert token not in caplog.text
     dead_letters = ledger.unresolved_dead_letters()
-    assert dead_letters[-1].reason == "claim abandoned after 1 failed API attempts"
+    # The reason names WHY, not only how many times: an operator triaging a
+    # dead letter needs to tell a bad API key from itch being down.
+    assert dead_letters[-1].reason.startswith("claim abandoned after 1 failed API attempts")
+    assert "HTTP Error 500" in dead_letters[-1].reason
 
 
 def test_claim_gets_exactly_max_attempts_api_calls(ledger: Ledger, core: IssuingCore) -> None:
@@ -835,6 +861,16 @@ def test_get_itch_claim_form_lists_configured_itch_games(itch_deps: BridgeDeps) 
     assert status.startswith("200")
     assert headers["Content-Type"].startswith("text/html")
     assert b"123456" in body
+
+
+def test_itch_claim_form_shows_the_buyer_a_title_not_a_game_id(itch_deps: BridgeDeps) -> None:
+    """The buyer picks from this dropdown. A merchant selling more than one
+    title cannot expect them to recognise itch's numeric game id, and the
+    catalog already carries the title."""
+    app = make_app(itch_deps)
+    _, _, body = call_app(app, "GET", "/itch/claim")
+
+    assert b'<option value="123456">Nebula Drifters</option>' in body
 
 
 def test_post_itch_claim_acknowledgement_is_identical_for_fresh_dedup_and_no_purchase(
