@@ -35,6 +35,18 @@ legal_text_sha256 = "{_LEGAL_TEXT_SHA256}"
 sku = "SDC-STD-001"
 """
 
+_SHOPIFY_ENV_VAR = "SHOPIFY_WEBHOOK_SECRET_CLI_TEST"  # env var NAME, not a secret
+_SHOPIFY_VARIANT_PRODUCT = f"""
+[products.shopify_49148385]
+title = "The Long Dusk"
+publisher = "Example Games Store"
+artifact_series = "merchant.example.com/works/the-long-dusk"
+terms_uri = "https://merchant.example.com/attest/license-templates/standard-v1"
+legal_text_sha256 = "{_LEGAL_TEXT_SHA256}"
+[products.shopify_49148385.identifiers]
+shopify_variant_id = "49148385"
+"""
+
 
 def _write_issuer_key_files(tmp_path: Path, hybrid_keys: pq.HybridSigningKeys) -> tuple[Path, Path]:
     seed_path = tmp_path / "issuer.seed"
@@ -217,6 +229,90 @@ def test_retry_failed_resolves_dead_letter_after_catalog_gains_the_mapping(
     assert ledger.unresolved_dead_letters() == []
     stored = ledger.get_receipt("stripe", "cs_retry_1")
     assert stored is not None
+
+
+def test_retry_failed_replays_a_shopify_dead_letter(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Shopify dead letter has to be recoverable, or acknowledging one with
+    200 quietly discards a paid purchase. The stored `raw_json` is the whole
+    signed order, so the replay re-drives the same path the webhook took."""
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    monkeypatch.setenv(_SHOPIFY_ENV_VAR, "shpss_real_test_secret")
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+    order = {
+        "id": 820982911946154508,
+        "email": "buyer@example.com",
+        "financial_status": "paid",
+        "created_at": "2026-08-24T11:15:00-05:00",
+        "currency": "EUR",
+        "total_price": "12.00",
+        "line_items": [{"variant_id": 49148385}],
+    }
+    ledger.add_dead_letter(
+        "shopify",
+        "820982911946154508",
+        "no product mapping for 'shopify_49148385'",
+        json.dumps(order),
+        now="2026-08-24T10:00:00Z",
+    )
+
+    # The merchant fixes the catalog, exactly as in the Stripe case above.
+    config_path = _write_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        products_toml=_SHOPIFY_VARIANT_PRODUCT,
+        extra_toml=f'[shopify]\nwebhook_secret_env = "{_SHOPIFY_ENV_VAR}"\n',
+    )
+
+    rc = cli.main(["retry-failed", "--config", str(config_path)])
+
+    assert rc == 0
+    assert ledger.unresolved_dead_letters() == []
+    assert ledger.get_receipt("shopify", "820982911946154508") is not None
+
+
+def test_retry_failed_leaves_a_shopify_multi_item_dead_letter_unresolved(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cart of three cannot become one receipt however many times it is
+    replayed — the invariant does not bend on retry."""
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    monkeypatch.setenv(_SHOPIFY_ENV_VAR, "shpss_real_test_secret")
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+    order = {
+        "id": 999000111,
+        "email": "buyer@example.com",
+        "financial_status": "paid",
+        "created_at": "2026-08-24T11:15:00-05:00",
+        "line_items": [{"variant_id": 49148385}, {"variant_id": 2}, {"variant_id": 3}],
+    }
+    ledger.add_dead_letter(
+        "shopify", "999000111", "3 line items", json.dumps(order), now="2026-08-24T10:00:00Z"
+    )
+
+    config_path = _write_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        products_toml=_SHOPIFY_VARIANT_PRODUCT,
+        extra_toml=f'[shopify]\nwebhook_secret_env = "{_SHOPIFY_ENV_VAR}"\n',
+    )
+
+    rc = cli.main(["retry-failed", "--config", str(config_path)])
+
+    assert rc == 1  # incomplete: a dead letter is still unresolved
+    assert len(ledger.unresolved_dead_letters()) == 1
+    assert ledger.get_receipt("shopify", "999000111") is None
 
 
 def test_retry_failed_leaves_still_unmapped_dead_letter_unresolved(

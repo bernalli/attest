@@ -325,6 +325,33 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
             deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
             resolved += 1
             continue
+        if dead_letter.platform == "shopify":
+            # The stored `raw_json` is the whole signed order, so replay
+            # re-drives the same `wants`/`normalize` path the webhook took —
+            # no signature to re-verify, because the body was already
+            # authenticated when it was stored.
+            if deps.shopify is None:
+                log.warning(
+                    "retry-failed: shopify dead letter %d needs a [shopify] section to replay",
+                    dead_letter.id,
+                )
+                continue
+            try:
+                order = json.loads(dead_letter.raw_json)
+                if not deps.shopify.wants(order):
+                    log.info(
+                        "retry-failed: shopify dead letter %d is not actionable", dead_letter.id
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
+                deps.core.process(deps.shopify.normalize(order))
+            except Exception:  # still bad input, or a transient failure — leave unresolved
+                log.warning("retry-failed: shopify dead letter %d still failing", dead_letter.id)
+                continue
+            deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+            resolved += 1
+            continue
         if dead_letter.platform != "stripe" or deps.stripe is None:
             log.warning(
                 "retry-failed: dead letter %d has no configured recovery path", dead_letter.id

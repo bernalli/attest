@@ -13,19 +13,23 @@ a verified signature first. The comparison is constant-time
 (`hmac.compare_digest`, never `==`), on the raw header bytes, so neither a
 length difference nor a prefix match leaks through timing.
 
-**What the signature does and does not cover.** The HMAC is computed over the
-request body alone. `X-Shopify-Topic`, `X-Shopify-Shop-Domain` and
-`X-Shopify-Webhook-Id` are NOT signed, so none of them can be an authorization
-decision: anyone able to replay a body can relabel its topic. The topic is
-therefore used only as a cheap filter for events this bridge does not handle,
-and the authoritative gate is `financial_status == "paid"` — a field inside the
-signed body, which a relabelled `orders/create` delivery cannot forge.
+**What the signature does and does not cover — and what follows from it.** The
+HMAC is computed over the request body alone. `X-Shopify-Topic`,
+`X-Shopify-Shop-Domain` and `X-Shopify-Webhook-Id` are NOT signed. The
+consequence is stronger than "treat them with care": **no decision this module
+or its handler makes may read them at all.** An unsigned value that can
+suppress issuance loses a receipt just as surely as one that can cause a false
+issuance — relabelling a genuine `orders/paid` delivery to another topic would
+otherwise get it acknowledged as unhandled and dropped. So the topic is not an
+input here, and every gate reads the signed body: `financial_status == "paid"`,
+`cancelled_at` absent, and the line items that name the product.
 
 Replay is explicitly NOT this module's job, exactly as in `stripe_adapter`: the
 same valid `(body, header)` pair verifies every time it is presented, and
 Shopify itself redelivers on a non-2xx response. Rejecting an actual replay is
-the Ledger's `(platform, purchase_id)` dedup job, keyed on the order id, with
-`X-Shopify-Webhook-Id` as the delivery-level event id.
+the Ledger's job, keyed on the **order id from the signed body** — never on the
+delivery id header, which an attacker could set to a value already seen to have
+a genuine delivery acknowledged and discarded.
 
 **No API call, by construction.** A Shopify order webhook already carries its
 `line_items`, so unlike the Stripe path there is no follow-up request to make,
@@ -144,17 +148,28 @@ class ShopifyAdapter:
         order: dict[str, Any] = json.loads(payload)
         return order
 
-    def wants(self, order: dict[str, Any], *, topic: str) -> bool:
-        """True iff this is a handled topic for an order that is actually paid.
+    def wants(self, order: dict[str, Any]) -> bool:
+        """True iff the signed body describes a paid, live order.
 
-        `topic` comes from an unsigned header and is only a filter; the
-        decision rests on `financial_status`, which is inside the signed body.
+        Deliberately takes NO topic argument. `X-Shopify-Topic` is not covered
+        by the HMAC, so letting it gate this decision would mean an attacker
+        who relabels a genuine `orders/paid` delivery could make the bridge
+        acknowledge it as unhandled and drop the receipt. Every input here
+        comes from the signed body instead, which cannot be edited without
+        breaking the signature. A redelivery under a different topic is
+        therefore still issuable, and costs nothing: the Ledger's
+        `(platform, purchase_id)` dedup collapses it onto the same receipt.
+
+        `cancelled_at` is checked because an order cancelled after payment can
+        still carry `financial_status: "paid"` until it is refunded — a
+        cancelled order is not a purchase to attest to.
         """
-        if topic not in self.HANDLED_TOPICS:
-            return False
         if not isinstance(order, dict):
             raise PurchaseRejected("shopify order payload is not an object")
-        return bool(order.get("financial_status") == "paid")
+        if order.get("financial_status") != "paid":
+            return False
+        cancelled_at = order.get("cancelled_at")
+        return not (isinstance(cancelled_at, str) and cancelled_at.strip())
 
     def normalize(self, order: dict[str, Any]) -> NormalizedPurchase:
         """Turn an `orders/paid` order into a `NormalizedPurchase`.
@@ -177,7 +192,7 @@ class ShopifyAdapter:
         email = self._buyer_email(order, platform_purchase_id)
         purchased_at = _parse_shopify_created_at(order.get("created_at"), platform_purchase_id)
         attributes = _note_attributes(order, platform_purchase_id)
-        product_key = self._product_key(order, platform_purchase_id, attributes)
+        product_key = self._product_key(order, platform_purchase_id)
 
         amount = order.get("total_price")
         if amount is not None and not isinstance(amount, str):
@@ -222,22 +237,25 @@ class ShopifyAdapter:
             "(email, contact_email and customer.email are all absent)"
         )
 
-    def _product_key(
-        self, order: dict[str, Any], purchase_id: str, attributes: dict[str, str]
-    ) -> str:
+    def _product_key(self, order: dict[str, Any], purchase_id: str) -> str:
         """`shopify_<variant_id>` — the variant is Shopify's unit of sale and
-        the closest analogue of a Stripe price id. `note_attributes` may
-        override it, mirroring the Stripe metadata carrier, which is what makes
-        a hand-built checkout able to name a catalog entry directly.
+        the closest analogue of a Stripe price id.
+
+        There is deliberately NO `note_attributes` override here, unlike the
+        Stripe adapter's `metadata.attest_product_key`. The two carriers are not
+        equivalent: Stripe's metadata is set by the merchant's own server when
+        it creates the Checkout Session, whereas Shopify's `note_attributes` is
+        populated from cart attributes that a theme, an installed app, or the
+        buyer's own browser session can set. An override there would let
+        whoever controls the cart name the catalog entry, which both detaches
+        the receipt from the variant that was actually sold and skips the
+        single-line-item check below. A merchant who needs a different mapping
+        writes it in the catalog, where only the merchant can.
 
         The single-line-item invariant is the same one the Stripe adapter
         enforces, and here it costs nothing: the line items are already in the
         signed payload, so this is a length check rather than an API call.
         """
-        override = attributes.get("attest_product_key")
-        if override:
-            return override
-
         line_items = order.get("line_items")
         if not isinstance(line_items, list):
             raise PurchaseRejected(
@@ -260,7 +278,6 @@ class ShopifyAdapter:
             or variant_id == ""
         ):
             raise PurchaseRejected(
-                f"shopify order {purchase_id_for_log(purchase_id)} line item has no variant_id; "
-                "set note_attributes.attest_product_key to name the catalog entry instead"
+                f"shopify order {purchase_id_for_log(purchase_id)} line item has no variant_id"
             )
         return f"{_PRODUCT_KEY_PREFIX}{variant_id}"

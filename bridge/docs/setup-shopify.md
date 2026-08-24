@@ -139,16 +139,29 @@ proves the signature path works against Shopify's own sender.
 Worth knowing, because it shapes what can go wrong:
 
 - The HMAC covers the **request body only**. `X-Shopify-Topic`,
-  `X-Shopify-Shop-Domain` and `X-Shopify-Webhook-Id` are not signed, so the
-  bridge never lets any of them decide whether to issue. The authoritative gate
-  is `financial_status == "paid"`, inside the signed body.
-- `X-Shopify-Webhook-Id` is used as the delivery dedup key. A redelivery of the
-  same id is acknowledged without issuing twice, and the Ledger's
-  `(platform, purchase_id)` receipt dedup collapses anything that slips past.
+  `X-Shopify-Shop-Domain` and `X-Shopify-Webhook-Id` are not signed, so **no
+  decision reads them at all** — not even to filter. An unsigned value that can
+  suppress issuance loses a receipt just as surely as one that can cause a false
+  issuance: relabel a genuine paid delivery to another topic and, if the topic
+  gated anything, its receipt would be quietly dropped. Every gate reads the
+  signed body: `financial_status == "paid"`, `cancelled_at` absent, and the line
+  items that name the product.
+- **The dedup key is the order id from the signed body**, not the delivery id.
+  A redelivery is acknowledged without issuing twice, and a tampered delivery id
+  changes nothing.
+- An order **cancelled after payment** keeps `financial_status: "paid"` until it
+  is refunded. Those are acknowledged without issuing — a cancelled order is not
+  a purchase to attest to.
 - An order with more than one line item is dead-lettered rather than issued: one
-  receipt per purchase is a protocol invariant, not a bridge limitation. Set
-  `note_attributes.attest_product_key` on the order if you need to name the
-  catalogue entry directly.
+  receipt per purchase is a protocol invariant, not a bridge limitation.
+  There is deliberately **no `note_attributes` override for the product key**,
+  unlike the Stripe rail's `metadata.attest_product_key`. Stripe's metadata is
+  written by your own server when it creates the Checkout Session; Shopify's
+  `note_attributes` comes from cart attributes a theme, an installed app or the
+  buyer's browser can set, so honouring one would let whoever controls the cart
+  choose which of your products gets attested. The variant that was sold
+  decides. If you need a different mapping, write it in your catalogue — that is
+  a file only you can edit.
 - A transient failure answers `500` so Shopify redelivers. A permanently-bad
   order answers `200` and lands in the dead-letter queue, replayable with
   `attest-bridge retry-failed` once you have fixed the cause.
@@ -157,6 +170,10 @@ Worth knowing, because it shapes what can go wrong:
 
 If a buyer wants a transferable receipt bound to their own key rather than their
 email, carry the base64url public key in the order's `note_attributes` under
-`attest_buyer_pubkey`. Shopify's `note_attributes` is the structural equivalent
-of Stripe's `metadata`: a list of `{"name": ..., "value": ...}` pairs your
+`attest_buyer_pubkey` — a list of `{"name": ..., "value": ...}` pairs your
 checkout or an app can set. A malformed key fails before signing, never after.
+
+This is the one thing `note_attributes` may carry, and the asymmetry is
+deliberate: a key there binds the receipt to whoever set it, which is the
+buyer's own choice to make about their own purchase. Naming the *product* is
+not, which is why that override does not exist.

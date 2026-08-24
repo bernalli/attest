@@ -120,23 +120,24 @@ def test_parse_event_verifies_before_parsing() -> None:
 
 def test_wants_true_for_orders_paid_and_paid_status() -> None:
     adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
-    assert adapter.wants(make_order(), topic="orders/paid") is True
+    assert adapter.wants(make_order()) is True
 
 
-@pytest.mark.parametrize("topic", ["orders/create", "orders/updated", "orders/cancelled", ""])
-def test_wants_false_for_unhandled_topics(topic: str) -> None:
+@pytest.mark.parametrize(
+    "status", ["pending", "authorized", "refunded", "voided", "partially_paid"]
+)
+def test_wants_false_for_any_status_that_is_not_paid(status: str) -> None:
     adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
-    assert adapter.wants(make_order(), topic=topic) is False
+    assert adapter.wants(make_order(financial_status=status)) is False
 
 
-@pytest.mark.parametrize("status", ["pending", "authorized", "refunded", "voided"])
-def test_a_relabelled_topic_cannot_make_an_unpaid_order_actionable(status: str) -> None:
-    """`X-Shopify-Topic` is NOT covered by the HMAC, so anyone replaying a body
-    can relabel it. The decision therefore rests on `financial_status`, which is
-    inside the signed body and cannot be changed without breaking the
-    signature."""
+def test_wants_false_for_a_cancelled_order_that_is_still_marked_paid() -> None:
+    """An order cancelled after payment keeps `financial_status: "paid"` until
+    it is refunded. It is not a purchase to attest to."""
     adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
-    assert adapter.wants(make_order(financial_status=status), topic="orders/paid") is False
+    order = make_order(cancelled_at="2026-08-24T12:00:00-05:00", cancel_reason="customer")
+
+    assert adapter.wants(order) is False
 
 
 # -- normalize ---------------------------------------------------------------
@@ -189,34 +190,54 @@ def test_normalize_rejects_a_line_item_without_a_variant_id() -> None:
     with pytest.raises(PurchaseRejected) as exc_info:
         adapter.normalize(make_order(line_items=[{"title": "no variant"}]))
 
-    assert "attest_product_key" in str(exc_info.value)
+    assert "variant_id" in str(exc_info.value)
 
 
-def test_note_attributes_override_the_product_key() -> None:
-    """The structural equivalent of Stripe's metadata carrier: a hand-built
-    checkout can name the catalog entry directly."""
+def test_note_attributes_cannot_name_the_product() -> None:
+    """The security difference from Stripe, asserted rather than assumed.
+    Stripe's `metadata` is written by the merchant's own server when it creates
+    the Checkout Session; Shopify's `note_attributes` comes from cart
+    attributes a theme, an app, or the buyer's browser can set. Honouring an
+    `attest_product_key` there would let whoever controls the cart pick which
+    catalog entry gets attested — and, worse, skip the single-line-item check.
+    The variant that was actually sold decides, always."""
     adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
     order = make_order(
-        line_items=[{"variant_id": 999999}],
-        note_attributes=[{"name": "attest_product_key", "value": "shopify_49148385"}],
+        line_items=[{"variant_id": _VARIANT_ID}],
+        note_attributes=[{"name": "attest_product_key", "value": "shopify_someone_elses_product"}],
     )
 
-    assert adapter.normalize(order).product_key == "shopify_49148385"
+    assert adapter.normalize(order).product_key == f"shopify_{_VARIANT_ID}"
+
+
+def test_note_attributes_cannot_smuggle_a_multi_item_cart_past_the_invariant() -> None:
+    """The same override used to be read before the line items were counted, so
+    a five-item cart could issue a single receipt for whatever it named."""
+    adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
+    order = make_order(
+        line_items=[{"variant_id": _VARIANT_ID}, {"variant_id": 2}, {"variant_id": 3}],
+        note_attributes=[{"name": "attest_product_key", "value": f"shopify_{_VARIANT_ID}"}],
+    )
+
+    with pytest.raises(PurchaseRejected) as exc_info:
+        adapter.normalize(order)
+
+    assert "one receipt per purchase" in str(exc_info.value)
 
 
 def test_a_neighbours_malformed_note_attribute_does_not_block_issuance() -> None:
     """`note_attributes` is shared with every other app the merchant installed,
-    so a non-string entry from one of them must not cost the buyer a receipt."""
+    so a non-string entry from one of them must not cost the buyer a receipt —
+    the buyer pubkey carrier still has to be readable past it."""
     adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
     order = make_order(
         note_attributes=[
             {"name": "other_app_field", "value": {"nested": "object"}},
             "not even a dict",
-            {"name": "attest_product_key", "value": "shopify_49148385"},
         ]
     )
 
-    assert adapter.normalize(order).product_key == "shopify_49148385"
+    assert adapter.normalize(order).product_key == f"shopify_{_VARIANT_ID}"
 
 
 @pytest.mark.parametrize(
@@ -359,19 +380,31 @@ def test_missing_signature_header_returns_400(shopify_deps: BridgeDeps) -> None:
     assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is None
 
 
-def test_missing_delivery_id_returns_400_without_issuing(shopify_deps: BridgeDeps) -> None:
-    """The delivery id is this rail's dedup key. Without it a redelivery could
-    not be recognised, so the request is refused rather than processed once and
-    then again."""
-    status, _, _ = _post_webhook(shopify_deps, make_order(), delivery_id="")
-
-    assert status.startswith("400")
-    assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is None
-
-
-def test_redelivery_of_the_same_delivery_id_issues_exactly_one_receipt(
+def test_missing_order_id_in_the_signed_body_returns_400_without_issuing(
     shopify_deps: BridgeDeps,
 ) -> None:
+    """The dedup key comes from the signed body. An order with no usable id
+    could not be recognised on redelivery, so it is refused before the Ledger
+    is touched rather than issued once and then again."""
+    body = json.dumps({k: v for k, v in make_order().items() if k != "id"}).encode()
+    status, _, _ = call_app(
+        make_app(shopify_deps),
+        "POST",
+        "/shopify/webhook",
+        body=body,
+        headers={
+            "X-Shopify-Hmac-Sha256": sign_shopify(body),
+            "X-Shopify-Topic": "orders/paid",
+            "X-Shopify-Webhook-Id": "delivery-1",
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert status.startswith("400")
+    assert shopify_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_redelivery_issues_exactly_one_receipt(shopify_deps: BridgeDeps) -> None:
     first = _post_webhook(shopify_deps, make_order())
     second = _post_webhook(shopify_deps, make_order())
 
@@ -379,7 +412,46 @@ def test_redelivery_of_the_same_delivery_id_issues_exactly_one_receipt(
     assert second[0].startswith("200")
     stored = shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID))
     assert stored is not None
-    assert shopify_deps.ledger.seen_event("shopify", "delivery-1") is True
+    assert shopify_deps.ledger.seen_event("shopify", str(_ORDER_ID)) is True
+
+
+def test_a_tampered_delivery_id_cannot_get_a_genuine_order_discarded(
+    shopify_deps: BridgeDeps,
+) -> None:
+    """The delivery id header is unsigned. If it were the dedup key, replaying
+    a genuine delivery with an already-seen id would have it acknowledged and
+    dropped — a lost receipt. The key is the order id inside the signed body,
+    so the header can say anything and the receipt is still issued."""
+    seeded = make_order(order_id=111111)
+    assert _post_webhook(shopify_deps, seeded, delivery_id="delivery-seen")[0].startswith("200")
+
+    status, _, _ = _post_webhook(shopify_deps, make_order(), delivery_id="delivery-seen")
+
+    assert status.startswith("200")
+    assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is not None
+
+
+@pytest.mark.parametrize("topic", ["orders/updated", "orders/cancelled", "", "anything"])
+def test_a_relabelled_topic_cannot_get_a_paid_order_discarded(
+    shopify_deps: BridgeDeps, topic: str
+) -> None:
+    """Same class of attack through the other unsigned header: if the topic
+    gated issuance, relabelling a genuine paid delivery would lose its receipt.
+    Nothing in the decision path reads it."""
+    status, _, _ = _post_webhook(shopify_deps, make_order(), topic=topic)
+
+    assert status.startswith("200")
+    assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is not None
+
+
+def test_a_cancelled_paid_order_is_acknowledged_without_issuing(
+    shopify_deps: BridgeDeps,
+) -> None:
+    status, _, _ = _post_webhook(shopify_deps, make_order(cancelled_at="2026-08-24T12:00:00-05:00"))
+
+    assert status.startswith("200")
+    assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is None
+    assert shopify_deps.ledger.unresolved_dead_letters() == []
 
 
 def test_unmapped_product_dead_letters_and_returns_200(shopify_deps: BridgeDeps) -> None:
@@ -390,7 +462,7 @@ def test_unmapped_product_dead_letters_and_returns_200(shopify_deps: BridgeDeps)
     assert status.startswith("200")
     assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is None
     assert len(shopify_deps.ledger.unresolved_dead_letters()) == 1
-    assert shopify_deps.ledger.seen_event("shopify", "delivery-1") is True
+    assert shopify_deps.ledger.seen_event("shopify", str(_ORDER_ID)) is True
 
 
 def test_unpaid_order_is_acknowledged_without_issuing(shopify_deps: BridgeDeps) -> None:
@@ -399,7 +471,7 @@ def test_unpaid_order_is_acknowledged_without_issuing(shopify_deps: BridgeDeps) 
     assert status.startswith("200")
     assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is None
     assert shopify_deps.ledger.unresolved_dead_letters() == []
-    assert shopify_deps.ledger.seen_event("shopify", "delivery-1") is True
+    assert shopify_deps.ledger.seen_event("shopify", str(_ORDER_ID)) is True
 
 
 def test_unexpected_core_failure_returns_500_and_does_not_acknowledge(
@@ -416,7 +488,7 @@ def test_unexpected_core_failure_returns_500_and_does_not_acknowledge(
     status, _, _ = _post_webhook(shopify_deps, make_order())
 
     assert status.startswith("500")
-    assert shopify_deps.ledger.seen_event("shopify", "delivery-1") is False
+    assert shopify_deps.ledger.seen_event("shopify", str(_ORDER_ID)) is False
     assert shopify_deps.ledger.get_receipt("shopify", str(_ORDER_ID)) is None
     assert shopify_deps.ledger.unresolved_dead_letters() == []
 

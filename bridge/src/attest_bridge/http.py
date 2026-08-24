@@ -63,6 +63,7 @@ from attest_bridge.model import (
     NormalizedPurchase,
     PurchaseRejected,
     UnmappedProduct,
+    purchase_id_for_log,
 )
 from attest_bridge.shopify_adapter import ShopifyAdapter, ShopifySignatureError
 from attest_bridge.stripe_adapter import StripeAdapter, StripeSignatureError
@@ -311,10 +312,15 @@ def _handle_shopify_webhook(
     deps: BridgeDeps, environ: dict[str, Any], start_response: Any, lock: threading.Lock
 ) -> Iterable[bytes]:
     """Same pinned policy table as the Stripe webhook — every row identical,
-    including which ones may `mark_event`. Two differences, both narrowing:
-    the delivery id comes from an unsigned header rather than the body, and
-    there is no API call inside `normalize`, so the transient-failure row can
-    only ever be reached by an unexpected error."""
+    including which ones may `mark_event`.
+
+    One structural difference from the Stripe rail, and it is a security
+    property rather than a detail: Shopify's HMAC covers the body only, so this
+    handler reads NOTHING from the unsigned headers except the signature
+    itself. The event key is the order id out of the signed body. Using
+    `X-Shopify-Webhook-Id` for it would let an attacker replay a genuine
+    delivery with an already-seen id and have the receipt acknowledged and
+    dropped."""
     shopify = deps.shopify
     if shopify is None:
         # No [shopify] section configured: this route simply doesn't exist.
@@ -335,20 +341,19 @@ def _handle_shopify_webhook(
         deps.log.warning("shopify webhook: signature valid but body is not parseable JSON")
         return _plain_response(start_response, "400 Bad Request", b"malformed body")
 
-    topic = environ.get("HTTP_X_SHOPIFY_TOPIC") or ""
-    # The delivery id is Shopify's own per-delivery identifier. It is NOT
-    # covered by the HMAC, so it is a dedup key and never an authorization
-    # input: the worst a tampered value can do is make this bridge treat one
-    # delivery as two, which the Ledger's `(platform, purchase_id)` receipt
-    # dedup then collapses back into a single receipt.
-    event_id = environ.get("HTTP_X_SHOPIFY_WEBHOOK_ID") or ""
+    # The event key comes from the signed body, never from a header. An order
+    # with no usable id cannot be deduplicated, and issuing something that
+    # cannot be recognised again on redelivery would risk a second receipt for
+    # the same purchase — so it is refused outright, before the Ledger is
+    # touched at all.
+    event_id = _best_effort_shopify_purchase_id(order)
     if not event_id:
-        deps.log.warning("shopify webhook: missing X-Shopify-Webhook-Id header")
-        return _plain_response(start_response, "400 Bad Request", b"missing delivery id")
+        deps.log.warning("shopify webhook: signed body has no usable order id")
+        return _plain_response(start_response, "400 Bad Request", b"missing order id")
 
     purchase: NormalizedPurchase | None = None
     try:
-        actionable = shopify.wants(order, topic=topic)
+        actionable = shopify.wants(order)
         if actionable:
             purchase = shopify.normalize(order)
     except (PurchaseRejected, UnmappedProduct, KeyError, TypeError, AttributeError) as exc:
@@ -364,17 +369,23 @@ def _handle_shopify_webhook(
                 "shopify", purchase_id, str(exc), json.dumps(order), now=_now_rfc3339()
             )
             deps.ledger.mark_event("shopify", event_id, now=_now_rfc3339())
-            deps.log.error("shopify delivery %s: dead-lettered", event_id)
+            deps.log.error("shopify order %s: dead-lettered", purchase_id_for_log(event_id))
             return _json_response(start_response, "200 OK", {"ok": True})
     except Exception:
-        deps.log.exception("shopify delivery %s: unexpected error, not acknowledged", event_id)
+        deps.log.exception(
+            "shopify order %s: unexpected error, not acknowledged",
+            purchase_id_for_log(event_id),
+        )
         return _plain_response(start_response, "500 Internal Server Error", b"internal error")
 
     with lock:
         if deps.ledger.seen_event("shopify", event_id):
             return _json_response(start_response, "200 OK", {"ok": True})
         if not actionable:
-            deps.log.info("shopify delivery %s: not actionable (topic/financial_status)", event_id)
+            deps.log.info(
+                "shopify order %s: not actionable (unpaid or cancelled)",
+                purchase_id_for_log(event_id),
+            )
             deps.ledger.mark_event("shopify", event_id, now=_now_rfc3339())
             return _json_response(start_response, "200 OK", {"ok": True})
         assert purchase is not None
@@ -389,19 +400,22 @@ def _handle_shopify_webhook(
                 now=_now_rfc3339(),
             )
             deps.ledger.mark_event("shopify", event_id, now=_now_rfc3339())
-            deps.log.error("shopify delivery %s: dead-lettered", event_id)
+            deps.log.error("shopify order %s: dead-lettered", purchase_id_for_log(event_id))
             return _json_response(start_response, "200 OK", {"ok": True})
         except Exception:
             # Signing/config/unexpected failure: fail closed. NEVER mark_event —
             # Shopify must retry, or a transient failure would silently drop a
             # purchase forever.
-            deps.log.exception("shopify delivery %s: unexpected error, not acknowledged", event_id)
+            deps.log.exception(
+                "shopify order %s: unexpected error, not acknowledged",
+                purchase_id_for_log(event_id),
+            )
             return _plain_response(start_response, "500 Internal Server Error", b"internal error")
 
         deps.ledger.mark_event("shopify", event_id, now=_now_rfc3339())
         deps.log.info(
-            "shopify delivery %s: processed (receipt=%s duplicate=%s)",
-            event_id,
+            "shopify order %s: processed (receipt=%s duplicate=%s)",
+            purchase_id_for_log(event_id),
             outcome.receipt_id,
             outcome.duplicate,
         )
