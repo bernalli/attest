@@ -402,6 +402,32 @@ def test_send_body_names_the_private_file_and_warns_not_to_forward() -> None:
     assert "https://merchant.example.com/attest/what-is-this" in text
 
 
+def test_send_body_does_not_offer_the_download_link_as_the_shareable_file() -> None:
+    """The body must not teach the rule and then break it two lines later.
+
+    The download route serves the bare salt-bearing envelope under the
+    SHAREABLE name `receipt-<id>.attest` (`http.py:128-137`), so a buyer who
+    follows the link gets the secret under the safe-looking name — exactly what
+    the attachment warning exists to prevent. Until that route serves a pair
+    too, the body must say what the link actually hands over. Asserting the
+    warning sits AFTER the link, not merely somewhere in the message: order is
+    the requirement, a caveat above the link is one a reader never reaches.
+    """
+    fakes: list[_FakeSMTP] = []
+    _send(_config(), _fake_factory(fakes))
+    body = fakes[0].sent_messages[0].get_body(preferencelist=("plain",))
+    assert body is not None
+    text = body.get_content()
+    lowered = text.lower()
+
+    link_at = text.index("https://receipts.example.com/r/tok_abc123")
+    caveat_at = lowered.index("keep it as private", link_at)
+    assert caveat_at > link_at
+    # The link's own paragraph must tie the download back to the private file,
+    # so the buyer has one rule to remember and not two conflicting ones.
+    assert ".private.attest" in text[link_at:]
+
+
 def test_send_never_puts_the_smtp_password_in_the_outgoing_message() -> None:
     # The envelope (and its embedded salt) legitimately IS the attachment —
     # that is delivery working as designed (Global Constraint 10: the buyer
