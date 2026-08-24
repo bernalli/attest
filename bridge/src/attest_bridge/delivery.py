@@ -219,10 +219,13 @@ def _build_message(
                 "Never forward it to anyone — not to a shop, not to support. Whoever holds "
                 "it can claim the purchase was theirs. Keep it with your own files.",
                 "",
-                f"If the attachments did not arrive, you can download your receipt "
-                f"here: {download_url} . That download is a single file holding "
-                f"both parts together, secret included, so keep it as private as "
-                f"{bundle_name}.private.attest and do not share it.",
+                "If the attachments did not arrive, you can download your receipt here:",
+                # The URL ends its own line: trailing punctuation gets swallowed
+                # into the link by many mail clients.
+                download_url,
+                f"That download is a single file holding both parts together, secret "
+                f"included: keep it as private as {bundle_name}.private.attest, and "
+                f"do not share it.",
                 "",
                 f"What are these files? {effective_info_url}",
             ]

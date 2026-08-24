@@ -426,6 +426,11 @@ def test_send_body_does_not_offer_the_download_link_as_the_shareable_file() -> N
     # The link's own paragraph must tie the download back to the private file,
     # so the buyer has one rule to remember and not two conflicting ones.
     assert ".private.attest" in text[link_at:]
+    # And it must not call the download shareable anywhere around the link: an
+    # ordering assertion alone would stay green if the text said "download the
+    # shareable file here" and only walked it back afterwards.
+    assert "shareable" not in lowered[link_at:]
+    assert "safe to share" not in lowered[link_at:]
 
 
 def test_send_never_puts_the_smtp_password_in_the_outgoing_message() -> None:
