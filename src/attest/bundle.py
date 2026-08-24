@@ -398,9 +398,7 @@ def export(
     # The private archive carries buyer-binding salts (bearer secrets); create it
     # owner-only (0600) race-free, mirroring _write_secret_json, so it never has a
     # world-readable window under the default umask (2026-07-13 review, finding 2).
-    fd = _open_secret_output(
-        private_path, label=".private.attest", exclusive=private_exclusive
-    )
+    fd = _open_secret_output(private_path, label=".private.attest", exclusive=private_exclusive)
     with os.fdopen(fd, "wb") as fh:
         os.fchmod(fh.fileno(), _SECRET_FILE_MODE)
         os.ftruncate(fh.fileno(), 0)
@@ -596,7 +594,8 @@ def disclose(
     verifies standalone.
 
     `out` may be an existing directory (the file is written as
-    `<receipt_id>.attest.json` inside it) or an exact destination path.
+    `<receipt_id>.attest.json` inside it) or an exact destination path. A
+    symlink passed as `out` is refused before directory routing.
     """
     envelope = next(
         (e for e in receipts if e.get("payload", {}).get("receipt_id") == receipt_id), None
@@ -632,6 +631,8 @@ def disclose(
     if delivery:
         disclosed["delivery"] = delivery
 
+    if out.is_symlink():
+        raise BundleError(f"disclose output {out} is a symlink; refusing to overwrite it")
     target = out / f"{receipt_id}.attest.json" if out.is_dir() else out
     _write_secret_json(target, disclosed)
     return target

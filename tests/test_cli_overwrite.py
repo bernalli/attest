@@ -1168,7 +1168,7 @@ _DISCLOSE_RECEIPT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
 _DISCLOSE_SALT = bytes(range(16))
 
 
-def _disclose_argv(tmp_path: Path, out: Path) -> list[str]:
+def _disclose_argv(tmp_path: Path, out: Path | str) -> list[str]:
     """Build a disclosable receipt and return `disclose --out <out>` argv."""
     seed = _make_keypair(tmp_path, "disclose-issuer")
     manifest_path = tmp_path / "disclose-manifest.json"
@@ -1194,6 +1194,27 @@ def _disclose_argv(tmp_path: Path, out: Path) -> list[str]:
     ]
 
 
+def test_disclose_refuses_a_symlinked_out_directory(tmp_path: Path, capsys: CapSys) -> None:
+    """A symlinked directory named by --out must not receive the salt-bearing
+    disclosure under its attacker-controlled target."""
+    attacker_dir = tmp_path / "attacker-controlled"
+    attacker_dir.mkdir()
+    out = tmp_path / "share"
+    try:
+        out.symlink_to(attacker_dir, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unsupported on this filesystem")
+    argv = _disclose_argv(tmp_path, out)
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert f"disclose output {out} is a symlink" in err
+    assert "refusing to overwrite" in err
+    assert list(attacker_dir.iterdir()) == []
+
+
 def test_disclose_refuses_a_symlinked_out(tmp_path: Path, capsys: CapSys) -> None:
     """The disclosure embeds `delivery.salt`: writing it through a link someone
     else planted hands that salt to them. Refused with no `--force` — the
@@ -1214,6 +1235,93 @@ def test_disclose_refuses_a_symlinked_out(tmp_path: Path, capsys: CapSys) -> Non
     assert f"disclose output {out} is a symlink" in err
     assert "refusing to overwrite" in err
     assert victim.read_text(encoding="utf-8") == "keep me"
+
+
+def test_disclose_refuses_a_dangling_symlinked_out(tmp_path: Path, capsys: CapSys) -> None:
+    out = tmp_path / "disclosed.attest.json"
+    missing_target = tmp_path / "missing.attest.json"
+    try:
+        out.symlink_to(missing_target)
+    except OSError:
+        pytest.skip("symlinks unsupported on this filesystem")
+    argv = _disclose_argv(tmp_path, out)
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert f"disclose output {out} is a symlink" in err
+    assert "refusing to overwrite" in err
+    assert not missing_target.exists()
+
+
+def test_disclose_refuses_a_dangling_symlinked_out_with_trailing_separator(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    out = tmp_path / "share"
+    missing_target = tmp_path / "missing-share"
+    try:
+        out.symlink_to(missing_target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unsupported on this filesystem")
+    argv = _disclose_argv(tmp_path, f"{out}{os.sep}")
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert f"disclose output {out} is a symlink" in err
+    assert "refusing to overwrite" in err
+    assert "Traceback" not in err
+    assert not missing_target.exists()
+
+
+def test_disclose_writes_into_an_existing_real_directory(tmp_path: Path, capsys: CapSys) -> None:
+    out_dir = tmp_path / "share"
+    out_dir.mkdir()
+    argv = _disclose_argv(tmp_path, out_dir)
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    result = json.loads(capsys.readouterr().out)
+    written = Path(result["out"])
+    assert rc == 0
+    assert written == out_dir / f"{_DISCLOSE_RECEIPT_ID}.attest.json"
+    disclosed = json.loads(written.read_text(encoding="utf-8"))
+    assert disclosed["payload"]["receipt_id"] == _DISCLOSE_RECEIPT_ID
+    assert disclosed["delivery"]["salt"] == keys.b64u(_DISCLOSE_SALT)
+
+
+def test_disclose_writes_into_a_new_trailing_separator_directory(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    out_dir = tmp_path / "share"
+    assert not out_dir.exists()
+    argv = _disclose_argv(tmp_path, f"{out_dir}{os.sep}")
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    result = json.loads(capsys.readouterr().out)
+    written = Path(result["out"])
+    assert rc == 0
+    assert written == out_dir / f"{_DISCLOSE_RECEIPT_ID}.attest.json"
+    disclosed = json.loads(written.read_text(encoding="utf-8"))
+    assert disclosed["payload"]["receipt_id"] == _DISCLOSE_RECEIPT_ID
+    assert disclosed["delivery"]["salt"] == keys.b64u(_DISCLOSE_SALT)
+
+
+def test_disclose_writes_to_a_plain_file_path(tmp_path: Path, capsys: CapSys) -> None:
+    out = tmp_path / "nested" / "disclosed.attest.json"
+    argv = _disclose_argv(tmp_path, out)
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    result = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert Path(result["out"]) == out
+    disclosed = json.loads(out.read_text(encoding="utf-8"))
+    assert disclosed["payload"]["receipt_id"] == _DISCLOSE_RECEIPT_ID
+    assert disclosed["delivery"]["salt"] == keys.b64u(_DISCLOSE_SALT)
 
 
 def test_disclose_writes_a_hardlinked_out(tmp_path: Path, capsys: CapSys) -> None:

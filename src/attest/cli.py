@@ -416,10 +416,9 @@ def _check_opened_write_target(
     expected = overwrite_plan.stat_result
     if not _same_inode(opened_stat, expected):
         _raise_output_changed(path, label=label)
-    if (
-        overwrite_plan.require_unchanged
-        and _stat_write_signature(opened_stat) != _stat_write_signature(expected)
-    ):
+    if overwrite_plan.require_unchanged and _stat_write_signature(
+        opened_stat
+    ) != _stat_write_signature(expected):
         _raise_output_changed(path, label=label)
 
 
@@ -454,9 +453,7 @@ def _open_text_output(
             ) from exc
         raise
     try:
-        _check_opened_write_target(
-            path, os.fstat(fd), label=label, overwrite_plan=overwrite_plan
-        )
+        _check_opened_write_target(path, os.fstat(fd), label=label, overwrite_plan=overwrite_plan)
     except Exception:
         os.close(fd)
         raise
@@ -881,9 +878,7 @@ def _cmd_keygen(args: argparse.Namespace) -> int:
     # Guard every protected output before the first write, so a refusal never
     # leaves half a keypair on disk. A generated seed is always new, so this
     # refuses on any re-run unless --force is passed.
-    seed_plan = _prepare_overwrite(
-        args.seed_out, seed_text, label="--seed-out", force=args.force
-    )
+    seed_plan = _prepare_overwrite(args.seed_out, seed_text, label="--seed-out", force=args.force)
     mldsa_plan: _OverwritePlan | None = None
     if mldsa_text is not None:
         mldsa_plan = _prepare_overwrite(
@@ -1207,9 +1202,7 @@ def _cmd_issue(args: argparse.Namespace) -> int:
     # refusal on the second output cannot leave the first one on disk.
     envelope_text = _json_text(envelope)
     salt_out_text = keys.b64u(salt) if args.salt_out is not None and salt is not None else None
-    envelope_plan = _prepare_overwrite(
-        args.out, envelope_text, label="--out", force=args.force
-    )
+    envelope_plan = _prepare_overwrite(args.out, envelope_text, label="--out", force=args.force)
     salt_out_plan: _OverwritePlan | None = None
     if salt_out_text is not None:
         salt_out_plan = _prepare_overwrite(
@@ -2007,9 +2000,13 @@ def _resolve_disclose_out(raw_out: str) -> Path:
     explicit "this is a directory" signal and created if missing; an
     already-existing directory is honored as-is; anything else is an exact
     file path (its parent directories are created by `bundle.disclose()`
-    itself).
+    itself). The named `--out` path itself is refused if it is a symlink before
+    any directory routing, including dangling symlinks and links to existing
+    directories.
     """
     out_path = Path(raw_out)
+    if out_path.is_symlink():
+        raise CliUsageError(f"disclose output {out_path} is a symlink; refusing to overwrite it")
     looks_like_directory = raw_out.endswith(("/", os.sep)) or out_path.is_dir()
     if looks_like_directory:
         out_path.mkdir(parents=True, exist_ok=True)
