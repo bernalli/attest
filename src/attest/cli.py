@@ -634,7 +634,37 @@ def _cmd_keygen(args: argparse.Namespace) -> int:
         raise CliUsageError("--mldsa-out must differ from --seed-out and --pub-out")
 
     kp = keys.generate()
-    _write_secret_text(args.seed_out, keys.b64u(kp.seed))
+    seed_text = keys.b64u(kp.seed)
+    mldsa_kp = pq.generate() if args.hybrid else None
+    mldsa_text = (
+        json.dumps(
+            {
+                "alg": pq.ML_DSA_65_ALG,
+                "sk": keys.b64u(mldsa_kp.sk),
+                "pub": keys.b64u(mldsa_kp.pub),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        if mldsa_kp is not None
+        else None
+    )
+
+    # Guard every protected output before the first write, so a refusal never
+    # leaves half a keypair on disk. A generated seed is always new, so this
+    # refuses on any re-run unless --force is passed.
+    seed_existed = _ensure_overwrite_allowed(
+        args.seed_out, seed_text, label="--seed-out", force=args.force
+    )
+    mldsa_existed = False
+    if mldsa_text is not None:
+        mldsa_existed = _ensure_overwrite_allowed(
+            args.mldsa_out, mldsa_text, label="--mldsa-out", force=args.force
+        )
+
+    _write_secret_text(args.seed_out, seed_text, exclusive=not seed_existed, label="--seed-out")
+    # Overwrite-unguarded by design: the public key is derivable from the seed
+    # at any time (2026-08-24 destructive-output-paths plan).
     args.pub_out.parent.mkdir(parents=True, exist_ok=True)
     args.pub_out.write_text(keys.b64u(kp.pub), encoding="utf-8")
 
@@ -643,14 +673,10 @@ def _cmd_keygen(args: argparse.Namespace) -> int:
         "seed_out": str(args.seed_out),
         "pub_out": str(args.pub_out),
     }
-    if args.hybrid:
-        mldsa_kp = pq.generate()
-        mldsa_key_file = {
-            "alg": pq.ML_DSA_65_ALG,
-            "sk": keys.b64u(mldsa_kp.sk),
-            "pub": keys.b64u(mldsa_kp.pub),
-        }
-        _write_secret_text(args.mldsa_out, json.dumps(mldsa_key_file, indent=2, sort_keys=True))
+    if mldsa_kp is not None and mldsa_text is not None:
+        _write_secret_text(
+            args.mldsa_out, mldsa_text, exclusive=not mldsa_existed, label="--mldsa-out"
+        )
         report["mldsa_pub"] = keys.b64u(mldsa_kp.pub)
         report["mldsa_out"] = str(args.mldsa_out)
     _print_json(report)
@@ -1871,6 +1897,19 @@ def _cmd_check_artifact(args: argparse.Namespace) -> int:
 # --- argument parser ----------------------------------------------------------------
 
 
+def _add_force_flag(parser: argparse.ArgumentParser) -> None:
+    """Add --force to a command that writes at least one protected output.
+
+    Deliberately not added to commands whose outputs are all derivable: a flag
+    there would misrepresent where the risk actually is.
+    """
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite protected output files that already exist with different content",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="attest", description="attest operator CLI (v0.1 and v0.2)"
@@ -1880,6 +1919,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("keygen", help="Generate an Ed25519 keypair")
     p.add_argument("--seed-out", required=True, type=Path, help="secret seed output path (0600)")
     p.add_argument("--pub-out", required=True, type=Path, help="public key output path")
+    _add_force_flag(p)
     p.add_argument(
         "--hybrid",
         action="store_true",

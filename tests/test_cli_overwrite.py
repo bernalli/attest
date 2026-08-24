@@ -22,6 +22,8 @@ import pytest
 
 from attest import cli
 
+CapSys = pytest.CaptureFixture[str]
+
 _ROOT = os.getuid() == 0
 
 
@@ -155,3 +157,96 @@ def test_write_secret_text_without_exclusive_still_truncates(tmp_path: Path) -> 
     cli._write_secret_text(target, "mine")
     assert target.read_text(encoding="utf-8") == "mine"
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+# --- keygen -----------------------------------------------------------------
+
+
+def _keygen_argv(
+    tmp_path: Path, name: str, *, hybrid: bool = False, force: bool = False
+) -> list[str]:
+    argv = [
+        "keygen",
+        "--seed-out",
+        str(tmp_path / f"{name}.seed"),
+        "--pub-out",
+        str(tmp_path / f"{name}.pub"),
+    ]
+    if hybrid:
+        argv += ["--hybrid", "--mldsa-out", str(tmp_path / f"{name}.mldsa")]
+    if force:
+        argv.append("--force")
+    return argv
+
+
+def test_keygen_refuses_an_existing_seed_out(tmp_path: Path, capsys: CapSys) -> None:
+    """A seed is the issuer identity and every generated one is new, so a
+    re-run always has different content: it always refuses without --force."""
+    seed_out = tmp_path / "id.seed"
+    assert cli.main(_keygen_argv(tmp_path, "id")) == 0
+    first = seed_out.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    assert cli.main(_keygen_argv(tmp_path, "id")) == 2
+    err = capsys.readouterr().err
+    assert "--seed-out" in err
+    assert str(seed_out) in err
+    assert "refusing to overwrite" in err
+    assert seed_out.read_text(encoding="utf-8") == first
+
+
+def test_keygen_refuses_before_touching_any_output(tmp_path: Path, capsys: CapSys) -> None:
+    """Two-phase: all guards run before the first write, so a refusal leaves
+    no partial state behind."""
+    seed_out = tmp_path / "taken.seed"
+    pub_out = tmp_path / "fresh.pub"
+    seed_out.write_text("previous-identity", encoding="utf-8")
+
+    rc = cli.main(["keygen", "--seed-out", str(seed_out), "--pub-out", str(pub_out)])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--seed-out" in err
+    assert str(seed_out) in err
+    assert "refusing to overwrite" in err
+    assert seed_out.read_text(encoding="utf-8") == "previous-identity"
+    assert not pub_out.exists()
+
+
+def test_keygen_refuses_an_existing_mldsa_out(tmp_path: Path, capsys: CapSys) -> None:
+    mldsa_out = tmp_path / "hy.mldsa"
+    seed_out = tmp_path / "hy.seed"
+    mldsa_out.write_text("previous-ml-dsa-secret", encoding="utf-8")
+
+    rc = cli.main(_keygen_argv(tmp_path, "hy", hybrid=True))
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--mldsa-out" in err
+    assert str(mldsa_out) in err
+    assert "refusing to overwrite" in err
+    assert mldsa_out.read_text(encoding="utf-8") == "previous-ml-dsa-secret"
+    assert not seed_out.exists()
+
+
+def test_keygen_force_regenerates_and_keeps_0600(tmp_path: Path, capsys: CapSys) -> None:
+    seed_out = tmp_path / "id.seed"
+    pub_out = tmp_path / "id.pub"
+    assert cli.main(_keygen_argv(tmp_path, "id")) == 0
+    first_seed = seed_out.read_text(encoding="utf-8")
+    first_pub = pub_out.read_text(encoding="utf-8")
+    seed_out.chmod(0o644)
+    capsys.readouterr()
+
+    assert cli.main(_keygen_argv(tmp_path, "id", force=True)) == 0
+    assert seed_out.read_text(encoding="utf-8") != first_seed
+    assert pub_out.read_text(encoding="utf-8") != first_pub
+    assert stat.S_IMODE(seed_out.stat().st_mode) == 0o600
+
+
+def test_keygen_overwrites_an_existing_pub_out(tmp_path: Path, capsys: CapSys) -> None:
+    """Classification pin: --pub-out is derivable from the seed, so it stays
+    unguarded and a stale public key is silently replaced."""
+    pub_out = tmp_path / "id.pub"
+    pub_out.write_text("stale-public-key", encoding="utf-8")
+
+    assert cli.main(_keygen_argv(tmp_path, "id")) == 0
+    assert pub_out.read_text(encoding="utf-8") != "stale-public-key"
