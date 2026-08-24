@@ -6,6 +6,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-24
+
 ### Added
 
 - `attest-bridge` email delivery now sends the spec §14.1/§14.2 bundle pair for
