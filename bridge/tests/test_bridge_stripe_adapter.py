@@ -480,11 +480,13 @@ def test_line_items_client_error_is_purchase_rejected_not_a_bare_httperror(statu
     assert str(status) in str(exc_info.value)
 
 
-@pytest.mark.parametrize("status", [429, 500, 502, 503])
+@pytest.mark.parametrize("status", [408, 409, 424, 429, 500, 502, 503])
 def test_line_items_transient_error_is_stripe_api_error(status: int) -> None:
-    """Rate limiting and Stripe-side failures are transient: they must NOT be
-    dead-lettered as permanently-bad input. They surface as `StripeApiError`,
-    which the webhook layer lets become a 500 so Stripe redelivers."""
+    """Timeouts, conflicts, external-dependency failures, rate limiting and
+    Stripe-side errors are all transient: they must NOT be dead-lettered as
+    permanently-bad input, because that stops Stripe redelivering and can lose
+    the receipt. They surface as `StripeApiError`, which the webhook layer lets
+    become a 500 so Stripe redelivers."""
     from attest_bridge.stripe_adapter import StripeApiError
 
     session = _session(metadata={"attest_product_key": "price_TEST"})

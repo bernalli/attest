@@ -364,14 +364,15 @@ downloaded and the manifest you published in step 2.
 > `sign-checkpoint`), run out-of-band; the bridge doesn't wire it up for you.
 
 > **A rotated or wrong API key fails loudly, not silently.** If
-> `stripe.api_key_env` holds a key Stripe rejects (4xx), the event is
-> dead-lettered with the reason `stripe api returned <code> fetching line
-> items…: check stripe.api_key_env` and the webhook answers 200 — Stripe stops
-> redelivering something that would fail identically every time. Fix the key,
-> then replay it with `attest-bridge retry-failed`; nothing was issued and
-> nothing was lost. A *transient* failure (rate limit, Stripe outage, network)
-> is the opposite case on purpose: it surfaces as a 500 so Stripe redelivers
-> and the receipt still gets issued on its own retry.
+> `stripe.api_key_env` holds a key Stripe rejects — specifically a `400`,
+> `401`, `403` or `404` — the event is dead-lettered with the reason `stripe
+> api returned <code> fetching line items…: check stripe.api_key_env` and the
+> webhook answers 200, so Stripe stops redelivering something that would fail
+> identically every time. Fix the key, then replay it with `attest-bridge
+> retry-failed`; nothing was issued and nothing was lost. Every other status —
+> `408`, `409`, `424`, `429`, any `5xx`, or a network failure — is treated as
+> transient and surfaces as a 500 instead, so Stripe redelivers on its own
+> schedule and the receipt still gets issued without anyone intervening.
 
 The local synthetic-webhook test that exercises this same pipeline
 end-to-end — no real Stripe account needed — is step 4, above, not repeated

@@ -57,6 +57,13 @@ class StripeSignatureError(BridgeError):
     """The inbound webhook signature failed verification — reject before parsing."""
 
 
+_PERMANENT_API_STATUSES = frozenset({400, 401, 403, 404})
+"""Stripe API statuses treated as permanent configuration faults, enumerated
+rather than inferred from the 4xx range: 408 (timeout), 409 (conflict), 424
+(external dependency failed) and 429 (rate limit) are all retryable 4xx, and
+filing one of those as permanent would stop Stripe's redelivery."""
+
+
 class StripeApiError(BridgeError):
     """A TRANSIENT failure calling Stripe's API (rate limit, Stripe-side error,
     network). Deliberately not a `PurchaseRejected`: the webhook layer
@@ -283,14 +290,21 @@ class StripeAdapter:
         try:
             body = self._http_get(url, headers)
         except urllib.error.HTTPError as exc:
-            # 4xx (bad or rotated key, revoked permissions, unknown session) is a
-            # configuration fault, not a transient one: retrying re-sends the same
-            # request to the same rejection. Dead-letter it with a readable reason
-            # so `retry-failed` can replay the event once the merchant fixes the
-            # config — never let it escape as a bare HTTPError (a 500 plus a
-            # traceback, which Stripe then retries on a schedule nobody wants).
-            # 429 is the exception: rate limiting IS transient.
-            if 400 <= exc.code < 500 and exc.code != 429:
+            # Only an explicitly-enumerated set counts as permanent (bad or rotated
+            # key, revoked permissions, unknown session): a configuration fault,
+            # where retrying re-sends the same request to the same rejection.
+            # Dead-letter those with a readable reason so `retry-failed` can replay
+            # the event once the merchant fixes the config — never let one escape as
+            # a bare HTTPError (a 500 plus a traceback, which Stripe then retries on
+            # a schedule nobody wants).
+            #
+            # Everything else — 408, 409, 424, 429, 5xx, and any status not listed
+            # here — is treated as transient. That asymmetry is deliberate: a
+            # transient failure misfiled as permanent stops Stripe's redelivery and
+            # can LOSE a receipt unless an operator notices the dead letter, while a
+            # permanent failure misfiled as transient costs only Stripe's own finite
+            # retry schedule. When in doubt, let Stripe retry.
+            if exc.code in _PERMANENT_API_STATUSES:
                 raise PurchaseRejected(
                     f"stripe api returned {exc.code} fetching line items for session "
                     f"{purchase_id_for_log(session_id)}: check stripe.api_key_env "
