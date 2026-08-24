@@ -2065,9 +2065,14 @@ def _cmd_export(args: argparse.Namespace) -> int:
     # secrets just to authorize a no-op would be surface for no gain. Refusing
     # on mere existence is the fail-closed direction; --force re-exports.
     #
-    # The filename is duplicated from bundle.export by necessity (bundle.py is
-    # owned by another change in flight); the export tests pin that the two
-    # agree, so a naming change fails loudly instead of silently unguarding it.
+    # The guard is layered, which is why the filename is spelled out here as
+    # well as in bundle.export: this pre-check refuses on mere existence and
+    # reports it as a CLI usage error naming the option, while bundle.export
+    # opens the same path with O_NOFOLLOW (plus O_EXCL unless --force) and an
+    # fstat that rejects a hard-linked alias, so a file that appears between
+    # the two is reported instead of truncated. The export tests pin that the
+    # two spellings agree, so a naming change fails loudly instead of silently
+    # unguarding it.
     #
     # Overwrite-unguarded by design: the shareable `<name>.attest` is
     # recomputable from inputs that all remain on local disk (2026-08-24

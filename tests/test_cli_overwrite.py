@@ -1111,3 +1111,128 @@ def test_import_rewrites_a_corrupted_receipt(tmp_path: Path, capsys: CapSys) -> 
 
     assert cli.main(argv) == 0
     assert receipt_file.read_text(encoding="utf-8") == intact
+
+
+# --- the inode the guard authorized -----------------------------------------
+
+
+def test_write_refuses_a_file_swapped_in_between_the_guard_and_the_write(
+    tmp_path: Path, capsys: CapSys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The plan authorizes an inode, not a name.
+
+    `--force` authorizes replacing the file the guard looked at; it does not
+    authorize replacing whatever happens to sit on that path a moment later.
+    `_check_opened_write_target` compares the opened descriptor against the
+    stat the plan recorded, so a file renamed over the target between the two
+    is reported instead of truncated. Drop that comparison and this test
+    silently writes a fresh seed over the swapped-in inode.
+    """
+    seed_out = tmp_path / "id.seed"
+    seed_out.write_text("the previous identity", encoding="utf-8")
+    decoy = tmp_path / "decoy"
+    decoy.write_text("an unrelated file", encoding="utf-8")
+
+    original_open = cli._open_text_output
+
+    def swap_then_open(
+        path: Path,
+        *,
+        exclusive: bool,
+        label: str,
+        mode: int,
+        overwrite_plan: cli._OverwritePlan | None = None,
+    ) -> int:
+        if path == seed_out and decoy.exists():
+            os.rename(decoy, seed_out)  # same name, different inode
+        return original_open(
+            path, exclusive=exclusive, label=label, mode=mode, overwrite_plan=overwrite_plan
+        )
+
+    monkeypatch.setattr(cli, "_open_text_output", swap_then_open)
+    capsys.readouterr()
+
+    rc = cli.main(_keygen_argv(tmp_path, "id", force=True))
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--seed-out" in err
+    assert str(seed_out) in err
+    assert "changed while writing" in err
+    assert "refusing to overwrite" in err
+    assert seed_out.read_text(encoding="utf-8") == "an unrelated file"
+
+
+# --- disclose ---------------------------------------------------------------
+
+_DISCLOSE_RECEIPT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
+_DISCLOSE_SALT = bytes(range(16))
+
+
+def _disclose_argv(tmp_path: Path, out: Path) -> list[str]:
+    """Build a disclosable receipt and return `disclose --out <out>` argv."""
+    seed = _make_keypair(tmp_path, "disclose-issuer")
+    manifest_path = tmp_path / "disclose-manifest.json"
+    assert cli.main(_manifest_init_argv(seed, manifest_path)) == 0
+    payload_path = _write_payload(
+        tmp_path, "disclose-payload.json", receipt_id=_DISCLOSE_RECEIPT_ID
+    )
+    salt_path = tmp_path / "disclose-salt.b64u"
+    salt_path.write_text(keys.b64u(_DISCLOSE_SALT), encoding="utf-8")
+    envelope_path = tmp_path / "disclose-envelope.json"
+    assert cli.main(_issue_argv(seed, payload_path, envelope_path, salt=salt_path)) == 0
+    return [
+        "disclose",
+        _DISCLOSE_RECEIPT_ID,
+        "--receipt",
+        str(envelope_path),
+        "--key-manifest",
+        str(manifest_path),
+        "--salt",
+        str(salt_path),
+        "--out",
+        str(out),
+    ]
+
+
+def test_disclose_refuses_a_symlinked_out(tmp_path: Path, capsys: CapSys) -> None:
+    """The disclosure embeds `delivery.salt`: writing it through a link someone
+    else planted hands that salt to them. Refused with no `--force` — the
+    disclosure is recomputable, so the answer is to name another path."""
+    victim = tmp_path / "victim.json"
+    victim.write_text("keep me", encoding="utf-8")
+    out = tmp_path / "disclosed.attest.json"
+    try:
+        out.symlink_to(victim)
+    except OSError:
+        pytest.skip("symlinks unsupported on this filesystem")
+    argv = _disclose_argv(tmp_path, out)
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert f"disclose output {out} is a symlink" in err
+    assert "refusing to overwrite" in err
+    assert victim.read_text(encoding="utf-8") == "keep me"
+
+
+def test_disclose_writes_a_hardlinked_out(tmp_path: Path, capsys: CapSys) -> None:
+    """Classification pin: unlike every other secret output, a hard-linked
+    disclose target is written. Its aliases are earlier disclosures of this
+    same receipt, so they already hold this same salt."""
+    out = tmp_path / "disclosed.attest.json"
+    out.write_text("an earlier disclosure", encoding="utf-8")
+    alias = tmp_path / "disclosed.alias.json"
+    try:
+        os.link(out, alias)
+    except OSError:
+        pytest.skip("hard links unsupported on this filesystem")
+    argv = _disclose_argv(tmp_path, out)
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    assert rc == 0
+    disclosed = json.loads(out.read_text(encoding="utf-8"))
+    assert disclosed["payload"]["receipt_id"] == _DISCLOSE_RECEIPT_ID
+    assert disclosed["delivery"]["salt"] == keys.b64u(_DISCLOSE_SALT)
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600

@@ -265,14 +265,25 @@ def _raise_secret_output_appeared(path: Path, *, label: str, exc: BaseException)
     ) from exc
 
 
-def _reject_unsafe_secret_output(path: Path, output_stat: os.stat_result, *, label: str) -> None:
+def _reject_unsafe_secret_output(
+    path: Path, output_stat: os.stat_result, *, label: str, reject_hardlinks: bool = True
+) -> None:
     if not stat.S_ISREG(output_stat.st_mode):
         raise BundleError(f"{label} {path} is not a regular file; refusing to overwrite it")
-    if output_stat.st_nlink > 1:
+    if reject_hardlinks and output_stat.st_nlink > 1:
         raise BundleError(f"{label} {path} has multiple hard links; refusing to overwrite it")
 
 
-def _open_secret_output(path: Path, *, label: str, exclusive: bool = False) -> int:
+def _open_secret_output(
+    path: Path, *, label: str, exclusive: bool = False, reject_hardlinks: bool = True
+) -> int:
+    """Open a secret-bearing output owner-only, never through a symlink.
+
+    `reject_hardlinks=False` keeps the symlink refusal — following a link
+    someone else planted writes the secret where they can read it — while
+    allowing a target that already has aliases, for outputs whose every alias
+    necessarily holds the same secret already (see `_write_secret_json`).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_WRONLY | os.O_CREAT | _O_NOFOLLOW
     if exclusive:
@@ -288,7 +299,9 @@ def _open_secret_output(path: Path, *, label: str, exclusive: bool = False) -> i
             raise BundleError(f"{label} {path} is a symlink; refusing to overwrite it") from exc
         raise
     try:
-        _reject_unsafe_secret_output(path, os.fstat(fd), label=label)
+        _reject_unsafe_secret_output(
+            path, os.fstat(fd), label=label, reject_hardlinks=reject_hardlinks
+        )
     except Exception:
         os.close(fd)
         raise
@@ -299,11 +312,16 @@ def _write_secret_json(path: Path, obj: dict[str, Any]) -> None:
     """Write a secret-bearing JSON file (the disclose output embeds
     `delivery.salt`) created atomically with owner-only 0600 permissions.
 
-    The fd is opened before truncation and checked with `fstat`, so a symlink or
-    hard-linked alias is refused before any bytes are destroyed. Mirrors
-    `cli._write_secret_text` deliberately.
+    The fd is opened before truncation and checked with `fstat`, so a symlink
+    is refused before any bytes are destroyed: the disclosure carries
+    `delivery.salt`, and following a link someone else planted would hand that
+    salt to them. A hard-linked target is written, unlike every other secret
+    output here — the aliases of that inode are earlier disclosures of this
+    same receipt, so they already hold this same salt and refusing would cost
+    a working call without protecting anything. There is no `--force`: the
+    disclosure is recomputable, so a refusal is answered by naming another path.
     """
-    fd = _open_secret_output(path, label="disclose output")
+    fd = _open_secret_output(path, label="disclose output", reject_hardlinks=False)
     with os.fdopen(fd, "w") as fh:  # takes ownership of fd; closes even on raise
         os.fchmod(fh.fileno(), _SECRET_FILE_MODE)
         os.ftruncate(fh.fileno(), 0)
