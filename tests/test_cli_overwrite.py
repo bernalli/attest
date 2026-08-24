@@ -624,3 +624,100 @@ def test_transfer_record_refuses_an_existing_revocation_out(
     assert revocation_out.read_text(encoding="utf-8") == "a previously logged revocation record"
     # Two-phase: both guards ran before the transfer record itself was written.
     assert not out.exists()
+
+
+# --- export -----------------------------------------------------------------
+
+_BUNDLE_NAME = "mylibrary"
+
+
+def _export_fixture(tmp_path: Path) -> tuple[list[str], Path]:
+    """Build a minimal exportable set and return (argv, out_dir)."""
+    seed = _make_keypair(tmp_path, "issuer")
+    manifest_path = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, manifest_path)) == 0
+    payload_path = _write_payload(tmp_path, "payload.json")
+    envelope_path = tmp_path / "envelope.json"
+    assert cli.main(_issue_argv(seed, payload_path, envelope_path)) == 0
+
+    legal_text_path = tmp_path / "legal.txt"
+    legal_text_path.write_bytes(b"attest-test-legal-text-v1")
+    mirror_policy_path = tmp_path / "mirror-policy.txt"
+    mirror_policy_path.write_bytes(b"attest-test-mirror-policy-v1")
+
+    out_dir = tmp_path / "bundle_out"
+    argv = [
+        "export",
+        "--receipt",
+        str(envelope_path),
+        "--key-manifest",
+        str(manifest_path),
+        "--legal-text",
+        str(legal_text_path),
+        "--legal-text",
+        str(mirror_policy_path),
+        "--out-dir",
+        str(out_dir),
+        "--name",
+        _BUNDLE_NAME,
+    ]
+    return argv, out_dir
+
+
+def test_export_refuses_an_existing_private_bundle(tmp_path: Path, capsys: CapSys) -> None:
+    """`.private.attest` is excluded from the identity clause: a zip is not
+    byte-reproducible even at identical logical content, so it is refused on
+    mere existence rather than compared."""
+    argv, out_dir = _export_fixture(tmp_path)
+    private_path = out_dir / f"{_BUNDLE_NAME}.private.attest"
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_bytes(b"a previously exported private bundle")
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert err.strip() == (
+        f"error: --out-dir already contains {private_path}; "
+        "refusing to overwrite a .private.attest (pass --force to replace it)"
+    )
+    assert private_path.read_bytes() == b"a previously exported private bundle"
+
+
+def test_export_force_replaces_the_private_bundle(tmp_path: Path, capsys: CapSys) -> None:
+    argv, out_dir = _export_fixture(tmp_path)
+    private_path = out_dir / f"{_BUNDLE_NAME}.private.attest"
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_bytes(b"a previously exported private bundle")
+    capsys.readouterr()
+
+    assert cli.main([*argv, "--force"]) == 0
+    assert private_path.read_bytes() != b"a previously exported private bundle"
+
+
+def test_export_overwrites_the_shareable_bundle(tmp_path: Path, capsys: CapSys) -> None:
+    """Classification pin: the shareable `.attest` is recomputable from inputs
+    that all stay on local disk, so it is deliberately unguarded."""
+    argv, out_dir = _export_fixture(tmp_path)
+    attest_path = out_dir / f"{_BUNDLE_NAME}.attest"
+    attest_path.parent.mkdir(parents=True, exist_ok=True)
+    attest_path.write_bytes(b"a previously exported shareable bundle")
+    capsys.readouterr()
+
+    assert cli.main(argv) == 0
+    assert attest_path.read_bytes() != b"a previously exported shareable bundle"
+
+
+def test_export_guard_path_matches_the_path_bundle_export_returns(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """Anti-drift pin: the guard precomputes the private bundle filename in
+    cli.py while bundle.py builds it independently. If the bundle naming scheme
+    changes, this fails loudly instead of silently unguarding the secrets."""
+    argv, out_dir = _export_fixture(tmp_path)
+    capsys.readouterr()
+
+    assert cli.main(argv) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["private"] == str(out_dir / f"{_BUNDLE_NAME}.private.attest")
+    assert report["attest"] == str(out_dir / f"{_BUNDLE_NAME}.attest")

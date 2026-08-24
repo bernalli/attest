@@ -192,6 +192,22 @@ def _ensure_overwrite_allowed(path: Path, new_text: str, *, label: str, force: b
     return True
 
 
+def _path_is_present(path: Path) -> bool:
+    """Fail-closed presence check for a path that must not be clobbered.
+
+    `os.lstat`, so a dangling symlink counts as present; anything other than a
+    clean "not found" also counts as present, because a path we cannot inspect
+    is a path we must not overwrite.
+    """
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def _read_bounded_bytes(path: Path, *, max_bytes: int, input_name: str) -> bytes:
     """Read at most `max_bytes` from an untrusted CLI file.
 
@@ -1832,6 +1848,27 @@ def _cmd_export(args: argparse.Namespace) -> int:
                 if not isinstance(evidence, dict):
                     raise CliUsageError(f"{candidate} must contain a JSON object")
                 proofs[receipt_id] = evidence
+
+    # The private bundle carries salts.json — every buyer-binding salt in the
+    # bundle — so it is protected. It is excluded from the identity clause on
+    # purpose: a zip is not byte-reproducible even at identical logical content
+    # (timestamps, member order, deflate levels), and reopening a file of
+    # secrets just to authorize a no-op would be surface for no gain. Refusing
+    # on mere existence is the fail-closed direction; --force re-exports.
+    #
+    # The filename is duplicated from bundle.export by necessity (bundle.py is
+    # owned by another change in flight); the export tests pin that the two
+    # agree, so a naming change fails loudly instead of silently unguarding it.
+    #
+    # The shareable `<name>.attest` is overwrite-unguarded by design: it is
+    # recomputable from inputs that all remain on local disk (2026-08-24
+    # destructive-output-paths plan).
+    guarded_private_path = args.out_dir / f"{args.name}.private.attest"
+    if not args.force and _path_is_present(guarded_private_path):
+        raise CliUsageError(
+            f"--out-dir already contains {guarded_private_path}; "
+            "refusing to overwrite a .private.attest (pass --force to replace it)"
+        )
 
     attest_path, private_path = bundle.export(
         receipts,
