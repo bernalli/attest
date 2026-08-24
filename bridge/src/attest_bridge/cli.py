@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import socketserver
+import stat
 import sys
 import tempfile
 import threading
@@ -248,6 +249,36 @@ def _guard_dry_run_out_path(out_path: Path, *, ledger_path: Path) -> Path:
     return resolved_out
 
 
+def _guard_dry_run_out_pair(out_path: Path, private_path: Path) -> None:
+    """Refuse output pairs whose filesystem aliases could hide the private half."""
+    if out_path.exists() and private_path.exists():
+        try:
+            same_output_file = out_path.samefile(private_path)
+        except OSError as exc:
+            raise ConfigError(
+                f"cannot compare --out {str(out_path)!r} with derived private path "
+                f"{str(private_path)!r}: {exc}"
+            ) from exc
+        if same_output_file:
+            raise ConfigError(
+                f"--out {str(out_path)!r} and derived private path {str(private_path)!r} "
+                "are the same file — refusing to write the salt-bearing private bundle "
+                "through the shareable path"
+            )
+    if private_path.exists():
+        try:
+            private_stat = private_path.stat()
+        except OSError as exc:
+            raise ConfigError(
+                f"cannot inspect derived private path {str(private_path)!r}: {exc}"
+            ) from exc
+        if stat.S_ISREG(private_stat.st_mode) and private_stat.st_nlink > 1:
+            raise ConfigError(
+                f"derived private path {str(private_path)!r} has multiple hard links — "
+                "refusing to write the salt-bearing private bundle through an aliased file"
+            )
+
+
 def _private_dry_run_out_path(out_path: Path) -> Path:
     """Derive the private half's path from `--out`, which names the SHAREABLE one.
 
@@ -312,8 +343,52 @@ def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path)
     except Exception:
         os.close(fd)
         raise
-    with handle:
-        handle.write(data)
+    try:
+        with handle:
+            handle.write(data)
+    except OSError as exc:
+        raise ConfigError(f"cannot write receipt to {str(path)!r}: {exc}") from exc
+
+
+def _write_dry_run_pair_no_follow(
+    out_path: Path,
+    shareable: bytes,
+    private_path: Path,
+    private: bytes,
+    *,
+    ledger_path: Path,
+) -> None:
+    """Write the shareable/private pair without leaving a newly created orphan half."""
+    out_existed = out_path.exists()
+    _write_receipt_file_no_follow(out_path, shareable, ledger_path=ledger_path)
+    out_stat = None
+    if not out_existed:
+        try:
+            out_stat = out_path.stat()
+        except OSError as exc:
+            raise ConfigError(
+                f"cannot inspect newly written shareable receipt {str(out_path)!r}: {exc}"
+            ) from exc
+    try:
+        _write_receipt_file_no_follow(private_path, private, ledger_path=ledger_path)
+    except Exception as exc:
+        if out_stat is not None:
+            try:
+                current = out_path.stat()
+            except OSError:
+                current = None
+            if current is not None and (current.st_dev, current.st_ino) == (
+                out_stat.st_dev,
+                out_stat.st_ino,
+            ):
+                try:
+                    out_path.unlink()
+                except OSError as cleanup_exc:
+                    raise ConfigError(
+                        f"cannot remove incomplete shareable receipt {str(out_path)!r}: "
+                        f"{cleanup_exc}"
+                    ) from exc
+        raise
 
 
 def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
@@ -670,6 +745,7 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
         private_requested = _private_dry_run_out_path(requested_out)
         out_path = _guard_dry_run_out_path(requested_out, ledger_path=config.ledger_path)
         private_path = _guard_dry_run_out_path(private_requested, ledger_path=config.ledger_path)
+        _guard_dry_run_out_pair(out_path, private_path)
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return _RC_CONFIG_ERROR
@@ -718,15 +794,16 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
             return _RC_CONFIG_ERROR
 
         try:
-            # Shareable first: if the second write fails, what is left on disk
-            # carries no secret. Both go through the unchanged 0600 no-follow
-            # writer — stricter than the shareable half needs, which is the
-            # safe direction to be wrong in.
-            _write_receipt_file_no_follow(
-                out_path, pair.shareable, ledger_path=config.ledger_path
-            )
-            _write_receipt_file_no_follow(
-                private_path, pair.private, ledger_path=config.ledger_path
+            # Shareable first: if the second write fails, the wrapper removes
+            # a newly created shareable half. Both go through the unchanged
+            # 0600 no-follow writer — stricter than the shareable half needs,
+            # which is the safe direction to be wrong in.
+            _write_dry_run_pair_no_follow(
+                out_path,
+                pair.shareable,
+                private_path,
+                pair.private,
+                ledger_path=config.ledger_path,
             )
         except ConfigError as exc:
             print(f"config error: {exc}", file=sys.stderr)

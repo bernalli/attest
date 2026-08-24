@@ -1006,6 +1006,83 @@ def test_itch_dry_run_rejects_out_equal_to_or_symlinked_to_production_ledger(
     assert ledger_path.read_bytes() == before
 
 
+def test_itch_dry_run_rejects_hardlinked_shareable_and_private_paths(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+    private_path = tmp_path / "dry-run.private.attest"
+    preexisting = tmp_path / "preexisting"
+    preexisting.write_bytes(b"do not replace with private salt")
+    os.link(preexisting, out_path)
+    os.link(preexisting, private_path)
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
+
+    stderr = capsys.readouterr().err
+    assert rc == 2
+    assert str(out_path.resolve()) in stderr
+    assert str(private_path.resolve()) in stderr
+    assert "same file" in stderr
+    assert preexisting.read_bytes() == b"do not replace with private salt"
+
+
+def test_itch_dry_run_rejects_private_path_hardlinked_to_a_third_file(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+    private_path = tmp_path / "dry-run.private.attest"
+    third_path = tmp_path / "public-alias.attest"
+    third_path.write_bytes(b"third file must not receive salts.json")
+    os.link(third_path, private_path)
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
+
+    stderr = capsys.readouterr().err
+    assert rc == 2
+    assert str(private_path.resolve()) in stderr
+    assert "hard link" in stderr
+    assert "salt-bearing" in stderr
+    assert not out_path.exists()
+    assert third_path.read_bytes() == b"third file must not receive salts.json"
+
+
+def test_itch_dry_run_removes_new_shareable_when_private_write_fails(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+    private_path = tmp_path / "dry-run.private.attest"
+    real_write = cli._write_receipt_file_no_follow
+
+    def fail_private_write(path: Path, data: bytes, *, ledger_path: Path) -> None:
+        if path == private_path.resolve():
+            raise ConfigError(f"cannot write receipt to {str(path)!r}: simulated private failure")
+        real_write(path, data, ledger_path=ledger_path)
+
+    monkeypatch.setattr(cli, "_write_receipt_file_no_follow", fail_private_write)
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
+
+    assert rc == 2
+    assert "simulated private failure" in capsys.readouterr().err
+    assert not out_path.exists()
+    assert not private_path.exists()
+
+
 def test_itch_dry_run_default_does_not_construct_delivery(
     tmp_path: Path,
     hybrid_keys: pq.HybridSigningKeys,
