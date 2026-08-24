@@ -248,15 +248,17 @@ def _guard_dry_run_out_path(out_path: Path, *, ledger_path: Path) -> Path:
 def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path) -> None:
     """Write the receipt at mode 0600 without following a symlink at `path`.
 
-    Three things happen in a deliberate order, all on the open descriptor
-    rather than on the path, because the path can change under us between the
-    `--out` guard and this call:
+    Everything happens on the open descriptor rather than on the path, because
+    the path can change under us between the `--out` guard and this call, and
+    the order is deliberate:
     1. open WITHOUT `O_TRUNC` — truncating first would already have destroyed
        whatever the path turned out to be;
-    2. `fchmod` before the first byte, so an existing world-readable file is
+    2. `fstat` against `ledger_path` — if this descriptor IS the production
+       Ledger (a hard link, a swapped path), refuse now, before anything about
+       that file is modified, its permissions included;
+    3. `fchmod` before the first byte, so an existing world-readable file is
        never readable while it holds `delivery.salt`, the buyer-binding secret;
-    3. `fstat` against `ledger_path` — if this descriptor IS the production
-       Ledger (a hard link, a swapped path), refuse before truncating.
+    4. truncate, then write.
     `O_NOFOLLOW` covers the symlink case at open time.
     """
     no_follow = getattr(os, "O_NOFOLLOW", None)
@@ -267,19 +269,27 @@ def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path)
     except OSError as exc:
         raise ConfigError(f"cannot write receipt to {str(path)!r}: {exc}") from exc
     try:
-        os.fchmod(fd, 0o600)
         opened = os.fstat(fd)
-        if ledger_path.exists():
-            ledger_stat = ledger_path.stat()
-            if (opened.st_dev, opened.st_ino) == (ledger_stat.st_dev, ledger_stat.st_ino):
-                raise ConfigError(
-                    f"--out {str(path)!r} is the production ledger file — refusing to write"
-                )
+        try:
+            ledger_stat: os.stat_result | None = ledger_path.stat()
+        except OSError:
+            # No ledger yet, or it moved under us: either way this descriptor
+            # cannot be it.
+            ledger_stat = None
+        if ledger_stat is not None and (opened.st_dev, opened.st_ino) == (
+            ledger_stat.st_dev,
+            ledger_stat.st_ino,
+        ):
+            raise ConfigError(
+                f"--out {str(path)!r} is the production ledger file — refusing to write"
+            )
+        os.fchmod(fd, 0o600)
         os.ftruncate(fd, 0)
+        handle = os.fdopen(fd, "wb")
     except Exception:
         os.close(fd)
         raise
-    with os.fdopen(fd, "wb") as handle:
+    with handle:
         handle.write(data)
 
 

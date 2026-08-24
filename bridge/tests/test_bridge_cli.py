@@ -696,6 +696,47 @@ def test_write_receipt_file_no_follow_refuses_a_path_that_became_the_ledger(
     assert ledger_path.read_bytes() == b"SQLite format 3\x00production"
 
 
+def test_write_receipt_file_no_follow_leaves_the_ledger_mode_untouched(tmp_path: Path) -> None:
+    # Refusing to WRITE the ledger is not enough if we have already changed its
+    # permissions on the way: prove identity before touching the descriptor.
+    ledger_path = tmp_path / "ledger.sqlite3"
+    ledger_path.write_bytes(b"production")
+    ledger_path.chmod(0o644)
+    hardlink = tmp_path / "receipt.attest"
+    os.link(ledger_path, hardlink)
+
+    with pytest.raises(ConfigError):
+        cli._write_receipt_file_no_follow(hardlink, b"envelope", ledger_path=ledger_path)
+
+    assert stat.S_IMODE(ledger_path.stat().st_mode) == 0o644
+
+
+def test_write_receipt_file_no_follow_closes_the_descriptor_when_fdopen_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "receipt.attest"
+    opened_fds: list[int] = []
+    real_open = os.open
+
+    def recording_open(path: Any, flags: int, mode: int = 0o777) -> int:
+        fd = real_open(path, flags, mode)
+        opened_fds.append(fd)
+        return fd
+
+    def failing_fdopen(fd: int, mode: str) -> Any:
+        raise OSError("fdopen refused")
+
+    monkeypatch.setattr(cli.os, "open", recording_open)
+    monkeypatch.setattr(cli.os, "fdopen", failing_fdopen)
+
+    with pytest.raises(OSError):
+        cli._write_receipt_file_no_follow(out, b"envelope", ledger_path=tmp_path / "ledger.sqlite3")
+
+    assert len(opened_fds) == 1
+    with pytest.raises(OSError):
+        os.fstat(opened_fds[0])  # a leaked descriptor would still be valid here
+
+
 # -- itch-dry-run command --------------------------------------------------
 
 _ITCH_ENV_VAR = "ITCH_API_KEY_DRY_RUN_TEST"  # env var NAME, not a secret
