@@ -23,14 +23,17 @@ from attest_bridge.delivery import DeliveryResult
 from attest_bridge.itch_adapter import ItchAdapter, ItchApiError
 from attest_bridge.ledger import Ledger
 from attest_bridge.model import ConfigError
-from conftest import DISPLAY_NAME, ISSUER, KID
+from conftest import DISPLAY_NAME, ISSUER, KID, LEGAL_TEXT, LEGAL_TEXT_SHA256
 from test_bridge_stripe_adapter import make_session_completed_event
 
 from attest import keys, pq
 from attest import verify as verify_mod
 
 _STRIPE_ENV_VAR = "STRIPE_WEBHOOK_SECRET_T8_CLI_TEST"  # env var NAME, not a secret
-_LEGAL_TEXT_SHA256 = "0" * 64
+# `_write_config` materialises the licence file every products table points at,
+# and substitutes its absolute path for this placeholder: `load_config` reads it
+# and cross-checks its digest against the declared `legal_text_sha256`.
+_LEGAL_TEXT_PATH_PLACEHOLDER = "__LEGAL_TEXT_PATH__"
 
 _PRICE_TEST_PRODUCT = f"""
 [products.price_TEST]
@@ -38,7 +41,8 @@ title = "Stardrift Chronicles"
 publisher = "Example Games Store"
 artifact_series = "merchant.example.com/works/stardrift-chronicles"
 terms_uri = "https://merchant.example.com/attest/license-templates/standard-v1"
-legal_text_sha256 = "{_LEGAL_TEXT_SHA256}"
+legal_text_sha256 = "{LEGAL_TEXT_SHA256}"
+legal_text_path = "{_LEGAL_TEXT_PATH_PLACEHOLDER}"
 [products.price_TEST.identifiers]
 sku = "SDC-STD-001"
 """
@@ -50,7 +54,8 @@ title = "The Long Dusk"
 publisher = "Example Games Store"
 artifact_series = "merchant.example.com/works/the-long-dusk"
 terms_uri = "https://merchant.example.com/attest/license-templates/standard-v1"
-legal_text_sha256 = "{_LEGAL_TEXT_SHA256}"
+legal_text_sha256 = "{LEGAL_TEXT_SHA256}"
+legal_text_path = "{_LEGAL_TEXT_PATH_PLACEHOLDER}"
 [products.shopify_49148385.identifiers]
 shopify_variant_id = "49148385"
 """
@@ -86,6 +91,8 @@ def _write_config(
     manifest_path = tmp_path / "key-manifest.json"
     manifest_path.write_text(json.dumps(key_manifest), encoding="utf-8")
     ledger_path = tmp_path / "ledger.sqlite3"
+    legal_path = tmp_path / "license.txt"
+    legal_path.write_bytes(LEGAL_TEXT)
 
     config_text = f"""
 public_base_url = "https://receipts.example.com"
@@ -106,7 +113,9 @@ webhook_secret_env = "{_STRIPE_ENV_VAR}"
 {extra_toml}
 """
     config_path = tmp_path / "bridge.toml"
-    config_path.write_text(config_text, encoding="utf-8")
+    config_path.write_text(
+        config_text.replace(_LEGAL_TEXT_PATH_PLACEHOLDER, str(legal_path)), encoding="utf-8"
+    )
     return config_path
 
 
@@ -181,7 +190,13 @@ def test_check_config_rejects_product_the_real_receipt_schema_cannot_issue(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
-    invalid = _PRICE_TEST_PRODUCT.replace(_LEGAL_TEXT_SHA256, "x")
+    # A grant the loader accepts (any non-empty string) but the receipt schema
+    # rejects (enum: perpetual|subscription) — the product is only unissuable
+    # once it reaches the real payload builder, which is what this gate is for.
+    invalid = _PRICE_TEST_PRODUCT.replace(
+        "[products.price_TEST.identifiers]",
+        'grant = "rental"\n[products.price_TEST.identifiers]',
+    )
 
     assert (
         cli.main(
@@ -193,7 +208,11 @@ def test_check_config_rejects_product_the_real_receipt_schema_cannot_issue(
         )
         == 2
     )
-    assert "price_TEST" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "price_TEST" in err
+    # Pin the REASON, not just the exit code: this must fail at the payload
+    # schema, never at an earlier config check that happens to also reject it.
+    assert "grant" in err
 
 
 # -- retry-failed -----------------------------------------------------------
@@ -563,7 +582,7 @@ def _itch_catalog(*game_ids: str) -> ProductCatalog:
                 identifiers={"itch_game_id": game_id},
                 artifact_series="merchant.example.com/works/nebula-drifters",
                 terms_uri="https://merchant.example.com/attest/license-templates/standard-v1",
-                legal_text_sha256=_LEGAL_TEXT_SHA256,
+                legal_text_sha256=LEGAL_TEXT_SHA256,
             )
             for game_id in game_ids
         }
@@ -748,7 +767,8 @@ title = "Nebula Drifters"
 publisher = "Example Games Store"
 artifact_series = "merchant.example.com/works/nebula-drifters"
 terms_uri = "https://merchant.example.com/attest/license-templates/standard-v1"
-legal_text_sha256 = "{_LEGAL_TEXT_SHA256}"
+legal_text_sha256 = "{LEGAL_TEXT_SHA256}"
+legal_text_path = "{_LEGAL_TEXT_PATH_PLACEHOLDER}"
 [products.itch_123456.identifiers]
 itch_game_id = "123456"
 """
@@ -759,7 +779,8 @@ title = "Nebula Drifters II"
 publisher = "Example Games Store"
 artifact_series = "merchant.example.com/works/nebula-drifters-ii"
 terms_uri = "https://merchant.example.com/attest/license-templates/standard-v1"
-legal_text_sha256 = "{_LEGAL_TEXT_SHA256}"
+legal_text_sha256 = "{LEGAL_TEXT_SHA256}"
+legal_text_path = "{_LEGAL_TEXT_PATH_PLACEHOLDER}"
 [products.itch_654321.identifiers]
 itch_game_id = "654321"
 """
@@ -1074,8 +1095,13 @@ class _RecordingDelivery:
     sent: ClassVar[list[dict[str, Any]]] = []
     result: ClassVar[DeliveryResult] = DeliveryResult(status="sent", detail=None)
 
-    def __init__(self, config: Any) -> None:
+    legal_texts: ClassVar[dict[str, bytes]] = {}
+
+    def __init__(self, config: Any, *, legal_texts: dict[str, bytes] | None = None) -> None:
         self.config = config
+        # Recorded so the command is shown to hand delivery the verified
+        # licence texts, not an empty map that would fail every bundle build.
+        _RecordingDelivery.legal_texts = dict(legal_texts or {})
 
     def send(self, **kwargs: Any) -> DeliveryResult:
         _RecordingDelivery.sent.append(kwargs)
@@ -1111,6 +1137,9 @@ def test_itch_dry_run_send_email_delivers_to_recipient_not_signed_buyer(
     assert rc == 0
     assert len(_RecordingDelivery.sent) == 1
     assert _RecordingDelivery.sent[0]["to_email"] == "merchant@example.com"
+    # The dry run must hand delivery the licence text the config verified, or
+    # the bundle it ships to the merchant could never be built.
+    assert _RecordingDelivery.legal_texts == {LEGAL_TEXT_SHA256: LEGAL_TEXT}
 
     # The SMTP recipient is not the signed identity: the receipt still commits
     # to the synthetic `.invalid` buyer.
@@ -1204,3 +1233,34 @@ def test_cli_docstring_names_itch_dry_run_as_throwaway_ledger_command() -> None:
     assert "itch-dry-run" in doc
     assert "throwaway Ledger" in doc
     assert "does NOT use `_build_deps`" in doc
+
+
+# -- setup guides: legal_text_path and the §14.1/§14.2 bundle pair ---------
+
+
+@pytest.mark.parametrize("guide_name", ["setup-stripe.md", "setup-itch.md", "setup-shopify.md"])
+def test_setup_guides_document_legal_text_path_and_bundle_delivery(guide_name: str) -> None:
+    text = (Path(__file__).parents[1] / "docs" / guide_name).read_text(encoding="utf-8")
+
+    # The config field a merchant now has to set, and the fail-closed
+    # consequence of leaving it out.
+    assert "legal_text_path" in text
+    assert "legal_text_sha256" in text
+    lowered = text.lower()
+    assert "won't start" in lowered or "does not start" in lowered or "never starts" in lowered
+
+    # The two-attachment bundle pair, and which one is the buyer's secret.
+    assert ".private.attest" in text
+    assert "shareable" in lowered or "share" in lowered
+    assert "secret" in lowered
+
+
+def test_example_config_declares_legal_text_path() -> None:
+    text = (Path(__file__).parents[1] / "examples" / "bridge.toml").read_text(encoding="utf-8")
+
+    products_section = text[text.index("[products.") :]
+    assert "legal_text_path" in products_section
+
+    delivery_section = text[text.index("[delivery]") : text.index("[products.")]
+    assert "info_url" in delivery_section
+    assert "optional" in delivery_section.lower()

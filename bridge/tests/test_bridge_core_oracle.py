@@ -15,7 +15,7 @@ from attest_bridge.model import NormalizedPurchase, PurchaseRejected, UnmappedPr
 from attest_bridge.signing import load_issuer
 from conftest import ISSUER
 
-from attest import anchor, cli, keys, pq, transfer
+from attest import anchor, bundle, cli, keys, pq, transfer
 from attest import verify as verify_mod
 
 
@@ -272,14 +272,14 @@ def _make_succeeding_smtp_factory() -> tuple[Any, list[int]]:
 
 
 def test_process_smtp_failure_keeps_receipt_safe_in_ledger_and_it_still_verifies(
-    catalog: Any, issuer_identity: Any, ledger: Any, trust_store: Any
+    catalog: Any, issuer_identity: Any, ledger: Any, trust_store: Any, legal_texts: dict[str, bytes]
 ) -> None:
     core = IssuingCore(
         catalog=catalog,
         issuer=issuer_identity,
         ledger=ledger,
         public_base_url="https://receipts.example.com",
-        delivery=Delivery(_delivery_config(), smtp_factory=_FailingSMTP),
+        delivery=Delivery(_delivery_config(), smtp_factory=_FailingSMTP, legal_texts=legal_texts),
     )
     outcome = core.process(_purchase(platform_purchase_id="cs_delivery_fail"))
 
@@ -297,7 +297,7 @@ def test_process_smtp_failure_keeps_receipt_safe_in_ledger_and_it_still_verifies
 
 
 def test_process_does_not_resend_to_an_already_delivered_receipt(
-    catalog: Any, issuer_identity: Any, ledger: Any
+    catalog: Any, issuer_identity: Any, ledger: Any, legal_texts: dict[str, bytes]
 ) -> None:
     factory, calls = _make_succeeding_smtp_factory()
     core = IssuingCore(
@@ -305,7 +305,7 @@ def test_process_does_not_resend_to_an_already_delivered_receipt(
         issuer=issuer_identity,
         ledger=ledger,
         public_base_url="https://receipts.example.com",
-        delivery=Delivery(_delivery_config(), smtp_factory=factory),
+        delivery=Delivery(_delivery_config(), smtp_factory=factory, legal_texts=legal_texts),
     )
     purchase = _purchase(platform_purchase_id="cs_no_resend")
 
@@ -320,3 +320,81 @@ def test_process_does_not_resend_to_an_already_delivered_receipt(
     assert stored is not None
     assert stored.delivered_at is not None
     assert stored.delivery_attempts == 0
+
+
+def test_delivered_email_carries_an_importable_bundle_that_verifies_offline(
+    catalog: Any,
+    issuer_identity: Any,
+    ledger: Any,
+    legal_texts: dict[str, bytes],
+    tmp_path: Path,
+) -> None:
+    """The buyer's own path, end to end, on a real signed sale.
+
+    Not a shape assertion on a hand-built fake: a real receipt is issued and
+    delivered, both attachments are written to disk exactly as a mail client
+    would save them, and the pair is re-imported and verified against the
+    trust store the BUNDLE carries — the store the buyer would still have if
+    the merchant vanished the next day.
+    """
+    captured: list[Any] = []
+
+    class _CapturingSMTP:
+        def __init__(self, host: str, port: int) -> None:
+            pass
+
+        def starttls(self, *, context: Any) -> None:
+            pass
+
+        def login(self, username: str, password: str) -> None:
+            pass
+
+        def send_message(self, message: Any) -> None:
+            captured.append(message)
+
+        def quit(self) -> None:
+            pass
+
+        def __enter__(self) -> _CapturingSMTP:
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            pass
+
+    core = IssuingCore(
+        catalog=catalog,
+        issuer=issuer_identity,
+        ledger=ledger,
+        public_base_url="https://receipts.example.com",
+        delivery=Delivery(_delivery_config(), smtp_factory=_CapturingSMTP, legal_texts=legal_texts),
+    )
+    outcome = core.process(_purchase(platform_purchase_id="cs_bundle_e2e"))
+
+    attachments = list(captured[0].iter_attachments())
+    assert len(attachments) == 2
+    paths: list[Path] = []
+    for attachment in attachments:
+        filename = attachment.get_filename()
+        assert filename is not None
+        content = attachment.get_content()
+        path = tmp_path / filename
+        path.write_bytes(content.encode("utf-8") if isinstance(content, str) else bytes(content))
+        paths.append(path)
+    attest_path, private_path = paths
+    assert attest_path.name.endswith(".attest")
+    assert private_path.name.endswith(".private.attest")
+
+    imported = bundle.import_bundle(attest_path, private_path)
+
+    assert len(imported.receipts) == 1
+    extracted = imported.receipts[0]
+    assert extracted["payload"]["receipt_id"] == outcome.receipt_id
+    result = verify_mod.verify(_envelope_bytes(extracted), imported.trust_store)
+    assert result.ok is True
+    assert imported.salts[outcome.receipt_id] == keys.b64u_decode(
+        outcome.envelope["delivery"]["salt"]
+    )
+    assert (
+        imported.legal_texts[extracted["payload"]["license"]["legal_text_sha256"]]
+        == (legal_texts[extracted["payload"]["license"]["legal_text_sha256"]])
+    )

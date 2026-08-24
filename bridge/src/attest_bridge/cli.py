@@ -303,7 +303,7 @@ def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
     issuer = load_issuer(config.issuer)
     catalog = ProductCatalog(config.products)
     ledger = Ledger(config.ledger_path)
-    delivery = Delivery(config.delivery)
+    delivery = Delivery(config.delivery, legal_texts=config.legal_texts)
     core = IssuingCore(
         catalog=catalog,
         issuer=issuer,
@@ -361,7 +361,11 @@ def _catalog_payload_errors(key: str, template: ProductTemplate) -> list[str]:
 
 def _sweep_deliveries(deps: BridgeDeps) -> tuple[int, int]:
     """Run the shared, crash-tolerant at-least-once delivery retry sweep."""
-    delivery = deps.delivery if deps.delivery is not None else Delivery(deps.config.delivery)
+    delivery = (
+        deps.delivery
+        if deps.delivery is not None
+        else Delivery(deps.config.delivery, legal_texts=deps.config.legal_texts)
+    )
     return sweep_undelivered(
         ledger=deps.ledger, delivery=delivery, public_base_url=deps.config.public_base_url
     )
@@ -688,7 +692,7 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
             # Delivery is driven from here, not through `core.process`: the core
             # sends to `stored.buyer_email`, which must stay the synthetic signed
             # identity. The SMTP recipient is a separate thing on purpose.
-            result = Delivery(config.delivery).send(
+            result = Delivery(config.delivery, legal_texts=config.legal_texts).send(
                 to_email=args.email,
                 receipt_id=stored.receipt_id,
                 work_title=template.title,

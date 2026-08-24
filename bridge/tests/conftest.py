@@ -19,9 +19,13 @@ KID = f"{ISSUER}/keys/2026-07#hybrid-1"
 DISPLAY_NAME = "Example Games Store"
 VALID_FROM = "2026-07-01T00:00:00Z"
 
-# A realistic-looking legal-text digest — the schema requires 64 lowercase hex
-# chars (`license.legal_text_sha256`), never a hand-typed placeholder string.
-_LEGAL_TEXT_SHA256 = hashlib.sha256(b"attest-bridge-test-license-terms-v1").hexdigest()
+# The licence text a test merchant sells under, and its digest. The schema
+# requires 64 lowercase hex chars (`license.legal_text_sha256`), never a
+# hand-typed placeholder string — and since `load_config` now cross-checks the
+# declared digest against the file on disk, the two must be derived from one
+# source of truth here.
+LEGAL_TEXT = b"attest-bridge-test-license-terms-v1"
+LEGAL_TEXT_SHA256 = hashlib.sha256(LEGAL_TEXT).hexdigest()
 
 
 @pytest.fixture(scope="session")
@@ -58,7 +62,7 @@ def catalog() -> ProductCatalog:
                 identifiers={"sku": "SDC-STD-001"},
                 artifact_series=f"{ISSUER}/works/stardrift-chronicles",
                 terms_uri=f"https://{ISSUER}/attest/license-templates/standard-v1",
-                legal_text_sha256=_LEGAL_TEXT_SHA256,
+                legal_text_sha256=LEGAL_TEXT_SHA256,
             ),
             "itch_123456": ProductTemplate(
                 title="Nebula Drifters",
@@ -66,7 +70,7 @@ def catalog() -> ProductCatalog:
                 identifiers={"itch_game_id": "123456"},
                 artifact_series=f"{ISSUER}/works/nebula-drifters",
                 terms_uri=f"https://{ISSUER}/attest/license-templates/standard-v1",
-                legal_text_sha256=_LEGAL_TEXT_SHA256,
+                legal_text_sha256=LEGAL_TEXT_SHA256,
             ),
             "shopify_49148385": ProductTemplate(
                 title="The Long Dusk",
@@ -74,10 +78,16 @@ def catalog() -> ProductCatalog:
                 identifiers={"shopify_variant_id": "49148385"},
                 artifact_series=f"{ISSUER}/works/the-long-dusk",
                 terms_uri=f"https://{ISSUER}/attest/license-templates/standard-v1",
-                legal_text_sha256=_LEGAL_TEXT_SHA256,
+                legal_text_sha256=LEGAL_TEXT_SHA256,
             ),
         }
     )
+
+
+@pytest.fixture
+def legal_texts() -> dict[str, bytes]:
+    """The licence-text map `load_config` builds, keyed by verified digest."""
+    return {LEGAL_TEXT_SHA256: LEGAL_TEXT}
 
 
 @pytest.fixture
