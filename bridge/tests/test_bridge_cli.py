@@ -25,6 +25,7 @@ from conftest import DISPLAY_NAME, ISSUER, KID
 from test_bridge_stripe_adapter import make_session_completed_event
 
 from attest import keys, pq
+from attest import verify as verify_mod
 
 _STRIPE_ENV_VAR = "STRIPE_WEBHOOK_SECRET_T8_CLI_TEST"  # env var NAME, not a secret
 _LEGAL_TEXT_SHA256 = "0" * 64
@@ -648,3 +649,204 @@ def test_write_receipt_file_no_follow_writes_mode_0600(tmp_path: Path) -> None:
 
     assert out.read_bytes() == b"envelope"
     assert stat.S_IMODE(out.stat().st_mode) == 0o600
+
+
+# -- itch-dry-run command --------------------------------------------------
+
+_ITCH_ENV_VAR = "ITCH_API_KEY_DRY_RUN_TEST"  # env var NAME, not a secret
+_SMTP_ENV_VAR = "SMTP_PASSWORD_DRY_RUN_TEST"  # env var NAME, not a secret
+
+_ITCH_GAME_PRODUCT = f"""
+[products.itch_123456]
+title = "Nebula Drifters"
+publisher = "Example Games Store"
+artifact_series = "merchant.example.com/works/nebula-drifters"
+terms_uri = "https://merchant.example.com/attest/license-templates/standard-v1"
+legal_text_sha256 = "{_LEGAL_TEXT_SHA256}"
+[products.itch_123456.identifiers]
+itch_game_id = "123456"
+"""
+
+_SECOND_ITCH_GAME_PRODUCT = f"""
+[products.itch_654321]
+title = "Nebula Drifters II"
+publisher = "Example Games Store"
+artifact_series = "merchant.example.com/works/nebula-drifters-ii"
+terms_uri = "https://merchant.example.com/attest/license-templates/standard-v1"
+legal_text_sha256 = "{_LEGAL_TEXT_SHA256}"
+[products.itch_654321.identifiers]
+itch_game_id = "654321"
+"""
+
+_ITCH_AND_DELIVERY_TOML = f"""
+[itch]
+api_key_env = "{_ITCH_ENV_VAR}"
+
+[delivery]
+smtp_host = "smtp.example.com"
+smtp_port = 587
+smtp_username = "receipts@merchant.example.com"
+smtp_password_env = "{_SMTP_ENV_VAR}"
+from_address = "receipts@merchant.example.com"
+info_url = "https://merchant.example.com/what-is-this-file"
+"""
+
+
+def _write_itch_dry_run_config(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    products_toml: str = _ITCH_GAME_PRODUCT,
+    extra_toml: str = _ITCH_AND_DELIVERY_TOML,
+) -> Path:
+    monkeypatch.setenv(_ITCH_ENV_VAR, "itch-api-key-value")
+    monkeypatch.setenv(_SMTP_ENV_VAR, "smtp-password-value")
+    # `_write_config` always emits a [stripe] section; its secret must resolve.
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "stripe-webhook-secret-value")
+    return _write_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        products_toml=products_toml,
+        extra_toml=extra_toml,
+    )
+
+
+def _ledger_path_of(config_path: Path) -> Path:
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("ledger_path"):
+            return Path(line.split("=", 1)[1].strip().strip('"'))
+    raise AssertionError("config has no ledger_path")
+
+
+def test_itch_dry_run_issues_verifiable_receipt_without_touching_production_ledger(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    trust_store: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    ledger_path = _ledger_path_of(config_path)
+    assert not ledger_path.exists()
+    out_path = tmp_path / "dry-run.attest"
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
+
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "ledger: throwaway" in stdout
+    # The whole point of the command: the merchant's real Ledger is never opened.
+    assert not ledger_path.exists()
+    assert stat.S_IMODE(out_path.stat().st_mode) == 0o600
+
+    envelope_bytes = out_path.read_bytes()
+    result = verify_mod.verify(envelope_bytes, trust_store)
+    assert result.ok is True
+
+    salt = keys.b64u_decode(json.loads(envelope_bytes)["delivery"]["salt"])
+    proven = verify_mod.verify(
+        envelope_bytes,
+        trust_store,
+        disclosure=verify_mod.Disclosure(
+            identifier=cli._DRY_RUN_BUYER_EMAIL, identifier_type="email", salt=salt
+        ),
+    )
+    assert proven.binding == "proven"
+    # A real address can never be the signed identity of a dry-run receipt.
+    not_proven = verify_mod.verify(
+        envelope_bytes,
+        trust_store,
+        disclosure=verify_mod.Disclosure(
+            identifier="merchant@example.com", identifier_type="email", salt=salt
+        ),
+    )
+    assert not_proven.binding == "not_proven"
+
+
+def test_itch_dry_run_settled_purchase_is_processed_by_the_poller(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Regression on the poller's status filter: this runs the real tick, so it
+    # goes red if "settled" ever starts being skipped.
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
+
+    assert rc == 0
+    assert "claim: confirmed (receipts issued: 1)" in capsys.readouterr().out
+
+
+def test_itch_dry_run_rejects_out_equal_to_or_symlinked_to_production_ledger(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    ledger_path = _ledger_path_of(config_path)
+
+    assert cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(ledger_path)]) == 2
+
+    Ledger(ledger_path)
+    before = ledger_path.read_bytes()
+    link_path = tmp_path / "ledger-link.attest"
+    link_path.symlink_to(ledger_path)
+
+    assert cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(link_path)]) == 2
+    assert ledger_path.read_bytes() == before
+
+
+def test_itch_dry_run_default_does_not_construct_delivery(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+
+    def exploding_delivery(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("Delivery must not be constructed without --send-email")
+
+    monkeypatch.setattr(cli, "Delivery", exploding_delivery)
+
+    rc = cli.main(
+        ["itch-dry-run", "--config", str(config_path), "--out", str(tmp_path / "d.attest")]
+    )
+
+    assert rc == 0
+
+
+def test_itch_dry_run_uses_only_throwaway_ledger_instances(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    ledger_path = _ledger_path_of(config_path)
+    opened: list[Path] = []
+    real_ledger = cli.Ledger
+
+    def recording_ledger(path: Path) -> Any:
+        opened.append(Path(path))
+        return real_ledger(path)
+
+    monkeypatch.setattr(cli, "Ledger", recording_ledger)
+
+    rc = cli.main(
+        ["itch-dry-run", "--config", str(config_path), "--out", str(tmp_path / "d.attest")]
+    )
+
+    assert rc == 0
+    assert opened
+    resolved_ledger = ledger_path.resolve()
+    assert all(path.resolve() != resolved_ledger for path in opened)

@@ -21,6 +21,7 @@ import os
 import re
 import socketserver
 import sys
+import tempfile
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -117,6 +118,16 @@ def _build_parser() -> argparse.ArgumentParser:
     itch_import_parser.add_argument("--config", required=True)
     itch_import_parser.add_argument("--game-id", required=True)
     itch_import_parser.add_argument("csv_path")
+
+    dry_run_parser = sub.add_parser(
+        "itch-dry-run",
+        help="local itch dry run: a real receipt from a fake API, in a throwaway Ledger",
+    )
+    dry_run_parser.add_argument("--config", required=True)
+    dry_run_parser.add_argument("--game-id")
+    dry_run_parser.add_argument("--send-email", action="store_true")
+    dry_run_parser.add_argument("--email")
+    dry_run_parser.add_argument("--out", default=_DRY_RUN_DEFAULT_OUT)
 
     return parser
 
@@ -565,6 +576,88 @@ def _cmd_itch_import(args: argparse.Namespace) -> int:
     return _RC_OK
 
 
+def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
+    """Exercise the real itch chain locally: claim -> tick -> normalize ->
+    sign -> record, against an in-process fake API and a throwaway Ledger.
+
+    Deliberately does NOT use `_build_deps`, which would open the merchant's
+    production Ledger. Nothing here ever constructs an object carrying
+    `config.ledger_path`, and `--out` is refused if it could clobber it.
+    """
+    try:
+        config = load_config(Path(args.config))
+        if config.itch is None:
+            raise ConfigError("this config has no [itch] section — nothing to dry-run")
+        if args.email is not None and not args.send_email:
+            raise ConfigError(
+                "--email is only the SMTP recipient for --send-email; "
+                "the signed buyer identity is always "
+                f"{_DRY_RUN_BUYER_EMAIL} and cannot be overridden"
+            )
+        if args.send_email and args.email is None:
+            raise ConfigError("--send-email requires an explicit --email <your-address>")
+        issuer = load_issuer(config.issuer)
+        catalog = ProductCatalog(config.products)
+        product_key = _resolve_itch_dry_run_product(catalog, args.game_id)
+        template = catalog.resolve(product_key)
+        out_path = _guard_dry_run_out_path(Path(args.out), ledger_path=config.ledger_path)
+    except ConfigError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return _RC_CONFIG_ERROR
+
+    game_id = product_key.removeprefix(_ITCH_PRODUCT_PREFIX)
+    now = datetime.now(UTC)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ledger = Ledger(Path(tmp_dir) / "dry-run-ledger.sqlite3")
+        token = ledger.enqueue_claim(_DRY_RUN_BUYER_EMAIL, game_id, now=_now_rfc3339())
+        purchase = _itch_dry_run_purchase(game_id, now=now)
+        adapter = ItchAdapter(
+            api_key=config.itch.api_key,
+            http_get=_dry_run_http_get(
+                purchase,
+                game_id=game_id,
+                buyer_email=_DRY_RUN_BUYER_EMAIL,
+                api_key=config.itch.api_key,
+            ),
+        )
+        core = IssuingCore(
+            catalog=catalog,
+            issuer=issuer,
+            ledger=ledger,
+            public_base_url=config.public_base_url,
+            delivery=None,
+        )
+        ItchPoller(adapter=adapter, ledger=ledger, core=core, max_attempts=1).tick(now=now)
+
+        stored = ledger.get_receipt("itch", _DRY_RUN_PURCHASE_ID)
+        if stored is None:
+            print("no receipt issued", file=sys.stderr)
+            for dead_letter in ledger.unresolved_dead_letters():
+                print(f"  reason: {dead_letter.reason}", file=sys.stderr)
+            return _RC_INCOMPLETE
+
+        try:
+            _write_receipt_file_no_follow(out_path, stored.envelope_json.encode("utf-8"))
+        except ConfigError as exc:
+            print(f"config error: {exc}", file=sys.stderr)
+            return _RC_CONFIG_ERROR
+
+        claim = ledger.get_claim(token)
+        issued = claim.receipts_issued if claim is not None else 0
+        status = claim.status if claim is not None else "unknown"
+
+        print(f"issuer: {issuer.issuer_id} (kid={issuer.kid})")
+        print(f"product: {product_key} ({template.title})")
+        print(f"buyer: {_DRY_RUN_BUYER_EMAIL} (signed synthetic identity)")
+        print(f"claim: {status} (receipts issued: {issued})")
+        print(f"receipt: {out_path} (mode 0600 - carries the buyer-binding salt)")
+        print("email: skipped (re-run with --send-email --email <your-address> to test SMTP)")
+        print("ledger: throwaway, deleted on exit - the production Ledger was never opened")
+        print("verify offline:")
+        print(f"  attest verify {out_path} --trust-dir <dir-containing-key-manifest.json>")
+    return _RC_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -577,6 +670,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_retry_failed(args)
     if args.command == "itch-import":
         return _cmd_itch_import(args)
+    if args.command == "itch-dry-run":
+        return _cmd_itch_dry_run(args)
     parser.error(
         f"unknown command: {args.command}"
     )  # pragma: no cover - argparse exits before this
