@@ -33,13 +33,17 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   second anchor would destroy the first within a single run), and one carrying
   a key manifest whose `manifest_version` is not an integer `>= 1` — that value
   names the trust-store file, so it is validated before any path is built.
-- **Breaking (CLI):** `attest disclose --out` refuses a symlink target. The
+- **Breaking (CLI):** `attest disclose --out` refuses a symlink named as the
+  output path, including a dangling one and one pointing at a directory. The
   disclosed file carries `delivery.salt`, so writing it through a link someone
-  else planted is a disclosure. There is deliberately no `--force` counterpart
-  here: the disclosure is recomputable from the receipt, the manifest and the
-  salt, so the answer to a refusal is to name another path. A hard-linked
-  target is still written — every alias of that inode already holds the same
-  secret, so refusing would break callers for no gain.
+  else planted is a disclosure. The refusal covers the path you name, not its
+  parent directories: if a *parent* component is a symlink someone else
+  controls, the disclosure still lands under their target — write disclosures
+  only into directories whose whole path you control. There is deliberately no
+  `--force` counterpart here: the disclosure is recomputable from the receipt,
+  the manifest and the salt, so the answer to a refusal is to name another
+  path. A hard-linked target is still written — every alias of that inode
+  already holds the same secret, so refusing would break callers for no gain.
 
 ## [0.5.0] — 2026-08-24
 
