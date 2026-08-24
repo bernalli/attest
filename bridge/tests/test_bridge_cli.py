@@ -1084,3 +1084,38 @@ def test_itch_dry_run_send_email_failure_is_rc_1_but_receipt_file_survives(
     assert "email: FAILED (smtp auth failed)" in capsys.readouterr().out
     # A failed SMTP test must not cost the merchant the receipt they just proved.
     assert verify_mod.verify(out_path.read_bytes(), trust_store).ok is True
+
+
+# -- itch-dry-run: docs and OI-4 wording -----------------------------------
+
+
+def test_setup_itch_docs_include_local_dry_run_before_live_test() -> None:
+    text = (Path(__file__).parents[1] / "docs" / "setup-itch.md").read_text(encoding="utf-8")
+
+    dry_run_heading = text.index("## 4. Dry run")
+    live_heading = text.index("## 5. Test it live")
+    assert dry_run_heading < live_heading
+
+    assert "attest-bridge itch-dry-run --config bridge.toml" in text
+    assert "--send-email --email" in text
+    assert cli._DRY_RUN_BUYER_EMAIL in text
+    # The guide must not let a merchant read the dry run as proof of their key.
+    assert "ITCH_API_KEY" in text[dry_run_heading:live_heading]
+
+
+def test_itch_adapter_docstring_names_dry_run_without_weakening_live_serve() -> None:
+    from attest_bridge import itch_adapter
+
+    doc = itch_adapter.__doc__ or ""
+    assert "itch-dry-run" in doc
+    assert "http_get" in doc
+    assert "production `serve`" in doc
+    # The live-API sole-authority statement must survive, scoped to production.
+    assert "SOLE ISSUANCE AUTHORITY" in doc
+
+
+def test_cli_docstring_names_itch_dry_run_as_throwaway_ledger_command() -> None:
+    doc = cli.__doc__ or ""
+    assert "itch-dry-run" in doc
+    assert "throwaway Ledger" in doc
+    assert "does NOT use `_build_deps`" in doc

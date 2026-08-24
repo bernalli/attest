@@ -15,9 +15,17 @@ This is the load-bearing invariant of this whole module: a claim or a CSV row
 NEVER causes issuance on its own — only an itch-API-confirmed purchase does.
 The one line that gates every `core.process` call in `ItchPoller.tick` is
 inside the `for raw in purchases` loop, where `purchases` is exactly what
-`ItchAdapter.fetch_purchases` returned from the LIVE API call for THIS tick —
-there is no other code path in this module, in `http.py`'s `/itch/claim`
-routes, or in `cli.py`'s `itch-import` that ever calls `core.process`.
+`ItchAdapter.fetch_purchases` returned for THIS tick. In production `serve`
+that is the LIVE API call, and it stays the sole issuance authority: neither
+`http.py`'s `/itch/claim` routes nor `cli.py`'s `itch-import` ever calls
+`core.process` — they only enqueue.
+
+One non-live `ItchPoller.tick` caller exists, and it is not reachable from
+`serve`: `cli.py`'s `itch-dry-run`, the merchant's local pre-production test.
+It builds its own poller over a throwaway Ledger with a fake API passed
+directly to `ItchAdapter(http_get=...)`. No config key or environment
+variable can inject that seam, so a production poller can never be pointed at
+a fake — `_build_deps` constructs `ItchAdapter(api_key=...)` and nothing else.
 Enqueuing a claim only ever inserts a row in the `claims` table; a CSV row
 only ever does the same, once per unique email — neither can, by itself,
 produce a receipt.

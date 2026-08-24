@@ -1,4 +1,5 @@
-"""attest-bridge CLI: `serve`, `check-config`, `retry-failed`, `itch-import`.
+"""attest-bridge CLI: `serve`, `check-config`, `retry-failed`, `itch-import`,
+`itch-dry-run`.
 
 `check-config` deliberately stops at config + issuer + catalog validation —
 it never touches the Ledger (no sqlite file is created just to validate a
@@ -9,6 +10,13 @@ assembled by `_build_deps`. `serve` additionally starts the itch
 `itch_adapter.py`'s module docstring for why that poller, not this CLI's
 `itch-import` or `http.py`'s `/itch/claim`, is the only code path that can
 ever issue an itch receipt.
+
+`itch-dry-run` is the merchant's local pre-production test and deliberately
+does NOT use `_build_deps`: `_build_deps` opens `config.ledger_path`, while
+this command assembles its own throwaway Ledger in a temporary directory and
+an in-process fake itch API injected through `ItchAdapter(http_get=...)`. It
+signs with the real key, but the buyer identity it commits to is always the
+reserved-TLD `itch-dry-run@example.invalid`.
 """
 
 from __future__ import annotations
