@@ -10,6 +10,7 @@ a synthetic stand-in.
 from __future__ import annotations
 
 import json
+import os
 import stat
 from datetime import UTC, datetime
 from pathlib import Path
@@ -639,17 +640,60 @@ def test_write_receipt_file_no_follow_refuses_symlink(tmp_path: Path) -> None:
     link.symlink_to(target)
 
     with pytest.raises(ConfigError):
-        cli._write_receipt_file_no_follow(link, b"replacement")
+        cli._write_receipt_file_no_follow(
+            link, b"replacement", ledger_path=tmp_path / "ledger.sqlite3"
+        )
 
     assert target.read_bytes() == b"original"
 
 
 def test_write_receipt_file_no_follow_writes_mode_0600(tmp_path: Path) -> None:
     out = tmp_path / "receipt.attest"
-    cli._write_receipt_file_no_follow(out, b"envelope")
+    cli._write_receipt_file_no_follow(out, b"envelope", ledger_path=tmp_path / "ledger.sqlite3")
 
     assert out.read_bytes() == b"envelope"
     assert stat.S_IMODE(out.stat().st_mode) == 0o600
+
+
+def test_write_receipt_file_no_follow_is_never_world_readable_while_holding_the_salt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Tightening the mode AFTER writing leaves a window where an existing 0644
+    # file already holds the buyer-binding salt. The mode must be right before
+    # the first byte is written, not after the last.
+    out = tmp_path / "receipt.attest"
+    out.write_bytes(b"stale")
+    out.chmod(0o644)
+    observed: list[int] = []
+    real_fdopen = os.fdopen
+
+    def recording_fdopen(fd: int, mode: str) -> Any:
+        observed.append(stat.S_IMODE(os.fstat(fd).st_mode))
+        return real_fdopen(fd, mode)
+
+    monkeypatch.setattr(cli.os, "fdopen", recording_fdopen)
+
+    cli._write_receipt_file_no_follow(out, b"envelope", ledger_path=tmp_path / "ledger.sqlite3")
+
+    assert observed == [0o600]
+    assert out.read_bytes() == b"envelope"
+
+
+def test_write_receipt_file_no_follow_refuses_a_path_that_became_the_ledger(
+    tmp_path: Path,
+) -> None:
+    # Simulates the TOCTOU the path guard alone cannot close: by the time the
+    # file is opened, `path` is a hard link to the production Ledger. The check
+    # must happen on the open file descriptor, and before truncation.
+    ledger_path = tmp_path / "ledger.sqlite3"
+    ledger_path.write_bytes(b"SQLite format 3\x00production")
+    hardlink = tmp_path / "receipt.attest"
+    os.link(ledger_path, hardlink)
+
+    with pytest.raises(ConfigError):
+        cli._write_receipt_file_no_follow(hardlink, b"envelope", ledger_path=ledger_path)
+
+    assert ledger_path.read_bytes() == b"SQLite format 3\x00production"
 
 
 # -- itch-dry-run command --------------------------------------------------

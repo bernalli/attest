@@ -245,24 +245,42 @@ def _guard_dry_run_out_path(out_path: Path, *, ledger_path: Path) -> Path:
     return resolved_out
 
 
-def _write_receipt_file_no_follow(path: Path, data: bytes) -> None:
+def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path) -> None:
     """Write the receipt at mode 0600 without following a symlink at `path`.
 
-    The envelope carries `delivery.salt`, a buyer-binding secret, so the file
-    is owner-only; `O_NOFOLLOW` makes "the target was a link to something
-    else" a hard failure rather than a silent write elsewhere.
+    Three things happen in a deliberate order, all on the open descriptor
+    rather than on the path, because the path can change under us between the
+    `--out` guard and this call:
+    1. open WITHOUT `O_TRUNC` — truncating first would already have destroyed
+       whatever the path turned out to be;
+    2. `fchmod` before the first byte, so an existing world-readable file is
+       never readable while it holds `delivery.salt`, the buyer-binding secret;
+    3. `fstat` against `ledger_path` — if this descriptor IS the production
+       Ledger (a hard link, a swapped path), refuse before truncating.
+    `O_NOFOLLOW` covers the symlink case at open time.
     """
     no_follow = getattr(os, "O_NOFOLLOW", None)
     if no_follow is None:  # pragma: no cover - POSIX-only platforms in CI
         raise ConfigError("O_NOFOLLOW is unavailable on this platform — refusing to write")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | no_follow
     try:
-        fd = os.open(path, flags, 0o600)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | no_follow, 0o600)
     except OSError as exc:
         raise ConfigError(f"cannot write receipt to {str(path)!r}: {exc}") from exc
+    try:
+        os.fchmod(fd, 0o600)
+        opened = os.fstat(fd)
+        if ledger_path.exists():
+            ledger_stat = ledger_path.stat()
+            if (opened.st_dev, opened.st_ino) == (ledger_stat.st_dev, ledger_stat.st_ino):
+                raise ConfigError(
+                    f"--out {str(path)!r} is the production ledger file — refusing to write"
+                )
+        os.ftruncate(fd, 0)
+    except Exception:
+        os.close(fd)
+        raise
     with os.fdopen(fd, "wb") as handle:
         handle.write(data)
-    os.chmod(path, 0o600)
 
 
 def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
@@ -645,7 +663,11 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
             return _RC_INCOMPLETE
 
         try:
-            _write_receipt_file_no_follow(out_path, stored.envelope_json.encode("utf-8"))
+            _write_receipt_file_no_follow(
+                out_path,
+                stored.envelope_json.encode("utf-8"),
+                ledger_path=config.ledger_path,
+            )
         except ConfigError as exc:
             print(f"config error: {exc}", file=sys.stderr)
             return _RC_CONFIG_ERROR
