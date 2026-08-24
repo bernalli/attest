@@ -44,10 +44,12 @@ verifier.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
 import re
+import stat
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,6 +59,7 @@ from attest import canon, keys, manifests, verify
 
 _PROVENANCE_BUNDLE = "bundle"
 _SECRET_FILE_MODE = 0o600  # disclose output carries delivery.salt (a bearer secret)
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 # Decompression caps for import_bundle (zip-bomb hardening). A .attest is
 # attacker-supplied — it is meant to survive peer-to-peer — so every member is
@@ -255,21 +258,73 @@ def _render_readme(name: str) -> str:
     return _README_TEMPLATE.replace("__BUNDLE_NAME__", name)
 
 
+def _raise_secret_output_appeared(path: Path, *, label: str, exc: BaseException) -> None:
+    raise BundleError(
+        f"{label} {path} appeared while writing; "
+        "refusing to overwrite it (re-run, or pass --force to replace it)"
+    ) from exc
+
+
+def _reject_unsafe_secret_output(
+    path: Path, output_stat: os.stat_result, *, label: str, reject_hardlinks: bool = True
+) -> None:
+    if not stat.S_ISREG(output_stat.st_mode):
+        raise BundleError(f"{label} {path} is not a regular file; refusing to overwrite it")
+    if reject_hardlinks and output_stat.st_nlink > 1:
+        raise BundleError(f"{label} {path} has multiple hard links; refusing to overwrite it")
+
+
+def _open_secret_output(
+    path: Path, *, label: str, exclusive: bool = False, reject_hardlinks: bool = True
+) -> int:
+    """Open a secret-bearing output owner-only, never through a symlink.
+
+    `reject_hardlinks=False` keeps the symlink refusal — following a link
+    someone else planted writes the secret where they can read it — while
+    allowing a target that already has aliases, for outputs whose every alias
+    necessarily holds the same secret already (see `_write_secret_json`).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | _O_NOFOLLOW
+    if exclusive:
+        flags |= os.O_EXCL
+    try:
+        fd = os.open(path, flags, _SECRET_FILE_MODE)
+    except FileExistsError as exc:
+        _raise_secret_output_appeared(path, label=label, exc=exc)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            if exclusive:
+                _raise_secret_output_appeared(path, label=label, exc=exc)
+            raise BundleError(f"{label} {path} is a symlink; refusing to overwrite it") from exc
+        raise
+    try:
+        _reject_unsafe_secret_output(
+            path, os.fstat(fd), label=label, reject_hardlinks=reject_hardlinks
+        )
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
+
+
 def _write_secret_json(path: Path, obj: dict[str, Any]) -> None:
     """Write a secret-bearing JSON file (the disclose output embeds
     `delivery.salt`) created atomically with owner-only 0600 permissions.
 
-    `os.open(..., O_CREAT, 0600)` sets the mode at creation time, so there is
-    never the world-readable window a plain `write_text(...)` + `chmod(...)`
-    leaves under the default umask. `os.fchmod` on the already-open fd then
-    also pins the mode when `path` pre-existed with looser perms (a re-run
-    overwriting a prior disclosure) — race-free, it acts on the fd not the
-    path. Mirrors `cli._write_secret_text` deliberately.
+    The fd is opened before truncation and checked with `fstat`, so a symlink
+    is refused before any bytes are destroyed: the disclosure carries
+    `delivery.salt`, and following a link someone else planted would hand that
+    salt to them. A hard-linked target is written, unlike every other secret
+    output here — the aliases of that inode are earlier disclosures of this
+    same receipt, so they already hold this same salt and refusing would cost
+    a working call without protecting anything. There is no `--force`: the
+    disclosure is recomputable, so a refusal is answered by naming another path.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _SECRET_FILE_MODE)
+    fd = _open_secret_output(path, label="disclose output", reject_hardlinks=False)
     with os.fdopen(fd, "w") as fh:  # takes ownership of fd; closes even on raise
         os.fchmod(fh.fileno(), _SECRET_FILE_MODE)
+        os.ftruncate(fh.fileno(), 0)
         json.dump(obj, fh)
 
 
@@ -282,6 +337,7 @@ def export(
     name: str,
     *,
     proofs: dict[str, dict[str, Any]] | None = None,
+    private_exclusive: bool = False,
 ) -> tuple[Path, Path]:
     """Write `<name>.attest` (shareable) and `<name>.private.attest` (secrets).
 
@@ -342,9 +398,12 @@ def export(
     # The private archive carries buyer-binding salts (bearer secrets); create it
     # owner-only (0600) race-free, mirroring _write_secret_json, so it never has a
     # world-readable window under the default umask (2026-07-13 review, finding 2).
-    fd = os.open(private_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _SECRET_FILE_MODE)
+    fd = _open_secret_output(
+        private_path, label=".private.attest", exclusive=private_exclusive
+    )
     with os.fdopen(fd, "wb") as fh:
         os.fchmod(fh.fileno(), _SECRET_FILE_MODE)
+        os.ftruncate(fh.fileno(), 0)
         with zipfile.ZipFile(fh, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("salts.json", json.dumps(salts_b64u))
 

@@ -3309,10 +3309,15 @@ def test_log_append_tile_failure_preserves_entries_and_retry_does_not_duplicate(
     prior_entries = entries_path.read_text(encoding="utf-8")
     prior_candidate = candidate_path.read_text(encoding="utf-8")
 
+    # Distinct --out from envelope_a: the second issuance was only ever
+    # incidentally reusing the default path, and `issue --out` no longer
+    # overwrites a different envelope (2026-08-24 destructive-output-paths
+    # plan, triage rule in section 6).
     envelope_b = _issue(
         tmp_path,
         seed,
         _write_payload(tmp_path, "payload-b.json", receipt_id="01J1V5B4M9Z8QWERTY12345672"),
+        out_name="envelope-b.json",
     )
     entry_b = _receipt_entry(envelope_b)
     entry_b_path = tmp_path / "entry-b.json"
@@ -3883,9 +3888,7 @@ def test_transfer_record_rejects_invalid_holder_authorization_without_writing(
         if authorization_kind == "forged"
         else "__________________________________________8"
     )
-    authorization_path = _write_authorization_sig(
-        tmp_path, old_receipt_id, signer
-    )
+    authorization_path = _write_authorization_sig(tmp_path, old_receipt_id, signer)
     if authorization_kind == "mismatched":
         authorization_path.write_text(
             json.dumps(

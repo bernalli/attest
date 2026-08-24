@@ -6,6 +6,41 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (CLI):** outputs whose loss is irrecoverable — key seeds
+  (`keygen --seed-out`/`--mldsa-out`), issuer key manifests
+  (`manifest init`/`rotate --out`), issued envelopes and salts
+  (`issue --out`/`--salt-out`), transfer and revocation records
+  (`transfer record --out`/`--revocation-out`), exported `.private.attest`,
+  and imported trust-store files and `salts.json` — now refuse to overwrite an
+  existing file whose content differs from what would be written (exit 2,
+  naming the path and the reason), under a single write-if-absent-or-identical
+  rule. Byte-identical rewrites still succeed, so re-running `attest import`
+  on the same bundle stays idempotent. Every affected command gains `--force`,
+  which authorizes replacing *different content* — it does not lift the
+  structural refusals: a target that is a directory, a symlink (a dangling one
+  included), or a regular file carrying more than one hard link is refused
+  unconditionally, `--force` and all, because in each of those cases the bytes
+  would land somewhere other than the path the caller named. A target swapped
+  for another file between the check and the write is refused as well, instead
+  of being truncated. Derivable outputs
+  (`--pub-out`, artifact manifests, the shareable `.attest`, imported
+  receipts/proofs/legal texts, `log prove`/`log anchor` evidence, and the
+  bridge's `itch-dry-run` receipt) are deliberately not gated.
+- **Breaking (CLI):** `attest import` now rejects two bundles it used to
+  accept: one whose issuers sanitize to the same trust-store filename (the
+  second anchor would destroy the first within a single run), and one carrying
+  a key manifest whose `manifest_version` is not an integer `>= 1` — that value
+  names the trust-store file, so it is validated before any path is built.
+- **Breaking (CLI):** `attest disclose --out` refuses a symlink target. The
+  disclosed file carries `delivery.salt`, so writing it through a link someone
+  else planted is a disclosure. There is deliberately no `--force` counterpart
+  here: the disclosure is recomputable from the receipt, the manifest and the
+  salt, so the answer to a refusal is to name another path. A hard-linked
+  target is still written — every alias of that inode already holds the same
+  secret, so refusing would break callers for no gain.
+
 ## [0.5.0] — 2026-08-24
 
 ### Added
