@@ -873,6 +873,22 @@ def test_itch_claim_form_shows_the_buyer_a_title_not_a_game_id(itch_deps: Bridge
     assert b'<option value="123456">Nebula Drifters</option>' in body
 
 
+def test_itch_claim_form_escapes_a_title_containing_markup(itch_deps: BridgeDeps) -> None:
+    """A title is merchant-supplied text now rendered into a page served to
+    that merchant's customers. It must arrive escaped however it was written —
+    the label is new, the escaping must not be assumed."""
+    product = itch_deps.config.products["itch_123456"]
+    itch_deps.config.products["itch_123456"] = replace(
+        product, title='</option><script>alert("xss")</script>'
+    )
+    app = make_app(itch_deps)
+
+    _, _, body = call_app(app, "GET", "/itch/claim")
+
+    assert b"<script>" not in body
+    assert b"&lt;script&gt;" in body
+
+
 def test_post_itch_claim_acknowledgement_is_identical_for_fresh_dedup_and_no_purchase(
     itch_deps: BridgeDeps,
 ) -> None:
