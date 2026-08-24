@@ -997,9 +997,31 @@ def _cmd_issue(args: argparse.Namespace) -> int:
     # default perms.
     delivery = envelope.get("delivery")
     salt_bearing = isinstance(delivery, dict) and "salt" in delivery
-    _write_json_file(args.out, envelope, secret=salt_bearing)
-    if args.salt_out is not None and salt is not None:
-        _write_secret_text(args.salt_out, keys.b64u(salt))
+
+    # Two-phase: build both contents, guard both paths, only then write, so a
+    # refusal on the second output cannot leave the first one on disk.
+    envelope_text = _json_text(envelope)
+    salt_out_text = keys.b64u(salt) if args.salt_out is not None and salt is not None else None
+    envelope_existed = _ensure_overwrite_allowed(
+        args.out, envelope_text, label="--out", force=args.force
+    )
+    salt_out_existed = False
+    if salt_out_text is not None:
+        salt_out_existed = _ensure_overwrite_allowed(
+            args.salt_out, salt_out_text, label="--salt-out", force=args.force
+        )
+
+    _write_json_text(
+        args.out,
+        envelope_text,
+        secret=salt_bearing,
+        exclusive=not envelope_existed,
+        label="--out",
+    )
+    if salt_out_text is not None:
+        _write_secret_text(
+            args.salt_out, salt_out_text, exclusive=not salt_out_existed, label="--salt-out"
+        )
 
     _print_json({"out": str(args.out), "receipt_id": payload.get("receipt_id")})
     return EXIT_OK
@@ -1119,17 +1141,32 @@ def _cmd_transfer_record(args: argparse.Namespace) -> int:
         signing_kp,
         args.kid,
     )
-    _write_json_file(args.out, record)
+    # Two-phase, as in `issue`: both records are built and both paths guarded
+    # before either is written.
+    record_text = _json_text(record)
+    revocation_text = (
+        _json_text(
+            revocation.build_record(
+                receipt_id, "transferred", args.transferred_at, signing_kp, args.kid
+            )
+        )
+        if args.revocation_out is not None
+        else None
+    )
+    _ensure_overwrite_allowed(args.out, record_text, label="--out", force=args.force)
+    if revocation_text is not None:
+        _ensure_overwrite_allowed(
+            args.revocation_out, revocation_text, label="--revocation-out", force=args.force
+        )
+
+    _write_json_text(args.out, record_text)
     report = {
         "out": str(args.out),
         "receipt_id": receipt_id,
         "new_receipt_id": args.new_receipt_id,
     }
-    if args.revocation_out is not None:
-        revocation_record = revocation.build_record(
-            receipt_id, "transferred", args.transferred_at, signing_kp, args.kid
-        )
-        _write_json_file(args.revocation_out, revocation_record)
+    if revocation_text is not None:
+        _write_json_text(args.revocation_out, revocation_text)
         report["revocation_out"] = str(args.revocation_out)
     _print_json(report)
     return EXIT_OK

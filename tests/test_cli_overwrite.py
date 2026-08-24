@@ -14,13 +14,15 @@ refusal apart from an unrelated failure.
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 from pathlib import Path
 
 import pytest
 
-from attest import cli
+from attest import cli, keys, transfer
+from tests.helpers import make_payload
 
 CapSys = pytest.CaptureFixture[str]
 
@@ -401,3 +403,224 @@ def test_manifest_rotate_refuses_an_existing_out(tmp_path: Path, capsys: CapSys)
 
     assert cli.main([*argv, "--force"]) == 0
     assert rotated.read_text(encoding="utf-8") != "a previously rotated manifest"
+
+
+# --- issue ------------------------------------------------------------------
+
+_NEW_HOLDER_PUB_B64U = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # 32 zero bytes
+_TRANSFERRED_AT = "2026-07-23T00:00:00Z"
+
+
+def _write_payload(tmp_path: Path, name: str, **overrides: object) -> Path:
+    payload = make_payload(issuer={"id": _ISSUER, "display_name": "Example Store"}, **overrides)
+    path = tmp_path / name
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _issue_argv(
+    seed: Path,
+    payload_path: Path,
+    out: Path,
+    *,
+    salt: Path | None = None,
+    salt_out: Path | None = None,
+    force: bool = False,
+) -> list[str]:
+    argv = [
+        "issue",
+        "--payload",
+        str(payload_path),
+        "--seed",
+        str(seed),
+        "--kid",
+        _KID,
+        "--out",
+        str(out),
+    ]
+    if salt is not None:
+        argv += ["--salt", str(salt)]
+    if salt_out is not None:
+        argv += ["--salt-out", str(salt_out)]
+    if force:
+        argv.append("--force")
+    return argv
+
+
+def test_issue_refuses_a_different_envelope(tmp_path: Path, capsys: CapSys) -> None:
+    """A logged receipt is pinned by core_sha256 over the signed core, signature
+    included (spec v0.2 section 8): a replaced envelope orphans its inclusion proof."""
+    seed = _make_keypair(tmp_path, "issuer")
+    out = tmp_path / "envelope.json"
+    first_payload = _write_payload(tmp_path, "a.json", receipt_id="01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    second_payload = _write_payload(tmp_path, "b.json", receipt_id="01ARZ3NDEKTSV4RRFFQ69G5FAW")
+    assert cli.main(_issue_argv(seed, first_payload, out)) == 0
+    first = out.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    rc = cli.main(_issue_argv(seed, second_payload, out))
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--out" in err
+    assert str(out) in err
+    assert "refusing to overwrite" in err
+    assert out.read_text(encoding="utf-8") == first
+
+    assert cli.main(_issue_argv(seed, second_payload, out, force=True)) == 0
+    assert out.read_text(encoding="utf-8") != first
+
+
+def test_issue_reruns_identically_without_force(tmp_path: Path, capsys: CapSys) -> None:
+    """An Ed25519-only re-issue of identical inputs is byte-identical, so the
+    identity clause costs legitimate re-runs nothing."""
+    seed = _make_keypair(tmp_path, "issuer")
+    out = tmp_path / "envelope.json"
+    payload = _write_payload(tmp_path, "a.json")
+    assert cli.main(_issue_argv(seed, payload, out)) == 0
+    first = out.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    assert cli.main(_issue_argv(seed, payload, out)) == 0
+    assert out.read_text(encoding="utf-8") == first
+
+
+def test_issue_refuses_a_different_salt_out(tmp_path: Path, capsys: CapSys) -> None:
+    """The buyer-binding salt is a bearer secret with no other copy."""
+    seed = _make_keypair(tmp_path, "issuer")
+    payload = _write_payload(tmp_path, "a.json")
+    salt = tmp_path / "salt.b64u"
+    salt.write_text(keys.b64u(bytes(range(16))), encoding="utf-8")
+    out = tmp_path / "envelope.json"
+    salt_out = tmp_path / "salt-out.b64u"
+    salt_out.write_text(keys.b64u(bytes(16)), encoding="utf-8")
+    capsys.readouterr()
+
+    rc = cli.main(_issue_argv(seed, payload, out, salt=salt, salt_out=salt_out))
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--salt-out" in err
+    assert str(salt_out) in err
+    assert "refusing to overwrite" in err
+    assert salt_out.read_text(encoding="utf-8") == keys.b64u(bytes(16))
+    # Two-phase: the guard on --salt-out ran before the envelope was written.
+    assert not out.exists()
+
+
+def test_issue_refuses_before_writing_the_salt(tmp_path: Path, capsys: CapSys) -> None:
+    """Mirror of the above: a refusal on --out leaves --salt-out untouched."""
+    seed = _make_keypair(tmp_path, "issuer")
+    payload = _write_payload(tmp_path, "a.json")
+    salt = tmp_path / "salt.b64u"
+    salt.write_text(keys.b64u(bytes(range(16))), encoding="utf-8")
+    out = tmp_path / "envelope.json"
+    out.write_text("a previously issued envelope", encoding="utf-8")
+    salt_out = tmp_path / "salt-out.b64u"
+    capsys.readouterr()
+
+    rc = cli.main(_issue_argv(seed, payload, out, salt=salt, salt_out=salt_out))
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--out" in err
+    assert str(out) in err
+    assert "refusing to overwrite" in err
+    assert out.read_text(encoding="utf-8") == "a previously issued envelope"
+    assert not salt_out.exists()
+
+
+# --- transfer record --------------------------------------------------------
+
+
+def _transfer_record_argv(
+    tmp_path: Path,
+    seed: Path,
+    out: Path,
+    *,
+    revocation_out: Path | None = None,
+    force: bool = False,
+) -> list[str]:
+    holder_kp = keys.generate()
+    old_receipt_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    payload_path = _write_payload(
+        tmp_path,
+        "old-payload.json",
+        receipt_id=old_receipt_id,
+        buyer={"pubkey": keys.b64u(holder_kp.pub)},
+    )
+    receipt_path = tmp_path / "old-envelope.json"
+    assert cli.main(_issue_argv(seed, payload_path, receipt_path)) == 0
+    sig = transfer.sign_authorization(
+        old_receipt_id, _NEW_HOLDER_PUB_B64U, _TRANSFERRED_AT, holder_kp
+    )
+    authorization_path = tmp_path / "authorization.json"
+    authorization_path.write_text(json.dumps({"sig": keys.b64u(sig)}), encoding="utf-8")
+
+    argv = [
+        "transfer",
+        "record",
+        "--receipt",
+        str(receipt_path),
+        "--new-receipt-id",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "--new-holder-pubkey",
+        _NEW_HOLDER_PUB_B64U,
+        "--transferred-at",
+        _TRANSFERRED_AT,
+        "--holder-authorization",
+        str(authorization_path),
+        "--seed",
+        str(seed),
+        "--kid",
+        _KID,
+        "--out",
+        str(out),
+    ]
+    if revocation_out is not None:
+        argv += ["--revocation-out", str(revocation_out)]
+    if force:
+        argv.append("--force")
+    return argv
+
+
+def test_transfer_record_refuses_an_existing_out(tmp_path: Path, capsys: CapSys) -> None:
+    """record_sha256 covers the whole signed record including its own signature
+    (spec v0.2 section 8), and section 17.4 gives the earliest logged record the
+    win forever: a lost record can never be regenerated into the same standing."""
+    seed = _make_keypair(tmp_path, "issuer")
+    out = tmp_path / "record.json"
+    out.write_text("a previously logged transfer record", encoding="utf-8")
+    argv = _transfer_record_argv(tmp_path, seed, out)
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--out" in err
+    assert str(out) in err
+    assert "refusing to overwrite" in err
+    assert out.read_text(encoding="utf-8") == "a previously logged transfer record"
+
+    assert cli.main([*argv, "--force"]) == 0
+    assert out.read_text(encoding="utf-8") != "a previously logged transfer record"
+
+
+def test_transfer_record_refuses_an_existing_revocation_out(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """Same record_sha256 discipline, and for refund_window the effect depends
+    on the log standing of that exact record (spec v0.2 section 15, item 5)."""
+    seed = _make_keypair(tmp_path, "issuer")
+    out = tmp_path / "record.json"
+    revocation_out = tmp_path / "revocation.json"
+    revocation_out.write_text("a previously logged revocation record", encoding="utf-8")
+    argv = _transfer_record_argv(tmp_path, seed, out, revocation_out=revocation_out)
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--revocation-out" in err
+    assert str(revocation_out) in err
+    assert "refusing to overwrite" in err
+    assert revocation_out.read_text(encoding="utf-8") == "a previously logged revocation record"
+    # Two-phase: both guards ran before the transfer record itself was written.
+    assert not out.exists()
