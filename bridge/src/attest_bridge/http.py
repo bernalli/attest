@@ -355,11 +355,14 @@ def _parse_claim_fields(environ: dict[str, Any]) -> dict[str, str]:
     return _parse_query(text)
 
 
-def _itch_game_ids(deps: BridgeDeps) -> list[str]:
-    """Configured itch game ids, derived from catalog keys `itch_<game_id>`."""
+def _itch_game_choices(deps: BridgeDeps) -> list[tuple[str, str]]:
+    """Configured itch games as `(game_id, title)`, derived from catalog keys
+    `itch_<game_id>`. The id is what the form submits; the title is what the
+    buyer reads — a dropdown of bare numeric ids is unusable for anyone
+    holding more than one title."""
     return sorted(
-        key[len(_ITCH_PRODUCT_PREFIX) :]
-        for key in deps.config.products
+        (key[len(_ITCH_PRODUCT_PREFIX) :], product.title)
+        for key, product in deps.config.products.items()
         if key.startswith(_ITCH_PRODUCT_PREFIX)
     )
 
@@ -376,8 +379,8 @@ def _handle_itch_claim_form(deps: BridgeDeps, start_response: Any) -> Iterable[b
             {"error": "receipt delivery is not configured"},
         )
     options = "".join(
-        f'<option value="{html.escape(gid)}">{html.escape(gid)}</option>'
-        for gid in _itch_game_ids(deps)
+        f'<option value="{html.escape(gid)}">{html.escape(title)}</option>'
+        for gid, title in _itch_game_choices(deps)
     )
     body = (
         "<!doctype html><html><body>"

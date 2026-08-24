@@ -66,6 +66,23 @@ class ItchApiError(BridgeError):
     """`api.itch.io` returned a non-200 response, or the body was unparseable."""
 
 
+def _scrub(text: str, *, email: str, api_key: str) -> str:
+    """Remove the buyer's address — plain and percent-encoded — and the API key
+    from an API error message, at the point the message is built rather than at
+    the point it is logged. The request URL carries the address as a query
+    parameter and the key travels in a header, so an exception whose text this
+    module does not control could echo either; every consumer downstream then
+    gets a message that is already safe to log or store."""
+    for secret, placeholder in (
+        (email, "<redacted-email>"),
+        (quote(email, safe=""), "<redacted-email>"),
+        (api_key, "<redacted-api-key>"),
+    ):
+        if secret:
+            text = text.replace(secret, placeholder)
+    return text
+
+
 def _parse_itch_created_at(raw: Any) -> str:
     """Accept itch's documented `"YYYY-MM-DD HH:MM:SS"` form or any ISO-8601
     form (with or without an explicit UTC offset); return RFC3339 `...Z`.
@@ -130,7 +147,13 @@ class ItchAdapter:
             # response) as well as any other transport failure from an
             # injected `http_get` — both are "the API call failed", which is
             # exactly the condition `ItchPoller.tick` backs off on.
-            raise ItchApiError(f"itch purchases request failed: {exc}") from exc
+            raise ItchApiError(
+                _scrub(
+                    f"itch purchases request failed: {exc}",
+                    email=email,
+                    api_key=self._api_key,
+                )
+            ) from exc
         try:
             data = json.loads(body)
         except (ValueError, RecursionError) as exc:
@@ -227,8 +250,8 @@ class ItchPoller:
         for claim in self._ledger.due_claims(now_rfc3339):
             try:
                 completed = self._drain_claim(claim, now_rfc3339)
-            except ItchApiError:
-                self._defer_or_exhaust(claim, now, api_failure=True)
+            except ItchApiError as exc:
+                self._defer_or_exhaust(claim, now, api_failure=True, detail=str(exc))
                 continue
             except Exception:
                 # One claim's unexpected failure (e.g. a signing IssueError) must
@@ -313,28 +336,42 @@ class ItchPoller:
                 self._ledger.add_claim_receipts(claim.token, 1)
         return completed and not retryable_failure
 
-    def _defer_or_exhaust(self, claim: Claim, now: datetime, *, api_failure: bool = False) -> None:
+    def _defer_or_exhaust(
+        self, claim: Claim, now: datetime, *, api_failure: bool = False, detail: str | None = None
+    ) -> None:
+        # `detail` is the API error's own message, carried through so the
+        # operator learns WHY. Without it the only signal a merchant who pasted
+        # a bad API key ever sees is "itch API failure", repeated until the
+        # claim is abandoned — the reason existed and was being discarded at
+        # the handler. It arrives already scrubbed of the buyer's address and
+        # the API key (see `_scrub`, applied where the message is built).
+        safe_detail = detail
         if claim.attempts + 1 >= self._max_attempts:
             failure_kind = "API" if api_failure else "issuance/storage"
             failure_reason = "failed API attempts" if api_failure else "issuance/storage failures"
             _log.warning(
-                "itch %s failure for game %s (attempt %d); abandoning claim",
+                "itch %s failure for game %s (attempt %d): %s; abandoning claim",
                 failure_kind,
                 claim.game_id,
                 claim.attempts + 1,
+                safe_detail or "no further detail",
             )
+            abandoned = f"claim abandoned after {claim.attempts + 1} {failure_reason}"
             self._ledger.exhaust_claim_with_dead_letter(
                 claim.token,
                 platform="itch",
                 purchase_id=None,
-                reason=f"claim abandoned after {claim.attempts + 1} {failure_reason}",
+                reason=f"{abandoned}; last error: {safe_detail}" if safe_detail else abandoned,
                 raw_json=json.dumps({"email": claim.email, "game_id": claim.game_id}),
                 now=now.strftime(_RFC3339),
             )
             return
         if api_failure:
             _log.warning(
-                "itch API failure for game %s (attempt %d)", claim.game_id, claim.attempts + 1
+                "itch API failure for game %s (attempt %d): %s",
+                claim.game_id,
+                claim.attempts + 1,
+                safe_detail or "no further detail",
             )
         delay_seconds = self._backoff_base_seconds * (2**claim.attempts)
         next_attempt_at = (now + timedelta(seconds=delay_seconds)).strftime(_RFC3339)
