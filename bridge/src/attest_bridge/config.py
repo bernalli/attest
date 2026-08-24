@@ -14,6 +14,7 @@ exposes it.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tomllib
 from collections.abc import Mapping
@@ -75,6 +76,9 @@ class BridgeConfig:
     # Default None so every existing `BridgeConfig(...)` construction site keeps
     # working unchanged — purely additive, mirroring how `itch` was introduced.
     shopify: ShopifyConfig | None = None
+    # Licence texts keyed by their verified SHA-256, ready to be shipped inside
+    # the buyer's bundle (spec §14.1). `repr=False` for size, not secrecy.
+    legal_texts: dict[str, bytes] = field(default_factory=dict, repr=False)
 
 
 def _require_table(data: Mapping[str, Any], key: str, *, context: str) -> dict[str, Any]:
@@ -218,6 +222,41 @@ def _load_product(key: str, value: Any) -> ProductTemplate:
     )
 
 
+def _load_legal_texts(
+    products_table: Mapping[str, Any], products: Mapping[str, ProductTemplate]
+) -> dict[str, bytes]:
+    """Read each product's licence text and cross-check it against its declared digest.
+
+    `legal_text_sha256` enters the SIGNED payload of every receipt, so the file
+    on disk is deliberately NOT the source of truth: it is verified against the
+    declaration, and a drift between the two fails the bridge at startup instead
+    of silently changing the terms every future receipt is signed against. The
+    same posture `load_issuer` takes when a manifest and a key both claim to
+    describe the same identity.
+
+    Reading here — not at sale time — means a merchant can never discover a
+    missing or stale licence file while a buyer is waiting for a receipt.
+    `ConfigError` messages name the product key and the path, never the text.
+    """
+    legal_texts: dict[str, bytes] = {}
+    for key, template in products.items():
+        context = f"[products.{key}]"
+        raw = products_table[key]
+        path = Path(_require_str(raw, "legal_text_path", context=context))
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise ConfigError(f"{context}: cannot read legal_text_path {path}: {exc}") from exc
+        digest = hashlib.sha256(content).hexdigest()
+        if digest != template.legal_text_sha256:
+            raise ConfigError(
+                f"{context}: {path} hashes to {digest}, but legal_text_sha256 "
+                f"declares {template.legal_text_sha256}"
+            )
+        legal_texts[digest] = content
+    return legal_texts
+
+
 def _load_stripe(table: Mapping[str, Any], env: Mapping[str, str]) -> StripeConfig:
     context = "[stripe]"
     api_key = _env(env, table, "api_key", context=context) if "api_key_env" in table else None
@@ -282,6 +321,7 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> BridgeConfi
 
     products_table = _optional_table(data, "products", context="config") or {}
     products = {key: _load_product(key, value) for key, value in products_table.items()}
+    legal_texts = _load_legal_texts(products_table, products)
 
     stripe_table = _optional_table(data, "stripe", context="config")
     shopify_table = _optional_table(data, "shopify", context="config")
@@ -305,4 +345,5 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> BridgeConfi
         delivery=(
             _load_delivery(delivery_table, resolved_env) if delivery_table is not None else None
         ),
+        legal_texts=legal_texts,
     )
