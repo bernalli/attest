@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,57 @@ def test_guard_force_allows_different_content(tmp_path: Path) -> None:
     assert cli._ensure_overwrite_allowed(target, "new", label="--out", force=True) is True
 
 
+def test_guard_refuses_hardlinked_file_even_with_force(tmp_path: Path) -> None:
+    target = tmp_path / "seed"
+    target.write_text("existing seed", encoding="utf-8")
+    alias = tmp_path / "seed.alias"
+    try:
+        os.link(target, alias)
+    except OSError:
+        pytest.skip("hard links unsupported on this filesystem")
+
+    for force in (False, True):
+        with pytest.raises(cli.CliUsageError) as excinfo:
+            cli._ensure_overwrite_allowed(target, "existing seed", label="--seed-out", force=force)
+        message = str(excinfo.value)
+        assert message.startswith(f"--seed-out {target} has multiple hard links")
+        assert "refusing to overwrite" in message
+        assert alias.read_text(encoding="utf-8") == "existing seed"
+
+
+# --- _write_json_text(exclusive=...) ----------------------------------------
+
+
+def test_write_json_text_exclusive_refuses_a_file_that_appeared(tmp_path: Path) -> None:
+    target = tmp_path / "manifest.json"
+    target.write_text("someone-else", encoding="utf-8")
+    with pytest.raises(cli.CliUsageError) as excinfo:
+        cli._write_json_text(target, "mine", exclusive=True, label="--out")
+    assert str(excinfo.value) == (
+        f"--out {target} appeared while writing; "
+        "refusing to overwrite it (re-run, or pass --force to replace it)"
+    )
+    assert target.read_text(encoding="utf-8") == "someone-else"
+
+
+def test_write_json_text_exclusive_refuses_a_symlink_that_appeared(tmp_path: Path) -> None:
+    target = tmp_path / "manifest.json"
+    victim = tmp_path / "victim.json"
+    victim.write_text("keep me", encoding="utf-8")
+    try:
+        target.symlink_to(victim)
+    except OSError:
+        pytest.skip("symlinks unsupported on this filesystem")
+
+    with pytest.raises(cli.CliUsageError) as excinfo:
+        cli._write_json_text(target, "replace", exclusive=True, label="--out")
+    assert str(excinfo.value) == (
+        f"--out {target} appeared while writing; "
+        "refusing to overwrite it (re-run, or pass --force to replace it)"
+    )
+    assert victim.read_text(encoding="utf-8") == "keep me"
+
+
 # --- _write_secret_text(exclusive=...) --------------------------------------
 
 
@@ -159,6 +211,23 @@ def test_write_secret_text_without_exclusive_still_truncates(tmp_path: Path) -> 
     cli._write_secret_text(target, "mine")
     assert target.read_text(encoding="utf-8") == "mine"
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_write_secret_text_refuses_hardlinked_existing_file(tmp_path: Path) -> None:
+    target = tmp_path / "seed"
+    target.write_text("existing seed", encoding="utf-8")
+    alias = tmp_path / "seed.alias"
+    try:
+        os.link(target, alias)
+    except OSError:
+        pytest.skip("hard links unsupported on this filesystem")
+
+    with pytest.raises(cli.CliUsageError) as excinfo:
+        cli._write_secret_text(target, "mine", label="--seed-out")
+    message = str(excinfo.value)
+    assert message.startswith(f"--seed-out {target} has multiple hard links")
+    assert "refusing to overwrite" in message
+    assert alias.read_text(encoding="utf-8") == "existing seed"
 
 
 # --- keygen -----------------------------------------------------------------
@@ -693,6 +762,59 @@ def test_export_force_replaces_the_private_bundle(tmp_path: Path, capsys: CapSys
     assert private_path.read_bytes() != b"a previously exported private bundle"
 
 
+def test_export_force_refuses_hardlinked_private_bundle(tmp_path: Path, capsys: CapSys) -> None:
+    argv, out_dir = _export_fixture(tmp_path)
+    private_path = out_dir / f"{_BUNDLE_NAME}.private.attest"
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_bytes(b"a previously exported private bundle")
+    alias = tmp_path / "private-alias.attest"
+    try:
+        os.link(private_path, alias)
+    except OSError:
+        pytest.skip("hard links unsupported on this filesystem")
+    capsys.readouterr()
+
+    rc = cli.main([*argv, "--force"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert ".private.attest" in err
+    assert str(private_path) in err
+    assert "refusing to overwrite" in err
+    assert alias.read_bytes() == b"a previously exported private bundle"
+
+
+def test_export_refuses_private_bundle_symlink_that_appears_after_guard(
+    tmp_path: Path, capsys: CapSys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    argv, out_dir = _export_fixture(tmp_path)
+    private_path = out_dir / f"{_BUNDLE_NAME}.private.attest"
+    victim = tmp_path / "victim.private.attest"
+    victim.write_bytes(b"keep me")
+
+    original_path_is_present = cli._path_is_present
+
+    def swap_in_symlink(path: Path) -> bool:
+        present = original_path_is_present(path)
+        if path == private_path and not present:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                path.symlink_to(victim)
+            except OSError:
+                pytest.skip("symlinks unsupported on this filesystem")
+        return present
+
+    monkeypatch.setattr(cli, "_path_is_present", swap_in_symlink)
+    capsys.readouterr()
+
+    rc = cli.main(argv)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert ".private.attest" in err
+    assert str(private_path) in err
+    assert "refusing to overwrite" in err
+    assert victim.read_bytes() == b"keep me"
+
+
 def test_export_overwrites_the_shareable_bundle(tmp_path: Path, capsys: CapSys) -> None:
     """Classification pin: the shareable `.attest` is recomputable from inputs
     that all stay on local disk, so it is deliberately unguarded."""
@@ -722,6 +844,30 @@ def test_export_guard_path_matches_the_path_bundle_export_returns(
 
 
 # --- import -----------------------------------------------------------------
+
+
+def _raw_manifest_bundle(
+    tmp_path: Path, name: str, manifest_blobs: list[tuple[str, dict[str, object]]]
+) -> Path:
+    bundle_path = tmp_path / f"{name}.attest"
+    with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for member_name, blob in manifest_blobs:
+            zf.writestr(f"manifests/{member_name}.json", json.dumps(blob))
+    return bundle_path
+
+
+def _manifest_blob(issuer: str, manifest_version: object) -> dict[str, object]:
+    return {
+        "issuer": issuer,
+        "key_manifests": [
+            {
+                "issuer": issuer,
+                "manifest_version": manifest_version,
+                "keys": [],
+            }
+        ],
+        "artifact_manifests": [],
+    }
 
 
 def _export_bundle(
@@ -797,6 +943,50 @@ def test_import_refuses_a_conflicting_trust_anchor(tmp_path: Path, capsys: CapSy
         cli.main(["import", "--bundle", str(bundle_b), "--out-dir", str(out_dir), "--force"]) == 0
     )
     assert trust_file.read_text(encoding="utf-8") != pinned
+
+
+def test_import_refuses_colliding_trust_store_paths_from_one_bundle(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    bundle_path = _raw_manifest_bundle(
+        tmp_path,
+        "collision",
+        [
+            ("slash", _manifest_blob("store/example", 1)),
+            ("underscore", _manifest_blob("store_example", 1)),
+        ],
+    )
+    out_dir = tmp_path / "imported"
+    trust_path = out_dir / "trust" / "store_example.v1.json"
+    capsys.readouterr()
+
+    rc = cli.main(["import", "--bundle", str(bundle_path), "--out-dir", str(out_dir)])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "import: trust-store file" in err
+    assert str(trust_path) in err
+    assert "refusing to overwrite" in err
+    assert not trust_path.exists()
+
+
+@pytest.mark.parametrize("manifest_version", ["../escaped", True, 0])
+def test_import_rejects_invalid_manifest_version_before_building_trust_path(
+    tmp_path: Path, capsys: CapSys, manifest_version: object
+) -> None:
+    bundle_path = _raw_manifest_bundle(
+        tmp_path, "bad-version", [("manifest", _manifest_blob("store.example", manifest_version))]
+    )
+    out_dir = tmp_path / "imported"
+    capsys.readouterr()
+
+    rc = cli.main(["import", "--bundle", str(bundle_path), "--out-dir", str(out_dir)])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "import: trust-store file" in err
+    assert "manifest_version" in err
+    assert "refusing" in err
+    assert not (out_dir / "escaped.json").exists()
+    assert not (out_dir / "trust").exists()
 
 
 def _salted_bundle(

@@ -30,6 +30,7 @@ import argparse
 import base64
 import copy
 import datetime
+import errno
 import hashlib
 import json
 import os
@@ -38,6 +39,7 @@ import shutil
 import stat
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +62,7 @@ EXIT_VERIFICATION_FAILED = 1
 EXIT_USAGE_ERROR = 2
 
 _SECRET_FILE_MODE = 0o600
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _PROVENANCE_BUNDLE = "bundle"  # local trust material is unauthenticated TOFU (design §5)
 _REDACTED_SALT = "<redacted: run on the .private material to see it>"
 
@@ -107,6 +110,13 @@ class CliUsageError(Exception):
     """A usage/IO problem this CLI can explain better than the raw exception."""
 
 
+@dataclass(frozen=True)
+class _OverwritePlan:
+    existed: bool
+    stat_result: os.stat_result | None
+    require_unchanged: bool
+
+
 def _manifest_version_arg(value: str) -> int:
     try:
         parsed = int(value)
@@ -133,17 +143,55 @@ def _same_file_target(a: Path, b: Path) -> bool:
         return False
 
 
-def _ensure_overwrite_allowed(path: Path, new_text: str, *, label: str, force: bool) -> bool:
-    """write-if-absent-or-identical: return whether `path` already existed.
+def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+def _stat_write_signature(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    mtime_ns = getattr(value, "st_mtime_ns", int(value.st_mtime * 1_000_000_000))
+    ctime_ns = getattr(value, "st_ctime_ns", int(value.st_ctime * 1_000_000_000))
+    return (value.st_dev, value.st_ino, value.st_size, mtime_ns, ctime_ns)
+
+
+def _raise_symlink_refusal(path: Path, *, label: str, force: bool) -> None:
+    if force:
+        raise CliUsageError(f"{label} {path} is a symlink; refusing to overwrite it")
+    raise CliUsageError(
+        f"{label} {path} already exists and cannot be read back for comparison: symlink; "
+        "refusing to overwrite it (pass --force to replace it)"
+    )
+
+
+def _reject_unsafe_output_stat(path: Path, output_stat: os.stat_result, *, label: str) -> None:
+    if stat.S_ISDIR(output_stat.st_mode):
+        raise CliUsageError(f"{label} {path} is a directory; refusing to write over it")
+    if stat.S_ISLNK(output_stat.st_mode):
+        _raise_symlink_refusal(path, label=label, force=False)
+    if not stat.S_ISREG(output_stat.st_mode):
+        raise CliUsageError(f"{label} {path} is not a regular file; refusing to overwrite it")
+    if output_stat.st_nlink > 1:
+        raise CliUsageError(f"{label} {path} has multiple hard links; refusing to overwrite it")
+
+
+def _raise_output_changed(path: Path, *, label: str) -> None:
+    raise CliUsageError(
+        f"{label} {path} changed while writing; "
+        "refusing to overwrite it (re-run, or pass --force to replace it)"
+    )
+
+
+def _prepare_overwrite(path: Path, new_text: str, *, label: str, force: bool) -> _OverwritePlan:
+    """write-if-absent-or-identical: return the authorized overwrite plan.
 
     Applied to outputs whose loss is irrecoverable (key seeds, issuer
     manifests, issued envelopes and salts, transfer/revocation records,
     imported trust anchors and `salts.json`). Derivable outputs are left
     unguarded on purpose — see the `Overwrite-unguarded by design` comments.
 
-    - absent -> False, the path is clear;
+    - absent -> a non-existing plan, the path is clear;
     - a directory -> refused unconditionally, `--force` included;
-    - `--force` -> allowed whatever the content is;
+    - a symlink or hard link -> refused unconditionally, `--force` included;
+    - `--force` -> allowed whatever the content is on a single-link regular file;
     - byte-identical to `new_text` (UTF-8) -> allowed, and the caller rewrites
       the same bytes so `_write_secret_text`'s 0600 re-pin still happens;
     - different content, or unreadable -> CliUsageError (exit 2).
@@ -162,34 +210,64 @@ def _ensure_overwrite_allowed(path: Path, new_text: str, *, label: str, force: b
     try:
         existing_stat = os.lstat(path)
     except FileNotFoundError:
-        return False
+        return _OverwritePlan(existed=False, stat_result=None, require_unchanged=False)
     except OSError as exc:
         raise CliUsageError(
             f"{label} {path} already exists and cannot be read back for comparison: {exc}; "
             "refusing to overwrite it (pass --force to replace it)"
         ) from exc
-    if stat.S_ISDIR(existing_stat.st_mode):
-        raise CliUsageError(f"{label} {path} is a directory; refusing to write over it")
+    if stat.S_ISLNK(existing_stat.st_mode):
+        _raise_symlink_refusal(path, label=label, force=force)
+    _reject_unsafe_output_stat(path, existing_stat, label=label)
     if force:
-        return True
+        return _OverwritePlan(existed=True, stat_result=existing_stat, require_unchanged=False)
     new_bytes = new_text.encode("utf-8")
     different = CliUsageError(
         f"{label} {path} already exists with different content; "
         "refusing to overwrite it (pass --force to replace it)"
     )
-    if stat.S_ISREG(existing_stat.st_mode) and existing_stat.st_size != len(new_bytes):
-        raise different
+    fd: int | None = None
+    opened_stat: os.stat_result | None = None
+    existing: bytes | None = None
     try:
-        with path.open("rb") as handle:
-            existing = handle.read(len(new_bytes) + 1)
+        fd = os.open(path, os.O_RDONLY | _O_NOFOLLOW)
+        opened_stat = os.fstat(fd)
+        _reject_unsafe_output_stat(path, opened_stat, label=label)
+        if not _same_inode(existing_stat, opened_stat):
+            raise CliUsageError(
+                f"{label} {path} changed while checking; "
+                "refusing to overwrite it (re-run, or pass --force to replace it)"
+            )
+        if opened_stat.st_size != len(new_bytes):
+            raise different
+        existing = os.read(fd, len(new_bytes) + 1)
+    except CliUsageError:
+        raise
     except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            _raise_symlink_refusal(path, label=label, force=force)
+        if isinstance(exc, FileNotFoundError):
+            return _OverwritePlan(existed=False, stat_result=None, require_unchanged=False)
+        if isinstance(exc, IsADirectoryError):
+            raise CliUsageError(
+                f"{label} {path} is a directory; refusing to write over it"
+            ) from exc
         raise CliUsageError(
             f"{label} {path} already exists and cannot be read back for comparison: {exc}; "
             "refusing to overwrite it (pass --force to replace it)"
         ) from exc
+    finally:
+        if fd is not None:
+            os.close(fd)
+    assert existing is not None
     if existing != new_bytes:
         raise different
-    return True
+    assert opened_stat is not None
+    return _OverwritePlan(existed=True, stat_result=opened_stat, require_unchanged=True)
+
+
+def _ensure_overwrite_allowed(path: Path, new_text: str, *, label: str, force: bool) -> bool:
+    return _prepare_overwrite(path, new_text, label=label, force=force).existed
 
 
 def _path_is_present(path: Path) -> bool:
@@ -270,12 +348,27 @@ def _write_json_text(
     secret: bool = False,
     exclusive: bool = False,
     label: str = "output file",
+    overwrite_plan: _OverwritePlan | None = None,
 ) -> None:
     if secret:
-        _write_secret_text(path, text, exclusive=exclusive, label=label)
+        _write_secret_text(
+            path, text, exclusive=exclusive, label=label, overwrite_plan=overwrite_plan
+        )
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    if not exclusive and overwrite_plan is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return
+    fd = _open_text_output(
+        path,
+        exclusive=exclusive,
+        label=label,
+        mode=0o666,
+        overwrite_plan=overwrite_plan,
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        os.ftruncate(fh.fileno(), 0)
+        fh.write(text)
 
 
 def _write_json_file(path: Path, obj: Any, *, secret: bool = False) -> None:
@@ -292,42 +385,117 @@ def _write_guarded_json(
     that a refusal on the second output cannot leave the first one written.
     """
     text = _json_text(obj)
-    existed = _ensure_overwrite_allowed(path, text, label=label, force=force)
-    _write_json_text(path, text, secret=secret, exclusive=not existed, label=label)
+    overwrite_plan = _prepare_overwrite(path, text, label=label, force=force)
+    _write_json_text(
+        path,
+        text,
+        secret=secret,
+        exclusive=not overwrite_plan.existed,
+        label=label,
+        overwrite_plan=overwrite_plan,
+    )
+
+
+def _raise_appeared_while_writing(path: Path, *, label: str, exc: BaseException) -> None:
+    raise CliUsageError(
+        f"{label} {path} appeared while writing; "
+        "refusing to overwrite it (re-run, or pass --force to replace it)"
+    ) from exc
+
+
+def _check_opened_write_target(
+    path: Path,
+    opened_stat: os.stat_result,
+    *,
+    label: str,
+    overwrite_plan: _OverwritePlan | None,
+) -> None:
+    _reject_unsafe_output_stat(path, opened_stat, label=label)
+    if overwrite_plan is None or overwrite_plan.stat_result is None:
+        return
+    expected = overwrite_plan.stat_result
+    if not _same_inode(opened_stat, expected):
+        _raise_output_changed(path, label=label)
+    if (
+        overwrite_plan.require_unchanged
+        and _stat_write_signature(opened_stat) != _stat_write_signature(expected)
+    ):
+        _raise_output_changed(path, label=label)
+
+
+def _open_text_output(
+    path: Path,
+    *,
+    exclusive: bool,
+    label: str,
+    mode: int,
+    overwrite_plan: _OverwritePlan | None = None,
+) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | _O_NOFOLLOW
+    if exclusive:
+        flags |= os.O_CREAT | os.O_EXCL
+    elif overwrite_plan is None or overwrite_plan.stat_result is None:
+        flags |= os.O_CREAT
+    try:
+        fd = os.open(path, flags, mode)
+    except FileExistsError as exc:
+        _raise_appeared_while_writing(path, label=label, exc=exc)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            if exclusive:
+                _raise_appeared_while_writing(path, label=label, exc=exc)
+            _raise_symlink_refusal(path, label=label, force=True)
+        if isinstance(exc, FileNotFoundError):
+            _raise_output_changed(path, label=label)
+        if isinstance(exc, IsADirectoryError):
+            raise CliUsageError(
+                f"{label} {path} is a directory; refusing to write over it"
+            ) from exc
+        raise
+    try:
+        _check_opened_write_target(
+            path, os.fstat(fd), label=label, overwrite_plan=overwrite_plan
+        )
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
 
 
 def _write_secret_text(
-    path: Path, text: str, *, exclusive: bool = False, label: str = "output file"
+    path: Path,
+    text: str,
+    *,
+    exclusive: bool = False,
+    label: str = "output file",
+    overwrite_plan: _OverwritePlan | None = None,
 ) -> None:
     """Write a secret (seed, salt, salt-bearing envelope, salts.json) to
     `path`, created atomically with owner-only 0600 permissions.
 
     `os.open(..., O_CREAT, 0600)` sets the mode at creation time, so there is
     never the brief window `write_text(...)` + `chmod(...)` leaves where the
-    file exists world-readable at the default umask. `os.fchmod` on the
-    already-open fd then also pins the mode when `path` pre-existed with
-    looser perms (a re-run overwriting a prior file) — still race-free
-    because it operates on the fd, not the path.
+    file exists world-readable at the default umask. The fd is opened without
+    `O_TRUNC`, checked with `fstat`, and only then truncated, so a symlink,
+    hard-linked alias, or inode swap is refused before bytes are destroyed.
 
-    `exclusive=True` (used when `_ensure_overwrite_allowed` found the path
-    clear) swaps `O_TRUNC` for `O_EXCL`, so a file that appeared between the
-    guard and the write is reported instead of truncated: that closes the
-    check-then-write race on the outputs where losing the old bytes is
-    irrecoverable.
+    `exclusive=True` (used when `_prepare_overwrite` found the path clear) adds
+    `O_EXCL`, so a file that appeared between the guard and the write is
+    reported instead of truncated.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    create_flags = os.O_EXCL if exclusive else os.O_TRUNC
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | create_flags, _SECRET_FILE_MODE)
-    except FileExistsError as exc:
-        raise CliUsageError(
-            f"{label} {path} appeared while writing; "
-            "refusing to overwrite it (re-run, or pass --force to replace it)"
-        ) from exc
+    fd = _open_text_output(
+        path,
+        exclusive=exclusive,
+        label=label,
+        mode=_SECRET_FILE_MODE,
+        overwrite_plan=overwrite_plan,
+    )
     # `os.fdopen` takes ownership of `fd`, so the `with` closes it even if
     # `fchmod`/`write` raise — no manual close, no double-close.
-    with os.fdopen(fd, "w") as fh:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         os.fchmod(fh.fileno(), _SECRET_FILE_MODE)
+        os.ftruncate(fh.fileno(), 0)
         fh.write(text)
 
 
@@ -465,6 +633,16 @@ def _safe_name(value: str) -> str:
     can never escape the output directory (2026-07-13 review, finding 14)."""
     safe = value.replace("/", "_").replace("\\", "_").replace(":", "_").replace("..", "_")
     return safe or "_"
+
+
+def _trust_manifest_version_for_filename(manifest: dict[str, Any], issuer: str) -> int:
+    version = manifest.get("manifest_version")
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise CliUsageError(
+            f"import: trust-store file for issuer {issuer!r} has invalid "
+            f"manifest_version {version!r}; refusing to write it"
+        )
+    return version
 
 
 def _proof_path_in_dir(proof_dir: Path, receipt_id: str) -> Path:
@@ -703,16 +881,22 @@ def _cmd_keygen(args: argparse.Namespace) -> int:
     # Guard every protected output before the first write, so a refusal never
     # leaves half a keypair on disk. A generated seed is always new, so this
     # refuses on any re-run unless --force is passed.
-    seed_existed = _ensure_overwrite_allowed(
+    seed_plan = _prepare_overwrite(
         args.seed_out, seed_text, label="--seed-out", force=args.force
     )
-    mldsa_existed = False
+    mldsa_plan: _OverwritePlan | None = None
     if mldsa_text is not None:
-        mldsa_existed = _ensure_overwrite_allowed(
+        mldsa_plan = _prepare_overwrite(
             args.mldsa_out, mldsa_text, label="--mldsa-out", force=args.force
         )
 
-    _write_secret_text(args.seed_out, seed_text, exclusive=not seed_existed, label="--seed-out")
+    _write_secret_text(
+        args.seed_out,
+        seed_text,
+        exclusive=not seed_plan.existed,
+        label="--seed-out",
+        overwrite_plan=seed_plan,
+    )
     # Overwrite-unguarded by design: the public key is derivable from the seed
     # at any time (2026-08-24 destructive-output-paths plan).
     args.pub_out.parent.mkdir(parents=True, exist_ok=True)
@@ -724,8 +908,13 @@ def _cmd_keygen(args: argparse.Namespace) -> int:
         "pub_out": str(args.pub_out),
     }
     if mldsa_kp is not None and mldsa_text is not None:
+        assert mldsa_plan is not None
         _write_secret_text(
-            args.mldsa_out, mldsa_text, exclusive=not mldsa_existed, label="--mldsa-out"
+            args.mldsa_out,
+            mldsa_text,
+            exclusive=not mldsa_plan.existed,
+            label="--mldsa-out",
+            overwrite_plan=mldsa_plan,
         )
         report["mldsa_pub"] = keys.b64u(mldsa_kp.pub)
         report["mldsa_out"] = str(args.mldsa_out)
@@ -1018,12 +1207,12 @@ def _cmd_issue(args: argparse.Namespace) -> int:
     # refusal on the second output cannot leave the first one on disk.
     envelope_text = _json_text(envelope)
     salt_out_text = keys.b64u(salt) if args.salt_out is not None and salt is not None else None
-    envelope_existed = _ensure_overwrite_allowed(
+    envelope_plan = _prepare_overwrite(
         args.out, envelope_text, label="--out", force=args.force
     )
-    salt_out_existed = False
+    salt_out_plan: _OverwritePlan | None = None
     if salt_out_text is not None:
-        salt_out_existed = _ensure_overwrite_allowed(
+        salt_out_plan = _prepare_overwrite(
             args.salt_out, salt_out_text, label="--salt-out", force=args.force
         )
 
@@ -1031,12 +1220,18 @@ def _cmd_issue(args: argparse.Namespace) -> int:
         args.out,
         envelope_text,
         secret=salt_bearing,
-        exclusive=not envelope_existed,
+        exclusive=not envelope_plan.existed,
         label="--out",
+        overwrite_plan=envelope_plan,
     )
     if salt_out_text is not None:
+        assert salt_out_plan is not None
         _write_secret_text(
-            args.salt_out, salt_out_text, exclusive=not salt_out_existed, label="--salt-out"
+            args.salt_out,
+            salt_out_text,
+            exclusive=not salt_out_plan.existed,
+            label="--salt-out",
+            overwrite_plan=salt_out_plan,
         )
 
     _print_json({"out": str(args.out), "receipt_id": payload.get("receipt_id")})
@@ -1169,20 +1364,34 @@ def _cmd_transfer_record(args: argparse.Namespace) -> int:
         if args.revocation_out is not None
         else None
     )
-    _ensure_overwrite_allowed(args.out, record_text, label="--out", force=args.force)
+    record_plan = _prepare_overwrite(args.out, record_text, label="--out", force=args.force)
+    revocation_plan: _OverwritePlan | None = None
     if revocation_text is not None:
-        _ensure_overwrite_allowed(
+        revocation_plan = _prepare_overwrite(
             args.revocation_out, revocation_text, label="--revocation-out", force=args.force
         )
 
-    _write_json_text(args.out, record_text)
+    _write_json_text(
+        args.out,
+        record_text,
+        exclusive=not record_plan.existed,
+        label="--out",
+        overwrite_plan=record_plan,
+    )
     report = {
         "out": str(args.out),
         "receipt_id": receipt_id,
         "new_receipt_id": args.new_receipt_id,
     }
     if revocation_text is not None:
-        _write_json_text(args.revocation_out, revocation_text)
+        assert revocation_plan is not None
+        _write_json_text(
+            args.revocation_out,
+            revocation_text,
+            exclusive=not revocation_plan.existed,
+            label="--revocation-out",
+            overwrite_plan=revocation_plan,
+        )
         report["revocation_out"] = str(args.revocation_out)
     _print_json(report)
     return EXIT_OK
@@ -1878,6 +2087,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
         args.out_dir,
         args.name,
         proofs=proofs or None,
+        private_exclusive=not args.force,
     )
     _print_json({"attest": str(attest_path), "private": str(private_path)})
     return EXIT_OK
@@ -1901,26 +2111,33 @@ def _cmd_import(args: argparse.Namespace) -> int:
     # before the first write, so a bundle that conflicts on its trust anchors
     # or its salts cannot leave a half-imported directory behind. The identity
     # clause is what keeps re-importing the same bundle idempotent.
-    trust_writes: list[tuple[Path, str]] = []
+    trust_writes: list[tuple[Path, str, _OverwritePlan]] = []
+    planned_trust_paths: set[Path] = set()
     for issuer, chain in imported.trust_store.chains.items():
         for version_manifest in chain:
-            version = version_manifest.get("manifest_version", 0)
+            version = _trust_manifest_version_for_filename(version_manifest, issuer)
             trust_path = trust_dir / f"{_safe_name(issuer)}.v{version}.json"
             trust_text = _json_text(version_manifest)
-            _ensure_overwrite_allowed(
+            if trust_path in planned_trust_paths:
+                raise CliUsageError(
+                    f"import: trust-store file {trust_path} would be written more than once; "
+                    "refusing to overwrite it"
+                )
+            planned_trust_paths.add(trust_path)
+            trust_plan = _prepare_overwrite(
                 trust_path, trust_text, label="import: trust-store file", force=args.force
             )
-            trust_writes.append((trust_path, trust_text))
+            trust_writes.append((trust_path, trust_text, trust_plan))
 
     salts_path = args.out_dir / "salts.json"
     salts_text: str | None = None
-    salts_existed = False
+    salts_plan: _OverwritePlan | None = None
     if imported.salts:
         salts_payload = {rid: keys.b64u(s) for rid, s in imported.salts.items()}
         # Serialization kept exactly as before (no sort_keys): the guard must
         # compare the bytes this command actually writes.
         salts_text = json.dumps(salts_payload, indent=2)
-        salts_existed = _ensure_overwrite_allowed(
+        salts_plan = _prepare_overwrite(
             salts_path, salts_text, label="import: salts file", force=args.force
         )
 
@@ -1930,8 +2147,14 @@ def _cmd_import(args: argparse.Namespace) -> int:
         receipt_id = envelope["payload"]["receipt_id"]
         _write_json_file(receipts_dir / f"{receipt_id}.attest.json", envelope)
 
-    for trust_path, trust_text in trust_writes:
-        _write_json_text(trust_path, trust_text)
+    for trust_path, trust_text, trust_plan in trust_writes:
+        _write_json_text(
+            trust_path,
+            trust_text,
+            exclusive=not trust_plan.existed,
+            label="import: trust-store file",
+            overwrite_plan=trust_plan,
+        )
 
     if imported.artifact_manifests:
         artifacts_dir = args.out_dir / "artifact-manifests"
@@ -1952,8 +2175,13 @@ def _cmd_import(args: argparse.Namespace) -> int:
             (legal_dir / f"{digest}.txt").write_bytes(content)
 
     if salts_text is not None:
+        assert salts_plan is not None
         _write_secret_text(
-            salts_path, salts_text, exclusive=not salts_existed, label="import: salts file"
+            salts_path,
+            salts_text,
+            exclusive=not salts_plan.existed,
+            label="import: salts file",
+            overwrite_plan=salts_plan,
         )
 
     if imported.proofs:
