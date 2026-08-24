@@ -68,3 +68,57 @@ describe('initApp wiring', () => {
     expect(spy).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('the salted-envelope notice in the page', () => {
+  const SALT = 'c2FsdHktbWNzYWx0ZmFjZQ'
+  const saltedWithManifest = (): Uint8Array => {
+    const env = loadsStrict(envelope()) as JsonObject
+    return canonicalBytes({
+      ...env,
+      delivery: { issuer_manifest: manifest(), salt: SALT },
+    } as JsonObject)
+  }
+  const saltedNoManifest = (): Uint8Array => {
+    const env = loadsStrict(envelope()) as JsonObject
+    return canonicalBytes({ ...env, delivery: { salt: SALT } } as JsonObject)
+  }
+  const results = (): HTMLElement => document.getElementById('results')!
+
+  it('renders the notice above the result, not instead of it', () => {
+    app.handleBytes('receipt.attest.json', saltedWithManifest())
+    const children = Array.from(results().children)
+    expect(children[0].className).toContain('notice')
+    expect(children[0].textContent).toMatch(/never/i)
+    // The receipt is still verified and rendered underneath.
+    expect(results().querySelectorAll('article.result')).toHaveLength(1)
+  })
+
+  it('keeps the notice after a re-render from applyDisclosure', () => {
+    app.handleBytes('receipt.attest.json', saltedWithManifest())
+    ;(document.getElementById('binding-salt') as HTMLInputElement).value = SALT
+    ;(document.getElementById('binding-identifier') as HTMLInputElement).value = 'a@b.example'
+    app.applyDisclosure()
+    expect(results().querySelector('.notice')!.textContent).toMatch(/never/i)
+    expect(results().querySelectorAll('article.result')).toHaveLength(1)
+  })
+
+  it('keeps the notice across the needs-manifest handover', () => {
+    app.handleBytes('receipt.attest.json', saltedNoManifest())
+    expect(document.getElementById('manifest-zone')!.hidden).toBe(false)
+    expect(results().textContent).toMatch(/never/i)
+
+    app.handleManifestBytes(canonicalBytes(manifest()))
+    expect(document.getElementById('manifest-zone')!.hidden).toBe(true)
+    expect(results().querySelector('.notice')!.textContent).toMatch(/never/i)
+    expect(results().textContent).toContain('Receipt verifies')
+  })
+
+  it('shows no notice for a salt-free receipt', () => {
+    const env = loadsStrict(envelope()) as JsonObject
+    app.handleBytes(
+      'receipt.attest.json',
+      canonicalBytes({ ...env, delivery: { issuer_manifest: manifest() } } as JsonObject),
+    )
+    expect(results().querySelector('.notice')).toBeNull()
+  })
+})
