@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta name="description" content="What the .attest and .private.attest files in your download are, and how to check one is real.">
+  <title>What is this file? — attest</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #1a1a1a; --muted: #555; --border: #d0d0d0;
+      --warn: #9a6700; --bad: #cf222e; --accent: #0969da;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117; --fg: #e6edf3; --muted: #9da7b1; --border: #30363d;
+        --warn: #d29922; --bad: #f85149; --accent: #58a6ff;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0 auto; max-width: 640px; padding: 2rem 1.25rem 3rem;
+      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg); color: var(--fg);
+    }
+    a { color: var(--accent); }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+    h1 { font-size: 1.7rem; margin: 0 0 0.25rem; }
+    h2 { font-size: 1.2rem; margin-top: 2rem; }
+    .warning {
+      border: 1px solid var(--bad); border-left-width: 4px; border-radius: 8px;
+      padding: 0.9rem 1.1rem; margin: 1.5rem 0; background: color-mix(in srgb, var(--bad) 8%, transparent);
+    }
+    .warning strong { color: var(--bad); }
+    .cta {
+      display: inline-block; margin-top: 0.5rem; padding: 0.6rem 1.1rem;
+      border: 1px solid var(--accent); border-radius: 8px; text-decoration: none; font-weight: 600;
+    }
+    footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>What is this file?</h1>
+  <p>
+    You bought something online, and your download included one or two extra files ending in
+    <code>.attest</code> or <code>.private.attest</code>. This page explains what they are.
+  </p>
+
+  <p>
+    Each file is a small, signed <strong>receipt</strong> from the store you bought from. It
+    records what you bought, from whom, and — cryptographically signed by the seller — that the
+    purchase is real. Think of it as a digital proof of purchase that lives on your own computer
+    instead of only inside the store's database.
+  </p>
+
+  <h2>You can check it yourself, without the store</h2>
+  <p>
+    You don't need to trust this page, or the store, or take anyone's word for it. Anyone can
+    verify the receipt directly — including you, right now, in your browser, with the file never
+    leaving your machine.
+  </p>
+  <p>
+    <a class="cta" href="./">Verify a receipt →</a>
+  </p>
+
+  <div class="warning">
+    <strong>If your file is named <code>*.private.attest</code>, never send it to anyone.</strong>
+    <p style="margin-bottom:0">
+      That file is the proof that the purchase belongs to <em>you</em>. Anyone who has it can use
+      it to claim they are the buyer. Sharing it — posting it, emailing it to "support", pasting
+      it into a chat — hands your proof of ownership to whoever receives it. A real store or
+      support agent will never need this file; they can already see your order. Keep it private,
+      the same way you'd keep a receipt with your card number on it private.
+    </p>
+  </div>
+
+  <h2>What if the store is gone?</h2>
+  <p>
+    That's the whole point of this format: the receipt still works. It doesn't call home, it
+    doesn't need the store's servers to be running, and it doesn't expire when a shop closes down.
+    A verifier can check it entirely offline, months or years later, using nothing but the file
+    itself and the seller's published signing key. If a store you bought from shuts down, your
+    receipt keeps proving what you own.
+  </p>
+
+  <footer>
+    Curious about the cryptography behind this? See the
+    <a href="https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.1.md">attest specification</a>
+    and the <a href="https://github.com/bernalli/attest">project on GitHub</a>.
+  </footer>
+</body>
+</html>

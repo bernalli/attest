@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from attest_bridge import config as config_mod
 from attest_bridge.config import (
     BridgeConfig,
     DeliveryConfig,
@@ -215,6 +216,39 @@ def test_stripe_itch_delivery_tables_are_all_optional(tmp_path: Path) -> None:
     assert config.stripe is None
     assert config.itch is None
     assert config.delivery is None
+
+
+def test_info_url_defaults_to_the_canonical_page(tmp_path: Path) -> None:
+    # A merchant who never wrote an `info_url` still gets a usable link in every
+    # receipt email, instead of a bare field the loader would otherwise reject.
+    content = _VALID_TOML.replace('info_url = "https://store.example.com/what-is-this-file"\n', "")
+    path = _write(tmp_path, content)
+
+    config = load_config(path, env=_SECRET_ENV)
+
+    assert config.delivery is not None
+    assert config.delivery.info_url == config_mod._DEFAULT_INFO_URL
+
+
+def test_default_info_url_page_ships_with_the_site() -> None:
+    page = Path(__file__).parents[2] / "site/public/what-is-this.html"
+
+    assert page.exists()
+    text = page.read_text()
+
+    assert "attest" in text.lower()
+    # (1) what the file is
+    assert "receipt" in text.lower()
+    # (2) it can be checked without the store, and (2a) how — a link to the verifier
+    assert 'href="./"' in text or 'href="/"' in text
+    # (3) the .private.attest file must never be shared
+    assert ".private.attest" in text
+    assert "never" in text.lower()
+    # (4) what to do if the store is gone
+    assert "gone" in text.lower() or "no longer" in text.lower() or "closed" in text.lower()
+
+    assert config_mod._DEFAULT_INFO_URL.startswith("https://bernalli.github.io/attest/")
+    assert config_mod._DEFAULT_INFO_URL.rsplit("/", 1)[-1] == page.name
 
 
 def test_itch_requires_smtp_delivery_at_config_load(tmp_path: Path) -> None:
