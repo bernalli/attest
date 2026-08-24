@@ -373,6 +373,35 @@ def test_send_body_uses_explicit_info_url_override_when_given() -> None:
     assert "https://merchant.example.com/attest/what-is-this" not in text
 
 
+def test_send_body_names_the_private_file_and_warns_not_to_forward() -> None:
+    """The buyer must be told which of the two files is a secret, by name.
+
+    Until now the only thing standing between a buyer and handing out a
+    replayable bearer proof was a filename convention nobody explained to them.
+    The private filename is compared against the ACTUAL attachment rather than
+    re-derived here, so the body and the file can never drift apart.
+    """
+    fakes: list[_FakeSMTP] = []
+    _send(_config(), _fake_factory(fakes))
+    message = fakes[0].sent_messages[0]
+    attachments = _attachments(fakes[0])
+    private_name = attachments[1].get_filename()
+    shareable_name = attachments[0].get_filename()
+    assert private_name is not None and shareable_name is not None
+
+    body = message.get_body(preferencelist=("plain",))
+    assert body is not None
+    text = body.get_content()
+
+    assert private_name in text
+    assert shareable_name in text
+    assert "never" in text.lower()
+    assert "forward" in text.lower()
+    # The pre-existing pointers survive the rewrite.
+    assert "https://receipts.example.com/r/tok_abc123" in text
+    assert "https://merchant.example.com/attest/what-is-this" in text
+
+
 def test_send_never_puts_the_smtp_password_in_the_outgoing_message() -> None:
     # The envelope (and its embedded salt) legitimately IS the attachment —
     # that is delivery working as designed (Global Constraint 10: the buyer

@@ -204,14 +204,24 @@ def _build_message(
     message["Subject"] = f"Your receipt for {work_title}"
     message["From"] = config.from_address
     message["To"] = to_email
+    # The two attachments are named in the body because their names are the
+    # only thing that tells a buyer which one is a secret — the web verifier
+    # refuses `*.private.attest` by name, and nothing else warns them.
     message.set_content(
         "\n".join(
             [
-                f"Your receipt for {work_title} is ready.",
+                f"Your receipt for {work_title} is ready. Two files are attached.",
                 "",
-                f"Download it here: {download_url}",
+                f"{bundle_name}.attest is your receipt. It is safe to share, and it can be "
+                "checked by anyone, offline, even if this store is gone.",
                 "",
-                f"What is this file? {effective_info_url}",
+                f"{bundle_name}.private.attest is the proof that the receipt is yours. "
+                "Never forward it to anyone — not to a shop, not to support. Whoever holds "
+                "it can claim the purchase was theirs. Keep it with your own files.",
+                "",
+                f"You can also download your receipt here: {download_url}",
+                "",
+                f"What are these files? {effective_info_url}",
             ]
         )
     )
