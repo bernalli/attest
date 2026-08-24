@@ -134,19 +134,24 @@ Expected: `{"ok": true}`. Change one byte of `BODY` without re-signing and you
 must get `400 invalid signature` — that failure is the test that the trust
 boundary works, so it is worth doing once.
 
-Then verify the receipt offline. Fetched from the download link
-(`/r/<token>`), it is a single envelope, `receipt-<receipt_id>.attest`:
+Then verify the receipt offline. The download link (`/r/<token>`) is a page
+offering the two files the receipt is made of; append `?part=receipt` or
+`?part=private` to fetch either half straight from a script:
 
 ```sh
 umask 077
-chmod 600 receipt-*.attest   # the envelope carries delivery.salt, a buyer-binding secret
-attest verify receipt-*.attest --trust-dir <dir-containing-key-manifest.json>
+curl "http://127.0.0.1:8080/r/<token>?part=receipt" -o receipt.attest
+curl "http://127.0.0.1:8080/r/<token>?part=private" -o receipt.private.attest
+chmod 600 receipt.private.attest   # this half carries delivery.salt, a buyer-binding secret
+attest import --bundle receipt.attest --private receipt.private.attest --out-dir ./imported
+attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
 ```
 
 `"ok": true` closes the loop.
 
-> **If instead you configured `[delivery]`**, the same receipt arrives by
-> email as a **pair of files**, not one: `<issuer-slug>-<receipt_id>.attest`
+> **If instead you configured `[delivery]`**, the same pair arrives by
+> email as two attachments, whether you download it or receive it:
+> `<issuer-slug>-<receipt_id>.attest`
 > (shareable — the receipt with its salt removed, plus your key manifest and
 > the licence text, so anyone can verify it even after your store is gone)
 > and `<issuer-slug>-<receipt_id>.private.attest` (the buyer's own secret —
