@@ -1,15 +1,15 @@
 """Delivery: merchant SMTP send of a signed receipt, or a zero-config
 download-link fallback.
 
-What the buyer receives (spec §14.1/§14.2): the pair `attest.bundle.export`
-already produces — `<issuer-slug>-<receipt_id>.attest`, which carries the
-receipt with `delivery.salt` STRIPPED plus the issuer's key manifest and the
-licence text, and `<...>.private.attest`, which holds the salt and says so in
-its name. That naming is the only guard the web verifier has (it refuses
-`*.private.attest` by name), so the salt must never leave under any other
-filename. The temporary pair exists on disk only inside a 0700 directory that
-is removed on every exit path, and the private half is 0600 from its first
-byte inside `export`.
+What the buyer receives (spec §14.1/§14.2): the pair `pair.build_pair` builds
+— `<issuer-slug>-<receipt_id>.attest`, which carries the receipt with
+`delivery.salt` STRIPPED plus the issuer's key manifest and the licence text,
+and `<...>.private.attest`, which holds the salt and says so in its name. That
+naming is the only guard the web verifier has (it refuses `*.private.attest`
+by name), so the salt must never leave under any other filename. The mechanism
+lives in `pair.py` rather than here because every other buyer-facing surface
+(the download routes, the itch dry-run) needs the same two files; its
+docstring holds the disk-hygiene contract.
 
 Contract (bridge design, Global Constraint 9): by the time `Delivery.send` is ever
 called, `IssuingCore.process` has already issued and durably recorded the
@@ -41,33 +41,20 @@ submitted message can leak into the caller or the Ledger's
 from __future__ import annotations
 
 import json
-import re
 import smtplib
 import ssl
-import tempfile
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from email.message import EmailMessage
-from pathlib import Path
 from typing import Any
 
 from attest import bundle
 from attest_bridge.config import DeliveryConfig
 from attest_bridge.ledger import Ledger
+from attest_bridge.pair import build_pair
 
 _SMTP_SSL_PORT = 465
-# Module seam: `tempfile.TemporaryDirectory` is 0700 by stdlib contract and
-# removes itself on EVERY exit path including exceptions. Indirecting it here
-# lets a test observe the directory and its removal without patching the stdlib
-# module globally.
-_TMPDIR_FACTORY: Callable[[], Any] = tempfile.TemporaryDirectory
-# Pinned character classes for anything that becomes a filename. Raw
-# interpolation of an issuer id or receipt id into a path is the hazard the
-# spec already closes for `proofs/<ULID>` bundle members; delivery closes it
-# the same way rather than trusting the payload.
-_RECEIPT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_MAX_SLUG_CHARS = 64
 SMTP_TIMEOUT_SECONDS = 15
 MAX_DELIVERY_ATTEMPTS = 10
 DELIVERY_SWEEP_SECONDS = 300
@@ -136,57 +123,6 @@ def _safe_detail(exc: Exception) -> str:
         return _GENERIC_FAILURE
 
 
-def _issuer_slug(issuer_id: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", issuer_id.lower()).strip("-")
-    if not slug:
-        raise bundle.BundleError("issuer id reduces to an empty filename slug")
-    return slug[:_MAX_SLUG_CHARS]
-
-
-def _bundle_pair(
-    envelope: dict[str, Any], receipt_id: str, legal_texts: Mapping[str, bytes]
-) -> tuple[str, bytes, bytes]:
-    """Build the §14.1/§14.2 pair for one receipt and return it in memory.
-
-    The key manifest is read from the ENVELOPE (`delivery.issuer_manifest`),
-    not from an issuer identity: `sweep_undelivered` has none in scope, and the
-    embedded copy is the snapshot taken at issuance — byte-identical to what
-    signed this receipt, and therefore still correct after a later key
-    rotation. The bridge holds no artifact manifests, and `export` accepts the
-    empty list.
-
-    Every precondition miss raises `BundleError` so `send`'s guarded block can
-    turn it into a failed `DeliveryResult` (the receipt is already durable in
-    the Ledger; nothing is lost). The pair exists on disk only inside a 0700
-    directory that the context manager removes on every exit path — the
-    private member is 0600 from its first byte inside `export` itself.
-    """
-    payload = envelope.get("payload")
-    if not isinstance(payload, dict):
-        raise bundle.BundleError("envelope has no payload object")
-    if payload.get("receipt_id") != receipt_id:
-        raise bundle.BundleError("receipt id does not match the envelope payload")
-    if not _RECEIPT_ID_RE.match(receipt_id):
-        raise bundle.BundleError("receipt id is not safe to use in a filename")
-
-    issuer = payload.get("issuer")
-    issuer_id = issuer.get("id") if isinstance(issuer, dict) else None
-    if not isinstance(issuer_id, str) or not issuer_id:
-        raise bundle.BundleError("envelope payload has no issuer id")
-
-    delivery_block = envelope.get("delivery")
-    manifest = delivery_block.get("issuer_manifest") if isinstance(delivery_block, dict) else None
-    if not isinstance(manifest, dict):
-        raise bundle.BundleError("envelope carries no embedded issuer manifest")
-
-    name = f"{_issuer_slug(issuer_id)}-{receipt_id}"
-    with _TMPDIR_FACTORY() as workdir:
-        attest_path, private_path = bundle.export(
-            [envelope], [manifest], [], dict(legal_texts), Path(workdir), name
-        )
-        return name, attest_path.read_bytes(), private_path.read_bytes()
-
-
 def _build_message(
     *,
     config: DeliveryConfig,
@@ -219,13 +155,13 @@ def _build_message(
                 "Never forward it to anyone — not to a shop, not to support. Whoever holds "
                 "it can claim the purchase was theirs. Keep it with your own files.",
                 "",
-                "If the attachments did not arrive, you can download your receipt here:",
+                "If the attachments did not arrive, this page lets you download the "
+                "same two files:",
                 # The URL ends its own line: trailing punctuation gets swallowed
                 # into the link by many mail clients.
                 download_url,
-                f"That download is a single file holding both parts together, secret "
-                f"included: keep it as private as {bundle_name}.private.attest, and "
-                f"do not share it.",
+                f"There too, {bundle_name}.attest is the one that is safe to share, and "
+                f"{bundle_name}.private.attest is yours alone — never send it to anyone.",
                 "",
                 f"What are these files? {effective_info_url}",
             ]
@@ -302,16 +238,16 @@ class Delivery:
         # is deliberate; BaseException (KeyboardInterrupt/SystemExit) still
         # propagates.
         try:
-            bundle_name, shareable, private = _bundle_pair(envelope, receipt_id, self._legal_texts)
+            pair = build_pair(envelope, receipt_id, self._legal_texts)
             message = _build_message(
                 config=config,
                 to_email=to_email,
                 work_title=work_title,
                 download_url=download_url,
                 info_url=info_url,
-                bundle_name=bundle_name,
-                shareable=shareable,
-                private=private,
+                bundle_name=pair.name,
+                shareable=pair.shareable,
+                private=pair.private,
             )
             try:
                 smtp = self._smtp_factory(config.smtp_host, config.smtp_port, SMTP_TIMEOUT_SECONDS)

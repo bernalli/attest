@@ -10,6 +10,8 @@ import io
 import json
 import logging
 import threading
+import zipfile
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,12 +20,13 @@ from attest_bridge.config import BridgeConfig, IssuerConfig, StripeConfig
 from attest_bridge.core import IssuingCore
 from attest_bridge.delivery import Delivery
 from attest_bridge.http import BridgeDeps, make_app
-from attest_bridge.ledger import Ledger
+from attest_bridge.ledger import Ledger, StoredReceipt
 from attest_bridge.signing import IssuerIdentity
 from attest_bridge.stripe_adapter import StripeAdapter
-from conftest import DISPLAY_NAME, ISSUER, KID
+from conftest import DISPLAY_NAME, ISSUER, KID, LEGAL_TEXT_SHA256
 from test_bridge_stripe_adapter import make_session_completed_event, sign_stripe
 
+from attest import bundle, keys
 from attest import verify as verify_mod
 
 _WEBHOOK_SECRET = "whsec_test"  # noqa: S105 - test fixture, not a real secret
@@ -74,9 +77,11 @@ def frozen_now(monkeypatch: pytest.MonkeyPatch) -> int:
 
 
 @pytest.fixture
-def bridge_config(tmp_path: Any) -> BridgeConfig:
-    # Never dereferenced by http.py at request time (only IssuingCore/
-    # StripeAdapter, already built, are) — placeholder paths are fine.
+def bridge_config(tmp_path: Any, legal_texts: dict[str, bytes]) -> BridgeConfig:
+    # The PATHS are never dereferenced by http.py at request time (only
+    # IssuingCore/StripeAdapter, already built, are), so placeholders are fine
+    # — but `legal_texts` IS read on every download: the shareable half of the
+    # pair ships the licence text the receipt hashes (§14.1).
     return BridgeConfig(
         public_base_url="https://receipts.example.com",
         ledger_path=tmp_path / "unused-ledger-path.sqlite3",
@@ -92,6 +97,7 @@ def bridge_config(tmp_path: Any) -> BridgeConfig:
         stripe=StripeConfig(webhook_secret=_WEBHOOK_SECRET, api_key=None),
         itch=None,
         delivery=None,
+        legal_texts=dict(legal_texts),
     )
 
 
@@ -136,7 +142,7 @@ def _signed_webhook(deps: BridgeDeps, event: dict[str, Any]) -> tuple[str, dict[
 
 
 def test_e2e_signed_webhook_to_offline_verified_receipt(
-    deps: BridgeDeps, trust_store: verify_mod.TrustStore, frozen_now: int
+    deps: BridgeDeps, trust_store: verify_mod.TrustStore, frozen_now: int, tmp_path: Path
 ) -> None:
     event = make_session_completed_event(
         session_id="cs_e2e_1",
@@ -172,21 +178,52 @@ def test_e2e_signed_webhook_to_offline_verified_receipt(
     replay_stored = deps.ledger.get_receipt("stripe", "cs_e2e_1")
     assert replay_stored == stored
 
-    # download fallback works and round-trips the same envelope
-    s, h, dl = call_app(app, "GET", "/r/" + stored.download_token)
+    # Download fallback: the buyer gets the §14.1/§14.2 pair, and the oracle
+    # is what they can DO with it — import both halves and verify the receipt
+    # offline, binding proven from the salt that travelled in the private one.
+    # (Before V-A.3 this section pinned the stored envelope byte-for-byte,
+    # which is exactly the salt-bearing file a shareable name must not carry.)
+    s, h, share = call_app(app, "GET", "/r/" + stored.download_token, query="part=receipt")
     assert s.startswith("200")
-    # /r/ returns the stored envelope bytes VERBATIM — a reserialization
-    # regression (re-dumping with different key order/whitespace) must fail here,
-    # not merely require the reparsed JSON to match.
-    assert dl == stored.envelope_json.encode()
-    assert json.loads(dl) == json.loads(stored.envelope_json)
-    assert h["Content-Type"] == "application/json"
+    assert h["Content-Type"] == "application/zip"
     assert h["Cache-Control"] == "no-store"
-    assert h["Content-Disposition"] == f'attachment; filename="receipt-{stored.receipt_id}.attest"'
+    assert h["Content-Disposition"].endswith('.attest"')
+    assert not h["Content-Disposition"].endswith('.private.attest"')
 
-    s2, _, dl2 = call_app(app, "GET", "/stripe/receipt", query="session_id=cs_e2e_1")
+    s2, h2, private = call_app(app, "GET", "/r/" + stored.download_token, query="part=private")
     assert s2.startswith("200")
-    assert dl2 == dl
+    assert h2["Content-Disposition"].endswith('.private.attest"')
+
+    share_path = tmp_path / "buyer.attest"
+    private_path = tmp_path / "buyer.private.attest"
+    share_path.write_bytes(share)
+    private_path.write_bytes(private)
+    imported = bundle.import_bundle(share_path, private_path)
+    assert len(imported.receipts) == 1
+    receipt = imported.receipts[0]
+    assert receipt["payload"]["receipt_id"] == stored.receipt_id
+    offline = verify_mod.verify(json.dumps(receipt).encode("utf-8"), imported.trust_store)
+    assert offline.ok is True
+    bound = verify_mod.verify(
+        json.dumps(receipt).encode("utf-8"),
+        imported.trust_store,
+        disclosure=verify_mod.Disclosure(
+            identifier="buyer@example.com",
+            identifier_type="email",
+            salt=imported.salts[stored.receipt_id],
+        ),
+    )
+    assert bound.binding == "proven"
+
+    # The same pair, semantically, from the session-id surface.
+    s3, h3, share2 = call_app(
+        app, "GET", "/stripe/receipt", query="session_id=cs_e2e_1&part=receipt"
+    )
+    assert s3.startswith("200")
+    assert h3["Content-Disposition"] == h["Content-Disposition"]
+    share2_path = tmp_path / "buyer-2.attest"
+    share2_path.write_bytes(share2)
+    assert bundle.import_bundle(share2_path).receipts == imported.receipts
 
 
 # -- policy row: missing/invalid Stripe-Signature -> 400, no mark_event --
@@ -655,3 +692,254 @@ def test_stripe_webhook_returns_404_when_stripe_not_configured(
     app = make_app(deps_no_stripe)
     status, _, _ = call_app(app, "POST", "/stripe/webhook", body=b"{}")
     assert status.startswith("404")
+
+
+# -- the receipt pair on every download surface (V-A.3) --------------------
+#
+# `IssuingCore` records ONE envelope and it is always salt-bearing: it has to
+# be, the buyer needs their own salt to prove the receipt is theirs (§8). What
+# the download routes may hand out is a different question, and until V-A.3
+# they handed out that envelope verbatim under `receipt-<id>.attest` — a name
+# §14.1 reserves for the salt-FREE half. A buyer forwarding "their receipt"
+# forwarded their own bearer proof. These tests pin the pair on every surface.
+
+_DOWNLOAD_SESSION = "cs_dl_1"
+
+
+@pytest.fixture
+def issued(deps: BridgeDeps, frozen_now: int) -> StoredReceipt:
+    event = make_session_completed_event(
+        session_id=_DOWNLOAD_SESSION,
+        email="buyer@example.com",
+        metadata={"attest_product_key": "price_TEST"},
+        created=_FROZEN_NOW,
+    )
+    status, _, _ = _signed_webhook(deps, event)
+    assert status.startswith("200")
+    stored = deps.ledger.get_receipt("stripe", _DOWNLOAD_SESSION)
+    assert stored is not None
+    return stored
+
+
+def _salt_b64u(stored: StoredReceipt) -> str:
+    salt = json.loads(stored.envelope_json)["delivery"]["salt"]
+    assert isinstance(salt, str) and salt
+    return salt
+
+
+def _pair_name(stored: StoredReceipt) -> str:
+    # `merchant.example.com` slugged, per pair.build_pair's naming rule.
+    return f"merchant-example-com-{stored.receipt_id}"
+
+
+def _token_url(stored: StoredReceipt) -> str:
+    return "/r/" + stored.download_token
+
+
+def test_download_landing_names_both_halves_and_marks_the_private_one(
+    deps: BridgeDeps, issued: StoredReceipt
+) -> None:
+    app = make_app(deps)
+    status, headers, body = call_app(app, "GET", _token_url(issued))
+
+    assert status.startswith("200")
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert headers["Cache-Control"] == "no-store"
+
+    page = body.decode("utf-8")
+    name = _pair_name(issued)
+    shareable_at = page.index(f"{name}.attest")
+    private_at = page.index(f"{name}.private.attest")
+    # Shareable first, exactly as the email body orders the two attachments:
+    # the buyer meets the safe file before the secret one.
+    assert shareable_at < private_at
+    # And the warning sits AFTER the private filename — a caveat above the
+    # thing it warns about is one the reader never connects to it.
+    assert "never" in page[private_at:].lower()
+
+    assert 'href="?part=receipt"' in page
+    assert 'href="?part=private"' in page
+    # The page never echoes the capability that reached it: the token is
+    # already in the address bar, and page source gets copied around.
+    assert issued.download_token not in page
+    assert _salt_b64u(issued) not in page
+
+
+def test_download_part_receipt_is_a_salt_free_bundle(
+    deps: BridgeDeps, issued: StoredReceipt
+) -> None:
+    app = make_app(deps)
+    status, headers, body = call_app(app, "GET", _token_url(issued), query="part=receipt")
+
+    assert status.startswith("200")
+    assert headers["Content-Type"] == "application/zip"
+    assert headers["Cache-Control"] == "no-store"
+    name = _pair_name(issued)
+    assert headers["Content-Disposition"] == f'attachment; filename="{name}.attest"'
+
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        assert set(zf.namelist()) == {
+            f"receipts/{issued.receipt_id}.attest.json",
+            f"manifests/{ISSUER}.json",
+            f"legal/{LEGAL_TEXT_SHA256}.txt",
+            "README.html",
+        }
+        receipt = json.loads(zf.read(f"receipts/{issued.receipt_id}.attest.json"))
+        assert "salt" not in receipt.get("delivery", {})
+        # The embedded manifest survives the strip: that is what keeps the
+        # extracted receipt verifiable on its own.
+        assert isinstance(receipt["delivery"]["issuer_manifest"], dict)
+
+
+def test_download_part_private_carries_the_salt_under_the_private_name(
+    deps: BridgeDeps, issued: StoredReceipt
+) -> None:
+    app = make_app(deps)
+    status, headers, body = call_app(app, "GET", _token_url(issued), query="part=private")
+
+    assert status.startswith("200")
+    assert headers["Content-Type"] == "application/zip"
+    assert headers["Cache-Control"] == "no-store"
+    name = _pair_name(issued)
+    assert headers["Content-Disposition"] == f'attachment; filename="{name}.private.attest"'
+    assert headers["Content-Disposition"].endswith('.private.attest"')
+
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        assert zf.namelist() == ["salts.json"]
+        assert json.loads(zf.read("salts.json")) == {issued.receipt_id: _salt_b64u(issued)}
+
+
+@pytest.mark.parametrize("part", ["", "receipts", "PRIVATE", "salts.json", "../private"])
+def test_download_unknown_part_is_a_uniform_404(
+    deps: BridgeDeps, issued: StoredReceipt, part: str
+) -> None:
+    app = make_app(deps)
+    status, _, body = call_app(app, "GET", _token_url(issued), query=f"part={part}")
+    assert status.startswith("404")
+    assert body == b'{"error":"not found"}'
+
+
+@pytest.mark.parametrize("query", ["", "part=receipt", "part=private"])
+def test_unknown_download_token_stays_a_uniform_404_on_every_part(
+    deps: BridgeDeps, query: str
+) -> None:
+    app = make_app(deps)
+    status, _, body = call_app(app, "GET", "/r/does-not-exist-token", query=query)
+    assert status.startswith("404")
+    assert b"does-not-exist-token" not in body
+    assert body == b'{"error":"not found"}'
+
+
+def test_stripe_receipt_landing_links_via_session_id_not_download_token(
+    deps: BridgeDeps, issued: StoredReceipt
+) -> None:
+    """`/stripe/receipt` is reached with a Stripe session id, not a download
+    token. Its landing must keep using the capability the caller already
+    holds — translating one capability into another hands the visitor a
+    credential they did not arrive with."""
+    app = make_app(deps)
+    status, headers, body = call_app(
+        app, "GET", "/stripe/receipt", query=f"session_id={_DOWNLOAD_SESSION}"
+    )
+
+    assert status.startswith("200")
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    page = body.decode("utf-8")
+    assert f'href="?session_id={_DOWNLOAD_SESSION}&amp;part=receipt"' in page
+    assert f'href="?session_id={_DOWNLOAD_SESSION}&amp;part=private"' in page
+    assert issued.download_token not in page
+    assert _salt_b64u(issued) not in page
+
+
+def test_stripe_receipt_parts_serve_the_same_pair(
+    deps: BridgeDeps, issued: StoredReceipt
+) -> None:
+    app = make_app(deps)
+    name = _pair_name(issued)
+
+    _, share_headers, share_body = call_app(
+        app, "GET", "/stripe/receipt", query=f"session_id={_DOWNLOAD_SESSION}&part=receipt"
+    )
+    assert share_headers["Content-Disposition"] == f'attachment; filename="{name}.attest"'
+
+    _, priv_headers, priv_body = call_app(
+        app, "GET", "/stripe/receipt", query=f"session_id={_DOWNLOAD_SESSION}&part=private"
+    )
+    assert priv_headers["Content-Disposition"] == f'attachment; filename="{name}.private.attest"'
+
+    # Semantic equivalence with the token surface, not byte equality: zip
+    # containers carry timestamps and ordering details worth nothing here.
+    with zipfile.ZipFile(io.BytesIO(share_body)) as zf:
+        assert f"receipts/{issued.receipt_id}.attest.json" in zf.namelist()
+    with zipfile.ZipFile(io.BytesIO(priv_body)) as zf:
+        assert json.loads(zf.read("salts.json")) == {issued.receipt_id: _salt_b64u(issued)}
+
+
+@pytest.mark.parametrize("query", ["", "part=receipt", "part=private"])
+def test_download_pair_build_failure_is_a_500_never_the_salted_envelope(
+    deps: BridgeDeps, issued: StoredReceipt, query: str
+) -> None:
+    """Fail closed. The shareable half cannot be built without the licence
+    text the receipt hashes, and the only other thing this route could serve
+    is the salted envelope — which is precisely the defect. So: 500."""
+    deps.config.legal_texts.clear()
+    app = make_app(deps)
+
+    status, _, body = call_app(app, "GET", _token_url(issued), query=query)
+
+    assert status.startswith("500")
+    assert _salt_b64u(issued).encode() not in body
+    assert issued.envelope_json.encode() not in body
+    assert b"issuer_manifest" not in body
+
+
+def test_no_route_serves_salt_bytes_under_a_shareable_name(
+    deps: BridgeDeps, issued: StoredReceipt
+) -> None:
+    """The structural regression this whole task exists to close.
+
+    A byte-scan of a zip container proves nothing — members are DEFLATE
+    compressed, so a salt sitting inside one would not show up in the
+    container's bytes. Every zip response is therefore opened and each member
+    decompressed. The salt may leave ONLY under a `.private.attest` filename.
+    """
+    app = make_app(deps)
+    salt_b64u = _salt_b64u(issued)
+    needles = [salt_b64u.encode(), keys.b64u_decode(salt_b64u)]
+
+    requests = [
+        (_token_url(issued), ""),
+        (_token_url(issued), "part=receipt"),
+        (_token_url(issued), "part=private"),
+        ("/stripe/receipt", f"session_id={_DOWNLOAD_SESSION}"),
+        ("/stripe/receipt", f"session_id={_DOWNLOAD_SESSION}&part=receipt"),
+        ("/stripe/receipt", f"session_id={_DOWNLOAD_SESSION}&part=private"),
+    ]
+
+    private_responses = 0
+    shareable_responses = 0
+    for path, query in requests:
+        status, headers, body = call_app(app, "GET", path, query=query)
+        assert status.startswith("200"), (path, query, status)
+        disposition = headers.get("Content-Disposition", "")
+        if disposition.endswith('.private.attest"'):
+            private_responses += 1
+            continue
+        shareable_responses += 1
+        for needle in needles:
+            assert needle not in body, (path, query)
+        if body[:2] == b"PK":
+            with zipfile.ZipFile(io.BytesIO(body)) as zf:
+                members = zf.namelist()
+                assert members
+                for member in members:
+                    content = zf.read(member)
+                    for needle in needles:
+                        assert needle not in content, (path, query, member)
+                    if member.endswith(".json"):
+                        decoded = json.loads(content)
+                        block = decoded.get("delivery") if isinstance(decoded, dict) else None
+                        assert not (isinstance(block, dict) and "salt" in block)
+
+    assert private_responses == 2
+    assert shareable_responses == 4

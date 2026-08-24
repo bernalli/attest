@@ -37,10 +37,16 @@ export function initApp(doc: Document): AppHandle {
   const results = byId<HTMLElement>('results')
 
   let currentJobs: VerifyJob[] = []
+  let currentNotices: string[] = []
   let pendingEnvelope: { bytes: Uint8Array; fileName: string } | null = null
 
+  // Notices are prepended on every render, not written once: `renderJobs` runs
+  // again on every disclosure and on the manifest handover, and a warning that
+  // disappears the moment the reader interacts with the page is a warning that
+  // was never really there.
   function renderJobs(disclosure: Disclosure | null): void {
     results.replaceChildren(
+      ...currentNotices.map((text) => message(doc, text)),
       ...currentJobs.map((job) => renderResult(job.label, runVerify(job.envelopeBytes, job.trustStore, null, disclosure))),
     )
   }
@@ -49,15 +55,18 @@ export function initApp(doc: Document): AppHandle {
     const r = intake(fileName, bytes)
     if (r.kind === 'rejected') {
       currentJobs = []
+      currentNotices = []
       manifestZone.hidden = true
       results.replaceChildren(renderRejection(r.reason))
       return
     }
+    currentNotices = r.notices ?? []
     if (r.kind === 'needs-manifest') {
       currentJobs = []
       pendingEnvelope = { bytes: r.envelopeBytes, fileName: r.fileName }
       manifestZone.hidden = false
       results.replaceChildren(
+        ...currentNotices.map((text) => message(doc, text)),
         message(doc, 'This receipt has no issuer manifest embedded. Drop the issuer’s key-manifest JSON below (or verify a full .attest bundle instead, which carries it).'),
       )
       return
@@ -72,7 +81,10 @@ export function initApp(doc: Document): AppHandle {
     if (!pendingEnvelope) return
     const trustStore = trustStoreFromManifestBytes(bytes)
     if (!trustStore) {
-      results.replaceChildren(message(doc, 'That file is not an attest key manifest (expected JSON with "issuer" and "keys").'))
+      results.replaceChildren(
+        ...currentNotices.map((text) => message(doc, text)),
+        message(doc, 'That file is not an attest key manifest (expected JSON with "issuer" and "keys").'),
+      )
       return
     }
     currentJobs = [{ label: pendingEnvelope.fileName, envelopeBytes: pendingEnvelope.bytes, trustStore }]
@@ -87,7 +99,10 @@ export function initApp(doc: Document): AppHandle {
     try {
       salt = b64uDecode(bindingSalt.value.trim())
     } catch {
-      results.replaceChildren(message(doc, 'That salt is not valid base64url (unpadded). Copy it exactly from your .private.attest sidecar.'))
+      results.replaceChildren(
+        ...currentNotices.map((text) => message(doc, text)),
+        message(doc, 'That salt is not valid base64url (unpadded). Copy it exactly from your .private.attest sidecar.'),
+      )
       return
     }
     renderJobs({ identifier: bindingIdentifier.value.trim(), identifier_type: bindingType.value, salt })

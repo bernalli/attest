@@ -34,6 +34,12 @@ declared dependency, so this one command gives you both `attest` and
 attest keygen --hybrid --seed-out issuer.seed --pub-out issuer.pub --mldsa-out issuer.mldsa.json
 ```
 
+Re-running this exact command refuses to overwrite `issuer.seed` or
+`issuer.mldsa.json` if either already exists with different content — they
+are your issuer identity, and the CLI exits with an error naming the file
+rather than silently replacing it. Pass `--force` only if you mean to
+discard the old keypair and generate a new one.
+
 This writes three files: `issuer.seed` and `issuer.mldsa.json` are secrets
 (written 0600 — back them up somewhere encrypted, never commit them, never
 send them anywhere); `issuer.pub` is public. `--hybrid` is required for the
@@ -68,6 +74,11 @@ attest manifest init \
   --issued-at 2026-07-24T00:00:00Z \
   --out key-manifest.json
 ```
+
+Re-running this command against an existing `--out` refuses to overwrite it
+if the manifest content would differ (wrong domain, rotated key, changed
+validity window) — the CLI exits with an error naming the file. Pass
+`--force` only if you really mean to replace the published manifest.
 
 Replace `store.example.com` with your own domain — `--issuer` is your DNS
 domain, and `--kid` must start with that same domain (`attest-bridge`
@@ -277,10 +288,19 @@ receipt it just issued (the synthetic event above used session id
 
 ```sh
 umask 077
-curl "http://127.0.0.1:8080/stripe/receipt?session_id=cs_test_1" -o receipt.attest
-chmod 600 receipt.attest   # the envelope carries delivery.salt, a buyer-binding secret
-attest verify receipt.attest --trust-dir .
+curl "http://127.0.0.1:8080/stripe/receipt?session_id=cs_test_1&part=receipt" \
+  -o receipt.attest
+curl "http://127.0.0.1:8080/stripe/receipt?session_id=cs_test_1&part=private" \
+  -o receipt.private.attest
+chmod 600 receipt.private.attest   # this half carries delivery.salt, a buyer-binding secret
+attest import --bundle receipt.attest --private receipt.private.attest --out-dir ./imported
+attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
 ```
+
+Without `&part=…` that URL is a page offering both files by name; the two
+`curl`s above are the same two downloads, straight to disk. `receipt.attest`
+is the shareable half — no salt in it — and only `receipt.private.attest`
+needs guarding.
 
 `"ok": true` closes the loop entirely offline: a signed receipt, issued by
 your own bridge, verified against the manifest you published in step 2 —
@@ -325,30 +345,24 @@ https://<your-bridge-host>/stripe/receipt?session_id={CHECKOUT_SESSION_ID}
 ```
 
 Stripe substitutes `{CHECKOUT_SESSION_ID}` itself; the buyer lands on a page
-that downloads their `.attest` receipt directly, with no email step needed.
+offering the two files their receipt is made of — the shareable `.attest`
+first, then the `.private.attest` half marked as theirs alone and never to be
+sent to anyone — with no email step needed. Scripts can skip the page and
+fetch either half directly by appending `&part=receipt` or `&part=private`.
 
 ## 9. Test it
 
 Make a real test-mode purchase (Stripe test card `4242 4242 4242 4242`), let
-the webhook fire, and get the resulting receipt. Two paths give you different
-things: step 8's URL (or your own lookup against the Ledger) downloads the
-single `receipt-<receipt_id>.attest` envelope — verify it directly:
-
-```sh
-attest verify receipt.attest --trust-dir <dir-containing-key-manifest.json>
-```
-
-should print `"ok": true`. That's the whole loop: a real Stripe purchase, a
-signed receipt, verified offline with nothing but the file you just
-downloaded and the manifest you published in step 2.
-
-The email from the `[delivery]` you configured in step 3 instead attaches a
+the webhook fire, and get the resulting receipt. Both paths deliver the same
 **pair**: `<issuer-slug>-<receipt_id>.attest` (shareable — salt removed, plus
 your key manifest and the licence text, so it verifies even after your store
 is gone) and `<issuer-slug>-<receipt_id>.private.attest` (the buyer's own
 secret, carrying `delivery.salt`; the web verifier refuses a file with that
-name on sight). A buyer verifies by dragging the shareable half into the web
-verifier your `info_url` points at; from this CLI, reconstruct it first:
+name on sight). Step 8's URL offers them as two downloads on a page; the
+email from the `[delivery]` you configured in step 3 attaches both.
+
+A buyer verifies by dragging the shareable half into the web verifier your
+`info_url` points at; from this CLI, reconstruct it first:
 
 ```sh
 attest import --bundle <issuer-slug>-<receipt_id>.attest \

@@ -30,13 +30,16 @@ import argparse
 import base64
 import copy
 import datetime
+import errno
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +62,7 @@ EXIT_VERIFICATION_FAILED = 1
 EXIT_USAGE_ERROR = 2
 
 _SECRET_FILE_MODE = 0o600
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _PROVENANCE_BUNDLE = "bundle"  # local trust material is unauthenticated TOFU (design §5)
 _REDACTED_SALT = "<redacted: run on the .private material to see it>"
 
@@ -106,6 +110,13 @@ class CliUsageError(Exception):
     """A usage/IO problem this CLI can explain better than the raw exception."""
 
 
+@dataclass(frozen=True)
+class _OverwritePlan:
+    existed: bool
+    stat_result: os.stat_result | None
+    require_unchanged: bool
+
+
 def _manifest_version_arg(value: str) -> int:
     try:
         parsed = int(value)
@@ -130,6 +141,149 @@ def _same_file_target(a: Path, b: Path) -> bool:
         return a.samefile(b)
     except OSError:
         return False
+
+
+def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+def _stat_write_signature(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    mtime_ns = getattr(value, "st_mtime_ns", int(value.st_mtime * 1_000_000_000))
+    ctime_ns = getattr(value, "st_ctime_ns", int(value.st_ctime * 1_000_000_000))
+    return (value.st_dev, value.st_ino, value.st_size, mtime_ns, ctime_ns)
+
+
+def _raise_symlink_refusal(path: Path, *, label: str, force: bool) -> None:
+    if force:
+        raise CliUsageError(f"{label} {path} is a symlink; refusing to overwrite it")
+    raise CliUsageError(
+        f"{label} {path} already exists and cannot be read back for comparison: symlink; "
+        "refusing to overwrite it (pass --force to replace it)"
+    )
+
+
+def _reject_unsafe_output_stat(path: Path, output_stat: os.stat_result, *, label: str) -> None:
+    if stat.S_ISDIR(output_stat.st_mode):
+        raise CliUsageError(f"{label} {path} is a directory; refusing to write over it")
+    if stat.S_ISLNK(output_stat.st_mode):
+        _raise_symlink_refusal(path, label=label, force=False)
+    if not stat.S_ISREG(output_stat.st_mode):
+        raise CliUsageError(f"{label} {path} is not a regular file; refusing to overwrite it")
+    if output_stat.st_nlink > 1:
+        raise CliUsageError(f"{label} {path} has multiple hard links; refusing to overwrite it")
+
+
+def _raise_output_changed(path: Path, *, label: str) -> None:
+    raise CliUsageError(
+        f"{label} {path} changed while writing; "
+        "refusing to overwrite it (re-run, or pass --force to replace it)"
+    )
+
+
+def _prepare_overwrite(path: Path, new_text: str, *, label: str, force: bool) -> _OverwritePlan:
+    """write-if-absent-or-identical: return the authorized overwrite plan.
+
+    Applied to outputs whose loss is irrecoverable (key seeds, issuer
+    manifests, issued envelopes and salts, transfer/revocation records,
+    imported trust anchors and `salts.json`). Derivable outputs are left
+    unguarded on purpose — see the `Overwrite-unguarded by design` comments.
+
+    - absent -> a non-existing plan, the path is clear;
+    - a directory -> refused unconditionally, `--force` included;
+    - a symlink or hard link -> refused unconditionally, `--force` included;
+    - `--force` -> allowed whatever the content is on a single-link regular file;
+    - byte-identical to `new_text` (UTF-8) -> allowed, and the caller rewrites
+      the same bytes so `_write_secret_text`'s 0600 re-pin still happens;
+    - different content, or unreadable -> CliUsageError (exit 2).
+
+    Presence is decided by `os.lstat`, so a dangling symlink counts as present:
+    creating through it would put the file somewhere else entirely. The
+    comparison is bounded — a size mismatch on a regular file is decided by
+    stat alone, and the read that follows asks for at most one byte more than
+    the new content, so an oversized file is never slurped.
+
+    The comparison is byte-level on the serialized text, never JSON-semantic
+    equivalence: a file that means the same thing but is formatted differently
+    is refused, which is the safe direction. Every writer in this repo
+    serializes deterministically, so legitimate re-runs still compare equal.
+    """
+    try:
+        existing_stat = os.lstat(path)
+    except FileNotFoundError:
+        return _OverwritePlan(existed=False, stat_result=None, require_unchanged=False)
+    except OSError as exc:
+        raise CliUsageError(
+            f"{label} {path} already exists and cannot be read back for comparison: {exc}; "
+            "refusing to overwrite it (pass --force to replace it)"
+        ) from exc
+    if stat.S_ISLNK(existing_stat.st_mode):
+        _raise_symlink_refusal(path, label=label, force=force)
+    _reject_unsafe_output_stat(path, existing_stat, label=label)
+    if force:
+        return _OverwritePlan(existed=True, stat_result=existing_stat, require_unchanged=False)
+    new_bytes = new_text.encode("utf-8")
+    different = CliUsageError(
+        f"{label} {path} already exists with different content; "
+        "refusing to overwrite it (pass --force to replace it)"
+    )
+    fd: int | None = None
+    opened_stat: os.stat_result | None = None
+    existing: bytes | None = None
+    try:
+        fd = os.open(path, os.O_RDONLY | _O_NOFOLLOW)
+        opened_stat = os.fstat(fd)
+        _reject_unsafe_output_stat(path, opened_stat, label=label)
+        if not _same_inode(existing_stat, opened_stat):
+            raise CliUsageError(
+                f"{label} {path} changed while checking; "
+                "refusing to overwrite it (re-run, or pass --force to replace it)"
+            )
+        if opened_stat.st_size != len(new_bytes):
+            raise different
+        existing = os.read(fd, len(new_bytes) + 1)
+    except CliUsageError:
+        raise
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            _raise_symlink_refusal(path, label=label, force=force)
+        if isinstance(exc, FileNotFoundError):
+            return _OverwritePlan(existed=False, stat_result=None, require_unchanged=False)
+        if isinstance(exc, IsADirectoryError):
+            raise CliUsageError(
+                f"{label} {path} is a directory; refusing to write over it"
+            ) from exc
+        raise CliUsageError(
+            f"{label} {path} already exists and cannot be read back for comparison: {exc}; "
+            "refusing to overwrite it (pass --force to replace it)"
+        ) from exc
+    finally:
+        if fd is not None:
+            os.close(fd)
+    assert existing is not None
+    if existing != new_bytes:
+        raise different
+    assert opened_stat is not None
+    return _OverwritePlan(existed=True, stat_result=opened_stat, require_unchanged=True)
+
+
+def _ensure_overwrite_allowed(path: Path, new_text: str, *, label: str, force: bool) -> bool:
+    return _prepare_overwrite(path, new_text, label=label, force=force).existed
+
+
+def _path_is_present(path: Path) -> bool:
+    """Fail-closed presence check for a path that must not be clobbered.
+
+    `os.lstat`, so a dangling symlink counts as present; anything other than a
+    clean "not found" also counts as present, because a path we cannot inspect
+    is a path we must not overwrite.
+    """
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def _read_bounded_bytes(path: Path, *, max_bytes: int, input_name: str) -> bytes:
@@ -177,32 +331,168 @@ def _read_json(path: Path, *, max_bytes: int | None = None, input_name: str = "J
         raise CliUsageError(f"invalid JSON in {path}: {exc}") from exc
 
 
-def _write_json_file(path: Path, obj: Any, *, secret: bool = False) -> None:
-    text = json.dumps(obj, indent=2, sort_keys=True)
+def _json_text(obj: Any) -> str:
+    """The canonical on-disk serialization for every JSON file this CLI writes.
+
+    Deterministic on purpose: the overwrite guard compares the bytes it would
+    write against the bytes already on disk, so a legitimate re-run producing
+    the same object must produce the same file.
+    """
+    return json.dumps(obj, indent=2, sort_keys=True)
+
+
+def _write_json_text(
+    path: Path,
+    text: str,
+    *,
+    secret: bool = False,
+    exclusive: bool = False,
+    label: str = "output file",
+    overwrite_plan: _OverwritePlan | None = None,
+) -> None:
     if secret:
-        _write_secret_text(path, text)
+        _write_secret_text(
+            path, text, exclusive=exclusive, label=label, overwrite_plan=overwrite_plan
+        )
         return
+    if not exclusive and overwrite_plan is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return
+    fd = _open_text_output(
+        path,
+        exclusive=exclusive,
+        label=label,
+        mode=0o666,
+        overwrite_plan=overwrite_plan,
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        os.ftruncate(fh.fileno(), 0)
+        fh.write(text)
+
+
+def _write_json_file(path: Path, obj: Any, *, secret: bool = False) -> None:
+    _write_json_text(path, _json_text(obj), secret=secret)
+
+
+def _write_guarded_json(
+    path: Path, obj: Any, *, label: str, force: bool, secret: bool = False
+) -> None:
+    """Serialize once, apply the overwrite guard, then write.
+
+    For a command with a single protected output. Commands with several build
+    all their contents and run all their guards first (see `_cmd_issue`), so
+    that a refusal on the second output cannot leave the first one written.
+    """
+    text = _json_text(obj)
+    overwrite_plan = _prepare_overwrite(path, text, label=label, force=force)
+    _write_json_text(
+        path,
+        text,
+        secret=secret,
+        exclusive=not overwrite_plan.existed,
+        label=label,
+        overwrite_plan=overwrite_plan,
+    )
+
+
+def _raise_appeared_while_writing(path: Path, *, label: str, exc: BaseException) -> None:
+    raise CliUsageError(
+        f"{label} {path} appeared while writing; "
+        "refusing to overwrite it (re-run, or pass --force to replace it)"
+    ) from exc
+
+
+def _check_opened_write_target(
+    path: Path,
+    opened_stat: os.stat_result,
+    *,
+    label: str,
+    overwrite_plan: _OverwritePlan | None,
+) -> None:
+    _reject_unsafe_output_stat(path, opened_stat, label=label)
+    if overwrite_plan is None or overwrite_plan.stat_result is None:
+        return
+    expected = overwrite_plan.stat_result
+    if not _same_inode(opened_stat, expected):
+        _raise_output_changed(path, label=label)
+    if overwrite_plan.require_unchanged and _stat_write_signature(
+        opened_stat
+    ) != _stat_write_signature(expected):
+        _raise_output_changed(path, label=label)
+
+
+def _open_text_output(
+    path: Path,
+    *,
+    exclusive: bool,
+    label: str,
+    mode: int,
+    overwrite_plan: _OverwritePlan | None = None,
+) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    flags = os.O_WRONLY | _O_NOFOLLOW
+    if exclusive:
+        flags |= os.O_CREAT | os.O_EXCL
+    elif overwrite_plan is None or overwrite_plan.stat_result is None:
+        flags |= os.O_CREAT
+    try:
+        fd = os.open(path, flags, mode)
+    except FileExistsError as exc:
+        _raise_appeared_while_writing(path, label=label, exc=exc)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            if exclusive:
+                _raise_appeared_while_writing(path, label=label, exc=exc)
+            _raise_symlink_refusal(path, label=label, force=True)
+        if isinstance(exc, FileNotFoundError):
+            _raise_output_changed(path, label=label)
+        if isinstance(exc, IsADirectoryError):
+            raise CliUsageError(
+                f"{label} {path} is a directory; refusing to write over it"
+            ) from exc
+        raise
+    try:
+        _check_opened_write_target(path, os.fstat(fd), label=label, overwrite_plan=overwrite_plan)
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
 
 
-def _write_secret_text(path: Path, text: str) -> None:
+def _write_secret_text(
+    path: Path,
+    text: str,
+    *,
+    exclusive: bool = False,
+    label: str = "output file",
+    overwrite_plan: _OverwritePlan | None = None,
+) -> None:
     """Write a secret (seed, salt, salt-bearing envelope, salts.json) to
     `path`, created atomically with owner-only 0600 permissions.
 
     `os.open(..., O_CREAT, 0600)` sets the mode at creation time, so there is
     never the brief window `write_text(...)` + `chmod(...)` leaves where the
-    file exists world-readable at the default umask. `os.fchmod` on the
-    already-open fd then also pins the mode when `path` pre-existed with
-    looser perms (a re-run overwriting a prior file) — still race-free
-    because it operates on the fd, not the path.
+    file exists world-readable at the default umask. The fd is opened without
+    `O_TRUNC`, checked with `fstat`, and only then truncated, so a symlink,
+    hard-linked alias, or inode swap is refused before bytes are destroyed.
+
+    `exclusive=True` (used when `_prepare_overwrite` found the path clear) adds
+    `O_EXCL`, so a file that appeared between the guard and the write is
+    reported instead of truncated.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _SECRET_FILE_MODE)
+    fd = _open_text_output(
+        path,
+        exclusive=exclusive,
+        label=label,
+        mode=_SECRET_FILE_MODE,
+        overwrite_plan=overwrite_plan,
+    )
     # `os.fdopen` takes ownership of `fd`, so the `with` closes it even if
     # `fchmod`/`write` raise — no manual close, no double-close.
-    with os.fdopen(fd, "w") as fh:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         os.fchmod(fh.fileno(), _SECRET_FILE_MODE)
+        os.ftruncate(fh.fileno(), 0)
         fh.write(text)
 
 
@@ -340,6 +630,16 @@ def _safe_name(value: str) -> str:
     can never escape the output directory (2026-07-13 review, finding 14)."""
     safe = value.replace("/", "_").replace("\\", "_").replace(":", "_").replace("..", "_")
     return safe or "_"
+
+
+def _trust_manifest_version_for_filename(manifest: dict[str, Any], issuer: str) -> int:
+    version = manifest.get("manifest_version")
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise CliUsageError(
+            f"import: trust-store file for issuer {issuer!r} has invalid "
+            f"manifest_version {version!r}; refusing to write it"
+        )
+    return version
 
 
 def _proof_path_in_dir(proof_dir: Path, receipt_id: str) -> Path:
@@ -559,7 +859,41 @@ def _cmd_keygen(args: argparse.Namespace) -> int:
         raise CliUsageError("--mldsa-out must differ from --seed-out and --pub-out")
 
     kp = keys.generate()
-    _write_secret_text(args.seed_out, keys.b64u(kp.seed))
+    seed_text = keys.b64u(kp.seed)
+    mldsa_kp = pq.generate() if args.hybrid else None
+    mldsa_text = (
+        json.dumps(
+            {
+                "alg": pq.ML_DSA_65_ALG,
+                "sk": keys.b64u(mldsa_kp.sk),
+                "pub": keys.b64u(mldsa_kp.pub),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        if mldsa_kp is not None
+        else None
+    )
+
+    # Guard every protected output before the first write, so a refusal never
+    # leaves half a keypair on disk. A generated seed is always new, so this
+    # refuses on any re-run unless --force is passed.
+    seed_plan = _prepare_overwrite(args.seed_out, seed_text, label="--seed-out", force=args.force)
+    mldsa_plan: _OverwritePlan | None = None
+    if mldsa_text is not None:
+        mldsa_plan = _prepare_overwrite(
+            args.mldsa_out, mldsa_text, label="--mldsa-out", force=args.force
+        )
+
+    _write_secret_text(
+        args.seed_out,
+        seed_text,
+        exclusive=not seed_plan.existed,
+        label="--seed-out",
+        overwrite_plan=seed_plan,
+    )
+    # Overwrite-unguarded by design: the public key is derivable from the seed
+    # at any time (2026-08-24 destructive-output-paths plan).
     args.pub_out.parent.mkdir(parents=True, exist_ok=True)
     args.pub_out.write_text(keys.b64u(kp.pub), encoding="utf-8")
 
@@ -568,14 +902,15 @@ def _cmd_keygen(args: argparse.Namespace) -> int:
         "seed_out": str(args.seed_out),
         "pub_out": str(args.pub_out),
     }
-    if args.hybrid:
-        mldsa_kp = pq.generate()
-        mldsa_key_file = {
-            "alg": pq.ML_DSA_65_ALG,
-            "sk": keys.b64u(mldsa_kp.sk),
-            "pub": keys.b64u(mldsa_kp.pub),
-        }
-        _write_secret_text(args.mldsa_out, json.dumps(mldsa_key_file, indent=2, sort_keys=True))
+    if mldsa_kp is not None and mldsa_text is not None:
+        assert mldsa_plan is not None
+        _write_secret_text(
+            args.mldsa_out,
+            mldsa_text,
+            exclusive=not mldsa_plan.existed,
+            label="--mldsa-out",
+            overwrite_plan=mldsa_plan,
+        )
         report["mldsa_pub"] = keys.b64u(mldsa_kp.pub)
         report["mldsa_out"] = str(args.mldsa_out)
     _print_json(report)
@@ -610,7 +945,7 @@ def _cmd_manifest_init(args: argparse.Namespace) -> int:
             "built manifest does not self-verify; check that --seed and --mldsa-key are "
             "a valid matching keypair"
         )
-    _write_json_file(args.out, manifest)
+    _write_guarded_json(args.out, manifest, label="--out", force=args.force)
     _print_json({"out": str(args.out), "issuer": args.issuer, "manifest_version": 1})
     return EXIT_OK
 
@@ -722,7 +1057,7 @@ def _cmd_manifest_rotate(args: argparse.Namespace) -> int:
             "in it and the version must increment by one"
         )
 
-    _write_json_file(args.out, manifest)
+    _write_guarded_json(args.out, manifest, label="--out", force=args.force)
     _print_json(
         {
             "out": str(args.out),
@@ -796,6 +1131,9 @@ def _cmd_manifest_artifacts(args: argparse.Namespace) -> int:
             "built artifact manifest does not self-verify against --in; check that "
             "--signing-seed, --mldsa-key, issuer, signer status, and released-at match it"
         )
+    # Overwrite-unguarded by design: an artifact manifest is recomputable from
+    # its inputs and is not loggable (spec v0.2 sections 13 and 15), so an
+    # equivalent re-sign is always acceptable (2026-08-24 destructive-output-paths plan).
     _write_json_file(args.out, manifest)
     _print_json(
         {
@@ -859,9 +1197,35 @@ def _cmd_issue(args: argparse.Namespace) -> int:
     # default perms.
     delivery = envelope.get("delivery")
     salt_bearing = isinstance(delivery, dict) and "salt" in delivery
-    _write_json_file(args.out, envelope, secret=salt_bearing)
-    if args.salt_out is not None and salt is not None:
-        _write_secret_text(args.salt_out, keys.b64u(salt))
+
+    # Two-phase: build both contents, guard both paths, only then write, so a
+    # refusal on the second output cannot leave the first one on disk.
+    envelope_text = _json_text(envelope)
+    salt_out_text = keys.b64u(salt) if args.salt_out is not None and salt is not None else None
+    envelope_plan = _prepare_overwrite(args.out, envelope_text, label="--out", force=args.force)
+    salt_out_plan: _OverwritePlan | None = None
+    if salt_out_text is not None:
+        salt_out_plan = _prepare_overwrite(
+            args.salt_out, salt_out_text, label="--salt-out", force=args.force
+        )
+
+    _write_json_text(
+        args.out,
+        envelope_text,
+        secret=salt_bearing,
+        exclusive=not envelope_plan.existed,
+        label="--out",
+        overwrite_plan=envelope_plan,
+    )
+    if salt_out_text is not None:
+        assert salt_out_plan is not None
+        _write_secret_text(
+            args.salt_out,
+            salt_out_text,
+            exclusive=not salt_out_plan.existed,
+            label="--salt-out",
+            overwrite_plan=salt_out_plan,
+        )
 
     _print_json({"out": str(args.out), "receipt_id": payload.get("receipt_id")})
     return EXIT_OK
@@ -920,10 +1284,7 @@ def _cmd_transfer_record(args: argparse.Namespace) -> int:
         or _same_file_target(args.revocation_out, args.receipt)
         or _same_file_target(args.revocation_out, args.holder_authorization)
         or _same_file_target(args.revocation_out, args.out)
-        or (
-            args.mldsa_seed is not None
-            and _same_file_target(args.revocation_out, args.mldsa_seed)
-        )
+        or (args.mldsa_seed is not None and _same_file_target(args.revocation_out, args.mldsa_seed))
     ):
         # Same input-vs-output aliasing hazard as manifest init/issue (finding 18
         # policy), extended to the second transfer output.
@@ -984,17 +1345,46 @@ def _cmd_transfer_record(args: argparse.Namespace) -> int:
         signing_kp,
         args.kid,
     )
-    _write_json_file(args.out, record)
+    # Two-phase, as in `issue`: both records are built and both paths guarded
+    # before either is written.
+    record_text = _json_text(record)
+    revocation_text = (
+        _json_text(
+            revocation.build_record(
+                receipt_id, "transferred", args.transferred_at, signing_kp, args.kid
+            )
+        )
+        if args.revocation_out is not None
+        else None
+    )
+    record_plan = _prepare_overwrite(args.out, record_text, label="--out", force=args.force)
+    revocation_plan: _OverwritePlan | None = None
+    if revocation_text is not None:
+        revocation_plan = _prepare_overwrite(
+            args.revocation_out, revocation_text, label="--revocation-out", force=args.force
+        )
+
+    _write_json_text(
+        args.out,
+        record_text,
+        exclusive=not record_plan.existed,
+        label="--out",
+        overwrite_plan=record_plan,
+    )
     report = {
         "out": str(args.out),
         "receipt_id": receipt_id,
         "new_receipt_id": args.new_receipt_id,
     }
-    if args.revocation_out is not None:
-        revocation_record = revocation.build_record(
-            receipt_id, "transferred", args.transferred_at, signing_kp, args.kid
+    if revocation_text is not None:
+        assert revocation_plan is not None
+        _write_json_text(
+            args.revocation_out,
+            revocation_text,
+            exclusive=not revocation_plan.existed,
+            label="--revocation-out",
+            overwrite_plan=revocation_plan,
         )
-        _write_json_file(args.revocation_out, revocation_record)
         report["revocation_out"] = str(args.revocation_out)
     _print_json(report)
     return EXIT_OK
@@ -1610,9 +2000,13 @@ def _resolve_disclose_out(raw_out: str) -> Path:
     explicit "this is a directory" signal and created if missing; an
     already-existing directory is honored as-is; anything else is an exact
     file path (its parent directories are created by `bundle.disclose()`
-    itself).
+    itself). The named `--out` path itself is refused if it is a symlink before
+    any directory routing, including dangling symlinks and links to existing
+    directories.
     """
     out_path = Path(raw_out)
+    if out_path.is_symlink():
+        raise CliUsageError(f"disclose output {out_path} is a symlink; refusing to overwrite it")
     looks_like_directory = raw_out.endswith(("/", os.sep)) or out_path.is_dir()
     if looks_like_directory:
         out_path.mkdir(parents=True, exist_ok=True)
@@ -1661,6 +2055,32 @@ def _cmd_export(args: argparse.Namespace) -> int:
                     raise CliUsageError(f"{candidate} must contain a JSON object")
                 proofs[receipt_id] = evidence
 
+    # The private bundle carries salts.json — every buyer-binding salt in the
+    # bundle — so it is protected. It is excluded from the identity clause on
+    # purpose: a zip is not byte-reproducible even at identical logical content
+    # (timestamps, member order, deflate levels), and reopening a file of
+    # secrets just to authorize a no-op would be surface for no gain. Refusing
+    # on mere existence is the fail-closed direction; --force re-exports.
+    #
+    # The guard is layered, which is why the filename is spelled out here as
+    # well as in bundle.export: this pre-check refuses on mere existence and
+    # reports it as a CLI usage error naming the option, while bundle.export
+    # opens the same path with O_NOFOLLOW (plus O_EXCL unless --force) and an
+    # fstat that rejects a hard-linked alias, so a file that appears between
+    # the two is reported instead of truncated. The export tests pin that the
+    # two spellings agree, so a naming change fails loudly instead of silently
+    # unguarding it.
+    #
+    # Overwrite-unguarded by design: the shareable `<name>.attest` is
+    # recomputable from inputs that all remain on local disk (2026-08-24
+    # destructive-output-paths plan).
+    guarded_private_path = args.out_dir / f"{args.name}.private.attest"
+    if not args.force and _path_is_present(guarded_private_path):
+        raise CliUsageError(
+            f"--out-dir already contains {guarded_private_path}; "
+            "refusing to overwrite a .private.attest (pass --force to replace it)"
+        )
+
     attest_path, private_path = bundle.export(
         receipts,
         key_manifests,
@@ -1669,6 +2089,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
         args.out_dir,
         args.name,
         proofs=proofs or None,
+        private_exclusive=not args.force,
     )
     _print_json({"attest": str(attest_path), "private": str(private_path)})
     return EXIT_OK
@@ -1687,17 +2108,60 @@ def _cmd_import(args: argparse.Namespace) -> int:
 
     receipts_dir = args.out_dir / "receipts"
     trust_dir = args.out_dir / "trust"
+
+    # Two-phase: precompute the protected files and guard every one of them
+    # before the first write, so a bundle that conflicts on its trust anchors
+    # or its salts cannot leave a half-imported directory behind. The identity
+    # clause is what keeps re-importing the same bundle idempotent.
+    trust_writes: list[tuple[Path, str, _OverwritePlan]] = []
+    planned_trust_paths: set[Path] = set()
+    for issuer, chain in imported.trust_store.chains.items():
+        for version_manifest in chain:
+            version = _trust_manifest_version_for_filename(version_manifest, issuer)
+            trust_path = trust_dir / f"{_safe_name(issuer)}.v{version}.json"
+            trust_text = _json_text(version_manifest)
+            if trust_path in planned_trust_paths:
+                raise CliUsageError(
+                    f"import: trust-store file {trust_path} would be written more than once; "
+                    "refusing to overwrite it"
+                )
+            planned_trust_paths.add(trust_path)
+            trust_plan = _prepare_overwrite(
+                trust_path, trust_text, label="import: trust-store file", force=args.force
+            )
+            trust_writes.append((trust_path, trust_text, trust_plan))
+
+    salts_path = args.out_dir / "salts.json"
+    salts_text: str | None = None
+    salts_plan: _OverwritePlan | None = None
+    if imported.salts:
+        salts_payload = {rid: keys.b64u(s) for rid, s in imported.salts.items()}
+        # Serialization kept exactly as before (no sort_keys): the guard must
+        # compare the bytes this command actually writes.
+        salts_text = json.dumps(salts_payload, indent=2)
+        salts_plan = _prepare_overwrite(
+            salts_path, salts_text, label="import: salts file", force=args.force
+        )
+
+    # Overwrite-unguarded by design: an imported receipt is re-extractable from
+    # the bundle the holder still holds (2026-08-24 destructive-output-paths plan).
     for envelope in imported.receipts:
         receipt_id = envelope["payload"]["receipt_id"]
         _write_json_file(receipts_dir / f"{receipt_id}.attest.json", envelope)
 
-    for issuer, chain in imported.trust_store.chains.items():
-        for version_manifest in chain:
-            version = version_manifest.get("manifest_version", 0)
-            _write_json_file(trust_dir / f"{_safe_name(issuer)}.v{version}.json", version_manifest)
+    for trust_path, trust_text, trust_plan in trust_writes:
+        _write_json_text(
+            trust_path,
+            trust_text,
+            exclusive=not trust_plan.existed,
+            label="import: trust-store file",
+            overwrite_plan=trust_plan,
+        )
 
     if imported.artifact_manifests:
         artifacts_dir = args.out_dir / "artifact-manifests"
+        # Overwrite-unguarded by design: re-extractable from the bundle and not
+        # loggable, like `manifest artifacts` (2026-08-24 plan).
         for series, versions in imported.artifact_manifests.items():
             for am in versions:
                 version = am.get("version", 0)
@@ -1706,15 +2170,26 @@ def _cmd_import(args: argparse.Namespace) -> int:
     if imported.legal_texts:
         legal_dir = args.out_dir / "legal"
         legal_dir.mkdir(parents=True, exist_ok=True)
+        # Overwrite-unguarded by design: content-addressed — the filename IS the
+        # SHA-256 of the content and import_bundle validates it, so any overwrite
+        # here can only be byte-identical (2026-08-24 plan).
         for digest, content in imported.legal_texts.items():
             (legal_dir / f"{digest}.txt").write_bytes(content)
 
-    if imported.salts:
-        salts_payload = {rid: keys.b64u(s) for rid, s in imported.salts.items()}
-        _write_secret_text(args.out_dir / "salts.json", json.dumps(salts_payload, indent=2))
+    if salts_text is not None:
+        assert salts_plan is not None
+        _write_secret_text(
+            salts_path,
+            salts_text,
+            exclusive=not salts_plan.existed,
+            label="import: salts file",
+            overwrite_plan=salts_plan,
+        )
 
     if imported.proofs:
         proofs_dir = args.out_dir / "proofs"
+        # Overwrite-unguarded by design: evidence is rederivable from the log
+        # (`log prove`) or re-extractable from the bundle (2026-08-24 plan).
         for receipt_id, evidence in imported.proofs.items():
             _write_json_file(proofs_dir / f"{receipt_id}.json", evidence)
 
@@ -1799,6 +2274,19 @@ def _cmd_check_artifact(args: argparse.Namespace) -> int:
 # --- argument parser ----------------------------------------------------------------
 
 
+def _add_force_flag(parser: argparse.ArgumentParser) -> None:
+    """Add --force to a command that writes at least one protected output.
+
+    Deliberately not added to commands whose outputs are all derivable: a flag
+    there would misrepresent where the risk actually is.
+    """
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite protected output files that already exist with different content",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="attest", description="attest operator CLI (v0.1 and v0.2)"
@@ -1808,6 +2296,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("keygen", help="Generate an Ed25519 keypair")
     p.add_argument("--seed-out", required=True, type=Path, help="secret seed output path (0600)")
     p.add_argument("--pub-out", required=True, type=Path, help="public key output path")
+    _add_force_flag(p)
     p.add_argument(
         "--hybrid",
         action="store_true",
@@ -1840,6 +2329,7 @@ def build_parser() -> argparse.ArgumentParser:
         "and manifest signature hybrid",
     )
     p.add_argument("--out", required=True, type=Path)
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_manifest_init)
 
     p = manifest_sub.add_parser(
@@ -1882,6 +2372,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="ML-DSA-65 leg of the signing key; makes the manifest signature hybrid",
     )
     p.add_argument("--out", required=True, type=Path)
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_manifest_rotate)
 
     p = manifest_sub.add_parser("artifacts", help="Build and sign an artifact manifest")
@@ -1931,6 +2422,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="ML-DSA-65 key file (from `keygen --hybrid`); required with --attest-version 0.2",
     )
     p.add_argument("--out", required=True, type=Path, help="output envelope JSON path")
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_issue)
 
     p_transfer = sub.add_parser("transfer", help="Issuer-mediated transfer operations (v0.2 §17)")
@@ -1982,6 +2474,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--out", required=True, type=Path, help="output signed transfer record JSON path"
     )
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_transfer_record)
 
     p_log = sub.add_parser(
@@ -2132,12 +2625,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--out-dir", required=True, type=Path)
     p.add_argument("--name", required=True)
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_export)
 
     p = sub.add_parser("import", help="Reconstruct receipts + a trust store from a .attest bundle")
     p.add_argument("--bundle", required=True, type=Path)
     p.add_argument("--private", type=Path, default=None, help=".private.attest sibling, for salts")
     p.add_argument("--out-dir", required=True, type=Path)
+    _add_force_flag(p)
     p.set_defaults(func=_cmd_import)
 
     p = sub.add_parser("inspect", help="Pretty-print an envelope and warn on shareability issues")

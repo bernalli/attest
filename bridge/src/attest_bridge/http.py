@@ -35,6 +35,14 @@ purchase is silently lost. Every other terminal state — including a
 permanently-bad purchase (dead-lettered) — gets a 200 so Stripe stops
 retrying something that will never succeed.
 
+The receipt-download routes (`/r/<token>` and `/stripe/receipt`) serve the
+spec §14.1/§14.2 PAIR, never the stored envelope: a landing page naming both
+halves plus one `?part=receipt|private` link each, all built through
+`pair.build_pair`. The stored envelope is salt-bearing by necessity, and
+`.attest` is the name §14.1 reserves for the salt-free half — there is no code
+path here that hands it out under that name, and a pair that cannot be built
+is a 500, not a fallback.
+
 Never logged, anywhere in this module: a download token, a Stripe session id,
 a salt, a secret, or a full envelope. A Stripe session id is a receipt
 capability: it is retained in the dead-letter row for operator recovery and
@@ -51,7 +59,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 
 from attest_bridge.config import BridgeConfig
 from attest_bridge.core import IssuingCore
@@ -65,11 +73,17 @@ from attest_bridge.model import (
     UnmappedProduct,
     purchase_id_for_log,
 )
+from attest_bridge.pair import BundlePair, build_pair
 from attest_bridge.shopify_adapter import ShopifyAdapter, ShopifySignatureError
 from attest_bridge.stripe_adapter import StripeAdapter, StripeSignatureError
 
 _RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 _NOT_FOUND_BODY = b'{"error":"not found"}'
+_INTERNAL_ERROR_BODY = b'{"error":"internal error"}'
+# The two halves of the §14.1/§14.2 pair, as `?part=` values. Anything else —
+# including the empty string — is a 404, never a guess at what was meant.
+_PART_SHAREABLE = "receipt"
+_PART_PRIVATE = "private"
 _ITCH_PRODUCT_PREFIX = "itch_"
 _ITCH_CLAIM_ACCEPTED = {
     "status": "received",
@@ -125,16 +139,15 @@ def _not_found(start_response: Any) -> Iterable[bytes]:
     return [_NOT_FOUND_BODY]
 
 
-def _receipt_response(start_response: Any, stored: StoredReceipt) -> Iterable[bytes]:
-    body = stored.envelope_json.encode("utf-8")
+def _internal_error(start_response: Any) -> Iterable[bytes]:
+    # Uniform body, like every 404 here: a failure to build the pair must not
+    # describe the envelope it failed on.
     headers = [
         ("Content-Type", "application/json"),
-        ("Content-Disposition", f'attachment; filename="receipt-{stored.receipt_id}.attest"'),
-        ("Cache-Control", "no-store"),
-        ("Content-Length", str(len(body))),
+        ("Content-Length", str(len(_INTERNAL_ERROR_BODY))),
     ]
-    start_response("200 OK", headers)
-    return [body]
+    start_response("500 Internal Server Error", headers)
+    return [_INTERNAL_ERROR_BODY]
 
 
 def _read_body(environ: dict[str, Any]) -> bytes:
@@ -441,22 +454,149 @@ def _best_effort_shopify_purchase_id(order: object) -> str | None:
     return str(raw_id) if isinstance(raw_id, (int, str)) and raw_id != "" else None
 
 
-def _handle_download(deps: BridgeDeps, start_response: Any, *, token: str) -> Iterable[bytes]:
+# -- receipt downloads: the §14.1/§14.2 pair, never the salted envelope -----
+#
+# The Ledger stores ONE envelope per receipt and it is always salt-bearing: it
+# has to be, the buyer needs their own salt to prove the receipt is theirs
+# (§8). What these routes may hand out is a different question. §14.1 reserves
+# the `.attest` name for the salt-FREE half, so serving that envelope verbatim
+# under `receipt-<id>.attest` — as this module did until V-A.3 — handed every
+# buyer a bearer proof wearing the name of the file they are told to share.
+#
+# So a download surface is now a landing page naming both halves, plus one
+# `?part=` link per half. `build_pair` is the single mechanism behind all of
+# them, and there is no code path that falls back to the stored envelope: if
+# the pair cannot be built, the answer is 500.
+
+
+def _render_pair_landing(
+    start_response: Any, pair: BundlePair, hrefs: tuple[str, str]
+) -> Iterable[bytes]:
+    """The page a receipt link lands on: two named downloads, in the order the
+    email body uses (shareable first, so the buyer meets the safe file before
+    the secret one) and with the warning AFTER the private filename, where a
+    reader connects it to the thing it warns about.
+
+    `hrefs` are relative and carry only the capability the visitor already
+    arrived with — never a translation of one capability into another.
+    """
+    shareable_href, private_href = (html.escape(href, quote=True) for href in hrefs)
+    name = html.escape(pair.name)
+    body = (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<title>Your receipt</title></head><body>"
+        "<h1>Your receipt</h1>"
+        "<p>Your receipt is two files. Download both.</p>"
+        f'<p><a href="{shareable_href}" download>{name}.attest</a> is your receipt. '
+        "It is safe to share, and it can be checked by anyone, offline, even if this "
+        "store is gone.</p>"
+        f'<p><a href="{private_href}" download>{name}.private.attest</a> is the proof '
+        "that the receipt is yours. Never send it to anyone — not to a shop, not to "
+        "support. Whoever holds it can claim the purchase was theirs. Keep it with "
+        "your own files.</p>"
+        "</body></html>"
+    ).encode()
+    headers = [
+        ("Content-Type", "text/html; charset=utf-8"),
+        ("Cache-Control", "no-store"),
+        ("Content-Length", str(len(body))),
+    ]
+    start_response("200 OK", headers)
+    return [body]
+
+
+def _pair_file_response(start_response: Any, pair: BundlePair, part: str) -> Iterable[bytes]:
+    """One half of the pair, under the filename §14 gives it.
+
+    The filename is safe to interpolate unquoted: `pair.name` is a slug plus a
+    receipt id, both already forced through pinned character classes in
+    `pair.build_pair`, so it can carry neither a quote nor a newline into the
+    header.
+    """
+    private = part == _PART_PRIVATE
+    body = pair.private if private else pair.shareable
+    suffix = ".private.attest" if private else ".attest"
+    headers = [
+        ("Content-Type", "application/zip"),
+        ("Content-Disposition", f'attachment; filename="{pair.name}{suffix}"'),
+        ("Cache-Control", "no-store"),
+        ("Content-Length", str(len(body))),
+    ]
+    start_response("200 OK", headers)
+    return [body]
+
+
+def _serve_receipt_pair(
+    deps: BridgeDeps,
+    start_response: Any,
+    stored: StoredReceipt,
+    *,
+    part: str | None,
+    hrefs: tuple[str, str],
+) -> Iterable[bytes]:
+    if part is not None and part not in (_PART_SHAREABLE, _PART_PRIVATE):
+        # Uniform with an unknown token: the route never says which of the two
+        # it did not recognise.
+        return _not_found(start_response)
+    try:
+        pair = build_pair(
+            json.loads(stored.envelope_json), stored.receipt_id, deps.config.legal_texts
+        )
+    except Exception:
+        # Fail closed, deliberately broad. Whatever went wrong — a missing
+        # embedded manifest, a licence text this process cannot serve, an
+        # unwritable temp dir — the ONLY other thing this route could hand
+        # over is the salted envelope, which is the defect itself. The log
+        # line carries the receipt id and nothing else: never the token, the
+        # session id, the salt, or the envelope.
+        deps.log.exception(
+            "receipt download: cannot build the pair for receipt %s", stored.receipt_id
+        )
+        return _internal_error(start_response)
+    if part is None:
+        return _render_pair_landing(start_response, pair, hrefs)
+    return _pair_file_response(start_response, pair, part)
+
+
+def _handle_download(
+    deps: BridgeDeps, start_response: Any, *, token: str, part: str | None
+) -> Iterable[bytes]:
     stored = deps.ledger.by_download_token(token)
     if stored is None:
         return _not_found(start_response)
-    return _receipt_response(start_response, stored)
+    # Relative hrefs: the token is already in the address bar, and page source
+    # travels further than an address bar does.
+    return _serve_receipt_pair(
+        deps,
+        start_response,
+        stored,
+        part=part,
+        hrefs=(f"?part={_PART_SHAREABLE}", f"?part={_PART_PRIVATE}"),
+    )
 
 
 def _handle_stripe_receipt(
-    deps: BridgeDeps, start_response: Any, *, session_id: str | None
+    deps: BridgeDeps, start_response: Any, *, session_id: str | None, part: str | None
 ) -> Iterable[bytes]:
     if not session_id:
         return _not_found(start_response)
     stored = deps.ledger.get_receipt("stripe", session_id)
     if stored is None:
         return _not_found(start_response)
-    return _receipt_response(start_response, stored)
+    # This surface is reached with a Stripe session id, so its links keep
+    # using one: handing the visitor the download token instead would give
+    # them a credential they did not arrive with.
+    held = quote(session_id, safe="")
+    return _serve_receipt_pair(
+        deps,
+        start_response,
+        stored,
+        part=part,
+        hrefs=(
+            f"?session_id={held}&part={_PART_SHAREABLE}",
+            f"?session_id={held}&part={_PART_PRIVATE}",
+        ),
+    )
 
 
 # -- itch claim queue (OI-4) --------------------------------
@@ -595,10 +735,16 @@ def make_app(deps: BridgeDeps) -> WSGIApp:
             return _handle_shopify_webhook(deps, environ, start_response, webhook_lock)
         if method == "GET" and path.startswith("/r/"):
             token = path[len("/r/") :]
-            return _handle_download(deps, start_response, token=token)
+            params = _parse_query(environ.get("QUERY_STRING", ""))
+            return _handle_download(deps, start_response, token=token, part=params.get("part"))
         if method == "GET" and path == "/stripe/receipt":
             params = _parse_query(environ.get("QUERY_STRING", ""))
-            return _handle_stripe_receipt(deps, start_response, session_id=params.get("session_id"))
+            return _handle_stripe_receipt(
+                deps,
+                start_response,
+                session_id=params.get("session_id"),
+                part=params.get("part"),
+            )
         if method == "GET" and path == "/itch/claim":
             return _handle_itch_claim_form(deps, start_response)
         if method == "POST" and path == "/itch/claim":

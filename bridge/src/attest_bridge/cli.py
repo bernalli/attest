@@ -27,7 +27,9 @@ import json
 import logging
 import os
 import re
+import secrets
 import socketserver
+import stat
 import sys
 import tempfile
 import threading
@@ -38,7 +40,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
-from attest import issue, validate
+from attest import bundle, issue, validate
 from attest_bridge.catalog import ProductCatalog, ProductTemplate
 from attest_bridge.config import load_config
 from attest_bridge.core import IssuingCore
@@ -47,12 +49,15 @@ from attest_bridge.http import BridgeDeps, make_app
 from attest_bridge.itch_adapter import ItchAdapter, ItchPoller
 from attest_bridge.ledger import Ledger
 from attest_bridge.model import ClaimQueueFull, ConfigError
+from attest_bridge.pair import build_pair
 from attest_bridge.shopify_adapter import ShopifyAdapter
 from attest_bridge.signing import load_issuer
 from attest_bridge.stripe_adapter import StripeAdapter
 
 _RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 _RC_OK = 0
+_SHAREABLE_SUFFIX = ".attest"
+_PRIVATE_SUFFIX = ".private.attest"
 _RC_CONFIG_ERROR = 2
 _RC_INCOMPLETE = 1
 
@@ -245,52 +250,160 @@ def _guard_dry_run_out_path(out_path: Path, *, ledger_path: Path) -> Path:
     return resolved_out
 
 
-def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path) -> None:
-    """Write the receipt at mode 0600 without following a symlink at `path`.
+def _guard_dry_run_out_pair(out_path: Path, private_path: Path) -> None:
+    """Refuse output pairs whose filesystem aliases could hide the private half."""
+    if out_path.exists() and private_path.exists():
+        try:
+            same_output_file = out_path.samefile(private_path)
+        except OSError as exc:
+            raise ConfigError(
+                f"cannot compare --out {str(out_path)!r} with derived private path "
+                f"{str(private_path)!r}: {exc}"
+            ) from exc
+        if same_output_file:
+            raise ConfigError(
+                f"--out {str(out_path)!r} and derived private path {str(private_path)!r} "
+                "are the same file — refusing to write the salt-bearing private bundle "
+                "through the shareable path"
+            )
+    if private_path.exists():
+        try:
+            private_stat = private_path.stat()
+        except OSError as exc:
+            raise ConfigError(
+                f"cannot inspect derived private path {str(private_path)!r}: {exc}"
+            ) from exc
+        if stat.S_ISREG(private_stat.st_mode) and private_stat.st_nlink > 1:
+            raise ConfigError(
+                f"derived private path {str(private_path)!r} has multiple hard links — "
+                "refusing to write the salt-bearing private bundle through an aliased file"
+            )
 
-    Everything happens on the open descriptor rather than on the path, because
-    the path can change under us between the `--out` guard and this call, and
-    the order is deliberate:
-    1. open WITHOUT `O_TRUNC` — truncating first would already have destroyed
-       whatever the path turned out to be;
-    2. `fstat` against `ledger_path` — if this descriptor IS the production
-       Ledger (a hard link, a swapped path), refuse now, before anything about
-       that file is modified, its permissions included;
-    3. `fchmod` before the first byte, so an existing world-readable file is
-       never readable while it holds `delivery.salt`, the buyer-binding secret;
-    4. truncate, then write.
-    `O_NOFOLLOW` covers the symlink case at open time.
+
+def _private_dry_run_out_path(out_path: Path) -> Path:
+    """Derive the private half's path from `--out`, which names the SHAREABLE one.
+
+    `foo.attest` -> `foo.private.attest`; a `--out` with no `.attest` suffix
+    just gains one. A `--out` that ALREADY ends in `.private.attest` is
+    refused rather than quietly renamed: the suffix is the only guard the web
+    verifier has, and a run that produced `x.private.attest` (shareable) next
+    to `x.private.private.attest` (secret) would invert exactly the signal the
+    buyer is taught to read.
+    """
+    text = str(out_path)
+    if text.endswith(_PRIVATE_SUFFIX):
+        raise ConfigError(
+            f"--out {text!r} ends in {_PRIVATE_SUFFIX} — that suffix names the private half, "
+            "which this command derives on its own; pass the shareable path instead"
+        )
+    stem = text[: -len(_SHAREABLE_SUFFIX)] if text.endswith(_SHAREABLE_SUFFIX) else text
+    return Path(stem + _PRIVATE_SUFFIX)
+
+
+def _write_receipt_file_no_follow(path: Path, data: bytes) -> None:
+    """Write the receipt at mode 0600 through a fresh temp file and an atomic rename.
+
+    Predicates on the destination — is it a symlink, does it alias the other
+    half, how many hard links does it have — all photograph an instant: an
+    adversary who can write in the output directory reorganises the names
+    after the last syscall that could have checked them. So this writer never
+    writes to the destination at all:
+    1. `os.open` a `.<final-name>.<pid>.<random>.tmp` sibling with
+       `O_CREAT|O_EXCL|O_NOFOLLOW` — the inode is fresh BY CONSTRUCTION, so it
+       cannot be the Ledger, cannot be an alias of anything, and has exactly
+       one link. Same directory, so the rename below stays within a filesystem;
+    2. `fchmod` 0600 on the descriptor — `O_CREAT`'s mode argument is filtered
+       by the umask, and the bytes about to land include `delivery.salt`, the
+       buyer-binding secret, so the file must never be readable by anyone else,
+       not even for an instant;
+    3. write, flush, `fsync`, close;
+    4. `os.rename` onto the final path: rename REPLACES the directory entry
+       atomically and never writes THROUGH an existing one, so an alias planted
+       by a third party is dropped, never fed.
+    Any failure unlinks the temp file (best effort) and raises `ConfigError`.
+
+    Declared residue: nothing here — nor any other write strategy — stops an
+    adversary who can write in that directory from hard-linking the finished
+    files at rest, afterwards, under any name of their choosing. The defences
+    against that are the directory's own permissions (the setup guides call for
+    `umask 077`) and the web verifier's by-CONTENT guard, which flags a
+    salt-bearing bundle whatever name it arrives under.
     """
     no_follow = getattr(os, "O_NOFOLLOW", None)
     if no_follow is None:  # pragma: no cover - POSIX-only platforms in CI
         raise ConfigError("O_NOFOLLOW is unavailable on this platform — refusing to write")
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | no_follow, 0o600)
+        fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | no_follow, 0o600)
     except OSError as exc:
-        raise ConfigError(f"cannot write receipt to {str(path)!r}: {exc}") from exc
+        raise ConfigError(
+            f"cannot create the temporary file for receipt {str(path)!r}: {exc}"
+        ) from exc
     try:
-        opened = os.fstat(fd)
         try:
-            ledger_stat: os.stat_result | None = ledger_path.stat()
-        except OSError:
-            # No ledger yet, or it moved under us: either way this descriptor
-            # cannot be it.
-            ledger_stat = None
-        if ledger_stat is not None and (opened.st_dev, opened.st_ino) == (
-            ledger_stat.st_dev,
-            ledger_stat.st_ino,
-        ):
-            raise ConfigError(
-                f"--out {str(path)!r} is the production ledger file — refusing to write"
-            )
-        os.fchmod(fd, 0o600)
-        os.ftruncate(fd, 0)
-        handle = os.fdopen(fd, "wb")
-    except Exception:
-        os.close(fd)
+            os.fchmod(fd, 0o600)
+            handle = os.fdopen(fd, "wb")
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.rename(temp_path, path)
+    except OSError as exc:
+        _unlink_quietly(temp_path)
+        raise ConfigError(f"cannot write receipt to {str(path)!r}: {exc}") from exc
+    except BaseException:
+        _unlink_quietly(temp_path)
         raise
-    with handle:
-        handle.write(data)
+
+
+def _unlink_quietly(path: Path) -> None:
+    """Drop a half-written temp file; a failure here must not mask the real error."""
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _write_dry_run_pair_no_follow(
+    out_path: Path,
+    shareable: bytes,
+    private_path: Path,
+    private: bytes,
+) -> None:
+    """Write the shareable/private pair without leaving a newly created orphan half."""
+    out_existed = out_path.exists()
+    _write_receipt_file_no_follow(out_path, shareable)
+    try:
+        # The identity of what the rename just put there, so the cleanup below
+        # removes THIS file and not whatever took its name in the meantime.
+        out_stat = None if out_existed else os.lstat(out_path)
+    except OSError as exc:
+        raise ConfigError(
+            f"cannot inspect the shareable receipt just written {str(out_path)!r}: {exc}"
+        ) from exc
+    try:
+        _write_receipt_file_no_follow(private_path, private)
+    except Exception as exc:
+        if out_stat is not None:
+            try:
+                current: os.stat_result | None = os.lstat(out_path)
+            except OSError:
+                current = None
+            if current is not None and (current.st_dev, current.st_ino) == (
+                out_stat.st_dev,
+                out_stat.st_ino,
+            ):
+                try:
+                    out_path.unlink()
+                except OSError as cleanup_exc:
+                    raise ConfigError(
+                        f"cannot remove incomplete shareable receipt {str(out_path)!r}: "
+                        f"{cleanup_exc} (after the private write failed: {exc})"
+                    ) from exc
+        raise
 
 
 def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
@@ -640,7 +753,14 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
         catalog = ProductCatalog(config.products)
         product_key = _resolve_itch_dry_run_product(catalog, args.game_id)
         template = catalog.resolve(product_key)
-        out_path = _guard_dry_run_out_path(Path(args.out), ledger_path=config.ledger_path)
+        requested_out = Path(args.out)
+        # Both paths get the same guard: the private one is DERIVED, so it
+        # never passes under a guard on its own name, and a symlink planted
+        # there would write the salt straight through to the Ledger.
+        private_requested = _private_dry_run_out_path(requested_out)
+        out_path = _guard_dry_run_out_path(requested_out, ledger_path=config.ledger_path)
+        private_path = _guard_dry_run_out_path(private_requested, ledger_path=config.ledger_path)
+        _guard_dry_run_out_pair(out_path, private_path)
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return _RC_CONFIG_ERROR
@@ -677,11 +797,23 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
             return _RC_INCOMPLETE
 
         try:
-            _write_receipt_file_no_follow(
-                out_path,
-                stored.envelope_json.encode("utf-8"),
-                ledger_path=config.ledger_path,
+            # `config.legal_texts` is always populated (V-A.2 made
+            # `legal_text_path` mandatory), so a BundleError here is a real
+            # defect in the envelope, not a missing-config accident. Its
+            # message is a hardcoded precondition string, never payload text.
+            pair = build_pair(
+                json.loads(stored.envelope_json), stored.receipt_id, config.legal_texts
             )
+        except bundle.BundleError as exc:
+            print(f"config error: {exc}", file=sys.stderr)
+            return _RC_CONFIG_ERROR
+
+        try:
+            # Shareable first: if the second write fails, the wrapper removes
+            # a newly created shareable half. Both go through the same 0600
+            # temp-then-rename writer — stricter than the shareable half needs,
+            # which is the safe direction to be wrong in.
+            _write_dry_run_pair_no_follow(out_path, pair.shareable, private_path, pair.private)
         except ConfigError as exc:
             print(f"config error: {exc}", file=sys.stderr)
             return _RC_CONFIG_ERROR
@@ -721,11 +853,18 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
         print(f"product: {product_key} ({template.title})")
         print(f"buyer: {_DRY_RUN_BUYER_EMAIL} (signed synthetic identity)")
         print(f"claim: {status} (receipts issued: {issued})")
-        print(f"receipt: {out_path} (mode 0600 - carries the buyer-binding salt)")
+        print(f"receipt: {out_path} (mode 0600 - safe to share)")
+        print(
+            f"private: {private_path} (mode 0600 - carries the buyer-binding salt, never share it)"
+        )
         print(email_line)
         print("ledger: throwaway, deleted on exit - the production Ledger was never opened")
         print("verify offline:")
-        print(f"  attest verify {out_path} --trust-dir <dir-containing-key-manifest.json>")
+        print(f"  attest import --bundle {out_path} --private {private_path} --out-dir ./imported")
+        print(
+            f"  attest verify ./imported/receipts/{stored.receipt_id}.attest.json "
+            "--trust-dir ./imported/trust"
+        )
     return rc
 
 
