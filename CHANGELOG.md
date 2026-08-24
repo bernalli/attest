@@ -60,6 +60,34 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the 23 added since exercise v0.2 behaviour a v0.1-only verifier is required
   to reject.
 
+- `attest-bridge` email delivery now sends the spec §14.1/§14.2 bundle pair for
+  every sale, instead of a single receipt file: `<issuer-slug>-<receipt_id>.attest`
+  (shareable — salt-stripped receipt plus the issuer's key manifest and the
+  licence text, verifiable even after the store is gone) and
+  `<issuer-slug>-<receipt_id>.private.attest` (the buyer's secret, carrying the
+  buyer-binding salt; the web verifier refuses this file by name).
+
+- `[delivery] info_url` in `bridge.toml` is now optional. Left unset, every
+  receipt email links to attest's canonical "what is this file?" page
+  (`https://bernalli.github.io/attest/what-is-this.html`) instead of requiring
+  every merchant to write their own explainer.
+
+### Changed
+
+- `[products.<key>] legal_text_path` is now a **required** `bridge.toml` field:
+  the bridge reads that file and cross-checks its SHA-256 against the
+  already-declared `legal_text_sha256` at startup, refusing to start (naming
+  the offending product key) on a mismatch, a missing file, or an unreadable
+  one. `legal_text_sha256` alone was never enough — it enters every signed
+  receipt's payload, so the terms text backing it must be verified once, loudly,
+  at startup, not trusted to stay in sync. This is a breaking change to
+  `bridge.toml`, accepted because no merchant is running this bridge in
+  production yet.
+
+- `attest export`'s generated `README.html` (and therefore the bundle every
+  `attest-bridge` delivery now ships) was rewritten for a reader who has never
+  seen an attest receipt before, not just a merchant debugging one.
+
 ## [0.4.0] — 2026-07-23
 
 ### Added

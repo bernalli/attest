@@ -42,6 +42,9 @@ smtp_port = 587
 smtp_username = "receipts@example.com"
 smtp_password_env = "SMTP_PASSWORD"
 from_address = "receipts@example.com"
+# Optional; omit to fall back to attest's canonical "what is this file?" page
+# (https://bernalli.github.io/attest/what-is-this.html), the same link every
+# receipt email uses by default.
 info_url = "https://store.example.com/what-is-this-file"
 
 # One [products.<product_key>] table per SKU you sell. `<product_key>` is
@@ -55,6 +58,11 @@ publisher = "Example Publisher srl"
 artifact_series = "store.example.com/works/EXG-001"
 terms_uri = "https://store.example.com/attest/license-templates/standard-v1"
 legal_text_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+# Path to the licence text file, read and hashed at startup and checked
+# against legal_text_sha256 above — a mismatch, or a missing file, refuses to
+# start the bridge (naming this product key), never issues against guessed
+# terms.
+legal_text_path = "/etc/attest-bridge/licences/EXG-001.txt"
 # grant = "perpetual"       # default; override per-product if this SKU differs
 # revocability = "none"     # default
 # revocation_window_days = 30 # required when revocability = "refund_window"

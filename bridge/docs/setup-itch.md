@@ -78,6 +78,19 @@ shasum -a 256 license.txt | cut -d' ' -f1      # macOS/BSD
 sha256sum license.txt | cut -d' ' -f1          # Linux
 ```
 
+Point `legal_text_path` at that same `license.txt`, wherever your deploy
+target mounts it — it's the file you just hashed, not a new artifact:
+
+```toml
+legal_text_path = "/etc/attest-bridge/licences/nebula-drifters.txt"
+```
+
+The bridge reads and re-hashes this file **at startup**: it does not start
+(naming this product key) if the file is missing, unreadable, or its hash
+doesn't match `legal_text_sha256` above — the field alone was never enough,
+since the signed hash and the file on disk could otherwise drift apart
+unnoticed.
+
 `poll_interval_seconds` is how often the poller checks due claims;
 `max_attempts` is how many times a single claim retries (with exponential
 backoff) against the itch API before it's marked `exhausted` and needs a
@@ -156,14 +169,24 @@ below proves those.
 ## 5. Test it live
 
 Once the poller has run (within `poll_interval_seconds` of enqueuing), a
-matching purchase's receipt arrives by email. Save the attached receipt with
-restrictive creation permissions and verify it:
+matching purchase's receipt arrives by email — itch claims are
+delivery-only-via-email (step 2), so this is the only path here, unlike
+Stripe and Shopify's optional download link. It arrives as **two
+attachments**, not one: `<issuer-slug>-<receipt_id>.attest` (shareable — the
+receipt with its salt removed, plus your key manifest and the licence text,
+so it verifies even after your store is gone) and
+`<issuer-slug>-<receipt_id>.private.attest` (the buyer's own secret,
+carrying `delivery.salt`; the web verifier refuses a file with that name on
+sight). Save both with restrictive creation permissions. A buyer verifies by
+dragging the shareable half into the web verifier your `info_url` points at;
+from this CLI, reconstruct it first:
 
 ```sh
 umask 077
-# Save the receipt attachment received at the address submitted in the claim.
-chmod 600 receipt.attest   # the envelope carries delivery.salt, a buyer-binding secret
-attest verify receipt.attest --trust-dir <dir-containing-key-manifest.json>
+chmod 600 *.attest   # both halves arrive 0600 already; this just matches on re-save
+attest import --bundle <issuer-slug>-<receipt_id>.attest \
+  --private <issuer-slug>-<receipt_id>.private.attest --out-dir ./imported
+attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
 ```
 
 `"ok": true` closes the loop. See [setup-stripe.md](setup-stripe.md)'s
