@@ -116,7 +116,44 @@ has to confirm each one against the live itch API before anything is
 signed. A CSV row for someone who never actually bought the game simply
 never resolves (its claim keeps retrying, then exhausts).
 
-## 4. Test it
+## 4. Dry run: a verified receipt on your own machine first
+
+Unlike the Stripe and Shopify rails, itch has no webhook you can replay
+locally — so without this step your first real test would be production. Run:
+
+```sh
+attest-bridge itch-dry-run --config bridge.toml
+```
+
+This enqueues a claim for `itch-dry-run@example.invalid`, ticks a local
+poller against an in-process fake itch API, normalizes a synthetic *settled*
+purchase, signs a receipt for your real `[products.itch_<game_id>]` mapping,
+records it in a throwaway Ledger, and writes the receipt file mode `0600`.
+Your configured `ledger_path` is never opened, and the fake API exists only
+inside this command — no config key or environment variable can point the
+`serve` poller at it.
+
+The signed buyer identity is always `itch-dry-run@example.invalid`, and it is
+not configurable: `--email` is only an SMTP recipient, and only together with
+`--send-email`:
+
+```sh
+attest-bridge itch-dry-run --config bridge.toml --send-email --email you@your-domain.example
+```
+
+Verify the receipt offline:
+
+```sh
+attest verify itch-dry-run-receipt.attest --trust-dir <dir-containing-key-manifest.json>
+```
+
+What this proves: your catalog mapping, key loading, signing, verifier
+compatibility, claim draining, and — with `--send-email` — your SMTP
+transport. What it cannot prove: that your real `ITCH_API_KEY` is accepted by
+the live API, or that it can see real buyer purchases. Only the live test
+below proves those.
+
+## 5. Test it live
 
 Once the poller has run (within `poll_interval_seconds` of enqueuing), a
 matching purchase's receipt arrives by email. Save the attached receipt with
