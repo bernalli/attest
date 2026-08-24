@@ -114,6 +114,12 @@ Edit it:
   **Price ID** (Dashboard → Product catalog → your product → the price →
   looks like `price_1Pxy...`). A purchase for a price with no matching table
   is refused, never issued with guessed terms — this is deliberate.
+  Alongside `legal_text_sha256`, each product table also needs
+  `legal_text_path`: a path to the licence text file that hash was taken
+  from. Read and re-hashed **at startup**, a mismatch (or a missing,
+  unreadable file) means the bridge does not start, naming the offending
+  product key — the hash alone was never enough, since the signed digest and
+  the terms text on disk could otherwise drift apart unnoticed.
 - A Checkout Session must contain exactly one purchasable line item. If the
   bridge has an API key, it fetches line items and rejects more than one even
   when `attest_product_key` metadata supplies the product mapping. Without an
@@ -324,9 +330,9 @@ that downloads their `.attest` receipt directly, with no email step needed.
 ## 9. Test it
 
 Make a real test-mode purchase (Stripe test card `4242 4242 4242 4242`), let
-the webhook fire, and download the resulting receipt (via step 8's URL, the
-email from the `[delivery]` you configured in step 3, or your own lookup
-against the Ledger). Then:
+the webhook fire, and get the resulting receipt. Two paths give you different
+things: step 8's URL (or your own lookup against the Ledger) downloads the
+single `receipt-<receipt_id>.attest` envelope — verify it directly:
 
 ```sh
 attest verify receipt.attest --trust-dir <dir-containing-key-manifest.json>
@@ -335,6 +341,20 @@ attest verify receipt.attest --trust-dir <dir-containing-key-manifest.json>
 should print `"ok": true`. That's the whole loop: a real Stripe purchase, a
 signed receipt, verified offline with nothing but the file you just
 downloaded and the manifest you published in step 2.
+
+The email from the `[delivery]` you configured in step 3 instead attaches a
+**pair**: `<issuer-slug>-<receipt_id>.attest` (shareable — salt removed, plus
+your key manifest and the licence text, so it verifies even after your store
+is gone) and `<issuer-slug>-<receipt_id>.private.attest` (the buyer's own
+secret, carrying `delivery.salt`; the web verifier refuses a file with that
+name on sight). A buyer verifies by dragging the shareable half into the web
+verifier your `info_url` points at; from this CLI, reconstruct it first:
+
+```sh
+attest import --bundle <issuer-slug>-<receipt_id>.attest \
+  --private <issuer-slug>-<receipt_id>.private.attest --out-dir ./imported
+attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
+```
 
 ---
 

@@ -76,6 +76,22 @@ shasum -a 256 license.txt | cut -d' ' -f1      # macOS/BSD
 sha256sum license.txt | cut -d' ' -f1          # Linux
 ```
 
+You already have `license.txt` open to hash it — point `legal_text_path` at
+that same file, wherever your deploy target mounts it:
+
+```toml
+legal_text_path = "/etc/attest-bridge/licences/the-long-dusk.txt"
+```
+
+The bridge reads this file and re-hashes it **at startup**: it does not start
+(naming this product key) if the file is missing, unreadable, or its hash
+doesn't match `legal_text_sha256` above — the config field alone was never
+enough, because the signed hash and the actual terms text could silently
+drift apart.
+This isn't an extra artifact to produce: it's the same `license.txt` you just
+hashed by hand, so the file the bridge ships to buyers is provably the one
+that hash was taken from.
+
 A purchase whose variant has no matching table is refused
 (`UnmappedProduct`) and dead-lettered — never issued with guessed terms.
 
@@ -118,16 +134,32 @@ Expected: `{"ok": true}`. Change one byte of `BODY` without re-signing and you
 must get `400 invalid signature` — that failure is the test that the trust
 boundary works, so it is worth doing once.
 
-Then verify the receipt offline:
+Then verify the receipt offline. Fetched from the download link
+(`/r/<token>`), it is a single envelope, `receipt-<receipt_id>.attest`:
 
 ```sh
 umask 077
-# Save the receipt from your delivery mailbox, or fetch it from the download link.
-chmod 600 receipt.attest   # the envelope carries delivery.salt, a buyer-binding secret
-attest verify receipt.attest --trust-dir <dir-containing-key-manifest.json>
+chmod 600 receipt-*.attest   # the envelope carries delivery.salt, a buyer-binding secret
+attest verify receipt-*.attest --trust-dir <dir-containing-key-manifest.json>
 ```
 
 `"ok": true` closes the loop.
+
+> **If instead you configured `[delivery]`**, the same receipt arrives by
+> email as a **pair of files**, not one: `<issuer-slug>-<receipt_id>.attest`
+> (shareable — the receipt with its salt removed, plus your key manifest and
+> the licence text, so anyone can verify it even after your store is gone)
+> and `<issuer-slug>-<receipt_id>.private.attest` (the buyer's own secret —
+> it carries `delivery.salt`, the buyer-binding value, and the web verifier
+> refuses a file with that name on sight). A buyer verifies by dragging the
+> shareable half into the web verifier your `info_url` points at; from this
+> CLI, reconstruct it first:
+>
+> ```sh
+> attest import --bundle <issuer-slug>-<receipt_id>.attest \
+>   --private <issuer-slug>-<receipt_id>.private.attest --out-dir ./imported
+> attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
+> ```
 
 You can also use Shopify's **Send test notification** button on the webhook you
 created. It posts a sample order that will not match your catalogue, so expect a

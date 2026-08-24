@@ -1233,3 +1233,34 @@ def test_cli_docstring_names_itch_dry_run_as_throwaway_ledger_command() -> None:
     assert "itch-dry-run" in doc
     assert "throwaway Ledger" in doc
     assert "does NOT use `_build_deps`" in doc
+
+
+# -- setup guides: legal_text_path and the §14.1/§14.2 bundle pair ---------
+
+
+@pytest.mark.parametrize("guide_name", ["setup-stripe.md", "setup-itch.md", "setup-shopify.md"])
+def test_setup_guides_document_legal_text_path_and_bundle_delivery(guide_name: str) -> None:
+    text = (Path(__file__).parents[1] / "docs" / guide_name).read_text(encoding="utf-8")
+
+    # The config field a merchant now has to set, and the fail-closed
+    # consequence of leaving it out.
+    assert "legal_text_path" in text
+    assert "legal_text_sha256" in text
+    lowered = text.lower()
+    assert "won't start" in lowered or "does not start" in lowered or "never starts" in lowered
+
+    # The two-attachment bundle pair, and which one is the buyer's secret.
+    assert ".private.attest" in text
+    assert "shareable" in lowered or "share" in lowered
+    assert "secret" in lowered
+
+
+def test_example_config_declares_legal_text_path() -> None:
+    text = (Path(__file__).parents[1] / "examples" / "bridge.toml").read_text(encoding="utf-8")
+
+    products_section = text[text.index("[products.") :]
+    assert "legal_text_path" in products_section
+
+    delivery_section = text[text.index("[delivery]") : text.index("[products.")]
+    assert "info_url" in delivery_section
+    assert "optional" in delivery_section.lower()
