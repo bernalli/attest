@@ -34,6 +34,12 @@ declared dependency, so this one command gives you both `attest` and
 attest keygen --hybrid --seed-out issuer.seed --pub-out issuer.pub --mldsa-out issuer.mldsa.json
 ```
 
+Re-running this exact command refuses to overwrite `issuer.seed` or
+`issuer.mldsa.json` if either already exists with different content — they
+are your issuer identity, and the CLI exits with an error naming the file
+rather than silently replacing it. Pass `--force` only if you mean to
+discard the old keypair and generate a new one.
+
 This writes three files: `issuer.seed` and `issuer.mldsa.json` are secrets
 (written 0600 — back them up somewhere encrypted, never commit them, never
 send them anywhere); `issuer.pub` is public. `--hybrid` is required for the
@@ -68,6 +74,11 @@ attest manifest init \
   --issued-at 2026-07-24T00:00:00Z \
   --out key-manifest.json
 ```
+
+Re-running this command against an existing `--out` refuses to overwrite it
+if the manifest content would differ (wrong domain, rotated key, changed
+validity window) — the CLI exits with an error naming the file. Pass
+`--force` only if you really mean to replace the published manifest.
 
 Replace `store.example.com` with your own domain — `--issuer` is your DNS
 domain, and `--kid` must start with that same domain (`attest-bridge`

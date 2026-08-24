@@ -166,6 +166,11 @@ attest import --bundle itch-dry-run-receipt.attest \
 attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
 ```
 
+Re-running `attest import` into the same `./imported` is idempotent as long
+as you import this same dry-run bundle again; importing a *different*
+bundle into that directory refuses if it would change the trust store or
+`salts.json` already pinned there (pass `--force` to replace them).
+
 What this proves: your catalog mapping, key loading, signing, verifier
 compatibility, claim draining, and — with `--send-email` — your SMTP
 transport. What it cannot prove: that your real `ITCH_API_KEY` is accepted by
@@ -194,6 +199,10 @@ attest import --bundle <issuer-slug>-<receipt_id>.attest \
   --private <issuer-slug>-<receipt_id>.private.attest --out-dir ./imported
 attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
 ```
+
+Re-running `attest import` on the same bundle pair is idempotent; importing
+a *different* bundle into the same `--out-dir` refuses if it would change
+your pinned trust store or `salts.json` (pass `--force` to replace them).
 
 `"ok": true` closes the loop. See [setup-stripe.md](setup-stripe.md)'s
 notice boxes (salt tradeoff, the Ledger database is a secret, Stage 2 is

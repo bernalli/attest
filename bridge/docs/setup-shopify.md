@@ -147,6 +147,10 @@ attest import --bundle receipt.attest --private receipt.private.attest --out-dir
 attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
 ```
 
+Re-running `attest import` on the same bundle pair is idempotent; importing
+a *different* bundle into the same `--out-dir` refuses if it would change
+your pinned trust store or `salts.json` (pass `--force` to replace them).
+
 `"ok": true` closes the loop.
 
 > **If instead you configured `[delivery]`**, the same pair arrives by
@@ -165,6 +169,11 @@ attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./importe
 >   --private <issuer-slug>-<receipt_id>.private.attest --out-dir ./imported
 > attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./imported/trust
 > ```
+>
+> Re-running `attest import` on the same bundle pair is idempotent;
+> importing a *different* bundle into the same `--out-dir` refuses if it
+> would change your pinned trust store or `salts.json` (pass `--force` to
+> replace them).
 
 You can also use Shopify's **Send test notification** button on the webhook you
 created. It posts a sample order that will not match your catalogue, so expect a
