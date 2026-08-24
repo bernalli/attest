@@ -35,6 +35,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -132,6 +133,65 @@ def _same_file_target(a: Path, b: Path) -> bool:
         return False
 
 
+def _ensure_overwrite_allowed(path: Path, new_text: str, *, label: str, force: bool) -> bool:
+    """write-if-absent-or-identical: return whether `path` already existed.
+
+    Applied to outputs whose loss is irrecoverable (key seeds, issuer
+    manifests, issued envelopes and salts, transfer/revocation records,
+    imported trust anchors and `salts.json`). Derivable outputs are left
+    unguarded on purpose — see the `Overwrite-unguarded by design` comments.
+
+    - absent -> False, the path is clear;
+    - a directory -> refused unconditionally, `--force` included;
+    - `--force` -> allowed whatever the content is;
+    - byte-identical to `new_text` (UTF-8) -> allowed, and the caller rewrites
+      the same bytes so `_write_secret_text`'s 0600 re-pin still happens;
+    - different content, or unreadable -> CliUsageError (exit 2).
+
+    Presence is decided by `os.lstat`, so a dangling symlink counts as present:
+    creating through it would put the file somewhere else entirely. The
+    comparison is bounded — a size mismatch on a regular file is decided by
+    stat alone, and the read that follows asks for at most one byte more than
+    the new content, so an oversized file is never slurped.
+
+    The comparison is byte-level on the serialized text, never JSON-semantic
+    equivalence: a file that means the same thing but is formatted differently
+    is refused, which is the safe direction. Every writer in this repo
+    serializes deterministically, so legitimate re-runs still compare equal.
+    """
+    try:
+        existing_stat = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise CliUsageError(
+            f"{label} {path} already exists and cannot be read back for comparison: {exc}; "
+            "refusing to overwrite it (pass --force to replace it)"
+        ) from exc
+    if stat.S_ISDIR(existing_stat.st_mode):
+        raise CliUsageError(f"{label} {path} is a directory; refusing to write over it")
+    if force:
+        return True
+    new_bytes = new_text.encode("utf-8")
+    different = CliUsageError(
+        f"{label} {path} already exists with different content; "
+        "refusing to overwrite it (pass --force to replace it)"
+    )
+    if stat.S_ISREG(existing_stat.st_mode) and existing_stat.st_size != len(new_bytes):
+        raise different
+    try:
+        with path.open("rb") as handle:
+            existing = handle.read(len(new_bytes) + 1)
+    except OSError as exc:
+        raise CliUsageError(
+            f"{label} {path} already exists and cannot be read back for comparison: {exc}; "
+            "refusing to overwrite it (pass --force to replace it)"
+        ) from exc
+    if existing != new_bytes:
+        raise different
+    return True
+
+
 def _read_bounded_bytes(path: Path, *, max_bytes: int, input_name: str) -> bytes:
     """Read at most `max_bytes` from an untrusted CLI file.
 
@@ -186,7 +246,9 @@ def _write_json_file(path: Path, obj: Any, *, secret: bool = False) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _write_secret_text(path: Path, text: str) -> None:
+def _write_secret_text(
+    path: Path, text: str, *, exclusive: bool = False, label: str = "output file"
+) -> None:
     """Write a secret (seed, salt, salt-bearing envelope, salts.json) to
     `path`, created atomically with owner-only 0600 permissions.
 
@@ -196,9 +258,22 @@ def _write_secret_text(path: Path, text: str) -> None:
     already-open fd then also pins the mode when `path` pre-existed with
     looser perms (a re-run overwriting a prior file) — still race-free
     because it operates on the fd, not the path.
+
+    `exclusive=True` (used when `_ensure_overwrite_allowed` found the path
+    clear) swaps `O_TRUNC` for `O_EXCL`, so a file that appeared between the
+    guard and the write is reported instead of truncated: that closes the
+    check-then-write race on the outputs where losing the old bytes is
+    irrecoverable.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _SECRET_FILE_MODE)
+    create_flags = os.O_EXCL if exclusive else os.O_TRUNC
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | create_flags, _SECRET_FILE_MODE)
+    except FileExistsError as exc:
+        raise CliUsageError(
+            f"{label} {path} appeared while writing; "
+            "refusing to overwrite it (re-run, or pass --force to replace it)"
+        ) from exc
     # `os.fdopen` takes ownership of `fd`, so the `with` closes it even if
     # `fchmod`/`write` raise — no manual close, no double-close.
     with os.fdopen(fd, "w") as fh:
@@ -920,10 +995,7 @@ def _cmd_transfer_record(args: argparse.Namespace) -> int:
         or _same_file_target(args.revocation_out, args.receipt)
         or _same_file_target(args.revocation_out, args.holder_authorization)
         or _same_file_target(args.revocation_out, args.out)
-        or (
-            args.mldsa_seed is not None
-            and _same_file_target(args.revocation_out, args.mldsa_seed)
-        )
+        or (args.mldsa_seed is not None and _same_file_target(args.revocation_out, args.mldsa_seed))
     ):
         # Same input-vs-output aliasing hazard as manifest init/issue (finding 18
         # policy), extended to the second transfer output.
