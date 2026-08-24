@@ -299,7 +299,14 @@ def _private_dry_run_out_path(out_path: Path) -> Path:
     return Path(stem + _PRIVATE_SUFFIX)
 
 
-def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path) -> None:
+def _write_receipt_file_no_follow(
+    path: Path,
+    data: bytes,
+    *,
+    ledger_path: Path,
+    must_not_be: tuple[int, int] | None = None,
+    require_sole_regular: bool = False,
+) -> os.stat_result:
     """Write the receipt at mode 0600 without following a symlink at `path`.
 
     Everything happens on the open descriptor rather than on the path, because
@@ -310,10 +317,18 @@ def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path)
     2. `fstat` against `ledger_path` — if this descriptor IS the production
        Ledger (a hard link, a swapped path), refuse now, before anything about
        that file is modified, its permissions included;
-    3. `fchmod` before the first byte, so an existing world-readable file is
+    3. the same descriptor-level slot rejects `must_not_be` (the (dev, ino)
+       identity of a sibling file this write must never alias — the shareable
+       half, when writing the private one) and, with `require_sole_regular`,
+       any non-regular file or one with more than one hard link: the path
+       guard runs long before this call, and an alias planted in between lands
+       exactly here;
+    4. `fchmod` before the first byte, so an existing world-readable file is
        never readable while it holds `delivery.salt`, the buyer-binding secret;
-    4. truncate, then write.
-    `O_NOFOLLOW` covers the symlink case at open time.
+    5. truncate, then write.
+    `O_NOFOLLOW` covers the symlink case at open time. Returns the `fstat` of
+    the descriptor actually written, so the caller can bind later decisions to
+    this file's identity instead of re-reading the path.
     """
     no_follow = getattr(os, "O_NOFOLLOW", None)
     if no_follow is None:  # pragma: no cover - POSIX-only platforms in CI
@@ -323,7 +338,10 @@ def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path)
     except OSError as exc:
         raise ConfigError(f"cannot write receipt to {str(path)!r}: {exc}") from exc
     try:
-        opened = os.fstat(fd)
+        try:
+            opened = os.fstat(fd)
+        except OSError as exc:
+            raise ConfigError(f"cannot inspect receipt file {str(path)!r}: {exc}") from exc
         try:
             ledger_stat: os.stat_result | None = ledger_path.stat()
         except OSError:
@@ -337,8 +355,27 @@ def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path)
             raise ConfigError(
                 f"--out {str(path)!r} is the production ledger file — refusing to write"
             )
-        os.fchmod(fd, 0o600)
-        os.ftruncate(fd, 0)
+        if must_not_be is not None and (opened.st_dev, opened.st_ino) == must_not_be:
+            raise ConfigError(
+                f"{str(path)!r} aliases the shareable receipt just written "
+                "(same inode) — refusing to write the salt-bearing half there"
+            )
+        if require_sole_regular:
+            if not stat.S_ISREG(opened.st_mode):
+                raise ConfigError(
+                    f"{str(path)!r} is not a regular file — refusing to write "
+                    "the salt-bearing half there"
+                )
+            if opened.st_nlink != 1:
+                raise ConfigError(
+                    f"{str(path)!r} has multiple hard links — refusing to write "
+                    "the salt-bearing half there"
+                )
+        try:
+            os.fchmod(fd, 0o600)
+            os.ftruncate(fd, 0)
+        except OSError as exc:
+            raise ConfigError(f"cannot prepare receipt file {str(path)!r}: {exc}") from exc
         handle = os.fdopen(fd, "wb")
     except Exception:
         os.close(fd)
@@ -348,6 +385,7 @@ def _write_receipt_file_no_follow(path: Path, data: bytes, *, ledger_path: Path)
             handle.write(data)
     except OSError as exc:
         raise ConfigError(f"cannot write receipt to {str(path)!r}: {exc}") from exc
+    return opened
 
 
 def _write_dry_run_pair_no_follow(
@@ -360,17 +398,16 @@ def _write_dry_run_pair_no_follow(
 ) -> None:
     """Write the shareable/private pair without leaving a newly created orphan half."""
     out_existed = out_path.exists()
-    _write_receipt_file_no_follow(out_path, shareable, ledger_path=ledger_path)
-    out_stat = None
-    if not out_existed:
-        try:
-            out_stat = out_path.stat()
-        except OSError as exc:
-            raise ConfigError(
-                f"cannot inspect newly written shareable receipt {str(out_path)!r}: {exc}"
-            ) from exc
+    written = _write_receipt_file_no_follow(out_path, shareable, ledger_path=ledger_path)
+    out_stat = None if out_existed else written
     try:
-        _write_receipt_file_no_follow(private_path, private, ledger_path=ledger_path)
+        _write_receipt_file_no_follow(
+            private_path,
+            private,
+            ledger_path=ledger_path,
+            must_not_be=(written.st_dev, written.st_ino),
+            require_sole_regular=True,
+        )
     except Exception as exc:
         if out_stat is not None:
             try:
@@ -386,7 +423,7 @@ def _write_dry_run_pair_no_follow(
                 except OSError as cleanup_exc:
                     raise ConfigError(
                         f"cannot remove incomplete shareable receipt {str(out_path)!r}: "
-                        f"{cleanup_exc}"
+                        f"{cleanup_exc} (after the private write failed: {exc})"
                     ) from exc
         raise
 

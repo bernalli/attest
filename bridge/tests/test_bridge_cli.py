@@ -1056,6 +1056,46 @@ def test_itch_dry_run_rejects_private_path_hardlinked_to_a_third_file(
     assert third_path.read_bytes() == b"third file must not receive salts.json"
 
 
+def test_itch_dry_run_refuses_private_alias_planted_after_the_path_guard(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The pair guard runs on paths, long before the writes; an attacker who can
+    write in the output directory can plant the hard link AFTER the guard, while
+    the dry run is still signing and zipping. The descriptor-level check in the
+    private write is what must catch it: the checked inode, not the checked
+    path, is what the bytes land on."""
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+    private_path = tmp_path / "dry-run.private.attest"
+    real_pair_write = cli._write_dry_run_pair_no_follow
+
+    def plant_alias_then_write(
+        out_p: Path, shareable: bytes, private_p: Path, private: bytes, *, ledger_path: Path
+    ) -> None:
+        # The path guard has already run and seen a clean directory. Recreate
+        # the original finding's state now, inside the TOCTOU window.
+        out_p.write_bytes(b"placeholder the attacker pre-created")
+        os.link(out_p, private_p)
+        real_pair_write(out_p, shareable, private_p, private, ledger_path=ledger_path)
+
+    monkeypatch.setattr(cli, "_write_dry_run_pair_no_follow", plant_alias_then_write)
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
+
+    stderr = capsys.readouterr().err
+    assert rc == 2
+    assert "alias" in stderr
+    assert str(private_path.resolve()) in stderr
+    # The shareable name must never end up holding the private zip: whatever is
+    # on disk under that name must not contain salts.json.
+    if out_path.exists():
+        assert b"salts.json" not in out_path.read_bytes()
+
+
 def test_itch_dry_run_removes_new_shareable_when_private_write_fails(
     tmp_path: Path,
     hybrid_keys: pq.HybridSigningKeys,
@@ -1068,10 +1108,10 @@ def test_itch_dry_run_removes_new_shareable_when_private_write_fails(
     private_path = tmp_path / "dry-run.private.attest"
     real_write = cli._write_receipt_file_no_follow
 
-    def fail_private_write(path: Path, data: bytes, *, ledger_path: Path) -> None:
+    def fail_private_write(path: Path, data: bytes, **kwargs: Any) -> os.stat_result:
         if path == private_path.resolve():
             raise ConfigError(f"cannot write receipt to {str(path)!r}: simulated private failure")
-        real_write(path, data, ledger_path=ledger_path)
+        return real_write(path, data, **kwargs)
 
     monkeypatch.setattr(cli, "_write_receipt_file_no_follow", fail_private_write)
 
