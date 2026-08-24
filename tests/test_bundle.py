@@ -277,6 +277,30 @@ def test_readme_states_proofs_are_corroboration_not_authenticity(tmp_path: Path)
     assert "proofs/" in readme
 
 
+def test_readme_answers_a_buyer_before_it_explains_cryptography(tmp_path: Path) -> None:
+    """The README's real reader is the buyer who opens the zip, not a
+    cryptographer: it must open in plain language and only explain jargon
+    like Ed25519/unauthenticated_tofu in a closing technical section, after
+    the buyer-facing "what is this"/"how do I verify it" and the
+    never-share warning."""
+    envelope = _envelope(receipt_id="01J1V5B4M9Z8QWERTY1234568K")
+
+    attest_path, _private_path = bundle.export(
+        [envelope], [_key_manifest()], [], _legal_texts(), tmp_path, "mylibrary"
+    )
+
+    with zipfile.ZipFile(attest_path) as zf:
+        readme = zf.read("README.html").decode("utf-8")
+
+    assert "This file is a purchase receipt." in readme
+    assert "If the store that sold you this is gone" in readme
+
+    assert readme.index("Never share mylibrary.private.attest") < readme.index("Ed25519")
+    assert readme.index("unauthenticated_tofu") > readme.index(
+        "If the store that sold you this is gone"
+    )
+
+
 # --- proofs/ (Stage 2: transparency-log evidence travels with the bundle) ---
 
 

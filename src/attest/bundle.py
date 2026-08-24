@@ -77,48 +77,57 @@ _README_TEMPLATE = """<!doctype html>
 <body>
 <h1>attest receipt bundle: __BUNDLE_NAME__</h1>
 
-<h2>What this is</h2>
-<p>This is an attest export bundle. It contains one or
-more signed purchase receipts, the issuer key manifests needed to verify
-them, and the full text of every license, mirror policy and end-of-life
-commitment document any receipt in this bundle refers to. Everything a
-verifier needs is inside this one file: no network access, no account with
-the original store, and no cooperation from the issuer is required.</p>
+<p>This file is a purchase receipt. It proves you bought what's described
+inside — even if the store that sold it to you closes, disappears, or
+just doesn't answer support emails anymore.</p>
 
-<h2>How to verify, even if the store no longer exists</h2>
-<p>Feed this bundle to any attest-compatible verifier (for example, the
-reference implementation: <code>attest import __BUNDLE_NAME__.attest</code> then
-<code>attest verify &lt;receipt_id&gt;</code>). Verification is fully offline:
-each receipt's Ed25519 signature is checked against the issuer's own key
-manifest, and both travel inside this bundle. Because this bundle was built
-without a live TLS connection to the issuer at verification time, a
-compatible verifier reports trust as <code>unauthenticated_tofu</code>
-rather than <code>verified</code> — the signatures are exactly as valid;
-only their provenance could not be freshly confirmed over the network.</p>
+<h2>What's inside</h2>
+<p>This zip holds one or more of your purchase receipts, plus everything
+needed to check that they're genuine: the store's own signing key, and the
+full text of the license, mirror policy, and end-of-life promise your
+receipts refer to. You don't need an internet connection, an account with
+the store, or any help from the store to use this file. It's self-contained
+on purpose.</p>
 
-<h2>About proofs/ (if present)</h2>
-<p>Some receipts in this bundle may be accompanied by a
-<code>proofs/&lt;receipt_id&gt;.json</code> file: evidence that the receipt (or the
-issuer's key manifest) was recorded in a public transparency log, optionally
-anchored to a Bitcoin block header (for example via
-<code>attest verify --transparency proofs/&lt;receipt_id&gt;.json --log-keys ...
---anchor-policy ...</code>). This is corroboration, not authenticity: the receipt's
-own Ed25519/ML-DSA-65 signature is what makes it authentic; a proof only shows the
-receipt (or manifest) was independently observable in the log at a point in time,
-and — absent independent witnesses — does not by itself rule out the log operator
-equivocating.</p>
+<h2>If the store that sold you this is gone</h2>
+<p>You can still prove you own what you bought. Use any attest-compatible
+tool to check this bundle — for example, the reference tool:
+<code>attest import __BUNDLE_NAME__.attest</code>, then
+<code>attest verify &lt;receipt_id&gt;</code>. That check runs entirely on
+your own computer; it never needs to reach the store.</p>
 
 <h2 style="color:#b00020">Never share __BUNDLE_NAME__.private.attest</h2>
 <p><strong>This file, __BUNDLE_NAME__.attest, is safe to share</strong> — it
-was built to contain no secrets. The separate sibling file
-<strong>__BUNDLE_NAME__.private.attest is not safe to share</strong>: it holds
-your buyer-binding salts (and, if you use per-receipt signing keys, those
-private keys too), which are what prove these receipts belong to you.
-Handing that file to anyone else hands them that proof for every receipt in
-your library at once. Keep <code>__BUNDLE_NAME__.private.attest</code> for
-yourself. If you need to share or prove a single receipt, use
-<code>attest disclose &lt;receipt_id&gt;</code> instead — it discloses only
-that one receipt's binding secret, never your whole library.</p>
+was built to contain no secrets. But it comes with a sibling file, and
+<strong>__BUNDLE_NAME__.private.attest is not safe to share</strong>: it
+holds the private information that proves these receipts belong to you
+specifically. Handing that file to anyone else hands them proof over your
+entire purchase history at once. Keep
+<code>__BUNDLE_NAME__.private.attest</code> for yourself. If you ever need
+to share or prove just one purchase, use
+<code>attest disclose &lt;receipt_id&gt;</code> instead — it shares only
+that one receipt, never your whole library.</p>
+
+<h2>About the proofs/ folder (if present)</h2>
+<p>Some receipts in this bundle may come with a
+<code>proofs/&lt;receipt_id&gt;.json</code> file: evidence that the receipt
+was independently recorded in a public log at some point in time, sometimes
+backed by a Bitcoin block header. Treat this as corroboration, not proof of
+purchase by itself — what actually proves the receipt is genuine is its own
+signature, described below. A log entry only shows the receipt was visible
+publicly at that time; it can't by itself rule out the log's operator
+showing different people different versions of history.</p>
+
+<h2>For the technically curious</h2>
+<p>Each receipt is signed with the issuer's private key (Ed25519, with an
+optional post-quantum ML-DSA-65 signature alongside it), and the matching
+public key manifest travels inside this bundle so the signature can be
+checked completely offline. Because this bundle was assembled without a
+live, at-verification-time TLS connection back to the issuer, a compliant
+verifier reports its trust level as <code>unauthenticated_tofu</code>
+rather than <code>verified</code>: the cryptographic signature is exactly
+as valid either way, it's specifically the freshness of that trust
+confirmation over the network that couldn't be re-checked just now.</p>
 </body>
 </html>
 """
@@ -139,14 +148,10 @@ def _proof_member_receipt_id(filename: str) -> str:
     """
     relative = filename.removeprefix("proofs/")
     if not relative.endswith(".json"):
-        raise BundleError(
-            f"invalid proof member path {filename!r}; expected proofs/<ULID>.json"
-        )
+        raise BundleError(f"invalid proof member path {filename!r}; expected proofs/<ULID>.json")
     receipt_id = relative.removesuffix(".json")
     if relative != f"{receipt_id}.json" or _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
-        raise BundleError(
-            f"invalid proof member path {filename!r}; expected proofs/<ULID>.json"
-        )
+        raise BundleError(f"invalid proof member path {filename!r}; expected proofs/<ULID>.json")
     return receipt_id
 
 
