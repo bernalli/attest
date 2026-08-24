@@ -1162,6 +1162,103 @@ def test_write_refuses_a_file_swapped_in_between_the_guard_and_the_write(
     assert seed_out.read_text(encoding="utf-8") == "an unrelated file"
 
 
+def test_write_refuses_an_in_place_rewrite_between_the_guard_and_the_write(
+    tmp_path: Path, capsys: CapSys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The identical-content clause authorizes the bytes the guard read.
+
+    A re-run that finds the manifest byte-identical is allowed to rewrite it,
+    which is why that plan carries `require_unchanged`: the file must still be
+    the one that was compared when the write opens it. `_open_text_output` runs
+    after `_prepare_overwrite` fstat'd the file and before anything is
+    truncated, so it sits inside the real window; rewriting the file in place
+    there keeps the inode, and only the recorded stat signature can tell that
+    the content is no longer the content the guard approved. Drop the signature
+    comparison and this test truncates someone else's bytes instead of
+    reporting them.
+    """
+    seed = _make_keypair(tmp_path, "issuer")
+    out = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, out)) == 0
+    approved_inode = out.stat().st_ino
+    planted = "written by someone else after the comparison"
+
+    original_open = cli._open_text_output
+
+    def rewrite_then_open(
+        path: Path,
+        *,
+        exclusive: bool,
+        label: str,
+        mode: int,
+        overwrite_plan: cli._OverwritePlan | None = None,
+    ) -> int:
+        if path == out:
+            out.write_text(planted, encoding="utf-8")  # same inode, different content
+        return original_open(
+            path, exclusive=exclusive, label=label, mode=mode, overwrite_plan=overwrite_plan
+        )
+
+    monkeypatch.setattr(cli, "_open_text_output", rewrite_then_open)
+    capsys.readouterr()
+
+    rc = cli.main(_manifest_init_argv(seed, out))
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--out" in err
+    assert str(out) in err
+    assert "changed while writing" in err
+    assert "refusing to overwrite" in err
+    assert out.read_text(encoding="utf-8") == planted
+    # The inode never moved, so the inode comparison alone would have allowed
+    # this write: the refusal can only come from the stat signature.
+    assert out.stat().st_ino == approved_inode
+
+
+def test_guard_refuses_a_file_swapped_in_while_it_is_checking(
+    tmp_path: Path, capsys: CapSys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard compares the content of the file it stat'd, not of a name.
+
+    `_prepare_overwrite` decides presence with `lstat` and then reopens the
+    path by name to read it back, so a rename onto that name between the two
+    syscalls hands the comparison a different inode; the plan would then carry
+    a stat of that stranger and the write would go to it. Substituting the file
+    immediately before that `os.open` is exactly that window. The decoy here
+    holds the same bytes the re-run would write, so without the inode
+    comparison the guard concludes "identical, nothing to do", returns 0, and
+    adopts it silently — the reason the refusal cannot be left to the content
+    check.
+    """
+    seed = _make_keypair(tmp_path, "issuer")
+    out = tmp_path / "manifest.json"
+    assert cli.main(_manifest_init_argv(seed, out)) == 0
+    decoy = tmp_path / "decoy.json"
+    decoy.write_bytes(out.read_bytes())  # same bytes, different inode
+    decoy_stat = decoy.stat()
+
+    original_os_open = os.open
+
+    def swap_then_open(path: str | bytes | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
+        if path == out and decoy.exists():
+            os.rename(decoy, out)
+        return original_os_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", swap_then_open)
+    capsys.readouterr()
+
+    rc = cli.main(_manifest_init_argv(seed, out))
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--out" in err
+    assert str(out) in err
+    assert "changed while checking" in err
+    assert "refusing to overwrite" in err
+    after = out.stat()
+    assert after.st_ino == decoy_stat.st_ino  # the swapped-in file is the one on the path
+    assert after.st_mtime_ns == decoy_stat.st_mtime_ns  # and nothing was written to it
+
+
 # --- disclose ---------------------------------------------------------------
 
 _DISCLOSE_RECEIPT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
