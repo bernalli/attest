@@ -7,14 +7,19 @@ including the context-manager protocol `Delivery.send` relies on.
 
 from __future__ import annotations
 
+import io
 import json
 import smtplib
 import ssl
+import stat
+import zipfile
 from dataclasses import replace
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 
 import pytest
+from attest_bridge import delivery as delivery_mod
 from attest_bridge.config import DeliveryConfig
 from attest_bridge.delivery import (
     MAX_DELIVERY_ATTEMPTS,
@@ -24,12 +29,30 @@ from attest_bridge.delivery import (
     sweep_undelivered,
 )
 from attest_bridge.ledger import Ledger
+from conftest import ISSUER, LEGAL_TEXT, LEGAL_TEXT_SHA256
+
+_SALT = "not-a-real-secret-but-treat-it-like-one"
+_RECEIPT_ID = "r_test_0001"
+# The slug the bundle filename derives from `merchant.example.com`.
+_SLUG = "merchant-example-com"
+# Shape-faithful to what `attest.issue.issue` embeds at issuance: the issuer's
+# key manifest travels INSIDE the envelope (`delivery.issuer_manifest`), which
+# is the only place delivery can read it from — `sweep_undelivered` has no
+# issuer identity in scope at all.
+_ISSUER_MANIFEST: dict[str, Any] = {"issuer": ISSUER, "manifest_version": 1, "keys": []}
 
 _ENVELOPE: dict[str, Any] = {
-    "payload": {"receipt_id": "r_test_0001", "work": {"title": "Stardrift Chronicles"}},
-    "delivery": {"salt": "not-a-real-secret-but-treat-it-like-one"},
+    "payload": {
+        "receipt_id": _RECEIPT_ID,
+        "issuer": {"id": ISSUER, "display_name": "Example Games Store"},
+        "work": {"title": "Stardrift Chronicles"},
+        "license": {"legal_text_sha256": LEGAL_TEXT_SHA256},
+    },
+    "delivery": {"salt": _SALT, "issuer_manifest": _ISSUER_MANIFEST},
     "signatures": {"ed25519": "deadbeef"},
 }
+
+_LEGAL_TEXTS: dict[str, bytes] = {LEGAL_TEXT_SHA256: LEGAL_TEXT}
 
 
 class _FakeSMTP:
@@ -131,16 +154,31 @@ def _send(
     *,
     info_url: str | None = None,
     envelope: dict[str, Any] | None = None,
+    legal_texts: dict[str, bytes] | None = None,
+    receipt_id: str = _RECEIPT_ID,
 ) -> DeliveryResult:
-    delivery = Delivery(config, smtp_factory=factory)
+    delivery = Delivery(
+        config,
+        smtp_factory=factory,
+        legal_texts=_LEGAL_TEXTS if legal_texts is None else legal_texts,
+    )
     return delivery.send(
         to_email="buyer@example.com",
-        receipt_id="r_test_0001",
+        receipt_id=receipt_id,
         work_title="Stardrift Chronicles",
         envelope=envelope if envelope is not None else _ENVELOPE,
         download_url="https://receipts.example.com/r/tok_abc123",
         info_url=info_url,
     )
+
+
+def _attachments(fake: _FakeSMTP) -> list[Any]:
+    return list(fake.sent_messages[0].iter_attachments())
+
+
+def _attachment_bytes(attachment: Any) -> bytes:
+    content = attachment.get_content()
+    return content.encode("utf-8") if isinstance(content, str) else bytes(content)
 
 
 # -- message shape --------------------------------------------------------
@@ -156,21 +194,161 @@ def test_send_sets_subject_from_and_to() -> None:
     assert message["To"] == "buyer@example.com"
 
 
-def test_send_attachment_filename_and_json_content_roundtrips_envelope() -> None:
+def test_send_attaches_shareable_and_private_bundle_pair() -> None:
+    fakes: list[_FakeSMTP] = []
+    assert _send(_config(), _fake_factory(fakes)).status == "sent"
+    attachments = _attachments(fakes[0])
+
+    assert [a.get_filename() for a in attachments] == [
+        f"{_SLUG}-{_RECEIPT_ID}.attest",
+        f"{_SLUG}-{_RECEIPT_ID}.private.attest",
+    ]
+    assert [a.get_content_type() for a in attachments] == ["application/zip"] * 2
+
+    with zipfile.ZipFile(io.BytesIO(_attachment_bytes(attachments[0]))) as shareable:
+        assert set(shareable.namelist()) == {
+            f"receipts/{_RECEIPT_ID}.attest.json",
+            f"manifests/{ISSUER}.json",
+            f"legal/{LEGAL_TEXT_SHA256}.txt",
+            "README.html",
+        }
+        receipt = json.loads(shareable.read(f"receipts/{_RECEIPT_ID}.attest.json"))
+        # The salt is gone, but the embedded manifest survives the strip — that
+        # is what keeps the extracted receipt verifiable on its own.
+        assert "salt" not in receipt.get("delivery", {})
+        assert receipt["delivery"]["issuer_manifest"] == _ISSUER_MANIFEST
+        assert shareable.read(f"legal/{LEGAL_TEXT_SHA256}.txt") == LEGAL_TEXT
+
+    with zipfile.ZipFile(io.BytesIO(_attachment_bytes(attachments[1]))) as private:
+        assert private.namelist() == ["salts.json"]
+        assert json.loads(private.read("salts.json")) == {_RECEIPT_ID: _SALT}
+
+
+def test_no_salt_bearing_attachment_ever_leaves_under_a_shareable_name() -> None:
+    """The structural regression for the defect this whole task exists to close.
+
+    A byte-scan of the attachment would prove nothing: bundle members are
+    DEFLATE-compressed, so a salt sitting inside a member would not appear in
+    the container's bytes. Every non-`.private.attest` attachment is therefore
+    opened and each member decompressed.
+    """
     fakes: list[_FakeSMTP] = []
     _send(_config(), _fake_factory(fakes))
-    message = fakes[0].sent_messages[0]
-    attachments = list(message.iter_attachments())
-    assert len(attachments) == 1
-    attachment = attachments[0]
-    assert attachment.get_filename() == "receipt-r_test_0001.attest"
-    assert attachment.get_content_type() == "application/json"
-    payload_bytes = attachment.get_content()
-    if isinstance(payload_bytes, str):
-        payload_bytes = payload_bytes.encode("utf-8")
-    assert json.loads(payload_bytes) == _ENVELOPE
-    # exact serialization the brief pins: indent=2, sorted keys.
-    assert payload_bytes.decode("utf-8") == json.dumps(_ENVELOPE, indent=2, sort_keys=True)
+
+    checked = 0
+    for attachment in _attachments(fakes[0]):
+        name = attachment.get_filename()
+        assert name is not None
+        if name.endswith(".private.attest"):
+            continue
+        checked += 1
+        raw = _attachment_bytes(attachment)
+        assert _SALT.encode() not in raw
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            for member in zf.namelist():
+                content = zf.read(member)
+                assert _SALT.encode() not in content
+                if member.endswith(".json"):
+                    decoded = json.loads(content)
+                    delivery = decoded.get("delivery") if isinstance(decoded, dict) else None
+                    assert not (isinstance(delivery, dict) and "salt" in delivery)
+    assert checked == 1
+
+
+def test_missing_issuer_manifest_is_a_failed_result_not_a_raise() -> None:
+    envelope = json.loads(json.dumps(_ENVELOPE))
+    del envelope["delivery"]["issuer_manifest"]
+    fakes: list[_FakeSMTP] = []
+
+    result = _send(_config(), _fake_factory(fakes), envelope=envelope)
+
+    assert result == DeliveryResult(status="failed", detail="bundle build failed")
+    assert fakes == []
+
+
+def test_missing_legal_text_is_a_failed_result_not_a_raise() -> None:
+    fakes: list[_FakeSMTP] = []
+
+    result = _send(_config(), _fake_factory(fakes), legal_texts={})
+
+    assert result == DeliveryResult(status="failed", detail="bundle build failed")
+    assert fakes == []
+
+
+@pytest.mark.parametrize("bad_id", ["../../evil", "a/b", "", "x" * 65, "we!rd"])
+def test_unsafe_receipt_id_never_reaches_a_filename(bad_id: str) -> None:
+    envelope = json.loads(json.dumps(_ENVELOPE))
+    envelope["payload"]["receipt_id"] = bad_id
+    fakes: list[_FakeSMTP] = []
+
+    result = _send(_config(), _fake_factory(fakes), envelope=envelope, receipt_id=bad_id)
+
+    assert result == DeliveryResult(status="failed", detail="bundle build failed")
+    assert fakes == []
+
+
+def test_issuer_id_that_reduces_to_an_empty_slug_is_a_failed_result() -> None:
+    envelope = json.loads(json.dumps(_ENVELOPE))
+    envelope["payload"]["issuer"]["id"] = "..."
+    fakes: list[_FakeSMTP] = []
+
+    result = _send(_config(), _fake_factory(fakes), envelope=envelope)
+
+    assert result == DeliveryResult(status="failed", detail="bundle build failed")
+    assert fakes == []
+
+
+def test_receipt_id_argument_must_match_the_payload() -> None:
+    fakes: list[_FakeSMTP] = []
+
+    result = _send(_config(), _fake_factory(fakes), receipt_id="r_test_9999")
+
+    assert result == DeliveryResult(status="failed", detail="bundle build failed")
+    assert fakes == []
+
+
+def test_bundle_workdir_is_owner_only_and_removed_on_success_and_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assert the ORDER and the lifecycle, not just the final state.
+
+    The V-A.1-bis review found four real defects that a final-state assertion
+    could never have caught, all of them in the order of operations around a
+    secret on disk. Here the private bundle exists, briefly, as a file: this
+    records that its directory is owner-only WHILE IT LIVES and that it is gone
+    afterwards — on the sent path, on an SMTP failure, and on a bundle failure.
+    """
+    seen: list[tuple[Path, int]] = []
+    real_factory = delivery_mod._TMPDIR_FACTORY
+
+    class _RecordingTmpDir:
+        def __init__(self) -> None:
+            self._inner = real_factory()
+
+        def __enter__(self) -> str:
+            path = Path(self._inner.__enter__())
+            seen.append((path, stat.S_IMODE(path.stat().st_mode)))
+            return str(path)
+
+        def __exit__(self, *exc_info: object) -> None:
+            self._inner.__exit__(*exc_info)
+
+    monkeypatch.setattr(delivery_mod, "_TMPDIR_FACTORY", _RecordingTmpDir)
+
+    fakes: list[_FakeSMTP] = []
+    assert _send(_config(), _fake_factory(fakes)).status == "sent"
+
+    def raising_factory(host: str, port: int) -> _FakeSMTP:
+        return _RaisingSMTP(host, port, smtplib.SMTPAuthenticationError(535, b"nope"))
+
+    assert _send(_config(), raising_factory).status == "failed"
+    # A bundle-build failure must not leave the directory behind either.
+    assert _send(_config(), _fake_factory(fakes), legal_texts={}).status == "failed"
+
+    assert len(seen) == 3
+    for path, mode in seen:
+        assert mode == 0o700
+        assert not path.exists()
 
 
 def test_send_body_contains_download_url_and_configured_info_url() -> None:
@@ -207,12 +385,24 @@ def test_send_never_puts_the_smtp_password_in_the_outgoing_message() -> None:
     assert config.smtp_password not in raw
 
 
+def _envelope_for(receipt_id: str) -> dict[str, Any]:
+    """`_ENVELOPE` whose payload receipt_id is the one the Ledger row stores.
+
+    The sweep passes `stored.receipt_id` alongside `stored.envelope_json`, and
+    delivery now refuses a pair whose two ids disagree — so a fixture that let
+    them drift would be testing a state the bridge cannot produce.
+    """
+    envelope = json.loads(json.dumps(_ENVELOPE))
+    envelope["payload"]["receipt_id"] = receipt_id
+    return envelope
+
+
 def _record_undelivered(ledger: Ledger, purchase_id: str) -> None:
     ledger.record_receipt(
         "stripe",
         purchase_id,
         f"r_{purchase_id}",
-        _ENVELOPE,
+        _envelope_for(f"r_{purchase_id}"),
         "buyer@example.com",
         f"token_{purchase_id}",
         "2026-07-24T10:00:00Z",
@@ -226,7 +416,7 @@ def test_sweep_resends_an_undelivered_receipt_and_marks_it_delivered(tmp_path: A
 
     delivered, failures = sweep_undelivered(
         ledger=ledger,
-        delivery=Delivery(_config(), smtp_factory=_fake_factory(fakes)),
+        delivery=Delivery(_config(), smtp_factory=_fake_factory(fakes), legal_texts=_LEGAL_TEXTS),
         public_base_url="https://receipts.example.com",
     )
 
@@ -244,7 +434,7 @@ def test_sweep_skips_receipts_at_the_delivery_attempt_cap(tmp_path: Any) -> None
 
     assert sweep_undelivered(
         ledger=ledger,
-        delivery=Delivery(_config(), smtp_factory=_fake_factory(fakes)),
+        delivery=Delivery(_config(), smtp_factory=_fake_factory(fakes), legal_texts=_LEGAL_TEXTS),
         public_base_url="https://receipts.example.com",
     ) == (0, 0)
     assert fakes == []
@@ -264,7 +454,7 @@ def test_sweep_rechecks_a_stale_candidate_before_sending(
 
     assert sweep_undelivered(
         ledger=ledger,
-        delivery=Delivery(_config(), smtp_factory=_fake_factory(fakes)),
+        delivery=Delivery(_config(), smtp_factory=_fake_factory(fakes), legal_texts=_LEGAL_TEXTS),
         public_base_url="https://receipts.example.com",
     ) == (0, 0)
     assert fakes == []
@@ -346,7 +536,7 @@ def test_default_factory_uses_smtp_ssl_for_port_465(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(smtplib, "SMTP_SSL", _RecordingSSL)
     monkeypatch.setattr(smtplib, "SMTP", _boom_smtp)
-    delivery = Delivery(_config(port=465))  # no smtp_factory injected -> default factory
+    delivery = Delivery(_config(port=465), legal_texts=_LEGAL_TEXTS)  # default factory
     result = delivery.send(
         to_email="buyer@example.com",
         receipt_id="r_test_0001",
@@ -375,7 +565,7 @@ def test_default_factory_uses_smtp_with_starttls_for_non_465_port(
 
     monkeypatch.setattr(smtplib, "SMTP", _RecordingSMTP)
     monkeypatch.setattr(smtplib, "SMTP_SSL", _boom_ssl)
-    delivery = Delivery(_config(port=587))
+    delivery = Delivery(_config(port=587), legal_texts=_LEGAL_TEXTS)
     result = delivery.send(
         to_email="buyer@example.com",
         receipt_id="r_test_0001",
@@ -452,11 +642,23 @@ def test_non_smtp_transport_exception_becomes_failed_result_not_a_raise() -> Non
 
 
 def test_message_construction_failure_becomes_failed_result_not_a_raise() -> None:
-    # _build_message runs INSIDE the guarded block: a non-serializable envelope
-    # (json.dumps -> TypeError) must become a failed result, and the transport
-    # is never reached.
+    # _build_message runs INSIDE the guarded block: a work title carrying a
+    # header separator (EmailMessage -> ValueError on assignment) must become a
+    # failed result, and the transport is never reached. The envelope itself is
+    # no longer serialized into the message, so header injection — not a
+    # non-serializable envelope — is what can still fail message construction.
     fakes: list[_FakeSMTP] = []
-    result = _send(_config(), _fake_factory(fakes), envelope={"bad": object()})
+    delivery = Delivery(_config(), smtp_factory=_fake_factory(fakes), legal_texts=_LEGAL_TEXTS)
+
+    result = delivery.send(
+        to_email="buyer@example.com",
+        receipt_id=_RECEIPT_ID,
+        work_title="Stardrift\r\nBcc: attacker@example.com",
+        envelope=_ENVELOPE,
+        download_url="https://receipts.example.com/r/tok_abc123",
+        info_url=None,
+    )
+
     assert result.status == "failed"
     assert result.detail == "invalid message"
     assert fakes == []

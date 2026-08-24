@@ -1095,8 +1095,13 @@ class _RecordingDelivery:
     sent: ClassVar[list[dict[str, Any]]] = []
     result: ClassVar[DeliveryResult] = DeliveryResult(status="sent", detail=None)
 
-    def __init__(self, config: Any) -> None:
+    legal_texts: ClassVar[dict[str, bytes]] = {}
+
+    def __init__(self, config: Any, *, legal_texts: dict[str, bytes] | None = None) -> None:
         self.config = config
+        # Recorded so the command is shown to hand delivery the verified
+        # licence texts, not an empty map that would fail every bundle build.
+        _RecordingDelivery.legal_texts = dict(legal_texts or {})
 
     def send(self, **kwargs: Any) -> DeliveryResult:
         _RecordingDelivery.sent.append(kwargs)
@@ -1132,6 +1137,9 @@ def test_itch_dry_run_send_email_delivers_to_recipient_not_signed_buyer(
     assert rc == 0
     assert len(_RecordingDelivery.sent) == 1
     assert _RecordingDelivery.sent[0]["to_email"] == "merchant@example.com"
+    # The dry run must hand delivery the licence text the config verified, or
+    # the bundle it ships to the merchant could never be built.
+    assert _RecordingDelivery.legal_texts == {LEGAL_TEXT_SHA256: LEGAL_TEXT}
 
     # The SMTP recipient is not the signed identity: the receipt still commits
     # to the synthetic `.invalid` buyer.
