@@ -68,6 +68,14 @@ def catalog() -> ProductCatalog:
                 terms_uri=f"https://{ISSUER}/attest/license-templates/standard-v1",
                 legal_text_sha256=_LEGAL_TEXT_SHA256,
             ),
+            "shopify_49148385": ProductTemplate(
+                title="The Long Dusk",
+                publisher="Example Games Store",
+                identifiers={"shopify_variant_id": "49148385"},
+                artifact_series=f"{ISSUER}/works/the-long-dusk",
+                terms_uri=f"https://{ISSUER}/attest/license-templates/standard-v1",
+                legal_text_sha256=_LEGAL_TEXT_SHA256,
+            ),
         }
     )
 

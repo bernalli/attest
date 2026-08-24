@@ -23,6 +23,12 @@ manifest_path = "/etc/attest-bridge/key-manifest.json"  # from: attest manifest 
 webhook_secret_env = "STRIPE_WEBHOOK_SECRET"     # whsec_... from the Stripe dashboard
 api_key_env = "STRIPE_API_KEY"                   # optional: only for line-items fallback
 
+# Omit this whole table if you don't sell through Shopify. The signing secret
+# is the only value needed: an orders/paid webhook already carries its line
+# items, so there is no API token and no follow-up request.
+[shopify]
+webhook_secret_env = "SHOPIFY_WEBHOOK_SECRET"
+
 # Omit this whole table if you don't sell through itch.io.
 [itch]
 api_key_env = "ITCH_API_KEY"

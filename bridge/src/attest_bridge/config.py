@@ -42,6 +42,11 @@ class StripeConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ShopifyConfig:
+    webhook_secret: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ItchConfig:
     api_key: str = field(repr=False)
     poll_interval_seconds: int = 60
@@ -67,6 +72,9 @@ class BridgeConfig:
     stripe: StripeConfig | None
     itch: ItchConfig | None
     delivery: DeliveryConfig | None
+    # Default None so every existing `BridgeConfig(...)` construction site keeps
+    # working unchanged — purely additive, mirroring how `itch` was introduced.
+    shopify: ShopifyConfig | None = None
 
 
 def _require_table(data: Mapping[str, Any], key: str, *, context: str) -> dict[str, Any]:
@@ -219,6 +227,11 @@ def _load_stripe(table: Mapping[str, Any], env: Mapping[str, str]) -> StripeConf
     )
 
 
+def _load_shopify(table: Mapping[str, Any], env: Mapping[str, str]) -> ShopifyConfig:
+    context = "[shopify]"
+    return ShopifyConfig(webhook_secret=_env(env, table, "webhook_secret", context=context))
+
+
 def _load_itch(table: Mapping[str, Any], env: Mapping[str, str]) -> ItchConfig:
     context = "[itch]"
     return ItchConfig(
@@ -271,6 +284,7 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> BridgeConfi
     products = {key: _load_product(key, value) for key, value in products_table.items()}
 
     stripe_table = _optional_table(data, "stripe", context="config")
+    shopify_table = _optional_table(data, "shopify", context="config")
     itch_table = _optional_table(data, "itch", context="config")
     delivery_table = _optional_table(data, "delivery", context="config")
 
@@ -286,6 +300,7 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> BridgeConfi
         issuer=issuer,
         products=products,
         stripe=_load_stripe(stripe_table, resolved_env) if stripe_table is not None else None,
+        shopify=_load_shopify(shopify_table, resolved_env) if shopify_table is not None else None,
         itch=_load_itch(itch_table, resolved_env) if itch_table is not None else None,
         delivery=(
             _load_delivery(delivery_table, resolved_env) if delivery_table is not None else None

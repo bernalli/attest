@@ -64,6 +64,7 @@ from attest_bridge.model import (
     PurchaseRejected,
     UnmappedProduct,
 )
+from attest_bridge.shopify_adapter import ShopifyAdapter, ShopifySignatureError
 from attest_bridge.stripe_adapter import StripeAdapter, StripeSignatureError
 
 _RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
@@ -93,6 +94,7 @@ class BridgeDeps:
     # keep working unchanged — purely additive, mirrors `stripe`'s optionality.
     itch: ItchAdapter | None = None
     delivery: Delivery | None = None
+    shopify: ShopifyAdapter | None = None
 
 
 # -- WSGI response helpers ---------------------------------------------------
@@ -302,6 +304,121 @@ def _handle_stripe_webhook(
 # -- receipt download ---------------------------------------------------------
 
 
+# -- shopify webhook ----------------------------------------------------------
+
+
+def _handle_shopify_webhook(
+    deps: BridgeDeps, environ: dict[str, Any], start_response: Any, lock: threading.Lock
+) -> Iterable[bytes]:
+    """Same pinned policy table as the Stripe webhook — every row identical,
+    including which ones may `mark_event`. Two differences, both narrowing:
+    the delivery id comes from an unsigned header rather than the body, and
+    there is no API call inside `normalize`, so the transient-failure row can
+    only ever be reached by an unexpected error."""
+    shopify = deps.shopify
+    if shopify is None:
+        # No [shopify] section configured: this route simply doesn't exist.
+        return _not_found(start_response)
+
+    body = _read_body(environ)
+    sig_header = environ.get("HTTP_X_SHOPIFY_HMAC_SHA256") or ""
+    if not sig_header:
+        deps.log.warning("shopify webhook: missing X-Shopify-Hmac-Sha256 header")
+        return _plain_response(start_response, "400 Bad Request", b"missing signature")
+
+    try:
+        order = shopify.parse_event(body, sig_header)
+    except ShopifySignatureError:
+        deps.log.warning("shopify webhook: signature verification failed")
+        return _plain_response(start_response, "400 Bad Request", b"invalid signature")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        deps.log.warning("shopify webhook: signature valid but body is not parseable JSON")
+        return _plain_response(start_response, "400 Bad Request", b"malformed body")
+
+    topic = environ.get("HTTP_X_SHOPIFY_TOPIC") or ""
+    # The delivery id is Shopify's own per-delivery identifier. It is NOT
+    # covered by the HMAC, so it is a dedup key and never an authorization
+    # input: the worst a tampered value can do is make this bridge treat one
+    # delivery as two, which the Ledger's `(platform, purchase_id)` receipt
+    # dedup then collapses back into a single receipt.
+    event_id = environ.get("HTTP_X_SHOPIFY_WEBHOOK_ID") or ""
+    if not event_id:
+        deps.log.warning("shopify webhook: missing X-Shopify-Webhook-Id header")
+        return _plain_response(start_response, "400 Bad Request", b"missing delivery id")
+
+    purchase: NormalizedPurchase | None = None
+    try:
+        actionable = shopify.wants(order, topic=topic)
+        if actionable:
+            purchase = shopify.normalize(order)
+    except (PurchaseRejected, UnmappedProduct, KeyError, TypeError, AttributeError) as exc:
+        with lock:
+            if deps.ledger.seen_event("shopify", event_id):
+                return _json_response(start_response, "200 OK", {"ok": True})
+            purchase_id = (
+                purchase.platform_purchase_id
+                if purchase is not None
+                else _best_effort_shopify_purchase_id(order)
+            )
+            deps.ledger.add_dead_letter(
+                "shopify", purchase_id, str(exc), json.dumps(order), now=_now_rfc3339()
+            )
+            deps.ledger.mark_event("shopify", event_id, now=_now_rfc3339())
+            deps.log.error("shopify delivery %s: dead-lettered", event_id)
+            return _json_response(start_response, "200 OK", {"ok": True})
+    except Exception:
+        deps.log.exception("shopify delivery %s: unexpected error, not acknowledged", event_id)
+        return _plain_response(start_response, "500 Internal Server Error", b"internal error")
+
+    with lock:
+        if deps.ledger.seen_event("shopify", event_id):
+            return _json_response(start_response, "200 OK", {"ok": True})
+        if not actionable:
+            deps.log.info("shopify delivery %s: not actionable (topic/financial_status)", event_id)
+            deps.ledger.mark_event("shopify", event_id, now=_now_rfc3339())
+            return _json_response(start_response, "200 OK", {"ok": True})
+        assert purchase is not None
+        try:
+            outcome = deps.core.process(purchase)
+        except (PurchaseRejected, UnmappedProduct) as exc:
+            deps.ledger.add_dead_letter(
+                "shopify",
+                purchase.platform_purchase_id,
+                str(exc),
+                json.dumps(order),
+                now=_now_rfc3339(),
+            )
+            deps.ledger.mark_event("shopify", event_id, now=_now_rfc3339())
+            deps.log.error("shopify delivery %s: dead-lettered", event_id)
+            return _json_response(start_response, "200 OK", {"ok": True})
+        except Exception:
+            # Signing/config/unexpected failure: fail closed. NEVER mark_event —
+            # Shopify must retry, or a transient failure would silently drop a
+            # purchase forever.
+            deps.log.exception("shopify delivery %s: unexpected error, not acknowledged", event_id)
+            return _plain_response(start_response, "500 Internal Server Error", b"internal error")
+
+        deps.ledger.mark_event("shopify", event_id, now=_now_rfc3339())
+        deps.log.info(
+            "shopify delivery %s: processed (receipt=%s duplicate=%s)",
+            event_id,
+            outcome.receipt_id,
+            outcome.duplicate,
+        )
+        return _json_response(start_response, "200 OK", {"ok": True})
+
+
+def _best_effort_shopify_purchase_id(order: object) -> str | None:
+    """Order id for dead-letter operator visibility only — never load-bearing
+    (the dead letter's `raw_json` is the authoritative record)."""
+    if not isinstance(order, dict):
+        return None
+    raw_id = order.get("id")
+    if isinstance(raw_id, bool):
+        return None
+    return str(raw_id) if isinstance(raw_id, (int, str)) and raw_id != "" else None
+
+
 def _handle_download(deps: BridgeDeps, start_response: Any, *, token: str) -> Iterable[bytes]:
     stored = deps.ledger.by_download_token(token)
     if stored is None:
@@ -452,6 +569,8 @@ def make_app(deps: BridgeDeps) -> WSGIApp:
             return _json_response(start_response, "200 OK", {"ok": True})
         if method == "POST" and path == "/stripe/webhook":
             return _handle_stripe_webhook(deps, environ, start_response, webhook_lock)
+        if method == "POST" and path == "/shopify/webhook":
+            return _handle_shopify_webhook(deps, environ, start_response, webhook_lock)
         if method == "GET" and path.startswith("/r/"):
             token = path[len("/r/") :]
             return _handle_download(deps, start_response, token=token)
