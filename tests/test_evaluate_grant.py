@@ -494,6 +494,36 @@ def test_a_discontinuous_publisher_chain_forces_unverified_rotation() -> None:
     assert verdict.grant_trust == "unverified_rotation"
 
 
+def test_an_unauthenticated_document_cannot_choose_which_domain_the_ladder_reads() -> None:
+    """§18.5 scopes the ladder to the RECEIPT's declared `work.publisher_id`,
+    never to the domain a supplied document happens to name. The document below
+    does not authenticate and its `kid` points at a domain the verifier knows
+    over TLS — if the ladder were keyed on the signer, appending that blob to
+    an evidence object would buy `grant_trust: "verified"` for free."""
+    document = _grant(OTHER_KEYS, kid=OTHER_KID)
+    document["jurisdiction"] = "FR"  # signed over "IT": authenticates against nothing
+    payload = _payload(document)
+    trust_store = _trust_store(
+        {OTHER: OTHER_MANIFEST}, provenance={OTHER: "tls", PUBLISHER: "bundle"}
+    )
+
+    verdict = _evaluate(payload=payload, view=_view(document), trust_store=trust_store)
+
+    assert verdict.grant == "invalid_grant_ignored"
+    assert verdict.grant_trust == "unauthenticated_tofu"
+
+
+def test_the_ladder_reads_the_publishers_own_manifest_not_the_signers() -> None:
+    """The positive half of the rule above: the grant authenticates and binds,
+    and `verified` comes from the publisher's own provenance."""
+    verdict = _evaluate(
+        view=_view(), trust_store=_trust_store(provenance={PUBLISHER: "tls", OTHER: "bundle"})
+    )
+
+    assert verdict.grant == "dormant"
+    assert verdict.grant_trust == "verified"
+
+
 def test_grant_trust_is_reported_at_its_best_value_even_when_the_grant_is_rejected() -> None:
     """§18.5: reported at its best-available value even when grant evaluation
     later rejects the document, and never silently reset on failure."""

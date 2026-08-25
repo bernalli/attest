@@ -285,6 +285,14 @@ def test_grant_against_self_inconsistent_manifest_rejected() -> None:
         {"unprotected_build": "true"},
         {"legal_text_sha256": "not-hex"},
         {"jurisdiction": ""},
+        # §18.2 types `legal_text_uri` "string, non-empty", and the emptiness
+        # is the load-bearing half: the prose is the ONLY thing that says what
+        # the permission means as an undertaking, and a grant pointing at
+        # nowhere authenticates a promise with no content. It is the one member
+        # the first implementation left unconstrained, so it is pinned here
+        # beside its neighbours rather than trusted to a reading.
+        {"legal_text_uri": ""},
+        {"legal_text_sha256": ""},
         {"issued_at": "2026-02-01"},
     ],
 )

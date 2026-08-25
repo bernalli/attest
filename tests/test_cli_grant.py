@@ -715,11 +715,10 @@ def test_a_malformed_signature_is_a_refusal_not_a_usage_error(
     assert _last_json(capsys)["redemption"] == "not_verified"
 
 
-def test_a_challenge_naming_another_receipt_is_a_usage_error(
-    tmp_path: Path, capsys: CapSys
-) -> None:
-    world = _world(tmp_path, capsys)
-    challenge = world["tmp"] / "challenge.json"
+def _challenge(
+    world: dict[str, Any], audience: str = CUSTODIAN, name: str = "challenge.json"
+) -> Path:
+    out = world["tmp"] / name
     assert (
         cli.main(
             [
@@ -728,32 +727,107 @@ def test_a_challenge_naming_another_receipt_is_a_usage_error(
                 "--receipt",
                 str(world["receipt"]),
                 "--audience",
-                CUSTODIAN,
+                audience,
                 "--out",
-                str(challenge),
+                str(out),
             ]
         )
         == 0
     )
-    capsys.readouterr()
+    return out
+
+
+def _redeem(world: dict[str, Any], challenge: Path, response: Path) -> int:
+    return cli.main(
+        [
+            "grant",
+            "verify",
+            "--receipt",
+            str(world["receipt"]),
+            "--challenge",
+            str(challenge),
+            "--response",
+            str(response),
+        ]
+    )
+
+
+def test_a_receipt_that_does_not_match_the_challenge_is_a_refusal(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The receipt is HOLDER-supplied. §18.7 forbids a gate fronting the
+    delivery of content from having an error path an attacker can tell apart
+    from a refusal, so presenting a receipt the challenge does not name is
+    `not_verified` and exit 1 — the same observable outcome as a wrong
+    signature, never a usage error naming which check failed."""
+    world = _world(tmp_path, capsys)
+    challenge = _challenge(world)
     tampered = json.loads(challenge.read_text(encoding="utf-8"))
     tampered["receipt_id"] = "01J1V5B4M9Z8QWERTY12345679"
     challenge.write_text(json.dumps(tampered), encoding="utf-8")
     response = world["tmp"] / "response.json"
     response.write_text(json.dumps({"sig": keys.b64u(bytes(64))}), encoding="utf-8")
+    capsys.readouterr()
 
-    assert (
-        cli.main(
-            [
-                "grant",
-                "verify",
-                "--receipt",
-                str(world["receipt"]),
-                "--challenge",
-                str(challenge),
-                "--response",
-                str(response),
-            ]
-        )
-        == 2
-    )
+    rc = _redeem(world, challenge, response)
+
+    assert rc == 1
+    assert _last_json(capsys)["redemption"] == "not_verified"
+
+
+@pytest.mark.parametrize(
+    "response_body",
+    ['{"sig": "not-base64url!!"}', "{}", '{"sig": 42}', "[]", "not json at all"],
+)
+def test_every_malformed_response_is_the_same_refusal(
+    tmp_path: Path, capsys: CapSys, response_body: str
+) -> None:
+    """One observable outcome for every way a holder's response can be wrong.
+    An adapter that distinguished "malformed" from "wrong" would be reporting
+    something §18.7 says must not be observable."""
+    world = _world(tmp_path, capsys)
+    challenge = _challenge(world)
+    response = world["tmp"] / "response.json"
+    response.write_text(response_body, encoding="utf-8")
+    capsys.readouterr()
+
+    rc = _redeem(world, challenge, response)
+
+    assert rc == 1
+    assert _last_json(capsys)["redemption"] == "not_verified"
+
+
+def test_a_receipt_without_a_holder_key_is_a_refusal(tmp_path: Path, capsys: CapSys) -> None:
+    """A guest receipt cannot redeem — but the gate says only "no", because
+    "this receipt has no `buyer.pubkey`" is a fact about the holder's document
+    that a probe should not be able to read off the exit code."""
+    world = _world(tmp_path, capsys)
+    challenge = _challenge(world)
+    envelope = json.loads(world["receipt"].read_text(encoding="utf-8"))
+    envelope["payload"]["buyer"]["pubkey"] = None
+    world["receipt"].write_text(json.dumps(envelope), encoding="utf-8")
+    response = world["tmp"] / "response.json"
+    response.write_text(json.dumps({"sig": keys.b64u(bytes(64))}), encoding="utf-8")
+    capsys.readouterr()
+
+    rc = _redeem(world, challenge, response)
+
+    assert rc == 1
+    assert _last_json(capsys)["redemption"] == "not_verified"
+
+
+def test_a_malformed_challenge_is_still_the_custodians_own_usage_error(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The one input on this command that is NOT holder-supplied: the challenge
+    is the custodian's own file, written by `grant challenge`. A broken one is
+    an operator mistake and says nothing about the holder, so it stays a loud
+    usage error rather than being disguised as a refusal."""
+    world = _world(tmp_path, capsys)
+    challenge = world["tmp"] / "broken-challenge.json"
+    challenge.write_text(json.dumps({"audience": CUSTODIAN}), encoding="utf-8")
+    response = world["tmp"] / "response.json"
+    response.write_text(json.dumps({"sig": keys.b64u(bytes(64))}), encoding="utf-8")
+    capsys.readouterr()
+
+    assert _redeem(world, challenge, response) == 2

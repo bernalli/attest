@@ -1400,15 +1400,26 @@ def evaluate_grant(
     # `grant_trust` starts at TOFU the moment evidence exists and is reported
     # at its best-available value from here on, even when the evaluation later
     # rejects the document — it MUST NOT be silently reset on failure (§18.5).
-    signer = grant_module.signer_domain(floor)
-    manifest = trust_store.manifests.get(signer) if isinstance(signer, str) else None
-    grant_trust = (
-        _grant_trust_ladder(trust_store, signer, manifest)
-        if isinstance(signer, str)
-        else _TRUST_TOFU
-    )
     work = payload.get("work")
     publisher_id = work.get("publisher_id") if isinstance(work, dict) else None
+    signer = grant_module.signer_domain(floor)
+    manifest = trust_store.manifests.get(signer) if isinstance(signer, str) else None
+    # The ladder is scoped to the RECEIPT's declared `work.publisher_id` (§18.5,
+    # "the trust store's provenance for the resolved `work.publisher_id`"), and
+    # NEVER to whatever domain a supplied document happens to name in its `kid`.
+    # The document is attacker-supplied and has not authenticated yet at this
+    # point: keying the ladder on its signer would let a blob that authenticates
+    # against nothing pick any TLS domain the verifier happens to know and buy
+    # `grant_trust: "verified"` for the price of appending bytes to an evidence
+    # object. The SIGNER's manifest is still what the signature resolves
+    # against, below — the two are the same domain in every case that gets past
+    # the binding check, and where they differ the answer is `signer_mismatch`,
+    # not a trust value borrowed from a stranger.
+    grant_trust = (
+        _grant_trust_ladder(trust_store, publisher_id, trust_store.manifests.get(publisher_id))
+        if isinstance(publisher_id, str)
+        else _TRUST_TOFU
+    )
 
     if not isinstance(manifest, dict) or not grant_module.verify_grant(floor, manifest):
         return GrantVerdict(_GRANT_INVALID_IGNORED, grant_trust, tuple(warnings))

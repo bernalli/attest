@@ -1550,32 +1550,56 @@ def _cmd_grant_respond(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _holder_supplied_json(path: Path, flag: str) -> Any:
+    """Read a document the HOLDER handed over. A path the operator got wrong is
+    still a loud usage error; anything wrong with the CONTENT degrades to
+    `None`, because §18.7 forbids a gate that fronts the delivery of content
+    from having an error path a holder can tell apart from a refusal."""
+    if not path.is_file():
+        raise CliUsageError(f"{flag} file not found: {path}")
+    try:
+        return _read_json(path)
+    except CliUsageError:
+        return None
+
+
 def _cmd_grant_verify(args: argparse.Namespace) -> int:
     """The custodian's step 5: verify the holder's response before serving
-    bytes. Exit 1 on a response that does not verify — the same exit code a
-    failed receipt verification uses, because to a gate they mean the same
-    thing: do not deliver."""
-    payload = _receipt_payload(args.receipt)
+    bytes.
+
+    EVERY way this can fail produces the SAME observable outcome — the JSON
+    `{"redemption": "not_verified"}` and exit 1, the same code a failed receipt
+    verification uses, because to a gate they mean the one thing that matters:
+    do not deliver. A wrong signature, a response that is not an object, a
+    receipt the challenge does not name, a receipt with no `buyer.pubkey` at
+    all: §18.7 makes them indistinguishable on purpose, so a holder cannot
+    probe the gate to learn which check they failed.
+
+    The one input here that is NOT holder-supplied is `--challenge`: the
+    custodian wrote it themselves with `grant challenge`. A malformed one is an
+    operator mistake and says nothing about the holder, so it stays a loud
+    usage error rather than being disguised as a refusal.
+    """
     receipt_id, audience, nonce = _read_challenge(args.challenge)
-    if payload.get("receipt_id") != receipt_id:
-        raise CliUsageError(
-            f"{args.challenge} names receipt_id {receipt_id!r}, which is not {args.receipt}'s own"
-        )
-    buyer = payload.get("buyer")
+
+    envelope = _holder_supplied_json(args.receipt, "--receipt")
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    buyer = payload.get("buyer") if isinstance(payload, dict) else None
     holder_pubkey = buyer.get("pubkey") if isinstance(buyer, dict) else None
-    if not isinstance(holder_pubkey, str):
-        raise CliUsageError(f"{args.receipt} payload must carry a non-null buyer.pubkey to redeem")
-    response = _read_json(args.response)
-    if not isinstance(response, dict) or not isinstance(response.get("sig"), str):
-        raise CliUsageError(f"{args.response} must be a JSON object {{'sig': <b64u>}}")
+
+    response = _holder_supplied_json(args.response, "--response")
+    sig_b64u = response.get("sig") if isinstance(response, dict) else None
     try:
-        sig = keys.b64u_decode(response["sig"])
+        sig = keys.b64u_decode(sig_b64u) if isinstance(sig_b64u, str) else b""
     except (TypeError, ValueError):
-        # A malformed signature is a rejection, not a usage error: a gate that
-        # fronts the delivery of content must not have an error path
-        # distinguishable from a refusal.
         sig = b""
-    verified = grant.verify_redemption(receipt_id, audience, nonce, sig, holder_pubkey)
+
+    verified = (
+        isinstance(payload, dict)
+        and payload.get("receipt_id") == receipt_id
+        and isinstance(holder_pubkey, str)
+        and grant.verify_redemption(receipt_id, audience, nonce, sig, holder_pubkey)
+    )
     _print_json({"redemption": "verified" if verified else "not_verified"})
     return EXIT_OK if verified else EXIT_VERIFICATION_FAILED
 

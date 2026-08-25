@@ -216,7 +216,12 @@ def _valid_grant_shape(document: object) -> bool:
         and PERMISSION_DELIVER_TO_HOLDER in permissions
         and _activation_or_none(document["activation"]) is not None
         and isinstance(document["unprotected_build"], bool)
-        and isinstance(document["legal_text_uri"], str)
+        # §18.2 types this "string, non-empty", and the emptiness is the
+        # load-bearing half rather than tidiness: the prose is the only thing
+        # that says what the permission MEANS as an undertaking, so a grant
+        # pointing at nowhere would authenticate a promise with no content and
+        # could go on to reach `activated`.
+        and _is_non_empty_str(document["legal_text_uri"])
         and _is_hex64(document["legal_text_sha256"])
         and _is_non_empty_str(document["jurisdiction"])
         and transfer._valid_utc_timestamp(document["issued_at"])
