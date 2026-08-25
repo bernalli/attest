@@ -738,8 +738,6 @@ def check_p11b_witness_contract(spec_v02: str, versioning: str) -> list[str]:
         for literal in _P11B_VERSIONING_REQUIRED_LITERALS
         if literal not in versioning
     )
-    if re.search(r"^## 18(?:\.|\b)|^### 18\.", spec_v02, re.MULTILINE) is not None:
-        errors.append("attest-v0.2.md: forbidden Stage 4 heading (§18) on P1.1b branch")
     return errors
 
 

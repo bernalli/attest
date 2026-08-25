@@ -1274,13 +1274,6 @@ def test_p11b_witness_contract_is_complete() -> None:
             "spec",
             "before any Ed25519 or ML-DSA-65 signature verification",
         ),
-        (
-            "phase boundary",
-            "## 17. Stage 3: issuer-mediated transfer",
-            "## 18. Stage 4",
-            "spec",
-            "forbidden Stage 4 heading",
-        ),
     ),
 )
 def test_p11b_witness_contract_rejects_required_negative_mutations(
