@@ -1,4 +1,4 @@
-// The conformance merge gate (40 vector groups / 157 leaves): this suite discovers every leaf under
+// The conformance merge gate (40 vector groups / 158 leaves): this suite discovers every leaf under
 // `docs/spec/vectors/` and asserts the produced VerificationResult matches
 // its `expected.json`, using the exact same match rules as the Python
 // reference's `tests/test_vectors.py`. Passing this suite in full IS the
@@ -9,7 +9,7 @@
 // parametrization rather than being run twice:
 //
 //  - the default: verify(), for every leaf that ships none of the three files
-//    below (129 leaves). Two of its optional leaf files are Stage 4's:
+//    below (130 leaves). Two of its optional leaf files are Stage 4's:
 //      * `grant-view.json` (group 37, v0.2 §18.4): the evidence OBJECT
 //        `{grant[, later_grants][, declarations][, anchor]}`, fed as
 //        `grantView`. Its presence is the §18.4 capability gate, so a leaf
@@ -57,8 +57,8 @@ const leaves = allLeaves.filter(
 const canonicalLeaves = leaves.filter((d) => existsSync(join(d, 'canonical.json')))
 
 describe('attest conformance vectors', () => {
-  it('discovers the full vector suite (>= 157 leaves)', () => {
-    expect(allLeaves.length).toBeGreaterThanOrEqual(157)
+  it('discovers the full vector suite (>= 158 leaves)', () => {
+    expect(allLeaves.length).toBeGreaterThanOrEqual(158)
   })
 
   it('routes every leaf to exactly one of the four surfaces', () => {

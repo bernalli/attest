@@ -67,18 +67,19 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     load-bearing one. Without it "holder" degenerates to whoever possesses the
     file, and the grant becomes indistinguishable from publishing the work
     outright. v0.1 receipts are untouched.
-  - Conformance corpus 130 → **157 leaves across 40 groups**, adding
-    `37-preservation-pledge` (23 leaves) and `38-redemption` (4). The
+  - Conformance corpus 130 → **158 leaves across 40 groups**, adding
+    `37-preservation-pledge` (24 leaves) and `38-redemption` (4). The
     redemption group is a fourth surface, alongside `verify()`, `auditChain`
     and the quorum evaluator: no receipt, no trust store, no grant document,
     only whether a holder's proof is good for one named custodian.
 
 ### Fixed
 
-- Two defects that a single implementation cannot see, both found by carrying
-  §18 into this package and comparing against the Python reference on
-  byte-identical input. Neither is reachable from either core alone, which is
-  the whole argument for writing the second one.
+- Four defects that a single implementation cannot see, found by carrying §18
+  into this package and comparing against the Python reference on
+  byte-identical input, and by independent review of the pair. None is
+  reachable from either core alone, which is the whole argument for writing
+  the second one.
 
   - **Sorted-array checks ordered by UTF-16 code unit, not by code point.**
     §18.2 requires `permissions`, `activation.modes`, `scope.artifacts` and
@@ -119,6 +120,22 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     the fixtures were hand-built JavaScript literals, a shape no document on
     the wire can produce; the shared corpus caught it on the first run, which
     is what the corpus is for.
+  - **`grant_trust` read from the supplied document's signer, not from the
+    receipt's publisher.** §18.5 scopes the ladder to the trust store's
+    provenance for the resolved `work.publisher_id`; this package keyed it on
+    the `kid` of the grant in the evidence object, before that grant
+    authenticates against anything. A caller could therefore name any domain
+    the verifier happens to know over domain control, attach a document that
+    authenticates against nothing, and be handed `grant_trust: "verified"` for
+    the price of appending bytes — the upward direction on the trust scale
+    that §18.4/§18.5 forbid to unauthenticated evidence. The Python reference
+    was corrected in the same review round and this package mirrored the
+    earlier shape, so the two disagreed on identical input; neither the
+    signer-mismatch leaf (its foreign grant *does* authenticate, so it reaches
+    the later override) nor the TOFU leaf (signer and publisher are the same
+    domain there) could see it. Corpus leaf
+    `37-preservation-pledge/x-trust-not-borrowed-from-signer` now pins it for
+    any third implementation.
 
 ## [0.7.0] — 2026-08-25
 

@@ -1162,11 +1162,25 @@ export function evaluateGrant(
   // `grant_trust` starts at TOFU the moment evidence exists and is reported at
   // its best-available value from here on, even when the evaluation later
   // rejects the document — it MUST NOT be silently reset on failure (§18.5).
-  const signer = signerDomain(floor)
-  const manifest = signer !== null ? trustStore.manifests[signer] : undefined
-  let grantTrust = signer !== null ? grantTrustLadder(trustStore, signer, manifest) : GRANT_TRUST_TOFU
   const work = (payload as Record<string, unknown>)['work']
   const publisherId = isPlainObject(work) ? work['publisher_id'] : null
+  const signer = signerDomain(floor)
+  const manifest = signer !== null ? trustStore.manifests[signer] : undefined
+  // The ladder is scoped to the RECEIPT's declared `work.publisher_id` (§18.5,
+  // "the trust store's provenance for the resolved `work.publisher_id`"), and
+  // NEVER to whatever domain a supplied document happens to name in its `kid`.
+  // The document is attacker-supplied and has not authenticated yet at this
+  // point: keying the ladder on its signer would let a blob that authenticates
+  // against nothing pick any TLS domain the verifier happens to know and buy
+  // `grant_trust: "verified"` for the price of appending bytes to an evidence
+  // object. The SIGNER's manifest is still what the signature resolves
+  // against, below — the two are the same domain in every case that gets past
+  // the binding check, and where they differ the answer is `signer_mismatch`,
+  // not a trust value borrowed from a stranger.
+  let grantTrust =
+    typeof publisherId === 'string'
+      ? grantTrustLadder(trustStore, publisherId, trustStore.manifests[publisherId])
+      : GRANT_TRUST_TOFU
 
   if (!isPlainObject(manifest) || !verifyGrant(floor, manifest as JsonObject)) {
     return invalidIgnored(grantTrust)

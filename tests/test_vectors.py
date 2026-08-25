@@ -468,7 +468,7 @@ def test_vectors_directory_is_nonempty() -> None:
     # `_LEAF_DIRS` (ALL leaves, every surface included) — `_VECTOR_DIRS`
     # alone (the `verify()`-routed subset) excludes group 36's chain-audit
     # leaves, group 40's quorum leaves and group 38's redemption leaves.
-    assert len(_LEAF_DIRS) >= 157
+    assert len(_LEAF_DIRS) >= 158
 
 
 def test_every_leaf_is_routed_to_exactly_one_surface() -> None:

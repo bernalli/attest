@@ -36,8 +36,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     where grant evaluation lives, next to every other verdict. The redemption
     nonce is generated inside `challenge` and never read from a flag — one a
     caller can choose is one a caller can replay.
-  - Conformance corpus 130 → **157 leaves across 40 groups**, adding
-    `37-preservation-pledge` (23 leaves) and `38-redemption` (4), each executed
+  - Conformance corpus 130 → **158 leaves across 40 groups**, adding
+    `37-preservation-pledge` (24 leaves) and `38-redemption` (4), each executed
     by all three runners from the same golden files. The v0.1 subset grows
     51 → 52: leaf `37s` is an `attest_version: "0.1"` receipt by construction,
     the negative control proving §18.6's conditional never touches v0.1.
@@ -67,6 +67,13 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the boundary between a strictly-parsed signed document and materialized
   untrusted evidence, which the fixed-date anchor path crossed in the wrong
   direction.
+- A third divergence, found by independent review of the pair and present only
+  in the TypeScript verifier, which had mirrored this package's earlier shape:
+  `grant_trust` keyed on the `kid` of the supplied grant instead of on the
+  receipt's `work.publisher_id` (§18.5), which would hand unauthenticated
+  evidence the top of the trust scale. Corrected there; corpus leaf
+  `37-preservation-pledge/x-trust-not-borrowed-from-signer` pins it here too,
+  so no third implementation can reintroduce it.
 
 ## [0.7.0] — 2026-08-25
 

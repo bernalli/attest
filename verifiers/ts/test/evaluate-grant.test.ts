@@ -555,6 +555,39 @@ describe('evaluateGrant — step 5: authentication and the domain binding', () =
     expect(verdict.grant).toBe('invalid_grant_ignored')
     expect(verdict.grant_trust).toBe('verified')
   })
+
+  it('never borrows grant_trust from the signer of a document that does not authenticate', () => {
+    // §18.5 scopes the ladder to the trust store's provenance for the
+    // RECEIPT's resolved `work.publisher_id`, never to the domain a supplied
+    // document names in its own `kid`. Keying it on the signer would let a
+    // caller attach a blob that authenticates against nothing, point its
+    // `kid` at any TLS domain the verifier happens to know, and be handed the
+    // top of the scale for the price of appending bytes.
+    const forged = { ...makeGrant(OTHER_KEYS, OTHER_KID, { publisher: OTHER }), jurisdiction: 'ZZ' }
+    const verdict = evaluate(
+      payloadFor(forged),
+      viewOf(forged),
+      trustStoreOf({ [OTHER]: OTHER_MANIFEST }, { [PUBLISHER]: 'bundle', [OTHER]: 'tls' }),
+    )
+
+    expect(verdict.grant).toBe('invalid_grant_ignored')
+    expect(verdict.grant_trust).toBe('unauthenticated_tofu')
+  })
+
+  it('still reads grant_trust from the publisher when the publisher itself is TLS-known', () => {
+    // The other direction of the same rule: the ladder follows the receipt's
+    // publisher, so a TLS-known publisher keeps `verified` even though the
+    // document that failed to authenticate came from somewhere else.
+    const forged = { ...makeGrant(OTHER_KEYS, OTHER_KID, { publisher: OTHER }), jurisdiction: 'ZZ' }
+    const verdict = evaluate(
+      payloadFor(forged),
+      viewOf(forged),
+      trustStoreOf({ [OTHER]: OTHER_MANIFEST }, { [PUBLISHER]: 'tls', [OTHER]: 'tls' }),
+    )
+
+    expect(verdict.grant).toBe('invalid_grant_ignored')
+    expect(verdict.grant_trust).toBe('verified')
+  })
 })
 
 // --- step 6: the receipt binding ---------------------------------------------

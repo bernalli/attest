@@ -4989,8 +4989,8 @@ def gen_37_preservation_pledge() -> None:
     is also the capability gate, so a leaf that ships no such file evaluates
     nothing and would report `not_checked`/`not_checked`.
 
-    The corpus is deliberately unbalanced toward refusal: fifteen of the
-    twenty-two leaves end somewhere other than `activated`, because §18.4's
+    The corpus is deliberately unbalanced toward refusal: seventeen of the
+    twenty-four leaves end somewhere other than `activated`, because §18.4's
     failure asymmetry is normative and a false `activated` is the single
     failure that would discredit the instrument. `q` is the only leaf where the
     publisher's manifest arrives without domain-control provenance, and `s` is
@@ -5522,6 +5522,47 @@ def gen_37_preservation_pledge() -> None:
         trust=trust,
         expected=_pledge_expected("invalid_grant_ignored", "verified", []),
         grant_view={"grant": floor_w, "declarations": [declaration_w]},
+    )
+
+    # --- (x) trust-not-borrowed-from-signer: §18.5 scopes the ladder to the
+    # trust store's provenance for the RECEIPT's resolved `work.publisher_id`,
+    # never to the domain a supplied document happens to name in its own `kid`.
+    # The document below authenticates against nothing — it is the marketplace's
+    # grant with a member changed after signing — but its `kid` names a domain
+    # the verifier knows over domain control, while the actual publisher's
+    # manifest arrived in a bundle. An implementation that keyed the ladder on
+    # the signer reports `grant_trust: "verified"` here, buying the top of the
+    # scale for the price of appending bytes to an evidence object nobody
+    # signed. `l` cannot catch it (its foreign grant DOES authenticate, so it
+    # reaches the later `signer_mismatch` override) and neither can `q` (signer
+    # and publisher are the same domain there). ---
+    marketplace_manifest = _stage4_manifest(
+        PLEDGE_MARKETPLACE_ID,
+        PLEDGE_MARKETPLACE_KID,
+        PLEDGE_MARKETPLACE_KP,
+        PLEDGE_MARKETPLACE_MLDSA_PK,
+        PLEDGE_MARKETPLACE_MLDSA_SK,
+    )
+    floor_x = dict(
+        _stage4_sign(
+            _grant_body(publisher=PLEDGE_MARKETPLACE_ID),
+            PLEDGE_MARKETPLACE_KID,
+            PLEDGE_MARKETPLACE_KP,
+            PLEDGE_MARKETPLACE_MLDSA_SK,
+        )
+    )
+    floor_x["jurisdiction"] = "ZZ"
+    payload_x = _pledge_payload(floor_x)
+    _assert_schema_valid(payload_x)
+    assert grant.verify_grant(floor_x, marketplace_manifest) is False
+    write_vector(
+        "37-preservation-pledge/x-trust-not-borrowed-from-signer",
+        payload=payload_x,
+        envelope=_hybrid_envelope(payload_x, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=_pledge_trust("bundle", PLEDGE_MARKETPLACE_ID),
+        expected=_pledge_expected("invalid_grant_ignored", "unauthenticated_tofu", []),
+        grant_view={"grant": floor_x},
     )
 
 
