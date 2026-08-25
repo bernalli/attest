@@ -35,12 +35,18 @@ dev = ["pytest>=8", "pytest-cov", "hypothesis>=6", "ruff", "mypy", "dilithium-py
 attest = "attest.cli:main"
 
 [tool.hatch.build.targets.sdist]
-# The reference witness is an OPERATOR's component: its source carries the
-# shape of a deployment, its example config names key files, and v0.2 §11.4
-# requires it to be excluded from both public package artifacts. hatchling's
-# sdist default is "everything not gitignored", so without this line publishing
-# the library would publish the witness with it.
-exclude = ["/witness"]
+# Both exclusions keep operator-side components out of the library's own
+# distribution. The reference witness is an OPERATOR's component: its source
+# carries the shape of a deployment, its example config names key files, and
+# v0.2 §11.4 requires it to be excluded from both public package artifacts.
+# The bridge is a MERCHANT's component and a separate distribution of its own
+# (attest-bridge, with its own pyproject.toml): shipping it inside this sdist
+# put 44 files of deployment source and webhook test fixtures into a library
+# that never imports any of them (measured: 860 members before, 816 after).
+# hatchling's sdist default is
+# "everything not gitignored", so without this line publishing the library
+# would publish both with it.
+exclude = ["/witness", "/bridge"]
 
 [tool.hatch.build.targets.wheel]
 # Distribution name (attest-receipts) differs from the import package (attest),
