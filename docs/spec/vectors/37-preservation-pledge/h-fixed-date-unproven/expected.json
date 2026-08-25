@@ -1,0 +1,14 @@
+{
+  "binding": "not_checked",
+  "errors": [],
+  "grant": "dormant",
+  "grant_trust": "verified",
+  "ok": true,
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "trust": "verified",
+  "warnings": [
+    "grant_unanchored"
+  ]
+}

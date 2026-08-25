@@ -40,7 +40,15 @@ RUNNER_NAME = "attest-conformance-runner"
 # living inside the otherwise-v0.2-only 35-transfer group).
 V01_MAX_GROUP = 25
 V01_EXTRA_GROUPS = frozenset({29, 31})
-V01_EXTRA_LEAF_IDS = frozenset({"35-transfer/i-v01-transferable-null-pubkey-ok"})
+V01_EXTRA_LEAF_IDS = frozenset(
+    {
+        "35-transfer/i-v01-transferable-null-pubkey-ok",
+        # 37s: §18.6's conditional is gated on `attest_version: "0.2"`, so a
+        # v0.1 receipt carrying `license.preservation_pledge` stays schema-valid
+        # and a v0.1-only verifier must reproduce it. Same mechanism as 35i.
+        "37-preservation-pledge/s-v01-negative-control",
+    }
+)
 
 # Diff-rule field sets (see docs/spec/vectors/README.md + tests/test_vectors.py
 # / verifiers/ts/test/conformance.test.ts / site/test/conformance.test.ts,
@@ -53,8 +61,11 @@ _VERIFY_CONDITIONAL_EXACT = (
     "transparency",
     "corroboration",
     "manifest_freshness",
+    "grant",
+    "grant_trust",
     "ok",
 )
+_REDEMPTION_EXACT = ("verified",)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_VECTORS_ROOT = _REPO_ROOT / "docs" / "spec" / "vectors"
@@ -291,6 +302,28 @@ def diff_witness_quorum_result(expected: dict[str, Any], actual: dict[str, Any])
     return mismatches
 
 
+def diff_redemption_result(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+    """Diff an adapter's redemption-leaf output against a ``redemption.json``
+    leaf (v0.2 §18.7).
+
+    One boolean, compared exactly. This surface deliberately has no
+    ``errors``/``warnings`` and no conditional member: §18.7 forbids a gate
+    that fronts the delivery of content from having an error path an attacker
+    can tell apart from a refusal, so an adapter that distinguished "malformed"
+    from "wrong" would be reporting something the specification says must not
+    be observable. ``_exact_eq``'s type strictness is what stops a JSON ``0``
+    from passing for ``false``.
+    """
+    mismatches: list[str] = []
+    for field in _REDEMPTION_EXACT:
+        exp_value = expected.get(field)
+        if field not in actual:
+            mismatches.append(f"{field}: missing from adapter output")
+        elif not _exact_eq(exp_value, actual[field]):
+            mismatches.append(f"{field}: expected {_fmt(exp_value)}, got {_fmt(actual[field])}")
+    return mismatches
+
+
 def diff_chain_result(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
     """Diff an adapter's chain-leaf output against a ``chain.json`` leaf's ``expected.json``.
 
@@ -394,12 +427,15 @@ def run_corpus(vectors_root: Path, template: str, subset: str, timeout: float) -
 
         actual = outcome.data or {}
         # Routing is by FILE PRESENCE, the contract `chain.json` established
-        # and `witness-quorum.json` follows: the three surfaces have disjoint
-        # result shapes, so the diff rule has to be chosen before comparing.
+        # and `witness-quorum.json`/`redemption.json` follow: the four surfaces
+        # have disjoint result shapes, so the diff rule has to be chosen before
+        # comparing.
         if (leaf / "chain.json").exists():
             mismatches = diff_chain_result(expected, actual)
         elif (leaf / "witness-quorum.json").exists():
             mismatches = diff_witness_quorum_result(expected, actual)
+        elif (leaf / "redemption.json").exists():
+            mismatches = diff_redemption_result(expected, actual)
         else:
             mismatches = diff_verify_result(expected, actual)
         results.append(

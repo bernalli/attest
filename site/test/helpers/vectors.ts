@@ -167,3 +167,30 @@ export function anchorPolicy(dir: string): AnchorPolicy | null {
   }
   return { pinnedHeaders, crqcHorizon: data.crqc_horizon }
 }
+
+// Group 37 (v0.2 §18, Stage 4): the untrusted evidence object, whose PRESENCE
+// is the capability gate — a leaf shipping none evaluates nothing at all.
+export function grantView(dir: string): JsonObject | null {
+  // Parsed STRICTLY, like every other evidence file: a plain `JSON.parse`
+  // turns `grant_version: 1` into a JS `number`, which this core's JSON model
+  // does not admit for an integer — the document would then fail to
+  // canonicalize and every leaf in the group would report `not_checked` for a
+  // reason that has nothing to do with §18.
+  const p = join(dir, 'grant-view.json')
+  return existsSync(p) ? loadJsonStrict(p) : null
+}
+
+export interface RedemptionInput {
+  receipt_id: string
+  audience: string
+  nonce_b64u: string
+  sig_b64u: string
+  holder_pubkey_b64u: string
+}
+
+// Group 38 (v0.2 §18.7): the FOURTH surface. No receipt, no trust store, no
+// grant document — only whether this holder proof is good for THIS custodian.
+export function redemptionInput(dir: string): RedemptionInput | null {
+  const p = join(dir, 'redemption.json')
+  return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf-8')) as RedemptionInput) : null
+}

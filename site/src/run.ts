@@ -1,4 +1,6 @@
-import { verify, isOk, auditChain, evaluateActivationWitnessQuorum } from 'attest-verifier'
+import {
+  verify, isOk, auditChain, evaluateActivationWitnessQuorum, verifyRedemption,
+} from 'attest-verifier'
 import type {
   VerificationResult, Disclosure, TrustStore, JsonValue, JsonObject, VerifyTransparencyOptions,
   LogKey, AnchorPolicy, ChainAuditResult,
@@ -13,9 +15,9 @@ export interface VerifyRun {
 // The single verify() call site in site/. Everything the page verifies —
 // bundles, bare envelopes, the sample — funnels through here, so the
 // conformance suite in test/conformance.test.ts pins the page's actual path.
-// `options` (transparency/logKeys/anchorPolicy/transferView) is additive: the
-// page itself never passes it today (defaults to `{}`, zero behavior
-// change), only the group-28/35 conformance leaves in
+// `options` (transparency/logKeys/anchorPolicy/transferView/grantView) is
+// additive: the page itself never passes it today (defaults to `{}`, zero
+// behavior change), only the group-28/35/37 conformance leaves in
 // test/conformance.test.ts do.
 export function runVerify(
   envelopeBytes: Uint8Array,
@@ -68,4 +70,23 @@ export function runWitnessQuorum(
     anchorPolicy,
     conflictDomain,
   })
+}
+
+// The single verifyRedemption() call site in site/ (v0.2 §18.7, group-38
+// conformance leaves only today — the page exposes no redemption UI, but the
+// production adapter carries the surface, not just the test, the same
+// convention runVerify()/runChainAudit()/runWitnessQuorum() already follow).
+//
+// Every argument is untrusted and every failure is the SAME observable
+// outcome, `false`: §18.7 forbids a gate that fronts the delivery of content
+// from having an error path an attacker can tell apart from a refusal, so
+// there is deliberately nothing here to report but the boolean.
+export function runRedemption(
+  receiptId: string,
+  audience: string,
+  nonce: Uint8Array,
+  sig: Uint8Array,
+  holderPubkeyB64u: string,
+): boolean {
+  return verifyRedemption(receiptId, audience, nonce, sig, holderPubkeyB64u)
 }

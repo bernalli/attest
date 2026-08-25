@@ -1,0 +1,7 @@
+{
+  "audience": "archive.example",
+  "holder_pubkey_b64u": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+  "nonce_b64u": "AAECAwQFBgc",
+  "receipt_id": "01JZ5PDHT0000G40R40M30E209",
+  "sig_b64u": "axoPyeOlKhfuaaGZ3fn7J3CMZf0HrUA5-I-8EF9z9GCDlchUj2SLost64iDdYHB0JrJ89VEGjbsrCpLLOSRBCA"
+}

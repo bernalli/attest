@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { runVerify, runChainAudit, runWitnessQuorum } from '../src/run.js'
+import { runVerify, runChainAudit, runWitnessQuorum, runRedemption } from '../src/run.js'
 import { parseWitnessPolicy } from 'attest-verifier'
 import * as V from './helpers/vectors.js'
+import { b64uDecode } from '../src/b64u.js'
 
 const allLeaves = V.findLeafDirs()
 // Group 36 (chain-of-title audit, v0.2 §17.5) leaves are a SEPARATE surface
@@ -11,11 +12,16 @@ const chainLeaves = allLeaves.filter((d) => V.chainInput(d) !== null)
 // Group 40 (activation witness quorum, v0.2 §11.4) leaves are a THIRD surface
 // (runWitnessQuorum, never runVerify and never runChainAudit).
 const quorumLeaves = allLeaves.filter((d) => V.quorumInput(d) !== null)
-const leaves = allLeaves.filter((d) => V.chainInput(d) === null && V.quorumInput(d) === null)
+// Group 38 (redemption, v0.2 §18.7) leaves are a FOURTH surface
+// (runRedemption): no receipt, no trust store, no grant document.
+const redemptionLeaves = allLeaves.filter((d) => V.redemptionInput(d) !== null)
+const leaves = allLeaves.filter(
+  (d) => V.chainInput(d) === null && V.quorumInput(d) === null && V.redemptionInput(d) === null,
+)
 
 describe('conformance corpus through the site adapter', () => {
-  it('discovers the full vector suite (>= 130 leaves)', () => {
-    expect(allLeaves.length).toBeGreaterThanOrEqual(130)
+  it('discovers the full vector suite (>= 156 leaves)', () => {
+    expect(allLeaves.length).toBeGreaterThanOrEqual(156)
   })
 
   it.each(leaves.map((d) => [V.vectorId(d), d] as const))('%s', (_id, dir) => {
@@ -27,6 +33,7 @@ describe('conformance corpus through the site adapter', () => {
       revocationEvidence: V.revocationEvidence(dir),
       transferView: V.transferView(dir),
       witnessPolicy: V.witnessPolicy(dir),
+      grantView: V.grantView(dir),
     })
     const r = run.result
     expect(r.signature).toBe(exp.signature)
@@ -37,6 +44,8 @@ describe('conformance corpus through the site adapter', () => {
     if ('transparency' in exp) expect(r.transparency).toBe(exp.transparency)
     if ('corroboration' in exp) expect(r.corroboration).toBe(exp.corroboration)
     if ('manifest_freshness' in exp) expect(r.manifest_freshness).toBe(exp.manifest_freshness)
+    if ('grant' in exp) expect(r.grant).toBe(exp.grant)
+    if ('grant_trust' in exp) expect(r.grant_trust).toBe(exp.grant_trust)
     if ('ok' in exp) expect(run.ok).toBe(exp.ok)
     if ('errors' in exp) expect([...r.errors]).toEqual(exp.errors)
     if ('warnings' in exp) expect([...r.warnings]).toEqual(exp.warnings)
@@ -94,5 +103,20 @@ describe('conformance corpus through the site adapter: activation witness quorum
     expect(result.valid).toBe(exp.valid)
     expect(result.witnessTime).toBe(exp.witness_time)
     expect([...result.countingControlGroups]).toEqual(exp.counting_control_groups)
+  })
+})
+
+describe('conformance corpus through the site adapter: redemption (group 38)', () => {
+  it.each(redemptionLeaves.map((d) => [V.vectorId(d), d] as const))('%s', (_id, dir) => {
+    const exp = V.expected(dir)
+    const input = V.redemptionInput(dir)!
+    const verified = runRedemption(
+      input.receipt_id,
+      input.audience,
+      b64uDecode(input.nonce_b64u),
+      b64uDecode(input.sig_b64u),
+      input.holder_pubkey_b64u,
+    )
+    expect(verified).toBe(exp.verified)
   })
 })

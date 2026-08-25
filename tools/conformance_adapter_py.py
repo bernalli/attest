@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from attest import anchor, keys, tlog, transfer, verify, witness
+from attest import anchor, grant, keys, tlog, transfer, verify, witness
 
 
 def _load_json(path: Path) -> Any:
@@ -145,6 +145,27 @@ def _witness_policy(leaf: Path) -> dict[str, Any] | None:
     return _load_json(path)  # type: ignore[no-any-return]
 
 
+def _grant_view(leaf: Path) -> dict[str, Any] | None:
+    """Group 37 only (v0.2 §18.4): the Stage 4 evidence object, and the
+    capability gate at once. A leaf shipping no `grant-view.json` hands
+    `verify()` `None`, which evaluates nothing — which is exactly what leaf
+    `37s`, the v0.1 negative control, needs."""
+    path = leaf / "grant-view.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
+def _redemption_input(leaf: Path) -> dict[str, Any] | None:
+    """Group 38 only (v0.2 §18.7): the audience-bound holder proof. A leaf
+    carrying this file is the FOURTH surface — no receipt, no trust store, no
+    grant document, only whether this proof is good for THIS custodian."""
+    path = leaf / "redemption.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
 def _sole_key_manifest(leaf: Path) -> dict[str, Any]:
     """Group 36 only: `audit_chain` takes ONE trusted `key_manifest`, not a
     full `TrustStore` — every group 36 leaf's `manifests.json` trusts exactly
@@ -163,6 +184,8 @@ def _verify_result_to_json(result: verify.VerificationResult) -> dict[str, Any]:
         "transparency": result.transparency,
         "corroboration": result.corroboration,
         "manifest_freshness": result.manifest_freshness,
+        "grant": result.grant,
+        "grant_trust": result.grant_trust,
         "ok": result.ok,
         "errors": list(result.errors),
         "warnings": list(result.warnings),
@@ -202,10 +225,11 @@ def _chain_result_to_json(result: transfer.ChainAuditResult) -> dict[str, Any]:
 def _run_leaf(leaf: Path) -> dict[str, Any]:
     """Route a leaf to `transfer.audit_chain` (group 36, `chain.json`
     present), `witness.evaluate_activation_witness_quorum` (group 40,
-    `witness-quorum.json` present), or `verify.verify` (every other leaf),
+    `witness-quorum.json` present), `grant.verify_redemption` (group 38,
+    `redemption.json` present), or `verify.verify` (every other leaf),
     mirroring `tests/test_vectors.py`'s `test_chain_audit_vectors` /
-    `test_witness_quorum_vectors` / `test_vector_matches_spec_intended_result`
-    routing exactly."""
+    `test_witness_quorum_vectors` / `test_redemption_vectors` /
+    `test_vector_matches_spec_intended_result` routing exactly."""
     quorum = _quorum_input(leaf)
     if quorum is not None:
         policy_document = _witness_policy(leaf)
@@ -224,6 +248,18 @@ def _run_leaf(leaf: Path) -> dict[str, Any]:
             conflict_domain=quorum["conflict_domain"],
         )
         return _quorum_result_to_json(quorum_result)
+
+    redemption = _redemption_input(leaf)
+    if redemption is not None:
+        return {
+            "verified": grant.verify_redemption(
+                redemption["receipt_id"],
+                redemption["audience"],
+                keys.b64u_decode(redemption["nonce_b64u"]),
+                keys.b64u_decode(redemption["sig_b64u"]),
+                redemption["holder_pubkey_b64u"],
+            )
+        }
 
     chain_path = leaf / "chain.json"
     if chain_path.exists():
@@ -253,6 +289,7 @@ def _run_leaf(leaf: Path) -> dict[str, Any]:
         revocation_evidence=_revocation_evidence(leaf),
         transfer_view=_transfer_view(leaf),
         witness_policy=_witness_policy(leaf),
+        grant_view=_grant_view(leaf),
     )
     return _verify_result_to_json(verify_result)
 

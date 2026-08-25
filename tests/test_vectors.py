@@ -91,6 +91,26 @@ Vector-directory conventions (a "vector case" is any directory containing
     leaves ship no `payload.json`/`envelope.json`/`manifests.json`; their
     `expected.json` shape is `{"valid": bool, "witness_time": int | null,
     "counting_control_groups": [...]}`, all three matched exactly.
+  - optional `grant-view.json` (group 37 only, v0.2 §18 Stage 4): the
+    untrusted evidence object `{"grant", "later_grants", "declarations",
+    "anchor"}`, fed to `verify()` as `grant_view=`. Its PRESENCE is the
+    capability gate: a leaf shipping none hands `verify()` `None`, which
+    evaluates nothing at all and leaves `grant`/`grant_trust` at their
+    `not_checked` defaults — which is exactly what leaf `37s`, the v0.1
+    negative control, relies on. `anchor` is ONE §11 evidence bundle, never a
+    list. Group 37's `expected.json` carries `grant` and `grant_trust`, the
+    only group where either appears, and carries none of Stage 2's three
+    (same discipline as groups 33 and 35).
+  - `redemption.json` (group 38 only, v0.2 §18.7): a leaf containing this
+    file is a FOURTH surface, EXCLUDED from the other three parametrizations
+    and driven by `test_redemption_vectors`, which calls
+    `grant.verify_redemption`. Like group 40's leaves it has no receipt in it
+    at all, so it ships no `payload.json`/`envelope.json`/`manifests.json`;
+    the file carries `{"receipt_id", "audience", "nonce_b64u", "sig_b64u",
+    "holder_pubkey_b64u"}` and `expected.json` is `{"verified": bool}`,
+    matched exactly. There is deliberately no `errors`/`warnings` on this
+    surface: §18.7 forbids a gate fronting the delivery of content from
+    having an error path an attacker can tell apart from a refusal.
   - `chain.json` (group 36 only, v0.2 §17.5 chain-of-title audit): a leaf
     containing this file is a SEPARATE audit surface, EXCLUDED from the
     `verify()` parametrization above and driven instead by
@@ -111,7 +131,7 @@ from typing import Any
 
 import pytest
 
-from attest import anchor, canon, keys, manifests, tlog, transfer, verify, witness
+from attest import anchor, canon, grant, keys, manifests, tlog, transfer, verify, witness
 
 VECTORS_DIR = Path(__file__).resolve().parent.parent / "docs" / "spec" / "vectors"
 
@@ -131,7 +151,19 @@ _CHAIN_IDS = [str(p.relative_to(VECTORS_DIR)) for p in _CHAIN_DIRS]
 _QUORUM_DIRS = [p for p in _LEAF_DIRS if (p / "witness-quorum.json").exists()]
 _QUORUM_IDS = [str(p.relative_to(VECTORS_DIR)) for p in _QUORUM_DIRS]
 
-_VECTOR_DIRS = [p for p in _LEAF_DIRS if p not in _CHAIN_DIRS and p not in _QUORUM_DIRS]
+# Group 38 (redemption, v0.2 §18.7) leaves are a FOURTH surface
+# (`grant.verify_redemption`): the question is whether a holder proof is good
+# for THIS custodian, which involves no receipt and no grant document at all.
+# Excluded from the other three parametrizations, driven by
+# `test_redemption_vectors`.
+_REDEMPTION_DIRS = [p for p in _LEAF_DIRS if (p / "redemption.json").exists()]
+_REDEMPTION_IDS = [str(p.relative_to(VECTORS_DIR)) for p in _REDEMPTION_DIRS]
+
+_VECTOR_DIRS = [
+    p
+    for p in _LEAF_DIRS
+    if p not in _CHAIN_DIRS and p not in _QUORUM_DIRS and p not in _REDEMPTION_DIRS
+]
 _VECTOR_IDS = [str(p.relative_to(VECTORS_DIR)) for p in _VECTOR_DIRS]
 
 _TAMPER_DIRS = [p for p in _VECTOR_DIRS if (p / "manifest_pristine.json").exists()]
@@ -243,6 +275,13 @@ def _witness_policy(vector_dir: Path) -> dict[str, Any] | None:
     return _load_json(path)  # type: ignore[no-any-return]
 
 
+def _grant_view(vector_dir: Path) -> dict[str, Any] | None:
+    path = vector_dir / "grant-view.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
 @pytest.mark.parametrize("vector_dir", _VECTOR_DIRS, ids=_VECTOR_IDS)
 def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
     expected = _load_json(vector_dir / "expected.json")
@@ -262,6 +301,7 @@ def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
         revocation_evidence=_revocation_evidence(vector_dir),
         transfer_view=_transfer_view(vector_dir),
         witness_policy=_witness_policy(vector_dir),
+        grant_view=_grant_view(vector_dir),
     )
 
     assert result.signature == expected["signature"]
@@ -277,6 +317,10 @@ def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
         assert result.corroboration == expected["corroboration"]
     if "manifest_freshness" in expected:
         assert result.manifest_freshness == expected["manifest_freshness"]
+    if "grant" in expected:
+        assert result.grant == expected["grant"]
+    if "grant_trust" in expected:
+        assert result.grant_trust == expected["grant_trust"]
     if "ok" in expected:
         assert result.ok == expected["ok"]
     if "errors" in expected:
@@ -377,6 +421,32 @@ def test_witness_quorum_vectors(vector_dir: Path) -> None:
     assert list(result.counting_control_groups) == expected["counting_control_groups"]
 
 
+@pytest.mark.parametrize("vector_dir", _REDEMPTION_DIRS, ids=_REDEMPTION_IDS)
+def test_redemption_vectors(vector_dir: Path) -> None:
+    """Group 38 (v0.2 §18.7, the audience-bound redemption proof): a FOURTH
+    surface, `grant.verify_redemption` rather than `verify()`. There is no
+    receipt in the question these leaves ask — only whether this holder proof
+    is good for THIS custodian — so they ship a `redemption.json`
+    (`{"receipt_id", "audience", "nonce_b64u", "sig_b64u",
+    "holder_pubkey_b64u"}`) and an `expected.json` of `{"verified": bool}`.
+
+    Every negative leaf must come back `False` rather than raise: a gate that
+    fronts the delivery of content must not have an error path an attacker can
+    distinguish from a refusal."""
+    expected = _load_json(vector_dir / "expected.json")
+    data = _load_json(vector_dir / "redemption.json")
+
+    verified = grant.verify_redemption(
+        data["receipt_id"],
+        data["audience"],
+        keys.b64u_decode(data["nonce_b64u"]),
+        keys.b64u_decode(data["sig_b64u"]),
+        data["holder_pubkey_b64u"],
+    )
+
+    assert verified == expected["verified"]
+
+
 def test_vectors_directory_is_nonempty() -> None:
     """Guard against a silently-empty parametrize list (e.g. a wrong
     `VECTORS_DIR` path) making the whole suite above vacuously pass."""
@@ -389,14 +459,26 @@ def test_vectors_directory_is_nonempty() -> None:
     # 4 logged-revocation leaves (33, 2026-07-23, G5/TM-47) + 11 transfer
     # leaves (35, 2026-07-23, §17 Stage 3) + 4 transfer-chain leaves (36,
     # 2026-07-23, §17.5) + 13 witness-corroboration leaves (39, 2026-08-25,
-    # §10.1/§11.4) + 20 witness-quorum leaves (40, 2026-08-25, §11.4):
+    # §10.1/§11.4) + 20 witness-quorum leaves (40, 2026-08-25, §11.4) +
+    # 23 preservation-pledge leaves (37, 2026-08-26, §18) + 4 redemption
+    # leaves (38, 2026-08-26, §18.7):
     # 19 a/b, 20 a-c, 21 a-g, 22 a-c, 23 a/b, 24, 25 a/b, 26 a-h, 28 a-n,
-    # 29 a/c, 30 a/b, 31 a-e, 32 a-c, 33 a-d, 35 a-k, 36 a-d, 39 a-m,
-    # 40 a-t. Counted over
-    # `_LEAF_DIRS` (ALL leaves, groups 35/36's chain-audit leaves included) —
-    # `_VECTOR_DIRS` alone (the `verify()`-routed subset) excludes them, as
-    # it excludes group 40's quorum leaves.
-    assert len(_LEAF_DIRS) >= 130
+    # 29 a/c, 30 a/b, 31 a-e, 32 a-c, 33 a-d, 35 a-k, 36 a-d, 37 a-w,
+    # 38 a-d, 39 a-m, 40 a-t. Counted over
+    # `_LEAF_DIRS` (ALL leaves, every surface included) — `_VECTOR_DIRS`
+    # alone (the `verify()`-routed subset) excludes group 36's chain-audit
+    # leaves, group 40's quorum leaves and group 38's redemption leaves.
+    assert len(_LEAF_DIRS) >= 157
+
+
+def test_every_leaf_is_routed_to_exactly_one_surface() -> None:
+    """The four surfaces partition the corpus. Without this, a leaf shipping
+    two surface files would be replayed twice, and a fifth surface file nobody
+    remembered to exclude would drop out of the gate silently — which is the
+    failure mode that shows up as a green suite over a truncated set."""
+    assert len(_VECTOR_DIRS) + len(_CHAIN_DIRS) + len(_QUORUM_DIRS) + len(_REDEMPTION_DIRS) == len(
+        _LEAF_DIRS
+    )
 
 
 _CANONICAL_DIRS = [p for p in _VECTOR_DIRS if (p / "canonical.json").exists()]
