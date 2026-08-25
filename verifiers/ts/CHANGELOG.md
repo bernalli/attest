@@ -26,9 +26,9 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     windows; pinned operators whose standing is judged at the instant claimed
     rather than at the verifier's clock; the conflict predicate that retires a
     compromised pin; and the reusable activation-grade quorum primitive
-    (`evaluateActivationWitnessQuorum`), which no verification path consumes —
-    its only caller anywhere is the site's conformance adapter, which exists to
-    execute group 40.
+    (`evaluateActivationWitnessQuorum`), which no verification path consumes:
+    its callers are the conformance harness and the tests that exercise group
+    40, never `verify()`.
   - `src/tlog.ts` parses checkpoint cosignature lines: type `0x04` (Ed25519)
     and the type `0xff` identifier `attest-cosignature-ml-dsa-65-v1` that spec
     §9.2 registers, domain-separated from `attest-ml-dsa-65`.

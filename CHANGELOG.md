@@ -42,8 +42,9 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     over the same note, one vote per `control_group`, the committee ceiling
     applied before any signature verification, and explicit temporal boundaries.
     No verification path consumes it: nothing in `verify()`, in revocation, in
-    transfer or in the bridge calls it, and the only caller anywhere is the
-    site's conformance adapter, which exists to execute group 40.
+    transfer or in the bridge calls it. Its callers are the conformance
+    harness — the vector generator, both language adapters and the site
+    runner — and the tests that exercise group 40.
   - Conformance corpus 97 → **130 leaves across 38 groups**, adding
     `39-witness-corroboration` (13 leaves) and `40-witness-quorum` (20), each
     executed by all three runners — Python reference, TypeScript verifier, site
