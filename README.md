@@ -236,7 +236,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv -e '.[dev]'
 ```
 
 ```sh
-.venv/bin/python demo/store_dies.py
+.venv/bin/python -m demo.store_dies
 ```
 
 ```sh

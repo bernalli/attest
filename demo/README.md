@@ -47,10 +47,10 @@ values the design promises.
 
 ## How to run it
 
-Manually, with narration printed to stdout:
+Manually, with narration printed to stdout (from the repository root):
 
 ```
-.venv/bin/python demo/store_dies.py
+.venv/bin/python -m demo.store_dies
 ```
 
 As an integration test:
