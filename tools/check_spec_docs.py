@@ -702,6 +702,13 @@ _STAGE4_REQUIRED_LITERALS: tuple[str, ...] = (
     "MAXIMUM over the verified proofs",
     "The legal text that binds a buyer is always the FLOOR's",
     "Scope coverage, and it is a gate",
+    # Three determinism claims. Coverage is TWO predicates, not one reused
+    # twice; the declaration step scans everything so the warning set does
+    # not depend on the order evidence arrived in; and all three
+    # prose-bearing members count, the URI included.
+    "Grant coverage of a receipt is a DIFFERENT predicate",
+    "never stops at the first one that succeeds",
+    "ANY of the three prose-bearing members",
 )
 
 _APPENDIX_A_HEADING = "## Appendix A — The custodian interface (non-normative)"

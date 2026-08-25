@@ -105,7 +105,10 @@ def _minimal_spec_v02() -> str:
         + "logging a declaration is RECOMMENDED and never required for validity; the "
         + "fixed-date proof runs in the direction anchoring can give, `T >= fixed_date`, "
         + "taking the MAXIMUM over the verified proofs. The legal text that binds a buyer "
-        + "is always the FLOOR's. Scope coverage, and it is a gate.\n"
+        + "is always the FLOOR's, and a later version differing in ANY of the three "
+        + "prose-bearing members is reported. Scope coverage, and it is a gate: Grant "
+        + "coverage of a receipt is a DIFFERENT predicate from declaration coverage. The "
+        + "declaration step never stops at the first one that succeeds.\n"
         + "\n## Appendix A — The custodian interface (non-normative)\n\nSketch.\n"
     )
 
@@ -1517,6 +1520,27 @@ def test_receipt_id_prose_row_absent_while_schema_pattern_present_is_an_error() 
             "Scope coverage, informational only",
             "spec_v02",
             "Scope coverage, and it is a gate",
+        ),
+        (
+            "grant coverage collapsed back into declaration coverage",
+            "Grant coverage of a receipt is a DIFFERENT predicate",
+            "Grant coverage of a receipt uses the same predicate",
+            "spec_v02",
+            "Grant coverage of a receipt is a DIFFERENT predicate",
+        ),
+        (
+            "declaration scan turned into a short circuit",
+            "never stops at the first one that succeeds",
+            "stops at the first one that succeeds",
+            "spec_v02",
+            "never stops at the first one that succeeds",
+        ),
+        (
+            "prose-bearing members narrowed to two",
+            "ANY of the three prose-bearing members",
+            "either of the two prose-bearing members",
+            "spec_v02",
+            "ANY of the three prose-bearing members",
         ),
         (
             "unknown pledge profile warning dropped",
