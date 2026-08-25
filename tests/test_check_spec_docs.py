@@ -485,7 +485,15 @@ def test_pc_08_corpus_pin_includes_json_parsed_chain_payloads() -> None:
 
     assert check_spec_docs.check_pc08_corpus_claim(rows, SPEC_DIR / "vectors") == []
 
-    drifted_privacy = privacy.replace("170 payload objects", "169 payload objects")
+    # Derived, never hardcoded: the pinned count changes every time the corpus
+    # grows, and a stale literal here turns the mutation into a no-op — the
+    # test then passes while proving nothing about drift detection.
+    pinned = re.search(r"(\d+) payload objects", privacy)
+    assert pinned is not None
+    current = int(pinned.group(1))
+    drifted_privacy = privacy.replace(
+        f"{current} payload objects", f"{current - 1} payload objects"
+    )
     drifted_rows = check_spec_docs.parse_pc_rows(drifted_privacy)
     errors = check_spec_docs.check_pc08_corpus_claim(drifted_rows, SPEC_DIR / "vectors")
 

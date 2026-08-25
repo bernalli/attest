@@ -105,6 +105,28 @@ export function witnessPolicy(dir: string): JsonValue | null {
   const p = join(dir, 'witness-policy.json')
   return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf-8')) as JsonValue) : null
 }
+// group 40 (activation witness quorum, v0.2 §11.4, P1.1b) only — mirrors
+// verifiers/ts/test/helpers/vectors.ts's loader of the same name. A leaf
+// containing witness-quorum.json is routed to runWitnessQuorum.
+export interface QuorumInput {
+  expectedOrigin: string
+  conflictDomain: string
+  epochId: unknown
+  checkpoint: unknown
+  anchorEvidence: unknown
+}
+export function quorumInput(dir: string): QuorumInput | null {
+  const p = join(dir, 'witness-quorum.json')
+  if (!existsSync(p)) return null
+  const d = JSON.parse(readFileSync(p, 'utf-8'))
+  return {
+    expectedOrigin: d.expected_origin,
+    conflictDomain: d.conflict_domain,
+    epochId: d.epoch_id,
+    checkpoint: d.checkpoint,
+    anchorEvidence: d.anchor_evidence,
+  }
+}
 // group 36 (transfer-chain conformance corpus, v0.2 §17.5) only — mirrors
 // verifiers/ts/test/helpers/vectors.ts's loader of the same name. A leaf
 // containing chain.json is routed to runChainAudit instead of runVerify().

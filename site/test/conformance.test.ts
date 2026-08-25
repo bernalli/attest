@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { runVerify, runChainAudit } from '../src/run.js'
+import { runVerify, runChainAudit, runWitnessQuorum } from '../src/run.js'
+import { parseWitnessPolicy } from 'attest-verifier'
 import * as V from './helpers/vectors.js'
 
 const allLeaves = V.findLeafDirs()
@@ -7,11 +8,14 @@ const allLeaves = V.findLeafDirs()
 // (runChainAudit, never runVerify()) — excluded here and driven by their own
 // describe block below.
 const chainLeaves = allLeaves.filter((d) => V.chainInput(d) !== null)
-const leaves = allLeaves.filter((d) => V.chainInput(d) === null)
+// Group 40 (activation witness quorum, v0.2 §11.4) leaves are a THIRD surface
+// (runWitnessQuorum, never runVerify and never runChainAudit).
+const quorumLeaves = allLeaves.filter((d) => V.quorumInput(d) !== null)
+const leaves = allLeaves.filter((d) => V.chainInput(d) === null && V.quorumInput(d) === null)
 
 describe('conformance corpus through the site adapter', () => {
-  it('discovers the full vector suite (>= 97 leaves)', () => {
-    expect(allLeaves.length).toBeGreaterThanOrEqual(97)
+  it('discovers the full vector suite (>= 130 leaves)', () => {
+    expect(allLeaves.length).toBeGreaterThanOrEqual(130)
   })
 
   it.each(leaves.map((d) => [V.vectorId(d), d] as const))('%s', (_id, dir) => {
@@ -65,5 +69,30 @@ describe('conformance corpus through the site adapter: chain-of-title audit (gro
       expect(result.errors.some((e: string) => e.includes(s))).toBe(true)
     }
     expect([...result.warnings]).toEqual(exp.warnings)
+  })
+})
+
+describe('conformance corpus through the site adapter: activation witness quorum (group 40)', () => {
+  it.each(quorumLeaves.map((d) => [V.vectorId(d), d] as const))('%s', (_id, dir) => {
+    const exp = V.expected(dir)
+    const q = V.quorumInput(dir)!
+    const policyDocument = V.witnessPolicy(dir)
+    const anchorPolicy = V.anchorPolicy(dir)
+    expect(policyDocument).not.toBeNull()
+    expect(anchorPolicy).not.toBeNull()
+
+    const result = runWitnessQuorum(
+      q.checkpoint,
+      parseWitnessPolicy(policyDocument),
+      q.epochId,
+      q.expectedOrigin,
+      q.anchorEvidence,
+      anchorPolicy!,
+      q.conflictDomain,
+    )
+
+    expect(result.valid).toBe(exp.valid)
+    expect(result.witnessTime).toBe(exp.witness_time)
+    expect([...result.countingControlGroups]).toEqual(exp.counting_control_groups)
   })
 })

@@ -122,6 +122,32 @@ export function witnessPolicy(dir: string): JsonValue | null {
   const p = join(dir, 'witness-policy.json')
   return existsSync(p) ? (loadJson(p) as JsonValue) : null
 }
+// group 40 (activation witness quorum, v0.2 §11.4, P1.1b) only: a leaf
+// containing `witness-quorum.json` is a THIRD surface, routed to
+// `evaluateActivationWitnessQuorum` instead of `verify()` or `auditChain`.
+// `expected_origin`/`conflict_domain` are TRUSTED call configuration;
+// `epoch_id`/`checkpoint`/`anchor_evidence` are untrusted. The two trusted
+// POLICIES stay in their own files beside this one. Plain JSON.parse: nothing
+// on this surface is re-canonicalized, so nothing here needs bigint.
+export interface QuorumInput {
+  expectedOrigin: string
+  conflictDomain: string
+  epochId: unknown
+  checkpoint: unknown
+  anchorEvidence: unknown
+}
+export function quorumInput(dir: string): QuorumInput | null {
+  const p = join(dir, 'witness-quorum.json')
+  if (!existsSync(p)) return null
+  const d = loadJson(p)
+  return {
+    expectedOrigin: d.expected_origin,
+    conflictDomain: d.conflict_domain,
+    epochId: d.epoch_id,
+    checkpoint: d.checkpoint,
+    anchorEvidence: d.anchor_evidence,
+  }
+}
 // group 36 (transfer-chain conformance corpus, v0.2 §17.5) only: a leaf
 // containing `chain.json` is routed to `auditChain` instead of `verify()` —
 // see tools/gen_vectors.py's gen_36_transfer_chain docstring for the shape.

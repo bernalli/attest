@@ -78,6 +78,19 @@ Vector-directory conventions (a "vector case" is any directory containing
     Absent for every leaf outside group 39, so `verify()` sees `None` there
     and `corroboration: "witnessed"` stays unreachable. Group 39 leaves carry
     `transparency`/`corroboration` in `expected.json`, same as group 28.
+  - `witness-quorum.json` (group 40 only, v0.2 §11.4, P1.1b): a leaf
+    containing this file is a THIRD surface, EXCLUDED from the `verify()`
+    parametrization and from the chain-audit one, and driven instead by
+    `test_witness_quorum_vectors`, which calls
+    `witness.evaluate_activation_witness_quorum`. The file carries the call's
+    own inputs: `expected_origin`/`conflict_domain` (TRUSTED call
+    configuration, which raises when malformed) and `epoch_id`/`checkpoint`/
+    `anchor_evidence` (UNTRUSTED, which may only degrade the verdict). The two
+    trusted POLICIES stay in their own files, `witness-policy.json` and
+    `anchor-policy.json`. There is no receipt in this group at all, so these
+    leaves ship no `payload.json`/`envelope.json`/`manifests.json`; their
+    `expected.json` shape is `{"valid": bool, "witness_time": int | null,
+    "counting_control_groups": [...]}`, all three matched exactly.
   - `chain.json` (group 36 only, v0.2 §17.5 chain-of-title audit): a leaf
     containing this file is a SEPARATE audit surface, EXCLUDED from the
     `verify()` parametrization above and driven instead by
@@ -98,7 +111,7 @@ from typing import Any
 
 import pytest
 
-from attest import anchor, canon, keys, manifests, tlog, transfer, verify
+from attest import anchor, canon, keys, manifests, tlog, transfer, verify, witness
 
 VECTORS_DIR = Path(__file__).resolve().parent.parent / "docs" / "spec" / "vectors"
 
@@ -111,7 +124,14 @@ _LEAF_DIRS = sorted((p.parent for p in VECTORS_DIR.rglob("expected.json")), key=
 _CHAIN_DIRS = [p for p in _LEAF_DIRS if (p / "chain.json").exists()]
 _CHAIN_IDS = [str(p.relative_to(VECTORS_DIR)) for p in _CHAIN_DIRS]
 
-_VECTOR_DIRS = [p for p in _LEAF_DIRS if p not in _CHAIN_DIRS]
+# Group 40 (activation witness quorum, v0.2 §11.4) leaves are a THIRD surface
+# (`witness.evaluate_activation_witness_quorum`, never `verify()` and never
+# `audit_chain`) — excluded from both parametrizations below and driven
+# instead by `test_witness_quorum_vectors`.
+_QUORUM_DIRS = [p for p in _LEAF_DIRS if (p / "witness-quorum.json").exists()]
+_QUORUM_IDS = [str(p.relative_to(VECTORS_DIR)) for p in _QUORUM_DIRS]
+
+_VECTOR_DIRS = [p for p in _LEAF_DIRS if p not in _CHAIN_DIRS and p not in _QUORUM_DIRS]
 _VECTOR_IDS = [str(p.relative_to(VECTORS_DIR)) for p in _VECTOR_DIRS]
 
 _TAMPER_DIRS = [p for p in _VECTOR_DIRS if (p / "manifest_pristine.json").exists()]
@@ -328,6 +348,35 @@ def test_chain_audit_vectors(vector_dir: Path) -> None:
     assert list(result.warnings) == expected["warnings"]
 
 
+@pytest.mark.parametrize("vector_dir", _QUORUM_DIRS, ids=_QUORUM_IDS)
+def test_witness_quorum_vectors(vector_dir: Path) -> None:
+    """Group 40 (v0.2 §11.4, activation-grade witness quorum): a SEPARATE
+    surface from `verify()` — see this module's docstring for the
+    `witness-quorum.json` shape and match rules. The witness policy is parsed
+    here rather than handed over as a document, because this entry point takes
+    trusted, already-parsed configuration (unlike `verify()`, which accepts
+    either)."""
+    expected = _load_json(vector_dir / "expected.json")
+    quorum = _load_json(vector_dir / "witness-quorum.json")
+    policy = witness.parse_policy(_witness_policy(vector_dir))
+    anchor_policy = _anchor_policy(vector_dir)
+    assert anchor_policy is not None
+
+    result = witness.evaluate_activation_witness_quorum(
+        quorum["checkpoint"],
+        witness_policy=policy,
+        epoch_id=quorum["epoch_id"],
+        expected_origin=quorum["expected_origin"],
+        anchor_evidence=quorum["anchor_evidence"],
+        anchor_policy=anchor_policy,
+        conflict_domain=quorum["conflict_domain"],
+    )
+
+    assert result.valid == expected["valid"]
+    assert result.witness_time == expected["witness_time"]
+    assert list(result.counting_control_groups) == expected["counting_control_groups"]
+
+
 def test_vectors_directory_is_nonempty() -> None:
     """Guard against a silently-empty parametrize list (e.g. a wrong
     `VECTORS_DIR` path) making the whole suite above vacuously pass."""
@@ -339,12 +388,15 @@ def test_vectors_directory_is_nonempty() -> None:
     # (31, 2026-07-22) + 3 anchor-profile-v2 leaves (32, 2026-07-22, G4) +
     # 4 logged-revocation leaves (33, 2026-07-23, G5/TM-47) + 11 transfer
     # leaves (35, 2026-07-23, §17 Stage 3) + 4 transfer-chain leaves (36,
-    # 2026-07-23, §17.5):
+    # 2026-07-23, §17.5) + 13 witness-corroboration leaves (39, 2026-08-25,
+    # §10.1/§11.4) + 20 witness-quorum leaves (40, 2026-08-25, §11.4):
     # 19 a/b, 20 a-c, 21 a-g, 22 a-c, 23 a/b, 24, 25 a/b, 26 a-h, 28 a-n,
-    # 29 a/c, 30 a/b, 31 a-e, 32 a-c, 33 a-d, 35 a-k, 36 a-d. Counted over
+    # 29 a/c, 30 a/b, 31 a-e, 32 a-c, 33 a-d, 35 a-k, 36 a-d, 39 a-m,
+    # 40 a-t. Counted over
     # `_LEAF_DIRS` (ALL leaves, groups 35/36's chain-audit leaves included) —
-    # `_VECTOR_DIRS` alone (the `verify()`-routed subset) excludes them.
-    assert len(_LEAF_DIRS) >= 97
+    # `_VECTOR_DIRS` alone (the `verify()`-routed subset) excludes them, as
+    # it excludes group 40's quorum leaves.
+    assert len(_LEAF_DIRS) >= 130
 
 
 _CANONICAL_DIRS = [p for p in _VECTOR_DIRS if (p / "canonical.json").exists()]

@@ -1,0 +1,67 @@
+{
+  "epochs": [
+    {
+      "epoch_id": "bootstrap-2026",
+      "log_origins": [
+        "attest-transparency-log.example/2026"
+      ],
+      "not_after": null,
+      "not_before": "2026-01-01T00:00:00Z",
+      "threshold": {
+        "m": 2,
+        "n": 2
+      },
+      "witnesses": [
+        {
+          "affiliated_domains": [
+            "witness-a.example"
+          ],
+          "control_group": "group-a.example",
+          "ed25519_pub_b64u": "-kg0FH9uaQw2k-_2EzYEZAPNiuKhTzGzxAc1hWkjlWU",
+          "mldsa_65_pub_b64u": "1in3MeBFAIaUQJ9JmP4BLrtpCGDK1tC10H2atxRXvEDbXlO5FK1dQ4aBoPbRsoVaFzjqLWpeW3GSoJN23BDl_JcIoeuYg48kqxLj8XxGSPhcaGeWSvyQyHN4XDrDFL0kOoay-Ozp_oCA31mGGeAGveqiNGEBkao4ecLbo2ilIl3IVzwUThsS-7-O1P_0SZ3bCDta7v1UR47x9p3WNyW6c0d8JkDnRUTQP29mLemLmnOw4_996oFRZN72en8wC8lmSsqyb9lnQhXbEaD_hVWoRmnCB_WnwRvy1Z8ecUFcYiVAmPXJzz-qS-qk3-lSpq0lhqqBBFbiTrbUJ5U2mTqw4f3TphkEgE0rJRMn15irnQ2w_M3pW_X_7ZVAVtCEPZVjPRVCxnhAhNJoXj0Fntt6_KwTpZzdqIKyDCdbsHYsLJld1ktksaARC5-Qcp8TYsEDxKSss5VdbOywljty8C_ZclzvtEd_nHhpYJFJJ8waoSt1364LscJMrlzB2m_WYhiqcBsJE_0tiDBUMhFmMQV_uJKHGh8WTTA7c7_8pHFLnMxiYZ6KFCnOs1oJdWuhz2ebg-Mgz7yH7eTM0sz1KB5rI8PSpyulh35p7uQbnYe8nWOO6XezjBh0JcBp7QoyCREsz_dkAl7hIE4FSoRgHt4G30lGVvDMfQ6OiUGIzDChL75GOpv7nJbmemRe65QL4PilZrOTbfAc6JAGBtya6UBLh3w5qY2vyBQid2YuhENVi9mKsAccfN4IzyXpM5GPJ31wSgz-3h-bj93QDelIrqX0YGBVISALR_d-_GoLVfsn6wnoPiIa-ZqyaIVf2tJiOd897VMtZN5e1-7wgBeUTY7v_gvXznmZVy4UEzuzLV5hGXnZ7pIUCclBxKoE0ReGXiC-nW-eMEwC2d95Y6gzV1ytveP_u0i6n0OSxlzU5vn1oYweQLHFpuJ1sIGGb6uSJ9cWnCFzvq8k0uuNiGOWizoGsfWsPReLht2YuGXkIFhs7rcOLTDceE_XnM_uVPr23j3Z1qJI2kkFfOIxahYhVoZBdfpc70jENW6W8PwJ1osKYXM5P_oD8BfxNC_WwNyB4LCuMN1G0RJMJUWj2_eHSrepQaJRwNBmHtuXDSJJaO2GcDsLCXtZX9_MGPJPn8QGfLsZFGipH9cBI_6XVqL4-hmju4ggLGSVq_OHh0BjsxZxhIochEtfwZHyicH18VtPtiUyngyyBCJyK01wGgbyBzY283RVMYe6IHsDwzVk6sOdC1N85In7BLeS6GuRS7Op9ojGKqoYpW4__29uIOAt8bh4FBKqtHk7IDNsNy873bZOoI3yor211_w57coP2dKeLz5R3_EKrT_Bw-_112FtN8NYVhMkLiIsPVla7f4dw3QVOgYlSfPtjv4pP6jo9jEWhNJLtL5VZgvYy7R71Y0jH6Adx737YWNN5Wg31aVxmMT9SljftM1JkEKlIv6giEA0NLetI3uC4zeWxt6XQRZvfTEDL9As0liRXIwDFsIPrKfHKt795S7qNOjBsT1D0kLWQRoDp8O4rMmuIE8SxrZb4e4a7sB5NKgiHG0MZ4cvPgfw83lQs7RT1TaQ8JzYqRYwndZBYDRA_4ths7zMZ10mrPUWo6xuQcRCSX7n09m4_d5J2wY1f-wT4N03-MjTRBIb1gX_pUu_NHPj2c6iZZulzKaIFWgDyHNELexmbxLBd_-a7SIAhomeiqcNCG5DdUIcYmPBRREznXt9goVQqodcSgKf0bUMRwBLwmWSXFpPNJGwO5AUjL3N4eE18udqrbbQbRZPrO6Mj1HTD90DhAL4y5c-23IN-UvhnYqU5LsZxEthnCcEtzpK9zras6P7VLSN90GBHDjrE-3E-ejy5cG2ioW4AUocOMsgZJBCrj1jT1MIpjHkFejox46MkdajY-aYERcZJeLBCIiSAzNRy718lxeC2uQ4uWv-9X1rLx4N90LfZqRwaLtopTHvbF_yylDQjhPs9yaygZTukhRCX3YyIFkiHmHE-0R91VzmwyA6InPHc-3K2H0vWDumTmKj9JzBtL3FpEqDswGqtY5p6pXVEiTFzIp1Oyx_ZedU5XcMCEi8s9DA1S8farJ4JLPzWZA9A_l8kfNzrR2Lqkcg8pTrv6JQJhR7x3xEXqBi6SVTZdxZXeL74UFheVux8KEsD-cdz2uidzDL2ASeRZN7w5lfHXB9UebIFXs_HbMkZDYsTwrYERMzkHThc-MSSbsZ75JvHHlzCdJytbNtHs3aCgcChHze91Gxdgke97KrGnKz0ALypYvPTjyLequNYE2lZqPq-NVchYbiEaFwkm7Ig_c18k39oZTCfeNn_wQsxJ7ziNV0w34P348EZ3ShlhdB8tS5JtZu-hNWoZd-hnekTABx-PaIbzp9cMD0q_DjojDVPwjqJfWhtRZSjTd4MgttK4jzaxp3BvBbt0W7pLLJcQR3dAx-jXNN5r8H1ARmvYAUUXHjDK3ulSMyFg392kqCEMkh7y6mnzUEI8XfOPhiW8QbTfWLyqRpHDFUxY2knj0ydcOJQT8t0V7U8P98ULMdyjC9HDJnn0bF3CYtJSACThr1N6rETirYqvsYP4vrW-SV9Lddih8",
+          "name": "attest-witness-a-2026",
+          "not_after": null,
+          "not_before": "2026-01-01T00:00:00Z",
+          "operator_id": "witness-a.example",
+          "roles": [
+            "corroboration",
+            "sunset-activation"
+          ]
+        },
+        {
+          "affiliated_domains": [
+            "witness-a.example"
+          ],
+          "control_group": "group-a.example",
+          "ed25519_pub_b64u": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+          "mldsa_65_pub_b64u": "ShAVpx0rujaI4iNKNJALir5_GTBbOLNn6EN7LiwRVvO8s9gIfjo9U_RN7NPnVyqXVJ7JRdXitQkj-ws2YVRQ0GWLv8JVRbDdRGboFwfQIoxhDcHWUn5DwhrRSzbyKkKaqXPn2bwzwRPnfqKv8rkTjwQpMIw6Bx3DDW0aw3ICrdTm2oBFhco4HHlfrhTeRjt2kOGfQgi8yeTB2uMSICXbS6ZH-q3zjN7cqREUceWtmXCdMSc06pktPLvNAOiVw6-d5bo76C0SBM0f6aokbE8VDXkgCzjIBZjYHukEV0-14OQqjFO6DqmsnCJEIfSr3wANnOl0h_THvIacnKoKN2LZZP7kGl2qNxrVI2TkmvmdpreLq_GowIAvRdhUpSG7XVrXu2MokuZudUQ4pawZou5u2FAStFGK2OfBkkwyZpR78zovbM70h0e7A5g938wqlLFnV7g7Gbd0WmeQJt4XY7A5HHyMzfrkP9lKUCKLbOApy2Hj4i6gmR2Zn32tkpuMH-0ehElzZNX-MxIImn7rl6W436XQGyvfcNykbV6q9BY50pRYMIc2yxauzLl_6daP5pku6GyKF15C7Yv5px5LEECAeawlvp_hS-icvR6VJf4JIOTLkmG59vNfp-DtyKhJX1tu4rftiQT71fb00z0O0Y0sep6j6hlOHMbMXcpH7oY1RQq7Y0Lj9mVAiI5LQU8jVHL7EuGvAZDjp9xEputasfSk_L5OMKW6ppN0NSFJDWxdQGGuQ7DRH8zAbBoWXV3EpMl_bganEEXbm2pdIO4zQKOpyNDn_xdS9I2cn-sy2zfu2NQuUwL7x5S38bd1uzsc8rX8eic7aNbYdzGQnqMYM1NoJfTUYKqQw_QfcA0sBwq6tDcftE1Lfv1XPStteDLzc0--1XZD6StOfzW-wev_rnksP1TS7IbLdIfRQZt6q6qVlgI1xy13Y3b65CDh3yhBLpNPXOTLWvWe75jJxVIdfXBNn-dci2yeDB6b6f6PhlZdlFSZJAtd2H3yODMIKBnJNz43x75eaie10efcrvcpK-eH9hjFptDNFhiDhfwpHzLMikBFYDOFp2tuOKLFOCVP7KlRF9ZdJFrxq7wt4cUE76JEGnyAWUXq5PenJss3jtowj2NQb7HkZQyTPmNXwSx3G-HOS0k1chAeMQta2ujfgVneewlFFkKDnk8fPh7G3P75zPjJw8VV2_qnfVCka87fw7YYF1Z_6khegvy8cfstFioYK-P7VJNZnAy0HgQ733_h8Lyk7dUgW0Ta9kveLf2QwoO8MVZuWXOyagusmXRo0UYlCIycN_JyqJ1YGUn19cU_0Yf2LITpuRqW0Hg5LCID-u6oMHJSw4mvW4A4AniY0Mf1c1JvWjReBWD0ZMLs43b5PXTkfaj6JuEBmT150lLuSeW-S1mn3l3-n7LG-H-4e9dGJZfQhXb-xLwIopI70ExBacGKWeANpFjLL0nfm4sQIvfFKM2NTY0y6BySwvFQaYMPIMHRpgsBlFI9UAnMl8honzB3Q7LLyy-3WoC9tbY0dp_j_eu-zQhX9KWEQ7I5j_CpjgP7wzJhbF3vwTQlAwtcg7Wi30efK4mArUrxV0ytgjwcP1-bED0CQ_MQb91RF-Z5d92VdcEmJRWeCgGun_azFywcTLagYRiaz0z-ftmSA89MFZpB0niOHT2YWXgVsY9khcgZMp1_vVFc2b1vAEfJPFGb3EKHm_ooF-ONm_WrOKHUh0_FrINxp7obd8K4GLcvQaNsi3lfaerca0JkKPa1VsoX8nfDNepmcEi_ath3c2AoZRREStewocYwWbUMWjn_TQaCSmPpFMiSDIouXZB26IxL_GIVzwpEai8L9YMIqqzdqvKCnk9UcT6zX329Ysdzne8G8SSYN5jwaqiCoplXZ-r77rmN5Y41Ggo3qjfgo5pkrPeh3ThvYdRQ5rjno3Q3HA0xqsF1TFemUKTPiOkZrsTCFAZt_3OEeum9mJqwEQU6qfMNQ0nmi4vLpJmOumowmUA6_q4PnViAWy7sP6krB9HITIJjbz-GJuCiE8cS6Jo2Qomxq__Agu6HAKO0DqVT2S0c5QVUhpmsXQ4pyUJv4Nn0zsGWaDin0DDqw9EzV1qWHQJe6gxLdb9GGzScmNIVvOwtRitpH1Ax_t5DpdoLICET1EBBoux46ec4ihP3DkJ5pcixDrO7OSaN9rhh2yGImtwEvIQeVhZkl2_ekeQAEJ7wJAGAZtXkSBshvyj9Zc9wjk1B6cgTGRFlthnY7-zRw7vDtR44tWijSbN8UnaiVyyjEczbjIGUrrwlguDTwfu3KEDMgSKcBt7IgFlFG_J8jBIGHTuCYlUvTlSzScdgQD80p2h-Pv0xeMtdUiHEIFJC4ce_KcBY1ftDLdiMkrqfSpRjkvBlHkNiovozp2LmbwR0HrvBnz-V4t0thoJbvUFREHaHKC9OULxOwPrZZ0q0dGrjUEkpFs8Uc0jQoMJzBLOvuIy0wceTWSmARLxIMkweUiCmeXacPqJrelarBg56nKUyw8PygKPrLNk3HpDex9oPF4cDGKxvdpp36KoKlNAI3yVLD0TwPshUX-USMaKE2JqS4SJP1icLftDtUht51Xs",
+          "name": "attest-witness-b-2026",
+          "not_after": null,
+          "not_before": "2026-01-01T00:00:00Z",
+          "operator_id": "witness-a.example",
+          "roles": [
+            "corroboration",
+            "sunset-activation"
+          ]
+        },
+        {
+          "affiliated_domains": [
+            "witness-c.example"
+          ],
+          "control_group": "group-c.example",
+          "ed25519_pub_b64u": "RQigeqlBcH8-stuUyIl6gLLBGXR2tt4hOsJz332GxP8",
+          "mldsa_65_pub_b64u": "sMaq8VL48kDV3hhc6VGPPNVlpeGLk4Mr93jxoinbwoyroxRjKE2P9ueuQAWeqgYzKgjdP00hVfGUw7ByS9txuwbKRK8gxjwiMJ-wtuJ48cZUmHU5-xfhxY7C60qG1aNOv-XsizgfVGhKjbir06d6dPSrbPhNUWevha24R_QyWK4PFLnbc-ySl7fwS4Sl2VgNt-UVPwGdZ9b6qB8dIz2OC_1mhT25DSYfkWmga6AcRIr18vJjXH7zjrPNBAeW_6aYugzy2rVi5HRtOVHFOW10K1FzQBDE6Iu0Gv1EV0uJVW1uMiiAspdHdnz3JTzSP5rLGJ4LGPDBma5S4XTJzrKz8lefp1LxFkssdY6olr_rmnSCSC548SxnVhipn9SwHzWQBIUgaw2Ajrgb0QGTThpjGQU9oZlTnDvwg4aRQ7jkoYjFPJpUqGGvcYVK92OVpSl187uyRvaMs-lBxyiggTXH3OXRaGupOP3eF1Ql_nti_f8rsV94zuWWcKlgI1O9yqnnqZ5jxaDqzfGPgfgmoUFWVVSynaRllcfe9OlUvuCsHtKhQH8-uhn5wKdg1XimO5BP27mTWAcxKev5BVRho-ODos9UzKawYLxLhgpeUKNBgSEV6YBs6V1hiYx3S3BoPIIjMyBGnm11wvYx9uDZvOJUGBImShEA_L8vW-HibpjKGv2EJFYeUR6Ok0KgE7-AKaWF-3tdFEMNYa3ucON6M9kRNzM_Qkei6tn9s2tmPoSFxWnj3YBBdLcgdxzwdSkAlvZIDEu_silloLYHn_oy6mJxfauu1WK617qMB_J8cGHnFosuL2L_dCX48lM1DH2M51NXz5_-A64b3bkzcPbG-Dhx1JhydvFvFc0nkqfaNCCEwkCAkvLgNmlMYT1OB8-5XM3bMBk796DoNlqAb0G-Mxke5cfK7n23s63R8WGJIYJ4rghQV1qmztQbxS1L2ba849knd3nUHicJGz4cauxLvbF_t5azWHj-5dQuB97dmgZXeSX2d_4EWem3rdRUBZ-RhT5y6wYp5bQcRO60DhncGFwwM8IvXeRFC-s6vu3UT8QHqKlNROdAc5ff8uWWsOSnVw4Qq-bn4SX7cef0DvNeIwrXDykGRASIoZPUVQtUVsIn21DVCZQhnweCMecePwimigmvge5qc1TkvdSOsF5XZohGTARH_Y-TBwMoFUK2mYGd2qWYtArQX0_X-3NpIQ7NDC6sq104b48jVSLP4nf2vpMtIxGtbvvNaGsSAACdUT1LbYW0NrNQloQfOM3UWm1PtQvWf_3B6CvsR0lflryr9IG6313uuuNVFsQ0dOpX2BXJrF2CZpez7YE1xxR3vxHr7u0ZSaN4TbPGUjBJvdUDnYaP58PdJVPdGMn7NEkISCBk-AY-S7cd77QC7QvI9hhiav_MfyV3y6IwzNnz45Xiudbnb4sah8IxN0tgEvxXljWyWs3ea764ctvageTqPGS4aD9EHrkF2M3fQ9BO9uMKc3x2vHS0J56akmpWmOph5KYmArGsrhLMSSrdcoSqEA9mfyttyirFZuC1GPTH9HRfyiAsYrBcrG_LETnusxc4swgvMau17HVUX0mPPDCTb3J4g5kB5chRDROtVqmTEx8VE9Upn7znFMot5NwOhU7-5BqIv5-0D7Kj7aU-PCsnf-cXeloPQ84uzgVQDJqUnsOyfilGZy0_on1Bon0Xf5_jzHPiTupvBB3Q2RHFc1zWsc04iZt0omH1dCSfl4ZcKIWEuAA77q53AnPfIRJp26M_sG4Fav_zKW7h520MgtF6YB86rRqg5vgaWlgqX5kDA4gAOnEkWBa0UfI3K2EZVCtTHCECKYBvCQXhnEmOEmMIdCXzKnHjEYu1iyfY30YTTeO3WlddgtcIX2k0li11x0TV5MDtUnK49923CW-SzAPjVZ5E2-3gd6Pqd9T3K-kBkUNdZNmhW8EFn6o1bP1lvWO2w64fLjOND-utSvxY0B92hgNd7JuVoc6pt0Ym_6D6FPKw3s7rMgQQlRYvnc7mQD2xHhjOvazsreh1QAG2WpSABjWH1-8ao03N-UTXPVJqBNit_CvMpfsqa1hlDA2fqxoV6kVic3r5adXUYssbfKABW4RcNtb_tWF8cadejNPy7TlKyOlIk1rQ1KvnojLNKoTDVrwUyYc4R-ucoxYGqmcHBjpdzvsvEHbjThdlXo_yRpNoowgKAz_JYQdF8ujCzTG37zRzspqHOGCC2bfFTUGwAuho5cvVhJG1PpUZoMMjh8WpC8syt8TyDP2auW2h7FPFff9zhypnrexaOF9rekcdEI2IHrR0aTBqDVQAtECRdo_ZKOP9rbvHD8md_r4bMH58cFwT3idXNd5NJ3-SHS83aOf40THVL4SMolduAhPOwMfIVOFUYOf_T5nyVejsyoHZyzwk_NukRiVj4joOPVmpDQIjsZXzUo_8qfUgDT0x1FxGhTM4h4_tJyzvRuAaRDeqWs8V0vQh1QDdtOR_vEGu6y_cx0y3_vqwBTvt7xtZgkBUgX8S7SkphMOVnlYxNGK3DeDai9WxtJ8ICtAx6tJ0wB6Ko5EDSj6iKfug1__X1WjDnojXZ04aaoXRbLeTM_6efWGblnI",
+          "name": "attest-witness-c-2026",
+          "not_after": null,
+          "not_before": "2026-01-01T00:00:00Z",
+          "operator_id": "witness-c.example",
+          "roles": [
+            "corroboration",
+            "sunset-activation"
+          ]
+        }
+      ]
+    }
+  ],
+  "schema": "attest-witness-policy-v1"
+}

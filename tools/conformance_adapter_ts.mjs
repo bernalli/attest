@@ -10,8 +10,9 @@
 // Reads one conformance-corpus leaf directory (see
 // docs/spec/vectors/README.md for the corpus contract) and prints the
 // leaf's VerificationResult (or, for a chain.json leaf, its
-// ChainAuditResult) as ONE JSON object on stdout — nothing else on stdout,
-// ever.
+// ChainAuditResult; or, for a witness-quorum.json leaf, its
+// ActivationWitnessQuorumResult) as ONE JSON object on stdout — nothing else
+// on stdout, ever.
 //
 // The loader functions below duplicate (never import) the loader semantics
 // of verifiers/ts/test/helpers/vectors.ts byte-for-byte, including the
@@ -24,7 +25,14 @@
 
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { verify, isOk, auditChain, loadsStrict } from '../verifiers/ts/dist/index.js'
+import {
+  verify,
+  isOk,
+  auditChain,
+  loadsStrict,
+  evaluateActivationWitnessQuorum,
+  parseWitnessPolicy,
+} from '../verifiers/ts/dist/index.js'
 import { b64uDecode } from '../verifiers/ts/dist/b64u.js'
 
 const loadJson = (p) => JSON.parse(readFileSync(p, 'utf-8'))
@@ -155,6 +163,23 @@ function chainInput(dir) {
   }
 }
 
+// group 40 (activation witness quorum, v0.2 §11.4) only: the call's own
+// inputs. expected_origin/conflict_domain are TRUSTED call configuration;
+// epoch_id/checkpoint/anchor_evidence are untrusted. The two trusted POLICIES
+// live in their own files beside this one.
+function quorumInput(dir) {
+  const p = join(dir, 'witness-quorum.json')
+  return existsSync(p) ? loadJson(p) : null
+}
+
+function quorumResultToJson(r) {
+  return {
+    valid: r.valid,
+    witness_time: r.witnessTime,
+    counting_control_groups: [...r.countingControlGroups],
+  }
+}
+
 function verifyResultToJson(r) {
   return {
     signature: r.signature,
@@ -181,6 +206,27 @@ function chainResultToJson(r) {
 }
 
 function runLeaf(dir) {
+  // Routing is by FILE PRESENCE, mirroring tests/test_vectors.py exactly.
+  const quorum = quorumInput(dir)
+  if (quorum !== null) {
+    const policyDocument = witnessPolicy(dir)
+    const policy = anchorPolicy(dir)
+    if (policyDocument === null || policy === null) {
+      throw new Error(`${dir}: witness-quorum.json leaf missing witness-policy.json/anchor-policy.json`)
+    }
+    // Parsed here, not handed over as a document: this entry point takes
+    // trusted, already-parsed configuration, unlike verify().
+    const result = evaluateActivationWitnessQuorum(quorum.checkpoint, {
+      witnessPolicy: parseWitnessPolicy(policyDocument),
+      epochId: quorum.epoch_id,
+      expectedOrigin: quorum.expected_origin,
+      anchorEvidence: quorum.anchor_evidence,
+      anchorPolicy: policy,
+      conflictDomain: quorum.conflict_domain,
+    })
+    return quorumResultToJson(result)
+  }
+
   const chain = chainInput(dir)
   if (chain !== null) {
     const keys = logKeys(dir)
