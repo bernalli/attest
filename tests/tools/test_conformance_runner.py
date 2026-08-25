@@ -186,16 +186,16 @@ def test_in_v01_subset_rule(lid: str, expected: bool) -> None:
     assert cr.in_v01_subset(lid) is expected
 
 
-def test_select_subset_v01_is_exactly_51_leaves_of_the_real_corpus() -> None:
+def test_select_subset_v01_is_exactly_52_leaves_of_the_real_corpus() -> None:
     leaves = cr.find_leaf_dirs(REAL_VECTORS)
     subset = cr.select_subset(leaves, REAL_VECTORS, "v0.1")
-    assert len(subset) == 51
+    assert len(subset) == 52
 
 
 def test_select_subset_v02_is_the_full_real_corpus() -> None:
     leaves = cr.find_leaf_dirs(REAL_VECTORS)
     subset = cr.select_subset(leaves, REAL_VECTORS, "v0.2")
-    assert len(subset) >= 130
+    assert len(subset) >= 158
     assert len(subset) == len(leaves)
 
 
@@ -395,6 +395,8 @@ def test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismat
         "transparency": "logged",
         "corroboration": "corroborated",
         "manifest_freshness": "fresh",
+        "grant": "dormant",
+        "grant_trust": "verified",
         "ok": True,
     }
     expected = dict(base)

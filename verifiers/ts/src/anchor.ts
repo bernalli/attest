@@ -12,6 +12,18 @@
 // (mirrors tlog.verifyCheckpoint's logKey/expectedOrigin split): malformed
 // ones throw `AnchorError` instead, since that signals a caller bug.
 //
+// `verifySeededAnchor` answers the other half of the question. Where
+// `verifyAnchor` asks "was THIS checkpoint timestamped?",
+// `verifySeededAnchor` asks "has real time reached date T?": the op-chain
+// starts from `sha256(seed)` for an arbitrary caller-supplied seed (the
+// canonical bytes of some public document), no checkpoint is involved
+// anywhere, and the anchor-profile dimension does not exist. Everything else
+// is shared, down to the ceilings and the warning strings. Because the two
+// ask opposite questions, the verdict carries BOTH reductions over the
+// verified proofs — `anchoredBefore` (minimum, "did this exist no later than
+// T?") and `anchoredAfter` (maximum, "has real time reached T?") — see
+// `AnchorVerdict` for why one cannot stand in for the other.
+//
 // Anchor profile (G4, attest-v0.2.md §11.1): an `ots` proof's accumulator
 // starts from an `evidence.anchor_profile`-selected commitment —
 // `sha256(checkpoint.signedNoteBytes)` (the full signed note) for
@@ -97,9 +109,28 @@ export interface AnchorPolicy {
   crqcHorizon: number | null
 }
 
-/** The outcome of `verifyAnchor` over one evidence bundle. `anchoredBefore`
- * is the minimum pinned header time over verified `ots` (PQ-surviving)
- * proofs only — `rfc3161` proofs never set it.
+/** The outcome of `verifyAnchor` or `verifySeededAnchor` over one evidence
+ * bundle.
+ *
+ * `anchoredBefore` and `anchoredAfter` are the two ends of the same set of
+ * verified `ots` (PQ-surviving) proofs — `rfc3161` proofs set neither, and
+ * both are `null` when no `ots` proof verified. They exist as a PAIR because
+ * a caller can ask two opposite questions of one bundle and only one
+ * reduction is sound for each:
+ *
+ * - `anchoredBefore` is the MINIMUM pinned header time. It answers "did this
+ *   exist no later than T?" — the oldest verified anchor is the strongest
+ *   claim of prior existence, and the maximum would overclaim.
+ * - `anchoredAfter` is the MAXIMUM pinned header time. It answers "has real
+ *   time reached T?" — a pinned header's time is a lower bound on real time,
+ *   so the most recent verified anchor is the strongest such evidence. The
+ *   minimum produces false negatives the moment a bundle carries two valid
+ *   proofs: an old one would veto a new one, and a caller handed only the
+ *   minimum cannot recover the maximum.
+ *
+ * Neither is derivable from the other, which is why the verdict carries
+ * both. `anchoredAfter` is optional so that every pre-existing construction
+ * site keeps compiling untouched; both entry points always populate it.
  *
  * `noteOnly` is `true` iff the evidence's `anchor_profile` is absent,
  * `null`, or `"note-v1"` (G4, attest-v0.2.md §11.1): the accumulator
@@ -114,6 +145,7 @@ export interface AnchorVerdict {
   pqSurviving: boolean
   warnings: string[]
   noteOnly: boolean
+  anchoredAfter?: number | null
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -260,18 +292,20 @@ interface OtsProofOutcome {
 /** Evaluate one `ots` proof: replay its op-chain from `accumulatorStart`
  * and cross-check the result against a header pinned in `policy`.
  *
- * `legacyAccumulatorStart`/`noteOnly` (G4/I2, attest-v0.2.md §11.1.1): on an
- * op-chain mismatch under a declared signed-note-v2 profile, also replay
- * the SAME `ops` from the legacy note-v1 seed — purely diagnostic, never
- * changes `verified` — so the warning can name which seed the declared
- * profile actually requires and flag a v1-shaped commitment presented as
- * v2. */
+ * `legacyAccumulatorStart` (G4/I2, attest-v0.2.md §11.1.1) carries the
+ * anchor-profile dimension, and `null` means the call has no such dimension
+ * — either a declared note-v1 profile or a seed that is not a checkpoint's
+ * bytes at all (`verifySeededAnchor`), both of which get the plain mismatch
+ * warning. When it IS supplied (a declared signed-note-v2 profile), an
+ * op-chain mismatch also replays the SAME `ops` from the legacy note-v1 seed
+ * — purely diagnostic, never changes `verified` — so the warning can name
+ * which seed the declared profile actually requires and flag a v1-shaped
+ * commitment presented as v2. */
 function verifyOtsProof(
   proof: Record<string, unknown>,
   accumulatorStart: Uint8Array,
-  legacyAccumulatorStart: Uint8Array,
-  noteOnly: boolean,
   policy: AnchorPolicy,
+  legacyAccumulatorStart: Uint8Array | null,
 ): OtsProofOutcome {
   const ops = proof['ops']
   const { accumulator, warning } = replayOtsOpChain(accumulatorStart, ops)
@@ -297,7 +331,9 @@ function verifyOtsProof(
 
   // `warning === null` above guarantees `accumulator` is non-null.
   if (!equalBytes(accumulator as Uint8Array, rootBytes)) {
-    if (noteOnly) return { verified: false, headerTime: 0, warning: ANCHOR_WARN.OTS_CHAIN_MISMATCH }
+    if (legacyAccumulatorStart === null) {
+      return { verified: false, headerTime: 0, warning: ANCHOR_WARN.OTS_CHAIN_MISMATCH }
+    }
     const legacyReplay = replayOtsOpChain(legacyAccumulatorStart, ops)
     const looksLikeV1 =
       legacyReplay.warning === null &&
@@ -326,6 +362,68 @@ function verifyOtsProof(
   return { verified: true, headerTime: pinned.time, warning: null }
 }
 
+interface ProofWalkOutcome {
+  anchored: boolean
+  pqSurviving: boolean
+  anchoredBefore: number | null
+  anchoredAfter: number | null
+}
+
+/** Evaluate every proof in an already-shape-checked, already-capped `proofs`
+ * list, appending any diagnostics to `warnings` in place.
+ *
+ * `anchoredBefore`/`anchoredAfter` are the minimum and maximum pinned time
+ * over the proofs that actually VERIFIED (see `AnchorVerdict` for which
+ * question each answers); both are computed here, once, from the same walk,
+ * and a proof that failed for any reason contributes to neither. Shared by
+ * both entry points so the proof-kind dispatch, the forward-compat "unknown
+ * kind is ignored, not fatal" rule and both aggregations exist in exactly
+ * one place — the only thing the two callers differ on is which bytes seed
+ * the accumulator, and whether the anchor-profile diagnostic
+ * (`legacyAccumulatorStart`) applies at all. */
+function walkProofs(
+  proofs: unknown[],
+  accumulatorStart: Uint8Array,
+  policy: AnchorPolicy,
+  warnings: string[],
+  legacyAccumulatorStart: Uint8Array | null,
+): ProofWalkOutcome {
+  let anchored = false
+  let pqSurviving = false
+  let anchoredBefore: number | null = null
+  let anchoredAfter: number | null = null
+
+  proofs.forEach((proof: unknown, i: number) => {
+    if (!isPlainObject(proof)) {
+      warnings.push(proofNotObject(i, proof))
+      return
+    }
+    const kind = proof['kind']
+    if (kind === 'ots') {
+      const outcome = verifyOtsProof(proof, accumulatorStart, policy, legacyAccumulatorStart)
+      if (outcome.warning !== null) warnings.push(proofPrefixed(i, outcome.warning))
+      if (outcome.verified) {
+        anchored = true
+        pqSurviving = true
+        if (anchoredBefore === null || outcome.headerTime < anchoredBefore) anchoredBefore = outcome.headerTime
+        if (anchoredAfter === null || outcome.headerTime > anchoredAfter) anchoredAfter = outcome.headerTime
+      }
+    } else if (kind === 'rfc3161') {
+      const tokenB64 = proof['token_b64']
+      if (typeof tokenB64 !== 'string') {
+        warnings.push(proofPrefixed(i, rfc3161TokenNotStr(tokenB64)))
+        return
+      }
+      anchored = true
+      warnings.push(RFC3161_WARNING)
+    } else {
+      warnings.push(proofPrefixed(i, unknownProofKind(kind)))
+    }
+  })
+
+  return { anchored, pqSurviving, anchoredBefore, anchoredAfter }
+}
+
 /** Verify an anchor-evidence bundle against `checkpoint` and `policy`.
  *
  * `evidence` is untrusted and this function NEVER throws because of it: any
@@ -345,6 +443,7 @@ export function verifyAnchor(evidence: unknown, checkpoint: unknown, policy: unk
   const fail = (): AnchorVerdict => ({
     anchored: false,
     anchoredBefore: null,
+    anchoredAfter: null,
     pqSurviving: false,
     warnings,
     noteOnly: false,
@@ -405,44 +504,108 @@ export function verifyAnchor(evidence: unknown, checkpoint: unknown, policy: unk
   const legacyAccumulatorStart = sha256(checkpoint.noteBytes)
   const v2AccumulatorStart = sha256(checkpoint.signedNoteBytes)
   const accumulatorStart = noteOnly ? legacyAccumulatorStart : v2AccumulatorStart
-  let anchored = false
-  let pqSurviving = false
-  let anchoredBefore: number | null = null
+  const { anchored, pqSurviving, anchoredBefore, anchoredAfter } = walkProofs(
+    proofs,
+    accumulatorStart,
+    validatedPolicy,
+    warnings,
+    noteOnly ? null : legacyAccumulatorStart,
+  )
 
-  proofs.forEach((proof: unknown, i: number) => {
-    if (!isPlainObject(proof)) {
-      warnings.push(proofNotObject(i, proof))
-      return
-    }
-    const kind = proof['kind']
-    if (kind === 'ots') {
-      const outcome = verifyOtsProof(
-        proof,
-        accumulatorStart,
-        legacyAccumulatorStart,
-        noteOnly,
-        validatedPolicy,
-      )
-      if (outcome.warning !== null) warnings.push(proofPrefixed(i, outcome.warning))
-      if (outcome.verified) {
-        anchored = true
-        pqSurviving = true
-        if (anchoredBefore === null || outcome.headerTime < anchoredBefore) anchoredBefore = outcome.headerTime
-      }
-    } else if (kind === 'rfc3161') {
-      const tokenB64 = proof['token_b64']
-      if (typeof tokenB64 !== 'string') {
-        warnings.push(proofPrefixed(i, rfc3161TokenNotStr(tokenB64)))
-        return
-      }
-      anchored = true
-      warnings.push(RFC3161_WARNING)
-    } else {
-      warnings.push(proofPrefixed(i, unknownProofKind(kind)))
-    }
+  return { anchored, anchoredBefore, anchoredAfter, pqSurviving, warnings, noteOnly }
+}
+
+/** Verify an anchor-evidence bundle whose op-chains start from `seed`.
+ *
+ * Answers a different question from `verifyAnchor`. That one asks "was THIS
+ * checkpoint timestamped?" and therefore binds every op-chain to a
+ * checkpoint's own bytes. This one asks "has real time reached date T?": the
+ * caller holds an OpenTimestamps attestation over the canonical bytes of
+ * some public document, and the only thing that matters is whether that
+ * document's op-chain climbs to a Bitcoin header the verifier has pinned. A
+ * pinned header's time is a lower bound on real time, so a verified anchor
+ * is evidence that the world has already passed it.
+ *
+ * `seed` is that document's bytes, and the accumulator starts from
+ * `sha256(seed)` — exactly as `verifyAnchor`'s legacy path starts from
+ * `sha256(checkpoint.noteBytes)`. Passing a checkpoint's `noteBytes`
+ * therefore replays the identical chain, and the two entry points return the
+ * same anchor facts for the same `proofs`.
+ *
+ * There is no checkpoint on this path: `evidence.checkpoint` is neither
+ * required nor read, and an incoherent one changes nothing. There is no
+ * anchor profile either — profiles say which of a checkpoint's two
+ * byte-strings an accumulator committed to, a distinction with no meaning
+ * once the seed is an arbitrary document, so `evidence.anchor_profile` is
+ * likewise not read and `AnchorVerdict.noteOnly` stays `false`.
+ *
+ * The verdict carries BOTH reductions over the verified `ots` proofs,
+ * because this entry point's caller asks the opposite question from
+ * `verifyAnchor`'s and neither reduction answers both:
+ *
+ * - `anchoredBefore` stays the MINIMUM, byte-for-byte the semantics
+ *   `verifyAnchor` has always had. It is kept identical so two twin
+ *   functions never answer the same evidence differently — a caller that
+ *   moves a bundle between them must not see the floor shift.
+ * - `anchoredAfter` is the MAXIMUM, and it is the field a "has time reached
+ *   T?" caller wants. The minimum is the wrong reduction for that question
+ *   as soon as a bundle carries two valid proofs: an old anchor and a new
+ *   one both verify, the minimum reports the old one, and the caller
+ *   concludes time has not advanced — a false negative it cannot undo,
+ *   since the maximum is not recoverable from a verdict that dropped it.
+ *
+ * On the single-proof evidence this is usually built for, the two coincide;
+ * they diverge exactly when it matters.
+ *
+ * `evidence` is untrusted and this function NEVER throws because of it. `seed`
+ * and `policy` are the trusted, caller-config side: a non-`Uint8Array` or
+ * empty `seed`, or a malformed `policy`, throws `AnchorError`. */
+export function verifySeededAnchor(evidence: unknown, seed: Uint8Array, policy: unknown): AnchorVerdict {
+  if (!(seed instanceof Uint8Array)) {
+    throw new AnchorError(`seed must be bytes, got ${pyTypeName(seed)}`)
+  }
+  if (seed.length === 0) throw new AnchorError('seed must not be empty')
+  const validatedPolicy = validatePolicy(policy)
+
+  const warnings: string[] = []
+  const fail = (): AnchorVerdict => ({
+    anchored: false,
+    anchoredBefore: null,
+    anchoredAfter: null,
+    pqSurviving: false,
+    warnings,
+    noteOnly: false,
   })
 
-  return { anchored, anchoredBefore, pqSurviving, warnings, noteOnly }
+  if (!isPlainObject(evidence)) {
+    warnings.push(evidenceNotObject(evidence))
+    return fail()
+  }
+
+  const proofs = evidence['proofs']
+  if (!Array.isArray(proofs)) {
+    warnings.push(evidenceProofsNotList(proofs))
+    return fail()
+  }
+  if (proofs.length > MAX_PROOFS_PER_EVIDENCE) {
+    warnings.push(evidenceProofsExceeds(MAX_PROOFS_PER_EVIDENCE))
+    return fail()
+  }
+
+  // Every list-shaped cap is now behind us, so the first digest of the call
+  // is bounded work: MAX_OPS_PER_PROOF and MAX_OP_HEX_LEN bound the rest
+  // inside replayOtsOpChain, which checks an operand's length before ever
+  // concatenating or hashing it.
+  const accumulatorStart = sha256(seed)
+  const { anchored, pqSurviving, anchoredBefore, anchoredAfter } = walkProofs(
+    proofs,
+    accumulatorStart,
+    validatedPolicy,
+    warnings,
+    null,
+  )
+
+  return { anchored, anchoredBefore, anchoredAfter, pqSurviving, warnings, noteOnly: false }
 }
 
 /** True iff `policy.crqcHorizon === null`, or `verdict` is a PQ-surviving

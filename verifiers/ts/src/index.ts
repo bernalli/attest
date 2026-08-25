@@ -26,7 +26,7 @@ export {
 export type { Checkpoint, LogKey } from './tlog.js'
 
 // OpenTimestamps-style Bitcoin block-header anchoring + CRQC horizon gating.
-export { AnchorError, verifyAnchor, passesHorizon } from './anchor.js'
+export { AnchorError, verifyAnchor, verifySeededAnchor, passesHorizon } from './anchor.js'
 export type { PinnedHeader, AnchorPolicy, AnchorVerdict } from './anchor.js'
 
 // Transparency/corroboration evaluator: the glue between the log and the
@@ -56,6 +56,55 @@ export {
   auditChain,
 } from './transfer.js'
 export type { ChainAuditResult } from './transfer.js'
+
+// v0.2 Stage 4 (§18, the preservation pledge): sunset grant and cessation
+// declaration PRIMITIVES (design §9: verification-side only — no build/sign).
+// Grant EVALUATION (§18.4's ordered steps and the `grant`/`grant_trust`
+// result components) needs the payload, a trust store and an anchor policy in
+// hand and is not part of this surface.
+export {
+  PERMISSION_DELIVER_TO_HOLDER,
+  PERMISSION_REDISTRIBUTE_AMONG_HOLDERS,
+  MODE_PUBLISHER_DECLARATION,
+  MODE_FIXED_DATE,
+  MODE_HEARTBEAT_ABSENCE,
+  PLEDGE_SUNSET_GRANT_V1,
+  END_OF_LIFE_SUNSET_GRANT,
+  SIGNER_ROLE_PUBLISHER,
+  SIGNER_ROLE_SUCCESSOR,
+  LABEL_REDEMPTION_CHALLENGE,
+  MAX_GRANT_LATER_VERSIONS,
+  MAX_GRANT_DECLARATIONS,
+  grantHash,
+  declarationHash,
+  verifyGrant,
+  verifyGrantSignature,
+  verifyDeclaration,
+  verifyDeclarationSignature,
+  signerDomain,
+  declarationSignerRole,
+  declarationCoversGrant,
+  grantCoversReceipt,
+  isNonNarrowing,
+  proseDiffers,
+  withinStructuralCeilings,
+  redemptionMessage,
+  verifyRedemption,
+  // §18.4's ordered evaluation and §18.5's two informational components.
+  evaluateGrant,
+  KNOWN_PLEDGE_TYPES,
+  GRANT_NOT_CHECKED,
+  GRANT_NONE,
+  GRANT_DORMANT,
+  GRANT_ACTIVATED,
+  GRANT_INVALID_IGNORED,
+  GRANT_TRUST_NOT_CHECKED,
+  GRANT_TRUST_VERIFIED,
+  GRANT_TRUST_TOFU,
+  GRANT_TRUST_UNVERIFIED_ROTATION,
+  GRANT_TRUST_SIGNER_MISMATCH,
+} from './grant.js'
+export type { GrantVerdict } from './grant.js'
 
 // v0.2 §11.4 (P1.1b): WitnessPolicy is TRUSTED verifier configuration on the
 // same rail as pinned log keys — parsed here, never read off evidence.

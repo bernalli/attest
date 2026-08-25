@@ -1,0 +1,14 @@
+{
+  "binding": "not_checked",
+  "errors_contains": [
+    "pubkey"
+  ],
+  "grant": "not_checked",
+  "grant_trust": "not_checked",
+  "ok": false,
+  "revocation": "unknown",
+  "schema": "invalid",
+  "signature": "valid",
+  "trust": "verified",
+  "warnings": []
+}

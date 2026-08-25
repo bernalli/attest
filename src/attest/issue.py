@@ -139,6 +139,8 @@ def build_payload(
     end_of_life: str = "artifacts-remain-redownloadable",
     eol_commitment_uri: str | None = None,
     eol_commitment_sha256: str | None = None,
+    publisher_id: str | None = None,
+    preservation_pledge: dict[str, Any] | None = None,
     issued_at: str | None = None,
     supersedes: str | None = None,
     receipt_id: str | None = None,
@@ -175,6 +177,12 @@ def build_payload(
         work["edition"] = edition
     if artifacts is not None:
         work["artifacts"] = artifacts
+    # v0.2 §18.1: the rights holder's domain. Absent under v0.1 alone, where it
+    # carries no meaning; schema-REQUIRED once `license.preservation_pledge` is
+    # present (§18.6), which is why the two arrive as separate kwargs rather
+    # than one — an issuer may name a publisher without pledging anything.
+    if publisher_id is not None:
+        work["publisher_id"] = publisher_id
 
     license_fields: dict[str, Any] = {
         "grant": grant,
@@ -188,6 +196,13 @@ def build_payload(
         license_fields["revocation_window_days"] = revocation_window_days
     if jurisdiction_flags is not None:
         license_fields["jurisdiction_flags"] = jurisdiction_flags
+    # v0.2 §18.2: `{pledge, grant_uri, grant_sha256}`, hash-binding the signed
+    # sunset grant. Passed through whole rather than as three kwargs: the object
+    # is deliberately NOT closed (a future profile may need a fourth member),
+    # and a builder that enumerated its members would have to be edited before
+    # an issuer could carry one.
+    if preservation_pledge is not None:
+        license_fields["preservation_pledge"] = preservation_pledge
 
     survivability: dict[str, Any] = {
         "redownload_right": redownload_right,

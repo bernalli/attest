@@ -47,6 +47,7 @@ from attest import (
     anchor,
     bundle,
     canon,
+    grant,
     issue,
     keys,
     manifests,
@@ -1391,6 +1392,218 @@ def _cmd_transfer_record(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# --- grant: preservation-pledge operations (Stage 4, v0.2 §18) --------------
+#
+# Five verbs across three parties, and the split matters: `issue` and `declare`
+# are the RIGHTS HOLDER's (they take a signing key), `challenge` and `verify`
+# are the CUSTODIAN's, `respond` is the HOLDER's. Nothing here is a custodian:
+# attest operates none, indexes none, and publishes no directory of where files
+# may be found (Appendix A). These are the primitives a custodian would use,
+# exposed so §18's machinery is exercisable end-to-end from a shell — grant
+# EVALUATION stays on `verify --grant-view`, where every other verdict lives.
+
+
+def _grant_scope_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    """§18.2's scope object: at least one of the two non-empty, `artifacts` a
+    SORTED, duplicate-free array of artifact hashes. Sorting here rather than
+    demanding it of the operator is deliberate — the order is normative, and a
+    tool that silently signs an unsorted array produces a document a conforming
+    verifier rejects for a reason the operator cannot see."""
+    artifacts = sorted(set(args.artifact or []))
+    for value in artifacts:
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise CliUsageError(f"--artifact must be 64 lowercase hex characters: {value!r}")
+    if args.artifact_series is None and not artifacts:
+        raise CliUsageError("at least one of --artifact-series or --artifact is required")
+    return {"artifact_series": args.artifact_series, "artifacts": artifacts}
+
+
+def _grant_signing_kp(args: argparse.Namespace) -> keys.SigningKeyPair | pq.HybridSigningKeys:
+    ed_signing_kp = _load_seed_kp(args.seed)
+    if args.mldsa_seed is None:
+        return ed_signing_kp
+    return pq.HybridSigningKeys(ed=ed_signing_kp, mldsa=_load_mldsa_kp(args.mldsa_seed))
+
+
+def _cmd_grant_issue(args: argparse.Namespace) -> int:
+    for flag, path in (("--seed", args.seed), ("--mldsa-seed", args.mldsa_seed)):
+        if path is not None and _same_file_target(path, args.out):
+            raise CliUsageError(f"{flag} and --out must be different paths")
+
+    modes = sorted(set(args.mode or [grant.MODE_PUBLISHER_DECLARATION]))
+    if args.fixed_date is not None and grant.MODE_FIXED_DATE not in modes:
+        # §18.2: a non-null `fixed_date` REQUIRES "fixed-date" in `modes`. Refuse
+        # rather than add the mode silently — the operator is signing a trigger,
+        # and a tool that widens one on their behalf is signing something else.
+        raise CliUsageError(f"--fixed-date requires --mode {grant.MODE_FIXED_DATE}")
+
+    document = grant.build_grant(
+        grant_version=args.grant_version,
+        publisher=args.publisher,
+        scope=_grant_scope_from_args(args),
+        permissions=sorted(set(args.permission or [grant.PERMISSION_DELIVER_TO_HOLDER])),
+        activation={
+            "modes": modes,
+            "fixed_date": args.fixed_date,
+            "successor_ids": sorted(set(args.successor or [])),
+        },
+        unprotected_build=not args.no_unprotected_build,
+        legal_text_uri=args.legal_text_uri,
+        legal_text_sha256=args.legal_text_sha256,
+        jurisdiction=args.jurisdiction,
+        issued_at=args.issued_at,
+        signing_kp=_grant_signing_kp(args),
+        kid=args.kid,
+    )
+    _write_json_file(args.out, document)
+    # The hash is the point of the report: it is what goes into the receipt's
+    # `license.preservation_pledge.grant_sha256`, and computing it by hand from
+    # a canonicalization the operator has to get right is how a grant ends up
+    # unbindable to the receipt that was supposed to carry it.
+    _print_json({"out": str(args.out), "grant_sha256": grant.grant_hash(document)})
+    return EXIT_OK
+
+
+def _cmd_grant_declare(args: argparse.Namespace) -> int:
+    for flag, path in (("--seed", args.seed), ("--mldsa-seed", args.mldsa_seed)):
+        if path is not None and _same_file_target(path, args.out):
+            raise CliUsageError(f"{flag} and --out must be different paths")
+
+    declaration = grant.build_declaration(
+        publisher=args.publisher,
+        scope=_grant_scope_from_args(args),
+        declared_at=args.declared_at,
+        signing_kp=_grant_signing_kp(args),
+        kid=args.kid,
+    )
+    _write_json_file(args.out, declaration)
+    _print_json({"out": str(args.out), "declaration_sha256": grant.declaration_hash(declaration)})
+    return EXIT_OK
+
+
+def _receipt_payload(path: Path) -> dict[str, Any]:
+    envelope = _read_json(path)
+    if not isinstance(envelope, dict):
+        raise CliUsageError(f"{path} must contain a JSON object")
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict):
+        raise CliUsageError(f"{path} is missing object member 'payload'")
+    return payload
+
+
+def _cmd_grant_challenge(args: argparse.Namespace) -> int:
+    """The custodian's step 3 (Appendix A): a FRESH nonce and its own audience.
+
+    The nonce is generated here and never taken from a flag: §18.7 requires it
+    be freshly generated by the custodian per challenge, and a nonce a caller
+    can choose is a nonce a caller can replay.
+    """
+    payload = _receipt_payload(args.receipt)
+    receipt_id = payload.get("receipt_id")
+    if not isinstance(receipt_id, str):
+        raise CliUsageError(f"{args.receipt} payload is missing string 'receipt_id'")
+    nonce = os.urandom(32)
+    challenge = {
+        "receipt_id": receipt_id,
+        "audience": args.audience,
+        "nonce": keys.b64u(nonce),
+    }
+    _write_json_file(args.out, challenge)
+    _print_json({"out": str(args.out), **challenge})
+    return EXIT_OK
+
+
+def _read_challenge(path: Path) -> tuple[str, str, bytes]:
+    challenge = _read_json(path)
+    if not isinstance(challenge, dict):
+        raise CliUsageError(f"{path} must contain a JSON object")
+    receipt_id = challenge.get("receipt_id")
+    audience = challenge.get("audience")
+    nonce_b64u = challenge.get("nonce")
+    if not all(isinstance(value, str) for value in (receipt_id, audience, nonce_b64u)):
+        raise CliUsageError(
+            f"{path} must be {{'receipt_id': <str>, 'audience': <str>, 'nonce': <b64u>}}"
+        )
+    try:
+        nonce = keys.b64u_decode(str(nonce_b64u))
+    except (TypeError, ValueError) as exc:
+        raise CliUsageError(f"{path} has a malformed 'nonce': {exc}") from exc
+    return str(receipt_id), str(audience), nonce
+
+
+def _cmd_grant_respond(args: argparse.Namespace) -> int:
+    """The holder's step 4: sign §18.7's audience-bound preimage with the
+    receipt's own `buyer.pubkey` key. Salt disclosure is NOT accepted as a
+    redemption proof anywhere — §18.7 prohibits it normatively, so there is no
+    flag here that would let an operator reach for one."""
+    if _same_file_target(args.holder_seed, args.out):
+        raise CliUsageError("--holder-seed and --out must be different paths")
+    receipt_id, audience, nonce = _read_challenge(args.challenge)
+    try:
+        sig = grant.sign_redemption(receipt_id, audience, nonce, _load_seed_kp(args.holder_seed))
+    except ValueError as exc:
+        raise CliUsageError(f"{args.challenge} is not a usable challenge: {exc}") from exc
+    # Not secret: a redemption response is meant to be handed to the custodian,
+    # and it is bound to one receipt, one audience and one nonce.
+    _write_json_file(args.out, {"sig": keys.b64u(sig)})
+    _print_json({"out": str(args.out), "receipt_id": receipt_id, "audience": audience})
+    return EXIT_OK
+
+
+def _holder_supplied_json(path: Path, flag: str) -> Any:
+    """Read a document the HOLDER handed over. A path the operator got wrong is
+    still a loud usage error; anything wrong with the CONTENT degrades to
+    `None`, because §18.7 forbids a gate that fronts the delivery of content
+    from having an error path a holder can tell apart from a refusal."""
+    if not path.is_file():
+        raise CliUsageError(f"{flag} file not found: {path}")
+    try:
+        return _read_json(path)
+    except CliUsageError:
+        return None
+
+
+def _cmd_grant_verify(args: argparse.Namespace) -> int:
+    """The custodian's step 5: verify the holder's response before serving
+    bytes.
+
+    EVERY way this can fail produces the SAME observable outcome — the JSON
+    `{"redemption": "not_verified"}` and exit 1, the same code a failed receipt
+    verification uses, because to a gate they mean the one thing that matters:
+    do not deliver. A wrong signature, a response that is not an object, a
+    receipt the challenge does not name, a receipt with no `buyer.pubkey` at
+    all: §18.7 makes them indistinguishable on purpose, so a holder cannot
+    probe the gate to learn which check they failed.
+
+    The one input here that is NOT holder-supplied is `--challenge`: the
+    custodian wrote it themselves with `grant challenge`. A malformed one is an
+    operator mistake and says nothing about the holder, so it stays a loud
+    usage error rather than being disguised as a refusal.
+    """
+    receipt_id, audience, nonce = _read_challenge(args.challenge)
+
+    envelope = _holder_supplied_json(args.receipt, "--receipt")
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    buyer = payload.get("buyer") if isinstance(payload, dict) else None
+    holder_pubkey = buyer.get("pubkey") if isinstance(buyer, dict) else None
+
+    response = _holder_supplied_json(args.response, "--response")
+    sig_b64u = response.get("sig") if isinstance(response, dict) else None
+    try:
+        sig = keys.b64u_decode(sig_b64u) if isinstance(sig_b64u, str) else b""
+    except (TypeError, ValueError):
+        sig = b""
+
+    verified = (
+        isinstance(payload, dict)
+        and payload.get("receipt_id") == receipt_id
+        and isinstance(holder_pubkey, str)
+        and grant.verify_redemption(receipt_id, audience, nonce, sig, holder_pubkey)
+    )
+    _print_json({"redemption": "verified" if verified else "not_verified"})
+    return EXIT_OK if verified else EXIT_VERIFICATION_FAILED
+
+
 # --- log: transparency-log operator/holder commands (Stage 2) ---------------
 #
 # THE OFFLINE-SIGNER SPLIT (design doc "Log key custody: offline/HSM ceremony,
@@ -1823,6 +2036,8 @@ def _result_to_dict(result: verify.VerificationResult) -> dict[str, Any]:
         "transparency": result.transparency,
         "corroboration": result.corroboration,
         "manifest_freshness": result.manifest_freshness,
+        "grant": result.grant,
+        "grant_trust": result.grant_trust,
         "warnings": list(result.warnings),
         "errors": list(result.errors),
     }
@@ -1995,6 +2210,27 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     anchor_policy = _load_anchor_policy(args.anchor_policy, crqc_horizon)
     witness_policy = _load_witness_policy(args.witness_policy)
 
+    grant_view = (
+        _read_json(
+            args.grant_view,
+            max_bytes=_MAX_STAGE2_INPUT_BYTES["json"],
+            input_name="--grant-view",
+        )
+        if args.grant_view is not None
+        else None
+    )
+    # Security, and the same reason `--revocations` refuses a lone record: a
+    # bare grant DOCUMENT passed here would be read member by member and
+    # resolve to `grant: "not_checked"`, reporting "no grant evidence" to an
+    # operator who supplied some. Do not auto-wrap — make them say `{"grant":
+    # ...}`, which is also what the file has to look like for the other three
+    # members to have anywhere to go.
+    if grant_view is not None and not isinstance(grant_view, dict):
+        raise CliUsageError(
+            f"--grant-view file {args.grant_view} must contain a JSON object; "
+            'wrap a lone grant document as {"grant": <document>}'
+        )
+
     result = verify.verify(
         envelope_bytes,
         trust_store,
@@ -2004,6 +2240,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         log_keys=log_keys,
         anchor_policy=anchor_policy,
         witness_policy=witness_policy,
+        grant_view=grant_view,
     )
     _print_json(_result_to_dict(result))
     return EXIT_OK if result.ok else EXIT_VERIFICATION_FAILED
@@ -2500,6 +2737,91 @@ def build_parser() -> argparse.ArgumentParser:
     _add_force_flag(p)
     p.set_defaults(func=_cmd_transfer_record)
 
+    p_grant = sub.add_parser("grant", help="Preservation-pledge operations (v0.2 §18)")
+    grant_sub = p_grant.add_subparsers(dest="grant_command", required=True)
+
+    p = grant_sub.add_parser("issue", help="Sign a sunset grant document (rights holder)")
+    p.add_argument(
+        "--grant-version", required=True, type=int, help="monotonic, per (publisher, scope)"
+    )
+    p.add_argument("--publisher", required=True, help="rights holder's lowercase DNS domain")
+    p.add_argument("--artifact-series", default=None, help="series this grant covers, or omit")
+    p.add_argument(
+        "--artifact", action="append", default=None, help="artifact SHA-256 (repeatable)"
+    )
+    p.add_argument(
+        "--permission",
+        action="append",
+        default=None,
+        help=f"repeatable; defaults to {grant.PERMISSION_DELIVER_TO_HOLDER}",
+    )
+    p.add_argument(
+        "--mode",
+        action="append",
+        default=None,
+        help=f"activation mode (repeatable); defaults to {grant.MODE_PUBLISHER_DECLARATION}",
+    )
+    p.add_argument("--fixed-date", default=None, help="ISO-8601 UTC backstop date, or omit")
+    p.add_argument(
+        "--successor", action="append", default=None, help="successor domain (repeatable)"
+    )
+    p.add_argument(
+        "--no-unprotected-build",
+        action="store_true",
+        help="do NOT commit to releasing a build free of technological protection",
+    )
+    p.add_argument("--legal-text-uri", required=True, help="the prose grant")
+    p.add_argument("--legal-text-sha256", required=True, help="hash of the prose grant")
+    p.add_argument("--jurisdiction", required=True)
+    p.add_argument("--issued-at", required=True, help="ISO-8601 UTC signed time")
+    p.add_argument("--seed", required=True, type=Path, help="publisher signing key seed")
+    p.add_argument("--kid", required=True)
+    p.add_argument(
+        "--mldsa-seed",
+        type=Path,
+        default=None,
+        help="ML-DSA-65 key file (from `keygen --hybrid`); makes the grant signature hybrid",
+    )
+    p.add_argument("--out", required=True, type=Path, help="output signed grant JSON path")
+    p.set_defaults(func=_cmd_grant_issue)
+
+    p = grant_sub.add_parser(
+        "declare", help="Sign a cessation declaration (publisher or designated successor)"
+    )
+    p.add_argument("--publisher", required=True, help="the grant's publisher, not the signer")
+    p.add_argument("--artifact-series", default=None)
+    p.add_argument("--artifact", action="append", default=None)
+    p.add_argument("--declared-at", required=True, help="ISO-8601 UTC signed time")
+    p.add_argument("--seed", required=True, type=Path, help="declaring domain's signing key seed")
+    p.add_argument("--kid", required=True)
+    p.add_argument("--mldsa-seed", type=Path, default=None)
+    p.add_argument("--out", required=True, type=Path, help="output signed declaration JSON path")
+    p.set_defaults(func=_cmd_grant_declare)
+
+    p = grant_sub.add_parser(
+        "challenge", help="Issue a fresh redemption challenge (custodian, §18.7)"
+    )
+    p.add_argument("--receipt", required=True, type=Path, help="the holder's receipt envelope")
+    p.add_argument("--audience", required=True, help="the custodian's own lowercase DNS domain")
+    p.add_argument("--out", required=True, type=Path, help="output challenge JSON path")
+    p.set_defaults(func=_cmd_grant_challenge)
+
+    p = grant_sub.add_parser("respond", help="Sign a redemption challenge (holder, §18.7)")
+    p.add_argument("--challenge", required=True, type=Path, help="JSON from `grant challenge`")
+    p.add_argument(
+        "--holder-seed", required=True, type=Path, help="the receipt's own buyer.pubkey seed"
+    )
+    p.add_argument("--out", required=True, type=Path, help="output {'sig': <b64u>} JSON path")
+    p.set_defaults(func=_cmd_grant_respond)
+
+    p = grant_sub.add_parser(
+        "verify", help="Verify a holder's redemption response (custodian, §18.7)"
+    )
+    p.add_argument("--receipt", required=True, type=Path)
+    p.add_argument("--challenge", required=True, type=Path, help="JSON from `grant challenge`")
+    p.add_argument("--response", required=True, type=Path, help="JSON from `grant respond`")
+    p.set_defaults(func=_cmd_grant_verify)
+
     p_log = sub.add_parser(
         "log", help="Transparency-log operator/holder commands (offline-signer split)"
     )
@@ -2623,6 +2945,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="JSON attest-witness-policy-v1 document pinning witness operators",
+    )
+    p.add_argument(
+        "--grant-view",
+        type=Path,
+        default=None,
+        help="JSON Stage 4 evidence object {grant[,later_grants][,declarations][,anchor]}; "
+        "supplying it at all opts into §18.4's grant evaluation",
     )
     p.set_defaults(func=_cmd_verify)
 

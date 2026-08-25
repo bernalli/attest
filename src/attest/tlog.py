@@ -50,10 +50,12 @@ _TYPE_KEY_MANIFEST = "key-manifest"
 _TYPE_RECEIPT = "receipt"
 _TYPE_REVOCATION_RECORD = "revocation-record"
 _TYPE_TRANSFER_RECORD = "transfer-record"
+_TYPE_CESSATION_DECLARATION = "cessation-declaration"
 _KEY_MANIFEST_FIELDS = frozenset({"type", "issuer", "manifest_version", "manifest_sha256"})
 _RECEIPT_FIELDS = frozenset({"type", "issuer", "core_sha256"})
 _REVOCATION_RECORD_FIELDS = frozenset({"type", "issuer", "record_sha256"})
 _TRANSFER_RECORD_FIELDS = frozenset({"type", "issuer", "record_sha256"})
+_CESSATION_DECLARATION_FIELDS = frozenset({"type", "issuer", "record_sha256"})
 
 # Same lowercase-DNS shape as the receipt schema's `issuer.id` pattern
 # (src/attest/schema/attest-receipt.schema.json) — kept in sync by hand,
@@ -360,7 +362,7 @@ def encode_entry(entry: dict[str, Any]) -> bytes:
     """Validate `entry` against a CLOSED schema and return its canonical
     (attest-JCS) bytes — the exact bytes that get leaf-hashed into the log.
 
-    Exactly four entry types, exactly these members each (extras rejected):
+    Exactly five entry types, exactly these members each (extras rejected):
 
     - `key-manifest`: `{"type", "issuer", "manifest_version", "manifest_sha256"}`,
       where `manifest_sha256 = SHA-256(JCS(manifest))` (lowercase hex).
@@ -385,6 +387,19 @@ def encode_entry(entry: dict[str, Any]) -> bytes:
       `issuer` here is the same NON-authenticated browsing hint as the other
       entry types' — the record's own signature is what binds it to an
       issuer, checked by `transfer.verify_record`, never by this entry.
+    - `cessation-declaration` (v0.2 §8/§18.4, Stage 4): `{"type", "issuer",
+      "record_sha256"}`, where `record_sha256 = attest.grant.declaration_hash(
+      declaration)` — `SHA-256(JCS(declaration))` over the ENTIRE signed
+      cessation declaration (including its own `signature` member), the same
+      canonical form `grant.py` already builds and verifies the declaration's
+      signature over. `issuer` here is the same NON-authenticated browsing
+      hint as the other entry types' — the declaration's own signature
+      (verified against the publisher's key manifest, v0.2 §18.1) is what
+      binds it, never this entry. Unlike `transfer-record`, this entry type is
+      NOT load-bearing: §18.4 RECOMMENDS logging a declaration, for
+      discoverability and for a date opposable to third parties, but a
+      declaration that authenticates activates a grant whether or not it was
+      ever logged.
 
     Raises `TlogError` on an unknown `type`, a missing/extra member, or a
     member with the wrong value shape.
@@ -409,6 +424,10 @@ def encode_entry(entry: dict[str, Any]) -> bytes:
         _require_hex64(entry, "record_sha256")
     elif entry_type == _TYPE_TRANSFER_RECORD:
         _require_fields(entry, _TRANSFER_RECORD_FIELDS)
+        _require_issuer(entry)
+        _require_hex64(entry, "record_sha256")
+    elif entry_type == _TYPE_CESSATION_DECLARATION:
+        _require_fields(entry, _CESSATION_DECLARATION_FIELDS)
         _require_issuer(entry)
         _require_hex64(entry, "record_sha256")
     else:

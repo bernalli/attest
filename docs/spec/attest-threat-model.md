@@ -587,6 +587,48 @@ An entry's verdict describes only what `attest-v0.1.md` and `attest-v0.2.md` cur
 - **Verdict:** Mitigated — v0.2 §17.1, v0.2 §8. A full transfer record exposes a pseudonymous incoming-holder key and signed time, not a plaintext identity or the outgoing holder's key. Its `transfer-record` log entry is different: it carries only an opaque `record_sha256` and a NON-AUTHENTICATED `issuer` hint, so the entry alone establishes neither that a transfer happened at that issuer nor a holder pseudonym or transfer cadence. The record's issuer signature and the verification path, not its browsing hint, bind a record to an issuer.
 - **Residual risk:** This is an observability consideration conditioned on access to records, not a log-only disclosure. The protocol does not prevent a client from reusing one `new_holder_pubkey` across issuers, which directly correlates the records any observer obtains; per-receipt keys are a buyer/client mitigation, not a protocol requirement. The issuer-mediated record and any accompanying log evidence make the event auditable, but do not erase that record-level exposure.
 
+#### TM-68 — Silent death of the rights holder
+
+- **Actor / precondition:** No actor at all. The rights holder simply ceases to exist — company dissolved, individual dead, domain lapsed — having designated no successor in `activation.successor_ids` and set no `fixed_date`.
+- **Impact:** The grant every buyer holds stays `dormant` forever. The exact scenario the preservation pledge exists to answer is the one in which nobody is left to sign the declaration that answers it.
+- **Verdict:** Out of scope — v0.2 §18.4. Both activation modes this revision defines are presence-based, and neither can fire without a positive artifact: a signed declaration, or an anchored proof that a date has passed. This is a deliberate trade against the alternative. The absence-based mode that would cover silent death (`heartbeat-absence`, registered `reserved`, attest-versioning.md §6.9) cannot be made sound by any amount of drafting: a transparency log proves presence and append-only order, anchoring bounds a checkpoint's age only from above, so a rule reading meaning into the absence of a recent record is defeated by re-anchoring a genuine but stale checkpoint. Shipping a claim we know to be false is worse than shipping a narrower one that is true.
+- **Residual risk:** Fully residual, and it is the largest one Stage 4 carries. Two mitigations exist and both are the rights holder's decision at issuance, not the verifier's at evaluation: name successors who outlive you, and set a backstop date. A publisher who does neither leaves buyers a pledge that can never activate. Closing this properly requires a freshness mechanism — witness cosignatures pinned at known times — which is a federation-and-operations effort, not a format change.
+
+#### TM-69 — Coerced or fraudulent cessation declaration
+
+- **Actor / precondition:** A `malicious issuer` or a party with legal or physical leverage over the rights holder, or over a domain listed in `activation.successor_ids`, procures a signed cessation declaration for a work still being distributed.
+- **Impact:** The grant activates while the work is still on sale, and a custodian meeting §18.7's preconditions delivers unprotected copies to every receipt holder. This is precisely the direction §18.4's failure asymmetry names as the one that would discredit the instrument.
+- **Verdict:** Out of scope — v0.2 §18.4, inheriting TM-47's scoping. Signer intent and compulsion are outside what a verifier can assess: a declaration signed under duress is cryptographically indistinguishable from one signed freely, exactly as a coerced revocation is. What the design does supply is attribution and reversibility of a kind: the declaration is a signed artifact naming its signer, its `declared_at` is inside the signing key's own validity window, and a declaration signed by a successor rather than by the publisher is reported separately (`grant_activated_by_successor`) so the caller sees which party actually spoke. Logging one is RECOMMENDED, which gives a date opposable to third parties.
+- **Residual risk:** A rights holder who lists successors widens the set of parties who can activate the grant on their behalf, and that widening is exactly what makes the successor mechanism useful against TM-68. The two risks trade directly against each other, and the trade is made per grant, at issuance, by the party bearing it. This specification neither resolves it nor hides it.
+
+#### TM-70 — Compromised key retroactively de-activating a grant
+
+- **Actor / precondition:** The key that signed a cessation declaration is later marked `compromised` in the publisher's manifest (v0.1 §7.3), whether truthfully or as an act of bad faith by whoever controls that manifest.
+- **Impact:** The declaration ceases to authenticate, and a grant that had reached `activated` returns to `dormant`. A buyer who could redeem yesterday cannot today.
+- **Verdict:** Mitigated — v0.1 §7.3, v0.2 §18.4. The direction of failure is the safe one: no false activation survives a stolen key, and fail-closed handling of `compromised` is the same discipline every other signed side-document already inherits. The alternative — letting an activation stand under a key known to be compromised — would let one stolen key permanently unlock a catalogue.
+- **Residual risk:** Activation is therefore not strictly irreversible, and the cost of a reversal falls on the buyer rather than on the party that mismanaged or misdeclared the key — the same asymmetry v0.1 already accepts for revocations. A rights holder acting in bad faith can mark a key compromised specifically to close a grant it no longer wants open. The declaration is not thereby erased: it remains a signed artifact, and if it was logged, its date remains opposable. This is a limitation on what a verifier can conclude, not on what a court can.
+
+#### TM-71 — Grant unenforceable against an insolvency estate
+
+- **Actor / precondition:** The rights holder enters insolvency, and the administrator or trustee disputes the preservation pledge — as an unperfected obligation, a preference, or an asset of the estate that cannot be given away.
+- **Impact:** Every cryptographic check passes and the grant reads `activated`, while the permission it reports has no force against the party now controlling the work.
+- **Verdict:** Out of scope — v0.2 §18.2. This specification defines a signed, hash-bound, dated, publishable instrument; whether that instrument survives a given insolvency regime is a question of law in a named `jurisdiction`, and no protocol property can answer it. What the design contributes is evidentiary rather than substantive: the pledge is signed before the event, hash-bound so its text cannot be rewritten afterwards, dated inside the signing key's validity window, and — when logged and anchored — carries a date opposable to third parties.
+- **Residual risk:** Fully residual and explicitly requiring competent legal advice per jurisdiction. The `jurisdiction` member exists so the question is at least askable of a specific legal system rather than of none. A verifier reporting `activated` states that the machinery is satisfied, never that a court would enforce it, and no implementation may present it as the latter.
+
+#### TM-72 — Post-CRQC forgery of a redemption proof
+
+- **Actor / precondition:** A `network attacker` with CRQC capability derives a buyer's Ed25519 private key from the `buyer.pubkey` published in the receipt, and signs §18.7's redemption preimage for a custodian's `audience` and nonce.
+- **Impact:** The attacker redeems an activated grant in the buyer's place and obtains the unprotected artifact.
+- **Verdict:** Out of scope — v0.2 §18.7, sibling of TM-66 and of v0.1's TM-03 posture. The holder leg is deliberately classical: the buyer key is an Ed25519 key the receipt already carries, and giving the redemption proof a post-quantum leg would require a second buyer key the format does not have. The bound is stated honestly rather than argued away — a post-CRQC forger of this leg still cannot forge the publisher's hybrid grant signature (§18.2) nor fabricate the anchored time proof, so the classical weakness is bounded by what surrounds it and is never load-bearing alone.
+- **Residual risk:** In a post-CRQC world the redemption gate degrades from proof of holdership to a speed bump, and the custodian's other preconditions (`ok`, revocation state, `grant: "activated"`, artifact within scope) carry the remaining weight. The audience binding still prevents replaying one custodian's response at another, which is a different attack and remains closed.
+
+#### TM-73 — Block-header time skew on the fixed-date path
+
+- **Actor / precondition:** A miner, or anyone able to influence the timestamp field of a Bitcoin block header, sets it ahead of real time within what consensus rules tolerate.
+- **Impact:** An anchored attestation resolving to that header appears to prove that time has reached a `fixed_date` slightly earlier than it truly has, activating a grant marginally ahead of schedule.
+- **Verdict:** Mitigated — v0.2 §18.4, v0.2 §11. The header a verifier compares against is one it pinned itself in its own `AnchorPolicy`; header times are not read from attacker-supplied evidence. The trust model therefore already places this choice with the party doing the checking, and an attestation cannot introduce a header the verifier has not accepted. Header timestamps are additionally constrained by consensus (above the median of the preceding blocks, and not far ahead of network-adjusted time), which bounds the skew rather than leaving it open.
+- **Residual risk:** A verifier that pins headers indiscriminately inherits whatever skew they carry — hours, not days. Against a `fixed_date` chosen years out, which is the intended use, this is immaterial; against one chosen within hours of evaluation, it is not, and a `fixed_date` should never be set that close. The claim "a future block cannot be manufactured" is true of proof-of-work and not of the number in the header's timestamp field; this entry exists so that distinction is written down rather than assumed.
+
 ## 5. Traceability
 
 Every numbered section of the two normative specifications maps to at least one catalog entry. Rows cover `attest-v0.1.md` §2–§15 and `attest-v0.2.md` §2–§17, excluding each document's §1 (status and conformance language) and v0.2 §5 (a worked example of §2–§4, carrying no mechanism of its own). Sections whose own text defines no attack surface map to the entry that scopes them, or to the out-of-scope register in §7; no cell is empty.
@@ -622,6 +664,7 @@ Every numbered section of the two normative specifications maps to at least one 
 | v0.2 §15 — Limitations (normative) | TM-03, TM-26, TM-34, TM-48, TM-49, TM-53 |
 | v0.2 §16 — Conformance, groups 28, 39, 40 | TM-25, TM-26, TM-34, TM-49 |
 | v0.2 §17 — Stage 3: issuer-mediated transfer | TM-61, TM-62, TM-63, TM-64, TM-65, TM-66, TM-67 |
+| v0.2 §18 — Stage 4: the preservation pledge | TM-68, TM-69, TM-70, TM-71, TM-72, TM-73 |
 
 ## 6. Forward-looking requirements
 

@@ -6,6 +6,89 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-25
+
+### Added
+
+- **v0.2 revision 8 — Stage 4, the preservation pledge.** The standard way for
+  a rights holder to say "if I disappear, the file becomes redistributable and
+  the receipt stays the proof". A new licence term, `license.preservation_pledge`,
+  hash-binds a signed *sunset grant* — an eleven-member document the RIGHTS
+  HOLDER signs, not the store — and once a verifiable trigger fires, that grant
+  converts into a machine-checkable permission for the receipt's holder to
+  obtain an unprotected copy.
+
+  - New module `attest.grant`: the grant document and the cessation
+    declaration, both hybrid-signed under the §13 AND-rule; the two coverage
+    predicates, written separately and deliberately not in terms of one
+    another; the floor-relative non-narrowing ratchet; the structural ceilings;
+    and the audience-bound redemption proof.
+  - `verify()` accepts `grant_view=` and reports two new components, `grant`
+    and `grant_trust`. Both are purely informational and take NO exception:
+    neither ever affects `signature`, `schema`, `revocation`, `binding`,
+    `trust` or `ok` — a grant is a permission that becomes exercisable, never
+    a validity property of the receipt. A caller that never supplies the
+    channel gets a byte-for-byte unchanged result.
+  - `attest.verify.evaluate_grant` implements §18.4's ordered, short-circuiting
+    evaluation on its own, so a custodian checking §18.7's preconditions can
+    ask the question without re-verifying a receipt it has already verified.
+  - New CLI group `attest grant`, five verbs across three parties:
+    `issue`/`declare` for the rights holder, `challenge`/`verify` for the
+    custodian, `respond` for the holder. `attest verify --grant-view <file>` is
+    where grant evaluation lives, next to every other verdict. The redemption
+    nonce is generated inside `challenge` and never read from a flag — one a
+    caller can choose is one a caller can replay.
+  - Conformance corpus 130 → **158 leaves across 40 groups**, adding
+    `37-preservation-pledge` (24 leaves) and `38-redemption` (4), each executed
+    by all three runners from the same golden files. The v0.1 subset grows
+    51 → 52: leaf `37s` is an `attest_version: "0.1"` receipt by construction,
+    the negative control proving §18.6's conditional never touches v0.1.
+
+  **Activation is established by POSITIVE evidence, never by an absence.** An
+  earlier design opened a grant when no recent proof-of-distribution appeared
+  in a transparency log; that design is unsound and the flaw sits at the level
+  of the idea rather than of the wording, because anchoring bounds a
+  checkpoint's age only from above. It is abandoned and registered `reserved`.
+  The two modes that ship are a signed cessation declaration and an anchored
+  fixed date, and the residual they leave — a publisher who simply vanishes,
+  signing nothing and setting no date — is stated in the threat model rather
+  than hidden.
+
+  **Which way this fails is normative.** A false `activated` would authorize
+  distribution of a work that is still on sale; a false `dormant` only means a
+  buyer cannot yet redeem. Every missing, unverifiable, malformed or ambiguous
+  input therefore resolves to `dormant` or `not_checked`.
+
+### Fixed
+
+- Two ways the two implementations could have disagreed on identical bytes,
+  both found by porting §18 to TypeScript and neither visible from one side
+  alone: "sorted" now means by Unicode **code point**, which UTF-16 code-unit
+  order contradicts for astral characters — reachable through `permissions`
+  and `modes`, which carry unregistered values rather than rejecting them —
+  and the boundary between a strictly-parsed signed document and materialized
+  untrusted evidence, which the fixed-date anchor path crossed in the wrong
+  direction.
+- `attest-bridge itch-dry-run` could report "no receipt issued" about a race
+  inside itself. The command read the clock twice — once for the synthetic
+  purchase and the poller, once inside `enqueue_claim` — and built the Ledger
+  between the two reads, so a loaded machine could land the second one in the
+  next whole second. The claim's `next_attempt_at` then sat one second ahead
+  of the `now` the poller queried with, `due_claims` returned nothing, and the
+  claim was never drained: no receipt, and no dead letter either, because
+  nothing entered the loop that records one — leaving the merchant with a
+  failure message about their own setup and nothing to act on. One clock read
+  now serves the whole command, which is what `attest_bridge.ledger`'s own
+  contract ("timestamps are always caller-supplied; this module never reads a
+  clock") assumes of its callers.
+- A third divergence, found by independent review of the pair and present only
+  in the TypeScript verifier, which had mirrored this package's earlier shape:
+  `grant_trust` keyed on the `kid` of the supplied grant instead of on the
+  receipt's `work.publisher_id` (§18.5), which would hand unauthenticated
+  evidence the top of the trust scale. Corrected there; corpus leaf
+  `37-preservation-pledge/x-trust-not-borrowed-from-signer` pins it here too,
+  so no third implementation can reintroduce it.
+
 ## [0.7.0] — 2026-08-25
 
 ### Added

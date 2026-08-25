@@ -71,7 +71,7 @@ a dead server. What survives is the proof — see the
 [FAQ](docs/faq.md) for exactly what that's worth in each case.
 
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
-only) are independent Python and TypeScript implementations that agree on all 130
+only) are independent Python and TypeScript implementations that agree on all 158
 conformance vector leaves. **Try it in your browser:**
 <https://bernalli.github.io/attest/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Be clear about the status: no
@@ -150,7 +150,7 @@ amount of protocol fixes that.
 
 Spec v0.1 is complete and v0.2 is specified and implemented on `main`, with two
 independent implementations — a Python reference implementation and a TypeScript
-verifier — that agree on all 130 conformance vector leaves across 38 groups: 51
+verifier — that agree on all 158 conformance vector leaves across 40 groups: 52
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
@@ -332,7 +332,7 @@ mark, which has not happened. Conformance claims follow the self-certification
 process in [docs/conformance.md](docs/conformance.md).
 
 **Contributing.** See [`CONTRIBUTING.md`](CONTRIBUTING.md). Implementation pull
-requests must pass all 130 conformance vector leaves and keep both the Python and
+requests must pass all 158 conformance vector leaves and keep both the Python and
 TypeScript suites green.
 
 **Contact.** Use GitHub Issues for technical bugs, GitHub Discussions for

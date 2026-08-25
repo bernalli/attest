@@ -1,0 +1,31 @@
+{
+  "grant": {
+    "activation": {
+      "fixed_date": null,
+      "modes": [
+        "publisher-declaration"
+      ],
+      "successor_ids": []
+    },
+    "grant_version": 1,
+    "issued_at": "2025-02-01T00:00:00Z",
+    "jurisdiction": "IT",
+    "legal_text_sha256": "8daeb2081984c3598f9b5b7104971da818fd9ef13d5579d8bd1e14cca4ba201f",
+    "legal_text_uri": "https://pub.example/sunset-grant-v1",
+    "permissions": [
+      "deliver-to-holder"
+    ],
+    "publisher": "pub.example",
+    "scope": {
+      "artifact_series": null,
+      "artifacts": [
+        "3f33b4d5852414a2de7bfbe6d2fafb054d5b4460d77b06b4d9273b4ed8b5fc3a"
+      ]
+    },
+    "signature": {
+      "kid": "pub.example/keys/2025-01#ed25519-1",
+      "sig": "tUdyW-WTneRCWI2TQ6EQ92ay1UZdLy5WYbchMuUxkXg6fnwtWAtvRfhMiF2KVSf3jIXoukEiRsPJEs9BLhNBCw"
+    },
+    "unprotected_build": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "binding": "not_checked",
+  "errors": [],
+  "grant": "dormant",
+  "grant_trust": "unverified_rotation",
+  "ok": true,
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "trust": "verified",
+  "warnings": []
+}

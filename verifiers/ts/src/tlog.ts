@@ -34,10 +34,12 @@ const TYPE_KEY_MANIFEST = 'key-manifest'
 const TYPE_RECEIPT = 'receipt'
 const TYPE_REVOCATION_RECORD = 'revocation-record'
 const TYPE_TRANSFER_RECORD = 'transfer-record'
+const TYPE_CESSATION_DECLARATION = 'cessation-declaration'
 const KEY_MANIFEST_FIELDS = new Set(['type', 'issuer', 'manifest_version', 'manifest_sha256'])
 const RECEIPT_FIELDS = new Set(['type', 'issuer', 'core_sha256'])
 const REVOCATION_RECORD_FIELDS = new Set(['type', 'issuer', 'record_sha256'])
 const TRANSFER_RECORD_FIELDS = new Set(['type', 'issuer', 'record_sha256'])
+const CESSATION_DECLARATION_FIELDS = new Set(['type', 'issuer', 'record_sha256'])
 // Mirrors tlog.py's `_MAX_ENTRY_SCALAR_LEN`: both cores bound free-text
 // entry scalars before regex matching, diagnostic rendering, or JCS work.
 const MAX_ENTRY_SCALAR_LEN = 500_000
@@ -45,8 +47,15 @@ const MAX_ENTRY_SCALAR_LEN = 500_000
 // Same lowercase-DNS shape as the receipt schema's `issuer.id` pattern
 // (src/attest/schema/attest-receipt.schema.json) — kept in sync by hand,
 // this module has no schema-file dependency. Mirrors tlog.py's `_ISSUER_RE`.
-const ISSUER_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
-const HEX64_RE = /^[0-9a-f]{64}$/
+//
+// Exported (module-private in tlog.py only by naming convention, where
+// `grant.py` imports `tlog._ISSUER_RE`/`tlog._HEX64_RE` outright) because
+// v0.2 §18's documents reuse these two shapes verbatim for `publisher`,
+// `work.publisher_id`, every `successor_ids` entry and every `scope.artifacts`
+// digest. A second spelling of either is a place two implementations can
+// drift apart, which is what §18 spends most of its prose preventing.
+export const ISSUER_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
+export const HEX64_RE = /^[0-9a-f]{64}$/
 
 export class TlogError extends Error {}
 
@@ -244,7 +253,7 @@ function requireManifestVersion(entry: Record<string, unknown>): void {
 /** Validate `entry` against a CLOSED schema and return its canonical
  * (attest-JCS) bytes — the exact bytes that get leaf-hashed into the log.
  *
- * Four entry types, exactly these members each (extras rejected):
+ * Five entry types, exactly these members each (extras rejected):
  * - `key-manifest`: `{type, issuer, manifest_version, manifest_sha256}`.
  * - `receipt`: `{type, issuer, core_sha256}`.
  * - `revocation-record` (v0.2 §8, G5): `{type, issuer, record_sha256}`,
@@ -255,6 +264,17 @@ function requireManifestVersion(entry: Record<string, unknown>): void {
  *   (transfer.ts) — `SHA-256(JCS(record))` over the entire signed transfer
  *   record, the same canonical form transfer.ts already builds and verifies
  *   the record's signature over.
+ * - `cessation-declaration` (v0.2 §8/§18.4, Stage 4): `{type, issuer,
+ *   record_sha256}`, where `record_sha256 = declarationHash(declaration)`
+ *   (grant.ts) — `SHA-256(JCS(declaration))` over the entire signed
+ *   cessation declaration, its own `signature` member included. `issuer`
+ *   is the same NON-authenticated browsing hint as the other entry types':
+ *   the declaration's own signature, verified against the publisher's key
+ *   manifest (§18.1), is what binds it, never this entry. Unlike
+ *   `transfer-record`, this entry type is NOT load-bearing — §18.4
+ *   RECOMMENDS logging a declaration for discoverability and for a date
+ *   opposable to third parties, but an authenticated declaration activates
+ *   a grant whether or not it was ever logged.
  *
  * `entry` is untrusted evidence (the "materialized", plain-JS-number
  * convention this port uses — see `transparency.ts`): `manifest_version`
@@ -285,6 +305,10 @@ export function encodeEntry(entry: unknown): Uint8Array {
     requireHex64(entry, 'record_sha256')
   } else if (entryType === TYPE_TRANSFER_RECORD) {
     requireFields(entry, TRANSFER_RECORD_FIELDS)
+    requireIssuer(entry)
+    requireHex64(entry, 'record_sha256')
+  } else if (entryType === TYPE_CESSATION_DECLARATION) {
+    requireFields(entry, CESSATION_DECLARATION_FIELDS)
     requireIssuer(entry)
     requireHex64(entry, 'record_sha256')
   } else {

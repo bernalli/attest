@@ -16,7 +16,7 @@ from typing import Any, cast
 
 import pytest
 
-from attest import canon, keys, pq, tlog
+from attest import canon, grant, keys, pq, tlog
 
 LEAVES = [bytes([i]) for i in range(7)]  # b"\x00", b"\x01", ... b"\x06"
 
@@ -346,6 +346,77 @@ def test_encode_entry_rejects_transfer_record_wrong_type_bad_issuer() -> None:
     entry["issuer"] = "NOT-A-VALID-DNS-NAME"
     with pytest.raises(tlog.TlogError):
         tlog.encode_entry(entry)
+
+
+def _valid_cessation_declaration_entry() -> dict[str, object]:
+    return {
+        "type": "cessation-declaration",
+        "issuer": "pub.example",
+        "record_sha256": "e" * 64,
+    }
+
+
+def test_encode_entry_accepts_valid_cessation_declaration_entry() -> None:
+    entry = _valid_cessation_declaration_entry()
+    encoded = tlog.encode_entry(entry)
+    assert isinstance(encoded, bytes)
+    assert encoded == canon.dumps(entry).encode("utf-8")
+
+
+def test_encode_entry_rejects_cessation_declaration_missing_member() -> None:
+    entry = _valid_cessation_declaration_entry()
+    del entry["record_sha256"]
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_encode_entry_rejects_cessation_declaration_extra_member() -> None:
+    entry = _valid_cessation_declaration_entry()
+    entry["declared_at"] = "2031-03-01T00:00:00Z"
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_encode_entry_rejects_cessation_declaration_short_hex() -> None:
+    entry = _valid_cessation_declaration_entry()
+    entry["record_sha256"] = "e" * 63
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_encode_entry_rejects_cessation_declaration_uppercase_hex() -> None:
+    entry = _valid_cessation_declaration_entry()
+    entry["record_sha256"] = "E" * 64
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_encode_entry_rejects_cessation_declaration_bad_issuer() -> None:
+    entry = _valid_cessation_declaration_entry()
+    entry["issuer"] = "NOT-A-VALID-DNS-NAME"
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_cessation_declaration_entry_commits_to_the_whole_signed_declaration() -> None:
+    """v0.2 §8/§18.4: `record_sha256` is `SHA-256(JCS(declaration))` over the
+    ENTIRE signed declaration, its own `signature` member included — the same
+    canonical form `grant.py` builds and verifies the signature over, never a
+    second one invented for the log."""
+    kp = keys.generate()
+    scope = {"artifact_series": None, "artifacts": [hashlib.sha256(b"a").hexdigest()]}
+    declaration = grant.build_declaration(
+        "pub.example", scope, "2031-03-01T00:00:00Z", kp, "pub.example/keys/grants#1"
+    )
+
+    entry = {
+        "type": "cessation-declaration",
+        "issuer": "pub.example",
+        "record_sha256": grant.declaration_hash(declaration),
+    }
+
+    assert tlog.encode_entry(entry)
+    assert entry["record_sha256"] == hashlib.sha256(canon.canonical_bytes(declaration)).hexdigest()
 
 
 def test_encode_entry_accepts_an_at_bound_scalar() -> None:

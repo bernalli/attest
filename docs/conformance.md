@@ -35,7 +35,7 @@ import, before any leaf is checked.)
   with that leaf's absolute path in every argv token, splits the template with
   `shlex.split`, and invokes it as a fixed argv list (`shell=False` — never a
   shell string).
-- `--subset` selects `v0.1` (51 leaves) or `v0.2` (all leaves, currently 130) —
+- `--subset` selects `v0.1` (52 leaves) or `v0.2` (all leaves, currently 156) —
   see §4.
 - `--report FILE` additionally writes the machine-readable JSON report (§6)
   to `FILE`.
@@ -47,8 +47,8 @@ The runner prints one `FAIL <leaf-id>` block (with its mismatches) per
 non-passing leaf, then exactly one summary line:
 
 ```
-CONFORMANT (v0.2): 130/130 leaves pass — corpus revision <hex12>
-NOT CONFORMANT (v0.1): 48/51 leaves pass — 3 failing
+CONFORMANT (v0.2): 157/157 leaves pass — corpus revision <hex12>
+NOT CONFORMANT (v0.1): 49/52 leaves pass — 3 failing
 ```
 
 Exit code: `0` if conformant, `1` if not, `2` on a usage/environment error
@@ -66,24 +66,30 @@ It receives the leaf's absolute directory path as an argument (wherever
    (`envelope.json`/`envelope.raw.json`, `manifests.json`, `disclosure.json`,
    `revocation.json`, `transparency.json`, `log-keys.json`,
    `anchor-policy.json`, `revocation-evidence.json`, `transfer-view.json`,
-   `chain.json`) — not duplicated here.
-2. Route the leaf: if the leaf directory contains `chain.json`, feed its
-   contents to your chain-of-title audit entrypoint (design v0.2 §17.5) and
-   print its result; otherwise feed the leaf's inputs to your ordinary
-   receipt-verification entrypoint (design v0.1 §11) and print its result.
+   `witness-policy.json`, `grant-view.json`, `chain.json`,
+   `witness-quorum.json`, `redemption.json`) — not duplicated here.
+2. Route the leaf **by file presence**, which is the whole routing rule: a
+   directory containing `chain.json` goes to your chain-of-title audit
+   entrypoint (v0.2 §17.5), one containing `witness-quorum.json` to your
+   activation-quorum entrypoint (v0.2 §11.4), one containing
+   `redemption.json` to your redemption check (v0.2 §18.7), and every other
+   leaf to your ordinary receipt-verification entrypoint (v0.1 §11). The four
+   surfaces have disjoint result shapes, so the routing has to happen before
+   anything is printed.
 3. Print **exactly one JSON object to stdout, and nothing else on stdout**.
    Diagnostics, logs, and stack traces go to stderr. A non-zero exit code, a
    timeout, or stdout that fails to parse as one JSON object all count as a
    failing leaf (`status: "error"`), regardless of what was printed.
 
-The two output shapes (verbatim member names):
+The four output shapes (verbatim member names):
 
-- **Verify-leaf output** (every leaf without `chain.json`):
+- **Verify-leaf output** (every leaf routed to receipt verification):
   ```json
   {
     "signature": "...", "schema": "...", "trust": "...",
     "revocation": "...", "binding": "...", "transparency": "...",
     "corroboration": "...", "manifest_freshness": "...",
+    "grant": "...", "grant_trust": "...",
     "ok": true, "errors": [], "warnings": []
   }
   ```
@@ -91,6 +97,19 @@ The two output shapes (verbatim member names):
   ```json
   { "valid": true, "link_status": ["valid", "valid"], "errors": [], "warnings": [] }
   ```
+- **Quorum-leaf output** (`witness-quorum.json`):
+  ```json
+  { "valid": true, "witness_time": 1730000000, "counting_control_groups": ["..."] }
+  ```
+- **Redemption-leaf output** (`redemption.json`):
+  ```json
+  { "verified": true }
+  ```
+  One boolean, and deliberately nothing else: v0.2 §18.7 forbids a gate that
+  fronts the delivery of content from having an error path an attacker can
+  tell apart from a refusal, so an adapter that distinguished "malformed"
+  from "wrong" would be reporting something the specification says must not
+  be observable.
 
 Extra members in your output are ignored — a richer result than the
 `expected.json` schema requires still passes. Reference implementations of
@@ -100,17 +119,18 @@ either as a worked example of the contract above.
 
 ## 4. Subsets
 
-- **v0.2** — every leaf in the corpus (currently 130). Measures conformance
+- **v0.2** — every leaf in the corpus (currently 157). Measures conformance
   against `docs/spec/attest-v0.2.md`.
-- **v0.1** — the 51-leaf subset: every leaf whose top-level group directory's
+- **v0.1** — the 52-leaf subset: every leaf whose top-level group directory's
   leading integer is ≤ 25, plus groups `29-limits` and
-  `31-manifest-currency`, plus the single leaf id
-  `35-transfer/i-v01-transferable-null-pubkey-ok` (`35i`). `35i` is included
-  because it is itself an `attest_version: "0.1"` receipt (a v0.1-shaped
-  negative control living inside the otherwise-v0.2-only `35-transfer`
-  group) — see `docs/spec/vectors/README.md` for the full membership
-  rationale. A v0.1-only implementation (one that never accepts v0.2's hybrid
-  profile) is measured against this subset, not against all 130.
+  `31-manifest-currency`, plus two pinned leaf ids,
+  `35-transfer/i-v01-transferable-null-pubkey-ok` (`35i`) and
+  `37-preservation-pledge/s-v01-negative-control` (`37s`). Both are included
+  because each is itself an `attest_version: "0.1"` receipt — a v0.1-shaped
+  negative control for a v0.2-only schema conditional, living inside an
+  otherwise-v0.2-only group — see `docs/spec/vectors/README.md` for the full
+  membership rationale. A v0.1-only implementation (one that never accepts v0.2's hybrid
+  profile) is measured against this subset, not against all 157.
 
 ## 5. The claim process
 

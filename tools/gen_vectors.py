@@ -71,6 +71,7 @@ from attest import (
     anchor,
     canon,
     commitment,
+    grant,
     issue,
     keys,
     manifests,
@@ -878,6 +879,7 @@ def write_vector(
     revocation_evidence: dict[str, Any] | None = None,
     transfer_view: list[dict[str, Any]] | None = None,
     witness_policy: dict[str, Any] | None = None,
+    grant_view: dict[str, Any] | None = None,
 ) -> None:
     """`transparency`/`log_keys`/`anchor_policy` (group 28 only, design doc
     "transparency/corroboration layer") are the untrusted evidence bundle and
@@ -941,6 +943,23 @@ def write_vector(
         _write_json(vector_dir / "transfer-view.json", transfer_view)
     if witness_policy is not None:
         _write_json(vector_dir / "witness-policy.json", witness_policy)
+    if grant_view is not None:
+        _write_json(vector_dir / "grant-view.json", grant_view)
+
+
+def write_redemption_vector(
+    name: str, *, redemption: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    """Group 38 only (v0.2 §18.7): a `redemption.json` leaf is a FOURTH
+    surface, routed to `grant.verify_redemption` by every harness rather than
+    to `verify()` — there is no receipt and no grant document in the question
+    "is this holder proof good for THIS custodian?", so these leaves ship no
+    `payload.json`/`envelope.json`/`manifests.json` at all, exactly as group
+    40's quorum leaves ship none. See `tests/test_vectors.py`'s
+    `test_redemption_vectors` and its TS/site mirrors."""
+    vector_dir = VECTORS_DIR / name
+    _write_json(vector_dir / "redemption.json", redemption)
+    _write_json(vector_dir / "expected.json", expected)
 
 
 def write_chain_vector(
@@ -4721,6 +4740,921 @@ def gen_36_transfer_chain() -> None:
     )
 
 
+# --- vector 37/38: Stage 4, the preservation pledge (v0.2 §18) -------------
+#
+# Three domains, three key pairs, three ML-DSA oracle keys. The publisher is
+# NOT the issuer — §18.1's whole point is a verifier resolving a manifest for a
+# domain that is not the receipt's own `issuer.id` — and the marketplace exists
+# so `signer_mismatch` has something to mismatch against. Each domain gets its
+# OWN ML-DSA-65 key rather than sharing the group-26 oracle: a corpus in which
+# three unrelated domains publish the same post-quantum public key would teach
+# key reuse across issuers, which is the opposite of what §7.1 asks for.
+
+PLEDGE_PUBLISHER_ID = "pub.example"
+PLEDGE_SUCCESSOR_ID = "heritage.example"
+PLEDGE_MARKETPLACE_ID = "marketplace.example"
+
+PLEDGE_PUBLISHER_KP = keys.from_seed(bytes([37]) * 32)
+PLEDGE_SUCCESSOR_KP = keys.from_seed(bytes([38]) * 32)
+PLEDGE_MARKETPLACE_KP = keys.from_seed(bytes([39]) * 32)
+
+PLEDGE_PUBLISHER_KID = f"{PLEDGE_PUBLISHER_ID}/keys/2025-01#ed25519-1"
+PLEDGE_SUCCESSOR_KID = f"{PLEDGE_SUCCESSOR_ID}/keys/2025-01#ed25519-1"
+PLEDGE_MARKETPLACE_KID = f"{PLEDGE_MARKETPLACE_ID}/keys/2025-01#ed25519-1"
+
+PLEDGE_PUBLISHER_MLDSA_PK, PLEDGE_PUBLISHER_MLDSA_SK = ML_DSA_65.key_derive(bytes([137]) * 32)
+PLEDGE_SUCCESSOR_MLDSA_PK, PLEDGE_SUCCESSOR_MLDSA_SK = ML_DSA_65.key_derive(bytes([138]) * 32)
+PLEDGE_MARKETPLACE_MLDSA_PK, PLEDGE_MARKETPLACE_MLDSA_SK = ML_DSA_65.key_derive(bytes([139]) * 32)
+
+GRANT_ISSUED_AT = "2025-02-01T00:00:00Z"
+GRANT_DECLARED_AT = "2031-03-01T00:00:00Z"
+GRANT_FIXED_DATE = "2026-01-01T00:00:00Z"
+# One pinned header past the backstop and one short of it. Both are fixed
+# inputs, never a clock: 1_800_000_000 is 2027-01-15, 1_740_000_000 is
+# 2025-02-19, and `GRANT_FIXED_DATE` sits between them.
+GRANT_HEADER_TIME_REACHED = 1_800_000_000
+GRANT_HEADER_TIME_STALE = 1_740_000_000
+
+GRANT_LEGAL_TEXT_URI = f"https://{PLEDGE_PUBLISHER_ID}/sunset-grant-v1"
+GRANT_LEGAL_TEXT_URI_V2 = f"https://{PLEDGE_PUBLISHER_ID}/sunset-grant-v2"
+GRANT_LEGAL_TEXT_SHA256 = hashlib.sha256(b"attest-vectors-sunset-grant-prose-v1").hexdigest()
+GRANT_URI = f"https://{PLEDGE_PUBLISHER_ID}/sunset-grant-v1.json"
+GRANT_OTHER_ARTIFACT_SHA256 = hashlib.sha256(b"attest-vectors-artifact-elsewhere").hexdigest()
+GRANT_OTHER_SERIES = f"{PLEDGE_PUBLISHER_ID}/works/OTHER-001"
+
+_PLEDGE_ARTIFACTS = [
+    {
+        "role": "installer",
+        "platform": "windows-x86_64",
+        "filename": "example-game-1.0-setup.exe",
+        "size_bytes": 734003200,
+        "sha256": ARTIFACT_SHA256,
+    }
+]
+
+
+def _stage4_manifest(
+    issuer_id: str, kid: str, ed_kp: keys.SigningKeyPair, mldsa_pk: bytes, mldsa_sk: bytes
+) -> dict[str, Any]:
+    """A hybrid key manifest for one Stage 4 domain, signed with THAT domain's
+    own deterministic ML-DSA oracle — `_hybrid_manifest` above is hard-wired to
+    the single group-26 oracle key and cannot express three distinct signers."""
+    entry = manifests.key_entry(
+        kid, ed_kp.pub, KEY_VALID_FROM, None, "active", pub_ml_dsa_65=mldsa_pk
+    )
+    body: dict[str, Any] = {
+        "issuer": issuer_id,
+        "manifest_version": 1,
+        "issued_at": MANIFEST_ISSUED_AT,
+        "keys": [entry],
+    }
+    signable = manifests._signable(body)
+    body["manifest_signature"] = {
+        "kid": kid,
+        "sig": keys.b64u(keys.sign(signable, ed_kp)),
+        "sig_ml_dsa_65": keys.b64u(ML_DSA_65.sign(mldsa_sk, signable, deterministic=True)),
+    }
+    return body
+
+
+def _stage4_sign(
+    body: dict[str, Any], kid: str, ed_kp: keys.SigningKeyPair, mldsa_sk: bytes
+) -> dict[str, Any]:
+    """Hybrid-sign a §18 side-document (grant or cessation declaration) with the
+    oracle-sign-then-splice technique `_hybrid_sign_record` uses, parameterized
+    by signer so a successor and a marketplace can each sign with their own."""
+    signable = canon.canonical_bytes(body)
+    document = dict(body)
+    document["signature"] = {
+        "kid": kid,
+        "sig": keys.b64u(keys.sign(signable, ed_kp)),
+        "sig_ml_dsa_65": keys.b64u(ML_DSA_65.sign(mldsa_sk, signable, deterministic=True)),
+    }
+    return document
+
+
+def _grant_body(**overrides: Any) -> dict[str, Any]:
+    """The eleven-member body minus its signature. `scope.artifact_series` is
+    null and `scope.artifacts` names the receipt's own artifact: §18.4 says a
+    grant scoped purely by hash covers a receipt naming exactly those artifacts
+    EVEN IF that receipt also carries a series, and every leaf below inherits
+    that reading unless it deliberately breaks it."""
+    body: dict[str, Any] = {
+        "grant_version": 1,
+        "publisher": PLEDGE_PUBLISHER_ID,
+        "scope": {"artifact_series": None, "artifacts": [ARTIFACT_SHA256]},
+        "permissions": ["deliver-to-holder"],
+        "activation": {
+            "modes": ["publisher-declaration"],
+            "fixed_date": None,
+            "successor_ids": [],
+        },
+        "unprotected_build": True,
+        "legal_text_uri": GRANT_LEGAL_TEXT_URI,
+        "legal_text_sha256": GRANT_LEGAL_TEXT_SHA256,
+        "jurisdiction": "IT",
+        "issued_at": GRANT_ISSUED_AT,
+    }
+    body.update(overrides)
+    return body
+
+
+def _publisher_grant(**overrides: Any) -> dict[str, Any]:
+    return _stage4_sign(
+        _grant_body(**overrides),
+        PLEDGE_PUBLISHER_KID,
+        PLEDGE_PUBLISHER_KP,
+        PLEDGE_PUBLISHER_MLDSA_SK,
+    )
+
+
+def _declaration_body(**overrides: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "publisher": PLEDGE_PUBLISHER_ID,
+        "scope": {"artifact_series": None, "artifacts": [ARTIFACT_SHA256]},
+        "declared_at": GRANT_DECLARED_AT,
+    }
+    body.update(overrides)
+    return body
+
+
+def _pledge_payload(document: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    """A v0.2 receipt hash-binding `document`, satisfying §18.6's conditional:
+    a non-null `buyer.pubkey`, a `work.publisher_id`, and the `sunset-grant`
+    label, all three schema-REQUIRED once the term is present."""
+    kwargs = _base_payload_kwargs(
+        attest_version="0.2",
+        buyer_pubkey=BUYER_KP.pub,
+        artifacts=_PLEDGE_ARTIFACTS,
+        publisher_id=PLEDGE_PUBLISHER_ID,
+        end_of_life="sunset-grant",
+        preservation_pledge={
+            "pledge": "sunset-grant-v1",
+            "grant_uri": GRANT_URI,
+            "grant_sha256": grant.grant_hash(document),
+        },
+    )
+    kwargs.update(overrides)
+    return issue.build_payload(**kwargs)
+
+
+def _pledge_trust(publisher_provenance: str = "tls", *extra_domains: str) -> dict[str, Any]:
+    """The issuer's hybrid manifest plus the publisher's, and optionally the
+    successor's/marketplace's — every domain a leaf's evidence names."""
+    triples: list[tuple[str, dict[str, Any], str]] = [
+        (ISSUER_ID, _hybrid_manifest(ISSUER_ID, ISSUER_KID, ISSUER_KP), "tls"),
+        (
+            PLEDGE_PUBLISHER_ID,
+            _stage4_manifest(
+                PLEDGE_PUBLISHER_ID,
+                PLEDGE_PUBLISHER_KID,
+                PLEDGE_PUBLISHER_KP,
+                PLEDGE_PUBLISHER_MLDSA_PK,
+                PLEDGE_PUBLISHER_MLDSA_SK,
+            ),
+            publisher_provenance,
+        ),
+    ]
+    for domain in extra_domains:
+        if domain == PLEDGE_SUCCESSOR_ID:
+            triples.append(
+                (
+                    PLEDGE_SUCCESSOR_ID,
+                    _stage4_manifest(
+                        PLEDGE_SUCCESSOR_ID,
+                        PLEDGE_SUCCESSOR_KID,
+                        PLEDGE_SUCCESSOR_KP,
+                        PLEDGE_SUCCESSOR_MLDSA_PK,
+                        PLEDGE_SUCCESSOR_MLDSA_SK,
+                    ),
+                    "tls",
+                )
+            )
+        elif domain == PLEDGE_MARKETPLACE_ID:
+            triples.append(
+                (
+                    PLEDGE_MARKETPLACE_ID,
+                    _stage4_manifest(
+                        PLEDGE_MARKETPLACE_ID,
+                        PLEDGE_MARKETPLACE_KID,
+                        PLEDGE_MARKETPLACE_KP,
+                        PLEDGE_MARKETPLACE_MLDSA_PK,
+                        PLEDGE_MARKETPLACE_MLDSA_SK,
+                    ),
+                    "tls",
+                )
+            )
+        else:  # pragma: no cover - generator guard
+            raise AssertionError(f"unknown Stage 4 domain {domain!r}")
+    return _trust_material(*triples)
+
+
+def _pledge_expected(
+    grant_state: str,
+    grant_trust: str,
+    warnings: list[str],
+    *,
+    schema: str = "valid",
+    ok: bool = True,
+    errors_contains: list[str] | None = None,
+) -> dict[str, Any]:
+    """Every §18 leaf below asserts the SAME five pre-Stage-4 components, and
+    each one is the point: per D6 the grant takes no exception, so `signature`,
+    `schema`, `revocation`, `binding`, `trust` and `ok` must read exactly as
+    they would have with no grant evidence in sight."""
+    expected: dict[str, Any] = {
+        "signature": "valid",
+        "schema": schema,
+        "revocation": "unknown",
+        "binding": "not_checked",
+        "trust": "verified",
+        "ok": ok,
+        "grant": grant_state,
+        "grant_trust": grant_trust,
+        "warnings": warnings,
+    }
+    if errors_contains is None:
+        expected["errors"] = []
+    else:
+        expected["errors_contains"] = errors_contains
+    return expected
+
+
+def gen_37_preservation_pledge() -> None:
+    """v0.2 Stage 4 (§18): the preservation pledge, its ratchet, and its two
+    presence-based activation paths.
+
+    Every leaf is one `verify()` call whose receipt is `attest_version: "0.2"`
+    and whose `grant-view.json` is the §18.4 evidence object — the channel that
+    is also the capability gate, so a leaf that ships no such file evaluates
+    nothing and would report `not_checked`/`not_checked`.
+
+    The corpus is deliberately unbalanced toward refusal: seventeen of the
+    twenty-four leaves end somewhere other than `activated`, because §18.4's
+    failure asymmetry is normative and a false `activated` is the single
+    failure that would discredit the instrument. `q` is the only leaf where the
+    publisher's manifest arrives without domain-control provenance, and `s` is
+    a v0.1 receipt that must stay untouched by all of it.
+    """
+    floor = _publisher_grant()
+    payload = _pledge_payload(floor)
+    _assert_schema_valid(payload)
+    envelope = _hybrid_envelope(payload, ISSUER_KP, ISSUER_KID)
+    trust = _pledge_trust()
+    publisher_manifest = _stage4_manifest(
+        PLEDGE_PUBLISHER_ID,
+        PLEDGE_PUBLISHER_KID,
+        PLEDGE_PUBLISHER_KP,
+        PLEDGE_PUBLISHER_MLDSA_PK,
+        PLEDGE_PUBLISHER_MLDSA_SK,
+    )
+    assert grant.verify_grant(floor, publisher_manifest) is True
+    assert grant.grant_covers_receipt(floor, payload) is True
+
+    declaration = _stage4_sign(
+        _declaration_body(),
+        PLEDGE_PUBLISHER_KID,
+        PLEDGE_PUBLISHER_KP,
+        PLEDGE_PUBLISHER_MLDSA_SK,
+    )
+    assert grant.verify_declaration(declaration, publisher_manifest) is True
+    assert grant.declaration_covers_grant(declaration, floor) is True
+
+    # --- (a) dormant-no-declaration: the grant authenticates, binds and
+    # covers, and nothing has happened yet. This is what a buyer sees for the
+    # entire life of a healthy store, and it must be silent. ---
+    write_vector(
+        "37-preservation-pledge/a-dormant-no-declaration",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("dormant", "verified", []),
+        grant_view={"grant": floor},
+    )
+
+    # --- (b) activated-publisher-declaration: the rights holder signs their
+    # own cessation. The permission becomes exercisable and `ok` does not
+    # move — D6, stated as a vector rather than only as prose. ---
+    write_vector(
+        "37-preservation-pledge/b-activated-publisher-declaration",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("activated", "verified", []),
+        grant_view={"grant": floor, "declarations": [declaration]},
+    )
+
+    # --- (c) activated-successor-declaration: the same, declared by a domain
+    # the grant designated. Reported, never downgraded. ---
+    floor_c = _publisher_grant(
+        activation={
+            "modes": ["publisher-declaration"],
+            "fixed_date": None,
+            "successor_ids": [PLEDGE_SUCCESSOR_ID],
+        }
+    )
+    payload_c = _pledge_payload(floor_c)
+    _assert_schema_valid(payload_c)
+    declaration_c = _stage4_sign(
+        _declaration_body(),
+        PLEDGE_SUCCESSOR_KID,
+        PLEDGE_SUCCESSOR_KP,
+        PLEDGE_SUCCESSOR_MLDSA_SK,
+    )
+    assert grant.declaration_signer_role(declaration_c, floor_c) == grant.SIGNER_ROLE_SUCCESSOR
+    write_vector(
+        "37-preservation-pledge/c-activated-successor-declaration",
+        payload=payload_c,
+        envelope=_hybrid_envelope(payload_c, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=_pledge_trust("tls", PLEDGE_SUCCESSOR_ID),
+        expected=_pledge_expected("activated", "verified", ["grant_activated_by_successor"]),
+        grant_view={"grant": floor_c, "declarations": [declaration_c]},
+    )
+
+    # --- (d) declaration-forged-ignored: the declaration's body was edited
+    # after signing, so it authenticates against nothing. ---
+    declaration_forged = dict(declaration)
+    declaration_forged["declared_at"] = "2030-01-01T00:00:00Z"
+    assert grant.verify_declaration(declaration_forged, publisher_manifest) is False
+    write_vector(
+        "37-preservation-pledge/d-declaration-forged-ignored",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("dormant", "verified", ["grant_declaration_ignored"]),
+        grant_view={"grant": floor, "declarations": [declaration_forged]},
+    )
+
+    # --- (e) declaration-scope-subset-ignored: a genuine declaration that
+    # covers LESS than the grant. Declaration coverage is superset containment
+    # (§18.4), the opposite direction from grant-to-receipt coverage, and this
+    # leaf exists so an implementation that confused the two fails here. ---
+    floor_e = _publisher_grant(
+        scope={
+            "artifact_series": None,
+            "artifacts": sorted([ARTIFACT_SHA256, GRANT_OTHER_ARTIFACT_SHA256]),
+        }
+    )
+    payload_e = _pledge_payload(floor_e)
+    _assert_schema_valid(payload_e)
+    declaration_e = _stage4_sign(
+        _declaration_body(),
+        PLEDGE_PUBLISHER_KID,
+        PLEDGE_PUBLISHER_KP,
+        PLEDGE_PUBLISHER_MLDSA_SK,
+    )
+    assert grant.grant_covers_receipt(floor_e, payload_e) is True
+    assert grant.declaration_covers_grant(declaration_e, floor_e) is False
+    write_vector(
+        "37-preservation-pledge/e-declaration-scope-subset-ignored",
+        payload=payload_e,
+        envelope=_hybrid_envelope(payload_e, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("dormant", "verified", ["grant_declaration_ignored"]),
+        grant_view={"grant": floor_e, "declarations": [declaration_e]},
+    )
+
+    # --- (f) declaration-unlisted-successor-ignored: a perfectly authentic
+    # declaration from a domain the grant never named. A declaration from a
+    # stranger is never honored, however well it is signed. ---
+    declaration_f = _stage4_sign(
+        _declaration_body(),
+        PLEDGE_MARKETPLACE_KID,
+        PLEDGE_MARKETPLACE_KP,
+        PLEDGE_MARKETPLACE_MLDSA_SK,
+    )
+    assert grant.declaration_signer_role(declaration_f, floor) is None
+    write_vector(
+        "37-preservation-pledge/f-declaration-unlisted-successor-ignored",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_pledge_trust("tls", PLEDGE_MARKETPLACE_ID),
+        expected=_pledge_expected("dormant", "verified", ["grant_declaration_ignored"]),
+        grant_view={"grant": floor, "declarations": [declaration_f]},
+    )
+
+    # --- (g) activated-fixed-date: the backstop, proven in the only direction
+    # anchoring can honestly give — `T >= fixed_date`, seeded by the grant's own
+    # canonical bytes rather than by any log checkpoint. ---
+    floor_g = _publisher_grant(
+        activation={
+            "modes": ["fixed-date", "publisher-declaration"],
+            "fixed_date": GRANT_FIXED_DATE,
+            "successor_ids": [],
+        }
+    )
+    payload_g = _pledge_payload(floor_g)
+    _assert_schema_valid(payload_g)
+    envelope_g = _hybrid_envelope(payload_g, ISSUER_KP, ISSUER_KID)
+    proof_g, policy_g = _single_hash_anchor(
+        canon.canonical_bytes(floor_g), b"attest-vectors-37g-header", GRANT_HEADER_TIME_REACHED
+    )
+    write_vector(
+        "37-preservation-pledge/g-activated-fixed-date",
+        payload=payload_g,
+        envelope=envelope_g,
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("activated", "verified", []),
+        anchor_policy=policy_g,
+        grant_view={"grant": floor_g, "anchor": {"proofs": [proof_g]}},
+    )
+
+    # --- (h) fixed-date-unproven: the mode is declared and no proof was
+    # supplied. Withholding evidence can only keep a grant closed. ---
+    write_vector(
+        "37-preservation-pledge/h-fixed-date-unproven",
+        payload=payload_g,
+        envelope=envelope_g,
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("dormant", "verified", ["grant_unanchored"]),
+        anchor_policy=policy_g,
+        grant_view={"grant": floor_g},
+    )
+
+    # --- (i) fixed-date-stale-proof: a genuine anchor that resolves EARLIER
+    # than the backstop. Real time has not reached the date, so the grant stays
+    # shut — the same verdict as no proof at all, and deliberately so. ---
+    proof_i, policy_i = _single_hash_anchor(
+        canon.canonical_bytes(floor_g), b"attest-vectors-37i-header", GRANT_HEADER_TIME_STALE
+    )
+    write_vector(
+        "37-preservation-pledge/i-fixed-date-stale-proof",
+        payload=payload_g,
+        envelope=envelope_g,
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("dormant", "verified", ["grant_unanchored"]),
+        anchor_policy=policy_i,
+        grant_view={"grant": floor_g, "anchor": {"proofs": [proof_i]}},
+    )
+
+    # --- (j) none-not-declared: a receipt that never pledged anything, asked
+    # the question anyway. `none` is not `not_checked`: the verifier looked. ---
+    payload_j = issue.build_payload(**_base_payload_kwargs(attest_version="0.2"))
+    _assert_schema_valid(payload_j)
+    write_vector(
+        "37-preservation-pledge/j-none-not-declared",
+        payload=payload_j,
+        envelope=_hybrid_envelope(payload_j, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("none", "not_checked", []),
+        grant_view={},
+    )
+
+    # --- (k) not-checked-no-grant-doc: the term is there, the document is not.
+    # Steps 1-3 ran (nothing to report), step 4 stopped. ---
+    write_vector(
+        "37-preservation-pledge/k-not-checked-no-grant-doc",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("not_checked", "not_checked", []),
+        grant_view={},
+    )
+
+    # --- (l) signer-mismatch: the marketplace signs a grant over a work whose
+    # rights it does not hold. The document is impeccable; the domain is not
+    # the receipt's declared `work.publisher_id`. Named, not silently ignored. ---
+    floor_l = _stage4_sign(
+        _grant_body(publisher=PLEDGE_MARKETPLACE_ID),
+        PLEDGE_MARKETPLACE_KID,
+        PLEDGE_MARKETPLACE_KP,
+        PLEDGE_MARKETPLACE_MLDSA_SK,
+    )
+    payload_l = _pledge_payload(floor_l)
+    _assert_schema_valid(payload_l)
+    write_vector(
+        "37-preservation-pledge/l-signer-mismatch",
+        payload=payload_l,
+        envelope=_hybrid_envelope(payload_l, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=_pledge_trust("tls", PLEDGE_MARKETPLACE_ID),
+        expected=_pledge_expected(
+            "invalid_grant_ignored", "signer_mismatch", ["grant_signer_not_publisher"]
+        ),
+        grant_view={"grant": floor_l},
+    )
+
+    # --- (m) commitment-mismatch: a genuine publisher grant that is not THE
+    # grant this receipt signed. One canonical form, never a second one. ---
+    payload_m = _pledge_payload(floor)
+    payload_m["license"]["preservation_pledge"]["grant_sha256"] = hashlib.sha256(
+        b"attest-vectors-some-other-grant"
+    ).hexdigest()
+    _assert_schema_valid(payload_m)
+    write_vector(
+        "37-preservation-pledge/m-commitment-mismatch",
+        payload=payload_m,
+        envelope=_hybrid_envelope(payload_m, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected(
+            "invalid_grant_ignored", "verified", ["grant_commitment_mismatch"]
+        ),
+        grant_view={"grant": floor},
+    )
+
+    # --- (n) ratchet-narrowing-ignored: a later version that takes a permission
+    # away. It is ignored and the floor stays effective — the buyer keeps what
+    # they paid for, and is told the attempt happened. ---
+    floor_n = _publisher_grant(
+        permissions=["deliver-to-holder", "redistribute-among-holders"],
+    )
+    payload_n = _pledge_payload(floor_n)
+    _assert_schema_valid(payload_n)
+    later_n = _publisher_grant(
+        grant_version=2,
+        permissions=["deliver-to-holder"],
+    )
+    assert grant.is_non_narrowing(floor_n, later_n) is False
+    write_vector(
+        "37-preservation-pledge/n-ratchet-narrowing-ignored",
+        payload=payload_n,
+        envelope=_hybrid_envelope(payload_n, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("dormant", "verified", ["grant_narrowing_ignored"]),
+        grant_view={"grant": floor_n, "later_grants": [later_n]},
+    )
+
+    # --- (o) ratchet-broadening-adds-fixed-date: the publisher widens the
+    # trigger after the sale — a backstop where there was none. The later
+    # version governs, and the anchor that opens it is seeded by THAT
+    # document's bytes, not the floor's. This leaf is where an implementation
+    # that seeded from the floor fails. ---
+    floor_o = _publisher_grant()
+    payload_o = _pledge_payload(floor_o)
+    _assert_schema_valid(payload_o)
+    later_o = _publisher_grant(
+        grant_version=2,
+        activation={
+            "modes": ["fixed-date", "publisher-declaration"],
+            "fixed_date": GRANT_FIXED_DATE,
+            "successor_ids": [],
+        },
+    )
+    assert grant.is_non_narrowing(floor_o, later_o) is True
+    proof_o, policy_o = _single_hash_anchor(
+        canon.canonical_bytes(later_o), b"attest-vectors-37o-header", GRANT_HEADER_TIME_REACHED
+    )
+    write_vector(
+        "37-preservation-pledge/o-ratchet-broadening-adds-fixed-date",
+        payload=payload_o,
+        envelope=_hybrid_envelope(payload_o, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("activated", "verified", []),
+        anchor_policy=policy_o,
+        grant_view={
+            "grant": floor_o,
+            "later_grants": [later_o],
+            "anchor": {"proofs": [proof_o]},
+        },
+    )
+
+    # --- (p) ratchet-equivocation: two authenticated grants, one version
+    # number. The publisher's own document set disagrees with itself, which is
+    # a currency signal and not something an attacker manufactured. ---
+    twin_p = _publisher_grant(jurisdiction="FR")
+    assert grant.grant_hash(twin_p) != grant.grant_hash(floor)
+    write_vector(
+        "37-preservation-pledge/p-ratchet-equivocation",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("dormant", "unverified_rotation", []),
+        grant_view={"grant": floor, "later_grants": [twin_p]},
+    )
+
+    # --- (q) tofu-publisher: the publisher's manifest arrived in a bundle, not
+    # over domain control. The grant is evaluated exactly the same; only
+    # `grant_trust` moves, and the RECEIPT's own `trust` does not — it remains
+    # a statement about the issuer. ---
+    write_vector(
+        "37-preservation-pledge/q-tofu-publisher",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_pledge_trust("bundle"),
+        expected=_pledge_expected("dormant", "unauthenticated_tofu", []),
+        grant_view={"grant": floor},
+    )
+
+    # --- (r) scope-uncovered: a grant about a different catalogue entirely.
+    # The gate returns BEFORE either activation path, so the declaration below
+    # is never honored and `grant_unanchored` never fires despite the mode
+    # being declared — an implementation that treated coverage as a note
+    # rather than a gate produces a different warning set here. ---
+    floor_r = _publisher_grant(
+        scope={"artifact_series": GRANT_OTHER_SERIES, "artifacts": [GRANT_OTHER_ARTIFACT_SHA256]},
+        activation={
+            "modes": ["fixed-date", "publisher-declaration"],
+            "fixed_date": GRANT_FIXED_DATE,
+            "successor_ids": [],
+        },
+    )
+    payload_r = _pledge_payload(floor_r)
+    _assert_schema_valid(payload_r)
+    declaration_r = _stage4_sign(
+        _declaration_body(
+            scope={
+                "artifact_series": GRANT_OTHER_SERIES,
+                "artifacts": [GRANT_OTHER_ARTIFACT_SHA256],
+            }
+        ),
+        PLEDGE_PUBLISHER_KID,
+        PLEDGE_PUBLISHER_KP,
+        PLEDGE_PUBLISHER_MLDSA_SK,
+    )
+    assert grant.grant_covers_receipt(floor_r, payload_r) is False
+    assert grant.declaration_covers_grant(declaration_r, floor_r) is True
+    write_vector(
+        "37-preservation-pledge/r-scope-uncovered",
+        payload=payload_r,
+        envelope=_hybrid_envelope(payload_r, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("dormant", "verified", ["grant_scope_uncovered"]),
+        grant_view={"grant": floor_r, "declarations": [declaration_r]},
+    )
+
+    # --- (s) v01-negative-control: §18.6's conditional is gated on
+    # `attest_version: "0.2"`, so a v0.1 receipt carrying the term with a NULL
+    # `buyer.pubkey` and no `work.publisher_id` stays schema-valid. It belongs
+    # to the v0.1 conformance subset: a verifier that implements v0.1 alone
+    # must still reproduce it, and would break here if Stage 4's conditional
+    # had been written without the version gate. ---
+    payload_s = issue.build_payload(
+        **_base_payload_kwargs(
+            attest_version="0.1",
+            preservation_pledge={
+                "pledge": "sunset-grant-v1",
+                "grant_uri": GRANT_URI,
+                "grant_sha256": grant.grant_hash(floor),
+            },
+        )
+    )
+    _assert_schema_valid(payload_s)
+    write_vector(
+        "37-preservation-pledge/s-v01-negative-control",
+        payload=payload_s,
+        envelope=issue.issue(payload_s, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=_issuer_only_trust(),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": [],
+        },
+    )
+
+    # --- (t) schema-pledge-requires-pubkey: the load-bearing half of §18.6.
+    # Without a holder key, "holder" degenerates to whoever possesses the file
+    # and the grant becomes indistinguishable from publishing the work. Built
+    # like 25-schema-parity: mutated to schema-invalid BEFORE signing, so the
+    # signature genuinely covers the invalid payload. ---
+    payload_t = _pledge_payload(floor)
+    payload_t["buyer"]["pubkey"] = None
+    violations_t = validate.validate_payload(payload_t)
+    assert any("pubkey" in v for v in violations_t), violations_t
+    write_vector(
+        "37-preservation-pledge/t-schema-pledge-requires-pubkey",
+        payload=payload_t,
+        envelope=_hybrid_envelope(payload_t, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected(
+            "not_checked",
+            "not_checked",
+            [],
+            schema="invalid",
+            ok=False,
+            errors_contains=["pubkey"],
+        ),
+        grant_view={"grant": floor},
+    )
+
+    # --- (u) schema-pledge-requires-publisher-id: the other half — §18.1's
+    # entire identity check hangs on `work.publisher_id`, so a pledge without
+    # one is a term nobody can resolve a signer for. ---
+    payload_u = _pledge_payload(floor)
+    del payload_u["work"]["publisher_id"]
+    violations_u = validate.validate_payload(payload_u)
+    assert any("publisher_id" in v for v in violations_u), violations_u
+    write_vector(
+        "37-preservation-pledge/u-schema-pledge-requires-publisher-id",
+        payload=payload_u,
+        envelope=_hybrid_envelope(payload_u, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected(
+            "not_checked",
+            "not_checked",
+            [],
+            schema="invalid",
+            ok=False,
+            errors_contains=["publisher_id"],
+        ),
+        grant_view={"grant": floor},
+    )
+
+    # --- (v) classical-only-grant-hybrid-publisher: the grant carries only its
+    # Ed25519 leg while the publisher's manifest entry is hybrid. §13's AND-rule
+    # fails closed, exactly as it does for revocation and transfer records —
+    # a grant is not a lesser document. ---
+    floor_v = grant.build_grant(
+        signing_kp=PLEDGE_PUBLISHER_KP, kid=PLEDGE_PUBLISHER_KID, **_grant_body()
+    )
+    assert "sig_ml_dsa_65" not in floor_v["signature"]
+    assert grant.verify_grant(floor_v, publisher_manifest) is False
+    payload_v = _pledge_payload(floor_v)
+    _assert_schema_valid(payload_v)
+    write_vector(
+        "37-preservation-pledge/v-classical-only-grant-hybrid-publisher",
+        payload=payload_v,
+        envelope=_hybrid_envelope(payload_v, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("invalid_grant_ignored", "verified", []),
+        grant_view={"grant": floor_v},
+    )
+
+    # --- (w) empty-legal-text-uri: §18.2 types `legal_text_uri` "string,
+    # non-empty", and the emptiness is the load-bearing half — the prose is the
+    # only thing that says what the permission MEANS as an undertaking, so a
+    # grant pointing at nowhere authenticates a promise with no content. The
+    # document below is otherwise impeccable: genuinely publisher-signed, hash
+    # bound to its receipt, covering it, with a valid cessation declaration
+    # beside it. An implementation that checked the member's TYPE but not its
+    # emptiness reaches `activated` here — the one direction §18.4 forbids —
+    # which is why this leaf exists rather than being left to a unit test. ---
+    floor_w = _publisher_grant(legal_text_uri="")
+    payload_w = _pledge_payload(floor_w)
+    _assert_schema_valid(payload_w)
+    declaration_w = _stage4_sign(
+        _declaration_body(),
+        PLEDGE_PUBLISHER_KID,
+        PLEDGE_PUBLISHER_KP,
+        PLEDGE_PUBLISHER_MLDSA_SK,
+    )
+    assert grant.verify_grant(floor_w, publisher_manifest) is False
+    write_vector(
+        "37-preservation-pledge/w-empty-legal-text-uri",
+        payload=payload_w,
+        envelope=_hybrid_envelope(payload_w, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected=_pledge_expected("invalid_grant_ignored", "verified", []),
+        grant_view={"grant": floor_w, "declarations": [declaration_w]},
+    )
+
+    # --- (x) trust-not-borrowed-from-signer: §18.5 scopes the ladder to the
+    # trust store's provenance for the RECEIPT's resolved `work.publisher_id`,
+    # never to the domain a supplied document happens to name in its own `kid`.
+    # The document below authenticates against nothing — it is the marketplace's
+    # grant with a member changed after signing — but its `kid` names a domain
+    # the verifier knows over domain control, while the actual publisher's
+    # manifest arrived in a bundle. An implementation that keyed the ladder on
+    # the signer reports `grant_trust: "verified"` here, buying the top of the
+    # scale for the price of appending bytes to an evidence object nobody
+    # signed. `l` cannot catch it (its foreign grant DOES authenticate, so it
+    # reaches the later `signer_mismatch` override) and neither can `q` (signer
+    # and publisher are the same domain there). ---
+    marketplace_manifest = _stage4_manifest(
+        PLEDGE_MARKETPLACE_ID,
+        PLEDGE_MARKETPLACE_KID,
+        PLEDGE_MARKETPLACE_KP,
+        PLEDGE_MARKETPLACE_MLDSA_PK,
+        PLEDGE_MARKETPLACE_MLDSA_SK,
+    )
+    floor_x = dict(
+        _stage4_sign(
+            _grant_body(publisher=PLEDGE_MARKETPLACE_ID),
+            PLEDGE_MARKETPLACE_KID,
+            PLEDGE_MARKETPLACE_KP,
+            PLEDGE_MARKETPLACE_MLDSA_SK,
+        )
+    )
+    floor_x["jurisdiction"] = "ZZ"
+    payload_x = _pledge_payload(floor_x)
+    _assert_schema_valid(payload_x)
+    assert grant.verify_grant(floor_x, marketplace_manifest) is False
+    write_vector(
+        "37-preservation-pledge/x-trust-not-borrowed-from-signer",
+        payload=payload_x,
+        envelope=_hybrid_envelope(payload_x, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=_pledge_trust("bundle", PLEDGE_MARKETPLACE_ID),
+        expected=_pledge_expected("invalid_grant_ignored", "unauthenticated_tofu", []),
+        grant_view={"grant": floor_x},
+    )
+
+
+def gen_38_redemption() -> None:
+    """v0.2 §18.7: the audience-bound redemption proof.
+
+    A FOURTH surface, like group 40's quorum leaves: there is no receipt to
+    verify here and no grant to evaluate, only the holder's signature over
+    §18.7's preimage, so these leaves ship a `redemption.json` and are routed
+    to `grant.verify_redemption` by every harness instead of to `verify()`.
+
+    `audience` is why this is a new preimage rather than a reuse of v0.1 §8.2's
+    binding challenge: that one names no recipient, so a response produced for
+    one custodian would be replayable at another. Leaf (b) is that replay,
+    and it is the reason the group exists.
+    """
+    nonce = bytes(range(16))
+    audience = "archive.example"
+    other_audience = "other-archive.example"
+    holder_pubkey_b64u = keys.b64u(BUYER_KP.pub)
+
+    sig_valid = grant.sign_redemption(RECEIPT_ID, audience, nonce, BUYER_KP)
+    assert (
+        grant.verify_redemption(RECEIPT_ID, audience, nonce, sig_valid, holder_pubkey_b64u) is True
+    )
+    write_redemption_vector(
+        "38-redemption/a-valid-proof",
+        redemption={
+            "receipt_id": RECEIPT_ID,
+            "audience": audience,
+            "nonce_b64u": keys.b64u(nonce),
+            "sig_b64u": keys.b64u(sig_valid),
+            "holder_pubkey_b64u": holder_pubkey_b64u,
+        },
+        expected={"verified": True},
+    )
+
+    # --- (b) wrong-audience-replay: a genuine response, produced for a
+    # DIFFERENT custodian and presented here. This is the attack v0.1 §8.2's
+    # preimage could not refuse, and the whole reason for the new domain. ---
+    sig_other = grant.sign_redemption(RECEIPT_ID, other_audience, nonce, BUYER_KP)
+    assert (
+        grant.verify_redemption(RECEIPT_ID, audience, nonce, sig_other, holder_pubkey_b64u) is False
+    )
+    write_redemption_vector(
+        "38-redemption/b-wrong-audience-replay",
+        redemption={
+            "receipt_id": RECEIPT_ID,
+            "audience": audience,
+            "nonce_b64u": keys.b64u(nonce),
+            "sig_b64u": keys.b64u(sig_other),
+            "holder_pubkey_b64u": holder_pubkey_b64u,
+        },
+        expected={"verified": False},
+    )
+
+    # --- (c) forged-signature: one flipped byte. A gate fronting the delivery
+    # of content must refuse, never raise. ---
+    write_redemption_vector(
+        "38-redemption/c-forged-signature",
+        redemption={
+            "receipt_id": RECEIPT_ID,
+            "audience": audience,
+            "nonce_b64u": keys.b64u(nonce),
+            "sig_b64u": _flip_sig_byte(keys.b64u(sig_valid)),
+            "holder_pubkey_b64u": holder_pubkey_b64u,
+        },
+        expected={"verified": False},
+    )
+
+    # --- (d) short-nonce: §18.7 requires at least 16 raw bytes, freshly
+    # generated by the custodian. Eight is a challenge cheap enough to
+    # exhaust, and the preimage builder refuses to construct it at all —
+    # which the verifier turns into a refusal, not an exception. ---
+    short_nonce = bytes(range(8))
+    assert (
+        grant.verify_redemption(RECEIPT_ID, audience, short_nonce, sig_valid, holder_pubkey_b64u)
+        is False
+    )
+    write_redemption_vector(
+        "38-redemption/d-short-nonce",
+        redemption={
+            "receipt_id": RECEIPT_ID,
+            "audience": audience,
+            "nonce_b64u": keys.b64u(short_nonce),
+            "sig_b64u": keys.b64u(sig_valid),
+            "holder_pubkey_b64u": holder_pubkey_b64u,
+        },
+        expected={"verified": False},
+    )
+
+
 def gen_39_witness_corroboration() -> None:
     """v0.2 §10.1/§11.4 (P1.1b): `corroboration: "witnessed"` — reachable, and
     hard to reach by accident.
@@ -5595,6 +6529,8 @@ def main() -> None:
     gen_33_logged_revocation()
     gen_35_transfer()
     gen_36_transfer_chain()
+    gen_37_preservation_pledge()
+    gen_38_redemption()
     gen_39_witness_corroboration()
     gen_40_witness_quorum()
     leaf_count = sum(1 for _ in VECTORS_DIR.rglob("expected.json"))

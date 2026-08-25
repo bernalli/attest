@@ -61,8 +61,11 @@ def _spec_text(version: str, sections: list[int]) -> str:
 def _minimal_spec_v01() -> str:
     return (
         _spec_text("0.1", list(range(1, 16)))  # §1..§15
-        + "### 5.5 `license`\n\n"
+        + "### 5.4 `work`\n\n"
+        + "| `work.publisher_id` | string, lowercase DNS domain | OPTIONAL | Reserved. |\n"
+        + "\n### 5.5 `license`\n\n"
         + "| `not_transferable_before` | string, ISO-8601 UTC | OPTIONAL | Reserved. |\n"
+        + "| `preservation_pledge` | object | OPTIONAL | Reserved. |\n"
     )
 
 
@@ -88,6 +91,33 @@ def _minimal_spec_v02() -> str:
             )
         )
         + "\n"
+        + "\n## 18. Stage 4: the preservation pledge\n\n"
+        + "`license.preservation_pledge` `sunset-grant-v1` `sunset-grant` "
+        + "`deliver-to-holder` `redistribute-among-holders` `publisher-declaration` "
+        + "`fixed-date` `heartbeat-absence` `cessation-declaration` "
+        + "`Attest-redemption-challenge-v1` `grant_narrowing_ignored` `grant_unanchored` "
+        + "`grant_signer_not_publisher` `grant_scope_uncovered` `grant_commitment_mismatch` "
+        + "`grant_commitment_divergence` `grant_declaration_ignored` "
+        + "`grant_activated_by_successor` `grant_pledge_type_unknown` "
+        + "`grant_legal_text_changed` `_MAX_GRANT_LATER_VERSIONS` "
+        + '`_MAX_GRANT_DECLARATIONS` `grant: "activated"` `grant_trust: "signer_mismatch"`\n\n'
+        + "Activation follows from positive evidence, never from the absence of evidence; "
+        + "logging a declaration is RECOMMENDED and never required for validity; the "
+        + "fixed-date proof runs in the direction anchoring can give, `T >= fixed_date`, "
+        + "taking the MAXIMUM over the verified proofs. The legal text that binds a buyer "
+        + "is always the FLOOR's, and a later version differing in ANY of the three "
+        + "prose-bearing members is reported. Scope coverage, and it is a gate: Grant "
+        + "coverage of a receipt is a DIFFERENT predicate from declaration coverage, and "
+        + "the artifact list must be present and non-empty. The declaration step never "
+        + "stops at the first one that succeeds.\n\n"
+        + "The evidence channel is also the capability gate. Which document seeds the "
+        + "accumulator is normative, and it is the effective grant, not the floor; the "
+        + "attestation is ONE §11 evidence bundle. A later version naming another "
+        + "publisher is inadmissible and ignored WITHOUT effect on `grant_trust`. Only "
+        + "an AUTHENTICATED, same-publisher document may move `grant_trust`, and "
+        + "`signer_mismatch` is reachable only for a document that has already "
+        + 'authenticated. "Sorted" means by Unicode CODE POINT.\n'
+        + "\n## Appendix A — The custodian interface (non-normative)\n\nSketch.\n"
     )
 
 
@@ -191,11 +221,35 @@ def _minimal_versioning() -> str:
         "| Name | State | Introduced | Reference |\n"
         "| --- | --- | --- | --- |\n"
         "| `transfer-record` | active | v0.2 §17 | v0.2 §8, §17.2 |\n"
+        "| `cessation-declaration` | active | v0.2 §18 | v0.2 §8, §18.4 |\n"
         "\n"
         "### 6.5 Transfer types\n\n"
         "| Name | State | Introduced | Reference |\n"
         "| --- | --- | --- | --- |\n"
         "| `issuer-mediated-v1` | active | v0.2 §17 | v0.2 §17 |\n"
+        "\n"
+        "### 6.7 End-of-life commitment values\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `sunset-grant` | active | v0.2 §18 | v0.2 §18 |\n"
+        "\n"
+        "### 6.8 Grant permissions\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `deliver-to-holder` | active | v0.2 §18 | v0.2 §18.2 |\n"
+        "| `redistribute-among-holders` | active | v0.2 §18 | v0.2 §18.2 |\n"
+        "\n"
+        "### 6.9 Activation modes\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `publisher-declaration` | active | v0.2 §18 | v0.2 §18.4 |\n"
+        "| `fixed-date` | active | v0.2 §18 | v0.2 §18.4 |\n"
+        "| `heartbeat-absence` | reserved | v0.2 §18 | v0.2 §18.4 |\n"
+        "\n"
+        "### 6.10 Preservation pledge types\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `sunset-grant-v1` | active | v0.2 §18 | v0.2 §18.2 |\n"
         "\n"
         "## Revision log\n\n"
         "- **2026-07-22 (rev 1)**: document introduced — vectors: none\n"
@@ -1274,13 +1328,6 @@ def test_p11b_witness_contract_is_complete() -> None:
             "spec",
             "before any Ed25519 or ML-DSA-65 signature verification",
         ),
-        (
-            "phase boundary",
-            "## 17. Stage 3: issuer-mediated transfer",
-            "## 18. Stage 4",
-            "spec",
-            "forbidden Stage 4 heading",
-        ),
     ),
 )
 def test_p11b_witness_contract_rejects_required_negative_mutations(
@@ -1390,6 +1437,241 @@ def test_receipt_id_prose_row_absent_while_schema_pattern_present_is_an_error() 
     errors = collect_errors(**docs)
 
     assert any("receipt_id" in e and "attest-v0.1.md" in e and "prose" in e.lower() for e in errors)
+
+
+@pytest.mark.parametrize(
+    ("name", "old", "new", "document", "expected"),
+    (
+        (
+            "section removed",
+            "## 18. Stage 4: the preservation pledge",
+            "## 18. Stage 4: something else",
+            "spec_v02",
+            "missing required heading",
+        ),
+        (
+            "appendix removed",
+            "## Appendix A — The custodian interface (non-normative)",
+            "## Appendix A — Something else",
+            "spec_v02",
+            "Appendix A",
+        ),
+        (
+            "warning literal dropped",
+            "`grant_declaration_ignored`",
+            "`grant_declaration_dropped`",
+            "spec_v02",
+            "grant_declaration_ignored",
+        ),
+        (
+            "successor warning dropped",
+            "`grant_activated_by_successor`",
+            "`grant_by_successor`",
+            "spec_v02",
+            "grant_activated_by_successor",
+        ),
+        (
+            "divergence warning dropped",
+            "`grant_commitment_divergence`",
+            "`grant_commitment_differs`",
+            "spec_v02",
+            "grant_commitment_divergence",
+        ),
+        (
+            "declaration ceiling dropped",
+            "`_MAX_GRANT_DECLARATIONS`",
+            "`_MAX_DECLARATIONS`",
+            "spec_v02",
+            "_MAX_GRANT_DECLARATIONS",
+        ),
+        # The three claims a regression could quietly invert. Each mutation
+        # below leaves a document that still reads fluently and still says
+        # something -- just something we know to be false.
+        (
+            "activation inferred from absence",
+            "never from the absence of evidence",
+            "or from the absence of evidence",
+            "spec_v02",
+            "never from the absence of evidence",
+        ),
+        (
+            "logging made load-bearing",
+            "never required for validity",
+            "required for validity",
+            "spec_v02",
+            "never required for validity",
+        ),
+        (
+            "fixed-date inequality reversed",
+            "T >= fixed_date",
+            "T <= fixed_date",
+            "spec_v02",
+            "T >= fixed_date",
+        ),
+        (
+            "fixed-date aggregation flipped to the minimum",
+            "MAXIMUM over the verified proofs",
+            "minimum over the verified proofs",
+            "spec_v02",
+            "MAXIMUM over the verified proofs",
+        ),
+        (
+            "later prose allowed to displace the floor's",
+            "The legal text that binds a buyer is always the FLOOR's",
+            "The legal text that binds a buyer is the effective version's",
+            "spec_v02",
+            "The legal text that binds a buyer is always the FLOOR's",
+        ),
+        (
+            "scope coverage demoted to informational",
+            "Scope coverage, and it is a gate",
+            "Scope coverage, informational only",
+            "spec_v02",
+            "Scope coverage, and it is a gate",
+        ),
+        (
+            "grant coverage collapsed back into declaration coverage",
+            "Grant coverage of a receipt is a DIFFERENT predicate",
+            "Grant coverage of a receipt uses the same predicate",
+            "spec_v02",
+            "Grant coverage of a receipt is a DIFFERENT predicate",
+        ),
+        (
+            "empty artifact list left to a vacuous quantifier",
+            "present and non-empty",
+            "present",
+            "spec_v02",
+            "present and non-empty",
+        ),
+        (
+            "declaration scan turned into a short circuit",
+            "never stops at the first one that succeeds",
+            "stops at the first one that succeeds",
+            "spec_v02",
+            "never stops at the first one that succeeds",
+        ),
+        (
+            "prose-bearing members narrowed to two",
+            "ANY of the three prose-bearing members",
+            "either of the two prose-bearing members",
+            "spec_v02",
+            "ANY of the three prose-bearing members",
+        ),
+        (
+            "unknown pledge profile warning dropped",
+            "`grant_pledge_type_unknown`",
+            "`grant_pledge_unknown`",
+            "spec_v02",
+            "grant_pledge_type_unknown",
+        ),
+        (
+            "legal text change warning dropped",
+            "`grant_legal_text_changed`",
+            "`grant_text_changed`",
+            "spec_v02",
+            "grant_legal_text_changed",
+        ),
+        # The seven divergence claims. Each names a choice §18 originally left
+        # to the implementer; dropping any one lets two conforming verifiers
+        # disagree on identical bytes while the prose still reads fluently.
+        (
+            "fixed-date seed left unnamed again",
+            "it is the effective grant, not the floor",
+            "it is one of the two grants",
+            "spec_v02",
+            "it is the effective grant, not the floor",
+        ),
+        (
+            "anchor evidence reopened as an array",
+            "ONE §11 evidence bundle",
+            "a list of §11 evidence bundles",
+            "spec_v02",
+            "ONE §11 evidence bundle",
+        ),
+        (
+            "inadmissible version allowed to downgrade trust",
+            "ignored WITHOUT effect on `grant_trust`",
+            "ignored",
+            "spec_v02",
+            "ignored WITHOUT effect on `grant_trust`",
+        ),
+        (
+            "unauthenticated version allowed to signal rollback",
+            "Only an AUTHENTICATED, same-publisher document may move `grant_trust`",
+            "Any supplied document may move `grant_trust`",
+            "spec_v02",
+            "Only an AUTHENTICATED, same-publisher document may move `grant_trust`",
+        ),
+        (
+            "signer_mismatch reachable without authentication",
+            "reachable only for a document that has already authenticated",
+            "reachable for any document",
+            "spec_v02",
+            "reachable only for a document that has already authenticated",
+        ),
+        (
+            "capability gate dropped",
+            "The evidence channel is also the capability gate",
+            "The evidence channel carries evidence",
+            "spec_v02",
+            "The evidence channel is also the capability gate",
+        ),
+        (
+            "collation left to the runtime",
+            '"Sorted" means by Unicode CODE POINT',
+            '"Sorted" means whatever the runtime does',
+            "spec_v02",
+            '"Sorted" means by Unicode CODE POINT',
+        ),
+        (
+            "reserved mode quietly promoted",
+            "| `heartbeat-absence` | reserved |",
+            "| `heartbeat-absence` | active |",
+            "versioning",
+            "reserved-state row for activation mode",
+        ),
+        (
+            "pledge type registry emptied",
+            "| `sunset-grant-v1` | active |",
+            "| `sunset-grant-v2` | active |",
+            "versioning",
+            "preservation pledge type",
+        ),
+        (
+            "cessation entry type dropped",
+            "| `cessation-declaration` | active |",
+            "| `cessation-declaration` | reserved |",
+            "versioning",
+            "log entry type `cessation-declaration`",
+        ),
+        (
+            "publisher_id row removed",
+            "| `work.publisher_id` |",
+            "| `work.publisher` |",
+            "spec_v01",
+            "work.publisher_id row",
+        ),
+        (
+            "pledge license row removed",
+            "| `preservation_pledge` |",
+            "| `preservation_promise` |",
+            "spec_v01",
+            "preservation_pledge row",
+        ),
+    ),
+)
+def test_stage4_required_material_removal_is_flagged(
+    name: str, old: str, new: str, document: str, expected: str
+) -> None:
+    docs = _base_docs()
+    text = docs[document]
+    assert isinstance(text, str)
+    assert old in text, name
+    docs[document] = text.replace(old, new, 1)
+
+    errors = collect_errors(**docs)
+
+    assert any(expected in error for error in errors), (name, errors)
 
 
 def _write(directory: Path, name: str, content: str) -> Path:

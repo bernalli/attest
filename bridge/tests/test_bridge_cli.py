@@ -13,7 +13,7 @@ import json
 import os
 import stat
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -1315,6 +1315,34 @@ def test_itch_dry_run_reports_actual_dead_letter_reason_when_issuance_fails(
     # Not just "it failed": the merchant must read WHY.
     assert "simulated signing failure" in stderr
     assert not out_path.exists()
+
+
+def test_itch_dry_run_survives_a_second_boundary_between_its_two_clock_reads(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The command reads the clock twice: once for the purchase and the poller,
+    # once inside `enqueue_claim`. Between them it builds a Ledger — a file
+    # touch, a connect and a schema script — so on a loaded machine the second
+    # read can land in the NEXT whole second. `next_attempt_at` is then one
+    # second ahead of the `now` the poller queries with, `due_claims` returns
+    # nothing, and the claim is never drained: no receipt, and no dead letter
+    # either, because nothing ever entered the loop that records one. The
+    # merchant reads "no receipt issued" about a race in the tool.
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    out_path = tmp_path / "dry-run.attest"
+
+    def one_second_ahead() -> str:
+        return (datetime.now(UTC) + timedelta(seconds=1)).strftime(cli._RFC3339)
+
+    monkeypatch.setattr(cli, "_now_rfc3339", one_second_ahead)
+
+    rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(out_path)])
+
+    assert rc == 0
+    assert out_path.exists()
 
 
 class _RecordingDelivery:
