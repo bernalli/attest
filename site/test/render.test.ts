@@ -3,18 +3,19 @@ import { describe, it, expect } from 'vitest'
 import { renderResult, renderRejection } from '../src/render.js'
 import type { VerifyRun } from '../src/run.js'
 
-// `transparency`/`corroboration`/`manifest_freshness` (Stage 2, verify.ts's
-// VerificationResult) are set to their ZERO-behavior-change defaults here —
-// pre-existing gap from the Task 7 interface extension (0e264c5) that this
-// file's mock results never picked up, only now surfaced because it blocks
-// a clean `tsc --noEmit` on `site`; not a rendering feature (render.ts does
-// not display these three fields, out of this task's scope).
+// `transparency`/`corroboration`/`manifest_freshness` (Stage 2) and
+// `grant`/`grant_trust` (Stage 4, v0.2 §18.5) are set to their
+// ZERO-behavior-change defaults here — the shape every caller that supplies
+// no evidence already gets. They are in these mocks because `VerificationResult`
+// requires them and a clean `tsc --noEmit` on `site` is a gate, not because
+// render.ts displays them: it renders the five component rows and nothing else.
 const okRun: VerifyRun = {
   ok: true,
   result: {
     signature: 'valid', schema: 'valid', revocation: 'unknown',
     binding: 'not_checked', trust: 'unauthenticated_tofu',
     transparency: 'not_checked', corroboration: 'none', manifest_freshness: 'not_checked',
+    grant: 'not_checked', grant_trust: 'not_checked',
     warnings: ['key retired example warning'], errors: [],
   },
 }
@@ -24,6 +25,7 @@ const badRun: VerifyRun = {
     signature: 'invalid', schema: 'not_checked', revocation: 'unknown',
     binding: 'not_checked', trust: 'unauthenticated_tofu',
     transparency: 'not_checked', corroboration: 'none', manifest_freshness: 'not_checked',
+    grant: 'not_checked', grant_trust: 'not_checked',
     warnings: [], errors: ['signature: payload does not verify'],
   },
 }
