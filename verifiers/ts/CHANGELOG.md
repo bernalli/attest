@@ -6,6 +6,120 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **v0.2 revision 8 — Stage 4, the preservation pledge**, at parity with the
+  Python reference. A rights holder can sign a commitment that, once a
+  verifiable trigger fires, converts into a machine-checkable permission for a
+  receipt's holder to obtain an unprotected copy of the work. `verify()`'s
+  `options` argument gains `grantView`; supply the evidence object and the
+  result carries two new components, `grant` and `grant_trust`. Omit it — the
+  default — and every result is byte-for-byte what it was.
+
+  Neither component ever touches `signature`, `schema`, `revocation`,
+  `binding`, `trust`, or `ok`. `isOk` is unchanged, deliberately and
+  normatively: a grant is a permission that becomes exercisable, never a
+  validity property of the receipt. An invalid grant on a good receipt leaves
+  that receipt good.
+
+  - New module `src/grant.ts`. The §18 primitives first: the closed,
+    hybrid-signed sunset grant and cessation declaration, authenticated under
+    the same §13 AND-rule every other v0.2 side-document uses; the two
+    coverage predicates §18.4 keeps deliberately apart, one comparing two
+    documents of the same shape and one comparing a grant against a receipt's
+    older `work` block; the floor-relative non-narrowing ratchet, which a
+    later version can widen and can never narrow; and the structural ceilings,
+    which count and never inspect, so they can run before any signature does.
+  - `evaluateGrant` implements §18.4's eleven ordered steps, short-circuiting
+    in one direction only. Its first three steps read the signed payload alone
+    and run *before* the "no evidence supplied" exit, so a defect visible in
+    the receipt itself is never masked by evidence a caller happened not to
+    attach. Scope coverage at step 8 is a gate rather than a note: an
+    uncovered receipt resolves `dormant` without either activation path
+    running, because telling a holder they may redeem something the grant
+    never spoke about would contradict §18.7's own custodian precondition. The
+    declaration scan at step 9 is exhaustive rather than first-match, so the
+    warning set is a function of the evidence and not of its arrangement. The
+    `fixed-date` proof at step 10 reduces to the **maximum** over verified
+    anchors, the opposite of §11's `anchored_before` and for the opposite
+    question: "has time reached T?" is answered conservatively by the latest
+    verified header, and the minimum would let one stale genuine proof hold a
+    grant closed forever.
+  - `verifyRedemption` (§18.7): the audience-bound holder proof, over a
+    preimage that names the custodian precisely so a response produced for one
+    is not replayable at another. Salt disclosure is not accepted as a
+    redemption proof and this module offers no way to spell one — §18.7
+    prohibits it normatively, being a replayable bearer proof that also hands
+    over the identifier.
+  - `src/tlog.ts` gains the fifth transparency-log entry type,
+    `cessation-declaration`. Unlike `transfer-record` it is never
+    load-bearing: logging a declaration is recommended for discoverability and
+    for a date opposable to third parties, but an authenticated declaration
+    activates a grant whether or not it was ever logged. Nobody gains by
+    hiding one.
+  - `src/schema.ts` gains the `license.preservation_pledge` term — three
+    required members, and deliberately *not* a closed object, so a future
+    pledge profile needing a fourth is not a schema error on a verifier that
+    predates it — plus `work.publisher_id` and §18.6's holder-binding
+    conditional: a v0.2 receipt carrying the pledge must also carry a non-null
+    `buyer.pubkey`, a `work.publisher_id`, and
+    `survivability.end_of_life == "sunset-grant"`. The holder key is the
+    load-bearing one. Without it "holder" degenerates to whoever possesses the
+    file, and the grant becomes indistinguishable from publishing the work
+    outright. v0.1 receipts are untouched.
+  - Conformance corpus 130 → **157 leaves across 40 groups**, adding
+    `37-preservation-pledge` (23 leaves) and `38-redemption` (4). The
+    redemption group is a fourth surface, alongside `verify()`, `auditChain`
+    and the quorum evaluator: no receipt, no trust store, no grant document,
+    only whether a holder's proof is good for one named custodian.
+
+### Fixed
+
+- Two defects that a single implementation cannot see, both found by carrying
+  §18 into this package and comparing against the Python reference on
+  byte-identical input. Neither is reachable from either core alone, which is
+  the whole argument for writing the second one.
+
+  - **Sorted-array checks ordered by UTF-16 code unit, not by code point.**
+    §18.2 requires `permissions`, `activation.modes`, `scope.artifacts` and
+    `activation.successor_ids` to arrive sorted and duplicate-free, and states
+    that over Unicode. JavaScript's `<` compares strings by UTF-16 code unit;
+    Python's compares by code point. The two disagree exactly on an astral
+    character against U+E000–U+FFFF, because a surrogate pair begins at
+    0xD800 — so this package would have *accepted* grants the reference
+    rejects and *rejected* grants it accepts, on the same bytes. `modes` and
+    `permissions` admit any non-empty string, so the disagreement is
+    attacker-reachable with a hand-built document rather than theoretical.
+    `src/grant.ts` now compares by code point explicitly, and two tests pin
+    both directions, each asserting that raw `<` says the opposite.
+  - **A grant naming no prose at all could reach `activated`.** §18.2 types
+    `legal_text_uri` as "string, non-empty"; the shape check accepted any
+    string, `""` included. Shape is checked *before* the signature and the
+    evaluation then runs on through the ratchet, the scope gate and the
+    declaration scan, so a publisher could sign such a grant, hash-bind it
+    into a receipt, supply a valid cessation declaration and open it — a false
+    `activated`, which authorizes distribution of a work that is still on
+    sale and is the single direction §18.4 declares normatively forbidden.
+    Both prose-bearing members now go through the same non-empty predicate as
+    their neighbour `jurisdiction`. Found by review on the Python reference
+    and present here identically, this package having mirrored it; corpus leaf
+    `37-preservation-pledge/w-empty-legal-text-uri` now pins it for any third
+    implementation.
+  - **The `bigint`/`number` boundary between a signed document and the
+    evidence beside it.** This package parses signed documents strictly, with
+    JSON integers as `bigint`, because they have to re-canonicalize; it hands
+    untrusted evidence to the §11 anchor evaluator in the materialized,
+    plain-`number` form that evaluator requires. Stage 4's evidence object is
+    the first place both meet inside one file: the grant documents need the
+    first representation, the anchor bundle nested beside them needs the
+    second. The `fixed-date` proof was handed across without conversion, so
+    every proof arriving as real wire JSON was rejected on `header_time` being
+    a `bigint`, and the grant stayed `dormant` forever — while the negative
+    cases still passed, for the wrong reason. It survived unit testing because
+    the fixtures were hand-built JavaScript literals, a shape no document on
+    the wire can produce; the shared corpus caught it on the first run, which
+    is what the corpus is for.
+
 ## [0.7.0] — 2026-08-25
 
 ### Added

@@ -11,17 +11,18 @@
 // docs/spec/vectors/README.md for the corpus contract) and prints the
 // leaf's VerificationResult (or, for a chain.json leaf, its
 // ChainAuditResult; or, for a witness-quorum.json leaf, its
-// ActivationWitnessQuorumResult) as ONE JSON object on stdout — nothing else
-// on stdout, ever.
+// ActivationWitnessQuorumResult; or, for a redemption.json leaf, the single
+// boolean of §18.7's holder proof) as ONE JSON object on stdout — nothing
+// else on stdout, ever.
 //
 // The loader functions below duplicate (never import) the loader semantics
 // of verifiers/ts/test/helpers/vectors.ts byte-for-byte, including the
 // strict-parse (bigint) routing for manifests.json, revocation.json,
-// transparency.json, revocation-evidence.json, transfer-view.json, and
-// chain.json — and the exact verify(...)/auditChain(...) call shapes of
-// verifiers/ts/test/conformance.test.ts. Those two files remain the source
-// of truth for this adapter's behavior; this file is NOT generated from
-// them and must be kept in sync by hand.
+// transparency.json, revocation-evidence.json, transfer-view.json,
+// grant-view.json and chain.json — and the exact verify(...)/auditChain(...)
+// call shapes of verifiers/ts/test/conformance.test.ts. Those two files
+// remain the source of truth for this adapter's behavior; this file is NOT
+// generated from them and must be kept in sync by hand.
 
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -32,6 +33,7 @@ import {
   loadsStrict,
   evaluateActivationWitnessQuorum,
   parseWitnessPolicy,
+  verifyRedemption,
 } from '../verifiers/ts/dist/index.js'
 import { b64uDecode } from '../verifiers/ts/dist/b64u.js'
 
@@ -142,6 +144,38 @@ function witnessPolicy(dir) {
   return existsSync(p) ? loadJson(p) : null
 }
 
+// group 37 (preservation-pledge conformance corpus, v0.2 §18 Stage 4) only:
+// the §18.4 evidence OBJECT {grant[, later_grants][, declarations][, anchor]},
+// handed to verify() as `grantView`. Its presence is the §18.4 capability
+// gate: a leaf shipping no grant-view.json hands verify() `null`, which
+// evaluates nothing — which is exactly what leaf 37s, the v0.1 negative
+// control, needs.
+//
+// STRICT-parsed, like transfer-view.json: the grant documents inside are
+// re-canonicalized (grantHash, and verifyGrant's own signature check), and
+// canonicalBytes only accepts bigint for JSON integers — `grant_version` read
+// as a plain `number` would make every grant fail to authenticate, silently,
+// as a `dormant` verdict. The §11 anchor bundle nested under `anchor` needs
+// the OPPOSITE representation (anchor.ts requires `typeof header_time ===
+// 'number'`), and crosses that boundary inside grant.ts's own
+// fixedDateReached, exactly as transfer.ts materializes a claim's `evidence`
+// beside its strict `record`. So the whole file goes through the strict
+// parser here, and nothing else is needed.
+function grantView(dir) {
+  const p = join(dir, 'grant-view.json')
+  return existsSync(p) ? loadJsonValueStrict(p) : null
+}
+
+// group 38 (redemption, v0.2 §18.7) only: the audience-bound holder proof. A
+// leaf carrying this file is the FOURTH surface — no receipt, no trust store,
+// no grant document, only whether this proof is good for THIS custodian.
+// Plain JSON.parse: nothing here is re-canonicalized, so nothing here needs
+// bigint (same reasoning as witness-quorum.json).
+function redemptionInput(dir) {
+  const p = join(dir, 'redemption.json')
+  return existsSync(p) ? loadJson(p) : null
+}
+
 // group 36 only: auditChain takes ONE trusted keyManifest, not a full
 // TrustStore — every group 36 leaf's manifests.json trusts exactly one
 // issuer, so its sole `manifests` value is that manifest.
@@ -190,6 +224,10 @@ function verifyResultToJson(r) {
     transparency: r.transparency,
     corroboration: r.corroboration,
     manifest_freshness: r.manifest_freshness,
+    // v0.2 Stage 4 (§18.5), informational only and taking NO exception (D6):
+    // neither ever affects `ok`, which is why isOk(r) below is unchanged.
+    grant: r.grant,
+    grant_trust: r.grant_trust,
     ok: isOk(r),
     errors: [...r.errors],
     warnings: [...r.warnings],
@@ -227,6 +265,22 @@ function runLeaf(dir) {
     return quorumResultToJson(result)
   }
 
+  const redemption = redemptionInput(dir)
+  if (redemption !== null) {
+    // Every negative leaf must come back `false` rather than throw: a gate
+    // that fronts the delivery of content must not have an error path an
+    // attacker can distinguish from a refusal.
+    return {
+      verified: verifyRedemption(
+        redemption.receipt_id,
+        redemption.audience,
+        b64uDecode(redemption.nonce_b64u),
+        b64uDecode(redemption.sig_b64u),
+        redemption.holder_pubkey_b64u,
+      ),
+    }
+  }
+
   const chain = chainInput(dir)
   if (chain !== null) {
     const keys = logKeys(dir)
@@ -252,6 +306,7 @@ function runLeaf(dir) {
     revocationEvidence: revocationEvidence(dir),
     transferView: transferView(dir),
     witnessPolicy: witnessPolicy(dir),
+    grantView: grantView(dir),
   })
   return verifyResultToJson(result)
 }

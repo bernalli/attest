@@ -248,6 +248,9 @@ function validRevocationRecordEntry(): Record<string, unknown> {
 function validTransferRecordEntry(): Record<string, unknown> {
   return { type: 'transfer-record', issuer: 'shop.example.com', record_sha256: 'd'.repeat(64) }
 }
+function validCessationDeclarationEntry(): Record<string, unknown> {
+  return { type: 'cessation-declaration', issuer: 'pub.example', record_sha256: 'e'.repeat(64) }
+}
 
 describe('encodeEntry', () => {
   it('accepts a valid key-manifest entry and round-trips through canonicalBytes', () => {
@@ -307,6 +310,35 @@ describe('encodeEntry', () => {
 
   it('rejects a transfer-record entry with uppercase hex', () => {
     const entry = { ...validTransferRecordEntry(), record_sha256: 'D'.repeat(64) }
+    expect(() => encodeEntry(entry)).toThrow(TlogError)
+  })
+
+  it('accepts a valid cessation-declaration entry (v0.2 §8/§18.4, Stage 4)', () => {
+    const entry = validCessationDeclarationEntry()
+    const encoded = encodeEntry(entry)
+    expect(encoded).toBeInstanceOf(Uint8Array)
+    const expectedJson = '{"issuer":"pub.example","record_sha256":"' + 'e'.repeat(64) + '","type":"cessation-declaration"}'
+    expect(new TextDecoder().decode(encoded)).toBe(expectedJson)
+  })
+
+  it('rejects a cessation-declaration entry missing a member', () => {
+    const entry = validCessationDeclarationEntry()
+    delete entry.record_sha256
+    expect(() => encodeEntry(entry)).toThrow(TlogError)
+  })
+
+  it('rejects a cessation-declaration entry with an extra member', () => {
+    const entry = { ...validCessationDeclarationEntry(), declared_at: '2031-03-01T00:00:00Z' }
+    expect(() => encodeEntry(entry)).toThrow(TlogError)
+  })
+
+  it('rejects a cessation-declaration entry with uppercase hex', () => {
+    const entry = { ...validCessationDeclarationEntry(), record_sha256: 'E'.repeat(64) }
+    expect(() => encodeEntry(entry)).toThrow(TlogError)
+  })
+
+  it('rejects a cessation-declaration entry whose issuer is not a lowercase DNS name', () => {
+    const entry = { ...validCessationDeclarationEntry(), issuer: 'Pub.Example' }
     expect(() => encodeEntry(entry)).toThrow(TlogError)
   })
 

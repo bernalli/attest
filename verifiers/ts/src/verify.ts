@@ -10,6 +10,8 @@ import { verifyStrict as verifyMldsaStrict, ML_DSA_65_ALG } from './mldsa.js'
 import { b64uDecode } from './b64u.js'
 import { validatePayload, SCHEMA_TOP_LEVEL_KEYS, validateEnvelopeSize } from './schema.js'
 import { classifyRevocation, MAX_REVOCATION_RECORDS } from './revocation.js'
+import { evaluateGrant, GRANT_NOT_CHECKED, GRANT_TRUST_NOT_CHECKED } from './grant.js'
+import type { GrantVerdict } from './grant.js'
 import { computeCommitment, verifyChallenge } from './commitment.js'
 import { b64uEncode } from './b64u.js'
 import { TlogError, LogKey, receiptCoreHash, encodeEntry } from './tlog.js'
@@ -64,6 +66,17 @@ export interface VerificationResult {
   // (design doc + plan explicitly spell `manifest_freshness`, not camelCase).
   transparency: string; corroboration: string; manifest_freshness: string
   warnings: string[]; errors: string[]
+  // v0.2 Stage 4 (§18.5), informational only and taking NO exception (D6):
+  // neither ever affects `signature`, `schema`, `revocation`, `binding`,
+  // `trust` or `ok` — a grant is a permission that becomes exercisable, never
+  // a validity property of the receipt. Both default, for every caller that
+  // never supplies `grantView`, to the values each already implicitly got.
+  // `grant`: "not_checked" | "none" | "dormant" | "activated" |
+  // "invalid_grant_ignored". `grant_trust`: "not_checked" | "verified" |
+  // "unauthenticated_tofu" | "unverified_rotation" | "signer_mismatch".
+  // Spelled snake_case for the same reason `manifest_freshness` is: these are
+  // the wire-contract component names §18.5 pins.
+  grant: string; grant_trust: string
 }
 export interface Disclosure {
   identifier?: string | null; identifier_type?: string | null
@@ -102,8 +115,24 @@ export interface VerifyTransparencyOptions {
   // a list (not a single JsonValue) to match its runtime shape and
   // `revocationView`'s own sibling convention above.
   transferView?: JsonValue[] | null
+  // v0.2 Stage 4's (§18) evidence channel and its capability gate at once —
+  // see grant.ts's `evaluateGrant`, which this delegates to whole. It is NOT a
+  // third exception to "Stage 2 is purely informational": per D6, Stage 4
+  // takes no exception at all, so `grant`/`grant_trust` never touch
+  // `signature`, `schema`, `revocation`, `binding`, `trust` or `ok`. A caller
+  // that never supplies it gets `not_checked`/`not_checked` and a byte-for-byte
+  // unchanged result, exactly like every Stage 2/3 addition before it. Typed
+  // `unknown` rather than a shaped interface because it is UNTRUSTED evidence:
+  // every member is validated inside the evaluation, never by the type system.
+  grantView?: unknown
 }
-const KNOWN_EOL = new Set(['artifacts-remain-redownloadable', 'escrow', 'none'])
+// attest-versioning.md §6.7 registers `sunset-grant` as `active`: it is the
+// label a Stage 4 receipt carries (§18.6 makes it schema-REQUIRED once
+// `license.preservation_pledge` is present), so it must stop being reported
+// as an unknown value. The vocabulary stays OPEN — registering a value
+// assigns it meaning, it does not close the field. Python parity:
+// verify.py's `_KNOWN_EOL_VALUES`.
+const KNOWN_EOL = new Set(['artifacts-remain-redownloadable', 'escrow', 'none', 'sunset-grant'])
 
 export function isOk(r: VerificationResult): boolean {
   return (
@@ -412,6 +441,7 @@ export function verify(
   const revocationEvidence = options.revocationEvidence ?? null
   const transferView = options.transferView ?? null
   const witnessPolicy = options.witnessPolicy ?? null
+  const grantView = options.grantView ?? null
 
   if (revocationView !== null && !Array.isArray(revocationView))
     throw new TypeError('revocation_view must be a list of records or None')
@@ -420,6 +450,15 @@ export function verify(
   // dict keys by classifyRevocation's transferred-branch resolver.
   if (transferView !== null && !Array.isArray(transferView))
     throw new TypeError('transfer_view must be a list of claims or None')
+  // Same caller-contract enforcement for Stage 4's channel: a lone grant
+  // DOCUMENT passed where the evidence object belongs would otherwise be read
+  // member by member and resolve to `not_checked`, silently reporting "no
+  // grant evidence" to a caller who supplied some. Hostile CONTENT inside a
+  // well-shaped view never throws — only the wrong container does. Raised here
+  // as well as inside evaluateGrant so it fires before any parsing work, the
+  // same position its two siblings above occupy.
+  if (grantView !== null && (typeof grantView !== 'object' || Array.isArray(grantView)))
+    throw new TypeError('grant_view must be an evidence object or None')
 
   // Fail loud if the trust store / revocation view was JSON.parse'd (JS numbers) rather
   // than loadsStrict-parsed (bigint). Prevents a silent revocation fail-open. Does NOT
@@ -449,6 +488,7 @@ export function verify(
       signature: 'invalid', schema, revocation: 'unknown', binding: 'not_checked', trust,
       transparency: transparencyState, corroboration: corroborationState, manifest_freshness: manifestFreshnessState,
       warnings: [...warnings], errors: [...errors],
+      grant: GRANT_NOT_CHECKED, grant_trust: GRANT_TRUST_NOT_CHECKED,
     }
   }
 
@@ -726,17 +766,28 @@ export function verify(
   // Steps 6-7 — revocation + binding (only when schema valid)
   let revocation = 'unknown'
   let binding: Binding = 'not_checked'
+  let grantVerdict: GrantVerdict = { grant: GRANT_NOT_CHECKED, grant_trust: GRANT_TRUST_NOT_CHECKED, warnings: [] }
   if (schema === 'valid') {
     revocation = classifyRevocation(
       payload, revocationView, manifest, warnings, errors, maxRevocationRecords,
       logKeys, anchorPolicy, revocationEvidence, transferView,
     )
     binding = disclosure != null ? classifyBinding(payload, disclosure) : 'not_checked'
+    // Stage 4 (§18.4). Gated on a valid schema for the same reason revocation
+    // and binding are: §18.6's holder-binding conditional makes a
+    // pledge-bearing v0.2 receipt without `buyer.pubkey`, `work.publisher_id`
+    // or the `sunset-grant` label a SCHEMA ERROR, and evaluating a grant
+    // against a payload that failed that conditional would be reasoning about
+    // a receipt the verifier has already rejected.
+    grantVerdict = evaluateGrant(payload, trustStore, grantView, anchorPolicy)
   }
+
+  warnings.push(...grantVerdict.warnings)
 
   return {
     signature: 'valid', schema, revocation, binding, trust,
     transparency: transparencyState, corroboration: corroborationState, manifest_freshness: manifestFreshnessState,
     warnings: [...warnings], errors: [...errors],
+    grant: grantVerdict.grant, grant_trust: grantVerdict.grant_trust,
   }
 }

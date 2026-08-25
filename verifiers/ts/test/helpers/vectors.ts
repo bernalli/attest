@@ -148,6 +148,46 @@ export function quorumInput(dir: string): QuorumInput | null {
     anchorEvidence: d.anchor_evidence,
   }
 }
+// group 37 (preservation-pledge conformance corpus, v0.2 §18 Stage 4) only:
+// the §18.4 evidence OBJECT `{grant[, later_grants][, declarations][, anchor]}`,
+// fed to verify() as `grantView`. Mirrors transferView(dir)'s file-presence
+// convention, and like it goes through the STRICT parser: the grant documents
+// inside are re-canonicalized (grantHash, verifyGrant's signature check), and
+// canonicalBytes only accepts bigint for JSON integers — `grant_version` read
+// as a plain `number` would make every grant fail to authenticate. Absent for
+// every leaf outside group 37, so verify() sees `grantView: null`, the
+// capability gate stays shut, and existing leaves see zero behavior change.
+export function grantView(dir: string): JsonValue | null {
+  const p = join(dir, 'grant-view.json')
+  return existsSync(p) ? loadJsonValueStrict(p) : null
+}
+// group 38 (redemption, v0.2 §18.7) only: a leaf containing `redemption.json`
+// is a FOURTH surface, routed to `verifyRedemption` — never verify(), never
+// auditChain, never the quorum evaluator. The question these leaves ask
+// involves no receipt and no grant document at all, only whether a holder
+// proof is good for THIS custodian, which is why the leaf ships no
+// payload/envelope/manifests. Plain JSON.parse: nothing here is
+// re-canonicalized, so nothing here needs bigint (same reasoning as
+// quorumInput above).
+export interface RedemptionInput {
+  receiptId: string
+  audience: string
+  nonce: Uint8Array
+  sig: Uint8Array
+  holderPubkeyB64u: string
+}
+export function redemptionInput(dir: string): RedemptionInput | null {
+  const p = join(dir, 'redemption.json')
+  if (!existsSync(p)) return null
+  const d = loadJson(p)
+  return {
+    receiptId: d.receipt_id,
+    audience: d.audience,
+    nonce: b64uDecode(d.nonce_b64u),
+    sig: b64uDecode(d.sig_b64u),
+    holderPubkeyB64u: d.holder_pubkey_b64u,
+  }
+}
 // group 36 (transfer-chain conformance corpus, v0.2 §17.5) only: a leaf
 // containing `chain.json` is routed to `auditChain` instead of `verify()` —
 // see tools/gen_vectors.py's gen_36_transfer_chain docstring for the shape.

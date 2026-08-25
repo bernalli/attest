@@ -263,3 +263,19 @@ export const TRANSFER_WARN = {
   NOT_YET_TRANSFERABLE: 'transfer_not_yet_transferable',
   DOUBLE_ASSIGNMENT: 'transfer_double_assignment_conflict',
 } as const
+
+// v0.2 Stage 4 (§18.5's ten warning literals, verbatim; TS parity: Python's
+// verify.py). All ten are bare wire tokens, not prose: a caller matches them
+// exactly, and §18 pins the spelling.
+export const GRANT_WARN = {
+  NARROWING_IGNORED: 'grant_narrowing_ignored',
+  UNANCHORED: 'grant_unanchored',
+  SIGNER_NOT_PUBLISHER: 'grant_signer_not_publisher',
+  SCOPE_UNCOVERED: 'grant_scope_uncovered',
+  COMMITMENT_MISMATCH: 'grant_commitment_mismatch',
+  COMMITMENT_DIVERGENCE: 'grant_commitment_divergence',
+  DECLARATION_IGNORED: 'grant_declaration_ignored',
+  ACTIVATED_BY_SUCCESSOR: 'grant_activated_by_successor',
+  PLEDGE_TYPE_UNKNOWN: 'grant_pledge_type_unknown',
+  LEGAL_TEXT_CHANGED: 'grant_legal_text_changed',
+} as const

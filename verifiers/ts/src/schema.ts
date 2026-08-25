@@ -107,6 +107,13 @@ function validateWork(v: JsonValue | undefined, errors: string[]): void {
       }
     }
   }
+  // v0.2 §18.1 (Stage 4): the rights holder's own domain, same lowercase-DNS
+  // shape as issuer.id. OPTIONAL under v0.1 alone (it carries no meaning
+  // there); REQUIRED, schema-conditionally, when license.preservation_pledge
+  // is present — see validatePreservationPledgeConditional (§18.6).
+  if ('publisher_id' in work) {
+    check(errors, typeof work['publisher_id'] === 'string' && ISSUER_ID_RE.test(work['publisher_id']), 'work.publisher_id: must be a dotted hostname-like string')
+  }
   if ('artifact_series' in work) {
     check(errors, isNonEmptyString(work['artifact_series']), 'work.artifact_series: must be a non-empty string')
   }
@@ -169,6 +176,28 @@ function validateLicense(v: JsonValue | undefined, errors: string[]): void {
       typeof license['not_transferable_before'] === 'string' && ISSUED_AT_RE.test(license['not_transferable_before']),
       'license.not_transferable_before: must be an RFC3339 UTC date-time (YYYY-MM-DDTHH:MM:SSZ)',
     )
+  }
+  // v0.2 §18.2 (Stage 4): the preservation-pledge term. Three REQUIRED
+  // members, and deliberately NOT a closed object -- it lives inside the
+  // payload, whose posture toward unrecognized members is tolerant (v0.1
+  // §11.2), so a future pledge profile needing a fourth member must not be a
+  // schema error on a verifier that predates it. That is also why `pledge` is
+  // only "non-empty string" here and never an enum: an unrecognized profile
+  // is valid-with-warning (`grant_pledge_type_unknown`), never a schema error.
+  if ('preservation_pledge' in license) {
+    const pledge = license['preservation_pledge']
+    if (check(errors, isObject(pledge), 'license.preservation_pledge: must be an object')) {
+      const term = pledge as JsonObject
+      if (check(errors, 'pledge' in term, 'license.preservation_pledge.pledge: required')) {
+        check(errors, isNonEmptyString(term['pledge']), 'license.preservation_pledge.pledge: must be a non-empty string')
+      }
+      if (check(errors, 'grant_uri' in term, 'license.preservation_pledge.grant_uri: required')) {
+        check(errors, typeof term['grant_uri'] === 'string', 'license.preservation_pledge.grant_uri: must be a string')
+      }
+      if (check(errors, 'grant_sha256' in term, 'license.preservation_pledge.grant_sha256: required')) {
+        check(errors, typeof term['grant_sha256'] === 'string' && SHA256_RE.test(term['grant_sha256']), 'license.preservation_pledge.grant_sha256: must be a 64-char lowercase hex string')
+      }
+    }
   }
 }
 
@@ -233,6 +262,54 @@ function validateTransferableConditional(payload: JsonObject, errors: string[]):
   )
 }
 
+// D5 (v0.2 §18.6 schema amendment): if attest_version === "0.2" AND
+// license.preservation_pledge is PRESENT, then all three of buyer.pubkey
+// (non-null), work.publisher_id and survivability.end_of_life ===
+// "sunset-grant" are required; any of the three absent is a SCHEMA ERROR.
+// Mirrors the third allOf/if/then in
+// docs/spec/schema/attest-receipt.schema.json, including its `properties`
+// semantics: each of the three sub-checks applies only when its own block is
+// present (the block's own absence is already reported by the top-level
+// required list), exactly as validateTransferableConditional above is only
+// reached when `buyer` is present.
+//
+// The three are not decoration. A grant authorizes delivery to the HOLDER of
+// a valid receipt: without a holder key, "holder" degenerates to whoever
+// possesses the file and the grant becomes indistinguishable from publishing
+// the work outright. work.publisher_id is what §18.1's whole identity check
+// hangs on. And the end_of_life label is required so the coarse, evidence-free
+// signal and the hash-bound term can never disagree on the same receipt.
+function validatePreservationPledgeConditional(payload: JsonObject, errors: string[]): void {
+  const license = payload['license']
+  if (payload['attest_version'] !== '0.2' || !isObject(license) || !('preservation_pledge' in license)) return
+
+  if ('buyer' in payload) {
+    const buyer = payload['buyer']
+    const pubkey = isObject(buyer) ? buyer['pubkey'] : undefined
+    check(
+      errors,
+      typeof pubkey === 'string' && COMMITMENT_RE.test(pubkey),
+      'buyer.pubkey: must be a non-null 43-char base64url string when license.preservation_pledge is present (attest_version 0.2)',
+    )
+  }
+  if ('work' in payload) {
+    const work = payload['work']
+    check(
+      errors,
+      isObject(work) && 'publisher_id' in work,
+      'work.publisher_id: required when license.preservation_pledge is present (attest_version 0.2)',
+    )
+  }
+  if ('survivability' in payload) {
+    const survivability = payload['survivability']
+    check(
+      errors,
+      isObject(survivability) && survivability['end_of_life'] === 'sunset-grant',
+      'survivability.end_of_life: must be sunset-grant when license.preservation_pledge is present (attest_version 0.2)',
+    )
+  }
+}
+
 export function validatePayload(payload: JsonObject): string[] {
   const errors: string[] = []
 
@@ -261,6 +338,9 @@ export function validatePayload(payload: JsonObject): string[] {
   }
   if ('license' in payload && 'buyer' in payload) {
     validateTransferableConditional(payload, errors)
+  }
+  if ('license' in payload) {
+    validatePreservationPledgeConditional(payload, errors)
   }
 
   return errors
