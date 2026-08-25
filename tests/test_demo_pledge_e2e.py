@@ -68,6 +68,8 @@ class World:
     receipt: Path
     trust_dir: Path
     archive_dir: Path
+    store_seed: Path
+    store_mldsa: Path
     buyer_seed: Path
     foreign_seed: Path
     salt_b64u: str
@@ -398,6 +400,8 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> World:
         receipt=receipt,
         trust_dir=trust,
         archive_dir=arch,
+        store_seed=store_seed,
+        store_mldsa=store_mldsa,
         buyer_seed=buyer_seed,
         foreign_seed=foreign_seed,
         salt_b64u=salt_b64u,
@@ -434,6 +438,38 @@ def _respond(world: World, challenge: Path, out: Path, seed: Path | None = None)
         ]
     )
     return out
+
+
+def _signed_receipt_with_filename(world: World, tmp_path: Path, filename: str) -> Path:
+    payload = json.loads(world.receipt.read_text(encoding="utf-8"))["payload"]
+    payload = json.loads(json.dumps(payload))
+    payload["work"]["artifacts"][0]["filename"] = filename
+
+    payload_path = tmp_path / "payload-with-hostile-filename.json"
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+    salt_path = tmp_path / "receipt.salt"
+    salt_path.write_text(world.salt_b64u, encoding="utf-8")
+    receipt = tmp_path / "receipt-with-hostile-filename.attest.json"
+    _cli(
+        [
+            "issue",
+            "--payload",
+            str(payload_path),
+            "--seed",
+            str(world.store_seed),
+            "--kid",
+            STORE_KID,
+            "--salt",
+            str(salt_path),
+            "--attest-version",
+            "0.2",
+            "--mldsa-key",
+            str(world.store_mldsa),
+            "--out",
+            str(receipt),
+        ]
+    )
+    return receipt
 
 
 # --------------------------------------------------------------------------
@@ -612,6 +648,28 @@ def test_a_proof_minted_for_another_custodian_is_refused(world: World, tmp_path:
     assert decision.reason == "redemption_proof_invalid"
 
 
+def test_a_foreign_challenge_and_matching_response_are_refused(
+    world: World, tmp_path: Path
+) -> None:
+    """A requester cannot bring both halves of another custodian's transcript."""
+    elsewhere = _gate(world, audience=OTHER_ARCHIVE)
+    other_challenge = elsewhere.challenge(receipt=world.receipt, out_dir=tmp_path / "elsewhere")
+    other_response = _respond(world, other_challenge, tmp_path / "elsewhere-response.json")
+
+    gate = _gate(world)
+
+    decision = gate.redeem(
+        receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        challenge=other_challenge,
+        response=other_response,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert decision.served is False
+    assert decision.reason == "redemption_proof_invalid"
+
+
 def test_an_archive_copy_that_does_not_match_the_receipt_is_refused(
     world: World, tmp_path: Path
 ) -> None:
@@ -627,6 +685,58 @@ def test_an_archive_copy_that_does_not_match_the_receipt_is_refused(
 
     decision = gate.redeem(
         receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        challenge=challenge,
+        response=response,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert decision.served is False
+    assert decision.reason == "artifact_out_of_scope"
+
+
+def test_an_archive_copy_named_by_absolute_receipt_path_is_refused(
+    world: World, tmp_path: Path
+) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_file = outside / FILENAME
+    outside_file.write_bytes(WORK_BYTES)
+    receipt = _signed_receipt_with_filename(world, tmp_path, str(outside_file))
+
+    gate = _gate(world, archive_dir=archive)
+    challenge = gate.challenge(receipt=receipt, out_dir=tmp_path / "gate")
+    response = _respond(world, challenge, tmp_path / "response.json")
+
+    decision = gate.redeem(
+        receipt=receipt,
+        grant_view=world.grant_view_active,
+        challenge=challenge,
+        response=response,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert decision.served is False
+    assert decision.reason == "artifact_out_of_scope"
+
+
+def test_an_archive_copy_named_by_parent_traversal_is_refused(world: World, tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_file = outside / FILENAME
+    outside_file.write_bytes(WORK_BYTES)
+    receipt = _signed_receipt_with_filename(world, tmp_path, f"../outside/{FILENAME}")
+
+    gate = _gate(world, archive_dir=archive)
+    challenge = gate.challenge(receipt=receipt, out_dir=tmp_path / "gate")
+    response = _respond(world, challenge, tmp_path / "response.json")
+
+    decision = gate.redeem(
+        receipt=receipt,
         grant_view=world.grant_view_active,
         challenge=challenge,
         response=response,
@@ -706,9 +816,11 @@ def test_every_decision_reason_belongs_to_the_closed_vocabulary(
 
 
 def test_the_revocation_vocabulary_covers_transfer_as_well_as_revocation() -> None:
-    """A transferred receipt is no longer the holder's, and the gate must
-    treat it exactly like a revoked one. Reachable only with a transfer view,
-    which this matrix does not build, so the intent is pinned here."""
+    """A transferred receipt remains a refusal value for a future verdict.
+
+    Today's CLI has no transfer-view flag, so this demo cannot produce that
+    verdict; the constant pins how the gate treats it if a verifier reports it.
+    """
     assert custodian_mod.REVOCATION_REFUSED == frozenset({"revoked", "transferred"})
 
 

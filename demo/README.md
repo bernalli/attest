@@ -91,12 +91,16 @@ directory.
 ### What the gate turns away
 
 An activated pledge is a promise to the **holder**, not to whoever turns up.
+One current CLI gap is named here too: today's `attest verify` accepts a
+revocation view but no transfer view, so this demo cannot detect that a
+receipt has been transferred away.
 
-| Request | Refused as |
+| Request | Outcome |
 | --- | --- |
 | The grant has not fired yet | `grant_not_activated` |
 | A receipt with a byte flipped in the signed payload | `receipt_not_ok` |
-| A receipt that has been revoked or transferred away | `revocation_blocked` |
+| A receipt that has been revoked | `revocation_blocked` |
+| A receipt that has been transferred away | Transfer gap: today's CLI cannot see it |
 | A proof signed by someone holding the public bundle but not Casey's seed | `redemption_proof_invalid` |
 | A proof Casey legitimately made **for a different archive**, replayed here | `redemption_proof_invalid` |
 | The buyer-binding salt offered as proof | `salt_disclosure_rejected` |
@@ -112,11 +116,13 @@ everywhere. That is a prohibition, not a fallback, so the gate checks it
 first.
 
 Two things the gate deliberately does **not** do. It does not distinguish
-its refusals to the requester: every way a redemption proof can be wrong
-gives the same answer, so a probe learns nothing from which door closed. And
-it does not treat a *bogus* revocation record as a reason to refuse —
-against an irrevocable receipt the verifier reports such a record as
-ignored, and a gate that read "something was ignored" as a refusal would
+bad redemption proofs: a wrong key, a replayed response, or a challenge for
+another archive all give the same proof answer. Other refusal classes remain
+distinct in this demo because `Decision` is a narration object, not a wire
+protocol; a real gate would decide separately how much of that reason to tell
+the requester. And it does not treat a *bogus* revocation record as a reason
+to refuse — against an irrevocable receipt the verifier reports such a record
+as ignored, and a gate that read "something was ignored" as a refusal would
 hand any passer-by a denial-of-service against a holder they have no
 relationship with.
 

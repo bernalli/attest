@@ -16,13 +16,14 @@ sunset grant has been activated. The interesting half is the refusals.
 Every decision that VERIFIES, AUTHENTICATES or SIGNS is delegated to the real
 `attest` CLI: `verify` for the receipt and the grant evidence, `grant
 challenge` for the nonce, `grant verify` for the audience-bound redemption
-proof, `check-artifact` for the bytes. This module contributes exactly one
-authorisation check the CLI does not expose — whether the file it is about to
-hand over is inside the grant's own scope — and it makes that check against
-the FLOOR grant the receipt hash-binds, never against a later version an
-attacker might supply. Because §18.3's ratchet forbids a later grant from
-narrowing scope, the floor's scope is a subset of the effective one: reading
-the floor is therefore strictly conservative, never permissive.
+proof, `check-artifact` for the bytes. This module contributes the checks the
+CLI does not expose — whether the challenge names this custodian's own
+audience, and whether the file it is about to hand over is inside the grant's
+own scope. The scope check is made against the FLOOR grant the receipt
+hash-binds, never against a later version an attacker might supply. Because
+§18.3's ratchet forbids a later grant from narrowing scope, the floor's scope
+is a subset of the effective one: reading the floor is therefore strictly
+conservative, never permissive.
 
 Refusals are verdicts, never exceptions. A gate that raises on hostile input
 leaks which check failed through the shape of the crash, and §18.7 asks for
@@ -54,8 +55,10 @@ REASONS = frozenset(
     }
 )
 
-#: `verify`'s `revocation` values that end the request. A transferred receipt
-#: is no longer this holder's, which is the same answer as a revoked one.
+#: `verify`'s `revocation` values that end the request. Today's CLI exposes a
+#: revocation view but no transfer view, so this demo cannot currently observe
+#: `transferred`; if a verifier verdict ever carries it, it is still the same
+#: refusal as a revoked receipt.
 REVOCATION_REFUSED = frozenset({"revoked", "transferred"})
 
 
@@ -171,7 +174,12 @@ class Custodian:
                 f"the sunset grant is {verdict.get('grant')}, so nothing is owed yet",
             )
 
-        if not self._redemption_verified(receipt, challenge, response):
+        # The challenge is the custodian's own file. Bad challenge bytes are an
+        # operator bug and stay loud, while a well-formed challenge for another
+        # audience is flattened into the same refusal as a bad signature.
+        if _challenge_audience(challenge) != self.audience or not self._redemption_verified(
+            receipt, challenge, response
+        ):
             return _refuse(
                 "redemption_proof_invalid",
                 "the response does not prove possession of this receipt's key for this archive",
@@ -253,8 +261,13 @@ class Custodian:
         the conservative place to read it).
         """
         permitted = _granted_artifacts(grant_view)
+        archive_root = self.archive_dir.resolve()
         for filename in _receipt_filenames(receipt):
-            candidate = self.archive_dir / filename
+            candidate = (self.archive_dir / filename).resolve()
+            try:
+                candidate.relative_to(archive_root)
+            except ValueError:
+                continue
             if not candidate.is_file():
                 continue
             digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
@@ -282,6 +295,13 @@ def _read_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
+
+
+def _challenge_audience(path: Path) -> str:
+    challenge = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(challenge, dict) or not isinstance(challenge.get("audience"), str):
+        raise ValueError(f"{path} is not a usable custodian challenge")
+    return str(challenge["audience"])
 
 
 def _receipt_filenames(receipt: Path) -> list[str]:
