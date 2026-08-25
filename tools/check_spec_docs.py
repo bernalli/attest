@@ -714,6 +714,29 @@ _STAGE4_REQUIRED_LITERALS: tuple[str, ...] = (
     # non-empty requirement is what stops a false activation from falling out
     # of a quantifier, so it is pinned as a claim, not left in a table cell.
     "present and non-empty",
+    # Seven places where the first implementation had to CHOOSE and §18 did
+    # not say. None of the choices is safety-critical on its own; every one of
+    # them lets two conforming verifiers reach different verdicts on identical
+    # bytes, which is the failure this whole section is written to prevent. A
+    # regression that dropped any of these sentences would leave prose reading
+    # perfectly while reopening the divergence:
+    #   - which document seeds the fixed-date accumulator,
+    #   - that its evidence is one bundle rather than a fourth hostile array,
+    #   - that an inadmissible or unauthenticated later version moves nothing
+    #     (otherwise a trust downgrade costs an attacker one array append),
+    #   - and that only publisher-signed documents can signal a rollback,
+    #   - that signer_mismatch needs a document that already authenticated,
+    #   - that the evidence channel is the opt-in, without which step 1 alone
+    #     would contradict §18.5's unchanged-result promise,
+    #   - and that "sorted" is code-point order, which UTF-16 code-unit order
+    #     contradicts on input `permissions`/`modes` actually accept.
+    "it is the effective grant, not the floor",
+    "ONE §11 evidence bundle",
+    "ignored WITHOUT effect on `grant_trust`",
+    "Only an AUTHENTICATED, same-publisher document may move `grant_trust`",
+    "reachable only for a document that has already authenticated",
+    "The evidence channel is also the capability gate",
+    '"Sorted" means by Unicode CODE POINT',
 )
 
 _APPENDIX_A_HEADING = "## Appendix A — The custodian interface (non-normative)"

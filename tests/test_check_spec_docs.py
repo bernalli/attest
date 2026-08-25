@@ -109,7 +109,14 @@ def _minimal_spec_v02() -> str:
         + "prose-bearing members is reported. Scope coverage, and it is a gate: Grant "
         + "coverage of a receipt is a DIFFERENT predicate from declaration coverage, and "
         + "the artifact list must be present and non-empty. The declaration step never "
-        + "stops at the first one that succeeds.\n"
+        + "stops at the first one that succeeds.\n\n"
+        + "The evidence channel is also the capability gate. Which document seeds the "
+        + "accumulator is normative, and it is the effective grant, not the floor; the "
+        + "attestation is ONE §11 evidence bundle. A later version naming another "
+        + "publisher is inadmissible and ignored WITHOUT effect on `grant_trust`. Only "
+        + "an AUTHENTICATED, same-publisher document may move `grant_trust`, and "
+        + "`signer_mismatch` is reachable only for a document that has already "
+        + 'authenticated. "Sorted" means by Unicode CODE POINT.\n'
         + "\n## Appendix A — The custodian interface (non-normative)\n\nSketch.\n"
     )
 
@@ -1563,6 +1570,58 @@ def test_receipt_id_prose_row_absent_while_schema_pattern_present_is_an_error() 
             "`grant_text_changed`",
             "spec_v02",
             "grant_legal_text_changed",
+        ),
+        # The seven divergence claims. Each names a choice §18 originally left
+        # to the implementer; dropping any one lets two conforming verifiers
+        # disagree on identical bytes while the prose still reads fluently.
+        (
+            "fixed-date seed left unnamed again",
+            "it is the effective grant, not the floor",
+            "it is one of the two grants",
+            "spec_v02",
+            "it is the effective grant, not the floor",
+        ),
+        (
+            "anchor evidence reopened as an array",
+            "ONE §11 evidence bundle",
+            "a list of §11 evidence bundles",
+            "spec_v02",
+            "ONE §11 evidence bundle",
+        ),
+        (
+            "inadmissible version allowed to downgrade trust",
+            "ignored WITHOUT effect on `grant_trust`",
+            "ignored",
+            "spec_v02",
+            "ignored WITHOUT effect on `grant_trust`",
+        ),
+        (
+            "unauthenticated version allowed to signal rollback",
+            "Only an AUTHENTICATED, same-publisher document may move `grant_trust`",
+            "Any supplied document may move `grant_trust`",
+            "spec_v02",
+            "Only an AUTHENTICATED, same-publisher document may move `grant_trust`",
+        ),
+        (
+            "signer_mismatch reachable without authentication",
+            "reachable only for a document that has already authenticated",
+            "reachable for any document",
+            "spec_v02",
+            "reachable only for a document that has already authenticated",
+        ),
+        (
+            "capability gate dropped",
+            "The evidence channel is also the capability gate",
+            "The evidence channel carries evidence",
+            "spec_v02",
+            "The evidence channel is also the capability gate",
+        ),
+        (
+            "collation left to the runtime",
+            '"Sorted" means by Unicode CODE POINT',
+            '"Sorted" means whatever the runtime does',
+            "spec_v02",
+            '"Sorted" means by Unicode CODE POINT',
         ),
         (
             "reserved mode quietly promoted",
