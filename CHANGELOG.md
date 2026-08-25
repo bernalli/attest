@@ -30,14 +30,20 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `verify()` and `evaluate_transparency()` accept `witness_policy=`, and the
     CLI accepts `attest verify --witness-policy <file>`. The document is read as
     bytes under the existing Stage 2 input ceiling and refused as trusted-config
-    on any malformation, never silently degraded.
+    on any malformation, never silently degraded — by the CLI when it loads the
+    file, and by `evaluate_transparency()` unconditionally. `verify()` reaches
+    that validation only when it actually evaluates a transparency claim: given
+    no evidence, or incomplete Stage 2 configuration, it returns the unchanged
+    result without inspecting the policy.
   - `attest.tlog` parses checkpoint cosignature lines: C2SP type `0x04`
     (Ed25519) and the type `0xff` identifier `attest-cosignature-ml-dsa-65-v1`
     that §9.2 registers, domain-separated from `attest-ml-dsa-65`.
   - An activation-grade hybrid quorum primitive (§11.4): both legs must verify
     over the same note, one vote per `control_group`, the committee ceiling
     applied before any signature verification, and explicit temporal boundaries.
-    It ships with no consumer — nothing in this release calls it.
+    No verification path consumes it: nothing in `verify()`, in revocation, in
+    transfer or in the bridge calls it, and the only caller anywhere is the
+    site's conformance adapter, which exists to execute group 40.
   - Conformance corpus 97 → **130 leaves across 38 groups**, adding
     `39-witness-corroboration` (13 leaves) and `40-witness-quorum` (20), each
     executed by all three runners — Python reference, TypeScript verifier, site

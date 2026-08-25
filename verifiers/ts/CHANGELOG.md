@@ -26,7 +26,9 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     windows; pinned operators whose standing is judged at the instant claimed
     rather than at the verifier's clock; the conflict predicate that retires a
     compromised pin; and the reusable activation-grade quorum primitive
-    (`evaluateActivationWitnessQuorum`), which ships with no consumer.
+    (`evaluateActivationWitnessQuorum`), which no verification path consumes —
+    its only caller anywhere is the site's conformance adapter, which exists to
+    execute group 40.
   - `src/tlog.ts` parses checkpoint cosignature lines: type `0x04` (Ed25519)
     and the type `0xff` identifier `attest-cosignature-ml-dsa-65-v1` that spec
     §9.2 registers, domain-separated from `attest-ml-dsa-65`.
@@ -52,10 +54,14 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- This file's history has been reconstructed from the commits that produced
-  each release. The section that stood as `[Unreleased]` is what shipped in
-  0.2.0 and now carries that heading; 0.3.0, 0.5.0 and 0.6.0 had no section at
-  all and now do. No released text was rewritten — only labelled.
+- This file's history has been reconstructed from git. Each change is now
+  attributed to the version whose published artifact contained it, rather than
+  to the commit that happened to document it: the section that stood as
+  `[Unreleased]` describes what 0.2.0 shipped and now carries that heading,
+  even though part of its text was written after that release went out. 0.3.0,
+  0.5.0 and 0.6.0 had no section at all and now do. Two counts in the released
+  0.4.0 entry had been amended in place after publication and are restored to
+  what 0.4.0 actually shipped, with the later leaves credited to 0.5.0.
 
 ## [0.6.0] — 2026-08-24
 
@@ -83,11 +89,11 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - The two conformance leaves that accompanied those fixes — a boundary vector
-  and the count-sweep completion — taking the corpus this package runs to 97
-  leaves across 36 groups. The `[0.4.0]` entry below already claims those
-  counts because it was amended in place when these leaves landed; 0.4.0 as
-  published ran 95. Its text is left as it stands, with the correction recorded
-  here.
+  in `35-transfer` and the count-sweep completion in `36-transfer-chain` —
+  taking the corpus this package runs to 97 leaves across the same 36 groups.
+  The `[0.4.0]` entry below claimed these counts for a while: it was amended in
+  place when these leaves landed, months after 0.4.0 went out. It has been
+  restored to the 95 leaves 0.4.0 actually published.
 
 ### Changed
 
@@ -113,8 +119,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `verify()`. A v0.2 receipt with `license.transferable: true` and a null/absent
   `buyer.pubkey` is now a schema error (v0.1 receipts untouched). Closed a
   Python/TypeScript parity divergence in Stage 3 date validation during review. New
-  conformance leaf groups `35-transfer` (11 leaves) and `36-transfer-chain` (4 leaves),
-  bringing the corpus this package runs to 97 leaves across 36 groups.
+  conformance leaf groups `35-transfer` (10 leaves) and `36-transfer-chain` (3 leaves),
+  bringing the corpus this package runs to 95 leaves across 36 groups.
 
 ## [0.3.0] — 2026-07-23
 

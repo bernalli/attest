@@ -482,9 +482,16 @@ def _evaluate_transparency_claim(
     wasn't set up for transparency checking) — degrades with a warning,
     never raises: the evidence side must never brick a receipt verification.
     A malformed `log_keys`/`anchor_policy`/`witness_policy` is trusted-config,
-    validated eagerly and regardless of what the evidence looks like, so a
-    config bug always surfaces as `TransparencyError` rather than being masked
-    by coincidentally-also-unresolvable evidence.
+    validated eagerly once this function reaches the point of evaluating a
+    transparency claim — before the untrusted-evidence boundary, never after —
+    so a config bug surfaces as `TransparencyError` instead of being masked by
+    coincidentally-also-unresolvable evidence. It is NOT validated on the two
+    paths that return before evaluating anything: no `transparency_evidence`
+    at all, and Stage 2 config incomplete. A caller that passes a malformed
+    policy alongside no evidence gets the same zero-behaviour-change result as
+    one that passes no policy, by design — `evaluate_transparency` is the
+    surface that raises unconditionally (§10.2), and the CLI validates
+    `--witness-policy` when it loads the file, before `verify()` is called.
     """
     if transparency_evidence is None:
         return _TRANSPARENCY_NOT_CHECKED, _CORROBORATION_NONE, _MANIFEST_FRESHNESS_NOT_CHECKED
