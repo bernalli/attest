@@ -34,6 +34,19 @@ cryptographically-relevant quantum computer (CRQC) horizon is reached.
   arguments): a non-`tlog.Checkpoint` `checkpoint` or a malformed `AnchorPolicy`
   raises `AnchorError` instead, since that signals a caller bug, not
   adversarial input.
+- `verify_seeded_anchor` answers the other half of the question. Where
+  `verify_anchor` asks "was THIS checkpoint timestamped?",
+  `verify_seeded_anchor` asks "has real time reached date T?": the op-chain
+  starts from `SHA256(seed)` for an arbitrary caller-supplied `seed` (the
+  canonical bytes of some public document), no checkpoint is involved
+  anywhere, and the anchor-profile dimension does not exist — a profile only
+  distinguishes WHICH of a checkpoint's two byte-strings an accumulator
+  committed to. Everything else is shared with `verify_anchor`, down to the
+  ceilings and the warning strings. Because the two ask opposite questions,
+  the verdict carries BOTH reductions over the verified proofs —
+  `anchored_before` (minimum, "did this exist no later than T?") and
+  `anchored_after` (maximum, "has real time reached T?") — see
+  `AnchorVerdict` for why one cannot stand in for the other.
 - `passes_horizon` is a pure function of `(verdict, policy)`: `AnchorError`
   only on a malformed `policy`, never on `verdict` content (even a
   hand-built `AnchorVerdict` with wrong field types degrades to `False`
@@ -129,11 +142,32 @@ class AnchorPolicy:
 
 @dataclass(frozen=True)
 class AnchorVerdict:
-    """The outcome of `verify_anchor` over one evidence bundle.
+    """The outcome of `verify_anchor` or `verify_seeded_anchor` over one
+    evidence bundle.
 
-    `anchored_before` is the minimum pinned header time over verified `ots`
-    (PQ-surviving) proofs only — `rfc3161` proofs never set it, even when
-    `anchored` is `True` from `rfc3161` corroboration alone.
+    `anchored_before` and `anchored_after` are the two ends of the same set
+    of verified `ots` (PQ-surviving) proofs — `rfc3161` proofs set neither,
+    even when `anchored` is `True` from `rfc3161` corroboration alone, and
+    both are `None` when no `ots` proof verified. They exist as a PAIR
+    because a caller can ask two opposite questions of one bundle and only
+    one reduction is sound for each:
+
+    - `anchored_before` is the MINIMUM pinned header time. It answers "did
+      this exist no later than T?" — the oldest verified anchor is the
+      strongest claim of prior existence, and taking the maximum there would
+      overclaim.
+    - `anchored_after` is the MAXIMUM pinned header time. It answers "has
+      real time reached T?" — a pinned header's time is a lower bound on
+      real time, so the most recent verified anchor is the strongest such
+      evidence. Taking the minimum there produces false negatives the moment
+      a bundle carries two valid proofs: an old one would veto a new one,
+      and a caller handed only the minimum cannot recover the maximum.
+
+    Neither reduction is derivable from the other, which is why the verdict
+    carries both rather than picking one. `anchored_after` defaults to `None`
+    so that every pre-existing construction site — including the
+    early-return verdicts below and callers that never heard of it — keeps
+    working untouched.
 
     `note_only` is `True` iff the evidence's `anchor_profile` is absent,
     `None`, or `"note-v1"` (G4, attest-v0.2.md §11.1): the accumulator
@@ -154,6 +188,7 @@ class AnchorVerdict:
     pq_surviving: bool
     warnings: list[str]
     note_only: bool = False
+    anchored_after: int | None = None
 
 
 def _trunc(value: object, limit: int = 60) -> str:
@@ -284,9 +319,9 @@ def replay_ots_op_chain(accumulator_start: bytes, ops: object) -> tuple[bytes | 
 def _verify_ots_proof(
     proof: dict[str, Any],
     accumulator_start: bytes,
-    legacy_accumulator_start: bytes,
-    note_only: bool,
     policy: AnchorPolicy,
+    *,
+    legacy_accumulator_start: bytes | None = None,
 ) -> tuple[bool, int, str | None]:
     """Evaluate one `ots` proof: replay its op-chain from `accumulator_start`
     and cross-check the result against a header pinned in `policy`.
@@ -298,13 +333,15 @@ def _verify_ots_proof(
     `warning` names the failure reason and is `None` only when `verified`
     is `True`.
 
-    `legacy_accumulator_start`/`note_only` (G4/I2, attest-v0.2.md §11.1.1):
-    on an op-chain mismatch under a declared `signed-note-v2` profile, also
-    replay the SAME `ops` from the legacy `note-v1` seed
-    (`legacy_accumulator_start`) — purely diagnostic, never changes
-    `verified` — so the warning can name which seed the declared profile
-    actually requires and flag the common mistake of presenting a v1-shaped
-    commitment as v2.
+    `legacy_accumulator_start` (G4/I2, attest-v0.2.md §11.1.1) carries the
+    anchor-profile dimension, and `None` means the call has no such
+    dimension — either a declared `note-v1` profile or a seed that is not a
+    checkpoint's bytes at all (`verify_seeded_anchor`), both of which get the
+    plain mismatch warning. When it IS supplied (a declared `signed-note-v2`
+    profile), an op-chain mismatch also replays the SAME `ops` from the
+    legacy `note-v1` seed — purely diagnostic, never changes `verified` — so
+    the warning can name which seed the declared profile actually requires
+    and flag the common mistake of presenting a v1-shaped commitment as v2.
     """
     ops = proof.get("ops")
     accumulator, warning = replay_ots_op_chain(accumulator_start, ops)
@@ -332,7 +369,7 @@ def _verify_ots_proof(
 
     assert accumulator is not None  # `warning is None` above guarantees this
     if not hmac.compare_digest(accumulator, root_bytes):
-        if note_only:
+        if legacy_accumulator_start is None:
             return False, 0, "ots op-chain result does not match header_merkle_root"
         message = (
             "ots op-chain result does not match header_merkle_root; anchor_profile "
@@ -359,6 +396,69 @@ def _verify_ots_proof(
         return False, 0, "pinned header time does not match proof"
 
     return True, pinned.time, None
+
+
+def _walk_proofs(
+    proofs: list[Any],
+    accumulator_start: bytes,
+    policy: AnchorPolicy,
+    warnings: list[str],
+    *,
+    legacy_accumulator_start: bytes | None = None,
+) -> tuple[bool, bool, int | None, int | None]:
+    """Evaluate every proof in an already-shape-checked, already-capped
+    `proofs` list, appending any diagnostics to `warnings` in place.
+
+    Returns `(anchored, pq_surviving, anchored_before, anchored_after)` —
+    the last two being the minimum and maximum pinned time over the proofs
+    that actually VERIFIED (see `AnchorVerdict` for which question each
+    answers). Both reductions are computed here, once, from the same walk:
+    a proof that failed for any reason contributes to neither. Shared by
+    both entry points so the proof-kind dispatch, the forward-compat
+    "unknown kind is ignored, not fatal" rule and both aggregations exist in
+    exactly one place — the only thing the two callers differ on is which
+    bytes seed the accumulator, and whether the anchor-profile diagnostic
+    (`legacy_accumulator_start`) applies at all.
+    """
+    anchored = False
+    pq_surviving = False
+    anchored_before: int | None = None
+    anchored_after: int | None = None
+
+    for i, proof in enumerate(proofs):
+        if not isinstance(proof, dict):
+            warnings.append(f"proof[{i}]: must be an object, got {type(proof).__name__}")
+            continue
+        kind = proof.get("kind")
+        if kind == "ots":
+            verified, header_time, warning = _verify_ots_proof(
+                proof,
+                accumulator_start,
+                policy,
+                legacy_accumulator_start=legacy_accumulator_start,
+            )
+            if warning is not None:
+                warnings.append(f"proof[{i}]: {warning}")
+            if verified:
+                anchored = True
+                pq_surviving = True
+                if anchored_before is None or header_time < anchored_before:
+                    anchored_before = header_time
+                if anchored_after is None or header_time > anchored_after:
+                    anchored_after = header_time
+        elif kind == "rfc3161":
+            token_b64 = proof.get("token_b64")
+            if not isinstance(token_b64, str):
+                warnings.append(
+                    f"proof[{i}]: rfc3161 token_b64 must be a str, got {type(token_b64).__name__}"
+                )
+                continue
+            anchored = True
+            warnings.append(_RFC3161_WARNING)
+        else:
+            warnings.append(f"proof[{i}]: unknown proof kind {_trunc(kind)}, ignored")
+
+    return anchored, pq_surviving, anchored_before, anchored_after
 
 
 def verify_anchor(
@@ -451,37 +551,13 @@ def verify_anchor(
     legacy_accumulator_start = hashlib.sha256(checkpoint.note_bytes).digest()
     v2_accumulator_start = hashlib.sha256(checkpoint.signed_note_bytes).digest()
     accumulator_start = legacy_accumulator_start if note_only else v2_accumulator_start
-    anchored = False
-    pq_surviving = False
-    anchored_before: int | None = None
-
-    for i, proof in enumerate(proofs):
-        if not isinstance(proof, dict):
-            warnings.append(f"proof[{i}]: must be an object, got {type(proof).__name__}")
-            continue
-        kind = proof.get("kind")
-        if kind == "ots":
-            verified, header_time, warning = _verify_ots_proof(
-                proof, accumulator_start, legacy_accumulator_start, note_only, policy
-            )
-            if warning is not None:
-                warnings.append(f"proof[{i}]: {warning}")
-            if verified:
-                anchored = True
-                pq_surviving = True
-                if anchored_before is None or header_time < anchored_before:
-                    anchored_before = header_time
-        elif kind == "rfc3161":
-            token_b64 = proof.get("token_b64")
-            if not isinstance(token_b64, str):
-                warnings.append(
-                    f"proof[{i}]: rfc3161 token_b64 must be a str, got {type(token_b64).__name__}"
-                )
-                continue
-            anchored = True
-            warnings.append(_RFC3161_WARNING)
-        else:
-            warnings.append(f"proof[{i}]: unknown proof kind {_trunc(kind)}, ignored")
+    anchored, pq_surviving, anchored_before, anchored_after = _walk_proofs(
+        proofs,
+        accumulator_start,
+        policy,
+        warnings,
+        legacy_accumulator_start=None if note_only else legacy_accumulator_start,
+    )
 
     return AnchorVerdict(
         anchored=anchored,
@@ -489,6 +565,103 @@ def verify_anchor(
         pq_surviving=pq_surviving,
         warnings=warnings,
         note_only=note_only,
+        anchored_after=anchored_after,
+    )
+
+
+def verify_seeded_anchor(
+    evidence: dict[str, Any], seed: bytes, policy: AnchorPolicy
+) -> AnchorVerdict:
+    """Verify an anchor-evidence bundle whose op-chains start from `seed`.
+
+    Answers a different question from `verify_anchor`. That one asks "was
+    THIS checkpoint timestamped?" and therefore binds every op-chain to a
+    checkpoint's own bytes. This one asks "has real time reached date T?":
+    the caller holds an OpenTimestamps attestation over the canonical bytes
+    of some public document, and the only thing that matters is whether that
+    document's op-chain climbs to a Bitcoin header the verifier has pinned.
+    A pinned header's time is a lower bound on real time, so a verified
+    anchor is evidence that the world has already passed it.
+
+    `seed` is that document's bytes, and the accumulator starts from
+    `SHA256(seed)` — exactly as `verify_anchor`'s legacy path starts from
+    `SHA256(checkpoint.note_bytes)`. Passing a checkpoint's `note_bytes`
+    therefore replays the identical chain, and the two entry points return
+    the same anchor facts for the same `proofs`.
+
+    There is no checkpoint on this path: `evidence["checkpoint"]` is neither
+    required nor read, and an incoherent one changes nothing. There is no
+    anchor profile either — profiles say which of a checkpoint's two
+    byte-strings an accumulator committed to, a distinction that has no
+    meaning once the seed is an arbitrary document, so
+    `evidence["anchor_profile"]` is likewise not read and
+    `AnchorVerdict.note_only` stays `False`.
+
+    The verdict carries BOTH reductions over the verified `ots` proofs,
+    because this entry point's caller asks the opposite question from
+    `verify_anchor`'s and neither reduction answers both:
+
+    - `anchored_before` stays the MINIMUM, byte-for-byte the semantics
+      `verify_anchor` has always had. It is kept identical so two twin
+      functions never answer the same evidence differently — a caller that
+      moves a bundle between them must not see the floor shift.
+    - `anchored_after` is the MAXIMUM, and it is the field a "has time
+      reached T?" caller wants. The minimum is the wrong reduction for that
+      question as soon as a bundle carries two valid proofs: an old anchor
+      and a new one both verify, the minimum reports the old one, and the
+      caller concludes time has not advanced — a false negative it cannot
+      undo, since the maximum is not recoverable from a verdict that
+      dropped it.
+
+    On the single-proof evidence this is usually built for, the two
+    coincide; they diverge exactly when it matters.
+
+    `evidence` is untrusted and this function NEVER raises because of it —
+    any malformation degrades to a warning, exactly as in `verify_anchor`.
+    `seed` and `policy` are the trusted, caller-config side: a non-`bytes`
+    or empty `seed`, or a malformed `policy`, raises `AnchorError`, since
+    that signals a caller bug rather than adversarial input.
+    """
+    if not isinstance(seed, bytes):
+        raise AnchorError(f"seed must be bytes, got {type(seed).__name__}")
+    if not seed:
+        raise AnchorError("seed must not be empty")
+    policy = _validate_policy(policy)
+
+    warnings: list[str] = []
+    if not isinstance(evidence, dict):
+        warnings.append(f"evidence must be an object, got {type(evidence).__name__}")
+        return AnchorVerdict(
+            anchored=False, anchored_before=None, pq_surviving=False, warnings=warnings
+        )
+
+    proofs = evidence.get("proofs")
+    if not isinstance(proofs, list):
+        warnings.append(f"evidence.proofs must be a list, got {type(proofs).__name__}")
+        return AnchorVerdict(
+            anchored=False, anchored_before=None, pq_surviving=False, warnings=warnings
+        )
+    if len(proofs) > _MAX_PROOFS_PER_EVIDENCE:
+        warnings.append(f"evidence.proofs exceeds max length {_MAX_PROOFS_PER_EVIDENCE}")
+        return AnchorVerdict(
+            anchored=False, anchored_before=None, pq_surviving=False, warnings=warnings
+        )
+
+    # Every list-shaped cap is now behind us, so the first digest of the call
+    # is bounded work: `_MAX_OPS_PER_PROOF` and `_MAX_OP_HEX_LEN` bound the
+    # rest inside `replay_ots_op_chain`, which checks an operand's length
+    # before ever concatenating or hashing it.
+    accumulator_start = hashlib.sha256(seed).digest()
+    anchored, pq_surviving, anchored_before, anchored_after = _walk_proofs(
+        proofs, accumulator_start, policy, warnings
+    )
+
+    return AnchorVerdict(
+        anchored=anchored,
+        anchored_before=anchored_before,
+        pq_surviving=pq_surviving,
+        warnings=warnings,
+        anchored_after=anchored_after,
     )
 
 

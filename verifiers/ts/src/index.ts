@@ -26,7 +26,7 @@ export {
 export type { Checkpoint, LogKey } from './tlog.js'
 
 // OpenTimestamps-style Bitcoin block-header anchoring + CRQC horizon gating.
-export { AnchorError, verifyAnchor, passesHorizon } from './anchor.js'
+export { AnchorError, verifyAnchor, verifySeededAnchor, passesHorizon } from './anchor.js'
 export type { PinnedHeader, AnchorPolicy, AnchorVerdict } from './anchor.js'
 
 // Transparency/corroboration evaluator: the glue between the log and the
