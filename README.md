@@ -22,9 +22,9 @@ answer is: they do. And Sony is no exception. Weeks earlier, Xbox had pulled
 three games not just from the store but from the libraries of everyone who'd
 bought them. Microsoft shut its ebook store in 2019: refunds went out, and every
 book it had ever sold stopped opening anyway. Amazon once deleted *1984*, of all
-titles, straight off people's Kindles. When Walmart and Yahoo shut their music
-stores in 2008, the DRM servers went dark and the songs people had paid for
-stopped working on any new device. Different store, different medium, same click.
+titles, straight off people's Kindles. When Yahoo closed its music store in 2008
+it switched off the DRM servers, and songs people had paid for stopped working on
+any new device. Different store, different medium, same click.
 
 Digital was supposed to set content free. A handful of stores sell honest,
 DRM-free files; everywhere else it got rebuilt into an instrument of control.
@@ -159,9 +159,9 @@ required to reject v0.2 envelopes, so it is measured against the 51-leaf
 subset.) There is also an end-to-end demo that deletes a store's entire
 infrastructure mid-lifecycle and proves the receipt still verifies.
 
-The published packages are `0.4.0`, which ships all of v0.2 — Stages 1 and 2
-(hybrid signatures; transparency and anchoring) and Stage 3, issuer-mediated
-transfer, this document's own §17.
+The published packages ship all of v0.2 — Stages 1 and 2 (hybrid signatures;
+transparency and anchoring) and Stage 3, issuer-mediated transfer, this
+document's own §17.
 
 Seven pieces of work go beyond what a test suite can show. All of them are on
 `main`, and they are linked here rather than left invisible:
