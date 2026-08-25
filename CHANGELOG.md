@@ -6,6 +6,82 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-25
+
+### Added
+
+- **v0.2 revision 7 — witness federation primitives.**
+  `corroboration: "witnessed"` is reachable for the first time. Supply a witness
+  policy, and one valid C2SP type-`0x04` cosignature from a witness that policy
+  pins — inside a live epoch, holding the `corroboration` role — raises
+  `corroboration` from `"logged"` to `"witnessed"`. It is always reported
+  together with the warning `witness_independence_not_established`, because a
+  witnessed result asserts that a second party observed a given tree head at a
+  given time and nothing else: not that the party is independent of the log, and
+  not that the log has not branched (spec §10.1, §15 item 1). Supply no policy —
+  the default — and every result is byte-for-byte what it was before.
+
+  - New module `attest.witness`: the closed `attest-witness-policy-v1` document,
+    parsed from bytes and canonicalized with attest-JCS; immutable epochs with
+    their validity windows; pinned operators with roles and per-pin standing
+    judged at the instant claimed rather than at the verifier's clock; the
+    conflict predicate that retires a compromised pin; and the reusable
+    activation-grade quorum primitive.
+  - `verify()` and `evaluate_transparency()` accept `witness_policy=`, and the
+    CLI accepts `attest verify --witness-policy <file>`. The document is read as
+    bytes under the existing Stage 2 input ceiling and refused as trusted-config
+    on any malformation, never silently degraded — by the CLI when it loads the
+    file, and by `evaluate_transparency()` unconditionally. `verify()` reaches
+    that validation only when it actually evaluates a transparency claim: given
+    no evidence, or incomplete Stage 2 configuration, it returns the unchanged
+    result without inspecting the policy.
+  - `attest.tlog` parses checkpoint cosignature lines: C2SP type `0x04`
+    (Ed25519) and the type `0xff` identifier `attest-cosignature-ml-dsa-65-v1`
+    that §9.2 registers, domain-separated from `attest-ml-dsa-65`.
+  - An activation-grade hybrid quorum primitive (§11.4): both legs must verify
+    over the same note, one vote per `control_group`, the committee ceiling
+    applied before any signature verification, and explicit temporal boundaries.
+    No verification path consumes it: nothing in `verify()`, in revocation, in
+    transfer or in the bridge calls it. Its callers are the conformance
+    harness — the vector generator, both language adapters and the site
+    runner — and the tests that exercise group 40.
+  - Conformance corpus 97 → **130 leaves across 38 groups**, adding
+    `39-witness-corroboration` (13 leaves) and `40-witness-quorum` (20), each
+    executed by all three runners — Python reference, TypeScript verifier, site
+    adapter — from the same golden files.
+
+  Failure inside the witness layer is deliberately SILENT (§11.4): a cosignature
+  that does not verify leaves `corroboration` at `"logged"` and adds no literal
+  saying why, because a verifier that explained itself would leak the policy's
+  shape to whoever supplied the note.
+
+- A reference witness under `witness/`, runnable for tests and demonstration:
+  the C2SP `add-checkpoint` protocol over WSGI, a configured origin allowlist,
+  an append-only store, and a CLI. **It is not published and belongs to neither
+  package** — §11.4 keeps an operator's component out of the public artifacts,
+  and `tools/assert_artifacts.py` now fails a build that ships it.
+
+### Changed
+
+- The published sdist no longer carries `bridge/`'s neighbour `witness/`:
+  hatchling's sdist default is everything not gitignored, so the exclusion is
+  stated (`[tool.hatch.build.targets.sdist] exclude = ["/witness"]`) and pinned
+  by an artifact assertion instead of left to a default.
+- Threat model: §6.2 rewritten — revision 7 closes the format half of witness
+  federation, and the section's own prohibition on emitting
+  `corroboration: "witnessed"` is superseded by spec §10.1. What keeps the
+  section open is now stated as operational rather than editorial: no
+  independently run witness exists, and the policy packaged with the verifiers
+  is empty. TM-49 stays **Out of scope** and open, reformulated around
+  observation not being prevention; TM-34, TM-60 and the §6.3 rows follow.
+- Spec §1 corrected: it still carried the pre-revision-7 sentence forbidding
+  `corroboration: "witnessed"` outright — a contradiction with §10.1 in the same
+  document — still called Stage 2b's format forthcoming, and still named only
+  Stage 1 and Stage 2, omitting Stage 3 (rev 6).
+- `docs/faq.md` no longer tells readers the witnessed verdict "requires a
+  witness federation that does not exist yet", and states the real residual
+  instead.
+
 ## [0.6.0] — 2026-08-24
 
 ### Changed

@@ -37,7 +37,7 @@ import hashlib
 import hmac
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from attest import canon, keys, pq
 
@@ -754,6 +754,31 @@ def _parse(text: str) -> tuple[Checkpoint, list[tuple[str, bytes]]]:
         signed_note_bytes=signed_note_bytes,
     )
     return checkpoint, signatures
+
+
+ED25519_SIG_TYPE: Final = _ED25519_SIG_TYPE
+
+
+def key_hash(name: str, signature_type: bytes, pub: bytes) -> bytes:
+    """C2SP key ID: `SHA-256(name || "\\n" || type || pub)[:4]`.
+
+    Public because witness cosignatures (v0.2 §9.2) are a different C2SP
+    signature type over the same note, and computing their key ID must use
+    this exact construction rather than a second copy of it.
+    """
+    return _key_hash(name, signature_type, pub)
+
+
+def note_signatures(text: str) -> list[tuple[str, bytes]]:
+    """Parse a signed note's `(name, blob)` signature lines.
+
+    Raises `TlogError` on a malformed note, exactly as `_parse` does — a
+    caller holding an already-verified checkpoint cannot hit that path, and
+    one that has not verified anything should not be reading signature lines
+    as if they meant something.
+    """
+    _, signatures = _parse(text)
+    return signatures
 
 
 def parse_checkpoint(text: str) -> Checkpoint:

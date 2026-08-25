@@ -55,6 +55,7 @@ from attest import (
     tlog,
     transfer,
     verify,
+    witness,
 )
 
 EXIT_OK = 0
@@ -1865,6 +1866,26 @@ def _parse_crqc_horizon(value: str) -> int:
     return int(parsed.timestamp())
 
 
+def _load_witness_policy(path: Path | None) -> witness.WitnessPolicy | None:
+    """Parse `--witness-policy`, the TRUSTED `attest-witness-policy-v1` document
+    (v0.2 §11.4) that makes `corroboration: "witnessed"` reachable.
+
+    Loaded from BYTES through `witness.load_policy`, not from a parsed object:
+    that is what keeps this core and the TypeScript one agreeing on numbers —
+    a JSON `1.0` is refused as a non-integer literal on the byte path and is
+    indistinguishable from `1` once it is an in-memory value.
+    """
+    if path is None:
+        return None
+    raw = _read_bounded_bytes(
+        path, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--witness-policy"
+    )
+    try:
+        return witness.load_policy(raw)
+    except ValueError as exc:
+        raise CliUsageError(f"--witness-policy {path}: {exc}") from exc
+
+
 def _load_anchor_policy(path: Path | None, crqc_horizon: int | None) -> anchor.AnchorPolicy | None:
     """Build the verifier's `AnchorPolicy` from `--anchor-policy` (the
     vector-runners' `anchor-policy.json` shape: `{"pinned_headers": {<hex>:
@@ -1972,6 +1993,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     log_keys = _load_log_keys(args.log_keys) if args.log_keys is not None else None
     crqc_horizon = _parse_crqc_horizon(args.crqc_horizon) if args.crqc_horizon is not None else None
     anchor_policy = _load_anchor_policy(args.anchor_policy, crqc_horizon)
+    witness_policy = _load_witness_policy(args.witness_policy)
 
     result = verify.verify(
         envelope_bytes,
@@ -1981,6 +2003,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         transparency=transparency_evidence,
         log_keys=log_keys,
         anchor_policy=anchor_policy,
+        witness_policy=witness_policy,
     )
     _print_json(_result_to_dict(result))
     return EXIT_OK if result.ok else EXIT_VERIFICATION_FAILED
@@ -2594,6 +2617,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="ISO-8601 UTC timestamp (e.g. 2030-01-01T00:00:00Z); overrides/sets "
         "--anchor-policy's crqc_horizon",
+    )
+    p.add_argument(
+        "--witness-policy",
+        type=Path,
+        default=None,
+        help="JSON attest-witness-policy-v1 document pinning witness operators",
     )
     p.set_defaults(func=_cmd_verify)
 

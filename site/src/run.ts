@@ -1,7 +1,8 @@
-import { verify, isOk, auditChain } from 'attest-verifier'
+import { verify, isOk, auditChain, evaluateActivationWitnessQuorum } from 'attest-verifier'
 import type {
   VerificationResult, Disclosure, TrustStore, JsonValue, JsonObject, VerifyTransparencyOptions,
   LogKey, AnchorPolicy, ChainAuditResult,
+  WitnessPolicy, ActivationWitnessQuorumResult,
 } from 'attest-verifier'
 
 export interface VerifyRun {
@@ -40,4 +41,31 @@ export function runChainAudit(
   anchorPolicy: AnchorPolicy,
 ): ChainAuditResult {
   return auditChain(payloads, transferView, revocationView, keyManifest, logKeys, anchorPolicy)
+}
+
+// The single evaluateActivationWitnessQuorum() call site in site/ (v0.2
+// §11.4, group-40 conformance leaves only today — the page exposes no
+// activation UI, but the production adapter carries the surface, not just the
+// test, the same convention runVerify()/runChainAudit() already follow).
+//
+// `witnessPolicy`/`anchorPolicy`/`expectedOrigin`/`conflictDomain` are the
+// TRUSTED side and throw when malformed; `checkpointText`/`epochId`/
+// `anchorEvidence` are untrusted and may only degrade the verdict.
+export function runWitnessQuorum(
+  checkpointText: unknown,
+  witnessPolicy: WitnessPolicy,
+  epochId: unknown,
+  expectedOrigin: string,
+  anchorEvidence: unknown,
+  anchorPolicy: AnchorPolicy,
+  conflictDomain: string,
+): ActivationWitnessQuorumResult {
+  return evaluateActivationWitnessQuorum(checkpointText, {
+    witnessPolicy,
+    epochId,
+    expectedOrigin,
+    anchorEvidence,
+    anchorPolicy,
+    conflictDomain,
+  })
 }

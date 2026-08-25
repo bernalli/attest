@@ -594,6 +594,16 @@ function parseCore(text: unknown): { checkpoint: Checkpoint; signatures: Array<[
 
 /** Parse a C2SP signed-note checkpoint body. Structural/shape validation
  * only — no signature is checked here, see `verifyCheckpoint`. */
+/** Parse a signed note's `[name, blob]` signature lines.
+ *
+ * Throws on a malformed note, exactly as `parseCore` does — a caller holding
+ * an already-verified checkpoint cannot hit that path, and one that has
+ * verified nothing should not be reading signature lines as if they meant
+ * something. Mirrors `tlog.note_signatures` in the Python core. */
+export function noteSignatures(text: unknown): Array<[string, Uint8Array]> {
+  return parseCore(text).signatures
+}
+
 export function parseCheckpoint(text: unknown): Checkpoint {
   return parseCore(text).checkpoint
 }

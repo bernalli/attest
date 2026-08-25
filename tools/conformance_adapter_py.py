@@ -4,7 +4,8 @@ usage: conformance_adapter_py.py LEAF_DIR
 
 Reads one conformance-corpus leaf directory (see `docs/spec/vectors/README.md`
 for the corpus contract) and prints the leaf's `VerificationResult` (or, for a
-`chain.json` leaf, its `ChainAuditResult`) as ONE JSON object on stdout —
+`chain.json` leaf, its `ChainAuditResult`; or, for a `witness-quorum.json`
+leaf, its `ActivationWitnessQuorumResult`) as ONE JSON object on stdout —
 nothing else on stdout, ever. This is the adapter driven by both the
 self-certification runs recorded in `docs/conformance.md` and by
 `tests/tools/test_conformance_dogfood.py`, which invokes it (and the runner)
@@ -15,8 +16,10 @@ The loader functions below duplicate (never import) the ~60 lines of vector-
 loading logic in `tests/test_vectors.py`, which remains the source of truth
 for their semantics (envelope-bytes XOR rule, `TrustStore` construction,
 `disclosure`/`revocation_view`/`transparency`/`log_keys`/`anchor_policy`/
-`revocation_evidence`/`transfer_view` loaders, and the group-36 `chain.json`
-routing to `transfer.audit_chain`). Deliberately NOT imported from `tests/`:
+`revocation_evidence`/`transfer_view`/`witness_policy` loaders, the group-36
+`chain.json` routing to `transfer.audit_chain`, and the group-40
+`witness-quorum.json` routing to
+`witness.evaluate_activation_witness_quorum`). Deliberately NOT imported from `tests/`:
 this adapter must work standalone, exactly like a real implementation's own
 adapter would, and must never depend on the test suite being installed.
 """
@@ -28,7 +31,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from attest import anchor, keys, tlog, transfer, verify
+from attest import anchor, keys, tlog, transfer, verify, witness
 
 
 def _load_json(path: Path) -> Any:
@@ -129,6 +132,19 @@ def _transfer_view(leaf: Path) -> list[dict[str, Any]] | None:
     return _load_json(path)  # type: ignore[no-any-return]
 
 
+def _witness_policy(leaf: Path) -> dict[str, Any] | None:
+    """Group 39 only: the TRUSTED `attest-witness-policy-v1` document.
+
+    Handed to `verify()` as the DOCUMENT, not as a parsed object — the corpus
+    exercises each implementation's own policy parser, which is half of what
+    `witness-policy.json` is for.
+    """
+    path = leaf / "witness-policy.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
 def _sole_key_manifest(leaf: Path) -> dict[str, Any]:
     """Group 36 only: `audit_chain` takes ONE trusted `key_manifest`, not a
     full `TrustStore` — every group 36 leaf's `manifests.json` trusts exactly
@@ -153,6 +169,27 @@ def _verify_result_to_json(result: verify.VerificationResult) -> dict[str, Any]:
     }
 
 
+def _quorum_input(leaf: Path) -> dict[str, Any] | None:
+    """Group 40 only: the activation-quorum call's own inputs.
+
+    `expected_origin`/`conflict_domain` are TRUSTED call configuration;
+    `epoch_id`/`checkpoint`/`anchor_evidence` are untrusted. The two trusted
+    POLICIES live in their own files beside this one.
+    """
+    path = leaf / "witness-quorum.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
+def _quorum_result_to_json(result: witness.ActivationWitnessQuorumResult) -> dict[str, Any]:
+    return {
+        "valid": result.valid,
+        "witness_time": result.witness_time,
+        "counting_control_groups": list(result.counting_control_groups),
+    }
+
+
 def _chain_result_to_json(result: transfer.ChainAuditResult) -> dict[str, Any]:
     return {
         "valid": result.valid,
@@ -163,10 +200,31 @@ def _chain_result_to_json(result: transfer.ChainAuditResult) -> dict[str, Any]:
 
 
 def _run_leaf(leaf: Path) -> dict[str, Any]:
-    """Route a leaf to `transfer.audit_chain` (group 36, `chain.json` present)
-    or `verify.verify` (every other leaf), mirroring `tests/test_vectors.py`'s
-    `test_chain_audit_vectors` / `test_vector_matches_spec_intended_result`
+    """Route a leaf to `transfer.audit_chain` (group 36, `chain.json`
+    present), `witness.evaluate_activation_witness_quorum` (group 40,
+    `witness-quorum.json` present), or `verify.verify` (every other leaf),
+    mirroring `tests/test_vectors.py`'s `test_chain_audit_vectors` /
+    `test_witness_quorum_vectors` / `test_vector_matches_spec_intended_result`
     routing exactly."""
+    quorum = _quorum_input(leaf)
+    if quorum is not None:
+        policy_document = _witness_policy(leaf)
+        anchor_policy = _anchor_policy(leaf)
+        assert policy_document is not None
+        assert anchor_policy is not None
+        # Parsed here, not handed over as a document: this entry point takes
+        # trusted, already-parsed configuration, unlike `verify()`.
+        quorum_result = witness.evaluate_activation_witness_quorum(
+            quorum["checkpoint"],
+            witness_policy=witness.parse_policy(policy_document),
+            epoch_id=quorum["epoch_id"],
+            expected_origin=quorum["expected_origin"],
+            anchor_evidence=quorum["anchor_evidence"],
+            anchor_policy=anchor_policy,
+            conflict_domain=quorum["conflict_domain"],
+        )
+        return _quorum_result_to_json(quorum_result)
+
     chain_path = leaf / "chain.json"
     if chain_path.exists():
         chain = _load_json(chain_path)
@@ -194,6 +252,7 @@ def _run_leaf(leaf: Path) -> dict[str, Any]:
         anchor_policy=_anchor_policy(leaf),
         revocation_evidence=_revocation_evidence(leaf),
         transfer_view=_transfer_view(leaf),
+        witness_policy=_witness_policy(leaf),
     )
     return _verify_result_to_json(verify_result)
 

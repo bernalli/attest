@@ -71,13 +71,19 @@ result stays domain control, and inclusion evidence is reported separately so th
 two are never confused.
 
 And it is worth being equally precise about the limit, because it is the honest
-answer to "so who audits the log?": **without witness cosignatures there is no
+answer to "so who audits the log?": **witness cosignatures are not
 anti-equivocation**. An unwitnessed operator can serve one view to you and a
 different one to someone else and stay internally consistent in both; a verifier
 catches that only if it already holds two conflicting validly-signed checkpoints.
-The verdict that closes this gap, `corroboration: "witnessed"`, requires a
-witness federation that does not exist yet — the format is specified, the
-deployment is not. The spec states this in its own scope section rather than
+Since v0.2 revision 7 the verdict `corroboration: "witnessed"` is reachable — one
+cosignature from a witness you have pinned yourself is enough to emit it — but
+what it says is that a second party saw a given head at a given time, not that
+the party is independent of the log and not that no second branch exists. Every
+witnessed result carries `witness_independence_not_established` for that reason.
+What is missing now is not the format but the operators: no independently run
+witness is published today, and the witness policy shipped inside the verifier
+packages is deliberately empty, so `witnessed` stays out of reach until you pin
+a policy of your own. The spec states this in its own scope section rather than
 burying it.
 
 None of which is load-bearing for the core promise: a receipt verifies offline

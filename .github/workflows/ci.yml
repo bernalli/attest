@@ -25,7 +25,7 @@ jobs:
       # Formatting is a gate, not a courtesy: without this check the tree
       # drifts silently, and it had — four files had never been formatted.
       - run: uv run --frozen ruff format --check .
-      - run: uv run --frozen mypy --strict src bridge/src
+      - run: uv run --frozen mypy --strict src bridge/src witness/src
       - run: uv run --frozen python tools/check_spec_docs.py
       # Builds the Internet-Draft snapshot source (ietf/) with the pinned,
       # inline-references-only xml2rfc v3 toolchain (ietf/README.md). uvx is

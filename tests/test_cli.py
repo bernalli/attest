@@ -2363,7 +2363,9 @@ def _v1_ots_proof(checkpoint_text: str) -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize("flag", ["--transparency", "--log-keys", "--anchor-policy"])
+@pytest.mark.parametrize(
+    "flag", ["--transparency", "--log-keys", "--anchor-policy", "--witness-policy"]
+)
 def test_verify_rejects_oversized_stage2_json_input(
     tmp_path: Path, capsys: CapSys, flag: str
 ) -> None:
@@ -3977,3 +3979,67 @@ def test_transfer_record_rejects_receipt_without_holder_pubkey(
     assert rc == 2
     assert "non-null buyer.pubkey" in capsys.readouterr().err
     assert not out.exists()
+
+
+# --------------------------------------------------------------------------
+# P1.1b (attest-v0.2.md §11.4): `--witness-policy` is trusted verifier
+# configuration on the same rail as `--log-keys`. The reachable-`witnessed`
+# path itself is pinned by conformance group 39, which is language-neutral;
+# what belongs here is the CLI contract — the flag exists, a malformed
+# document is a usage error, and a well-formed one changes nothing on its own.
+# --------------------------------------------------------------------------
+
+
+_CANONICAL_EMPTY_WITNESS_POLICY = '{"epochs":[],"schema":"attest-witness-policy-v1"}'
+
+
+def test_verify_rejects_a_malformed_witness_policy(tmp_path: Path, capsys: CapSys) -> None:
+    seed, _pub = _keygen(tmp_path, "issuer")
+    manifest_path = _manifest_init(tmp_path, seed)
+    trust_dir = _trust_dir(tmp_path, manifest_path)
+    envelope_path = _issue(tmp_path, seed, _write_payload(tmp_path))
+    policy_path = tmp_path / "bad-witness-policy.json"
+    policy_path.write_text('{"schema":"wrong","epochs":[]}', encoding="utf-8")
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "verify",
+            str(envelope_path),
+            "--trust-dir",
+            str(trust_dir),
+            "--witness-policy",
+            str(policy_path),
+        ]
+    )
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "--witness-policy" in capsys.readouterr().err
+
+
+def test_a_well_formed_witness_policy_alone_changes_nothing(tmp_path: Path, capsys: CapSys) -> None:
+    """The packaged default is the canonical EMPTY policy: installing it
+    authorizes no witness at all, so `witnessed` stays unreachable until a
+    release pins real operators."""
+    seed, _pub = _keygen(tmp_path, "issuer")
+    manifest_path = _manifest_init(tmp_path, seed)
+    trust_dir = _trust_dir(tmp_path, manifest_path)
+    envelope_path = _issue(tmp_path, seed, _write_payload(tmp_path))
+    policy_path = tmp_path / "empty-witness-policy.json"
+    policy_path.write_text(_CANONICAL_EMPTY_WITNESS_POLICY, encoding="utf-8")
+
+    capsys.readouterr()
+    rc = cli.main(["verify", str(envelope_path), "--trust-dir", str(trust_dir)])
+    baseline = json.loads(capsys.readouterr().out)
+
+    capsys.readouterr()
+    rc_with_policy = cli.main(
+        [
+            "verify",
+            str(envelope_path),
+            "--trust-dir",
+            str(trust_dir),
+            "--witness-policy",
+            str(policy_path),
+        ]
+    )
+    assert (rc_with_policy, json.loads(capsys.readouterr().out)) == (rc, baseline)

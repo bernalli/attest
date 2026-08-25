@@ -1,0 +1,15 @@
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "verified",
+  "warnings": [
+    "checkpoint_verification_failed"
+  ]
+}

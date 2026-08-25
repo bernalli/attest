@@ -56,3 +56,33 @@ export {
   auditChain,
 } from './transfer.js'
 export type { ChainAuditResult } from './transfer.js'
+
+// v0.2 §11.4 (P1.1b): WitnessPolicy is TRUSTED verifier configuration on the
+// same rail as pinned log keys — parsed here, never read off evidence.
+export {
+  SCHEMA_ID as WITNESS_POLICY_SCHEMA_ID,
+  MAX_WITNESS_SKEW_SECONDS,
+  MAX_WITNESS_ANCHOR_DELAY_SECONDS,
+  MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE,
+  ROLE_CORROBORATION,
+  ROLE_SUNSET_ACTIVATION,
+  CANONICAL_EMPTY_POLICY_BYTES,
+  WitnessError,
+  parsePolicy as parseWitnessPolicy,
+  loadPolicy as loadWitnessPolicy,
+  findEpoch as findWitnessEpoch,
+  epochCovers as witnessEpochCovers,
+  pinCovers as witnessPinCovers,
+  pinHasStandingAt as witnessPinHasStandingAt,
+  isConflicted as witnessIsConflicted,
+  PQ_COSIGNATURE_SIG_TYPE as WITNESS_PQ_COSIGNATURE_SIG_TYPE,
+  evaluateActivationWitnessQuorum,
+} from './witness.js'
+export type {
+  WitnessPolicy,
+  WitnessEpoch,
+  WitnessPin,
+  Threshold,
+  ActivationWitnessQuorumResult,
+  ActivationWitnessQuorumOptions,
+} from './witness.js'

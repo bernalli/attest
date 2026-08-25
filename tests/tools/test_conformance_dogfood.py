@@ -43,7 +43,7 @@ def test_python_adapter_single_leaf() -> None:
 def test_python_reference_self_certifies_v02(tmp_path: Path) -> None:
     """The phase's end-to-end conformance gate: the REAL Python reference
     verifier, driven through its adapter, driven through the PUBLIC runner
-    (a subprocess spawning one adapter subprocess per leaf, ~97 leaves) —
+    (a subprocess spawning one adapter subprocess per leaf, ~130 leaves) —
     self-certifies the full v0.2 corpus. Deliberately the slowest test in
     the suite; never mark, never skip: this IS the public conformance path,
     not a proxy for it."""
@@ -68,6 +68,6 @@ def test_python_reference_self_certifies_v02(tmp_path: Path) -> None:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["conformant"] is True
     assert report["passed"] == report["total"]
-    assert report["total"] >= 97
+    assert report["total"] >= 130
     assert report["subset"] == "v0.2"
     assert _HEX64_RE.match(report["corpus_revision"]) is not None

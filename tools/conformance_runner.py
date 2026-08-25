@@ -46,6 +46,7 @@ V01_EXTRA_LEAF_IDS = frozenset({"35-transfer/i-v01-transferable-null-pubkey-ok"}
 # / verifiers/ts/test/conformance.test.ts / site/test/conformance.test.ts,
 # whose match semantics this module reproduces exactly).
 _VERIFY_REQUIRED_EXACT = ("signature", "schema", "trust")
+_QUORUM_EXACT = ("valid", "witness_time", "counting_control_groups")
 _VERIFY_CONDITIONAL_EXACT = (
     "revocation",
     "binding",
@@ -264,6 +265,32 @@ def diff_verify_result(expected: dict[str, Any], actual: dict[str, Any]) -> list
     return mismatches
 
 
+def diff_witness_quorum_result(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+    """Diff an adapter's quorum-leaf output against a ``witness-quorum.json`` leaf.
+
+    Mirrors ``tests/test_vectors.py``'s ``test_witness_quorum_vectors`` and its
+    TS/site mirrors: all three members of the result are compared EXACTLY and
+    unconditionally, with no substring rule and no conditional member. This
+    surface has no ``errors``/``warnings`` at all — §11.4's quorum reports
+    standing and a time, and says nothing about why a vote did not count — so
+    there is nothing here to match loosely.
+
+    ``counting_control_groups`` is compared as an exact, ORDERED list: the
+    reference sorts it, so an adapter that emits the same groups in another
+    order is not conformant. ``witness_time`` is ``null`` whenever ``valid``
+    is false; ``_exact_eq``'s type strictness is what stops a JSON ``0`` from
+    passing for ``false`` here, exactly as in the verify diff.
+    """
+    mismatches: list[str] = []
+    for field in _QUORUM_EXACT:
+        exp_value = expected.get(field)
+        if field not in actual:
+            mismatches.append(f"{field}: missing from adapter output")
+        elif not _exact_eq(exp_value, actual[field]):
+            mismatches.append(f"{field}: expected {_fmt(exp_value)}, got {_fmt(actual[field])}")
+    return mismatches
+
+
 def diff_chain_result(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
     """Diff an adapter's chain-leaf output against a ``chain.json`` leaf's ``expected.json``.
 
@@ -366,12 +393,15 @@ def run_corpus(vectors_root: Path, template: str, subset: str, timeout: float) -
             continue
 
         actual = outcome.data or {}
-        is_chain_leaf = (leaf / "chain.json").exists()
-        mismatches = (
-            diff_chain_result(expected, actual)
-            if is_chain_leaf
-            else diff_verify_result(expected, actual)
-        )
+        # Routing is by FILE PRESENCE, the contract `chain.json` established
+        # and `witness-quorum.json` follows: the three surfaces have disjoint
+        # result shapes, so the diff rule has to be chosen before comparing.
+        if (leaf / "chain.json").exists():
+            mismatches = diff_chain_result(expected, actual)
+        elif (leaf / "witness-quorum.json").exists():
+            mismatches = diff_witness_quorum_result(expected, actual)
+        else:
+            mismatches = diff_verify_result(expected, actual)
         results.append(
             LeafResult(id=lid, status="pass" if not mismatches else "fail", mismatches=mismatches)
         )

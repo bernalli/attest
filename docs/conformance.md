@@ -35,7 +35,7 @@ import, before any leaf is checked.)
   with that leaf's absolute path in every argv token, splits the template with
   `shlex.split`, and invokes it as a fixed argv list (`shell=False` — never a
   shell string).
-- `--subset` selects `v0.1` (51 leaves) or `v0.2` (all leaves, currently 97) —
+- `--subset` selects `v0.1` (51 leaves) or `v0.2` (all leaves, currently 130) —
   see §4.
 - `--report FILE` additionally writes the machine-readable JSON report (§6)
   to `FILE`.
@@ -47,7 +47,7 @@ The runner prints one `FAIL <leaf-id>` block (with its mismatches) per
 non-passing leaf, then exactly one summary line:
 
 ```
-CONFORMANT (v0.2): 97/97 leaves pass — corpus revision <hex12>
+CONFORMANT (v0.2): 130/130 leaves pass — corpus revision <hex12>
 NOT CONFORMANT (v0.1): 48/51 leaves pass — 3 failing
 ```
 
@@ -100,7 +100,7 @@ either as a worked example of the contract above.
 
 ## 4. Subsets
 
-- **v0.2** — every leaf in the corpus (currently 97). Measures conformance
+- **v0.2** — every leaf in the corpus (currently 130). Measures conformance
   against `docs/spec/attest-v0.2.md`.
 - **v0.1** — the 51-leaf subset: every leaf whose top-level group directory's
   leading integer is ≤ 25, plus groups `29-limits` and
@@ -110,7 +110,7 @@ either as a worked example of the contract above.
   negative control living inside the otherwise-v0.2-only `35-transfer`
   group) — see `docs/spec/vectors/README.md` for the full membership
   rationale. A v0.1-only implementation (one that never accepts v0.2's hybrid
-  profile) is measured against this subset, not against all 97.
+  profile) is measured against this subset, not against all 130.
 
 ## 5. The claim process
 
@@ -165,14 +165,17 @@ sentence (§5) names.
 
 The first two entries are attest's own reference implementations,
 self-certified through this exact public path (never a special internal
-shortcut):
+shortcut). These rows are a CURRENT claim, not a changelog: a corpus revision
+is a digest over the leaf files, so it changes whenever the corpus grows, and
+a row naming a digest that no longer exists on any branch cannot be re-run by
+anyone. They are re-measured and replaced whenever the corpus changes.
 
 | Implementation | Subset | Leaves passed | Corpus revision | Date | Command |
 | --- | --- | --- | --- | --- | --- |
-| attest (Python reference) 0.4.0 | v0.2 | 97/97 | `905e03af52fa3f9d3bdbda946e55a53c877e942f1b9de32db17c71dbb149b27e` | 2026-07-23 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
-| attest (Python reference) 0.4.0 | v0.1 | 51/51 | `905e03af52fa3f9d3bdbda946e55a53c877e942f1b9de32db17c71dbb149b27e` | 2026-07-23 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
-| attest-verifier (TypeScript) 0.4.0 | v0.2 | 97/97 | `905e03af52fa3f9d3bdbda946e55a53c877e942f1b9de32db17c71dbb149b27e` | 2026-07-23 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
-| attest-verifier (TypeScript) 0.4.0 | v0.1 | 51/51 | `905e03af52fa3f9d3bdbda946e55a53c877e942f1b9de32db17c71dbb149b27e` | 2026-07-23 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
+| attest (Python reference) 0.6.0 | v0.2 | 130/130 | `55f751acdfd05861517d7f7a14b5fca07d6e4cd399af5a7bc530965302ddb79d` | 2026-08-25 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
+| attest (Python reference) 0.6.0 | v0.1 | 51/51 | `55f751acdfd05861517d7f7a14b5fca07d6e4cd399af5a7bc530965302ddb79d` | 2026-08-25 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
+| attest-verifier (TypeScript) 0.6.0 | v0.2 | 130/130 | `55f751acdfd05861517d7f7a14b5fca07d6e4cd399af5a7bc530965302ddb79d` | 2026-08-25 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
+| attest-verifier (TypeScript) 0.6.0 | v0.1 | 51/51 | `55f751acdfd05861517d7f7a14b5fca07d6e4cd399af5a7bc530965302ddb79d` | 2026-08-25 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
 
 A third-party implementation adds a row here (or in its own repo/README,
 linking back to this process) the same way: run §2's command, record the

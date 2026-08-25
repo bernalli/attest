@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import tarfile
 import zipfile
 from pathlib import Path
@@ -14,20 +15,41 @@ from tools.assert_artifacts import (
     main,
 )
 
+# The two source declarations a packaged `witness.py` must carry for the
+# default policy to be the canonical EMPTY one (v0.2 §11.4). Kept verbatim
+# here rather than imported from the tool, so a silent edit to the tool's
+# expectation shows up as a red test instead of a tautology.
+WITNESS_SOURCE = (
+    b'SCHEMA_ID: Final = "attest-witness-policy-v1"\n'
+    b"CANONICAL_EMPTY_POLICY_BYTES: Final = canon.canonical_bytes("
+    b'{"schema": SCHEMA_ID, "epochs": []})\n'
+)
+# The same module with a witness already pinned in the shipped default — the
+# packaging regression the assertion exists to catch.
+WITNESS_SOURCE_SEEDED = (
+    b'SCHEMA_ID: Final = "attest-witness-policy-v1"\n'
+    b"CANONICAL_EMPTY_POLICY_BYTES: Final = canon.canonical_bytes("
+    b'{"schema": SCHEMA_ID, "epochs": [BOOTSTRAP_EPOCH]})\n'
+)
 
-def _make_wheel(tmp: Path, members: list[str]) -> Path:
+
+def _member_bytes(name: str, witness_source: bytes = WITNESS_SOURCE) -> bytes:
+    return witness_source if name.endswith("attest/witness.py") else b"x"
+
+
+def _make_wheel(tmp: Path, members: list[str], witness_source: bytes = WITNESS_SOURCE) -> Path:
     p = tmp / "attest_receipts-0.1.2-py3-none-any.whl"
     with zipfile.ZipFile(p, "w") as z:
         for m in members:
-            z.writestr(m, b"x")
+            z.writestr(m, _member_bytes(m, witness_source))
     return p
 
 
-def _make_sdist(tmp: Path, members: list[str]) -> Path:
+def _make_sdist(tmp: Path, members: list[str], witness_source: bytes = WITNESS_SOURCE) -> Path:
     p = tmp / "attest_receipts-0.1.2.tar.gz"
     with tarfile.open(p, "w:gz") as t:
         for m in members:
-            data = b"x"
+            data = _member_bytes(m, witness_source)
             info = tarfile.TarInfo(name=m)
             info.size = len(data)
             t.addfile(info, io.BytesIO(data))
@@ -38,6 +60,7 @@ WHEEL_OK = [
     "attest/__init__.py",
     "attest/py.typed",
     "attest/schema/attest-receipt.schema.json",
+    "attest/witness.py",
     "attest_receipts-0.1.2.dist-info/METADATA",
     "attest_receipts-0.1.2.dist-info/licenses/LICENSE",
 ]
@@ -45,6 +68,7 @@ SDIST_OK = [
     "attest_receipts-0.1.2/pyproject.toml",
     "attest_receipts-0.1.2/src/attest/__init__.py",
     "attest_receipts-0.1.2/src/attest/py.typed",
+    "attest_receipts-0.1.2/src/attest/witness.py",
     "attest_receipts-0.1.2/LICENSE",
 ]
 
@@ -85,7 +109,14 @@ def _pack(files: list[str]) -> list[dict]:
     return [{"files": [{"path": f} for f in files]}]
 
 
-NPM_OK = ["dist/index.js", "dist/index.d.ts", "README.md", "CHANGELOG.md", "package.json"]
+NPM_OK = [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/witness.js",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json",
+]
 
 
 def test_npm_ok() -> None:
@@ -235,3 +266,97 @@ def test_main_all_targets_ok_returns_zero(tmp_path: Path) -> None:
         )
         == 0
     )
+
+
+def test_wheel_missing_witness_module_raises(tmp_path: Path) -> None:
+    """A wheel without the witness-policy layer is broken on import, not
+    merely feature-incomplete: `verify()` imports it unconditionally."""
+    members = [m for m in WHEEL_OK if m != "attest/witness.py"]
+    with pytest.raises(ArtifactError, match="witness"):
+        assert_wheel(_make_wheel(tmp_path, members))
+
+
+def test_wheel_with_seeded_default_policy_raises(tmp_path: Path) -> None:
+    """The published packages must ship the canonical EMPTY policy: with no
+    epochs, no witness is pinned and `corroboration: "witnessed"` is
+    unreachable for anyone installing them. A build that seeded a witness into
+    that default would pass every test in the suite and still hand users a
+    different trust root."""
+    with pytest.raises(ArtifactError, match="does not declare"):
+        assert_wheel(_make_wheel(tmp_path, WHEEL_OK, witness_source=WITNESS_SOURCE_SEEDED))
+
+
+def test_sdist_with_seeded_default_policy_raises(tmp_path: Path) -> None:
+    with pytest.raises(ArtifactError, match="does not declare"):
+        assert_sdist(_make_sdist(tmp_path, SDIST_OK, witness_source=WITNESS_SOURCE_SEEDED))
+
+
+def test_npm_missing_witness_module_raises() -> None:
+    """`npm pack --json` reports a file list, not contents, so the JavaScript
+    core's own packaged default cannot be read here — presence is what this
+    side can honestly assert."""
+    with pytest.raises(ArtifactError, match=r"dist/witness\.js"):
+        assert_npm_tarball(_pack([f for f in NPM_OK if f != "dist/witness.js"]))
+
+
+# --- The private reference witness must never ship (v0.2 §11.4) --------------
+#
+# `witness/` is an operator component: its source describes a deployment and
+# its example config names key files. hatchling's sdist default is "everything
+# not gitignored", so the exclusion in pyproject.toml is load-bearing and these
+# tests are what keep it load-bearing. The paired "not a false positive" tests
+# below matter just as much: the OPPOSITE requirement — that the packaged
+# module `attest/witness.py` IS present — is asserted a few dozen lines up, and
+# a pattern that swallowed it would trade one packaging bug for a worse one.
+
+
+def test_sdist_forbidden_private_witness_workspace_raises(tmp_path: Path) -> None:
+    p = _make_sdist(tmp_path, [*SDIST_OK, "attest_receipts-0.1.2/witness/pyproject.toml"])
+    with pytest.raises(ArtifactError, match=re.escape("witness/pyproject.toml")):
+        assert_sdist(p)
+
+
+def test_sdist_forbidden_private_witness_example_config_raises(tmp_path: Path) -> None:
+    """The example config is the worst single file to ship: it is the shape of
+    an operator's deployment, key-file paths included."""
+    p = _make_sdist(tmp_path, [*SDIST_OK, "attest_receipts-0.1.2/witness/examples/witness.toml"])
+    with pytest.raises(ArtifactError, match=re.escape("witness.toml")):
+        assert_sdist(p)
+
+
+def test_sdist_forbidden_private_witness_package_raises(tmp_path: Path) -> None:
+    p = _make_sdist(
+        tmp_path,
+        [*SDIST_OK, "attest_receipts-0.1.2/witness/src/attest_witness/service.py"],
+    )
+    with pytest.raises(ArtifactError, match=re.escape("attest_witness")):
+        assert_sdist(p)
+
+
+def test_wheel_forbidden_private_witness_package_raises(tmp_path: Path) -> None:
+    """A wheel cannot pick this up by default, but a `packages = [...]` edit
+    could — and a wheel is what `pip install` actually consumes."""
+    p = _make_wheel(tmp_path, [*WHEEL_OK, "attest_witness/__init__.py"])
+    with pytest.raises(ArtifactError, match=re.escape("attest_witness")):
+        assert_wheel(p)
+
+
+def test_npm_forbidden_private_witness_raises() -> None:
+    with pytest.raises(ArtifactError, match=re.escape("attest_witness")):
+        assert_npm_tarball(_pack([*NPM_OK, "attest_witness/cli.py"]))
+
+
+def test_sdist_attest_witness_module_is_not_a_false_positive(tmp_path: Path) -> None:
+    """`src/attest/witness.py` is REQUIRED in the sdist. The exclusion pattern
+    must not match it: it is a file named witness.py, not a witness/ directory
+    and not the attest_witness package."""
+    assert_sdist(_make_sdist(tmp_path, SDIST_OK))
+
+
+def test_wheel_attest_witness_module_is_not_a_false_positive(tmp_path: Path) -> None:
+    assert_wheel(_make_wheel(tmp_path, WHEEL_OK))
+
+
+def test_npm_dist_witness_js_is_not_a_false_positive() -> None:
+    """`dist/witness.js` is REQUIRED in the npm tarball, for the same reason."""
+    assert_npm_tarball(_pack(NPM_OK))

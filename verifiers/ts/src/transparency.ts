@@ -33,6 +33,7 @@ import {
 } from './anchor.js'
 import {
   Checkpoint,
+  noteSignatures,
   LogKey,
   TlogError,
   encodeEntry,
@@ -44,6 +45,12 @@ import {
   validateOrigin as tlogValidateOrigin,
 } from './tlog.js'
 import { TRANSPARENCY_WARN, pyTypeName } from './messages.js'
+import {
+  evaluateCorroboration,
+  isParsedPolicy,
+  parsePolicy as parseWitnessPolicy,
+  type WitnessPolicy,
+} from './witness.js'
 
 // RFC 6962 inclusion/consistency proofs for a tree of at most 2**64 leaves
 // have at most 64 entries (one per tree level) — caps a hostile proof list
@@ -58,8 +65,10 @@ export const TRANSPARENCY_EQUIVOCATION_DETECTED = 'equivocation_detected'
 
 export const CORROBORATION_NONE = 'none'
 export const CORROBORATION_LOGGED = 'logged'
-// Defined for the Stage 3 contract but unreachable in Stage 2: no witness
-// input exists yet on the evidence schema above.
+// Reachable since v0.2 rev 7 (P1.1b): Step 8 below emits it when the caller
+// supplies a `witnessPolicy` and a pinned, epoch-valid type-0x04 cosignature
+// verifies (§10.1). With no policy supplied — the packaged default — every
+// branch still settles on NONE or LOGGED.
 export const CORROBORATION_WITNESSED = 'witnessed'
 
 export const MAX_PROOF_LEN_ = MAX_PROOF_LEN
@@ -194,6 +203,7 @@ function evaluateUntrustedEvidence(
   expectedOrigin: string,
   policy: AnchorPolicy,
   expectedEntry: Record<string, unknown>,
+  witnessPolicy: WitnessPolicy | null = null,
 ): TransparencyResult {
   if (!isPlainObject(evidence)) return notChecked(TRANSPARENCY_WARN.EVIDENCE_INVALID)
 
@@ -276,7 +286,7 @@ function evaluateUntrustedEvidence(
 
   // --- Step 5: base standing. ---
   let transparencyState: string = TRANSPARENCY_LOGGED
-  const corroborationState: string = CORROBORATION_LOGGED
+  let corroborationState: string = CORROBORATION_LOGGED
   const warnings: string[] = []
 
   // --- Step 6: an optional anchor claim upgrades transparencyState if a
@@ -306,6 +316,24 @@ function evaluateUntrustedEvidence(
     return { transparency: TRANSPARENCY_NOT_CHECKED, corroboration: CORROBORATION_NONE, warnings }
   }
 
+  // --- Step 8: a pinned witness cosignature upgrades corroboration from
+  // `logged` to `witnessed` (§10.1, P1.1b). Reachable only FROM `logged`: a
+  // cosignature never rescues a broken inclusion proof. Any failure is
+  // SILENT by §11.4 — the independence warning is the only literal this
+  // layer may add, and only on success.
+  if (witnessPolicy !== null && corroborationState === CORROBORATION_LOGGED) {
+    const verdict = evaluateCorroboration(
+      checkpoint,
+      noteSignatures(new TextDecoder().decode(checkpoint.signedNoteBytes)),
+      witnessPolicy,
+      evidence['witness_policy_epoch'],
+    )
+    if (verdict.witnessed) {
+      corroborationState = CORROBORATION_WITNESSED
+      warnings.push(...verdict.warnings)
+    }
+  }
+
   return { transparency: transparencyState, corroboration: corroborationState, warnings }
 }
 
@@ -314,6 +342,10 @@ export interface EvaluateTransparencyOptions {
   expectedOrigin: string
   policy: AnchorPolicy
   expectedEntry: Record<string, unknown>
+  /** TRUSTED witness policy, on the same rail as `logKeys`: packaged with the
+   * release, never read off evidence. Omitting it preserves the previous
+   * result exactly (§10.2). A malformed one throws. */
+  witnessPolicy?: unknown
 }
 
 /** Evaluate one untrusted transparency/corroboration evidence bundle.
@@ -323,14 +355,47 @@ export interface EvaluateTransparencyOptions {
  * arguments validate, no behavior supplied by `evidence` may escape this
  * boundary as an exception.
  */
+/** Deep-validate the trusted witness policy; `null` means "not configured".
+ *
+ * Same rail as `logKeys`: a malformed policy is a caller/configuration bug
+ * and throws, while omitting it entirely preserves the previous result. */
+export function validateWitnessPolicy(witnessPolicy: unknown): WitnessPolicy | null {
+  if (witnessPolicy === null || witnessPolicy === undefined) return null
+  // Validation must be IDEMPOTENT, and in TypeScript that takes an explicit
+  // check: `verify()` validates the policy eagerly (before the untrusted
+  // boundary) and then hands the PARSED result down to this same function,
+  // exactly as `verify.py` does. Python's `isinstance` short circuit absorbs
+  // that second pass; here, without this branch, `parsePolicy` rejects its
+  // own output for a missing `schema` member — and because that throw lands
+  // outside the untrusted-evidence guard, verify() degrades the WHOLE claim
+  // to `transparency_claim_unresolvable`. `corroboration: "witnessed"` was
+  // therefore unreachable through the TypeScript public API, while the
+  // Python core reached it on byte-identical input; group 39 of the
+  // conformance corpus is what surfaced it.
+  if (isParsedPolicy(witnessPolicy)) return witnessPolicy
+  try {
+    return parseWitnessPolicy(witnessPolicy)
+  } catch (e) {
+    throw new TransparencyError(e instanceof Error ? e.message : String(e))
+  }
+}
+
 export function evaluateTransparency(evidence: unknown, options: EvaluateTransparencyOptions): TransparencyResult {
   const logKeys = validateLogKeys(options.logKeys)
   const expectedOrigin = validateExpectedOrigin(options.expectedOrigin)
   const policy = validatePolicy(options.policy)
   const expectedEntry = validateExpectedEntry(options.expectedEntry)
+  const witnessPolicy = validateWitnessPolicy(options.witnessPolicy)
 
   try {
-    return evaluateUntrustedEvidence(evidence, logKeys, expectedOrigin, policy, expectedEntry)
+    return evaluateUntrustedEvidence(
+      evidence,
+      logKeys,
+      expectedOrigin,
+      policy,
+      expectedEntry,
+      witnessPolicy,
+    )
   } catch {
     // Deliberate adversarial-boundary confinement, not lazy error handling:
     // a hostile evidence object's own property getters/toString/valueOf can

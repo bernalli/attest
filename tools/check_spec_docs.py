@@ -658,6 +658,91 @@ def _check_revision_log(spec_text: str, filename: str) -> list[str]:
     return errors
 
 
+# P1.1b is deliberately a specification-only trust-surface amendment.  These
+# literals are exact conformance text, rather than aspirational documentation:
+# each prevents a later edit from silently reopening one of D7--D11 or moving
+# Stage 4 material onto the P1.1b branch.
+_P11B_V02_REQUIRED_LITERALS: tuple[str, ...] = (
+    "attest-cosignature-ml-dsa-65-v1",
+    '`0xff || UTF8("attest-cosignature-ml-dsa-65-v1")`',
+    "C2SP type `0x06` MUST NOT count",
+    'UTF8("cosignature/v1\\n")',
+    '`corroboration: "witnessed"` asserts timestamped witness observation only',
+    "MUST NOT be described as proof of organizational independence or split-view prevention",
+    "One valid Ed25519 C2SP type-`0x04` cosignature",
+    "witness_independence_not_established",
+    "`WitnessPolicy` is a closed JSON object",
+    '"schema": "attest-witness-policy-v1"',
+    '"epochs": []',
+    "`^[a-z0-9][a-z0-9._-]{0,127}$`",
+    "exact UTC ISO-8601 second timestamps",
+    "inclusive at both declared boundaries",
+    "Evidence MUST identify `witness_policy_epoch` explicitly; "
+    "the current epoch is never substituted",
+    "sorted and duplicate-free",
+    "distinct activation-role `control_group` values, not keys",
+    "same verifier-owned configuration rail as existing pinned log keys",
+    "Python core keyword `witness_policy=`",
+    "Python CLI file `--witness-policy`",
+    "TypeScript verifier option `witnessPolicy`",
+    "Installing a release authorizes that packaged policy revision",
+    "Evidence MUST NOT carry epoch contents",
+    "one canonical JCS document and MUST be byte-identical",
+    "Direct conflict: `X` appears in the pin's `affiliated_domains`.",
+    "Transitive conflict: the pin's `control_group` equals the `control_group`",
+    "parameterized as `conflict_domain`",
+    "Domain inequality MUST NOT establish independence",
+    "no positive independence certificate or inference rule",
+    "Absent `compromised_after` means no compromise is declared",
+    "`T <= compromised_after` retains its standing",
+    "`T > compromised_after` excludes it",
+    'explicit `"compromised_after": null` means compromise onset is unknown',
+    "release publisher that ships the policy",
+    "cannot rewrite or delete prior epoch contents",
+    "reference witness receives a configured allowlist of log origins "
+    "and their pinned hybrid log keys",
+    "No origin or log key is hardcoded in source",
+    "any configured allowlist size, including a single origin",
+    "Unknown origins are rejected before checkpoint or consistency work can advance state",
+    "spec, policy, both-core verification, vectors, reference witness, ceremony, review/PR/tag",
+    "top-level `witness/`",
+    "unpublished, receives no independent tag, and is excluded from both public package artifacts",
+    "one vote per `control_group`",
+    "MAX_WITNESS_SKEW_SECONDS = 600",
+    "MAX_WITNESS_ANCHOR_DELAY_SECONDS = 86400",
+    "MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE = 9",
+    "before any Ed25519 or ML-DSA-65 signature verification",
+    "full `signed-note-v2` anchor over the complete signed note",
+    "`max(t_i) <= A <= T + MAX_WITNESS_ANCHOR_DELAY_SECONDS`",
+    "No warning literal is introduced by this section other than "
+    "`witness_independence_not_established`",
+)
+
+_P11B_VERSIONING_REQUIRED_LITERALS: tuple[str, ...] = (
+    "`attest-cosignature-ml-dsa-65-v1`",
+    "`witness_independence_not_established`",
+    "WitnessPolicy epochs are immutable",
+    "groups 39 and 40",
+)
+
+
+def check_p11b_witness_contract(spec_v02: str, versioning: str) -> list[str]:
+    """Fail closed on drift in P1.1b's witness-policy amendment."""
+    errors = [
+        f"attest-v0.2.md: P1.1b witness contract missing required literal {literal!r}"
+        for literal in _P11B_V02_REQUIRED_LITERALS
+        if literal not in spec_v02
+    ]
+    errors.extend(
+        f"attest-versioning.md: P1.1b registry/lifecycle missing required literal {literal!r}"
+        for literal in _P11B_VERSIONING_REQUIRED_LITERALS
+        if literal not in versioning
+    )
+    if re.search(r"^## 18(?:\.|\b)|^### 18\.", spec_v02, re.MULTILINE) is not None:
+        errors.append("attest-v0.2.md: forbidden Stage 4 heading (§18) on P1.1b branch")
+    return errors
+
+
 def check_receipt_id_pattern(spec_v01: str, schema: dict[str, object]) -> list[str]:
     """§5.1's inline `receipt_id` ULID regex MUST equal the schema's own
     `properties.receipt_id.pattern` — the two describe the same wire
@@ -993,6 +1078,7 @@ def main() -> int:
     versioning = _VERSIONING_PATH.read_text(encoding="utf-8")
 
     errors = collect_errors(threat_model, privacy, spec_v01, spec_v02, schema, versioning)
+    errors += check_p11b_witness_contract(spec_v02, versioning)
     errors += check_standards_relationship()
     errors += check_internet_draft_snapshot()
     errors += check_conformance_doc()

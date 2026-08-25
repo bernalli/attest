@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "attest-witness"
+version = "0.1.0"
+description = "attest reference C2SP tlog-witness — hybrid cosigning witness (UNRELEASED, NEVER PUBLISHED)"
+requires-python = ">=3.12"
+dependencies = ["attest-receipts>=0.6.0"]
+# `Private :: Do Not Upload` is refused by PyPI itself: this package holds an
+# operator's allowlist, deployment shape and online signing-key wiring, none of
+# which belongs in a public artifact (v0.2 §11.4). It also receives no release
+# tag of its own — the repository tag covers the published project only.
+classifiers = ["Private :: Do Not Upload"]
+
+[project.scripts]
+attest-witness = "attest_witness.cli:main"
+
+[tool.uv.sources]
+attest-receipts = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/attest_witness"]

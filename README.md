@@ -40,7 +40,7 @@ them fails, nothing here is needed.
 
 `attest-receipts` 0.4.0 on PyPI (issue and verify) and `attest-verifier` 0.4.0 on
 npm (verify only) are independent Python and TypeScript implementations that
-agree on all 97 conformance vector leaves. **Try it in your browser:**
+agree on all 130 conformance vector leaves. **Try it in your browser:**
 <https://bernalli.github.io/attest/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Nothing in production uses it:
 no archive runs such a gate today, there are no issuers and no external reviews,
@@ -117,7 +117,7 @@ amount of protocol fixes that.
 
 Spec v0.1 is complete and v0.2 is specified and implemented on `main`, with two
 independent implementations — a Python reference implementation and a TypeScript
-verifier — that agree on all 97 conformance vector leaves across 36 groups: 51
+verifier — that agree on all 130 conformance vector leaves across 38 groups: 51
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
@@ -171,7 +171,7 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   answered once instead of re-argued per issue.
 - **[Conformance program](docs/conformance.md).** One documented command, run with
   a third party's own adapter against the vector corpus, produces a pass/fail
-  report and a self-certification claim; both in-repo verifiers pass 97/97 through
+  report and a self-certification claim; both in-repo verifiers pass 130/130 through
   that exact path.
 
 ## Quickstart
@@ -223,6 +223,11 @@ specification. [docs/spec/vectors/](docs/spec/vectors/) holds the conformance
 corpus every implementation is checked against.
 
 For merchants who'd rather not hand-sign anything, see [bridge/README.md](bridge/README.md).
+
+For anyone wanting to run a witness — the component that cosigns a log's
+checkpoints so a verifier can tell that somebody else saw the same tree — see
+[witness/README.md](witness/README.md). Like the bridge, it is a reference
+implementation for operators and is not published to any package registry.
 
 [docs/spec/attest-v0.2.md](docs/spec/attest-v0.2.md) is an additive delta
 specification defining the v0.2 hybrid Ed25519+ML-DSA-65 signature profile
@@ -294,7 +299,7 @@ mark, which has not happened. Conformance claims follow the self-certification
 process in [docs/conformance.md](docs/conformance.md).
 
 **Contributing.** See [`CONTRIBUTING.md`](CONTRIBUTING.md). Implementation pull
-requests must pass all 97 conformance vector leaves and keep both the Python and
+requests must pass all 130 conformance vector leaves and keep both the Python and
 TypeScript suites green.
 
 **Contact.** Use GitHub Issues for technical bugs, GitHub Discussions for

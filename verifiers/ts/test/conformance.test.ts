@@ -1,4 +1,4 @@
-// The conformance merge gate (36 vector groups / 97 leaves): this suite discovers every leaf under
+// The conformance merge gate (38 vector groups / 130 leaves): this suite discovers every leaf under
 // `docs/spec/vectors/` and asserts the produced VerificationResult matches
 // its `expected.json`, using the exact same match rules as the Python
 // reference's `tests/test_vectors.py`. Passing this suite in full IS the
@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
-import { verify, isOk, auditChain } from '../src/index.js'
+import { verify, isOk, auditChain, evaluateActivationWitnessQuorum, parseWitnessPolicy } from '../src/index.js'
 import { canonicalBytes, loadsStrict } from '../src/canon.js'
 import type { JsonObject } from '../src/canon.js'
 import * as V from './helpers/vectors.js'
@@ -16,12 +16,16 @@ const allLeaves = V.findLeafDirs()
 // (auditChain, never verify()) — excluded here and driven by their own
 // describe block below.
 const chainLeaves = allLeaves.filter((d) => V.chainInput(d) !== null)
-const leaves = allLeaves.filter((d) => V.chainInput(d) === null)
+// Group 40 (activation witness quorum, v0.2 §11.4) leaves are a THIRD surface
+// (evaluateActivationWitnessQuorum, never verify() and never auditChain) —
+// excluded here and driven by their own describe block below.
+const quorumLeaves = allLeaves.filter((d) => V.quorumInput(d) !== null)
+const leaves = allLeaves.filter((d) => V.chainInput(d) === null && V.quorumInput(d) === null)
 const canonicalLeaves = leaves.filter((d) => existsSync(join(d, 'canonical.json')))
 
 describe('attest conformance vectors', () => {
-  it('discovers the full vector suite (>= 97 leaves)', () => {
-    expect(allLeaves.length).toBeGreaterThanOrEqual(97)
+  it('discovers the full vector suite (>= 130 leaves)', () => {
+    expect(allLeaves.length).toBeGreaterThanOrEqual(130)
   })
 
   it.each(leaves.map((d) => [V.vectorId(d), d] as const))('%s', (_id, dir) => {
@@ -32,6 +36,7 @@ describe('attest conformance vectors', () => {
       anchorPolicy: V.anchorPolicy(dir),
       revocationEvidence: V.revocationEvidence(dir),
       transferView: V.transferView(dir),
+      witnessPolicy: V.witnessPolicy(dir),
     })
 
     // always-exact
@@ -78,6 +83,32 @@ describe('attest conformance vectors: chain-of-title audit (group 36)', () => {
       expect(result.errors.some((e) => e.includes(s)), `chain error containing ${s}; got ${JSON.stringify(result.errors)}`).toBe(true)
     }
     expect([...result.warnings]).toEqual(exp.warnings)
+  })
+})
+
+describe('attest conformance vectors: activation witness quorum (group 40)', () => {
+  it.each(quorumLeaves.map((d) => [V.vectorId(d), d] as const))('%s', (_id, dir) => {
+    const exp = V.expected(dir)
+    const q = V.quorumInput(dir)!
+    const policyDocument = V.witnessPolicy(dir)
+    const anchorPolicy = V.anchorPolicy(dir)
+    expect(policyDocument).not.toBeNull()
+    expect(anchorPolicy).not.toBeNull()
+
+    // Parsed here, not handed over as a document: this entry point takes
+    // trusted, already-parsed configuration, unlike verify().
+    const result = evaluateActivationWitnessQuorum(q.checkpoint, {
+      witnessPolicy: parseWitnessPolicy(policyDocument),
+      epochId: q.epochId,
+      expectedOrigin: q.expectedOrigin,
+      anchorEvidence: q.anchorEvidence,
+      anchorPolicy: anchorPolicy!,
+      conflictDomain: q.conflictDomain,
+    })
+
+    expect(result.valid).toBe(exp.valid)
+    expect(result.witnessTime).toBe(exp.witness_time)
+    expect([...result.countingControlGroups]).toEqual(exp.counting_control_groups)
   })
 })
 

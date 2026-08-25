@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "attest-receipts"
-version = "0.6.0"
+version = "0.7.0"
 description = "attest reference implementation (v0.1 and v0.2) — cryptographically-signed, offline-verifiable purchase receipts"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -34,6 +34,14 @@ dev = ["pytest>=8", "pytest-cov", "hypothesis>=6", "ruff", "mypy", "dilithium-py
 [project.scripts]
 attest = "attest.cli:main"
 
+[tool.hatch.build.targets.sdist]
+# The reference witness is an OPERATOR's component: its source carries the
+# shape of a deployment, its example config names key files, and v0.2 §11.4
+# requires it to be excluded from both public package artifacts. hatchling's
+# sdist default is "everything not gitignored", so without this line publishing
+# the library would publish the witness with it.
+exclude = ["/witness"]
+
 [tool.hatch.build.targets.wheel]
 # Distribution name (attest-receipts) differs from the import package (attest),
 # so hatchling cannot infer the package directory on its own.
@@ -46,6 +54,16 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "S", "RUF"]
 ignore = ["S101"]  # assert in tests
+
+[tool.ruff.lint.per-file-ignores]
+# The witness test tree IMPORTS its fixtures instead of inheriting them from a
+# conftest.py: a second conftest.py in a non-package test tree becomes a second
+# top-level module named `conftest` and hijacks `bridge/tests`' own
+# `from conftest import ...` (measured — it broke nine bridge modules at
+# collection). A test then takes a fixture as a parameter of the same name it
+# imported, which is precisely what F811 flags. Scoped to this directory so a
+# genuine redefinition anywhere else still fails the gate.
+"witness/tests/*" = ["F811"]
 
 [tool.mypy]
 strict = true
@@ -63,7 +81,7 @@ module = "pqcrypto.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "bridge/tests"]
+testpaths = ["tests", "bridge/tests", "witness/tests"]
 
 [tool.uv.workspace]
-members = ["bridge"]
+members = ["bridge", "witness"]

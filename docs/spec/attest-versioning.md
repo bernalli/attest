@@ -69,6 +69,16 @@ The tables below are the extension points named by §2. Registration policy is *
 
 **Non-normative note:** `ed25519`'s `active` state is qualified by the CRQC-cutoff mechanism named in §4 — a future cryptographically-relevant quantum computer moves it to `unsafe` under §4's lifecycle rule, not by removing it from this table.
 
+### 6.1.1 C2SP signature-type identifiers
+
+| Identifier | Type | State | Introduced | Reference |
+| --- | ---: | --- | --- | --- |
+| `attest-cosignature-ml-dsa-65-v1` | `0xff` | active | v0.2 rev 7 | v0.2 §9.2, §11.4 |
+
+This identifier is the namespaced ML-DSA-65 witness-cosignature leg, not the checkpoint identifier `attest-ml-dsa-65`; C2SP `0x06` is excluded by v0.2 §9.2 and is not an alias or successor.
+
+WitnessPolicy epochs are immutable release-controlled verifier policy. An installed release may add a future epoch or add/tighten a pin's compromise information, but it MUST NOT rewrite or delete the membership, keys, roles, control groups, threshold, validity interval, or contents of a prior epoch. Evidence identifies an epoch but never authorizes policy contents or updates.
+
 ### 6.2 Payload fields
 
 v0.1 §5 is the authoritative payload-field registry: its per-object tables (§5.1–§5.6) list every defined field, its type, and its required-ness. This section is a pointer to that registry, not a duplicate of it, to keep a single source of truth. A new payload field, or a new required-ness/type constraint on an existing field that would change verifier behavior on unchanged inputs, is a normative amendment under §5 above and MUST be recorded in the governing specification's own `## Revision log`. New fields enter OPTIONAL, per the additive pattern (§2): an unrecognized field remains signed-and-warned (v0.1 §11.2) until a registry amendment recognizes it.
@@ -101,8 +111,17 @@ Key lifecycle statuses — `active`, `retired`, `compromised` (v0.1 §7.3) — a
 
 This registry's first entry is populated by the receipt-transfer profile named as out of scope for v0.1 (v0.1 §2) and shipped as v0.2's Stage 3 (v0.2 §17), the remaining stage of v0.2's roadmap this registry named empty at its introduction.
 
+### 6.6 Warning literals
+
+| Literal | State | Introduced | Reference |
+| --- | --- | --- | --- |
+| `witness_independence_not_established` | active | v0.2 rev 7 | v0.2 §10.1, §11.4, §15 item 1 |
+
+This is the sole P1.1b warning literal. It records that timestamped witness observation does not establish organizational independence; it is not a positive independence inference.
+
 ## Revision log
 
+- **2026-07-28 (rev 4)**: §6.1.1 registers `attest-cosignature-ml-dsa-65-v1` at C2SP type `0xff` and distinguishes it from the checkpoint identifier; immutable WitnessPolicy epoch/update lifecycle is recorded; §6.6 registers the sole P1.1b warning `witness_independence_not_established`; revision provenance is groups 39 and 40. — vectors: 39-witness-corroboration, 40-witness-quorum
 - **2026-07-23 (rev 3)**: §6.3 `transferred` row assigned `active` state by v0.2 §17 (Stage 3, was `reserved`); §6.4 gains `transfer-record`, `active`, introduced by v0.2 §8/§17; §6.5 receives its first entry, `issuer-mediated-v1`, `active` — the transfer-type registry named empty at this document's introduction now has its first registrant. **Amended same-day, still rev 3 (unpublished):** §2's sanctioned newly-recognized-hazard instances extended from two to three with the v0.2 rev 6 holder-binding schema conditional (attest-v0.2.md §17.8). — vectors: 35-transfer, 36-transfer-chain
 - **2026-07-22 (rev 2)**: §6.4 `revocation-record` row assigned `active` state by v0.2 rev 5 (was `reserved`); §2 amendment rule restored — the security-strengthening exception (resource guards above §11.3's floors, the `refund_window` deadline-evidence requirement) was omitted from an earlier revision of this document and is now stated; §6.3 registry corrected — the `compromised` row is dropped (it names a key lifecycle STATUS, v0.1 §7.3, not a `license.revocability` class, v0.1 §5.5) and a clarifying sentence distinguishes the two vocabularies. — vectors: none
 - **2026-07-22 (rev 1)**: document introduced — vectors: none

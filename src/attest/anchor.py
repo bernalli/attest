@@ -492,6 +492,20 @@ def verify_anchor(
     )
 
 
+def validate_policy(policy: object) -> AnchorPolicy:
+    """Deep-validate a trusted `AnchorPolicy`, raising `AnchorError` if it is
+    malformed — the public name for what `verify_anchor` does to its own
+    policy argument before touching any evidence.
+
+    Exists so a caller that must validate its trusted configuration BEFORE
+    deciding whether any anchor work is worth doing (the §11.4 quorum
+    primitive, whose anchor check is deliberately last) does not have to
+    reach for a private helper. Mirrors the TypeScript core's already-exported
+    `validatePolicy`, so the two cores expose the same surface.
+    """
+    return _validate_policy(policy)
+
+
 def passes_horizon(verdict: AnchorVerdict, policy: AnchorPolicy) -> bool:
     """True iff `policy.crqc_horizon is None`, or `verdict` is a PQ-surviving
     anchor whose time is strictly before the horizon.

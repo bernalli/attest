@@ -59,6 +59,7 @@ import hashlib
 import json
 import shutil
 import unicodedata
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,7 @@ from attest import (
     transfer,
     ulid,
     validate,
+    witness,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -247,6 +249,63 @@ CHAIN_RECEIPT_0 = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=bytes
 CHAIN_RECEIPT_1 = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=bytes([36] * 10))
 CHAIN_RECEIPT_2 = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=bytes([37] * 10))
 CHAIN_PHANTOM_RECEIPT = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=bytes([40] * 10))
+
+
+# --- groups 39/40 (v0.2 §11.4, witness federation) additional fixed inputs ---
+#
+# Ten witness identities, each with an Ed25519 leg (seed bytes 41-50) and an
+# ML-DSA-65 leg (`key_derive` seed bytes 51-60), continuing the seed numbering
+# above (1-6, 9, 26, 28-30, 32-38 taken; 40 is a ULID randomness byte). Group
+# 39 needs one pinned witness plus one impostor; the block is sized to ten
+# because group 40's committee-ceiling leaf needs ten distinct control groups.
+#
+# One witness == one operator == one control group by construction, EXCEPT
+# where a leaf deliberately says otherwise (40g pins two keys of one operator
+# into a single control group; 40i puts a domain-conflicted sibling into
+# another witness's group). Keeping the default one-to-one is what makes those
+# two leaves the only place a reader has to think about the difference.
+
+_WITNESS_SLOTS = 10
+WITNESS_ED_KPS = [keys.from_seed(bytes([41 + index]) * 32) for index in range(_WITNESS_SLOTS)]
+WITNESS_MLDSA_KEYS = [
+    ML_DSA_65.key_derive(bytes([51 + index]) * 32) for index in range(_WITNESS_SLOTS)
+]
+WITNESS_NAMES = [f"attest-witness-{chr(97 + index)}-2026" for index in range(_WITNESS_SLOTS)]
+WITNESS_OPERATORS = [f"witness-{chr(97 + index)}.example" for index in range(_WITNESS_SLOTS)]
+WITNESS_CONTROL_GROUPS = [f"group-{chr(97 + index)}.example" for index in range(_WITNESS_SLOTS)]
+
+# Real key material that NO epoch ever pins (39b): the impostor is genuine, it
+# is simply not in the trusted policy.
+UNPINNED_WITNESS_ED_KP = keys.from_seed(bytes([61]) * 32)
+UNPINNED_WITNESS_NAME = "attest-witness-impostor-2026"
+
+# Epoch windows, fixed and far apart so a leaf's intent is legible from its
+# timestamps alone: the CURRENT epoch is open-ended from 2026-01-01, the
+# HISTORICAL one closed in 2020 (39i/39j/39k, 40r).
+WITNESS_EPOCH_ID = "bootstrap-2026"
+WITNESS_EPOCH_NOT_BEFORE = "2026-01-01T00:00:00Z"
+HISTORICAL_EPOCH_ID = "bootstrap-2020"
+HISTORICAL_EPOCH_NOT_BEFORE = "2020-01-01T00:00:00Z"
+HISTORICAL_EPOCH_NOT_AFTER = "2020-12-31T23:59:59Z"
+
+# 2026-06-01T00:00:00Z, inside the current epoch: the instant every group
+# 39/40 cosignature claims to have observed unless its leaf says otherwise.
+# The two spellings are the same instant — cosignature blobs carry POSIX
+# seconds, policy documents carry the §11.4 timestamp grammar — and the
+# generator asserts they agree rather than trusting the comment.
+WITNESS_OBSERVED_AT = 1780272000
+WITNESS_OBSERVED_AT_ISO = "2026-06-01T00:00:00Z"
+# 2020-06-01T00:00:00Z, inside the historical epoch.
+HISTORICAL_OBSERVED_AT = 1590969600
+HISTORICAL_OBSERVED_AT_ISO = "2020-06-01T00:00:00Z"
+
+# Group 40's `conflict_domain`: the issuer whose sunset the quorum would be
+# activating — a witness affiliated with it cannot corroborate its own sunset.
+WITNESS_CONFLICT_DOMAIN = ISSUER_ID
+
+# Sentinel distinguishing "the policy declares nothing about compromise" from
+# an explicit JSON `null` (§11.4's tri-state; see `_witness_pin`).
+_ABSENT: Any = object()
 
 
 # --- generic helpers --------------------------------------------------------
@@ -508,6 +567,235 @@ def _hex_proof(proof: list[bytes]) -> list[str]:
     return [item.hex() for item in proof]
 
 
+# --- groups 39/40 witness material (v0.2 §11.4) -----------------------------
+#
+# Policy documents are written to `witness-policy.json` as the DOCUMENT the
+# spec describes, never as a parsed object: `witness-policy.json` is TRUSTED
+# verifier configuration on the same rail as `log-keys.json`/
+# `anchor-policy.json`, and each core runs its OWN `parse_policy` over it.
+# That is the whole point of shipping the document — the corpus exercises both
+# parsers, not just both evaluators.
+
+
+def _witness_pin(
+    index: int,
+    *,
+    roles: list[str],
+    not_before: str = WITNESS_EPOCH_NOT_BEFORE,
+    not_after: str | None = None,
+    operator_id: str | None = None,
+    control_group: str | None = None,
+    affiliated_domains: list[str] | None = None,
+    compromised_after: Any = _ABSENT,
+    with_mldsa: bool = True,
+) -> dict[str, Any]:
+    """One pinned witness identity, exactly as the policy document spells it.
+
+    `compromised_after` is TRI-state (§11.4): the default sentinel omits the
+    member entirely (nothing declared), an explicit `None` writes JSON `null`
+    (onset unknown — the pin never carries standing), and a timestamp writes
+    the declared onset. A plain `str | None` parameter cannot express that
+    difference, and the difference is exactly what leaf 40t pins.
+    """
+    operator = operator_id if operator_id is not None else WITNESS_OPERATORS[index]
+    domains = sorted({operator, *(affiliated_domains or [])})
+    mldsa_pub = WITNESS_MLDSA_KEYS[index][0]
+    pin: dict[str, Any] = {
+        "operator_id": operator,
+        "control_group": control_group
+        if control_group is not None
+        else WITNESS_CONTROL_GROUPS[index],
+        "name": WITNESS_NAMES[index],
+        "ed25519_pub_b64u": keys.b64u(WITNESS_ED_KPS[index].pub),
+        "mldsa_65_pub_b64u": keys.b64u(mldsa_pub) if with_mldsa else None,
+        "roles": sorted(roles),
+        "not_before": not_before,
+        "not_after": not_after,
+        "affiliated_domains": domains,
+    }
+    if compromised_after is not _ABSENT:
+        pin["compromised_after"] = compromised_after
+    return pin
+
+
+def _witness_epoch(
+    witnesses: list[dict[str, Any]],
+    *,
+    epoch_id: str = WITNESS_EPOCH_ID,
+    not_before: str = WITNESS_EPOCH_NOT_BEFORE,
+    not_after: str | None = None,
+    threshold: tuple[int, int] = (1, 1),
+    log_origins: list[str] | None = None,
+) -> dict[str, Any]:
+    """One immutable epoch: a fixed committee over a fixed window."""
+    return {
+        "epoch_id": epoch_id,
+        "not_before": not_before,
+        "not_after": not_after,
+        "log_origins": sorted(log_origins if log_origins is not None else [LOG_ORIGIN]),
+        "threshold": {"n": threshold[0], "m": threshold[1]},
+        "witnesses": witnesses,
+    }
+
+
+def _witness_policy_document(*epochs: dict[str, Any]) -> dict[str, Any]:
+    """An `attest-witness-policy-v1` document, checked against the real parser.
+
+    The generator-time `parse_policy` call is a narrow self-check in this
+    file's existing style (cf. `_assert_schema_valid`): every policy shipped as
+    trusted configuration must be one the reference parser accepts, or the leaf
+    would be testing the parser's rejection path by accident instead of the
+    evaluator's behavior. Leaves that WANT a rejected policy do not exist in
+    groups 39/40 — a malformed trusted input raises, and `expected.json` has no
+    vocabulary for an exception.
+    """
+    document = {"schema": witness.SCHEMA_ID, "epochs": list(epochs)}
+    witness.parse_policy(document)
+    return document
+
+
+def _ed_cosignature_blob(
+    name: str,
+    kp: keys.SigningKeyPair,
+    note_bytes: bytes,
+    timestamp: int,
+    *,
+    signed_message: bytes | None = None,
+    corrupt: bool = False,
+) -> bytes:
+    """A C2SP type-`0x04` Ed25519 cosignature blob: key ID ‖ time ‖ signature.
+
+    `signed_message` overrides WHAT gets signed while leaving the blob's shape
+    untouched — the only way to build 39e's "a signature made in the checkpoint
+    domain, presented as a cosignature". `corrupt` flips a signature byte for
+    39c, which needs a well-formed blob whose signature simply does not verify.
+    """
+    key_id = witness.cosignature_key_id(name, kp.pub)
+    message = (
+        witness.cosignature_message(note_bytes, timestamp)
+        if signed_message is None
+        else signed_message
+    )
+    signature = keys.sign(message, kp)
+    if corrupt:
+        signature = bytes([signature[0] ^ 0x01]) + signature[1:]
+    return key_id + timestamp.to_bytes(8, "big") + signature
+
+
+def _pq_cosignature_blob(
+    name: str,
+    index: int,
+    note_bytes: bytes,
+    timestamp: int,
+    *,
+    signed_message: bytes | None = None,
+) -> bytes:
+    """The activation leg: a `0xff`-typed ML-DSA-65 cosignature blob.
+
+    The `0xff` extension type is NOT the checkpoint's own `attest-ml-dsa-65`:
+    sharing that identifier would let a checkpoint signature be replayed as a
+    witness assertion (§11.4), which is what leaf 39f pins from the other side.
+    """
+    mldsa_pub, mldsa_sk = WITNESS_MLDSA_KEYS[index]
+    key_id = tlog.key_hash(name, witness.PQ_COSIGNATURE_SIG_TYPE, mldsa_pub)
+    message = (
+        witness.cosignature_message(note_bytes, timestamp)
+        if signed_message is None
+        else signed_message
+    )
+    return (
+        key_id
+        + timestamp.to_bytes(8, "big")
+        + ML_DSA_65.sign(mldsa_sk, message, deterministic=True)
+    )
+
+
+def _note_line(name: str, blob: bytes) -> str:
+    """One C2SP signed-note signature line (§9.2's `— <name> <base64>` form)."""
+    return f"— {name} {base64.b64encode(blob).decode('ascii')}\n"
+
+
+def _cosigned(checkpoint_text: str, *lines: str) -> str:
+    """Append cosignature lines to an already-signed checkpoint note.
+
+    Order matters for what an anchor commits to: a `signed-note-v2` anchor
+    seeds from `signed_note_bytes`, so it must be built from the note AFTER
+    these lines land — which is precisely why §11.4 requires the full-note
+    profile for an activation quorum (a `note-v1` anchor commits to the header
+    alone and says nothing about the votes; leaf 40q).
+    """
+    return checkpoint_text + "".join(lines)
+
+
+def _witness_vote_lines(
+    index: int,
+    note_bytes: bytes,
+    timestamp: int,
+    *,
+    ed_message: bytes | None = None,
+    pq_message: bytes | None = None,
+    pq_timestamp: int | None = None,
+    with_ed: bool = True,
+    with_pq: bool = True,
+) -> list[str]:
+    """One witness's hybrid vote: the `0x04` leg and the `0xff` leg together.
+
+    Both legs sign the byte-identical payload, timestamp included — legs
+    carrying different times are not a pair at all (leaf 40e uses
+    `pq_timestamp` to build exactly that), and a lone leg is no vote (40c/40d).
+    """
+    name = WITNESS_NAMES[index]
+    lines: list[str] = []
+    if with_ed:
+        lines.append(
+            _note_line(
+                name,
+                _ed_cosignature_blob(
+                    name, WITNESS_ED_KPS[index], note_bytes, timestamp, signed_message=ed_message
+                ),
+            )
+        )
+    if with_pq:
+        pq_time = timestamp if pq_timestamp is None else pq_timestamp
+        lines.append(
+            _note_line(
+                name,
+                _pq_cosignature_blob(name, index, note_bytes, pq_time, signed_message=pq_message),
+            )
+        )
+    return lines
+
+
+def _single_hash_anchor(
+    commitment_bytes: bytes, header_seed: bytes, header_time: int
+) -> tuple[dict[str, Any], anchor.AnchorPolicy]:
+    """A one-op OTS proof over `commitment_bytes`, plus the policy pinning it.
+
+    The same shape `gen_32_anchor_v2` builds inline; lifted here because groups
+    39 and 40 both need it, and group 40 needs it at a dozen different
+    `header_time` values to walk the anchor-window boundaries.
+    """
+    header_hash = hashlib.sha256(header_seed).hexdigest()
+    accumulator_start = hashlib.sha256(commitment_bytes).digest()
+    header_merkle_root = hashlib.sha256(accumulator_start).digest().hex()
+    proof = {
+        "kind": "ots",
+        "ops": [["sha256"]],
+        "header_merkle_root": header_merkle_root,
+        "header_hash": header_hash,
+        "header_time": header_time,
+    }
+    policy = anchor.AnchorPolicy(
+        pinned_headers={
+            header_hash: anchor.PinnedHeader(
+                header_hash=header_hash, merkle_root=header_merkle_root, time=header_time
+            )
+        },
+        crqc_horizon=None,
+    )
+    return proof, policy
+
+
 def _trust_material(
     *issuer_manifest_provenance: tuple[str, dict[str, Any], str],
     chains: dict[str, list[dict[str, Any]]] | None = None,
@@ -589,6 +877,7 @@ def write_vector(
     anchor_policy: anchor.AnchorPolicy | None = None,
     revocation_evidence: dict[str, Any] | None = None,
     transfer_view: list[dict[str, Any]] | None = None,
+    witness_policy: dict[str, Any] | None = None,
 ) -> None:
     """`transparency`/`log_keys`/`anchor_policy` (group 28 only, design doc
     "transparency/corroboration layer") are the untrusted evidence bundle and
@@ -612,7 +901,17 @@ def write_vector(
     `log_keys`/`anchor_policy` written above — a DIFFERENT evidence channel
     from `transparency.json`/`revocation_evidence.json`: group 35's
     `expected.json` carries none of `transparency`/`corroboration`/
-    `manifest_freshness` either, same discipline as group 33."""
+    `manifest_freshness` either, same discipline as group 33.
+
+    `witness_policy` (group 39 only, v0.2 §11.4, P1.1b) is a TRUSTED
+    `attest-witness-policy-v1` DOCUMENT, written to `witness-policy.json` and
+    fed to `verify()` as `witness_policy=`. It rides the same rail as
+    `log-keys.json`/`anchor-policy.json` — verifier configuration, never
+    evidence — which is why it is its own file and is never nested inside
+    `transparency.json`. The untrusted evidence names the epoch it claims
+    (`witness_policy_epoch`); the trusted policy is what says who that epoch
+    pins. Absent for every leaf outside group 39, so `verify()` sees `None`
+    there and `corroboration: "witnessed"` stays unreachable."""
     vector_dir = VECTORS_DIR / name
     if payload is not None:
         _write_json(vector_dir / "payload.json", payload)
@@ -640,6 +939,8 @@ def write_vector(
         _write_json(vector_dir / "revocation-evidence.json", revocation_evidence)
     if transfer_view is not None:
         _write_json(vector_dir / "transfer-view.json", transfer_view)
+    if witness_policy is not None:
+        _write_json(vector_dir / "witness-policy.json", witness_policy)
 
 
 def write_chain_vector(
@@ -667,6 +968,46 @@ def write_chain_vector(
     _write_json(vector_dir / "expected.json", expected)
     _write_json(vector_dir / "log-keys.json", [_log_key_json(k) for k in log_keys])
     _write_json(vector_dir / "anchor-policy.json", _anchor_policy_json(anchor_policy))
+
+
+def write_quorum_vector(
+    name: str,
+    *,
+    quorum: dict[str, Any],
+    witness_policy: dict[str, Any],
+    anchor_policy: anchor.AnchorPolicy,
+    expected: dict[str, Any],
+) -> None:
+    """Group 40 only (v0.2 §11.4, activation-grade witness quorum): a leaf
+    containing `witness-quorum.json` is a THIRD audit surface, routed to
+    `evaluate_activation_witness_quorum`/`evaluateActivationWitnessQuorum`/
+    `runWitnessQuorum` instead of `verify()` or `audit_chain` — the same
+    file-presence routing `chain.json` established for group 36, applied at
+    the six independent points that each re-implement the corpus contract.
+
+    There is no receipt here, and deliberately so: §11.4's quorum is a
+    STANDALONE primitive that answers one question — did a quorum of pinned
+    witnesses observe THIS checkpoint, and by when. It knows nothing about
+    receipts, so these leaves ship neither `payload.json`/`envelope.json` nor
+    `manifests.json`.
+
+    `witness-quorum.json` carries the call's own inputs. Two of its members
+    are TRUSTED call configuration (`expected_origin`, `conflict_domain`, both
+    of which RAISE when malformed); the other three are UNTRUSTED and must
+    only ever degrade the verdict (`epoch_id`, named by the evidence;
+    `checkpoint`, the signed note text; `anchor_evidence`, the anchor bundle —
+    named for what it is, an evidence channel, and never nested inside the
+    trusted `anchor-policy.json` beside it). The two POLICIES stay in their
+    own files, which is where the rail separation actually lives.
+
+    `expected.json` is the result shape, `{"valid", "witness_time",
+    "counting_control_groups"}` — no `signature`/`schema`/`trust` members
+    exist on this surface at all."""
+    vector_dir = VECTORS_DIR / name
+    _write_json(vector_dir / "witness-quorum.json", quorum)
+    _write_json(vector_dir / "witness-policy.json", witness_policy)
+    _write_json(vector_dir / "anchor-policy.json", _anchor_policy_json(anchor_policy))
+    _write_json(vector_dir / "expected.json", expected)
 
 
 # --- vector 01: valid-minimal ------------------------------------------------
@@ -4380,6 +4721,841 @@ def gen_36_transfer_chain() -> None:
     )
 
 
+def gen_39_witness_corroboration() -> None:
+    """v0.2 §10.1/§11.4 (P1.1b): `corroboration: "witnessed"` — reachable, and
+    hard to reach by accident.
+
+    One receipt/checkpoint fixture, thirteen leaves that differ ONLY in the
+    cosignature lines appended to the note and in the TRUSTED
+    `witness-policy.json` fed alongside `log-keys.json`. That separation is the
+    group's subject: the evidence names an epoch (`witness_policy_epoch`), the
+    trusted policy says who that epoch pins, and nothing an evidence bundle
+    carries can add a witness (leaf l).
+
+    Every failure here is SILENT by §11.4 — the layer's only permitted literal
+    is the independence warning that accompanies a successful upgrade — so ten
+    of these leaves are distinguished from each other by nothing but
+    `corroboration` staying `"logged"`. That is the normative behavior, not an
+    under-specified expectation: a verifier that explained WHY a cosignature
+    failed would be leaking the policy's shape to whoever supplied the note.
+
+    Two leaves deliberately probe the CHECKPOINT layer from the witness side:
+    `e` presents a genuine signature made in the checkpoint domain as a
+    cosignature, and `f` presents a genuine witness `0xff` leg where the log's
+    own ML-DSA-65 checkpoint signature should be. Both directions of the
+    domain separation of §9.2 have to hold, and only `f` degrades the
+    transparency claim itself (the checkpoint never authenticated).
+
+    The epochs' `threshold` is `{n: 1, m: 1}` and every corroborating pin also
+    carries `sunset-activation`, so the declared committee form matches the
+    membership. Group 39 never evaluates a quorum — but shipping a policy whose
+    activation form is incoherent would make these fixtures unusable as
+    examples of a real deployment's configuration.
+    """
+    payload = issue.build_payload(**_base_payload_kwargs())
+    _assert_schema_valid(payload)
+    envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)
+    trust = _issuer_only_trust()
+
+    entry = {
+        "type": "receipt",
+        "issuer": ISSUER_ID,
+        "core_sha256": tlog.receipt_core_hash(envelope),
+    }
+    entry_bytes = tlog.encode_entry(entry)
+    root = tlog.build_tree([entry_bytes])
+    inclusion = _hex_proof(tlog.inclusion_proof([entry_bytes], 0))
+    base_checkpoint = _sign_checkpoint_oracle(LOG_ORIGIN, 1, root)
+    note_bytes = tlog.parse_checkpoint(base_checkpoint).note_bytes
+    assert tlog.verify_inclusion(tlog.leaf_hash(entry_bytes), 0, 1, [], root)
+
+    def _evidence(
+        checkpoint_text: str, *, epoch_id: str = WITNESS_EPOCH_ID, **overrides: Any
+    ) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "entry": entry,
+            "leaf_index": 0,
+            "tree_size": 1,
+            "inclusion_proof": inclusion,
+            "checkpoint": checkpoint_text,
+            "witness_policy_epoch": epoch_id,
+        }
+        base.update(overrides)
+        return base
+
+    def _expected(
+        *, corroboration: str, transparency: str = "logged", warnings: list[str] | None = None
+    ) -> dict[str, Any]:
+        return {
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": transparency,
+            "corroboration": corroboration,
+            "manifest_freshness": "not_checked",
+            "ok": True,
+            "errors": [],
+            "warnings": warnings if warnings is not None else [],
+        }
+
+    def _witnessed(*, transparency: str = "logged") -> dict[str, Any]:
+        """Every witnessed verdict carries the independence warning, always."""
+        return _expected(
+            corroboration="witnessed",
+            transparency=transparency,
+            warnings=[witness.WARN_INDEPENDENCE_NOT_ESTABLISHED],
+        )
+
+    def _logged() -> dict[str, Any]:
+        """A cosignature that did not count leaves NO trace (§11.4's silence)."""
+        return _expected(corroboration="logged")
+
+    def _write(
+        name: str,
+        *,
+        evidence: dict[str, Any],
+        expected: dict[str, Any],
+        policy_document: dict[str, Any],
+        anchor_policy: anchor.AnchorPolicy | None = None,
+    ) -> None:
+        write_vector(
+            f"39-witness-corroboration/{name}",
+            payload=payload,
+            envelope=envelope,
+            envelope_raw=None,
+            trust=trust,
+            expected=expected,
+            transparency=evidence,
+            log_keys=[_log_key()],
+            anchor_policy=anchor_policy if anchor_policy is not None else _empty_anchor_policy(),
+            witness_policy=policy_document,
+        )
+
+    corroborating_roles = [witness.ROLE_CORROBORATION, witness.ROLE_SUNSET_ACTIVATION]
+    policy_current = _witness_policy_document(
+        _witness_epoch([_witness_pin(0, roles=corroborating_roles)])
+    )
+
+    # --- (a) the bootstrap case: one pinned witness, one valid `0x04`
+    # cosignature, `logged` -> `witnessed`. The independence warning is
+    # UNCONDITIONAL on every witnessed verdict (§11.4): policy v1 defines no
+    # positive independence certificate, so the verifier says so every time
+    # rather than letting silence imply a property it cannot check. ---
+    checkpoint_a = _cosigned(
+        base_checkpoint, *_witness_vote_lines(0, note_bytes, WITNESS_OBSERVED_AT, with_pq=False)
+    )
+    _write(
+        "a-ed25519-witnessed-bootstrap",
+        evidence=_evidence(checkpoint_a),
+        expected=_witnessed(),
+        policy_document=policy_current,
+    )
+
+    # --- (b) an UNPINNED witness's genuine cosignature. The signature
+    # verifies against its own key; the key is simply in no epoch, so it
+    # carries no standing. Trust comes from the policy, never from the note. ---
+    checkpoint_b = _cosigned(
+        base_checkpoint,
+        _note_line(
+            UNPINNED_WITNESS_NAME,
+            _ed_cosignature_blob(
+                UNPINNED_WITNESS_NAME, UNPINNED_WITNESS_ED_KP, note_bytes, WITNESS_OBSERVED_AT
+            ),
+        ),
+    )
+    _write(
+        "b-unpinned-witness-does-not-count",
+        evidence=_evidence(checkpoint_b),
+        expected=_logged(),
+        policy_document=policy_current,
+    )
+
+    # --- (c) right name, right key ID, WRONG signature: the blob is
+    # well-formed all the way down to the last 64 bytes. Nothing but the
+    # Ed25519 verification separates this leaf from (a). ---
+    checkpoint_c = _cosigned(
+        base_checkpoint,
+        _note_line(
+            WITNESS_NAMES[0],
+            _ed_cosignature_blob(
+                WITNESS_NAMES[0],
+                WITNESS_ED_KPS[0],
+                note_bytes,
+                WITNESS_OBSERVED_AT,
+                corrupt=True,
+            ),
+        ),
+    )
+    _write(
+        "c-invalid-ed25519-does-not-count",
+        evidence=_evidence(checkpoint_c),
+        expected=_logged(),
+        policy_document=policy_current,
+    )
+
+    # --- (d) C2SP type `0x06` (ML-DSA-44 over the `subtree/v1` structure)
+    # gets ZERO standing (§9.2). Built as the sharpest possible discriminator:
+    # same witness, same timestamp, same 76-byte shape, and a genuine Ed25519
+    # signature over the correct cosignature message — the ONLY defect is the
+    # signature type baked into the key ID. An implementation that computed
+    # the key ID without the type, or with the wrong one, would accept it. ---
+    type_06_key_id = tlog.key_hash(WITNESS_NAMES[0], b"\x06", WITNESS_ED_KPS[0].pub)
+    assert type_06_key_id != witness.cosignature_key_id(WITNESS_NAMES[0], WITNESS_ED_KPS[0].pub)
+    blob_d = (
+        type_06_key_id
+        + WITNESS_OBSERVED_AT.to_bytes(8, "big")
+        + keys.sign(witness.cosignature_message(note_bytes, WITNESS_OBSERVED_AT), WITNESS_ED_KPS[0])
+    )
+    assert len(blob_d) == len(
+        _ed_cosignature_blob(WITNESS_NAMES[0], WITNESS_ED_KPS[0], note_bytes, WITNESS_OBSERVED_AT)
+    )
+    checkpoint_d = _cosigned(base_checkpoint, _note_line(WITNESS_NAMES[0], blob_d))
+    _write(
+        "d-c2sp-type-06-does-not-count",
+        evidence=_evidence(checkpoint_d),
+        expected=_logged(),
+        policy_document=policy_current,
+    )
+
+    # --- (e) domain separation, first direction: a genuine signature made
+    # over the checkpoint BODY, transported into a cosignature blob. Without
+    # the `cosignature/v1\ntime <t>\n` prefix the message is a different one,
+    # so the pinned witness's own valid signature does not corroborate. ---
+    checkpoint_e = _cosigned(
+        base_checkpoint,
+        _note_line(
+            WITNESS_NAMES[0],
+            _ed_cosignature_blob(
+                WITNESS_NAMES[0],
+                WITNESS_ED_KPS[0],
+                note_bytes,
+                WITNESS_OBSERVED_AT,
+                signed_message=note_bytes,
+            ),
+        ),
+    )
+    _write(
+        "e-checkpoint-domain-not-cosignature",
+        evidence=_evidence(checkpoint_e),
+        expected=_logged(),
+        policy_document=policy_current,
+    )
+
+    # --- (f) domain separation, other direction: the log's own ML-DSA-65
+    # checkpoint line is MISSING and a genuine witness `0xff` activation leg
+    # stands in its place. Checkpoint authentication is hybrid and mandatory,
+    # so the claim never reaches `logged` at all — this is the one leaf in the
+    # group where `transparency` itself degrades. ---
+    checkpoint_f = _cosigned(
+        _sign_checkpoint_ed_only(LOG_ORIGIN, 1, root),
+        _note_line(
+            WITNESS_NAMES[0],
+            _pq_cosignature_blob(WITNESS_NAMES[0], 0, note_bytes, WITNESS_OBSERVED_AT),
+        ),
+    )
+    _write(
+        "f-cosignature-domain-not-checkpoint",
+        evidence=_evidence(checkpoint_f),
+        expected=_expected(
+            corroboration="none",
+            transparency="not_checked",
+            warnings=["checkpoint_verification_failed"],
+        ),
+        policy_document=policy_current,
+    )
+
+    # --- (g) the evidence names an epoch the policy does not contain. The
+    # cosignature itself is leaf (a)'s, valid in every respect: an unresolvable
+    # epoch is not a reason to go looking for another one (§10.2). ---
+    _write(
+        "g-missing-policy-epoch",
+        evidence=_evidence(checkpoint_a, epoch_id="bootstrap-1999"),
+        expected=_logged(),
+        policy_document=policy_current,
+    )
+
+    # --- (h) the pin is real, current, and holds `sunset-activation` — but not
+    # `corroboration`. Roles are capabilities, not decoration. ---
+    _write(
+        "h-wrong-role",
+        evidence=_evidence(checkpoint_a),
+        expected=_logged(),
+        policy_document=_witness_policy_document(
+            _witness_epoch([_witness_pin(0, roles=[witness.ROLE_SUNSET_ACTIVATION])])
+        ),
+    )
+
+    # --- (i) a CLOSED epoch still corroborates: the observation falls inside
+    # the 2020 window, and a timely `signed-note-v2` anchor over the full note
+    # (cosignature line included) ties it to a PQ-surviving time. The two
+    # layers compose — `transparency` upgrades to `anchored_before:<T>` while
+    # `corroboration` upgrades to `witnessed` — and neither reads a clock. ---
+    policy_historical = _witness_policy_document(
+        _witness_epoch(
+            [
+                _witness_pin(
+                    0,
+                    roles=corroborating_roles,
+                    not_before=HISTORICAL_EPOCH_NOT_BEFORE,
+                    not_after=HISTORICAL_EPOCH_NOT_AFTER,
+                )
+            ],
+            epoch_id=HISTORICAL_EPOCH_ID,
+            not_before=HISTORICAL_EPOCH_NOT_BEFORE,
+            not_after=HISTORICAL_EPOCH_NOT_AFTER,
+        )
+    )
+    checkpoint_i = _cosigned(
+        base_checkpoint, *_witness_vote_lines(0, note_bytes, HISTORICAL_OBSERVED_AT, with_pq=False)
+    )
+    signed_note_i = tlog.parse_checkpoint(checkpoint_i).signed_note_bytes
+    assert signed_note_i != note_bytes
+    anchor_time_i = 1593561600  # 2020-07-01T00:00:00Z, a month after the observation
+    proof_i, anchor_policy_i = _single_hash_anchor(
+        signed_note_i, b"attest-vectors-39i-header-v1", anchor_time_i
+    )
+    _write(
+        "i-historical-epoch-valid",
+        evidence=_evidence(
+            checkpoint_i,
+            epoch_id=HISTORICAL_EPOCH_ID,
+            anchors={
+                "checkpoint": checkpoint_i,
+                "proofs": [proof_i],
+                "anchor_profile": "signed-note-v2",
+            },
+        ),
+        expected=_witnessed(transparency="anchored_before:2020-07-01T00:00:00Z"),
+        policy_document=policy_historical,
+        anchor_policy=anchor_policy_i,
+    )
+
+    # --- (j) the current committee MUST NOT reinterpret old evidence. Same
+    # checkpoint and epoch name as (i), but the 2020 epoch pins a DIFFERENT
+    # operator; the witness who actually signed is pinned only in the current
+    # epoch. A verifier that fell back to the current membership would read
+    # this as witnessed. ---
+    policy_two_epochs = _witness_policy_document(
+        _witness_epoch(
+            [
+                _witness_pin(
+                    1,
+                    roles=corroborating_roles,
+                    not_before=HISTORICAL_EPOCH_NOT_BEFORE,
+                    not_after=HISTORICAL_EPOCH_NOT_AFTER,
+                )
+            ],
+            epoch_id=HISTORICAL_EPOCH_ID,
+            not_before=HISTORICAL_EPOCH_NOT_BEFORE,
+            not_after=HISTORICAL_EPOCH_NOT_AFTER,
+        ),
+        # This pin's window deliberately reaches back into the historical
+        # epoch: the operator existed all along and only entered the committee
+        # in the current epoch. Without that, the leaf could not fail under any
+        # reading — a 2020 observation would be outside a 2026-only pin whether
+        # or not a verifier substituted the membership, and the leaf would pin
+        # nothing at all.
+        _witness_epoch(
+            [_witness_pin(0, roles=corroborating_roles, not_before=HISTORICAL_EPOCH_NOT_BEFORE)]
+        ),
+    )
+    _write(
+        "j-current-epoch-not-substituted",
+        evidence=_evidence(checkpoint_i, epoch_id=HISTORICAL_EPOCH_ID),
+        expected=_logged(),
+        policy_document=policy_two_epochs,
+    )
+
+    # --- (k) eternal verifiability: the pin RETIRED on 2026-06-30, the
+    # observation was made on 2026-06-01, and standing is judged at the moment
+    # claimed — never at the verifier's local clock. This verdict must still
+    # read `witnessed` in 2050. ---
+    _write(
+        "k-old-valid-no-local-clock-cap",
+        evidence=_evidence(checkpoint_a),
+        expected=_witnessed(),
+        policy_document=_witness_policy_document(
+            _witness_epoch(
+                [_witness_pin(0, roles=corroborating_roles, not_after="2026-06-30T00:00:00Z")]
+            )
+        ),
+    )
+
+    # --- (l) the evidence carries its OWN, perfectly valid policy document
+    # pinning the witness who signed. It is ignored in full: a bundle that
+    # could nominate its own witnesses would make the trusted rail decorative.
+    # The trusted policy pins someone else, so the verdict stays `logged`. ---
+    checkpoint_l = _cosigned(
+        base_checkpoint, *_witness_vote_lines(1, note_bytes, WITNESS_OBSERVED_AT, with_pq=False)
+    )
+    _write(
+        "l-evidence-policy-substitution-ignored",
+        evidence=_evidence(
+            checkpoint_l,
+            witness_policy=_witness_policy_document(
+                _witness_epoch([_witness_pin(1, roles=corroborating_roles)])
+            ),
+        ),
+        expected=_logged(),
+        policy_document=policy_current,
+    )
+
+    # --- (m) `compromised_after: null` is the tri-state's third value: a
+    # compromise IS declared and its onset is unknown, so the pin fails closed
+    # at every instant, forever. Distinct from the member being absent, which
+    # is what every other leaf in this group ships. ---
+    _write(
+        "m-compromise-onset-unknown",
+        evidence=_evidence(checkpoint_a),
+        expected=_logged(),
+        policy_document=_witness_policy_document(
+            _witness_epoch([_witness_pin(0, roles=corroborating_roles, compromised_after=None)])
+        ),
+    )
+
+
+def gen_40_witness_quorum() -> None:
+    """v0.2 §11.4 (P1.1b): the activation-grade hybrid witness quorum, as a
+    conformance surface of its own.
+
+    Twenty leaves over ONE checkpoint. There is no receipt anywhere in this
+    group: §11.4's quorum is a standalone primitive that answers a single
+    question — did a quorum of pinned witnesses observe THIS checkpoint, and
+    by when — and returns the conservative time at which that became true. Its
+    result vocabulary (`valid`, `witness_time`, `counting_control_groups`) has
+    no overlap with a `VerificationResult`, which is why these leaves are
+    routed by file presence to a third entry point rather than being bent into
+    the `verify()` shape.
+
+    The group is built around the boundaries, because that is where a quorum
+    rule either holds or silently does not. Every temporal limit ships as a
+    PAIR one second apart — skew 600/601 (l/m), anchor delay 86400/86401
+    (o/p) — and the compromise cutoff ships as the pair the §11.4 tri-state
+    demands: `T` exactly at the declared onset still counts (s), while a
+    declared compromise with unknown onset never counts (t).
+
+    Three leaves attack the evaluation ORDER rather than any single rule,
+    because §11.4 makes that order normative: the committee ceiling and the
+    one-candidate-per-control-group rule bind BEFORE any signature
+    verification, so a hostile policy or note cannot turn the primitive into a
+    work amplifier. In (j) ten control groups trip the ceiling while carrying
+    votes that would otherwise satisfy the threshold; in (g) a rotated key
+    inside one control group presents a second valid vote; in (k) the declared
+    form contradicts the membership. All three are rejected outright — not
+    de-duplicated, not repaired.
+
+    Declared limit, measured rather than assumed (it is also written into
+    `witness.py`): the ceiling in (j) is REDUNDANT with the declared-form
+    check today, because `threshold.n > 9` is already refused at parse time.
+    No leaf can separate the two, so (j) pins their conjunction. It stays
+    because §11.4 states the ordering normatively and because a future policy
+    revision that relaxes the parser must not silently relax this.
+
+    Two things the corpus CANNOT pin here, measured rather than assumed. That
+    no cryptographic work happened before the ordering checks bind: a vector
+    observes a verdict, not a call count, so the spies that prove it live in
+    the unit suites of both cores. And the one-timestamp-per-pair rule of (e):
+    both legs sign a message built from a SINGLE timestamp, so a verifier that
+    dropped the equality check would build the pair and then fail the
+    signature verification anyway — deleting the check leaves every leaf
+    green. Leaf (e) pins the OUTCOME, not the rule that produces it, the same
+    honest half-measure as (j) and the committee ceiling.
+    """
+    root = hashlib.sha256(b"attest-vectors-40-root-v1").digest()
+    base_checkpoint = _sign_checkpoint_oracle(LOG_ORIGIN, 1, root)
+    note_bytes = tlog.parse_checkpoint(base_checkpoint).note_bytes
+    # A note the witness never observed, for the transplanted-leg leaf (f).
+    other_note_bytes = _checkpoint_note_bytes(
+        LOG_ORIGIN, 2, hashlib.sha256(b"attest-vectors-40f-other-root-v1").digest()
+    )
+    assert other_note_bytes != note_bytes
+
+    observed_at = WITNESS_OBSERVED_AT
+    # The compromise-cutoff pair (s/t) only means anything if the POSIX second
+    # the cosignature blob carries and the §11.4 timestamp the policy declares
+    # are the SAME instant. Checked, not commented.
+    for iso, posix_seconds in (
+        (WITNESS_OBSERVED_AT_ISO, observed_at),
+        (HISTORICAL_OBSERVED_AT_ISO, HISTORICAL_OBSERVED_AT),
+    ):
+        assert (
+            datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
+            == posix_seconds
+        )
+    activation_roles = [witness.ROLE_CORROBORATION, witness.ROLE_SUNSET_ACTIVATION]
+
+    def _policy(
+        pins: list[dict[str, Any]],
+        *,
+        threshold: tuple[int, int],
+        epoch_id: str = WITNESS_EPOCH_ID,
+        not_before: str = WITNESS_EPOCH_NOT_BEFORE,
+        not_after: str | None = None,
+    ) -> dict[str, Any]:
+        return _witness_policy_document(
+            _witness_epoch(
+                pins,
+                epoch_id=epoch_id,
+                not_before=not_before,
+                not_after=not_after,
+                threshold=threshold,
+            )
+        )
+
+    def _valid(witness_time: int, control_groups: list[str]) -> dict[str, Any]:
+        return {
+            "valid": True,
+            "witness_time": witness_time,
+            "counting_control_groups": sorted(control_groups),
+        }
+
+    def _invalid() -> dict[str, Any]:
+        """An invalid quorum has no time to report and no groups to name."""
+        return {"valid": False, "witness_time": None, "counting_control_groups": []}
+
+    def _write(
+        name: str,
+        *,
+        votes: list[str],
+        policy: dict[str, Any],
+        anchored_at: int,
+        expected: dict[str, Any],
+        epoch_id: str = WITNESS_EPOCH_ID,
+        note_v1: bool = False,
+    ) -> None:
+        text = _cosigned(base_checkpoint, *votes)
+        signed_note_bytes = tlog.parse_checkpoint(text).signed_note_bytes
+        # A `signed-note-v2` anchor commits to the note WITH the votes in it;
+        # a `note-v1` anchor commits to the unsigned header alone and so says
+        # nothing about the votes being counted (leaf q).
+        commitment = note_bytes if note_v1 else signed_note_bytes
+        proof, anchor_policy = _single_hash_anchor(
+            commitment, f"attest-vectors-{name}-header-v1".encode(), anchored_at
+        )
+        anchor_evidence: dict[str, Any] = {"checkpoint": text, "proofs": [proof]}
+        if not note_v1:
+            anchor_evidence["anchor_profile"] = "signed-note-v2"
+        write_quorum_vector(
+            f"40-witness-quorum/{name}",
+            quorum={
+                "expected_origin": LOG_ORIGIN,
+                "conflict_domain": WITNESS_CONFLICT_DOMAIN,
+                "epoch_id": epoch_id,
+                "checkpoint": text,
+                "anchor_evidence": anchor_evidence,
+            },
+            witness_policy=policy,
+            anchor_policy=anchor_policy,
+            expected=expected,
+        )
+
+    policy_one = _policy([_witness_pin(0, roles=activation_roles)], threshold=(1, 1))
+    policy_three = _policy(
+        [_witness_pin(index, roles=activation_roles) for index in range(3)], threshold=(3, 2)
+    )
+    group_a, group_b = WITNESS_CONTROL_GROUPS[0], WITNESS_CONTROL_GROUPS[1]
+
+    def _vote(index: int, at: int, **overrides: Any) -> list[str]:
+        return _witness_vote_lines(index, note_bytes, at, **overrides)
+
+    # --- (a) the shape everything else deviates from: one pinned witness, a
+    # complete hybrid vote, an anchor comfortably inside the window. ---
+    _write(
+        "a-one-of-one-valid",
+        votes=_vote(0, observed_at),
+        policy=policy_one,
+        anchored_at=observed_at + 3600,
+        expected=_valid(observed_at, [group_a]),
+    )
+
+    # --- (b) 2-of-3, and `T` is the MINIMUM over the counting votes. Taking
+    # the maximum instead would let the latest signer stretch the anchor
+    # window that every earlier observation is judged by; this leaf is what
+    # makes that choice observable, since the two votes are 300s apart. ---
+    _write(
+        "b-two-of-three-conservative-t",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=policy_three,
+        anchored_at=observed_at + 3600,
+        expected=_valid(observed_at, [group_a, group_b]),
+    )
+
+    # --- (c)/(d) a vote is the AND of both legs. Half a pair is not a
+    # weakened vote, it is no vote: neither the classical leg alone nor the
+    # post-quantum leg alone produces a candidate at all. ---
+    _write(
+        "c-ed25519-leg-only-invalid",
+        votes=_vote(0, observed_at, with_pq=False),
+        policy=policy_one,
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+    _write(
+        "d-mldsa-leg-only-invalid",
+        votes=_vote(0, observed_at, with_ed=False),
+        policy=policy_one,
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+
+    # --- (e) both legs sign the byte-identical payload, timestamp included.
+    # Legs carrying different times are not a pair — a one-second difference
+    # is enough, and no leg is verified. ---
+    _write(
+        "e-legs-with-divergent-timestamps",
+        votes=_vote(0, observed_at, pq_timestamp=observed_at + 1),
+        policy=policy_one,
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+
+    # --- (f) a genuine post-quantum leg, correctly typed and correctly timed,
+    # signed over a DIFFERENT note. It pairs structurally with the classical
+    # leg and then fails the fail-closed AND — the transplant is caught by
+    # verification, not by shape. ---
+    _write(
+        "f-transplanted-leg",
+        votes=_vote(
+            0,
+            observed_at,
+            pq_message=witness.cosignature_message(other_note_bytes, observed_at),
+        ),
+        policy=policy_one,
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+
+    # --- (g) one vote per control group, enforced as a hard failure rather
+    # than a de-duplication: an operator who rotated keys has two pinned
+    # identities in one control group, and presents a valid vote from each.
+    # A verifier that counted them separately would reach the threshold on a
+    # single organization's say-so. ---
+    rotated_pin = _witness_pin(
+        1,
+        roles=activation_roles,
+        operator_id=WITNESS_OPERATORS[0],
+        control_group=group_a,
+    )
+    _write(
+        "g-one-vote-per-control-group",
+        votes=_vote(0, observed_at) + _vote(1, observed_at) + _vote(2, observed_at),
+        policy=_policy(
+            [
+                _witness_pin(0, roles=activation_roles),
+                rotated_pin,
+                _witness_pin(2, roles=activation_roles),
+            ],
+            threshold=(2, 2),
+        ),
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+
+    # --- (h) direct conflict: the pin itself names the domain whose sunset
+    # this quorum would activate, so it is excluded before pairing and the
+    # remaining single vote cannot reach 2-of-3. ---
+    _write(
+        "h-direct-domain-conflict",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=_policy(
+            [
+                _witness_pin(
+                    0, roles=activation_roles, affiliated_domains=[WITNESS_CONFLICT_DOMAIN]
+                ),
+                _witness_pin(1, roles=activation_roles),
+                _witness_pin(2, roles=activation_roles),
+            ],
+            threshold=(3, 2),
+        ),
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+
+    # --- (i) transitive conflict: the voting pin names nothing, but a sibling
+    # in its OWN control group names the domain. Shared control is shared
+    # conflict — and there is deliberately no inverse of this predicate:
+    # domain inequality never establishes independence. ---
+    _write(
+        "i-transitive-domain-conflict",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=_policy(
+            [
+                _witness_pin(0, roles=activation_roles),
+                _witness_pin(1, roles=activation_roles),
+                _witness_pin(2, roles=activation_roles),
+                _witness_pin(
+                    3,
+                    roles=activation_roles,
+                    control_group=group_a,
+                    affiliated_domains=[WITNESS_CONFLICT_DOMAIN],
+                ),
+            ],
+            threshold=(3, 2),
+        ),
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+
+    # --- (j) ten activation control groups against a ceiling of nine. The two
+    # votes present would satisfy the declared threshold, so a verifier that
+    # skipped the membership bound would have to verify them to find out. ---
+    _write(
+        "j-committee-of-ten-invalid",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=_policy(
+            [_witness_pin(index, roles=activation_roles) for index in range(_WITNESS_SLOTS)],
+            threshold=(witness.MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE, 2),
+        ),
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+
+    # --- (k) the declared form contradicts the membership: `threshold.n`
+    # counts distinct activation control groups, and this epoch declares two
+    # while pinning three. The two votes present would satisfy 2-of-2 exactly;
+    # the policy is refused instead of being reconciled to them. ---
+    _write(
+        "k-declared-form-incoherent-with-membership",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=_policy(
+            [_witness_pin(index, roles=activation_roles) for index in range(3)],
+            threshold=(2, 2),
+        ),
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+
+    # --- (l)/(m) the skew boundary, one second apart. Exactly 600s of spread
+    # between the counting votes is inside the limit; 601 is not. ---
+    _write(
+        "l-skew-600-valid",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 600),
+        policy=policy_three,
+        anchored_at=observed_at + 700,
+        expected=_valid(observed_at, [group_a, group_b]),
+    )
+    _write(
+        "m-skew-601-invalid",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 601),
+        policy=policy_three,
+        anchored_at=observed_at + 700,
+        expected=_invalid(),
+    )
+
+    # --- (n) the anchor must land at or after the LATEST counting vote: an
+    # anchor that predates a vote cannot be evidence that the vote existed. ---
+    _write(
+        "n-anchor-before-latest-vote",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=policy_three,
+        anchored_at=observed_at + 100,
+        expected=_invalid(),
+    )
+
+    # --- (o)/(p) the anchor-delay boundary, one second apart, measured from
+    # `T` and NOT from the latest vote. Two votes 300s apart is what makes that
+    # difference observable at all: with a single vote `min(t_i)` and `max(t_i)`
+    # are the same instant, so a verifier that measured the window from the
+    # latest vote would pass both leaves while reporting the same
+    # `witness_time`. At 300s of spread the two readings disagree exactly here
+    # — `observed_at + 86401` is outside a `T`-anchored window and inside a
+    # `latest`-anchored one, so (p) is the leaf that catches the substitution. ---
+    _write(
+        "o-anchor-delay-86400-valid",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=policy_three,
+        anchored_at=observed_at + 86400,
+        expected=_valid(observed_at, [group_a, group_b]),
+    )
+    _write(
+        "p-anchor-delay-86401-invalid",
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=policy_three,
+        anchored_at=observed_at + 86401,
+        expected=_invalid(),
+    )
+
+    # --- (q) a `note-v1` anchor commits to the unsigned header only, so it
+    # proves nothing about the cosignature lines this quorum counts. Nothing
+    # else about the leaf differs from (a). ---
+    _write(
+        "q-note-v1-anchor-insufficient",
+        votes=_vote(0, observed_at),
+        policy=policy_one,
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+        note_v1=True,
+    )
+
+    # --- (r) fresh evidence does not revive an expired epoch. The pins
+    # themselves are open-ended and would have standing today; it is the
+    # EPOCH's window that closed in 2020, and `T` falls outside it. ---
+    _write(
+        "r-new-evidence-does-not-revive-expired-epoch",
+        votes=_vote(0, observed_at),
+        policy=_policy(
+            [_witness_pin(0, roles=activation_roles, not_before=HISTORICAL_EPOCH_NOT_BEFORE)],
+            threshold=(1, 1),
+            epoch_id=HISTORICAL_EPOCH_ID,
+            not_before=HISTORICAL_EPOCH_NOT_BEFORE,
+            not_after=HISTORICAL_EPOCH_NOT_AFTER,
+        ),
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+        epoch_id=HISTORICAL_EPOCH_ID,
+    )
+
+    # --- (s) `T` exactly at the declared compromise onset still counts: the
+    # boundary is inclusive, and standing is judged at the instant claimed.
+    # Without this leaf a verifier could make the window exclusive and stay
+    # green everywhere else.
+    #
+    # It runs inside the CLOSED 2020 epoch on purpose, and that is a second
+    # property in the same leaf: a VALID quorum whose `T` falls inside a window
+    # that has since expired. A verifier that judged the epoch against its own
+    # clock instead of against `T` would reject this — and (r), whose `T` is
+    # outside the same window, cannot catch that substitution on its own,
+    # because both readings reject (r). The two leaves only pin the rule
+    # together. ---
+    _write(
+        "s-quorum-time-exactly-at-compromise-cutoff",
+        votes=_vote(0, HISTORICAL_OBSERVED_AT),
+        policy=_policy(
+            [
+                _witness_pin(
+                    0,
+                    roles=activation_roles,
+                    not_before=HISTORICAL_EPOCH_NOT_BEFORE,
+                    compromised_after=HISTORICAL_OBSERVED_AT_ISO,
+                )
+            ],
+            threshold=(1, 1),
+            epoch_id=HISTORICAL_EPOCH_ID,
+            not_before=HISTORICAL_EPOCH_NOT_BEFORE,
+            not_after=HISTORICAL_EPOCH_NOT_AFTER,
+        ),
+        anchored_at=HISTORICAL_OBSERVED_AT + 3600,
+        expected=_valid(HISTORICAL_OBSERVED_AT, [group_a]),
+        epoch_id=HISTORICAL_EPOCH_ID,
+    )
+
+    # --- (t) the same member set as (s) with an explicit `null` onset: a
+    # compromise IS declared and nobody knows when it began, so the pin fails
+    # closed at every instant and the quorum has zero counting votes. ---
+    _write(
+        "t-compromise-cutoff-null-zero-votes",
+        votes=_vote(0, observed_at),
+        policy=_policy(
+            [_witness_pin(0, roles=activation_roles, compromised_after=None)],
+            threshold=(1, 1),
+        ),
+        anchored_at=observed_at + 3600,
+        expected=_invalid(),
+    )
+
+
 def main() -> None:
     _clear_leaf_dirs(VECTORS_DIR)
     VECTORS_DIR.mkdir(parents=True, exist_ok=True)
@@ -4419,6 +5595,8 @@ def main() -> None:
     gen_33_logged_revocation()
     gen_35_transfer()
     gen_36_transfer_chain()
+    gen_39_witness_corroboration()
+    gen_40_witness_quorum()
     leaf_count = sum(1 for _ in VECTORS_DIR.rglob("expected.json"))
     print(f"generated {leaf_count} vector cases under {VECTORS_DIR}")
 
