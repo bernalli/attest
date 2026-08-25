@@ -6,8 +6,9 @@ import { canonicalBytes, loadsStrict } from '../src/canon.js'
 import type { JsonObject, JsonValue } from '../src/canon.js'
 import type { TrustStore } from '../src/manifests.js'
 import { authorizationMessage, recordHash } from '../src/transfer.js'
-import { encodeEntry } from '../src/tlog.js'
+import { encodeEntry, receiptCoreHash } from '../src/tlog.js'
 import { b64uEncode } from '../src/b64u.js'
+import { parsePolicy as parseWitnessPolicy } from '../src/witness.js'
 import { buildTree, inclusionProof, signCheckpoint, type HybridTestKeys } from './helpers/tlog-builder.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
@@ -545,5 +546,65 @@ describe('verify(): witness policy on the trusted rail (§11.4)', () => {
     } as any)
     expect(withPolicy.corroboration).toBe(withoutPolicy.corroboration)
     expect(withPolicy.warnings).not.toContain('witness_independence_not_established')
+  })
+
+  // Regression, found by conformance group 39 and not by any test above:
+  // comparing `withPolicy` to `withoutPolicy` field by field passes happily
+  // while BOTH collapse, so the claim state has to be pinned absolutely.
+  //
+  // `verify()` validates the policy eagerly and then passes the PARSED result
+  // to `evaluateTransparency`, which validates it again. `WitnessPolicy` is an
+  // interface — erased at runtime — so that second pass used to reject the
+  // parser's own output for a missing `schema`, and the throw landed outside
+  // the untrusted-evidence guard: the entire transparency claim degraded to
+  // `transparency_claim_unresolvable`, on byte-identical input the Python
+  // core evaluated normally. Both accepted shapes are pinned here, the
+  // document AND the parsed policy `loadWitnessPolicy()` hands back, because
+  // the exported loader makes the second one a supported caller input.
+  it('does not degrade the transparency claim, for either accepted policy shape', () => {
+    const hk = generateHybridLogKeys()
+    // A bundle whose claim actually RESOLVES: the receipt itself is the
+    // logged entry. The sibling tests above log a transfer record instead, so
+    // their claim is unresolvable whatever the policy says — which is exactly
+    // why a field-by-field comparison between `withPolicy` and `withoutPolicy`
+    // could not see this defect. The baseline here reaches `logged`, so a
+    // policy that collapses the claim is visible as a difference.
+    const envelopeBytes = tEnvelopeBytes('none')
+    const entry = {
+      type: 'receipt',
+      issuer: T_ISSUER,
+      core_sha256: receiptCoreHash(loadsStrict(envelopeBytes) as JsonObject),
+    }
+    const leaves = [encodeEntry(entry)]
+    const root = buildTree(leaves)
+    // Through `parse`, not a plain object literal: verify() re-serializes the
+    // evidence with the canonical serializer, which accepts only `bigint` for
+    // JSON integers — a bundle carrying plain `number` leaf_index/tree_size
+    // throws there and lands in the same catch-all, which would make this
+    // fixture unresolvable for a reason that has nothing to do with witnesses.
+    const bundle = parse({
+      entry,
+      leaf_index: 0,
+      tree_size: 1,
+      inclusion_proof: inclusionProof(leaves, 0).map((p) => Buffer.from(p).toString('hex')),
+      checkpoint: signCheckpoint(T_LOG_ORIGIN, 1, root, hk, T_LOG_NAME),
+    })
+    const call = (witnessPolicy?: unknown) =>
+      verify(envelopeBytes, tTrustStore(), null, null, undefined, {
+        transparency: bundle,
+        logKeys: [tLogKey(hk)],
+        anchorPolicy: noHorizonPolicy(),
+        ...(witnessPolicy === undefined ? {} : { witnessPolicy }),
+      } as any)
+
+    const baseline = call()
+    expect(baseline.transparency).toBe('logged')
+    expect(baseline.warnings).not.toContain('transparency_claim_unresolvable')
+    for (const shape of [witnessPolicyDoc, parseWitnessPolicy(witnessPolicyDoc)]) {
+      const result = call(shape)
+      expect(result.transparency).toBe(baseline.transparency)
+      expect(result.corroboration).toBe(baseline.corroboration)
+      expect([...result.warnings]).toEqual([...baseline.warnings])
+    }
   })
 })

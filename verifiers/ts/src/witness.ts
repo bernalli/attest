@@ -673,6 +673,26 @@ function verifiesBothLegs(candidate: CandidatePair, noteBytes: Uint8Array): bool
  * empty hand-built `{ epochs: [] }`, or a perfectly imitated parsed policy, is
  * indistinguishable from the parser's output here while the Python core would
  * reject it. This guard is for malformed configuration shapes, not a brand. */
+/** Whether `value` already IS a parsed `WitnessPolicy`, by the exact shape
+ * check `requireParsedPolicy` enforces — reused verbatim, via its own
+ * throw, so there is one definition of "parsed policy" and hardening it
+ * hardens both callers at once.
+ *
+ * This exists because `WitnessPolicy` is an interface, erased at runtime:
+ * Python can write `isinstance(x, WitnessPolicy)` to make policy validation
+ * IDEMPOTENT, and without this predicate the TypeScript core cannot. A
+ * document and a parsed policy are cleanly separable — the document carries
+ * `schema` and `epochs`, the parsed value carries `epochs` alone — so this
+ * never has to guess. */
+export function isParsedPolicy(value: unknown): value is WitnessPolicy {
+  try {
+    requireParsedPolicy(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function requireParsedPolicy(policy: unknown): asserts policy is WitnessPolicy {
   if (typeof policy !== 'object' || policy === null || Array.isArray(policy))
     throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')

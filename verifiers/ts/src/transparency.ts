@@ -47,6 +47,7 @@ import {
 import { TRANSPARENCY_WARN, pyTypeName } from './messages.js'
 import {
   evaluateCorroboration,
+  isParsedPolicy,
   parsePolicy as parseWitnessPolicy,
   type WitnessPolicy,
 } from './witness.js'
@@ -358,6 +359,18 @@ export interface EvaluateTransparencyOptions {
  * and throws, while omitting it entirely preserves the previous result. */
 export function validateWitnessPolicy(witnessPolicy: unknown): WitnessPolicy | null {
   if (witnessPolicy === null || witnessPolicy === undefined) return null
+  // Validation must be IDEMPOTENT, and in TypeScript that takes an explicit
+  // check: `verify()` validates the policy eagerly (before the untrusted
+  // boundary) and then hands the PARSED result down to this same function,
+  // exactly as `verify.py` does. Python's `isinstance` short circuit absorbs
+  // that second pass; here, without this branch, `parsePolicy` rejects its
+  // own output for a missing `schema` member — and because that throw lands
+  // outside the untrusted-evidence guard, verify() degrades the WHOLE claim
+  // to `transparency_claim_unresolvable`. `corroboration: "witnessed"` was
+  // therefore unreachable through the TypeScript public API, while the
+  // Python core reached it on byte-identical input; group 39 of the
+  // conformance corpus is what surfaced it.
+  if (isParsedPolicy(witnessPolicy)) return witnessPolicy
   try {
     return parseWitnessPolicy(witnessPolicy)
   } catch (e) {
