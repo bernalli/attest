@@ -19,6 +19,7 @@ import { parseCheckpoint, type Checkpoint } from '../src/tlog.js'
 // shared test builder rather than by the library.
 import { signCheckpoint } from './helpers/tlog-builder.js'
 import {
+  MAX_COSIGNATURE_TIMESTAMP,
   WARN_INDEPENDENCE_NOT_ESTABLISHED,
   cosignatureKeyId,
   cosignatureMessage,
@@ -185,15 +186,20 @@ describe('review regressions (2026-08-25)', () => {
     expect(verdict.witnessed).toBe(true)
   })
 
-  it.each([253402300800, Number(2n ** 64n - 1n)])(
-    'never counts a timestamp past year 9999 (%i)',
+  // Timestamps must travel as BigInt end to end: `Number(2n ** 64n - 1n)`
+  // rounds past the safe range, and `setBigUint64` then serializes it modulo
+  // 2^64 — eight zero bytes. Written that way the case passed because the
+  // effective timestamp was 0 (outside the 2020+ policy), never because the
+  // ceiling refused it.
+  it.each([253402300800n, 2n ** 64n - 1n])(
+    'never counts a timestamp past year 9999 (%s)',
     (timestamp) => {
-      // Python's datetime stops at 9999, JS Date reaches 275760; without a
-      // shared ceiling the same cosignature diverges across the cores.
       const cp = checkpoint()
       const out = new Uint8Array(76)
       out.set(cosignatureKeyId(WITNESS_NAME, witnessPub), 0)
-      new DataView(out.buffer).setBigUint64(4, BigInt(timestamp), false)
+      new DataView(out.buffer).setBigUint64(4, timestamp, false)
+      // Proof the bytes really carry the value under test, not a wrapped one.
+      expect(new DataView(out.buffer).getBigUint64(4, false)).toBe(timestamp)
       const message = new Uint8Array([
         ...new TextEncoder().encode(`cosignature/v1\ntime ${timestamp}\n`),
         ...cp.noteBytes,
@@ -204,6 +210,22 @@ describe('review regressions (2026-08-25)', () => {
       )
     },
   )
+
+  it('still counts a cosignature exactly at the ceiling', () => {
+    // The negative cases prove nothing without this one: a ceiling that
+    // rejected everything would satisfy them all.
+    const cp = checkpoint()
+    const out = new Uint8Array(76)
+    out.set(cosignatureKeyId(WITNESS_NAME, witnessPub), 0)
+    new DataView(out.buffer).setBigUint64(4, BigInt(MAX_COSIGNATURE_TIMESTAMP), false)
+    out.set(
+      ed25519.sign(cosignatureMessage(cp.noteBytes, MAX_COSIGNATURE_TIMESTAMP), witnessSeed),
+      12,
+    )
+    expect(evaluate(cp, [[WITNESS_NAME, out]], policyDoc(b64uEncode(witnessPub))).witnessed).toBe(
+      true,
+    )
+  })
 })
 
 describe('everything that must not count', () => {

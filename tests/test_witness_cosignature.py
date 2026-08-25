@@ -448,6 +448,25 @@ def test_timestamps_past_year_9999_never_count(
     assert verdict.witnessed is False
 
 
+def test_a_cosignature_exactly_at_the_ceiling_still_counts(
+    log_keys: tuple[Any, Any], witness_keys: Any
+) -> None:
+    """The negative ceiling cases prove nothing without this one.
+
+    A ceiling that rejected everything would satisfy all of them.
+    """
+    log_ed, log_mldsa = log_keys
+    checkpoint = tlog.parse_checkpoint(_checkpoint_text(log_ed, log_mldsa))
+    timestamp = witness.MAX_COSIGNATURE_TIMESTAMP
+    key_id = witness.cosignature_key_id(_WITNESS_NAME, witness_keys.pub)
+    message = witness.cosignature_message(checkpoint.note_bytes, timestamp)
+    blob = key_id + struct.pack(">Q", timestamp) + keys.sign(message, witness_keys)
+    verdict = _reject_case(
+        checkpoint, [(_WITNESS_NAME, blob)], _policy_doc(keys.b64u(witness_keys.pub))
+    )
+    assert verdict.witnessed is True
+
+
 # --- end-to-end through evaluate_transparency ------------------------------
 
 
