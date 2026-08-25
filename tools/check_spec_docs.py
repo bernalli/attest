@@ -679,20 +679,29 @@ _STAGE4_REQUIRED_LITERALS: tuple[str, ...] = (
     "grant_commitment_divergence",
     "grant_declaration_ignored",
     "grant_activated_by_successor",
+    "grant_pledge_type_unknown",
+    "grant_legal_text_changed",
     'grant: "activated"',
     'grant_trust: "signer_mismatch"',
     # Ceilings, both counted before any signature is verified.
     "_MAX_GRANT_LATER_VERSIONS",
     "_MAX_GRANT_DECLARATIONS",
-    # The three load-bearing normative claims of the presence-based trigger.
-    # Each one is a sentence a regression could quietly invert, and each
-    # inversion would ship a claim we know to be false:
+    # The load-bearing normative claims. Each is a sentence a regression could
+    # quietly invert while leaving prose that still reads fluently, and each
+    # inversion would ship something we know to be false:
     #   - activation never follows from an absence,
     #   - logging a declaration is recommended but never load-bearing,
-    #   - the fixed-date proof runs in the direction OTS can actually prove.
+    #   - the fixed-date proof runs in the direction OTS can actually prove,
+    #   - and it aggregates several proofs the way that question needs, which
+    #     is the opposite reduction from the one §11 applies,
+    #   - the prose a buyer is bound by stays the one their receipt signed,
+    #   - an uncovered receipt cannot reach "activated".
     "never from the absence of evidence",
     "never required for validity",
     "T >= fixed_date",
+    "MAXIMUM over the verified proofs",
+    "The legal text that binds a buyer is always the FLOOR's",
+    "Scope coverage, and it is a gate",
 )
 
 _APPENDIX_A_HEADING = "## Appendix A — The custodian interface (non-normative)"

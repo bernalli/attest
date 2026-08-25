@@ -98,11 +98,14 @@ def _minimal_spec_v02() -> str:
         + "`Attest-redemption-challenge-v1` `grant_narrowing_ignored` `grant_unanchored` "
         + "`grant_signer_not_publisher` `grant_scope_uncovered` `grant_commitment_mismatch` "
         + "`grant_commitment_divergence` `grant_declaration_ignored` "
-        + "`grant_activated_by_successor` `_MAX_GRANT_LATER_VERSIONS` "
+        + "`grant_activated_by_successor` `grant_pledge_type_unknown` "
+        + "`grant_legal_text_changed` `_MAX_GRANT_LATER_VERSIONS` "
         + '`_MAX_GRANT_DECLARATIONS` `grant: "activated"` `grant_trust: "signer_mismatch"`\n\n'
         + "Activation follows from positive evidence, never from the absence of evidence; "
         + "logging a declaration is RECOMMENDED and never required for validity; the "
-        + "fixed-date proof runs in the direction anchoring can give, `T >= fixed_date`.\n"
+        + "fixed-date proof runs in the direction anchoring can give, `T >= fixed_date`, "
+        + "taking the MAXIMUM over the verified proofs. The legal text that binds a buyer "
+        + "is always the FLOOR's. Scope coverage, and it is a gate.\n"
         + "\n## Appendix A — The custodian interface (non-normative)\n\nSketch.\n"
     )
 
@@ -1493,6 +1496,41 @@ def test_receipt_id_prose_row_absent_while_schema_pattern_present_is_an_error() 
             "T <= fixed_date",
             "spec_v02",
             "T >= fixed_date",
+        ),
+        (
+            "fixed-date aggregation flipped to the minimum",
+            "MAXIMUM over the verified proofs",
+            "minimum over the verified proofs",
+            "spec_v02",
+            "MAXIMUM over the verified proofs",
+        ),
+        (
+            "later prose allowed to displace the floor's",
+            "The legal text that binds a buyer is always the FLOOR's",
+            "The legal text that binds a buyer is the effective version's",
+            "spec_v02",
+            "The legal text that binds a buyer is always the FLOOR's",
+        ),
+        (
+            "scope coverage demoted to informational",
+            "Scope coverage, and it is a gate",
+            "Scope coverage, informational only",
+            "spec_v02",
+            "Scope coverage, and it is a gate",
+        ),
+        (
+            "unknown pledge profile warning dropped",
+            "`grant_pledge_type_unknown`",
+            "`grant_pledge_unknown`",
+            "spec_v02",
+            "grant_pledge_type_unknown",
+        ),
+        (
+            "legal text change warning dropped",
+            "`grant_legal_text_changed`",
+            "`grant_text_changed`",
+            "spec_v02",
+            "grant_legal_text_changed",
         ),
         (
             "reserved mode quietly promoted",
