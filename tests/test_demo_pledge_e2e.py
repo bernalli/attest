@@ -810,3 +810,45 @@ def test_the_demo_touches_nothing_outside_its_own_workspace(tmp_path: Path) -> N
     run_demo(workspace)
 
     assert canary.read_text(encoding="utf-8") == "untouched"
+
+
+# --------------------------------------------------------------------------
+# The same sequence, with the backstop instead of the declaration.
+# --------------------------------------------------------------------------
+
+
+def test_the_fixed_date_backstop_delivers_with_nobody_left_to_declare(
+    tmp_path: Path,
+) -> None:
+    """The second trigger exists for the case the first cannot cover: the
+    rights holder is gone too, and nobody is left to sign anything. Time
+    itself becomes the trigger, proved by an anchor rather than asserted."""
+    outcomes = run_demo(tmp_path, trigger="fixed-date")
+
+    assert outcomes["trigger"] == "fixed-date"
+    assert outcomes["declaration_minted"] is False
+
+    assert outcomes["verify_dormant"]["grant"] == "dormant"
+    assert outcomes["refusal_dormant"] == "grant_not_activated"
+    assert outcomes["verify_activated"]["grant"] == "activated"
+
+    assert outcomes["served"] == "served"
+    assert outcomes["check_artifact"]["match"] is True
+
+
+def test_the_backstop_stays_shut_until_the_pinned_header_passes_the_date(
+    tmp_path: Path,
+) -> None:
+    """The half that actually proves something: with the SAME grant and the
+    same kind of evidence, an anchor whose header predates the backstop leaves
+    the grant closed. Without this, "activated" would only show that passing
+    any bundle at all is enough."""
+    outcomes = run_demo(tmp_path, trigger="fixed-date")
+
+    assert outcomes["anchor_before_the_date"]["grant"] == "dormant"
+    assert outcomes["anchor_after_the_date"]["grant"] == "activated"
+
+
+def test_an_unknown_trigger_is_refused_rather_than_guessed(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unsupported trigger"):
+        run_demo(tmp_path, trigger="heartbeat-absence")

@@ -57,6 +57,15 @@ LEGAL_TEXT_BYTES = (
 )
 
 TRIGGER_PUBLISHER_DECLARATION = "publisher-declaration"
+TRIGGER_FIXED_DATE = "fixed-date"
+TRIGGERS = (TRIGGER_PUBLISHER_DECLARATION, TRIGGER_FIXED_DATE)
+
+# Past the grant's own `fixed_date`, and comfortably before it. The demo
+# pins both, because only the pair proves the backstop is the thing doing
+# the work.
+HEADER_TIME_AFTER = 1_924_992_001
+HEADER_TIME_BEFORE = 1_600_000_000
+PINNED_HEADER_HASH = "3a" * 32
 
 
 def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> dict[str, Any]:
@@ -69,7 +78,7 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
     protect a caller who hands in a shared directory that already has
     content under `store/`.
     """
-    if trigger != TRIGGER_PUBLISHER_DECLARATION:
+    if trigger not in TRIGGERS:
         raise ValueError(f"unsupported trigger: {trigger!r}")
 
     workspace = workspace.resolve()
@@ -393,24 +402,40 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
         "and it is DORMANT: nothing is owed yet"
     )
     grant_doc = json.loads(grant_path.read_text(encoding="utf-8"))
+    grant_seed = canon.canonical_bytes(grant_doc)
+
+    # The two passes differ in ONE thing: what makes the grant fire. On the
+    # declaration pass the dormant view is the grant alone. On the fixed-date
+    # pass it is the grant plus an anchor whose pinned header is still BEFORE
+    # the backstop — the same shape of evidence that will later activate it,
+    # which is what makes the later activation mean something.
+    anchor_policy_path: Path | None = None
+    if trigger == TRIGGER_FIXED_DATE:
+        proof, policy = _seeded_time_proof(grant_seed, HEADER_TIME_BEFORE)
+        anchor_policy_path = buyer_dir / "anchor-policy-before.json"
+        anchor_policy_path.write_text(json.dumps(policy), encoding="utf-8")
+        dormant_view: dict[str, Any] = {"grant": grant_doc, "anchor": {"proofs": [proof]}}
+    else:
+        dormant_view = {"grant": grant_doc}
+
     grant_view_dormant = buyer_dir / "grant-view-dormant.json"
-    grant_view_dormant.write_text(json.dumps({"grant": grant_doc}), encoding="utf-8")
+    grant_view_dormant.write_text(json.dumps(dormant_view), encoding="utf-8")
     rc, verify_dormant = _driver.run_cli_capture(
-        [
-            "verify",
-            str(imported_receipt),
-            "--trust-dir",
-            str(trust_dir),
-            "--grant-view",
-            str(grant_view_dormant),
-        ]
+        _verify_argv(imported_receipt, trust_dir, grant_view_dormant, anchor_policy_path)
     )
+    if trigger == TRIGGER_FIXED_DATE:
+        outcomes["anchor_before_the_date"] = verify_dormant
     outcomes["verify_dormant"] = verify_dormant
     outcomes["verify_dormant_exit_code"] = rc
 
     # --- Step 8: the first refusal -------------------------------------------
     _driver.narrate("Step 8: Casey turns up at the archive anyway. REFUSED: the grant is dormant")
-    gate = Custodian(audience=ARCHIVE, archive_dir=archive_dir, trust_dir=trust_dir)
+    gate = Custodian(
+        audience=ARCHIVE,
+        archive_dir=archive_dir,
+        trust_dir=trust_dir,
+        anchor_policy=anchor_policy_path,
+    )
     challenge_path = gate.challenge(receipt=imported_receipt, out_dir=gate_dir)
     response_path = buyer_dir / "response.json"
     _driver.run_cli_json(
@@ -438,52 +463,62 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
     ).reason
 
     # --- Step 9: the trigger --------------------------------------------------
-    _driver.narrate(
-        "Step 9: the rights holder signs the cessation declaration — the trigger the grant "
-        "named. The store is gone; the person who made the promise is not"
-    )
-    _driver.run_cli_json(
-        [
-            "grant",
-            "declare",
-            "--publisher",
-            PUBLISHER,
-            "--artifact",
-            game_sha256,
-            "--declared-at",
-            DECLARED_AT,
-            "--seed",
-            str(pub_seed),
-            "--kid",
-            PUB_KID,
-            "--mldsa-seed",
-            str(pub_mldsa),
-            "--out",
-            str(declaration_path),
-        ]
-    )
+    if trigger == TRIGGER_PUBLISHER_DECLARATION:
+        _driver.narrate(
+            "Step 9: the rights holder signs the cessation declaration — the trigger the grant "
+            "named. The store is gone; the person who made the promise is not"
+        )
+        _driver.run_cli_json(
+            [
+                "grant",
+                "declare",
+                "--publisher",
+                PUBLISHER,
+                "--artifact",
+                game_sha256,
+                "--declared-at",
+                DECLARED_AT,
+                "--seed",
+                str(pub_seed),
+                "--kid",
+                PUB_KID,
+                "--mldsa-seed",
+                str(pub_mldsa),
+                "--out",
+                str(declaration_path),
+            ]
+        )
+        active_view: dict[str, Any] = {
+            "grant": grant_doc,
+            "declarations": [json.loads(declaration_path.read_text(encoding="utf-8"))],
+        }
+    else:
+        _driver.narrate(
+            "Step 9: nobody signs anything. The rights holder is gone too, and the backstop "
+            "the grant named has been reached — proved by an anchor, not asserted by anyone"
+        )
+        proof_after, policy_after = _seeded_time_proof(grant_seed, HEADER_TIME_AFTER)
+        anchor_policy_path = buyer_dir / "anchor-policy-after.json"
+        anchor_policy_path.write_text(json.dumps(policy_after), encoding="utf-8")
+        gate = Custodian(
+            audience=ARCHIVE,
+            archive_dir=archive_dir,
+            trust_dir=trust_dir,
+            anchor_policy=anchor_policy_path,
+        )
+        active_view = {"grant": grant_doc, "anchor": {"proofs": [proof_after]}}
+
+    outcomes["declaration_minted"] = declaration_path.exists()
+
     grant_view_active = buyer_dir / "grant-view-active.json"
-    grant_view_active.write_text(
-        json.dumps(
-            {
-                "grant": grant_doc,
-                "declarations": [json.loads(declaration_path.read_text(encoding="utf-8"))],
-            }
-        ),
-        encoding="utf-8",
-    )
+    grant_view_active.write_text(json.dumps(active_view), encoding="utf-8")
     rc, verify_activated = _driver.run_cli_capture(
-        [
-            "verify",
-            str(imported_receipt),
-            "--trust-dir",
-            str(trust_dir),
-            "--grant-view",
-            str(grant_view_active),
-        ]
+        _verify_argv(imported_receipt, trust_dir, grant_view_active, anchor_policy_path)
     )
     outcomes["verify_activated"] = verify_activated
     outcomes["verify_activated_exit_code"] = rc
+    if trigger == TRIGGER_FIXED_DATE:
+        outcomes["anchor_after_the_date"] = verify_activated
 
     # --- Step 10: the refusals that still stand, at an ACTIVE grant ----------
     _driver.narrate(
@@ -549,6 +584,69 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
         "the file — against a receipt, a signed grant, and a proof only Casey could make"
     )
     return outcomes
+
+
+def _verify_argv(
+    receipt: Path, trust_dir: Path, grant_view: Path, anchor_policy: Path | None
+) -> list[str]:
+    argv = [
+        "verify",
+        str(receipt),
+        "--trust-dir",
+        str(trust_dir),
+        "--grant-view",
+        str(grant_view),
+    ]
+    if anchor_policy is not None:
+        argv += ["--anchor-policy", str(anchor_policy)]
+    return argv
+
+
+def _seeded_time_proof(seed: bytes, header_time: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Fabricate one seeded OpenTimestamps attestation over `seed`, plus the
+    trust policy that pins the header it climbs to.
+
+    A real attestation is obtained from a calendar and the header is one a
+    verifier already trusts; here both ends are synthesised so the demo needs
+    no network and no Bitcoin. The op-chain is written out by hand rather than
+    taken from a shared generator: `tests/test_anchor.py` and
+    `tools/gen_vectors.py` each keep their own copy for the same reason — one
+    generator with a bug in it would agree with itself everywhere.
+
+    The chain is `SHA256(seed)`, append a sibling, hash, prepend a prefix,
+    hash. §18.4 reduces the resulting verdict by `anchored_after`, the MAXIMUM
+    pinned time: "has real time reached T?", the opposite question from §11's.
+    """
+    sibling = bytes.fromhex("ab" * 32)
+    prefix = bytes.fromhex("cd" * 16)
+    acc = hashlib.sha256(seed).digest()
+    acc = hashlib.sha256(acc + sibling).digest()
+    acc = hashlib.sha256(prefix + acc).digest()
+    merkle_root = acc.hex()
+
+    proof: dict[str, Any] = {
+        "kind": "ots",
+        "ops": [
+            ["append", sibling.hex()],
+            ["sha256"],
+            ["prepend", prefix.hex()],
+            ["sha256"],
+        ],
+        "header_merkle_root": merkle_root,
+        "header_time": header_time,
+        "header_hash": PINNED_HEADER_HASH,
+    }
+    policy: dict[str, Any] = {
+        "pinned_headers": {
+            PINNED_HEADER_HASH: {
+                "header_hash": PINNED_HEADER_HASH,
+                "merkle_root": merkle_root,
+                "time": header_time,
+            }
+        },
+        "crqc_horizon": None,
+    }
+    return proof, policy
 
 
 def _refusals_at_an_active_grant(
@@ -651,19 +749,22 @@ def _refusals_at_an_active_grant(
 def main() -> int:
     import tempfile
 
-    with tempfile.TemporaryDirectory(prefix="attest-pledge-demo-") as tmp:
-        outcomes = run_demo(Path(tmp))
-        print("\n--- outcomes ---")
-        print(json.dumps(outcomes, indent=2, sort_keys=True))
-        ok = (
-            outcomes["store_dir_deleted"] is True
-            and outcomes["verify_dormant"]["grant"] == "dormant"
-            and outcomes["refusal_dormant"] == "grant_not_activated"
-            and outcomes["verify_activated"]["grant"] == "activated"
-            and outcomes["served"] == "served"
-            and outcomes["check_artifact"]["match"] is True
-        )
-    return 0 if ok else 1
+    all_ok = True
+    for trigger in TRIGGERS:
+        _driver.narrate(f"=== pass: {trigger} ===")
+        with tempfile.TemporaryDirectory(prefix=f"attest-pledge-{trigger}-") as tmp:
+            outcomes = run_demo(Path(tmp), trigger=trigger)
+            print(f"\n--- outcomes ({trigger}) ---")
+            print(json.dumps(outcomes, indent=2, sort_keys=True))
+            all_ok = all_ok and (
+                outcomes["store_dir_deleted"] is True
+                and outcomes["verify_dormant"]["grant"] == "dormant"
+                and outcomes["refusal_dormant"] == "grant_not_activated"
+                and outcomes["verify_activated"]["grant"] == "activated"
+                and outcomes["served"] == "served"
+                and outcomes["check_artifact"]["match"] is True
+            )
+    return 0 if all_ok else 1
 
 
 if __name__ == "__main__":
