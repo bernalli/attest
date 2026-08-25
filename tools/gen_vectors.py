@@ -5058,11 +5058,7 @@ def gen_39_witness_corroboration() -> None:
         # or not a verifier substituted the membership, and the leaf would pin
         # nothing at all.
         _witness_epoch(
-            [
-                _witness_pin(
-                    0, roles=corroborating_roles, not_before=HISTORICAL_EPOCH_NOT_BEFORE
-                )
-            ]
+            [_witness_pin(0, roles=corroborating_roles, not_before=HISTORICAL_EPOCH_NOT_BEFORE)]
         ),
     )
     _write(
