@@ -26,7 +26,7 @@ _VERSIONING_PATH = _REPO_ROOT / "docs/spec/attest-versioning.md"
 _VECTORS_PATH = _REPO_ROOT / "docs/spec/vectors"
 _STANDARDS_RELATIONSHIP_PATH = _REPO_ROOT / "docs/spec/attest-standards-relationship.md"
 _INTERNET_DRAFT_DIR = _REPO_ROOT / "ietf"
-_INTERNET_DRAFT_BASENAME = "draft-martinalli-open-purchase-receipts"
+_INTERNET_DRAFT_BASENAME = "draft-bernalli-open-purchase-receipts"
 _CONFORMANCE_DOC_PATH = _REPO_ROOT / "docs/conformance.md"
 
 # The six normative sections attest-versioning.md's amendment procedure
@@ -877,7 +877,7 @@ _REV_LOG_ENTRY_REV_RE = re.compile(r"\(rev (\d+)\)")
 
 
 def _internet_draft_source_path() -> Path | None:
-    """The single `ietf/draft-martinalli-open-purchase-receipts.{md,xml}`
+    """The single `ietf/draft-bernalli-open-purchase-receipts.{md,xml}`
     source, or None if zero or more than one candidate exists."""
     candidates = [
         path
@@ -905,7 +905,7 @@ def _revisions_in_log(spec_text: str) -> set[int]:
 def check_internet_draft_snapshot() -> list[str]:
     """Fail-closed existence/shape guard for the Internet-Draft source.
 
-    Checks that exactly one of `ietf/draft-martinalli-open-purchase-receipts.md`
+    Checks that exactly one of `ietf/draft-bernalli-open-purchase-receipts.md`
     /`.xml` exists, that its text (XML comments stripped first -- a
     declaration or required literal inside a `<!-- ... -->` comment is
     never operative content and must not satisfy this guard, 2026-07-23

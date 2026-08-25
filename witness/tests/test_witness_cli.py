@@ -104,10 +104,10 @@ def test_a_served_witness_answers_a_real_http_submission(
         # test into a test that never finishes. (Measured, while mutating the
         # body reader to over-read a keep-alive socket.)
         httpd = make_server("127.0.0.1", 0, app, server_class=_ThreadingWSGIServer)
-    except PermissionError:  # pragma: no cover - sandboxed developer machines
+    except PermissionError:  # pragma: no cover - depends on the runner's permissions
         pytest.skip(
-            "binding a loopback socket is not permitted here; this test runs in CI "
-            "and outside a restricted sandbox"
+            "binding a loopback socket is not permitted for this process; the test runs "
+            "wherever it is"
         )
     with httpd:
         port = httpd.server_address[1]
