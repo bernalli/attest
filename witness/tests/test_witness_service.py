@@ -541,11 +541,14 @@ def test_the_read_and_the_write_happen_inside_one_transaction(
 def test_a_log_that_grows_from_an_empty_tree_is_still_cosigned(
     service: WitnessService, log: FakeLog
 ) -> None:
-    """The one path where the stored size is 0 but state EXISTS. It takes the
-    consistency branch rather than the first-submission branch, and RFC 6962
-    makes consistency from an empty tree hold with an empty proof — so a
-    witness that treated "no proof" as "no evidence" here would refuse a log
-    its first real growth, forever."""
+    """Coverage for the one path where the stored size is 0 but state EXISTS.
+
+    Stated plainly because a review caught the earlier wording promising more:
+    this passes under the previous three-branch implementation too. It pins
+    that the path WORKS — a witness that treated "no proof" as "no evidence"
+    here would refuse a log its first real growth forever — not that any
+    particular implementation of it is in place.
+    """
     service.add_checkpoint(_body(0, [], log.checkpoint_text()))
     log.append(4)
     service.add_checkpoint(_body(0, [], log.checkpoint_text()))
@@ -619,10 +622,17 @@ def test_an_unknown_origin_in_a_malformed_note_is_still_404(
         service.add_checkpoint(b"old 0\n\nunknown.example\n4\nnot-base64\n\n\xe2\x80\x94 x y\n")
 
 
-def test_a_malformed_note_for_a_known_origin_is_400(service: WitnessService) -> None:
-    """The other half of the pair: once the origin IS ours, a note we cannot
-    parse is a bad request, and saying so tells the operator of a log we
-    actually serve something useful."""
+def test_a_malformed_note_for_a_known_origin_is_400_not_403(
+    service: WitnessService,
+) -> None:
+    """Once the origin IS ours, a note we cannot parse is a bad request — 403
+    is reserved for a note that parses and whose signatures do not verify.
+
+    This guards the 400-vs-403 split and NOT the ordering fix: it passes with
+    the allowlist lookup on either side of the parse, so the ordering claim is
+    pinned by its own test above, the one that submits an unknown origin in a
+    note that does not parse.
+    """
     with pytest.raises(BadRequest):
         service.add_checkpoint(f"old 0\n\n{ORIGIN}\n4\nnot-base64\n\n".encode())
 
@@ -639,4 +649,28 @@ def test_a_witness_whose_clock_reads_zero_refuses_rather_than_signing(
     with pytest.raises(CosignFailed) as excinfo:
         service.add_checkpoint(_body(0, [], log.checkpoint_text()))
     assert excinfo.value.status == 500
+    assert service._store.latest(ORIGIN) is None
+
+
+@pytest.mark.parametrize(
+    "origin_line",
+    [
+        "ünicode-origin.example",  # valid UTF-8, not attest's ASCII grammar
+        "x" * 4000,  # long, but a legitimate string
+        "",  # no origin at all
+    ],
+)
+def test_an_origin_this_witness_does_not_serve_is_404_whatever_it_looks_like(
+    service: WitnessService, origin_line: str
+) -> None:
+    """C2SP requires only that an origin be non-empty; attest's printable-ASCII
+    rule is attest's own, and applying it BEFORE the allowlist lookup answered
+    400 where the specification says 404 — telling a stranger their note was
+    inspected and found wanting, when the truthful answer is that this witness
+    does not serve that log at all. The allowlist decides, and nothing before
+    it does.
+    """
+    body = f"old 0\n\n{origin_line}\n4\nnot-base64\n".encode()
+    with pytest.raises(UnknownOrigin):
+        service.add_checkpoint(body)
     assert service._store.latest(ORIGIN) is None

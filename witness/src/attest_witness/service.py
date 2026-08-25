@@ -183,27 +183,24 @@ def _b64_hash(line: str) -> bytes:
     return raw
 
 
-# A checkpoint's first line is its origin (v0.2 §9.1). Bounded before use: the
-# body is already size-limited, but a lookup key is not a place to put an
-# unbounded slice of somebody's request.
-_MAX_ORIGIN_LEN: Final = 512
-
-
 def _declared_origin(checkpoint_text: str) -> str:
-    """The origin a submission CLAIMS, read without parsing anything else.
+    """The origin a submission CLAIMS: its first line, judged by nothing.
 
-    Deliberately not `parse_checkpoint(...).origin`: that validates the whole
+    Deliberately not `parse_checkpoint(...).origin` — that validates the whole
     note first, so an unknown origin in a malformed note would be answered as
-    a malformed note. A claim is all that is needed to decide whether this
-    witness has any business with it.
+    a malformed note. And deliberately no grammar check either: attest's
+    printable-ASCII origin rule (v0.2 §9.2) is attest's, while C2SP requires
+    only that an origin be non-empty. Refusing a valid UTF-8 origin as
+    malformed BEFORE looking it up would answer 400 where C2SP says 404, and
+    would hand a stranger a diagnostic about a note this witness never had any
+    business reading.
+
+    Whatever the first line says, the allowlist is what decides. A line this
+    witness does not serve — empty, enormous, or in a script nobody expected —
+    is simply not one of ours. The body is already length-bounded, so the
+    lookup key is bounded with it.
     """
     first_line, _, _ = checkpoint_text.partition("\n")
-    if not first_line or len(first_line) > _MAX_ORIGIN_LEN:
-        raise BadRequest("checkpoint does not begin with an origin line")
-    if not all("\x20" <= character <= "\x7e" for character in first_line):
-        # v0.2 §9.2's origin grammar. Refused as a malformed request rather
-        # than an unknown origin: this is not a name any log could have.
-        raise BadRequest("checkpoint origin is not printable ASCII")
     return first_line
 
 
