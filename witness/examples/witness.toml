@@ -1,0 +1,75 @@
+# attest reference witness — example configuration.
+#
+# Everything this witness trusts is in this file. It is read once, at startup,
+# and every problem in it is a startup failure: run
+#
+#     attest-witness check-config --config witness.toml
+#
+# before deploying, and again after every edit. The command prints what was
+# loaded — allowlist, key ids, bounds — and never any secret, so its output is
+# safe to paste into a ticket.
+
+[witness]
+# This witness's C2SP signed-note key name (v0.2 §9.2 grammar: printable
+# ASCII, no "+"). Verifiers pin it BY NAME as well as by key, so changing it
+# is a key rotation, not a rename.
+name = "witness.example/w1"
+
+# Secret key material lives in files, never inline here. Both are in the exact
+# shapes `attest keygen` writes:
+#
+#     attest keygen --seed-out ed25519.seed --pub-out ed25519.pub \
+#                   --mldsa-out mldsa65.json
+#
+# Keep them 0600 and owned by the account that runs the witness. These keys are
+# ONLINE — the service signs with them on every accepted submission — which is
+# a declared operational property of a witness, not an oversight.
+seed_path = "/etc/attest-witness/ed25519.seed"
+mldsa_key_path = "/etc/attest-witness/mldsa65.json"
+
+[storage]
+# The record of every head this witness has cosigned. Losing it means the
+# witness forgets what it has already endorsed and would cosign a fork of it:
+# back it up, and never point two witnesses at two different copies of it.
+database_path = "/var/lib/attest-witness/state.sqlite3"
+
+[server]
+# Endpoint prefixes. The submission endpoint is
+# `<submission_prefix>/add-checkpoint`; monitoring is
+# `<monitoring_prefix>/<sha256(origin) in lowercase hex>/checkpoint`.
+submission_prefix = "/witness/v0"
+monitoring_prefix = "/witness/v0/monitoring"
+
+# Bounds applied to every request. `max_proof_lines` may be lowered but never
+# raised: C2SP tlog-witness says a client MUST NOT send more than 63.
+max_request_bytes = 262144
+max_proof_lines = 63
+
+# --- The allowlist ----------------------------------------------------------
+#
+# One [[log]] table per log this witness will cosign for. There is no default
+# and no wildcard: a log absent from this list is refused with 404 before any
+# checkpoint or consistency work is done. One log and fifty logs are the same
+# code path — add or remove tables, nothing else changes.
+#
+# `ed25519_pub_b64u` and `mldsa_65_pub_b64u` are the log's HYBRID pair, both
+# required: checkpoint authentication is a fail-closed AND (v0.2 §9.3), so a
+# pin missing its ML-DSA-65 leg could never authenticate anything and is a
+# configuration error rather than a degraded mode.
+#
+# Get these values from the log operator over a channel you trust. They are
+# the whole of what stops this witness cosigning for an impostor.
+
+[[log]]
+origin = "log.example"
+name = "log.example"
+ed25519_pub_b64u = "REPLACE-WITH-THE-LOG-ED25519-PUBLIC-KEY-BASE64URL"
+mldsa_65_pub_b64u = "REPLACE-WITH-THE-LOG-ML-DSA-65-PUBLIC-KEY-BASE64URL"
+
+# A second log, to show that nothing about the first one is special:
+#
+# [[log]]
+# origin = "other-log.example/2026"
+# name = "other-log.example"
+# ed25519_pub_b64u = "..."
+# mldsa_65_pub_b64u = "..."

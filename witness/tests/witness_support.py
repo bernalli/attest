@@ -261,3 +261,64 @@ def anchor_for(text: str, header_time: int) -> dict[str, Any]:
             crqc_horizon=None,
         ),
     }
+
+
+class FakeLog:
+    """A real RFC 6962 log with real hybrid keys — small, and entirely honest.
+
+    Nothing here is a stub: leaves are hashed by the core, roots come from
+    `tlog.build_tree`, consistency proofs from `tlog.consistency_proof`, and
+    checkpoints are signed by `tlog.sign_checkpoint`. A witness tested against
+    a fabricated log would only ever prove that our fabrication matches our
+    expectation.
+
+    `checkpoint_text` takes optional `tree_size`/`root` overrides so a test can
+    sign a checkpoint the log could never have produced — a fork, a rollback,
+    an empty tree with an invented root. Those are GENUINE signatures over
+    dishonest contents, which is exactly the adversary a witness faces: the log
+    holds its own keys.
+    """
+
+    def __init__(
+        self, origin: str, signing_keys: pq.HybridSigningKeys, *, name: str | None = None
+    ) -> None:
+        self.origin = origin
+        self.name = name if name is not None else origin
+        self.signing_keys = signing_keys
+        self.leaves: list[bytes] = []
+
+    @property
+    def log_key(self) -> tlog.LogKey:
+        return tlog.LogKey(
+            origin=self.origin,
+            name=self.name,
+            ed25519_pub=self.signing_keys.ed.pub,
+            mldsa_pub=self.signing_keys.mldsa.pub,
+        )
+
+    def append(self, count: int, *, filler: bytes = b"") -> None:
+        start = len(self.leaves)
+        for index in range(start, start + count):
+            self.leaves.append(filler + f"entry-{index}".encode())
+
+    def fork(self, size: int) -> FakeLog:
+        """A second log sharing this one's first `size` leaves and its keys."""
+        branch = FakeLog(self.origin, self.signing_keys, name=self.name)
+        branch.leaves = list(self.leaves[:size])
+        return branch
+
+    def root_at(self, size: int) -> bytes:
+        return tlog.build_tree(self.leaves[:size])
+
+    def checkpoint_text(self, *, tree_size: int | None = None, root: bytes | None = None) -> str:
+        size = len(self.leaves) if tree_size is None else tree_size
+        return tlog.sign_checkpoint(
+            self.origin,
+            size,
+            self.root_at(size) if root is None else root,
+            self.signing_keys,
+            self.name,
+        )
+
+    def consistency_proof_from(self, size: int) -> list[bytes]:
+        return tlog.consistency_proof(self.leaves, size)

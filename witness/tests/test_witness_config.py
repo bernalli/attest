@@ -332,3 +332,34 @@ def test_mismatched_mldsa_secret_and_public_key_fails_startup(
     )
     with pytest.raises(ConfigError, match="not the same key pair"):
         load_config(config_path)
+
+
+def test_the_shipped_example_config_is_a_valid_config(
+    tmp_path: Path, witness_keys: pq.HybridSigningKeys, log_keys: pq.HybridSigningKeys
+) -> None:
+    """`examples/witness.toml` is the first thing an operator copies. Loading
+    it here — with the placeholders filled in and nothing else changed — is
+    what stops it drifting into a file that documents field names this loader
+    no longer has.
+    """
+    example = (Path(__file__).resolve().parents[1] / "examples" / "witness.toml").read_text(
+        encoding="utf-8"
+    )
+    seed_path, mldsa_path = write_key_files(tmp_path, witness_keys)
+    filled = (
+        example.replace("/etc/attest-witness/ed25519.seed", str(seed_path))
+        .replace("/etc/attest-witness/mldsa65.json", str(mldsa_path))
+        .replace("/var/lib/attest-witness/state.sqlite3", str(tmp_path / "state.sqlite3"))
+        .replace("REPLACE-WITH-THE-LOG-ED25519-PUBLIC-KEY-BASE64URL", keys.b64u(log_keys.ed.pub))
+        .replace(
+            "REPLACE-WITH-THE-LOG-ML-DSA-65-PUBLIC-KEY-BASE64URL",
+            keys.b64u(log_keys.mldsa.pub),
+        )
+    )
+    config_path = tmp_path / "from-example.toml"
+    config_path.write_text(filled, encoding="utf-8")
+
+    config = load_config(config_path)
+    assert list(config.logs) == ["log.example"]
+    assert config.server.max_proof_lines == 63
+    assert config.identity.name == "witness.example/w1"
