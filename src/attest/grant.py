@@ -636,17 +636,31 @@ def is_non_narrowing(floor: object, later: object) -> bool:
     because the prose that binds them stays the floor's either way; the
     divergence is reported instead, by `prose_differs`.
 
-    This is criterion 2 alone. Criterion 1 (currency: a strictly greater
-    `grant_version`, a signer key still active in the publisher's manifest
-    chain, and the rollback-or-equivocation rejection of two authenticated
-    grants sharing one `grant_version`) needs the manifest chain in hand and
-    belongs with the evaluation that resolves it.
+    This is criterion 2 PLUS the one half of criterion 1 that needs nothing
+    but the two documents: `publisher` equality. §18.3 states that equality as
+    a precondition of ADMISSIBILITY rather than as a narrowing test, and it is
+    enforced here rather than left to the caller because it is load-bearing and
+    free: `publisher` is what declaration coverage compares against (§18.4), so
+    a later version allowed to change it could move WHO MAY SIGN the cessation
+    that opens the grant. A supplied version naming a different publisher is
+    not a later version of this grant at all — it is a different grant, and it
+    is ignored. A caller holding only this predicate must not be able to widen
+    a grant into someone else's hands.
+
+    The REST of criterion 1 — a strictly greater `grant_version`, a signer key
+    still active in the publisher's manifest chain, and the
+    rollback-or-equivocation rejection of two authenticated grants sharing one
+    `grant_version` — needs the manifest chain in hand and belongs with the
+    evaluation that resolves it (`evaluate_grant`).
 
     Fails closed on every malformed input, never raises: a version that cannot
     be compared is ignored, which leaves the floor effective.
     """
     try:
         if not isinstance(floor, dict) or not isinstance(later, dict):
+            return False
+        floor_publisher, later_publisher = floor.get("publisher"), later.get("publisher")
+        if not _is_dns_name(floor_publisher) or floor_publisher != later_publisher:
             return False
         floor_scope = _scope_or_none(floor.get("scope"))
         later_scope = _scope_or_none(later.get("scope"))

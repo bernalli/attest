@@ -662,6 +662,32 @@ def test_grant_coverage_fails_closed_on_a_malformed_artifact_entry() -> None:
 # --- the non-narrowing ratchet (§18.3) ---------------------------------------
 
 
+def test_a_later_version_naming_another_publisher_is_not_a_later_version() -> None:
+    """§18.3 criterion 1: `publisher` equality is a precondition of
+    ADMISSIBILITY, and it is load-bearing — `publisher` is what declaration
+    coverage compares against (§18.4), so a later version free to change it
+    could move WHO MAY SIGN the cessation that opens the grant. This version
+    widens every member the ratchet does test, and is still not a later
+    version of this grant: it is a different grant."""
+    floor = _unsigned_grant()
+    later = _unsigned_grant(
+        grant_version=2,
+        publisher=OTHER,
+        permissions=["deliver-to-holder", "redistribute-among-holders"],
+    )
+
+    assert not grant.is_non_narrowing(floor, later)
+
+
+@pytest.mark.parametrize("publisher", [None, 42, "", ["pub.example"]])
+def test_ratchet_fails_closed_on_a_non_domain_publisher(publisher: Any) -> None:
+    floor = _unsigned_grant()
+    later = _unsigned_grant(grant_version=2, publisher=publisher)
+
+    assert not grant.is_non_narrowing(floor, later)
+    assert not grant.is_non_narrowing(later, floor)
+
+
 def test_identical_later_version_is_non_narrowing() -> None:
     floor = _unsigned_grant()
     later = _unsigned_grant(grant_version=2)
