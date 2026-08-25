@@ -13,10 +13,10 @@ declares exactly which revision of each file it mirrors.
 ## Toolchain decision: xml2rfc v3 XML, hand-authored (fallback path)
 
 The plan's primary path was `kramdown-rfc` (Ruby) generating xml2rfc v3 XML,
-which `xml2rfc` then builds to text/HTML. That path is **unavailable in this
-local sandbox**: the system Ruby is `2.6.10` (`ruby -v`) and `gem install` is
-blocked by the sandbox's network/filesystem policy — there is no path to
-install `kramdown-rfc` here. Per the plan's own fallback clause, the draft is
+which `xml2rfc` then builds to text/HTML. That path was **unavailable in the
+authoring environment**: the system Ruby is `2.6.10` (`ruby -v`) and
+`gem install` could not reach a package index, so `kramdown-rfc` could not be
+installed there. Per the plan's own fallback clause, the draft is
 therefore **hand-authored directly as xml2rfc v3 XML**
 (`draft-martinalli-open-purchase-receipts.xml`), and only the `xml2rfc` pin
 remains in the toolchain. There is no `.md` source for this draft; the `.xml`
@@ -24,7 +24,7 @@ file is authoritative.
 
 **Pinned builder: `xml2rfc==3.34.0`**, run via `uvx` (no separate install
 step; `uvx` resolves and caches the pinned version on first use). Verified
-live end-to-end, twice, in this sandbox — see "Build" below.
+live end-to-end, twice — see "Build" below.
 
 ## Inline references, not `xi:include` — deliberately
 
@@ -32,8 +32,9 @@ Every citation in the draft (`RFC2119`, `RFC8174`, `RFC8785`, `RFC8032`,
 `RFC4648`, `RFC9334`, `RFC9943`, `RFC7515`, `RFC9052`, `FIPS204`,
 `W3C.VC-DATA-MODEL`, `C2PA`, `ATTEST-REPO`) is a full inline `<reference>`
 element inside `<references>` — never an `xi:include` pulling from
-`bib.ietf.org`. `bib.ietf.org` is outside the network this sandbox allows,
-and inline references make the RENDER step deterministic and reproducible
+`bib.ietf.org`. That host is not reachable from every environment this draft
+has to build in, and inline references make the RENDER step deterministic
+and reproducible
 with no network access at all, in any environment — distinct from the
 one-time pinned-toolchain install above (`uvx --from xml2rfc==3.34.0`),
 which MAY fetch the package from PyPI the first time it runs in a given
@@ -46,10 +47,9 @@ resolution* — the property inline references exist to guarantee.
 
 ## Build
 
-The local sandbox's default `uv` tool/cache directory is not writable
-("Operation not permitted"), so export these before every `uvx` call in this
-sandbox (not needed on a CI runner with a normal writable home — see the CI
-step below):
+Where the default `uv` tool/cache directory is not writable ("Operation not
+permitted"), export these before every `uvx` call — not needed on a CI runner
+with a normal writable home, see the CI step below:
 
 ```sh
 export UV_CACHE_DIR="$TMPDIR/uv-cache" UV_TOOL_DIR="$TMPDIR/uv-tools"
@@ -111,8 +111,8 @@ The one clean way to get the correctly-named files from the
 committed source (which is deliberately named without `-00`, matching the
 plan's fixed literal path) in a single `xml2rfc` invocation is the `cp` step
 above: copy the source to a `-00`-suffixed name in the build directory
-first, then build that copy with `--path`. This was verified live, twice,
-in this sandbox (see below), and is exactly what the CI step
+first, then build that copy with `--path`. This was verified live, twice
+(see below), and is exactly what the CI step
 (`.github/workflows/ci.yml`, `python` job) does with `$RUNNER_TEMP` in place
 of `ietf/build/`.
 
@@ -172,6 +172,6 @@ a defect to chase — RFC 7997 admits non-ASCII in RFCs and drafts under its own
 rules, and nothing in this document failed validation. The lines the same report
 flags as over-long are the ones carrying an em dash: idnits applies the
 72-column limit in **bytes** (it runs under `LC_ALL=C`), and an em dash costs
-three of them. Counted in characters — measured directly on the rendered text
-here, which is more than the report itself establishes — every line is within
-72. Neither is worth fixing.
+three of them. Counted in characters — measured directly on the rendered
+text, which is more than the report itself establishes — every line is
+within 72. Neither is worth fixing.
