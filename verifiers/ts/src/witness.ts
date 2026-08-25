@@ -13,6 +13,8 @@ import { b64uDecode } from './b64u.js'
 import { canonicalBytes, loadsStrict } from './canon.js'
 import { parseStrictUtc } from './dates.js'
 import { ML_DSA_65_PK_LEN } from './mldsa.js'
+import { verifyStrict as verifyEd25519Strict } from './ed25519.js'
+import { keyHash, type Checkpoint } from './tlog.js'
 
 export const SCHEMA_ID = 'attest-witness-policy-v1'
 
@@ -114,6 +116,11 @@ function requireExactMembers(
 }
 
 function requireTimestamp(value: unknown, field: string): number {
+  // Years 0000-0099 are refused explicitly: `Date.UTC` remaps them to
+  // 1900-1999, so `parseStrictUtc` rejects them while Python's `strptime`
+  // accepts them — the same document would be admissible in one core only.
+  if (typeof value === 'string' && /^00\d\d-/.test(value))
+    throw new WitnessError(`${field} must be a UTC ISO-8601 second timestamp`)
   const parsed = parseStrictUtc(value)
   if (parsed === null) throw new WitnessError(`${field} must be a UTC ISO-8601 second timestamp`)
   return parsed
@@ -186,7 +193,10 @@ function requirePositiveInt(value: unknown, field: string): number {
   } else {
     throw new WitnessError(`${field} must be a positive integer`)
   }
-  if (!Number.isInteger(n) || n < 1) throw new WitnessError(`${field} must be a positive integer`)
+  // `isSafeInteger`, not `isInteger`: 2^53 is an "integer" here but Python
+  // rejects it, and an unsafe integer cannot round-trip identically anyway.
+  if (!Number.isSafeInteger(n) || n < 1)
+    throw new WitnessError(`${field} must be a positive integer`)
   return n
 }
 
@@ -250,19 +260,23 @@ function parsePin(raw: unknown, index: number): WitnessPin {
     ? requireOptionalTimestamp(pin['compromised_after'], `${field}.compromised_after`)
     : null
 
-  return {
+  // `readonly` is erased at runtime: without freezing, a consumer can mutate
+  // validated trusted configuration in place. Typed arrays cannot be frozen
+  // (`Cannot freeze array buffer views with elements`), so the key material
+  // is copied on the way in and its immutability stays a convention.
+  return Object.freeze({
     operatorId,
     controlGroup,
     name,
     ed25519Pub,
     mldsa65Pub,
-    roles,
+    roles: Object.freeze([...roles]),
     notBefore,
     notAfter,
-    affiliatedDomains,
+    affiliatedDomains: Object.freeze([...affiliatedDomains]),
     compromiseDeclared,
     compromisedAfter,
-  }
+  })
 }
 
 function parseThreshold(raw: unknown, field: string): Threshold {
@@ -271,7 +285,15 @@ function parseThreshold(raw: unknown, field: string): Threshold {
   const n = requirePositiveInt(threshold['n'], `${field}.n`)
   const m = requirePositiveInt(threshold['m'], `${field}.m`)
   if (m > n) throw new WitnessError(`${field}.m must not exceed ${field}.n`)
-  return { n, m }
+  // §11.4's committee ceiling. Declaring a committee larger than the ceiling
+  // is a policy that could never be satisfied, so it is refused at parse
+  // time. Whether `n` MATCHES the epoch's activation control groups is
+  // checked where those groups are actually counted, not here.
+  if (n > MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE)
+    throw new WitnessError(
+      `${field}.n must not exceed ${MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE}`,
+    )
+  return Object.freeze({ n, m })
 }
 
 function parseEpoch(raw: unknown, index: number): WitnessEpoch {
@@ -296,7 +318,14 @@ function parseEpoch(raw: unknown, index: number): WitnessEpoch {
   if (!Array.isArray(rawWitnesses)) throw new WitnessError(`${field}.witnesses must be an array`)
   const witnesses = rawWitnesses.map((item, position) => parsePin(item, position))
 
-  return { epochId, notBefore, notAfter, logOrigins, threshold, witnesses }
+  return Object.freeze({
+    epochId,
+    notBefore,
+    notAfter,
+    logOrigins: Object.freeze([...logOrigins]),
+    threshold,
+    witnesses: Object.freeze(witnesses),
+  })
 }
 
 /** Parse a TRUSTED `attest-witness-policy-v1` document. Throws on anything
@@ -318,7 +347,7 @@ export function parsePolicy(document: unknown): WitnessPolicy {
     seen.add(epoch.epochId)
   }
 
-  return { epochs }
+  return Object.freeze({ epochs: Object.freeze(epochs) })
 }
 
 /** Parse a policy from its canonical JCS bytes — the supported entry point.
@@ -375,4 +404,102 @@ export function isConflicted(
     (other) =>
       other.affiliatedDomains.includes(conflictDomain) && other.controlGroup === pin.controlGroup,
   )
+}
+
+// --- C2SP tlog-cosignature (v0.2 §9.2) -------------------------------------
+
+// Type `0x04` is the interoperable Ed25519 cosignature real witnesses already
+// emit. Type `0x06` is an ML-DSA-44 signature over the DIFFERENT `subtree/v1`
+// structure and MUST NOT count as either leg (§9.2).
+export const COSIGNATURE_SIG_TYPE = Uint8Array.of(0x04)
+const COSIGNATURE_HEADER = new TextEncoder().encode('cosignature/v1\n')
+const KEY_ID_LEN = 4
+const TIMESTAMP_LEN = 8
+const ED25519_SIG_LEN = 64
+const COSIGNATURE_BLOB_LEN = KEY_ID_LEN + TIMESTAMP_LEN + ED25519_SIG_LEN
+
+export const WARN_INDEPENDENCE_NOT_ESTABLISHED = 'witness_independence_not_established'
+
+/** The exact bytes a witness signs: header, time line, then the note body.
+ *
+ * `cosignature/v1\n` is the domain separation that stops a signature made
+ * over a checkpoint body from being transported into a witness assertion,
+ * or the reverse (§9.2). */
+export function cosignatureMessage(noteBytes: Uint8Array, timestamp: number): Uint8Array {
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0)
+    throw new WitnessError('timestamp must be a non-negative POSIX integer')
+  const timeLine = new TextEncoder().encode(`time ${timestamp}\n`)
+  const out = new Uint8Array(COSIGNATURE_HEADER.length + timeLine.length + noteBytes.length)
+  out.set(COSIGNATURE_HEADER, 0)
+  out.set(timeLine, COSIGNATURE_HEADER.length)
+  out.set(noteBytes, COSIGNATURE_HEADER.length + timeLine.length)
+  return out
+}
+
+/** `SHA-256(name || "\n" || 0x04 || pub)[:4]` — the C2SP type-`0x04` key ID.
+ * Distinct from the same witness's checkpoint-type key ID by construction. */
+export function cosignatureKeyId(name: string, ed25519Pub: Uint8Array): Uint8Array {
+  return keyHash(name, COSIGNATURE_SIG_TYPE, ed25519Pub)
+}
+
+export interface CorroborationVerdict {
+  readonly witnessed: boolean
+  readonly warnings: readonly string[]
+}
+
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false
+  return true
+}
+
+/** Whether one signature-line blob is a valid cosignature by `pin`.
+ * Never throws: these bytes come from an untrusted note. */
+function countsAsCorroboration(blob: unknown, pin: WitnessPin, noteBytes: Uint8Array): boolean {
+  if (!(blob instanceof Uint8Array) || blob.length !== COSIGNATURE_BLOB_LEN) return false
+  if (!equalBytes(blob.subarray(0, KEY_ID_LEN), cosignatureKeyId(pin.name, pin.ed25519Pub)))
+    return false
+  const view = new DataView(blob.buffer, blob.byteOffset + KEY_ID_LEN, TIMESTAMP_LEN)
+  const seconds = view.getBigUint64(0, false)
+  if (seconds > BigInt(Number.MAX_SAFE_INTEGER) / 1000n) return false
+  const timestamp = Number(seconds)
+  // Standing is judged at the moment the witness CLAIMS to have observed, not
+  // at the verifier's local clock — an old but valid observation must keep
+  // verifying forever.
+  if (!pinHasStandingAt(pin, timestamp * 1000)) return false
+  const message = cosignatureMessage(noteBytes, timestamp)
+  return verifyEd25519Strict(message, blob.subarray(KEY_ID_LEN + TIMESTAMP_LEN), pin.ed25519Pub)
+}
+
+/** Decide whether one pinned witness cosignature reaches `witnessed`.
+ *
+ * §10.1's one-`0x04` rule: a single valid Ed25519 cosignature by a pinned,
+ * epoch-resolved witness holding the `corroboration` role is sufficient.
+ *
+ * Every failure returns `witnessed: false` with NO warning, leaving the
+ * caller's existing standing untouched. That silence is normative (§11.4). */
+export function evaluateCorroboration(
+  checkpoint: Checkpoint,
+  signatures: ReadonlyArray<readonly [string, Uint8Array]>,
+  policy: WitnessPolicy,
+  epochId: unknown,
+): CorroborationVerdict {
+  if (typeof epochId !== 'string') return { witnessed: false, warnings: [] }
+  const epoch = findEpoch(policy, epochId)
+  if (epoch === undefined) return { witnessed: false, warnings: [] }
+
+  try {
+    for (const [name, blob] of signatures) {
+      for (const pin of epoch.witnesses) {
+        // A line naming someone else is a signed-note convention, never a
+        // fatal condition (§9.2).
+        if (pin.name !== name || !pin.roles.includes(ROLE_CORROBORATION)) continue
+        if (countsAsCorroboration(blob, pin, checkpoint.noteBytes))
+          return { witnessed: true, warnings: [WARN_INDEPENDENCE_NOT_ESTABLISHED] }
+      }
+    }
+  } catch {
+    return { witnessed: false, warnings: [] }
+  }
+  return { witnessed: false, warnings: [] }
 }

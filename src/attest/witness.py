@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final
 
-from attest import canon, keys, pq
+from attest import canon, keys, pq, tlog
 
 SCHEMA_ID: Final = "attest-witness-policy-v1"
 
@@ -98,6 +98,11 @@ def _require_timestamp(value: object, field: str) -> datetime:
         parsed = datetime.strptime(value, _DATE_FMT)
     except ValueError as exc:
         raise WitnessError(f"{field} must be a UTC ISO-8601 second timestamp") from exc
+    # Years 0000-0099 are refused: JavaScript's `Date.UTC` remaps them to
+    # 1900-1999, so the TypeScript core cannot represent them and the same
+    # document would be admissible in one core only.
+    if parsed.year < 100:
+        raise WitnessError(f"{field} must be a UTC ISO-8601 second timestamp")
     if parsed.strftime(_DATE_FMT) != value:
         raise WitnessError(f"{field} must be a UTC ISO-8601 second timestamp")
     return parsed.replace(tzinfo=UTC)
@@ -347,6 +352,12 @@ def _parse_threshold(raw: object, field: str) -> Threshold:
     m = _require_positive_int(threshold["m"], f"{field}.m")
     if m > n:
         raise WitnessError(f"{field}.m must not exceed {field}.n")
+    # §11.4's committee ceiling: a committee larger than the ceiling could
+    # never be satisfied, so the policy is refused at parse time. Whether `n`
+    # MATCHES the epoch's activation control groups is checked where those
+    # groups are actually counted, not here.
+    if n > MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE:
+        raise WitnessError(f"{field}.n must not exceed {MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE}")
     return Threshold(n=n, m=m)
 
 
@@ -425,3 +436,116 @@ def load_policy(data: bytes) -> WitnessPolicy:
 def policy_bytes(document: object) -> bytes:
     """Canonical JCS bytes of a policy document (§11.4 packaged-byte assertions)."""
     return canon.canonical_bytes(document)
+
+
+# --- C2SP tlog-cosignature (v0.2 §9.2) -------------------------------------
+
+# Type `0x04` is the interoperable Ed25519 cosignature already emitted by real
+# witnesses. Type `0x06` is an ML-DSA-44 signature over the DIFFERENT
+# `subtree/v1` structure and MUST NOT count as either leg (§9.2).
+COSIGNATURE_SIG_TYPE: Final = b"\x04"
+_COSIGNATURE_HEADER: Final = b"cosignature/v1\n"
+_KEY_ID_LEN: Final = 4
+_TIMESTAMP_LEN: Final = 8
+_ED25519_SIG_LEN: Final = 64
+_COSIGNATURE_BLOB_LEN: Final = _KEY_ID_LEN + _TIMESTAMP_LEN + _ED25519_SIG_LEN
+
+WARN_INDEPENDENCE_NOT_ESTABLISHED: Final = "witness_independence_not_established"
+
+
+def cosignature_message(note_bytes: bytes, timestamp: int) -> bytes:
+    """The exact bytes a witness signs: header, time line, then the note body.
+
+    `cosignature/v1\\n` provides the domain separation that stops a signature
+    made over a checkpoint body from being transported into a witness
+    assertion, or the reverse (§9.2).
+    """
+    if not isinstance(note_bytes, bytes):
+        raise WitnessError("note_bytes must be bytes")
+    if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 0:
+        raise WitnessError("timestamp must be a non-negative POSIX integer")
+    return _COSIGNATURE_HEADER + f"time {timestamp}\n".encode() + note_bytes
+
+
+def cosignature_key_id(name: str, ed25519_pub: bytes) -> bytes:
+    """`SHA-256(name || "\\n" || 0x04 || pub)[:4]` — the C2SP type-`0x04` key ID.
+
+    Distinct from the same witness's checkpoint-type key ID by construction:
+    the signature type is part of the hashed input.
+    """
+    return tlog.key_hash(name, COSIGNATURE_SIG_TYPE, ed25519_pub)
+
+
+@dataclass(frozen=True)
+class CorroborationVerdict:
+    """Whether a checkpoint reached `witnessed`, and what must be reported.
+
+    `warnings` carries `witness_independence_not_established` on EVERY
+    witnessed verdict and nothing else, ever: §11.4 permits no other literal
+    from this layer, so a failed cosignature is silent by construction.
+    """
+
+    witnessed: bool
+    warnings: list[str]
+
+
+def _counts_as_corroboration(blob: object, pin: WitnessPin, note_bytes: bytes) -> bool:
+    """Whether one signature-line blob is a valid cosignature by `pin`.
+
+    Never raises: these bytes come from an untrusted note.
+    """
+    if not isinstance(blob, bytes) or len(blob) != _COSIGNATURE_BLOB_LEN:
+        return False
+    if blob[:_KEY_ID_LEN] != cosignature_key_id(pin.name, pin.ed25519_pub):
+        return False
+    timestamp = int.from_bytes(blob[_KEY_ID_LEN : _KEY_ID_LEN + _TIMESTAMP_LEN], "big")
+    observed_at = datetime.fromtimestamp(timestamp, UTC)
+    # The pin must have standing AT the moment it claims to have observed —
+    # not at the verifier's local clock, which would break eternal
+    # verifiability for an old but valid observation.
+    if not pin.has_standing_at(observed_at):
+        return False
+    message = cosignature_message(note_bytes, timestamp)
+    return keys.verify_strict(message, blob[_KEY_ID_LEN + _TIMESTAMP_LEN :], pin.ed25519_pub)
+
+
+def evaluate_corroboration(
+    *,
+    checkpoint: tlog.Checkpoint,
+    signatures: list[tuple[str, bytes]],
+    policy: WitnessPolicy,
+    epoch_id: object,
+) -> CorroborationVerdict:
+    """Decide whether one pinned witness cosignature reaches `witnessed`.
+
+    §10.1's one-`0x04` rule: a single valid Ed25519 cosignature by a pinned,
+    epoch-resolved witness holding the `corroboration` role is sufficient.
+
+    Every failure — unresolvable epoch, unpinned key, wrong role, expired or
+    compromised pin, bad signature, wrong blob shape, `0x06` — returns
+    `witnessed=False` with NO warning, leaving the caller's existing standing
+    untouched. That silence is normative (§11.4), not an omission.
+    """
+    if not isinstance(epoch_id, str):
+        return CorroborationVerdict(witnessed=False, warnings=[])
+    epoch = policy.epoch(epoch_id)
+    if epoch is None:
+        return CorroborationVerdict(witnessed=False, warnings=[])
+
+    try:
+        for name, blob in signatures:
+            for pin in epoch.witnesses:
+                if pin.name != name or ROLE_CORROBORATION not in pin.roles:
+                    # A line naming someone else is a signed-note convention,
+                    # never a fatal condition (§9.2).
+                    continue
+                if _counts_as_corroboration(blob, pin, checkpoint.note_bytes):
+                    return CorroborationVerdict(
+                        witnessed=True, warnings=[WARN_INDEPENDENCE_NOT_ESTABLISHED]
+                    )
+    # Signature lines are untrusted input; a hostile shape must degrade, and
+    # the evidence-side caller in transparency.py relies on that.
+    except Exception:
+        return CorroborationVerdict(witnessed=False, warnings=[])
+
+    return CorroborationVerdict(witnessed=False, warnings=[])

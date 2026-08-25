@@ -69,6 +69,7 @@ export {
   CANONICAL_EMPTY_POLICY_BYTES,
   WitnessError,
   parsePolicy as parseWitnessPolicy,
+  loadPolicy as loadWitnessPolicy,
   findEpoch as findWitnessEpoch,
   epochCovers as witnessEpochCovers,
   pinCovers as witnessPinCovers,

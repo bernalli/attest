@@ -200,7 +200,13 @@ describe('cross-core parity guards', () => {
     // apart — which is why loading from bytes is the supported entry point.
     const enc = (s: string): Uint8Array => new TextEncoder().encode(s)
     expect(loadPolicy(enc('{"epochs":[],"schema":"attest-witness-policy-v1"}')).epochs).toEqual([])
-    expect(() => loadPolicy(enc('{"epochs":[{"threshold":{"n":1.0}}],"schema":"x"}'))).toThrow()
+    // The document is valid in every other respect, so only the float can
+    // be what makes it fail — otherwise a shape error would pass this test
+    // even if float rejection disappeared.
+    const withFloat = JSON.stringify(policy({ epochs: [epoch({ threshold: { n: 1, m: 1 } })] }))
+      .replace('"n":1', '"n":1.0')
+    expect(withFloat).toContain('"n":1.0')
+    expect(() => loadPolicy(enc(withFloat))).toThrow()
   })
 
   it('loads a policy carrying a threshold from bytes', () => {
@@ -214,6 +220,47 @@ describe('cross-core parity guards', () => {
   it('rejects an integer past the JS safe range on both cores', () => {
     const doc = JSON.stringify(policy({ epochs: [epoch({ threshold: { n: 9007199254740993, m: 1 } })] }))
     expect(() => loadPolicy(new TextEncoder().encode(doc))).toThrow(WitnessError)
+  })
+})
+
+describe('review regressions (2026-08-25)', () => {
+  it('freezes the parsed policy at runtime', () => {
+    // `readonly` is erased at runtime; without freezing, validated trusted
+    // configuration could be mutated in place after it was checked.
+    const parsed = parsePolicy(policy())
+    expect(Object.isFrozen(parsed)).toBe(true)
+    expect(Object.isFrozen(parsed.epochs[0])).toBe(true)
+    expect(Object.isFrozen(parsed.epochs[0]!.witnesses[0])).toBe(true)
+    expect(() => {
+      ;(parsed.epochs[0] as { epochId: string }).epochId = 'mutated'
+    }).toThrow()
+    expect(parsed.epochs[0]!.epochId).toBe('bootstrap-1')
+  })
+
+  it('rejects an unsafe integer from the in-memory path too', () => {
+    // Python refuses anything past 2^53-1; the bigint fix covered only the
+    // byte path, leaving this one divergent.
+    expect(() =>
+      parsePolicy(
+        policy({ epochs: [epoch({ threshold: { n: Number.MAX_SAFE_INTEGER + 1, m: 1 } })] }),
+      ),
+    ).toThrow(WitnessError)
+  })
+
+  it('rejects a committee larger than the §11.4 ceiling', () => {
+    expect(() =>
+      parsePolicy(policy({ epochs: [epoch({ threshold: { n: 10, m: 1 } })] })),
+    ).toThrow(WitnessError)
+    expect(parsePolicy(policy({ epochs: [epoch({ threshold: { n: 9, m: 1 } })] })).epochs[0]!
+      .threshold.n).toBe(9)
+  })
+
+  it('rejects a two-digit year in both cores', () => {
+    // `Date.UTC` remaps years 0-99 to 1900-1999, so TypeScript could not
+    // represent what Python's strptime accepted.
+    expect(() =>
+      parsePolicy(policy({ epochs: [epoch({ not_before: '0001-01-01T00:00:00Z' })] })),
+    ).toThrow(WitnessError)
   })
 })
 

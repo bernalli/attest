@@ -73,7 +73,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, cast
 
-from attest import anchor, tlog
+from attest import anchor, tlog, witness
 
 # RFC 6962 inclusion/consistency proofs for a tree of at most 2**64 leaves
 # have at most 64 entries (one per tree level) — caps a hostile proof list
@@ -177,6 +177,23 @@ def _validate_log_keys(log_keys: object) -> list[tlog.LogKey]:
         raise TransparencyError(str(exc)) from exc
 
 
+def _validate_witness_policy(witness_policy: object) -> witness.WitnessPolicy | None:
+    """Deep-validate the trusted witness policy; `None` means "not configured".
+
+    Same rail as `log_keys`: a malformed policy is a caller/configuration bug
+    and raises, while omitting it entirely preserves the previous result
+    exactly (§10.2, zero behavior change for existing callers).
+    """
+    if witness_policy is None:
+        return None
+    if isinstance(witness_policy, witness.WitnessPolicy):
+        return witness_policy
+    try:
+        return witness.parse_policy(witness_policy)
+    except witness.WitnessError as exc:
+        raise TransparencyError(str(exc)) from exc
+
+
 def _validate_expected_origin(expected_origin: object) -> str:
     try:
         return tlog._validate_origin(expected_origin, "expected_origin")
@@ -249,6 +266,7 @@ def _evaluate_untrusted_evidence(
     expected_origin: str,
     policy: anchor.AnchorPolicy,
     expected_entry: dict[str, Any],
+    witness_policy: witness.WitnessPolicy | None = None,
 ) -> TransparencyResult:
     if not isinstance(evidence, dict):
         return _not_checked(_WARN_EVIDENCE_INVALID)
@@ -378,6 +396,22 @@ def _evaluate_untrusted_evidence(
             warnings=warnings,
         )
 
+    # --- Step 8: a pinned witness cosignature upgrades corroboration from
+    # `logged` to `witnessed` (§10.1, P1.1b). Only reachable from `logged`:
+    # a cosignature never rescues a broken inclusion proof. Any failure is
+    # SILENT by §11.4 — the only literal this layer may add is the
+    # independence warning that accompanies a successful upgrade.
+    if witness_policy is not None and corroboration_state == CORROBORATION_LOGGED:
+        verdict = witness.evaluate_corroboration(
+            checkpoint=checkpoint,
+            signatures=tlog.note_signatures(checkpoint.signed_note_bytes.decode()),
+            policy=witness_policy,
+            epoch_id=evidence.get("witness_policy_epoch"),
+        )
+        if verdict.witnessed:
+            corroboration_state = CORROBORATION_WITNESSED
+            warnings.extend(verdict.warnings)
+
     return TransparencyResult(
         transparency=transparency_state, corroboration=corroboration_state, warnings=warnings
     )
@@ -390,6 +424,7 @@ def evaluate_transparency(
     expected_origin: str,
     policy: anchor.AnchorPolicy,
     expected_entry: dict[str, Any],
+    witness_policy: object = None,
 ) -> TransparencyResult:
     """Evaluate one untrusted transparency/corroboration evidence bundle.
 
@@ -401,6 +436,7 @@ def evaluate_transparency(
     expected_origin = _validate_expected_origin(expected_origin)
     policy = _validate_policy(policy)
     expected_entry = _validate_expected_entry(expected_entry)
+    validated_witness_policy = _validate_witness_policy(witness_policy)
 
     try:
         return _evaluate_untrusted_evidence(
@@ -409,6 +445,7 @@ def evaluate_transparency(
             expected_origin=expected_origin,
             policy=policy,
             expected_entry=expected_entry,
+            witness_policy=validated_witness_policy,
         )
     # This is deliberate adversarial-boundary confinement, not lazy error
     # handling: hostile dict `get`/`__getitem__`/`__eq__` implementations can

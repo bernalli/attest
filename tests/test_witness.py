@@ -230,6 +230,24 @@ def test_integer_past_the_js_safe_range_rejected() -> None:
         witness.parse_policy(_policy(epochs=[_epoch(threshold={"n": 2**53 + 1, "m": 1})]))
 
 
+def test_committee_ceiling_enforced_at_parse_time() -> None:
+    """§11.4: a committee past `MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE` = 9."""
+    with pytest.raises(witness.WitnessError):
+        witness.parse_policy(_policy(epochs=[_epoch(threshold={"n": 10, "m": 1})]))
+    accepted = witness.parse_policy(_policy(epochs=[_epoch(threshold={"n": 9, "m": 1})]))
+    assert accepted.epochs[0].threshold.n == 9
+
+
+def test_two_digit_year_rejected_for_cross_core_parity() -> None:
+    """JS `Date.UTC` remaps years 0-99 to 1900-1999; Python's strptime does not.
+
+    Accepting `0001-01-01T00:00:00Z` here would make the document admissible
+    in the Python core alone.
+    """
+    with pytest.raises(witness.WitnessError):
+        witness.parse_policy(_policy(epochs=[_epoch(not_before="0001-01-01T00:00:00Z")]))
+
+
 # --- witness pin shape -----------------------------------------------------
 
 
