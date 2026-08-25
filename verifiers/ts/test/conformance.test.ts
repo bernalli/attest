@@ -32,6 +32,7 @@ describe('attest conformance vectors', () => {
       anchorPolicy: V.anchorPolicy(dir),
       revocationEvidence: V.revocationEvidence(dir),
       transferView: V.transferView(dir),
+      witnessPolicy: V.witnessPolicy(dir),
     })
 
     // always-exact

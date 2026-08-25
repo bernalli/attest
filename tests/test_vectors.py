@@ -68,6 +68,16 @@ Vector-directory conventions (a "vector case" is any directory containing
     `anchor-policy.json`. Absent for every leaf outside group 35, so
     `verify()` sees `None`. Group 35 leaves do NOT gain `transparency`/
     `corroboration`/`manifest_freshness` either (same discipline as group 33).
+  - optional `witness-policy.json` (group 39 only, v0.2 §11.4, P1.1b): the
+    TRUSTED `attest-witness-policy-v1` DOCUMENT, fed to `verify()` as
+    `witness_policy=`. It rides the same rail as `log-keys.json`/
+    `anchor-policy.json` — verifier configuration, never evidence — which is
+    why it is its own file and never appears nested inside
+    `transparency.json`. The untrusted `transparency.json` names the epoch it
+    claims (`witness_policy_epoch`); this document says whom that epoch pins.
+    Absent for every leaf outside group 39, so `verify()` sees `None` there
+    and `corroboration: "witnessed"` stays unreachable. Group 39 leaves carry
+    `transparency`/`corroboration` in `expected.json`, same as group 28.
   - `chain.json` (group 36 only, v0.2 §17.5 chain-of-title audit): a leaf
     containing this file is a SEPARATE audit surface, EXCLUDED from the
     `verify()` parametrization above and driven instead by
@@ -206,6 +216,13 @@ def _transfer_view(vector_dir: Path) -> list[dict[str, Any]] | None:
     return _load_json(path)  # type: ignore[no-any-return]
 
 
+def _witness_policy(vector_dir: Path) -> dict[str, Any] | None:
+    path = vector_dir / "witness-policy.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
 @pytest.mark.parametrize("vector_dir", _VECTOR_DIRS, ids=_VECTOR_IDS)
 def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
     expected = _load_json(vector_dir / "expected.json")
@@ -224,6 +241,7 @@ def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
         anchor_policy=_anchor_policy(vector_dir),
         revocation_evidence=_revocation_evidence(vector_dir),
         transfer_view=_transfer_view(vector_dir),
+        witness_policy=_witness_policy(vector_dir),
     )
 
     assert result.signature == expected["signature"]

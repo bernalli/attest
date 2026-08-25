@@ -110,6 +110,18 @@ export function transferView(dir: string): JsonValue[] | null {
   const p = join(dir, 'transfer-view.json')
   return existsSync(p) ? (loadJsonValueStrict(p) as JsonValue[]) : null
 }
+// group 39 (witness-corroboration conformance corpus, v0.2 §11.4, P1.1b)
+// only: the TRUSTED `attest-witness-policy-v1` DOCUMENT, fed to verify() as
+// `witnessPolicy`. Same rail as logKeys/anchorPolicy — verifier
+// configuration, never evidence — so it is its own file and never appears
+// nested inside transparency.json. Handed over as the DOCUMENT, not as a
+// parsed WitnessPolicy: verify()'s own validateWitnessPolicy() runs
+// parsePolicy() over it, which is half of what shipping the document is for
+// (the corpus exercises both cores' PARSERS, not just their evaluators).
+export function witnessPolicy(dir: string): JsonValue | null {
+  const p = join(dir, 'witness-policy.json')
+  return existsSync(p) ? (loadJson(p) as JsonValue) : null
+}
 // group 36 (transfer-chain conformance corpus, v0.2 §17.5) only: a leaf
 // containing `chain.json` is routed to `auditChain` instead of `verify()` —
 // see tools/gen_vectors.py's gen_36_transfer_chain docstring for the shape.

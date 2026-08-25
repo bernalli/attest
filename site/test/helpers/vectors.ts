@@ -97,6 +97,14 @@ export function transferView(dir: string): JsonValue[] | null {
   const p = join(dir, 'transfer-view.json')
   return existsSync(p) ? (loadJsonValueStrict(p) as unknown as JsonValue[]) : null
 }
+// group 39 (witness-corroboration conformance corpus, v0.2 §11.4, P1.1b)
+// only — mirrors verifiers/ts/test/helpers/vectors.ts's loader of the same
+// name. The TRUSTED policy DOCUMENT, fed to runVerify() as `witnessPolicy`;
+// each core runs its own parsePolicy() over it.
+export function witnessPolicy(dir: string): JsonValue | null {
+  const p = join(dir, 'witness-policy.json')
+  return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf-8')) as JsonValue) : null
+}
 // group 36 (transfer-chain conformance corpus, v0.2 §17.5) only — mirrors
 // verifiers/ts/test/helpers/vectors.ts's loader of the same name. A leaf
 // containing chain.json is routed to runChainAudit instead of runVerify().

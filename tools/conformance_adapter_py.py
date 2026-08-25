@@ -129,6 +129,19 @@ def _transfer_view(leaf: Path) -> list[dict[str, Any]] | None:
     return _load_json(path)  # type: ignore[no-any-return]
 
 
+def _witness_policy(leaf: Path) -> dict[str, Any] | None:
+    """Group 39 only: the TRUSTED `attest-witness-policy-v1` document.
+
+    Handed to `verify()` as the DOCUMENT, not as a parsed object — the corpus
+    exercises each implementation's own policy parser, which is half of what
+    `witness-policy.json` is for.
+    """
+    path = leaf / "witness-policy.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
 def _sole_key_manifest(leaf: Path) -> dict[str, Any]:
     """Group 36 only: `audit_chain` takes ONE trusted `key_manifest`, not a
     full `TrustStore` — every group 36 leaf's `manifests.json` trusts exactly
@@ -194,6 +207,7 @@ def _run_leaf(leaf: Path) -> dict[str, Any]:
         anchor_policy=_anchor_policy(leaf),
         revocation_evidence=_revocation_evidence(leaf),
         transfer_view=_transfer_view(leaf),
+        witness_policy=_witness_policy(leaf),
     )
     return _verify_result_to_json(verify_result)
 

@@ -124,6 +124,16 @@ function transferView(dir) {
   return existsSync(p) ? loadJsonValueStrict(p) : null
 }
 
+// group 39 (witness-corroboration conformance corpus, v0.2 §11.4, P1.1b)
+// only: the TRUSTED attest-witness-policy-v1 DOCUMENT, handed to verify() as
+// `witnessPolicy`. Plain JSON.parse, like log-keys.json/anchor-policy.json:
+// this is trusted configuration, and verify()'s own validateWitnessPolicy()
+// runs parsePolicy() over the document.
+function witnessPolicy(dir) {
+  const p = join(dir, 'witness-policy.json')
+  return existsSync(p) ? loadJson(p) : null
+}
+
 // group 36 only: auditChain takes ONE trusted keyManifest, not a full
 // TrustStore — every group 36 leaf's manifests.json trusts exactly one
 // issuer, so its sole `manifests` value is that manifest.
@@ -195,6 +205,7 @@ function runLeaf(dir) {
     anchorPolicy: anchorPolicy(dir),
     revocationEvidence: revocationEvidence(dir),
     transferView: transferView(dir),
+    witnessPolicy: witnessPolicy(dir),
   })
   return verifyResultToJson(result)
 }
