@@ -126,5 +126,5 @@ uv run --frozen mypy --strict witness/src
 
 One test shells out to `node` to check this witness's lines against the
 TypeScript verifier; it skips if `verifiers/ts/dist` has not been built. One
-binds a loopback socket to speak real HTTP to the served app; it skips where a
-sandbox forbids that. Both run in CI.
+binds a loopback socket to speak real HTTP to the served app; it skips where
+the process is not permitted to bind one. Both run in CI.
