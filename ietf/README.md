@@ -152,11 +152,11 @@ note) before being treated as current.
 A snapshot-profile mirror of this specification was submitted to the IETF
 Datatracker on 2026-08-06 and accepted as an individual submission
 (Informational, expires 2027-02-07). It went out under an earlier document
-name; the source here carries the current one, and the next revision declares
-the first as the document it **replaces**, which the Datatracker tracks as a
-first-class relationship. An I-D's base name is fixed for the life of a
-document, so a new name always starts again at `-00` — that is expected, not a
-loss of standing.
+name; the source here carries the current one. The next revision has not been
+submitted yet: when it goes out, it will declare the first as the document it
+**replaces**, which the Datatracker tracks as a first-class relationship. An
+I-D's base name is fixed for the life of a document, so a new name always
+starts again at `-00` — that is expected, not a loss of standing.
 
 How it was done, for whoever does the next revision. Submission is a **manual
 action** for the maintainer and is not automated by anything here — the CI step

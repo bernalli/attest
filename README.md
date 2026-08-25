@@ -159,8 +159,9 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   submission (Informational, expires 2027-02-07) — it declares that it mirrors
   v0.1 revision 5 and v0.2 revision 6, so the specification in this repository,
   not the draft, remains normative. The [XML source](ietf/draft-bernalli-open-purchase-receipts.xml)
-  lives here and builds clean to txt/html in CI; the next revision goes out
-  under the name it now carries and replaces the first. Being an I-D means the
+  lives here and builds clean to txt/html in CI; the next revision will go out
+  under the name it now carries, and will be submitted declaring the first as
+  the document it replaces. Being an I-D means the
   document exists and can be cited as work in progress, nothing more: it is not
   endorsed by the IETF and has no formal standing in the standards process.
 - **[Standards-relationship annex](docs/spec/attest-standards-relationship.md).**
