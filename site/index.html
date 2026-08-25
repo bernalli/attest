@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
-  <meta name="description" content="attest — seller-signed purchase receipts the buyer holds, checkable by a machine after the seller is gone. Verify one right here, offline, in your browser.">
-  <title>attest — a receipt a machine can still check after the seller is gone</title>
+  <meta name="description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Verify one right here in your browser.">
+  <title>attest — own what you buy: a receipt you hold, verified offline in your browser</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -15,7 +15,7 @@
 <body>
 <header class="hero">
   <h1>attest</h1>
-  <p class="tagline">When the store is gone, someone still has to decide who was entitled.</p>
+  <p class="tagline">Own what you buy. The seller signs a receipt, you hold the file, anyone can verify it offline — even after the store is gone.</p>
   <p>An open standard for seller-signed purchase receipts the buyer holds. The seller signs
      once at checkout; the buyer keeps the file; a gate can verify it offline afterwards —
      issuer, license grant, buyer binding — with no surviving service of any kind, and tell
@@ -100,8 +100,8 @@
       <li><strong>Not a DRM tool.</strong> It never strips or bypasses DRM, and a receipt
           for a DRM-bound purchase says so honestly.</li>
       <li><strong>Not a blockchain.</strong> A signed receipt needs no consensus, token, or
-          wallet. (A strictly optional transparency-anchoring layer is future roadmap — the
-          only place a chain will ever appear.)</li>
+          wallet. (v0.2 ships a strictly optional transparency and anchoring layer, and
+          transfers record a chain of title — neither needs one.)</li>
       <li><strong>Not a resale market.</strong> v0.1 defines no transfer protocol at all;
           v0.2 §17 adds transfer only where the issuer mediates it, and never a general
           right to resell.</li>

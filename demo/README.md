@@ -1,10 +1,12 @@
 # `store_dies.py` — the store dies, the receipt survives
 
-**Thesis:** an attest receipt is not a database row the issuing store keeps
-alive for you. It is a self-verifying object. Delete the store — its
-signing keys, its manifests, its whole infrastructure — and the receipt it
-issued still verifies, still proves who it belongs to, and still points at
-an artifact that still matches.
+**Thesis:** when you buy something digital, the seller signs a receipt and
+hands it to you — that's the part of the purchase that's actually yours. An
+attest receipt is not a database row the issuing store keeps alive for you.
+It is a self-verifying object. Delete the store — its signing keys, its
+manifests, its whole infrastructure — and the receipt it issued still
+verifies, still proves who it belongs to, and still points at an artifact
+that still matches.
 
 ## What the demo proves
 

@@ -1,8 +1,9 @@
 # Security Policy
 
-attest is a cryptographic standard: a flaw in verification, canonicalization, or
-key handling can let a forged or revoked receipt pass as valid. Please treat
-security issues with care.
+attest is a cryptographic standard for purchase receipts a buyer holds and
+verifies offline: a flaw in verification, canonicalization, or key handling
+can let a forged or revoked receipt pass as valid. Please treat security
+issues with care.
 
 ## Supported versions
 

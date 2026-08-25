@@ -80,9 +80,13 @@ _README_TEMPLATE = """<!doctype html>
 <body>
 <h1>attest receipt bundle: __BUNDLE_NAME__</h1>
 
-<p>This file is a purchase receipt. It proves you bought what's described
-inside — even if the store that sold it to you closes, disappears, or
-just doesn't answer support emails anymore.</p>
+<p>This file is your receipt. It proves you bought what's listed inside, and
+it's yours: it doesn't live in any account, and nobody can take it away with
+a click. Keep it with your own files, the way you'd keep an important paper
+receipt. If the store closes one day, or you lose access to your account
+there, this file still proves what you bought. You don't need an internet
+connection or anyone's permission to check it: any attest tool can do it,
+free, on your own computer.</p>
 
 <h2>What's inside</h2>
 <p>This zip holds one or more of your purchase receipts, plus everything

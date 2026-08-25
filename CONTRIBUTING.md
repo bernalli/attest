@@ -1,9 +1,10 @@
 # Contributing to attest
 
-attest is an open standard with a Python reference implementation and an
-independent TypeScript verifier. Contributions are welcome — bug reports,
-spec clarifications, new conformance vectors, and additional independent
-implementations.
+attest is an open standard for seller-signed purchase receipts that a buyer
+holds and anyone can verify offline, with a Python reference implementation
+and an independent TypeScript verifier. Contributions are welcome — bug
+reports, spec clarifications, new conformance vectors, and additional
+independent implementations.
 
 ## Ground rules
 

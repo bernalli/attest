@@ -1,13 +1,14 @@
 # attest-bridge
 
-attest-bridge is a self-hosted webhook facilitator that turns purchase events
-from a payment or storefront platform (Stripe, itch.io, ...) into signed
-attest receipts, automatically, at the moment of sale. It runs as a small
-service the merchant deploys and operates themselves, alongside their
-existing checkout flow — normalizing each platform's webhook payload into a
-common purchase shape and handing it to the same `attest` issuance path the
-CLI uses, so the resulting receipt is indistinguishable from one minted by
-hand.
+attest-bridge is how a store becomes an issuer without writing code. It's a
+small service the merchant deploys and runs themselves, next to the existing
+checkout — Stripe, itch.io or Shopify. A paid order comes in as a platform
+event; a signed attest receipt goes out to the buyer, automatically, at the
+moment of sale. From then on the receipt belongs to the buyer: a plain attest
+file that verifies offline no matter what happens to the bridge, the
+platform, or the store. For a DRM-free seller this is the entire cost of
+giving customers ownership that outlives the shop: run one small service and
+keep a signing key.
 
 It is NOT a hosted service attest operates on a merchant's behalf, and it
 never holds or transmits a third-party's keys: the merchant's issuer signing
