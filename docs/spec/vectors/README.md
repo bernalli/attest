@@ -218,7 +218,7 @@ Checked against [`docs/spec/attest-v0.2.md`](../attest-v0.2.md) §11.4 — see t
 | 39g | `g-missing-policy-epoch` | 39a's cosignature verbatim, but the evidence names an epoch the policy does not contain → stays `logged`. An unresolvable epoch is never a reason to substitute another. |
 | 39h | `h-wrong-role` | The pin is real and current but holds only `sunset-activation` → stays `logged`. |
 | 39i | `i-historical-epoch-valid` | A CLOSED epoch still corroborates: the observation falls inside its window, and a timely `signed-note-v2` anchor over the full note (cosignature line included) ties it to a PQ-surviving time → `anchored_before:<T>` and `witnessed`. |
-| 39j | `j-current-epoch-not-substituted` | Same checkpoint and epoch name as 39i, but the historical epoch pins a different operator and the witness who signed is pinned only in the current epoch → stays `logged`. |
+| 39j | `j-current-epoch-not-substituted` | Same checkpoint and epoch name as 39i, but the historical epoch pins a different operator and the witness who signed is pinned only in the current epoch → stays `logged`. That pin's window reaches back into the historical epoch on purpose, so the membership difference is the only thing deciding. |
 | 39k | `k-old-valid-no-local-clock-cap` | The pin retired after the observation was made; standing is judged at the instant claimed, never at the verifier's clock → `witnessed`, and it must still read `witnessed` decades from now. |
 | 39l | `l-evidence-policy-substitution-ignored` | The evidence carries its own, perfectly valid policy document pinning the witness who signed. It is ignored in full → stays `logged`. |
 | 39m | `m-compromise-onset-unknown` | `compromised_after: null` — a compromise IS declared and its onset is unknown, so the pin fails closed at every instant, forever. Distinct from the member being absent → stays `logged`. |
@@ -233,7 +233,7 @@ Checked against [`docs/spec/attest-v0.2.md`](../attest-v0.2.md) §11.4 — see t
 | 40b | `b-two-of-three-conservative-t` | 2-of-3 with votes 300s apart → `T = min(t_i)`, never the maximum. |
 | 40c | `c-ed25519-leg-only-invalid` | The classical leg alone is no vote. |
 | 40d | `d-mldsa-leg-only-invalid` | The post-quantum leg alone is no vote. |
-| 40e | `e-legs-with-divergent-timestamps` | Legs one second apart are not a pair. |
+| 40e | `e-legs-with-divergent-timestamps` | Legs one second apart are not a pair. Declared limit: redundant with signature verification, since both legs sign a message built from one timestamp — the leaf pins the outcome, not the rule. |
 | 40f | `f-transplanted-leg` | A genuine `0xff` leg signed over a DIFFERENT note pairs structurally, then fails the fail-closed AND. |
 | 40g | `g-one-vote-per-control-group` | Two pinned keys of one operator in one control group, each voting → rejected outright, not de-duplicated. |
 | 40h | `h-direct-domain-conflict` | The pin names the domain whose sunset the quorum would activate → excluded before pairing. |
@@ -242,10 +242,10 @@ Checked against [`docs/spec/attest-v0.2.md`](../attest-v0.2.md) §11.4 — see t
 | 40k | `k-declared-form-incoherent-with-membership` | `threshold.n` declares two while the epoch pins three activation control groups. |
 | 40l/40m | `l-skew-600-valid` / `m-skew-601-invalid` | 600s of spread between counting votes is inside the limit; 601 is not. |
 | 40n | `n-anchor-before-latest-vote` | An anchor predating a counting vote cannot evidence it. |
-| 40o/40p | `o-anchor-delay-86400-valid` / `p-anchor-delay-86401-invalid` | The anchor-delay boundary, measured from `T`. |
+| 40o/40p | `o-anchor-delay-86400-valid` / `p-anchor-delay-86401-invalid` | The anchor-delay boundary, measured from `T` and not from the latest vote — both leaves carry two votes 300s apart, which is what makes the two readings disagree. |
 | 40q | `q-note-v1-anchor-insufficient` | A `note-v1` anchor commits to the unsigned header alone; nothing else differs from 40a. |
 | 40r | `r-new-evidence-does-not-revive-expired-epoch` | Open-ended pins, but the EPOCH's window has closed. |
-| 40s | `s-quorum-time-exactly-at-compromise-cutoff` | `T` exactly at the declared onset still counts: the boundary is inclusive. |
+| 40s | `s-quorum-time-exactly-at-compromise-cutoff` | `T` exactly at the declared onset still counts: the boundary is inclusive. Inside the CLOSED 2020 epoch, so it also pins that the epoch window is judged at `T` and not at the verifier's clock — which 40r cannot pin alone. |
 | 40t | `t-compromise-cutoff-null-zero-votes` | An explicit `null` onset fails closed at every instant, forever. |
 
 ## Regeneration

@@ -1,6 +1,7 @@
 {
   "counting_control_groups": [
-    "group-a.example"
+    "group-a.example",
+    "group-b.example"
   ],
   "valid": true,
   "witness_time": 1780272000

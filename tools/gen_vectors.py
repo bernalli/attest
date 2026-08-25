@@ -297,6 +297,7 @@ WITNESS_OBSERVED_AT = 1780272000
 WITNESS_OBSERVED_AT_ISO = "2026-06-01T00:00:00Z"
 # 2020-06-01T00:00:00Z, inside the historical epoch.
 HISTORICAL_OBSERVED_AT = 1590969600
+HISTORICAL_OBSERVED_AT_ISO = "2020-06-01T00:00:00Z"
 
 # Group 40's `conflict_domain`: the issuer whose sunset the quorum would be
 # activating — a witness affiliated with it cannot corroborate its own sunset.
@@ -5050,7 +5051,19 @@ def gen_39_witness_corroboration() -> None:
             not_before=HISTORICAL_EPOCH_NOT_BEFORE,
             not_after=HISTORICAL_EPOCH_NOT_AFTER,
         ),
-        _witness_epoch([_witness_pin(0, roles=corroborating_roles)]),
+        # This pin's window deliberately reaches back into the historical
+        # epoch: the operator existed all along and only entered the committee
+        # in the current epoch. Without that, the leaf could not fail under any
+        # reading — a 2020 observation would be outside a 2026-only pin whether
+        # or not a verifier substituted the membership, and the leaf would pin
+        # nothing at all.
+        _witness_epoch(
+            [
+                _witness_pin(
+                    0, roles=corroborating_roles, not_before=HISTORICAL_EPOCH_NOT_BEFORE
+                )
+            ]
+        ),
     )
     _write(
         "j-current-epoch-not-substituted",
@@ -5144,9 +5157,15 @@ def gen_40_witness_quorum() -> None:
     because §11.4 states the ordering normatively and because a future policy
     revision that relaxes the parser must not silently relax this.
 
-    What the corpus CANNOT pin here is that no cryptographic work happened —
-    a vector observes a verdict, not a call count. The spies that prove zero
-    signature verifications live in the unit suites of both cores.
+    Two things the corpus CANNOT pin here, measured rather than assumed. That
+    no cryptographic work happened before the ordering checks bind: a vector
+    observes a verdict, not a call count, so the spies that prove it live in
+    the unit suites of both cores. And the one-timestamp-per-pair rule of (e):
+    both legs sign a message built from a SINGLE timestamp, so a verifier that
+    dropped the equality check would build the pair and then fail the
+    signature verification anyway — deleting the check leaves every leaf
+    green. Leaf (e) pins the OUTCOME, not the rule that produces it, the same
+    honest half-measure as (j) and the committee ceiling.
     """
     root = hashlib.sha256(b"attest-vectors-40-root-v1").digest()
     base_checkpoint = _sign_checkpoint_oracle(LOG_ORIGIN, 1, root)
@@ -5161,12 +5180,14 @@ def gen_40_witness_quorum() -> None:
     # The compromise-cutoff pair (s/t) only means anything if the POSIX second
     # the cosignature blob carries and the §11.4 timestamp the policy declares
     # are the SAME instant. Checked, not commented.
-    assert (
-        datetime.strptime(WITNESS_OBSERVED_AT_ISO, "%Y-%m-%dT%H:%M:%SZ")
-        .replace(tzinfo=UTC)
-        .timestamp()
-        == observed_at
-    )
+    for iso, posix_seconds in (
+        (WITNESS_OBSERVED_AT_ISO, observed_at),
+        (HISTORICAL_OBSERVED_AT_ISO, HISTORICAL_OBSERVED_AT),
+    ):
+        assert (
+            datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
+            == posix_seconds
+        )
     activation_roles = [witness.ROLE_CORROBORATION, witness.ROLE_SUNSET_ACTIVATION]
 
     def _policy(
@@ -5438,18 +5459,24 @@ def gen_40_witness_quorum() -> None:
     )
 
     # --- (o)/(p) the anchor-delay boundary, one second apart, measured from
-    # `T` rather than from the latest vote. ---
+    # `T` and NOT from the latest vote. Two votes 300s apart is what makes that
+    # difference observable at all: with a single vote `min(t_i)` and `max(t_i)`
+    # are the same instant, so a verifier that measured the window from the
+    # latest vote would pass both leaves while reporting the same
+    # `witness_time`. At 300s of spread the two readings disagree exactly here
+    # — `observed_at + 86401` is outside a `T`-anchored window and inside a
+    # `latest`-anchored one, so (p) is the leaf that catches the substitution. ---
     _write(
         "o-anchor-delay-86400-valid",
-        votes=_vote(0, observed_at),
-        policy=policy_one,
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=policy_three,
         anchored_at=observed_at + 86400,
-        expected=_valid(observed_at, [group_a]),
+        expected=_valid(observed_at, [group_a, group_b]),
     )
     _write(
         "p-anchor-delay-86401-invalid",
-        votes=_vote(0, observed_at),
-        policy=policy_one,
+        votes=_vote(0, observed_at) + _vote(1, observed_at + 300),
+        policy=policy_three,
         anchored_at=observed_at + 86401,
         expected=_invalid(),
     )
@@ -5487,16 +5514,35 @@ def gen_40_witness_quorum() -> None:
     # --- (s) `T` exactly at the declared compromise onset still counts: the
     # boundary is inclusive, and standing is judged at the instant claimed.
     # Without this leaf a verifier could make the window exclusive and stay
-    # green everywhere else. ---
+    # green everywhere else.
+    #
+    # It runs inside the CLOSED 2020 epoch on purpose, and that is a second
+    # property in the same leaf: a VALID quorum whose `T` falls inside a window
+    # that has since expired. A verifier that judged the epoch against its own
+    # clock instead of against `T` would reject this — and (r), whose `T` is
+    # outside the same window, cannot catch that substitution on its own,
+    # because both readings reject (r). The two leaves only pin the rule
+    # together. ---
     _write(
         "s-quorum-time-exactly-at-compromise-cutoff",
-        votes=_vote(0, observed_at),
+        votes=_vote(0, HISTORICAL_OBSERVED_AT),
         policy=_policy(
-            [_witness_pin(0, roles=activation_roles, compromised_after=WITNESS_OBSERVED_AT_ISO)],
+            [
+                _witness_pin(
+                    0,
+                    roles=activation_roles,
+                    not_before=HISTORICAL_EPOCH_NOT_BEFORE,
+                    compromised_after=HISTORICAL_OBSERVED_AT_ISO,
+                )
+            ],
             threshold=(1, 1),
+            epoch_id=HISTORICAL_EPOCH_ID,
+            not_before=HISTORICAL_EPOCH_NOT_BEFORE,
+            not_after=HISTORICAL_EPOCH_NOT_AFTER,
         ),
-        anchored_at=observed_at + 3600,
-        expected=_valid(observed_at, [group_a]),
+        anchored_at=HISTORICAL_OBSERVED_AT + 3600,
+        expected=_valid(HISTORICAL_OBSERVED_AT, [group_a]),
+        epoch_id=HISTORICAL_EPOCH_ID,
     )
 
     # --- (t) the same member set as (s) with an explicit `null` onset: a
