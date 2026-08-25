@@ -674,7 +674,7 @@ _P11B_V02_REQUIRED_LITERALS: tuple[str, ...] = (
     "`WitnessPolicy` is a closed JSON object",
     '"schema": "attest-witness-policy-v1"',
     '"epochs": []',
-    '`^[a-z0-9][a-z0-9._-]{0,127}$`',
+    "`^[a-z0-9][a-z0-9._-]{0,127}$`",
     "exact UTC ISO-8601 second timestamps",
     "inclusive at both declared boundaries",
     "Evidence MUST identify `witness_policy_epoch` explicitly; "
