@@ -632,6 +632,186 @@ def check_v01_not_transferable_before_row(spec_v01: str) -> list[str]:
     return []
 
 
+def check_v01_publisher_id_row(spec_v01: str) -> list[str]:
+    """v0.1 §5.4 retains Stage 4's publisher_id field row."""
+    work_match = re.search(r"^### 5\.4 `work`$([\s\S]*?)(?=^### |^## |\Z)", spec_v01, re.MULTILINE)
+    if work_match is None:
+        return ["attest-v0.1.md: missing required heading '### 5.4 `work`'"]
+    if re.search(r"^\| `work\.publisher_id` \|", work_match.group(1), re.MULTILINE) is None:
+        return ["attest-v0.1.md: §5.4 missing required work.publisher_id row"]
+    return []
+
+
+def check_v01_preservation_pledge_row(spec_v01: str) -> list[str]:
+    """v0.1 §5.5 retains Stage 4's preservation_pledge license-term row."""
+    license_match = re.search(
+        r"^### 5\.5 `license`$([\s\S]*?)(?=^### |^## |\Z)", spec_v01, re.MULTILINE
+    )
+    if license_match is None:
+        return ["attest-v0.1.md: missing required heading '### 5.5 `license`'"]
+    if re.search(r"^\| `preservation_pledge` \|", license_match.group(1), re.MULTILINE) is None:
+        return ["attest-v0.1.md: §5.5 missing required preservation_pledge row"]
+    return []
+
+
+_STAGE4_HEADING = "## 18. Stage 4: the preservation pledge"
+_STAGE4_REQUIRED_LITERALS: tuple[str, ...] = (
+    # The license term and the document it hash-binds.
+    "license.preservation_pledge",
+    "sunset-grant-v1",
+    "sunset-grant",
+    "deliver-to-holder",
+    "redistribute-among-holders",
+    # The activation vocabulary. `heartbeat-absence` is pinned deliberately:
+    # it is the mode this revision declines to make reachable, and the prose
+    # that says so is what keeps a later reader from assuming otherwise.
+    "publisher-declaration",
+    "fixed-date",
+    "heartbeat-absence",
+    "cessation-declaration",
+    "Attest-redemption-challenge-v1",
+    # Warning literals, byte-identical across both cores.
+    "grant_narrowing_ignored",
+    "grant_unanchored",
+    "grant_signer_not_publisher",
+    "grant_scope_uncovered",
+    "grant_commitment_mismatch",
+    "grant_commitment_divergence",
+    "grant_declaration_ignored",
+    "grant_activated_by_successor",
+    'grant: "activated"',
+    'grant_trust: "signer_mismatch"',
+    # Ceilings, both counted before any signature is verified.
+    "_MAX_GRANT_LATER_VERSIONS",
+    "_MAX_GRANT_DECLARATIONS",
+    # The three load-bearing normative claims of the presence-based trigger.
+    # Each one is a sentence a regression could quietly invert, and each
+    # inversion would ship a claim we know to be false:
+    #   - activation never follows from an absence,
+    #   - logging a declaration is recommended but never load-bearing,
+    #   - the fixed-date proof runs in the direction OTS can actually prove.
+    "never from the absence of evidence",
+    "never required for validity",
+    "T >= fixed_date",
+)
+
+_APPENDIX_A_HEADING = "## Appendix A — The custodian interface (non-normative)"
+
+
+def check_v02_stage4_preservation_pledge(spec_v02: str) -> list[str]:
+    """v0.2 §18 retains its heading, Stage 4 fixed vocabulary, and Appendix A."""
+    errors: list[str] = []
+    stage4_match = re.search(
+        rf"^{re.escape(_STAGE4_HEADING)}$([\s\S]*?)(?=^## |\Z)", spec_v02, re.MULTILINE
+    )
+    if stage4_match is None:
+        errors.append(f"attest-v0.2.md: missing required heading {_STAGE4_HEADING!r}")
+        stage4_text = ""
+    else:
+        stage4_text = stage4_match.group(1)
+    for literal in _STAGE4_REQUIRED_LITERALS:
+        if literal not in stage4_text:
+            errors.append(f"attest-v0.2.md: §18 missing required literal {literal!r}")
+    if re.search(rf"^{re.escape(_APPENDIX_A_HEADING)}$", spec_v02, re.MULTILINE) is None:
+        errors.append(f"attest-v0.2.md: missing required heading {_APPENDIX_A_HEADING!r}")
+    return errors
+
+
+# Stage 4 (v0.2 §18, rev 8) registers one more active row in the existing §6.4
+# log-entry-types registry, plus four new registries of its own: §6.7
+# (end-of-life commitment values), §6.8 (grant permissions), §6.9 (activation
+# modes) and §6.10 (preservation pledge types). §6.6 is already taken by the
+# warning-literals registry, so these numbers are not the ones the plan quotes.
+_VERSIONING_REQUIRED_ACTIVE_LOG_ENTRY_TYPES_STAGE4: tuple[str, ...] = ("`cessation-declaration`",)
+_VERSIONING_REQUIRED_ACTIVE_EOL_VALUES: tuple[str, ...] = ("`sunset-grant`",)
+_VERSIONING_REQUIRED_ACTIVE_GRANT_PERMISSIONS: tuple[str, ...] = (
+    "`deliver-to-holder`",
+    "`redistribute-among-holders`",
+)
+_VERSIONING_REQUIRED_ACTIVE_ACTIVATION_MODES: tuple[str, ...] = (
+    "`publisher-declaration`",
+    "`fixed-date`",
+)
+# The one mode this revision registers WITHOUT making it reachable. Pinned in
+# its reserved state so that promoting it stays a deliberate amendment rather
+# than a silent edit: absence-based activation is unsound until witness
+# freshness exists.
+_VERSIONING_REQUIRED_RESERVED_ACTIVATION_MODES: tuple[str, ...] = ("`heartbeat-absence`",)
+_VERSIONING_REQUIRED_ACTIVE_PLEDGE_TYPES: tuple[str, ...] = ("`sunset-grant-v1`",)
+
+
+def _registry_rows(versioning: str, heading: str) -> tuple[str, list[str]]:
+    """Return a registry subsection's body, or an error naming the missing heading."""
+    match = re.search(
+        rf"^### {re.escape(heading)}$([\s\S]*?)(?=^### |^## |\Z)", versioning, re.MULTILINE
+    )
+    if match is None:
+        return "", [f"missing required heading '### {heading}'"]
+    return match.group(1), []
+
+
+def check_versioning_stage4_registries(versioning: str) -> list[str]:
+    """§6.4 gains `cessation-declaration`; §6.7-§6.10 carry Stage 4's own rows."""
+    errors: list[str] = []
+    checks: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
+        (
+            "6.4 Log entry types",
+            "§6.4",
+            _VERSIONING_REQUIRED_ACTIVE_LOG_ENTRY_TYPES_STAGE4,
+            "active",
+            "log entry type",
+        ),
+        (
+            "6.7 End-of-life commitment values",
+            "§6.7",
+            _VERSIONING_REQUIRED_ACTIVE_EOL_VALUES,
+            "active",
+            "end-of-life value",
+        ),
+        (
+            "6.8 Grant permissions",
+            "§6.8",
+            _VERSIONING_REQUIRED_ACTIVE_GRANT_PERMISSIONS,
+            "active",
+            "grant permission",
+        ),
+        (
+            "6.9 Activation modes",
+            "§6.9",
+            _VERSIONING_REQUIRED_ACTIVE_ACTIVATION_MODES,
+            "active",
+            "activation mode",
+        ),
+        (
+            "6.9 Activation modes",
+            "§6.9",
+            _VERSIONING_REQUIRED_RESERVED_ACTIVATION_MODES,
+            "reserved",
+            "activation mode",
+        ),
+        (
+            "6.10 Preservation pledge types",
+            "§6.10",
+            _VERSIONING_REQUIRED_ACTIVE_PLEDGE_TYPES,
+            "active",
+            "preservation pledge type",
+        ),
+    )
+    reported_headings: set[str] = set()
+    for heading, section, entries, state, noun in checks:
+        rows, heading_errors = _registry_rows(versioning, heading)
+        # §6.9 is checked twice — once for its active rows, once for the
+        # reserved one — so a missing heading would otherwise be reported twice.
+        if heading not in reported_headings:
+            errors.extend(heading_errors)
+            reported_headings.add(heading)
+        for entry in entries:
+            pattern = rf"^\| {re.escape(entry)} \| {state} \|"
+            if re.search(pattern, rows, re.MULTILINE) is None:
+                errors.append(f"{section} registry missing {state}-state row for {noun} {entry}")
+    return errors
+
+
 def _check_revision_log(spec_text: str, filename: str) -> list[str]:
     """Validate the required revision-log heading, entries, and entry grammar."""
     errors: list[str] = []
@@ -1061,6 +1241,10 @@ def collect_errors(
     errors += check_v02_stage3_transfer_profile(spec_v02)
     errors += check_v02_chain_audit_literals(spec_v02)
     errors += check_v01_not_transferable_before_row(spec_v01)
+    errors += [f"attest-versioning.md: {e}" for e in check_versioning_stage4_registries(versioning)]
+    errors += check_v02_stage4_preservation_pledge(spec_v02)
+    errors += check_v01_publisher_id_row(spec_v01)
+    errors += check_v01_preservation_pledge_row(spec_v01)
     errors += check_revision_logs(spec_v01, spec_v02)
     errors += _check_revision_log(versioning, "attest-versioning.md")
     errors += check_receipt_id_pattern(spec_v01, schema)

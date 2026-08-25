@@ -228,7 +228,7 @@ Pinned log keys (§9.2 `LogKey`) ship baked into the verifier's own trust store,
 
 ## 8. Log entry schemas
 
-Every entry admitted to the log is a CLOSED, versioned, JCS-canonicalized object (`tlog.encode_entry`): unknown members are rejected outright (no silent extension of a schema in production use — schema extension is a registry-governed change, out of this document's scope), and the canonical bytes produced are exactly what gets RFC 6962 leaf-hashed: `tlog.leaf_hash(entry_bytes) = SHA-256(0x00 || entry_bytes)`. Exactly four entry types are defined:
+Every entry admitted to the log is a CLOSED, versioned, JCS-canonicalized object (`tlog.encode_entry`): unknown members are rejected outright (no silent extension of a schema in production use — schema extension is a registry-governed change, out of this document's scope), and the canonical bytes produced are exactly what gets RFC 6962 leaf-hashed: `tlog.leaf_hash(entry_bytes) = SHA-256(0x00 || entry_bytes)`. Exactly five entry types are defined:
 
 | Type | Members (exactly these, no more, no fewer) | Semantics |
 | --- | --- | --- |
@@ -237,7 +237,9 @@ Every entry admitted to the log is a CLOSED, versioned, JCS-canonicalized object
 | `revocation-record` (G5, TM-47, rev 5) | `type` (`"revocation-record"`), `issuer` (lowercase DNS name), `record_sha256` (64 lowercase-hex chars) | `record_sha256 = SHA-256(JCS(record))`, where `record` is the ENTIRE issuer-signed revocation record (design §3.1/§6, v0.1 §12.2) — including its own `signature` member, the same canonicalization `revocation.py`/`revocation.ts` already build and verify the record's signature over (`revocation.record_hash` / `recordHash`; one canonical form, never a second one). `issuer` here is the same NON-AUTHENTICATED browsing hint as `receipt`'s — the record's own signature (verified against the issuer's key manifest, §13) is what binds it to an issuer, never this entry. §15 item 5 defines the one behavioral consequence of a record's presence (or absence) in the log: the `refund_window` deadline-effectiveness rule. |
 | `transfer-record` (Stage 3, rev 6) | `type` (`"transfer-record"`), `issuer` (lowercase DNS name), `record_sha256` (64 lowercase-hex chars) | `record_sha256 = SHA-256(JCS(record))` over the ENTIRE signed transfer record (§17.1) — including its own `signature` member, the identical hashing discipline `revocation-record` above already establishes, applied to the new record shape. `issuer` here is the same NON-AUTHENTICATED browsing hint as `receipt`'s and `revocation-record`'s — the record's own signature (verified against the issuer's key manifest, §13) is what binds it to an issuer, never this entry. §17.2 defines the one behavioral consequence of a transfer record's presence (or absence) in the log: the log-required honoring rule (D2). |
 
-An entry whose `type` is not one of these four, or whose member set is not exactly the required set, MUST be rejected by the log (never admitted) and, if encountered as evidence during verification, MUST resolve to `transparency: "not_checked"` (§10.2) rather than being partially trusted.
+| `cessation-declaration` (Stage 4, rev 8) | `type` (`"cessation-declaration"`), `issuer` (lowercase DNS name), `record_sha256` (64 lowercase-hex chars) | `record_sha256 = SHA-256(JCS(record))` over the ENTIRE signed cessation declaration (§18.4) — including its own `signature` member, the same hashing discipline the two record types above establish. `issuer` here is the same NON-AUTHENTICATED browsing hint — the declaration's own signature (verified against the publisher's key manifest, §18.1) is what binds it, never this entry. Unlike `transfer-record`, this entry type is NOT load-bearing: §18.4 RECOMMENDS logging a declaration, for discoverability and for a date opposable to third parties, but a declaration that authenticates activates a grant whether or not it was ever logged. |
+
+An entry whose `type` is not one of these five, or whose member set is not exactly the required set, MUST be rejected by the log (never admitted) and, if encountered as evidence during verification, MUST resolve to `transparency: "not_checked"` (§10.2) rather than being partially trusted.
 
 ## 9. Checkpoints: the hybrid C2SP signed-note profile
 
@@ -283,6 +285,8 @@ For the same reason, diagnostic rendering of untrusted origin/name/tree-size/sig
 ## 10. Result contract: `transparency`, `corroboration`, `manifest_freshness`
 
 Stage 2 adds three new, purely informational `VerificationResult` components (v0.1 §11.1's table gains three rows; none of the five original rows, nor `ok`, gain a new possible value). **The log NEVER upgrades `trust`, and these three components never affect `signature`, `schema`, `revocation`, `binding`, or `ok`** — this is Stage 2's central correctness property, not an incidental one (design doc: the log is a corroboration layer, not an authenticity layer), **with exactly two scoped exceptions: (G5, TM-47, rev 5) a `refund_window` revocation record's effectiveness, once a verifier is Stage-2 capable and evaluates `revocation-record` transparency evidence for it — §15 item 5 states the rule precisely; and (Stage 3, rev 6) an authenticated `transferred`-class record is honored ONLY when its transfer record's `holder_authorization` verifies AND its log inclusion proof checks out (§17.3).** Their defaults (`not_checked` / `none` / `not_checked`) are the exact values every pre-Stage-2 caller already implicitly gets, so Stage 1 behavior is unchanged for any caller that never supplies transparency evidence (and, per §15 item 5 and §17.3, for any caller that never engages either exception).
+
+**Stage 4 takes NO exception at all.** The two components §18.5 adds, `grant` and `grant_trust`, never affect `signature`, `schema`, `revocation`, `binding`, `trust`, or `ok` — under any value, including `grant: "activated"`. The exceptions above exist because a revocation record can extinguish an entitlement; a grant cannot, in either direction. It is a permission that becomes exercisable, never a validity property of the receipt, and a verifier that conflated the two would let a rights holder's distribution decision change what a signature is worth.
 
 ### 10.1 Vocabulary
 
@@ -682,8 +686,227 @@ A signature establishes what was signed, never why. This profile claims authoriz
 
 Exactly one in-protocol field governs transfer economics: `license.not_transferable_before` (§17.7). Royalty schedules, resale windows, pricing floors, and revenue splits are issuer/marketplace policy, entirely out of this specification's scope — see the non-normative annex [`attest-transfer-economics.md`](attest-transfer-economics.md) for the business frame this profile intentionally leaves unregulated.
 
+## 18. Stage 4: the preservation pledge
+
+This section specifies the license term `license.preservation_pledge` (v0.1 §5.5, registered attest-versioning.md §6.2) and the signed document it hash-binds: a rights-holder commitment that, once a verifiable trigger fires, converts into a machine-checkable permission for the receipt's holder to obtain an unprotected copy of the work. The receipt additionally carries the coarse label `survivability.end_of_life == "sunset-grant"` (v0.1 §5.6, registered attest-versioning.md §6.7), which stays comparable across catalogues without any evidence at all; the binding lives in the license term.
+
+Like Stage 1, Stage 2, and Stage 3 before it, Stage 4 is additive: no `signature`, `schema`, `binding`, `trust`, or `revocation` component gains a new value, and verification behavior is unchanged for any evaluation in which no grant evidence is presented — with one schema-level carve-out, §18.6's holder-binding conditional (D5). Unlike Stage 3, Stage 4 adds no new reachable value to any EXISTING v0.1 §11.1 component: `grant` and `grant_trust` (§18.5) are two entirely new, purely informational result components, and per D6 they take no exception at all — a grant is a permission that becomes exercisable, never a validity property of the receipt.
+
+**Stage dependency: Stage 1 suffices.** Stage 4 requires only the manifest machinery of v0.1 §7 plus the resolution of one further manifest, the rights holder's (§18.1). It does NOT require Stage 2, and it does not require the rights holder to operate a transparency log — a small publisher with no log at all can sign a pledge on day one. Anchoring (§11) is needed by exactly one of the two activation modes, `fixed-date`, and by nothing else. This is a deliberate relaxation of an earlier design in which activation was read from a log; §18.4 explains why that design was abandoned and what was gained by abandoning it.
+
+### 18.1 Rights-holder identity
+
+| Field | Type | Required | Semantics |
+| --- | --- | --- | --- |
+| `work.publisher_id` | string, lowercase DNS domain, or absent | OPTIONAL | The rights holder's domain. REQUIRED, schema-conditionally, when `license.preservation_pledge` is present (§18.6). Absent under v0.1 alone, carries no meaning. |
+
+The rights holder publishes a key manifest of the IDENTICAL existing shape (v0.1 §7.1, hybrid per §13) at `https://<publisher_id>/.well-known/attest.json`. No new manifest type, no new crypto: domain-control provenance, rotation continuity, `compromised` fail-closed, and the TOFU/TLS ladder (v0.1 §7.4) are reused verbatim. What is new is only the ROLE — a verifier resolving a manifest for a domain that is not the receipt's own `issuer.id`.
+
+Resolution and binding mirror v0.1 §11 step 2 in full: the grant signer's `kid` DNS prefix MUST equal the resolving manifest's own `issuer`, and both MUST equal the receipt's `work.publisher_id`. A grant that authenticates against some manifest but whose domain is not the receipt's declared `publisher_id` is reported `grant_trust: "signer_mismatch"` and its grant is ignored, with warning `grant_signer_not_publisher` — the marketplace-signing-a-grant-it-has-no-rights-to-concede case, named.
+
+Self-publishing — an indie who is both store and rights holder — is `publisher_id == issuer.id` and needs no carve-out: one domain, one manifest, and the verifier's statement stays true.
+
+The publisher's manifest gets the same trust ladder as an issuer's (`verified` on TLS domain-control provenance, `unauthenticated_tofu` otherwise, `unverified_rotation` on a discontinuous chain), reported ONLY in `grant_trust`. The receipt's own `trust` component is untouched — it remains a statement about the issuer.
+
+### 18.2 The license term and the sunset grant document
+
+**The license term.** `license.preservation_pledge` is an object, OPTIONAL, with exactly these three members. It declares the term and hash-binds the document that carries it, following the `terms_uri`/`legal_text_sha256` pattern its neighbours already use (v0.1 §5.5).
+
+| Field | Type | Required | Semantics |
+| --- | --- | --- | --- |
+| `pledge` | string, non-empty, open versioned vocabulary | REQUIRED | Pledge profile. The sole value this revision defines is `sunset-grant-v1` (attest-versioning.md §6.10). An unrecognized value is valid-with-warning, following the `end_of_life` discipline of v0.1 §5.6, never a schema error. |
+| `grant_uri` | string, `format: "uri"` | REQUIRED | Where the signed grant document lives. See §9 on the annotation-only status of `format: "uri"`: integrity comes from the hash below, never from the URI. |
+| `grant_sha256` | string, `^[0-9a-f]{64}$` | REQUIRED | `SHA-256(JCS(grant))` over the ENTIRE signed grant including its own `signature` member — the identical hashing discipline `revocation-record` and `transfer-record` already establish (§8). This is the buyer's FLOOR (§18.3). |
+
+**The grant document.** A sunset grant is a closed, hybrid-signed side-document, structurally a sibling of the revocation record (v0.1 §12) and the transfer record (§17.1): unknown members are rejected outright (the log-entry discipline of §8, not the payload's tolerant one), and it is JCS-canonicalized (v0.1 §9). Exactly these eleven members:
+
+| Field | Type | Required | Semantics |
+| --- | --- | --- | --- |
+| `grant_version` | integer, `1 <= n <= 2**53 - 1`, monotonically increasing per (publisher, scope) | REQUIRED | Currency/rollback ordering; same discipline as `manifest_version` (v0.1 §7.3). |
+| `publisher` | string, lowercase DNS domain | REQUIRED | MUST equal the signer manifest's `issuer` AND the receipt's `work.publisher_id`. |
+| `scope` | object `{artifact_series: string\|null, artifacts: [64-hex, ...]}` | REQUIRED | At least one of the two non-empty. `artifacts` is a sorted, duplicate-free array of artifact SHA-256 hashes (v0.1 §5.4 shape). |
+| `permissions` | array of enum, non-empty, sorted, duplicate-free | REQUIRED | MUST contain `deliver-to-holder`. MAY contain `redistribute-among-holders`. Registry-governed (attest-versioning.md §6.8). |
+| `activation` | object `{modes, fixed_date, successor_ids}` | REQUIRED | The trigger (§18.4). |
+| `unprotected_build` | boolean | REQUIRED | The publisher's commitment to release a build free of technological protection on activation. Without it a grant over a DRM-bound artifact promises delivery of something the holder still cannot open. |
+| `legal_text_uri` | string | REQUIRED | The prose grant. |
+| `legal_text_sha256` | string, 64 lowercase hex | REQUIRED | Hash-binds the prose so it cannot be silently rewritten, mirroring `license.legal_text_sha256` (v0.1 §5.5). |
+| `jurisdiction` | string, non-empty | REQUIRED | |
+| `issued_at` | string, ISO-8601 UTC `Z` | REQUIRED | Checked against the signer key's `[valid_from, valid_to]` window. |
+| `signature` | object | REQUIRED | The PUBLISHER's signature over `JCS(grant)` with `signature` removed, under the §13 hybrid AND-rule. A classical-only grant against a hybrid key entry MUST fail closed, exactly as revocation and transfer records do. |
+
+The `activation` member:
+
+```json
+"activation": {
+  "modes": ["publisher-declaration", "fixed-date"],
+  "fixed_date": "2046-01-01T00:00:00Z",
+  "successor_ids": ["heritage.example"]
+}
+```
+
+- `modes`: array, non-empty, sorted, duplicate-free, drawn from the registry at attest-versioning.md §6.9. `publisher-declaration` and `fixed-date` are active; `heartbeat-absence` is registered `reserved` and MUST NOT be honored by a conforming verifier — a grant listing it is not thereby invalid, but that mode contributes nothing to activation.
+- `fixed_date`: ISO-8601 UTC `Z`, or `null`. A non-null value REQUIRES `"fixed-date"` in `modes`.
+- `successor_ids`: array, possibly empty, of lowercase DNS domains, sorted and duplicate-free: the domains whose manifests (identical shape, v0.1 §7.1, same TOFU/TLS ladder) may sign the cessation declaration in the publisher's place.
+
+**Receipt binding.** The grant's own hash MUST equal `license.preservation_pledge.grant_sha256`. One canonical form, never a second one. A grant whose hash does not match does not correspond to this receipt and MUST be ignored — warning `grant_commitment_mismatch` — exactly as `transparency_entry_mismatch` (§10.2) ignores a mismatched log entry.
+
+`survivability.eol_commitment_uri`/`eol_commitment_sha256` remain available for generic end-of-life documents and are NOT the binding. An issuer SHOULD duplicate the grant there, so that a v0.1-only reader still sees a hash-bound commitment; where both are present and they disagree, a Stage-4-capable verifier emits `grant_commitment_divergence` and continues, using `license.preservation_pledge.grant_sha256`. The divergence is reported rather than resolved: the two fields have different authorities, and silently preferring one would hide an issuer's own inconsistency from the person holding the receipt.
+
+**Authentication** mirrors v0.1 §12.1 / §17.1 in full: the resolving manifest MUST be self-consistent (v0.1 §7.1); `signature.kid` MUST resolve to a key-entry with `status == "active"`; `issued_at` MUST fall within that key's `[valid_from, valid_to]` window; the publisher signature MUST verify over `JCS(grant)` with `signature` removed; the hybrid AND-rule of §13 layers on top exactly as it does for revocation and transfer records; and every check fails closed (treated as unauthenticated) on any malformed, wrong-typed, or missing input, never by raising.
+
+**The prose dependency (normative, stated honestly).** `legal_text_uri` and `legal_text_sha256` are REQUIRED members, so the machinery specified here is exercisable end-to-end by conformance vectors and by the reference implementation — but no real publisher can sign a real grant until the prose those two members hash-bind exists and has been drawn by counsel. This specification gives that text its structure; it does not write it.
+
+### 18.3 Grant currency and the ratchet (D3)
+
+The receipt hash-binds one grant: the FLOOR of that buyer's rights. A verifier MAY additionally hold later grant versions for the same (publisher, scope). Each supplied later version is evaluated independently AGAINST THE FLOOR — never against another later version, and never against whichever version the verifier happens to have accepted first — so the outcome does not depend on the order `later_grants` is presented in. A later version is accepted only if BOTH hold, relative to the FLOOR:
+
+1. **Currency** — `grant_version` strictly greater than the FLOOR's; the signer key `active` in the publisher's manifest chain. Two distinct authenticated grants sharing the same `grant_version` — the floor and a later version, or two later versions — is rollback-or-equivocation and is rejected, reported `grant_trust: "unverified_rotation"` — the same value and the same posture v0.1 §7.3 already uses for manifests. No new trust value.
+2. **Non-narrowing** — relative to the FLOOR: `permissions` a superset; `scope.artifact_series` unchanged (or newly set from `null`); `scope.artifacts` a superset; `unprotected_build` never going from `true` to `false`; `activation.modes` a superset; `activation.fixed_date` equal or earlier (or newly set from `null`); and `activation.successor_ids` a superset.
+
+The `activation` half of criterion 2 is what keeps the trigger from being narrowed after the sale. Pushing `fixed_date` further out, dropping a mode, or removing a designated successor each make activation strictly harder to reach for a buyer who has already paid — so each counts as narrowing, even though nothing about the permissions changed.
+
+A version failing (2) is ignored with warning `grant_narrowing_ignored`. A version failing (1) is ignored with `grant_trust: "unverified_rotation"`. When more than one supplied later version independently passes BOTH (1) and (2) against the floor, the EFFECTIVE grant is the one with the greatest `grant_version` among them — a maximum over a floor-relative filter, never a sequential fold that mutates as candidates are processed, which is what keeps the result independent of `later_grants`' presentation order. If no later version passes, the floor itself remains effective.
+
+### 18.4 Activation: cessation declaration and fixed date (D4)
+
+Activation is established by POSITIVE evidence, never from the absence of evidence. Two modes are defined; both require the holder to be handed something that exists, is signed or anchored, and can be checked offline.
+
+**Why not a dead-man switch.** An earlier design activated a grant when no recent proof-of-distribution appeared in a transparency log. That design is unsound, and the flaw is directional rather than editorial. A transparency log proves PRESENCE (inclusion) and append-only behavior (consistency); anchoring bounds a checkpoint's age only from above — "this existed no later than `T`" — never from below. So any rule that reads meaning into the ABSENCE of a recent record can be defeated by re-anchoring a genuine but stale checkpoint today. Three successive attempts to patch the mechanism closed three real holes and left this one untouched, because it sits at the level of the idea. Rather than ship a claim we know to be false, this revision abandons the mode and registers it `reserved` (attest-versioning.md §6.9): `heartbeat-absence` becomes reachable only if and when a verifier can establish freshness, which no log alone provides.
+
+**The residual, stated plainly.** A publisher who simply vanishes — signing nothing, designating no successor, setting no `fixed_date` — leaves the grant `dormant` forever. Neither mode below covers silent death. The two mitigations available today are inside the grant itself: designate successors, and set a backstop date. Both are the rights holder's decision at issuance, which is honest about where the residual actually lives.
+
+**The cessation declaration.** A closed, hybrid-signed side-document, four members, authenticated exactly like the grant (§18.2):
+
+```json
+{
+  "publisher": "pub.example",
+  "scope": { "artifact_series": null,
+             "artifacts": ["9f2b4a1c0d3e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4"] },
+  "declared_at": "2031-03-01T00:00:00Z",
+  "signature": { "kid": "heritage.example/2031-q1", "...": "..." }
+}
+```
+
+| Field | Type | Required | Semantics |
+| --- | --- | --- | --- |
+| `publisher` | string, lowercase DNS domain | REQUIRED | MUST equal the effective grant's `publisher`. |
+| `scope` | object, same shape as the grant's `scope` | REQUIRED | Coverage rule below. |
+| `declared_at` | string, ISO-8601 UTC `Z` | REQUIRED | The declaration's own signed time; the signing key's validity window is checked against this, never against the verifier's clock (v0.1 §12 discipline). |
+| `signature` | object | REQUIRED | Publisher-or-successor hybrid signature over `JCS(record)` minus `signature`. |
+
+**Who may sign.** The `kid`'s DNS prefix MUST equal either the effective grant's `publisher` or one of the domains listed in that grant's `activation.successor_ids`. A successor's manifest is resolved exactly like the publisher's (§18.1). A declaration signed by a successor activates the grant and additionally reports `grant_activated_by_successor`, so the caller can see that the cessation was declared by a designated third party rather than by the rights holder — informational, never a downgrade.
+
+**Coverage** is deterministic and identical across both cores: a declaration covers a grant iff `publisher` is equal, `scope.artifact_series` is equal (both `null` counts as equal), and the declaration's `scope.artifacts` is a superset of the grant's. Set containment over sorted, duplicate-free hex arrays — no ambiguity to drift between implementations.
+
+**Logging a declaration is RECOMMENDED and never required for validity.** §8's fifth entry type, `cessation-declaration`, gives a declaration discoverability and a date opposable to third parties, and publishers SHOULD use it. But an authenticated declaration that was never logged activates the grant all the same. This is the opposite posture from `transfer-record` (§17.2), and the asymmetry is deliberate: a transfer moves an entitlement between people and an unlogged one enables double assignment, whereas a cessation declaration only ever works AGAINST the party that signs it. Nobody gains by hiding one, so nothing needs to be extorted from the log to honor it.
+
+**The fixed date.** With `"fixed-date"` among the effective grant's `modes` and `fixed_date` non-null, activation is proven by an anchored attestation over the grant's own canonical bytes whose proven chain time `T` satisfies `T >= fixed_date`. The attestation is verified under §11 with the caller's own `AnchorPolicy`, including the CRQC horizon check, and its accumulator is seeded by the grant document rather than by a log checkpoint — anyone may anchor a public document, and no log need exist.
+
+This is the direction of the inequality that anchoring can prove honestly. Possessing an attestation that resolves to a block header the verifier itself has pinned demonstrates that real time has REACHED `T`; a future block cannot be manufactured on demand. The converse — that something is still current — is exactly what anchoring cannot show, which is why the abandoned mode above could not be rescued. The proven time is taken as the minimum over the verified proofs, the same conservative reduction §11 already applies. Proof absent, unverifiable, or resolving earlier than `fixed_date` → the grant stays `dormant` with warning `grant_unanchored`, never `activated`.
+
+**Evaluation order (deterministic, short-circuiting).**
+
+1. `license.preservation_pledge` absent, or unreadable as an object with the three required members → `grant: "none"`.
+2. No grant evidence supplied, or the evidence carries no grant document; or a structural ceiling is exceeded (below) → `grant: "not_checked"`.
+3. The floor grant authenticates (§18.2) and the triple domain binding holds — `grant.publisher` equals the resolving manifest's `issuer` equals the receipt's `work.publisher_id`. Otherwise `grant: "invalid_grant_ignored"`; where the failure is specifically the domain binding, `grant_trust: "signer_mismatch"` with warning `grant_signer_not_publisher`.
+4. `SHA-256(JCS(floor))` equals `license.preservation_pledge.grant_sha256`. Otherwise `grant: "invalid_grant_ignored"` with warning `grant_commitment_mismatch`. A present-but-divergent `survivability.eol_commitment_sha256` emits `grant_commitment_divergence` here and evaluation continues.
+5. Determine the effective grant by the floor-relative ratchet (§18.3).
+6. If the effective grant's `scope` does not cover this receipt's `work.artifact_series`/`work.artifacts` (§5.4) under the coverage rule above, emit `grant_scope_uncovered` and CONTINUE — a grant may be scoped to a broader catalogue than one receipt's artifacts, and the verifier still owes the caller that distinction.
+7. **Declaration path.** Any supplied declaration that authenticates (signed by the publisher or by a successor listed in the EFFECTIVE grant) and covers its scope → `grant: "activated"`, plus `grant_activated_by_successor` where the signer was a successor. A supplied declaration that fails authentication or coverage is ignored with warning `grant_declaration_ignored` and never honored.
+8. **Fixed-date path.** `"fixed-date"` in the effective grant's `modes`, `fixed_date` non-null, and a valid anchored attestation with `T >= fixed_date` → `grant: "activated"`. The mode declared but the proof absent or insufficient → warning `grant_unanchored`.
+9. Otherwise → `grant: "dormant"`.
+
+**Structural ceilings (normative).** `later_grants` and supplied declarations are attacker-supplied inputs whose elements each cost a hybrid signature verification, so — exactly as v0.1 §11.3 and §16.1 require elsewhere — a byte cap alone is not a ceiling. A conforming Stage 4 implementation MUST bound the COUNT of each:
+
+| Ceiling | Value | Constant |
+| --- | --- | --- |
+| `later_grants` entries per evaluation | 64 | `_MAX_GRANT_LATER_VERSIONS` |
+| cessation declarations per evaluation | 64 | `_MAX_GRANT_DECLARATIONS` |
+
+Exceeding either ceiling truncates evaluation fail-closed toward `not_checked`, never toward `activated`. The ceiling check MUST run BEFORE any signature is verified, or it is not a ceiling.
+
+**Which way this fails (normative).** A false `activated` authorizes distribution of a work that is still on sale — harm to the rights holder, and the single failure that would discredit the whole instrument. A false `dormant` merely means a buyer cannot yet redeem. Therefore every missing, unverifiable, malformed, or ambiguous input resolves to `dormant` or `not_checked`, never to `activated`. This asymmetry is normative, not left to implementations. With both modes above being presence-based, the asymmetry now costs almost nothing to hold: withholding evidence can only keep a grant closed, never open it.
+
+**Interaction with a compromised key.** A declaration signed under a key later marked `compromised` (v0.1 §7.3) ceases to authenticate, and a grant that had activated on it returns to `dormant`. The direction is the safe one — no false activation survives a stolen key — but it does mean activation is not strictly irreversible, and the cost of the reversal falls on the buyer, exactly as it already does for revocations. Stated here rather than left to be discovered.
+
+### 18.5 Result contract
+
+Two new components, both purely informational:
+
+| Component | Allowed values |
+| --- | --- |
+| `grant` | `not_checked` \| `none` \| `dormant` \| `activated` \| `invalid_grant_ignored` |
+| `grant_trust` | `not_checked` \| `verified` \| `unauthenticated_tofu` \| `unverified_rotation` \| `signer_mismatch` |
+
+`grant_trust` reuses the three `trust` values verbatim (v0.1 §11.1), adding exactly one — `signer_mismatch` — for the case v0.1's ladder has no way to express: a well-formed, well-signed document from a domain that is not the declared rights holder.
+
+**Resolution follows v0.1 §11.1's discipline for `trust`, scoped to the publisher.** It stays `not_checked` until grant evidence is supplied; then it starts at `unauthenticated_tofu`; becomes `verified` when the trust store's provenance for the resolved `work.publisher_id` is `"tls"`; is forced to `unverified_rotation` (overriding provenance) on a discontinuous publisher-manifest chain or a grant-currency violation (§18.3); and is forced to `signer_mismatch` (overriding everything) when the resolved domain is not the receipt's declared `work.publisher_id`. Like `trust`, it is reported at its best-available value even when grant evaluation later rejects the document, and MUST NOT be silently reset on failure.
+
+Defaults (`not_checked` / `not_checked`) are exactly what every pre-Stage-4 caller already implicitly gets, so Stage 1/2/3 behavior is unchanged for any caller that never supplies grant evidence.
+
+The eight warning literals (verbatim):
+
+| Literal (verbatim) | Emitted when |
+| --- | --- |
+| `grant_narrowing_ignored` | a later grant version fails the non-narrowing ratchet check (§18.3); the floor (or another still-effective version) remains effective. |
+| `grant_unanchored` | the `fixed-date` mode is declared but no anchored attestation proves `T >= fixed_date` (§18.4); accompanies `grant: "dormant"`. |
+| `grant_signer_not_publisher` | the grant authenticates, but the resolved signer domain is not the receipt's declared `work.publisher_id` (§18.1); accompanies `grant_trust: "signer_mismatch"`. |
+| `grant_scope_uncovered` | the effective grant's own `scope` does not cover this receipt's `work.artifact_series`/`work.artifacts` (§5.4), under the coverage rule of §18.4; evaluation continues unaffected. |
+| `grant_commitment_mismatch` | the grant's own hash, `SHA-256(JCS(grant))`, does not equal `license.preservation_pledge.grant_sha256` (§18.2); the grant evidence does not correspond to this receipt and is ignored. |
+| `grant_commitment_divergence` | `survivability.eol_commitment_sha256` is present and differs from `license.preservation_pledge.grant_sha256` (§18.2); the license term governs, and evaluation continues. |
+| `grant_declaration_ignored` | a supplied cessation declaration fails authentication or does not cover the effective grant's scope (§18.4); it is never honored. |
+| `grant_activated_by_successor` | activation came from a declaration signed by a domain in `activation.successor_ids` rather than by the publisher itself (§18.4); informational, never a downgrade. |
+
+**Per D6, Stage 4 takes no exception.** Unlike Stage 2 (§10, two scoped exceptions) and Stage 3 (`revocation: "transferred"`, §17.3), neither `grant` nor `grant_trust` ever affects `signature`, `schema`, `revocation`, `binding`, `trust`, or `ok` — a grant is a permission that becomes exercisable, never a validity property of the receipt.
+
+### 18.6 Holder binding conditional (D5)
+
+A v0.2 receipt (gated on `attest_version`; v0.1 receipts are untouched) carrying `license.preservation_pledge` MUST also carry a non-null `buyer.pubkey`, a `work.publisher_id`, and `survivability.end_of_life == "sunset-grant"`. Any of the three absent is a SCHEMA ERROR. The combination never had assigned meaning (v0.1 §2), and the changed outcome is sanctioned as the FOURTH newly-recognized-hazard instance under attest-versioning.md §2 — the same path §17.8 already used.
+
+The rationale for the holder key is the load-bearing one: a grant authorizes delivery to the holder of a valid receipt; without a holder key, "holder" degenerates to whoever possesses the file, and the grant becomes indistinguishable from publishing the work outright. `work.publisher_id` is required because §18.1's whole identity check hangs on it. The `end_of_life` label is required so that the coarse, evidence-free signal and the hash-bound term can never disagree on the same receipt.
+
+Guest and client-less flows remain entirely valid — they simply cannot carry a preservation pledge until re-issued with a `buyer.pubkey` via the existing `supersedes` path.
+
+**Interaction with Stage 3.** A pledge-bearing receipt already has a non-null `buyer.pubkey`, so it satisfies §17.8 automatically. After a transfer, the new receipt carries its own `license` and `survivability` blocks as set by the issuer at re-issuance (§17.6 discipline) — the pledge does not ride along implicitly; the issuer restates it, or it is absent.
+
+### 18.7 Redemption
+
+**The holder proof (normative, verbatim):**
+
+```
+UTF8("Attest-redemption-challenge-v1") || 0x00 || UTF8(receipt_id) || 0x00 || UTF8(audience) || 0x00 || nonce
+```
+
+- The domain label is the ASCII string `Attest-redemption-challenge-v1`.
+- `audience` is the custodian's lowercase DNS domain, as UTF-8 text.
+- `nonce` is at least 16 raw bytes, freshly generated by the custodian per challenge.
+- `receipt_id` is the receipt's own `payload.receipt_id`, as UTF-8 text, not decoded and re-encoded — v0.1 §8.2 and §17.1 discipline, unchanged.
+- Signed with `buyer.pubkey` (Ed25519), the same authorization-liveness posture and the same honestly-stated post-CRQC bound as §17.8: a post-CRQC forger of this leg still cannot forge the publisher's hybrid signature (§18.2) — the holder leg's classical weakness is bounded by what surrounds it, never load-bearing alone.
+
+`audience` is why this is a NEW preimage rather than a reuse of §8.2: v0.1's binding challenge names no recipient, so a response produced for one custodian would be replayable at another.
+
+**Salt disclosure MUST NOT be accepted as a redemption proof.** It is a replayable bearer proof that also hands over the identifier (v0.1 §8.1) and burns the receipt's binding secrecy toward that verifier — unfit for a gate queried repeatedly by different custodians. This is a normative prohibition, not a recommendation.
+
+**Custodian preconditions (normative checklist, descriptive interface — Appendix A).** Anyone delivering under a grant checks, before serving bytes: the receipt is `ok`; `revocation` is neither `revoked` nor `transferred`; `grant` is `activated`; the redemption proof verifies for its own `audience`; and the served artifact's SHA-256 is within the effective grant's scope AND matches the receipt (v0.1 §5.4) or the issuer's artifact manifest (v0.1 §7.2).
+
+## Appendix A — The custodian interface (non-normative)
+
+This appendix sketches the redemption exchange — challenge, response, artifact, hash check — described but never required, exactly as v0.1 Appendix B treats registry nodes. attest operates no custodian, indexes none, and publishes no directory of where files may be found; no conforming implementation may depend on a custodian existing, or attest stops being offline-verifiable.
+
+A custodian is anyone willing to check §18.7's preconditions and serve bytes: a heritage institution, a store, a foundation, or the rights holder itself.
+
+1. The holder presents a `.attest` bundle (v0.1 §14.1), or an equivalent receipt/grant/declaration evidence set, to the custodian.
+2. The custodian independently verifies the receipt (v0.1 §11 / §3) and evaluates the grant (§18.4); if `grant` is not `activated`, or any other §18.7 precondition fails, the custodian declines.
+3. The custodian issues a challenge: a fresh `nonce` (at least 16 bytes) and its own `audience` domain.
+4. The holder responds with a signature over §18.7's preimage, using `buyer.pubkey`.
+5. The custodian verifies the response and, on success, serves the artifact whose SHA-256 falls within the effective grant's scope.
+6. The holder (or the custodian, before serving) checks the served artifact's SHA-256 against the receipt's own `work.artifacts[]` (v0.1 §5.4) or the issuer's artifact manifest (v0.1 §7.2).
+
+Nothing above is required by this specification's conformance surface; it exists to make the machinery §18 specifies exercisable end-to-end, exactly as v0.1's Appendix B sketches a registry-node interface without normatizing one.
+
 ## Revision log
 
+- **2026-08-25 (rev 8)**: §18 added — Stage 4, the preservation pledge: the license term `license.preservation_pledge` (§18.2, three members, hash-binding the signed grant document the way `terms_uri`/`legal_text_sha256` bind licence prose) and the eleven-member sunset grant document it binds, signed by the RIGHTS HOLDER under the §13 hybrid AND-rule; rights-holder identity resolved from a manifest of the identical v0.1 §7.1 shape at the publisher's own domain, with the triple domain binding and `grant_trust: "signer_mismatch"` for a signer that is not the declared publisher (§18.1); the floor-relative non-narrowing ratchet, extended to the activation members so a trigger cannot be narrowed after the sale (§18.3); PRESENCE-BASED activation only (§18.4) — a signed `cessation-declaration` from the publisher or a designated successor, and an anchored `fixed-date` proof in the direction anchoring can honestly give (`T >= fixed_date`) — with the absence-based dead-man switch ABANDONED and registered `reserved`, because reading meaning into the absence of a record cannot be sound without freshness, and the silent-death residual it leaves stated rather than hidden; two purely informational result components `grant`/`grant_trust` and eight warning literals (§18.5); the holder-binding schema conditional, this document's second and attest-versioning.md §2's fourth sanctioned newly-recognized-hazard instance (§18.6); the audience-bound redemption proof with its normative prohibition on salt disclosure (§18.7); and the non-normative custodian sketch (Appendix A). §8 amended — `cessation-declaration` is a FIFTH loggable entry type, RECOMMENDED but never load-bearing, the opposite posture from `transfer-record` and for a stated reason. §10 amended — Stage 4 takes NO scoped exception: neither new component ever touches `ok`. The binding deliberately lives in `license.*` rather than in `survivability.eol_commitment_*`, which the earlier design used: a pledge is a term of the licence, `eol_commitment_*` stays free for generic end-of-life documents, and a divergence between the two is reported (`grant_commitment_divergence`) rather than silently resolved. — vectors: 37-preservation-pledge, 38-redemption
 - **2026-07-28 (rev 7)**: P1.1b witness federation primitives added without Stage 4: §9.2 registers C2SP type `0xff` identifier `attest-cosignature-ml-dsa-65-v1`, its exact `cosignature/v1` payload, domain separation from `attest-ml-dsa-65`, and excludes `0x06`; §10 makes one pinned type-`0x04` cosignature reach `corroboration: "witnessed"` as timestamped observation with `witness_independence_not_established`, and adds explicit `witness_policy_epoch`; §11.4 defines closed JCS WitnessPolicy epochs, distribution, conflicts, compromise lifecycle, configured witness origin scope, and reusable quorum primitives; §15 item 1 preserves the residual anti-equivocation limitation; §1 amended in the same revision so its Stage 2b paragraph no longer forbids emitting `corroboration: "witnessed"` — that prohibition predates this revision and §10.1 supersedes it — and no longer calls the format forthcoming, and §10.3 annotated so the discovery half stays distinct from the observation this revision makes reachable; §10.2 gains the ordered step 8 this revision's corroboration path adds, and its degradation rule now names that step's deliberate silence as an exception. No §18 material is introduced. — vectors: 39-witness-corroboration, 40-witness-quorum
 - **2026-07-23 (rev 6)**: §17 added — Stage 3, issuer-mediated transfer: the transfer record profile (§17.1, six fields, holder-authorization domain `Attest-transfer-authorization-v1`, issuer signature under the §13 hybrid AND-rule); log-required honoring (§17.2, D2 — unlogged records ignored with `transfer_record_unlogged`); old-receipt extinguishment via `status: "transferred"` revocation records reported as `revocation: "transferred"` (new reachable value on v0.1 §11.1's `revocation` component, capping `ok` the same way `"revoked"` already does) for all revocability classes when backed by §17.1/§17.2, `invalid_revocation_ignored` plus warning `transferred_revocation_unbacked` otherwise (§17.3); double assignment — earliest log index wins, loser reported with warning `transfer_double_assignment_conflict` (§17.4); chain-of-title audit surface, separate from single-receipt verify (§17.5); post-transfer revocation interplay, matched by `receipt_id`, new receipt's own class and `issued_at` anchor (§17.6); `license.not_transferable_before` enforcement, warning `transfer_not_yet_transferable` (§17.7); holder binding at issuance (§17.8, D1 — `transferable: true` requires non-null `buyer.pubkey`, schema-conditional, v0.1 untouched); coerced-transfer limitation, TM-47 scoping inherited (§17.9); business knobs out of protocol (§17.10). §8 amended — fourth loggable entry type `transfer-record` (`{type, issuer, record_sha256}`). §10 amended — the "these three components never affect revocation/ok" property gains a second scoped exception for `transferred`-class backing. attest-versioning.md §6.3's `transferred` row moves `reserved` -> `active`; §6.4 gains `transfer-record`; §6.5 receives its first entry, `issuer-mediated-v1`. — vectors: 35-transfer, 36-transfer-chain
 - **2026-07-23 (rev 5)**: §8 amended — `revocation-record` is a THIRD loggable entry type (`{type, issuer, record_sha256}`, `record_sha256 = SHA-256(JCS(record))` over the entire signed revocation record); §10 amended — the "these three components never affect revocation/ok" property gains one scoped exception; §13 amended — the AND-rule paragraph's "transparency evidence cannot rescue OR condemn a revocation verdict" claim scoped against this exception; §15 item 5 rewritten — a `refund_window` revocation record is effective ONLY when a Stage-2-capable verifier's `revocation-record` transparency evidence proves the record's log entry was anchored no later than the receipt's own refund-window deadline (`issued_at + revocation_window_days`); failing that bound (unlogged, or anchored after the deadline) resolves to `revocation: "invalid_revocation_ignored"` (no vocabulary growth) plus warning `revocation_unlogged_deadline`; a verifier that is not Stage-2 capable at all keeps v0.1 semantics unchanged (eternal verifiability); `policy`/`none` classes unaffected; closes TM-47's deadline-unenforceable-effectiveness gap (signer intent/compulsion remain out of scope, §7 of the threat model). §16/§16.4 leaf counts added/corrected (`31-manifest-currency`'s stated leaf count corrected from 3 to 5, matching its actual 5 leaves since rev 2; corpus 78 -> 82). attest-versioning.md §6.4's `revocation-record` registry row moves `reserved` -> `active`. — vectors: 33-logged-revocation

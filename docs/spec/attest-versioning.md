@@ -18,7 +18,7 @@ attest evolves by addition, not by replacement. Extensions enter as OPTIONAL reg
 
 One exception exists: a result-classification downgrade mandated by an algorithm lifecycle transition (§4) is NOT a breaking change and does not require a new `attest_version`. A lifecycle transition records newly established cryptanalytic reality about an algorithm; the protocol semantics are unchanged, and eternal verifiability (§3) is preserved because the artifact remains verifiable — the result simply reports what its signature is worth today.
 
-Amendments MAY additionally introduce rules that apply only to artifacts produced after the amendment's revision date, and MAY introduce verifier behavior that bounds resources or demands newly-available evidence in response to a newly-recognized hazard. Such security-strengthening behavior is not breaking in the §2 sense even where it changes a capable verifier's outcome on unchanged inputs: the artifact remains verifiable, and the changed outcome reflects the new hazard, not new protocol semantics. The resource-guard rejections above the §11.3 acceptance floors (v0.1 rev 3), the deadline-evidence requirement for `refund_window` revocation under Stage-2-capable verification (v0.2 rev 5), and the holder-binding schema conditional for transferable receipts (v0.2 rev 6, attest-v0.2.md §17.8 — `license.transferable: true` with no `buyer.pubkey` becomes a schema error, a combination that never had assigned meaning) are the three instances this revision sanctions.
+Amendments MAY additionally introduce rules that apply only to artifacts produced after the amendment's revision date, and MAY introduce verifier behavior that bounds resources or demands newly-available evidence in response to a newly-recognized hazard. Such security-strengthening behavior is not breaking in the §2 sense even where it changes a capable verifier's outcome on unchanged inputs: the artifact remains verifiable, and the changed outcome reflects the new hazard, not new protocol semantics. The resource-guard rejections above the §11.3 acceptance floors (v0.1 rev 3), the deadline-evidence requirement for `refund_window` revocation under Stage-2-capable verification (v0.2 rev 5), the holder-binding schema conditional for transferable receipts (v0.2 rev 6, attest-v0.2.md §17.8 — `license.transferable: true` with no `buyer.pubkey` becomes a schema error, a combination that never had assigned meaning), and the holder-binding schema conditional for pledge-bearing receipts (v0.2 rev 8, attest-v0.2.md §18.6 — `license.preservation_pledge` present with no `buyer.pubkey`, no `work.publisher_id`, or without `survivability.end_of_life == "sunset-grant"` becomes a schema error, likewise a combination that never had assigned meaning) are the four instances this revision sanctions.
 
 v0.1 §11.2 is the forward-compatibility substrate this pattern generalizes: an unrecognized top-level payload field is signed, carried through verification, and reported only as a warning — never as an error. That rule is the payload-field instance of a general principle that binds every extension point registered in §6 (signature suites, payload fields, revocation classes, log entry types, transfer types): a verifier that predates a given extension MUST continue to accept and correctly classify artifacts that do not use it, and MUST NOT be required to reject artifacts that do, unless a new `attest_version` explicitly changes that baseline.
 
@@ -102,6 +102,7 @@ Key lifecycle statuses — `active`, `retired`, `compromised` (v0.1 §7.3) — a
 | `receipt` | active | v0.2 | v0.2 §8 |
 | `revocation-record` | active | v0.2 (§8/§15 amendment, rev 5) | v0.2 §8, §15 item 5 — G5/TM-47: a `refund_window` revocation record's effectiveness gains a deadline-effectiveness rule once a verifier evaluates this entry type's transparency evidence for it. |
 | `transfer-record` | active | v0.2 (§8/§17 amendment, rev 6) | v0.2 §8, §17.2 |
+| `cessation-declaration` | active | v0.2 (§8/§18 amendment, rev 8) | v0.2 §8, §18.4 — logging a declaration is RECOMMENDED and never required for validity, unlike `transfer-record` (§17.2) |
 
 ### 6.5 Transfer types
 
@@ -119,8 +120,45 @@ This registry's first entry is populated by the receipt-transfer profile named a
 
 This is the sole P1.1b warning literal. It records that timestamped witness observation does not establish organizational independence; it is not a positive independence inference.
 
+### 6.7 End-of-life commitment values
+
+| Name | State | Introduced | Reference |
+| --- | --- | --- | --- |
+| `artifacts-remain-redownloadable` | active | v0.1 | v0.1 §5.6 |
+| `escrow` | active | v0.1 | v0.1 §5.6 |
+| `none` | active | v0.1 | v0.1 §5.6 |
+| `sunset-grant` | active | v0.2 (§18 amendment, rev 8) | v0.2 §18 — the label a Stage 4 receipt carries; the binding itself lives in `license.preservation_pledge` (§18.2) |
+
+The vocabulary stays OPEN: v0.1 §5.6 classifies an unrecognized `end_of_life` value as valid-with-warning, never a schema error, and that discipline is unchanged. Registering a value here assigns it meaning to a Stage-4-capable verifier; it does not close the field.
+
+### 6.8 Grant permissions
+
+| Name | State | Introduced | Reference |
+| --- | --- | --- | --- |
+| `deliver-to-holder` | active | v0.2 (§18, rev 8) | v0.2 §18.2 — REQUIRED in every grant's `permissions` |
+| `redistribute-among-holders` | active | v0.2 (§18, rev 8) | v0.2 §18.2 — OPTIONAL; a permission the rights holder grants, never a distribution channel this specification defines |
+
+### 6.9 Activation modes
+
+| Name | State | Introduced | Reference |
+| --- | --- | --- | --- |
+| `publisher-declaration` | active | v0.2 (§18, rev 8) | v0.2 §18.4 — a signed cessation declaration from the publisher or a designated successor |
+| `fixed-date` | active | v0.2 (§18, rev 8) | v0.2 §18.4 — an anchored proof that chain time has reached the grant's own `fixed_date` |
+| `heartbeat-absence` | reserved | v0.2 (§18, rev 8) | v0.2 §18.4 — registered, deliberately unreachable: a mode that reads meaning into the ABSENCE of a recent record cannot be sound until a verifier can establish freshness, which no transparency log alone provides |
+
+`heartbeat-absence` is reserved rather than omitted so that the gap it names stays visible. Promoting it to `active` is a normative amendment in its own right, not an editorial change, and requires the freshness mechanism it waits on.
+
+### 6.10 Preservation pledge types
+
+| Name | State | Introduced | Reference |
+| --- | --- | --- | --- |
+| `sunset-grant-v1` | active | v0.2 (§18, rev 8) | v0.2 §18.2 — the sole pledge profile this revision defines |
+
+The vocabulary is open and versioned: an unrecognized `license.preservation_pledge.pledge` value is valid-with-warning, following §6.7's discipline, never a schema error.
+
 ## Revision log
 
+- **2026-08-25 (rev 5)**: §6.4 gains `cessation-declaration`, `active`, introduced by v0.2 §8/§18 — with the posture difference that logging one is RECOMMENDED and never load-bearing, unlike `transfer-record`; four new registries carry Stage 4's own vocabularies — §6.7 end-of-life commitment values (v0.1's three seed values recorded, plus `sunset-grant` `active`, the field's open-vocabulary discipline unchanged), §6.8 grant permissions (`deliver-to-holder` and `redistribute-among-holders`, both `active`), §6.9 activation modes (`publisher-declaration` and `fixed-date` `active`; `heartbeat-absence` deliberately `reserved`, because reading meaning into the absence of a record is unsound until freshness can be established), and §6.10 preservation pledge types (`sunset-grant-v1`, `active`); §2's sanctioned newly-recognized-hazard instances extended from three to four with the v0.2 rev 8 pledge-bearing holder-binding schema conditional (attest-v0.2.md §18.6). — vectors: 37-preservation-pledge, 38-redemption
 - **2026-07-28 (rev 4)**: §6.1.1 registers `attest-cosignature-ml-dsa-65-v1` at C2SP type `0xff` and distinguishes it from the checkpoint identifier; immutable WitnessPolicy epoch/update lifecycle is recorded; §6.6 registers the sole P1.1b warning `witness_independence_not_established`; revision provenance is groups 39 and 40. — vectors: 39-witness-corroboration, 40-witness-quorum
 - **2026-07-23 (rev 3)**: §6.3 `transferred` row assigned `active` state by v0.2 §17 (Stage 3, was `reserved`); §6.4 gains `transfer-record`, `active`, introduced by v0.2 §8/§17; §6.5 receives its first entry, `issuer-mediated-v1`, `active` — the transfer-type registry named empty at this document's introduction now has its first registrant. **Amended same-day, still rev 3 (unpublished):** §2's sanctioned newly-recognized-hazard instances extended from two to three with the v0.2 rev 6 holder-binding schema conditional (attest-v0.2.md §17.8). — vectors: 35-transfer, 36-transfer-chain
 - **2026-07-22 (rev 2)**: §6.4 `revocation-record` row assigned `active` state by v0.2 rev 5 (was `reserved`); §2 amendment rule restored — the security-strengthening exception (resource guards above §11.3's floors, the `refund_window` deadline-evidence requirement) was omitted from an earlier revision of this document and is now stated; §6.3 registry corrected — the `compromised` row is dropped (it names a key lifecycle STATUS, v0.1 §7.3, not a `license.revocability` class, v0.1 §5.5) and a clarifying sentence distinguishes the two vocabularies. — vectors: none

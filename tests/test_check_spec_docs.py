@@ -61,8 +61,11 @@ def _spec_text(version: str, sections: list[int]) -> str:
 def _minimal_spec_v01() -> str:
     return (
         _spec_text("0.1", list(range(1, 16)))  # §1..§15
-        + "### 5.5 `license`\n\n"
+        + "### 5.4 `work`\n\n"
+        + "| `work.publisher_id` | string, lowercase DNS domain | OPTIONAL | Reserved. |\n"
+        + "\n### 5.5 `license`\n\n"
         + "| `not_transferable_before` | string, ISO-8601 UTC | OPTIONAL | Reserved. |\n"
+        + "| `preservation_pledge` | object | OPTIONAL | Reserved. |\n"
     )
 
 
@@ -88,6 +91,19 @@ def _minimal_spec_v02() -> str:
             )
         )
         + "\n"
+        + "\n## 18. Stage 4: the preservation pledge\n\n"
+        + "`license.preservation_pledge` `sunset-grant-v1` `sunset-grant` "
+        + "`deliver-to-holder` `redistribute-among-holders` `publisher-declaration` "
+        + "`fixed-date` `heartbeat-absence` `cessation-declaration` "
+        + "`Attest-redemption-challenge-v1` `grant_narrowing_ignored` `grant_unanchored` "
+        + "`grant_signer_not_publisher` `grant_scope_uncovered` `grant_commitment_mismatch` "
+        + "`grant_commitment_divergence` `grant_declaration_ignored` "
+        + "`grant_activated_by_successor` `_MAX_GRANT_LATER_VERSIONS` "
+        + '`_MAX_GRANT_DECLARATIONS` `grant: "activated"` `grant_trust: "signer_mismatch"`\n\n'
+        + "Activation follows from positive evidence, never from the absence of evidence; "
+        + "logging a declaration is RECOMMENDED and never required for validity; the "
+        + "fixed-date proof runs in the direction anchoring can give, `T >= fixed_date`.\n"
+        + "\n## Appendix A — The custodian interface (non-normative)\n\nSketch.\n"
     )
 
 
@@ -191,11 +207,35 @@ def _minimal_versioning() -> str:
         "| Name | State | Introduced | Reference |\n"
         "| --- | --- | --- | --- |\n"
         "| `transfer-record` | active | v0.2 §17 | v0.2 §8, §17.2 |\n"
+        "| `cessation-declaration` | active | v0.2 §18 | v0.2 §8, §18.4 |\n"
         "\n"
         "### 6.5 Transfer types\n\n"
         "| Name | State | Introduced | Reference |\n"
         "| --- | --- | --- | --- |\n"
         "| `issuer-mediated-v1` | active | v0.2 §17 | v0.2 §17 |\n"
+        "\n"
+        "### 6.7 End-of-life commitment values\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `sunset-grant` | active | v0.2 §18 | v0.2 §18 |\n"
+        "\n"
+        "### 6.8 Grant permissions\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `deliver-to-holder` | active | v0.2 §18 | v0.2 §18.2 |\n"
+        "| `redistribute-among-holders` | active | v0.2 §18 | v0.2 §18.2 |\n"
+        "\n"
+        "### 6.9 Activation modes\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `publisher-declaration` | active | v0.2 §18 | v0.2 §18.4 |\n"
+        "| `fixed-date` | active | v0.2 §18 | v0.2 §18.4 |\n"
+        "| `heartbeat-absence` | reserved | v0.2 §18 | v0.2 §18.4 |\n"
+        "\n"
+        "### 6.10 Preservation pledge types\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `sunset-grant-v1` | active | v0.2 §18 | v0.2 §18.2 |\n"
         "\n"
         "## Revision log\n\n"
         "- **2026-07-22 (rev 1)**: document introduced — vectors: none\n"
@@ -1383,6 +1423,126 @@ def test_receipt_id_prose_row_absent_while_schema_pattern_present_is_an_error() 
     errors = collect_errors(**docs)
 
     assert any("receipt_id" in e and "attest-v0.1.md" in e and "prose" in e.lower() for e in errors)
+
+
+@pytest.mark.parametrize(
+    ("name", "old", "new", "document", "expected"),
+    (
+        (
+            "section removed",
+            "## 18. Stage 4: the preservation pledge",
+            "## 18. Stage 4: something else",
+            "spec_v02",
+            "missing required heading",
+        ),
+        (
+            "appendix removed",
+            "## Appendix A — The custodian interface (non-normative)",
+            "## Appendix A — Something else",
+            "spec_v02",
+            "Appendix A",
+        ),
+        (
+            "warning literal dropped",
+            "`grant_declaration_ignored`",
+            "`grant_declaration_dropped`",
+            "spec_v02",
+            "grant_declaration_ignored",
+        ),
+        (
+            "successor warning dropped",
+            "`grant_activated_by_successor`",
+            "`grant_by_successor`",
+            "spec_v02",
+            "grant_activated_by_successor",
+        ),
+        (
+            "divergence warning dropped",
+            "`grant_commitment_divergence`",
+            "`grant_commitment_differs`",
+            "spec_v02",
+            "grant_commitment_divergence",
+        ),
+        (
+            "declaration ceiling dropped",
+            "`_MAX_GRANT_DECLARATIONS`",
+            "`_MAX_DECLARATIONS`",
+            "spec_v02",
+            "_MAX_GRANT_DECLARATIONS",
+        ),
+        # The three claims a regression could quietly invert. Each mutation
+        # below leaves a document that still reads fluently and still says
+        # something -- just something we know to be false.
+        (
+            "activation inferred from absence",
+            "never from the absence of evidence",
+            "or from the absence of evidence",
+            "spec_v02",
+            "never from the absence of evidence",
+        ),
+        (
+            "logging made load-bearing",
+            "never required for validity",
+            "required for validity",
+            "spec_v02",
+            "never required for validity",
+        ),
+        (
+            "fixed-date inequality reversed",
+            "T >= fixed_date",
+            "T <= fixed_date",
+            "spec_v02",
+            "T >= fixed_date",
+        ),
+        (
+            "reserved mode quietly promoted",
+            "| `heartbeat-absence` | reserved |",
+            "| `heartbeat-absence` | active |",
+            "versioning",
+            "reserved-state row for activation mode",
+        ),
+        (
+            "pledge type registry emptied",
+            "| `sunset-grant-v1` | active |",
+            "| `sunset-grant-v2` | active |",
+            "versioning",
+            "preservation pledge type",
+        ),
+        (
+            "cessation entry type dropped",
+            "| `cessation-declaration` | active |",
+            "| `cessation-declaration` | reserved |",
+            "versioning",
+            "log entry type `cessation-declaration`",
+        ),
+        (
+            "publisher_id row removed",
+            "| `work.publisher_id` |",
+            "| `work.publisher` |",
+            "spec_v01",
+            "work.publisher_id row",
+        ),
+        (
+            "pledge license row removed",
+            "| `preservation_pledge` |",
+            "| `preservation_promise` |",
+            "spec_v01",
+            "preservation_pledge row",
+        ),
+    ),
+)
+def test_stage4_required_material_removal_is_flagged(
+    name: str, old: str, new: str, document: str, expected: str
+) -> None:
+    docs = _base_docs()
+    text = docs[document]
+    assert isinstance(text, str)
+    assert old in text, name
+    docs[document] = text.replace(old, new, 1)
+
+    errors = collect_errors(**docs)
+
+    assert any(expected in error for error in errors), (name, errors)
 
 
 def _write(directory: Path, name: str, content: str) -> Path:
