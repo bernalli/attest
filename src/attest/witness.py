@@ -812,18 +812,27 @@ def evaluate_activation_witness_quorum(
     if not verified:
         return _INVALID_QUORUM
 
-    # 12-14. `T = min(t_i)`: the conservative quorum time. Taking the maximum
-    # would let the latest signer stretch the anchor window every earlier
-    # observation is judged by.
-    quorum_time = min(candidate.timestamp for candidate in verified)
+    # 12-16. `T = min(t_i)` is the conservative quorum time: taking the
+    # maximum would let the latest signer stretch the anchor window every
+    # earlier observation is judged by. But §11.4 defines T over COUNTING
+    # votes, and standing is itself judged at T, so the two facts form a fixed
+    # point. Iterating is what makes T a property of the counting set rather
+    # than of the presented set.
+    counting = verified
+    while True:
+        if not counting:
+            return _INVALID_QUORUM
+        quorum_time = min(candidate.timestamp for candidate in counting)
+        quorum_at = _at(quorum_time)
+        if not epoch.covers(quorum_at):
+            return _INVALID_QUORUM
+        next_counting = [
+            candidate for candidate in counting if candidate.pin.has_standing_at(quorum_at)
+        ]
+        if next_counting == counting:
+            break
+        counting = next_counting
 
-    # 15-16. Epoch validity, pin validity and compromise state are all judged
-    # AT `T`, not at each leg's own timestamp.
-    if not epoch.covers(_at(quorum_time)):
-        return _INVALID_QUORUM
-    counting = [
-        candidate for candidate in verified if candidate.pin.has_standing_at(_at(quorum_time))
-    ]
     if len(counting) < epoch.threshold.m:
         return _INVALID_QUORUM
 

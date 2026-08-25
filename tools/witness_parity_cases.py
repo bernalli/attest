@@ -359,6 +359,19 @@ def _quorum_cases(hk: pq.HybridSigningKeys) -> list[dict[str, Any]]:
             anchor_time=TIMESTAMP + 300,
         ),
         _quorum_case(
+            "excluded-vote-does-not-set-t",
+            base + _quorum_pair(w1, note, TIMESTAMP) + _quorum_pair(w2, note, TIMESTAMP + 400),
+            _quorum_policy(
+                [
+                    w1.pin(compromised_after="2023-11-14T22:13:19Z"),
+                    w2.pin(compromised_after="2023-11-14T22:16:40Z"),
+                ],
+                2,
+                1,
+            ),
+            anchor_time=TIMESTAMP + 400,
+        ),
+        _quorum_case(
             "committee-of-ten",
             solo,
             _quorum_policy(

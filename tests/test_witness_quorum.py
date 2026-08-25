@@ -869,6 +869,31 @@ def test_the_lifecycle_is_judged_at_the_quorum_time_not_per_leg(
     assert _evaluate(text, policy, anchor_time=_BASE_T + 300).valid is True
 
 
+def test_an_excluded_vote_does_not_set_t_for_the_counting_set(
+    log_signing: pq.HybridSigningKeys, w1: _Witness, w2: _Witness
+) -> None:
+    """The fixed point makes `T` belong to the votes that still count.
+
+    `w1` is already out at its own timestamp. If that excluded vote were allowed
+    to set T, `w2` would still have standing and a 1-of-2 would pass. Recomputing
+    T over the surviving vote moves T past `w2`'s cutoff, so no vote counts.
+    """
+    base = _base_checkpoint(log_signing)
+    note = tlog.parse_checkpoint(base).note_bytes
+    text = base + "".join(_pair(w1, note, _BASE_T) + _pair(w2, note, _BASE_T + 400))
+    policy = _policy(
+        [
+            _pin(w1, compromised_after="2023-11-14T22:13:19Z"),
+            _pin(w2, compromised_after="2023-11-14T22:16:40Z"),
+        ],
+        n=2,
+        m=1,
+    )
+    result = _evaluate(text, policy, anchor_time=_BASE_T + 400)
+    assert result.valid is False
+    assert result.witness_time is None
+
+
 # --- scope and untrusted-input discipline ----------------------------------
 
 
@@ -984,6 +1009,33 @@ def test_a_raw_policy_document_carrying_an_epoch_also_raises(
         witness.evaluate_activation_witness_quorum(
             text,
             witness_policy=_policy_doc([_pin(w1)], n=1, m=1),  # type: ignore[arg-type]
+            epoch_id="bootstrap-1",
+            expected_origin=_ORIGIN,
+            anchor_evidence=evidence,
+            anchor_policy=anchor_policy,
+            conflict_domain="issuer.example",
+        )
+
+
+def test_a_hostile_empty_threshold_policy_shape_raises(
+    log_signing: pq.HybridSigningKeys, w1: _Witness
+) -> None:
+    text, _ = _one_of_one(log_signing, w1, _BASE_T)
+    evidence, anchor_policy = _anchor(text, _BASE_T)
+    hostile = {
+        "epochs": [
+            {
+                "epochId": "bootstrap-1",
+                "notBefore": 0,
+                "threshold": {},
+                "witnesses": [],
+            }
+        ]
+    }
+    with pytest.raises(witness.WitnessError):
+        witness.evaluate_activation_witness_quorum(
+            text,
+            witness_policy=hostile,  # type: ignore[arg-type]
             epoch_id="bootstrap-1",
             expected_origin=_ORIGIN,
             anchor_evidence=evidence,

@@ -661,18 +661,18 @@ function verifiesBothLegs(candidate: CandidatePair, noteBytes: Uint8Array): bool
 /** Refuse anything that is not a policy this module itself parsed.
  *
  * The Python core gets this from `isinstance(WitnessPolicy)`. TypeScript
- * interfaces are erased at runtime, so the check here is one of SHAPE: a
- * parsed policy carries exactly `epochs`, and each of its epochs carries the
- * camelCase fields `parseEpoch` produces. That is what catches the mistake
- * this guard exists for — handing the raw JSON document (with its `schema`
- * member and `epoch_id`/`not_before` keys) straight to the evaluator, which
- * would otherwise resolve no epoch and look like an ordinary negative result
- * instead of the configuration bug it is.
+ * interfaces are erased at runtime, so the check here is one of SHAPE: a parsed
+ * policy carries exactly `epochs`; each epoch carries the camelCase temporal,
+ * scope, threshold and witness fields this evaluator reads. That is what
+ * catches the mistake this guard exists for — handing the raw JSON document
+ * (with its `schema` member and `epoch_id`/`not_before` keys) straight to the
+ * evaluator, which would otherwise resolve no epoch and look like an ordinary
+ * negative result instead of the configuration bug it is.
  *
- * Declared limit: an empty hand-built `{ epochs: [] }` is indistinguishable
- * from a parsed empty policy here, while the Python core would reject it.
- * Both cores return the same verdict for it (no epoch resolves), so no
- * verification outcome diverges — only the diagnostic does. */
+ * Declared limit: this is still a runtime shape check, not a nominal type. An
+ * empty hand-built `{ epochs: [] }`, or a perfectly imitated parsed policy, is
+ * indistinguishable from the parser's output here while the Python core would
+ * reject it. This guard is for malformed configuration shapes, not a brand. */
 function requireParsedPolicy(policy: unknown): asserts policy is WitnessPolicy {
   if (typeof policy !== 'object' || policy === null || Array.isArray(policy))
     throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
@@ -683,15 +683,37 @@ function requireParsedPolicy(policy: unknown): asserts policy is WitnessPolicy {
   if (!Array.isArray(epochs))
     throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
   for (const epoch of epochs) {
+    if (typeof epoch !== 'object' || epoch === null || Array.isArray(epoch))
+      throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
+    const parsedEpoch = epoch as Record<string, unknown>
+    const notAfter = parsedEpoch['notAfter']
+    const threshold = parsedEpoch['threshold']
     if (
-      typeof epoch !== 'object' ||
-      epoch === null ||
-      typeof (epoch as WitnessEpoch).epochId !== 'string' ||
-      typeof (epoch as WitnessEpoch).notBefore !== 'number' ||
-      typeof (epoch as WitnessEpoch).threshold !== 'object' ||
-      !Array.isArray((epoch as WitnessEpoch).witnesses)
+      typeof parsedEpoch['epochId'] !== 'string' ||
+      typeof parsedEpoch['notBefore'] !== 'number' ||
+      (typeof notAfter !== 'number' && notAfter !== null) ||
+      !Array.isArray(parsedEpoch['logOrigins']) ||
+      typeof threshold !== 'object' ||
+      threshold === null ||
+      Array.isArray(threshold) ||
+      !Array.isArray(parsedEpoch['witnesses'])
     )
       throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
+    const parsedThreshold = threshold as Record<string, unknown>
+    if (typeof parsedThreshold['n'] !== 'number' || typeof parsedThreshold['m'] !== 'number')
+      throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
+    for (const pin of parsedEpoch['witnesses']) {
+      if (typeof pin !== 'object' || pin === null || Array.isArray(pin))
+        throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
+      const parsedPin = pin as Record<string, unknown>
+      if (
+        typeof parsedPin['controlGroup'] !== 'string' ||
+        typeof parsedPin['name'] !== 'string' ||
+        !Array.isArray(parsedPin['roles']) ||
+        !(parsedPin['ed25519Pub'] instanceof Uint8Array)
+      )
+        throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
+    }
   }
 }
 
@@ -788,17 +810,27 @@ export function evaluateActivationWitnessQuorum(
   )
   if (verified.length === 0) return INVALID_QUORUM
 
-  // 12-14. `T = min(t_i)`: the conservative quorum time. Taking the maximum
+  // 12-16. `T = min(t_i)` is the conservative quorum time: taking the maximum
   // would let the latest signer stretch the anchor window every earlier
-  // observation is judged by.
-  const quorumTime = Math.min(...verified.map((candidate) => candidate.timestamp))
+  // observation is judged by. But §11.4 defines T over COUNTING votes, and
+  // standing is itself judged at T, so the two facts form a fixed point.
+  // Iterating is what makes T a property of the counting set rather than of the
+  // presented set.
+  let counting = verified
+  let quorumTime = 0
+  for (;;) {
+    if (counting.length === 0) return INVALID_QUORUM
+    quorumTime = Math.min(...counting.map((candidate) => candidate.timestamp))
+    const quorumTimeMs = quorumTime * 1000
+    if (!epochCovers(epoch, quorumTimeMs)) return INVALID_QUORUM
+    const nextCounting = counting.filter((candidate) => pinHasStandingAt(candidate.pin, quorumTimeMs))
+    const unchanged =
+      nextCounting.length === counting.length &&
+      nextCounting.every((candidate, index) => candidate === counting[index])
+    if (unchanged) break
+    counting = nextCounting
+  }
 
-  // 15-16. Epoch validity, pin validity and compromise state are all judged AT
-  // `T`, not at each leg's own timestamp.
-  if (!epochCovers(epoch, quorumTime * 1000)) return INVALID_QUORUM
-  const counting = verified.filter((candidate) =>
-    pinHasStandingAt(candidate.pin, quorumTime * 1000),
-  )
   if (counting.length < epoch.threshold.m) return INVALID_QUORUM
 
   // 17-18. Every counting vote already refers to this checkpoint: its note

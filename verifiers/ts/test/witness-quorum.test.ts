@@ -484,6 +484,22 @@ describe('temporal and lifecycle boundaries', () => {
     )
     expect(evaluate(text, p, { anchorTime: BASE_T + 300 }).valid).toBe(true)
   })
+
+  it('does not let an excluded vote set T for the counting set', () => {
+    const base = baseCheckpoint()
+    const note = noteOf(base)
+    const text = base + pair(w1, note, BASE_T) + pair(w2, note, BASE_T + 400)
+    const p = policy(
+      [
+        pinDoc(w1, { compromised_after: '2023-11-14T22:13:19Z' }),
+        pinDoc(w2, { compromised_after: '2023-11-14T22:16:40Z' }),
+      ],
+      { n: 2, m: 1 },
+    )
+    const result = evaluate(text, p, { anchorTime: BASE_T + 400 })
+    expect(result.valid).toBe(false)
+    expect(result.witnessTime).toBeNull()
+  })
 })
 
 describe('scope and untrusted-input discipline', () => {
@@ -574,6 +590,30 @@ describe('trusted-configuration errors', () => {
     expect(() =>
       evaluateActivationWitnessQuorum(text, {
         witnessPolicy: policyDoc([pinDoc(w1)], { n: 1, m: 1 }) as WitnessPolicy,
+        epochId: 'bootstrap-1',
+        expectedOrigin: ORIGIN,
+        anchorEvidence: evidence,
+        anchorPolicy,
+        conflictDomain: 'issuer.example',
+      }),
+    ).toThrow(WitnessError)
+  })
+
+  it('throws on a hostile empty-threshold policy shape', () => {
+    const { text } = oneOfOne(BASE_T)
+    const { evidence, policy: anchorPolicy } = anchorFor(text, BASE_T)
+    expect(() =>
+      evaluateActivationWitnessQuorum(text, {
+        witnessPolicy: {
+          epochs: [
+            {
+              epochId: 'bootstrap-1',
+              notBefore: 0,
+              threshold: {},
+              witnesses: [],
+            },
+          ],
+        } as unknown as WitnessPolicy,
         epochId: 'bootstrap-1',
         expectedOrigin: ORIGIN,
         anchorEvidence: evidence,
