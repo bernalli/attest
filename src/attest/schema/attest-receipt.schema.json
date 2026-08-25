@@ -35,6 +35,7 @@
         "publisher": { "type": "string", "minLength": 1 },
         "edition": { "type": "string" },
         "identifiers": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string" } },
+        "publisher_id": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" },
         "artifact_series": { "type": "string", "minLength": 1 },
         "artifacts": {
           "type": "array",
@@ -64,7 +65,16 @@
         "terms_uri": { "type": "string", "format": "uri" },
         "legal_text_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "jurisdiction_flags": { "type": "object", "additionalProperties": { "type": "boolean" } },
-        "not_transferable_before": { "type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" }
+        "not_transferable_before": { "type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" },
+        "preservation_pledge": {
+          "type": "object",
+          "required": ["pledge", "grant_uri", "grant_sha256"],
+          "properties": {
+            "pledge": { "type": "string", "minLength": 1 },
+            "grant_uri": { "type": "string", "format": "uri" },
+            "grant_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
       },
       "allOf": [
         {
@@ -113,6 +123,22 @@
       "then": {
         "properties": {
           "buyer": { "properties": { "pubkey": { "type": "string" } }, "required": ["pubkey"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "attest_version": { "const": "0.2" },
+          "license": { "required": ["preservation_pledge"] }
+        },
+        "required": ["attest_version", "license"]
+      },
+      "then": {
+        "properties": {
+          "buyer": { "properties": { "pubkey": { "type": "string" } }, "required": ["pubkey"] },
+          "work": { "required": ["publisher_id"] },
+          "survivability": { "properties": { "end_of_life": { "const": "sunset-grant" } }, "required": ["end_of_life"] }
         }
       }
     }

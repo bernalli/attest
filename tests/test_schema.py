@@ -132,6 +132,129 @@ def test_not_transferable_before_accepts_iso_and_rejects_garbage() -> None:
     assert any("not_transferable_before" in e for e in errors)
 
 
+# --- D5 preservation pledge (v0.2 §18.2, §18.6) ------------------------------
+
+_GRANT_SHA256 = "9f2b4a1c0d3e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4"
+_PLEDGE = {
+    "pledge": "sunset-grant-v1",
+    "grant_uri": "https://pub.example/sunset-grant-v1.json",
+    "grant_sha256": _GRANT_SHA256,
+}
+
+
+def _pledge_payload(**overrides: object) -> dict[str, object]:
+    """A v0.2 receipt satisfying §18.6's holder-binding conditional."""
+    payload = make_payload(
+        attest_version="0.2",
+        buyer={"pubkey": _PUBKEY},
+        work={"publisher_id": "pub.example"},
+        license={"preservation_pledge": dict(_PLEDGE)},
+        survivability={"end_of_life": "sunset-grant"},
+    )
+    payload.update(overrides)
+    return payload
+
+
+def test_pledge_bearing_v02_receipt_is_valid() -> None:
+    assert validate.validate_payload(_pledge_payload()) == []
+
+
+def test_pledge_requires_all_three_members() -> None:
+    for member in ("pledge", "grant_uri", "grant_sha256"):
+        payload = _pledge_payload()
+        del payload["license"]["preservation_pledge"][member]  # type: ignore[index]
+
+        errors = validate.validate_payload(payload)
+
+        assert errors, f"missing {member!r} must be a schema error"
+
+
+def test_pledge_grant_sha256_must_be_lowercase_hex64() -> None:
+    payload = _pledge_payload()
+    payload["license"]["preservation_pledge"]["grant_sha256"] = _GRANT_SHA256.upper()  # type: ignore[index]
+
+    assert validate.validate_payload(payload)
+
+
+def test_unrecognized_pledge_profile_is_never_a_schema_error() -> None:
+    """§18.2: the pledge vocabulary is open and versioned — an unrecognized
+    value is valid-with-warning, following v0.1 §5.6's `end_of_life`
+    discipline, never a schema error."""
+    payload = _pledge_payload()
+    payload["license"]["preservation_pledge"]["pledge"] = "sunset-grant-v9"  # type: ignore[index]
+
+    assert validate.validate_payload(payload) == []
+
+
+def test_v02_pledge_requires_non_null_buyer_pubkey() -> None:
+    payload = _pledge_payload()
+    payload["buyer"]["pubkey"] = None  # type: ignore[index]
+
+    assert any("pubkey" in e for e in validate.validate_payload(payload))
+
+
+def test_v02_pledge_requires_work_publisher_id() -> None:
+    payload = _pledge_payload()
+    del payload["work"]["publisher_id"]  # type: ignore[index]
+
+    assert any("publisher_id" in e for e in validate.validate_payload(payload))
+
+
+def test_v02_pledge_requires_the_sunset_grant_eol_label() -> None:
+    payload = _pledge_payload()
+    payload["survivability"]["end_of_life"] = "escrow"  # type: ignore[index]
+
+    assert any("sunset-grant" in e for e in validate.validate_payload(payload))
+
+
+def test_v01_receipt_with_a_pledge_is_untouched() -> None:
+    """§18.6 is gated on `attest_version`: a v0.1 receipt carrying the same
+    three fields — no pubkey, no publisher_id, another end_of_life — stays
+    exactly as valid as it was before Stage 4 existed."""
+    payload = make_payload(
+        attest_version="0.1",
+        license={"preservation_pledge": dict(_PLEDGE)},
+    )
+    payload["buyer"]["pubkey"] = None
+
+    assert validate.validate_payload(payload) == []
+
+
+def test_v02_receipt_without_a_pledge_is_untouched() -> None:
+    payload = make_payload(attest_version="0.2")
+    payload["buyer"]["pubkey"] = None
+
+    assert validate.validate_payload(payload) == []
+
+
+def test_v01_receipt_corpus_is_byte_identical_after_stage_4() -> None:
+    """No v0.1 receipt changes meaning: the pledge conditional is
+    `attest_version`-gated, and the two new OPTIONAL properties constrain only
+    names v0.1 never assigned. Pinned over the reference payload rather than
+    asserted in prose."""
+    before = canon.canonical_bytes(make_payload())
+
+    assert validate.validate_payload(make_payload()) == []
+    assert canon.canonical_bytes(make_payload()) == before
+
+
+def test_work_publisher_id_must_be_a_lowercase_dns_name() -> None:
+    payload = _pledge_payload()
+    payload["work"]["publisher_id"] = "Pub.Example"  # type: ignore[index]
+
+    assert any("publisher_id" in e for e in validate.validate_payload(payload))
+
+
+def test_work_publisher_id_pattern_equals_issuer_id_pattern() -> None:
+    """§18.1: the rights holder's domain has the same shape as `issuer.id` —
+    one grammar, not a second one that could drift."""
+    properties = validate.SCHEMA["properties"]
+    issuer_pattern = properties["issuer"]["properties"]["id"]["pattern"]
+    publisher_pattern = properties["work"]["properties"]["publisher_id"]["pattern"]
+
+    assert publisher_pattern == issuer_pattern
+
+
 # --- G1 normative ceilings (attest-versioning.md §5 amendment) --------------
 
 

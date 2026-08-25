@@ -44,7 +44,22 @@ from attest import transparency as transparency_module
 
 _ALG = "Ed25519"  # hard-coded — never selected from any field, mirrors issue.py
 _SUPPORTED_ATTEST_VERSIONS = frozenset({"0.1", "0.2"})
-_KNOWN_EOL_VALUES = frozenset({"artifacts-remain-redownloadable", "escrow", "none"})
+# attest-versioning.md §6.7: v0.1's three seed values plus `sunset-grant`,
+# registered `active` by v0.2 §18 — the label a Stage 4 receipt carries, while
+# the commitment itself is hash-bound by `license.preservation_pledge` (§18.2).
+# The vocabulary stays OPEN (v0.1 §5.6): registering a value assigns it meaning
+# to a Stage-4-capable verifier and stops it being reported as unknown; it does
+# not close the field, and an unrecognized value remains valid-with-warning.
+_KNOWN_EOL_VALUES = frozenset({"artifacts-remain-redownloadable", "escrow", "none", "sunset-grant"})
+
+# attest-versioning.md §6.10: the sole preservation-pledge profile v0.2 §18
+# defines. Open and versioned, following §6.7's discipline — an unrecognized
+# `license.preservation_pledge.pledge` is never a schema error. It is also
+# never evaluated under `sunset-grant-v1`'s rules (§18.4 step 2, warning
+# `grant_pledge_type_unknown`): a later profile may attach different meaning to
+# the same members, and guessing is exactly how two conforming implementations
+# reach different verdicts on identical input.
+_KNOWN_PLEDGE_TYPES = frozenset({"sunset-grant-v1"})
 _DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 _STATUS_ACTIVE = "active"
