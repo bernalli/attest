@@ -89,9 +89,10 @@ TRANSPARENCY_EQUIVOCATION_DETECTED = "equivocation_detected"
 
 CORROBORATION_NONE = "none"
 CORROBORATION_LOGGED = "logged"
-# Defined for the Stage 3 contract but unreachable in Stage 2: no witness
-# input exists yet on the evidence schema above. Tests assert it is never
-# returned by `evaluate_transparency`.
+# Reachable since v0.2 rev 7 (P1.1b): Step 8 below emits it when the caller
+# supplies a `witness_policy` and a pinned, epoch-valid type-0x04 cosignature
+# verifies (§10.1). With no policy supplied — the packaged default — every
+# branch still settles on NONE or LOGGED, and the tests assert that.
 CORROBORATION_WITNESSED = "witnessed"
 
 _WARN_EVIDENCE_INVALID = "evidence_invalid"
@@ -136,7 +137,8 @@ class TransparencyResult:
     `transparency` is one of `TRANSPARENCY_NOT_CHECKED`, `TRANSPARENCY_LOGGED`,
     `f"anchored_before:{iso8601}"`, or `TRANSPARENCY_EQUIVOCATION_DETECTED`.
     `corroboration` is one of `CORROBORATION_NONE`, `CORROBORATION_LOGGED`, or
-    `CORROBORATION_WITNESSED` (the last unreachable in Stage 2).
+    `CORROBORATION_WITNESSED` (the last reachable only when a `witness_policy` is
+    supplied and one of its pinned witnesses has cosigned the checkpoint).
     """
 
     transparency: str

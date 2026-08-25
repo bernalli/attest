@@ -608,7 +608,7 @@ describe('evaluateTransparency: trusted-arg validation', () => {
 })
 
 // --------------------------------------------------------------------------
-// Module contract: CORROBORATION_WITNESSED is defined but unreachable.
+// Module contract: CORROBORATION_WITNESSED is unreachable with NO witness policy.
 // --------------------------------------------------------------------------
 
 describe('CORROBORATION_WITNESSED', () => {
@@ -616,7 +616,7 @@ describe('CORROBORATION_WITNESSED', () => {
     expect(CORROBORATION_WITNESSED).toBe('witnessed')
   })
 
-  it('is never returned across representative decision-order branches', () => {
+  it('is never returned across representative decision-order branches when no witness policy is supplied', () => {
     const base = evaluate(bundleEvidence())
 
     const consistent = evaluate(bundleEvidence({ prior_checkpoint: CP_PRIOR2, consistency_proof: [...CONSISTENCY_PROOF_2TO3] }))

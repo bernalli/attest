@@ -783,7 +783,7 @@ def test_evaluate_transparency_raises_on_schema_invalid_expected_entry() -> None
 
 
 # --------------------------------------------------------------------------
-# Module contract: CORROBORATION_WITNESSED is defined but unreachable.
+# Module contract: CORROBORATION_WITNESSED is unreachable with NO witness policy.
 # --------------------------------------------------------------------------
 
 
@@ -791,12 +791,13 @@ def test_corroboration_witnessed_constant_is_defined() -> None:
     assert transparency.CORROBORATION_WITNESSED == "witnessed"
 
 
-def test_corroboration_witnessed_never_returned_across_representative_scenarios() -> None:
-    # Stage 2 has no witness input on the evidence schema: every branch of
-    # evaluate_transparency sets corroboration to CORROBORATION_NONE or
-    # CORROBORATION_LOGGED only. Independently re-derive one evidence bundle
-    # per major branch (base standing, consistent prior, equivocation,
-    # anchored, horizon-capped) and assert none produces "witnessed".
+def test_corroboration_witnessed_never_returned_without_a_witness_policy() -> None:
+    # Called with no `witness_policy`, every branch of evaluate_transparency
+    # sets corroboration to CORROBORATION_NONE or CORROBORATION_LOGGED only —
+    # rev 7 reaches "witnessed" through Step 8, which a caller opts into by
+    # supplying a policy. Independently re-derive one evidence bundle per major
+    # branch (base standing, consistent prior, equivocation, anchored,
+    # horizon-capped) and assert none produces "witnessed".
     bundle = _Bundle()
 
     base = _evaluate(bundle, bundle.evidence())

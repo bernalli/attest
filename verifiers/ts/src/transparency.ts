@@ -65,8 +65,10 @@ export const TRANSPARENCY_EQUIVOCATION_DETECTED = 'equivocation_detected'
 
 export const CORROBORATION_NONE = 'none'
 export const CORROBORATION_LOGGED = 'logged'
-// Defined for the Stage 3 contract but unreachable in Stage 2: no witness
-// input exists yet on the evidence schema above.
+// Reachable since v0.2 rev 7 (P1.1b): Step 8 below emits it when the caller
+// supplies a `witnessPolicy` and a pinned, epoch-valid type-0x04 cosignature
+// verifies (§10.1). With no policy supplied — the packaged default — every
+// branch still settles on NONE or LOGGED.
 export const CORROBORATION_WITNESSED = 'witnessed'
 
 export const MAX_PROOF_LEN_ = MAX_PROOF_LEN
