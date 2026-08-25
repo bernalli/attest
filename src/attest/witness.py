@@ -450,6 +450,12 @@ _TIMESTAMP_LEN: Final = 8
 _ED25519_SIG_LEN: Final = 64
 _COSIGNATURE_BLOB_LEN: Final = _KEY_ID_LEN + _TIMESTAMP_LEN + _ED25519_SIG_LEN
 
+# Both cores must agree on which timestamps are representable at all: Python's
+# `datetime` stops at year 9999 while JavaScript's `Date` reaches year 275760,
+# so a cosignature past this bound would be rejected by one core and accepted
+# by the other. 253402300799 is 9999-12-31T23:59:59Z.
+MAX_COSIGNATURE_TIMESTAMP: Final = 253402300799
+
 WARN_INDEPENDENCE_NOT_ESTABLISHED: Final = "witness_independence_not_established"
 
 
@@ -489,7 +495,9 @@ class CorroborationVerdict:
     warnings: list[str]
 
 
-def _counts_as_corroboration(blob: object, pin: WitnessPin, note_bytes: bytes) -> bool:
+def _counts_as_corroboration(
+    blob: object, pin: WitnessPin, note_bytes: bytes, epoch: WitnessEpoch
+) -> bool:
     """Whether one signature-line blob is a valid cosignature by `pin`.
 
     Never raises: these bytes come from an untrusted note.
@@ -499,14 +507,34 @@ def _counts_as_corroboration(blob: object, pin: WitnessPin, note_bytes: bytes) -
     if blob[:_KEY_ID_LEN] != cosignature_key_id(pin.name, pin.ed25519_pub):
         return False
     timestamp = int.from_bytes(blob[_KEY_ID_LEN : _KEY_ID_LEN + _TIMESTAMP_LEN], "big")
+    if timestamp > MAX_COSIGNATURE_TIMESTAMP:
+        return False
     observed_at = datetime.fromtimestamp(timestamp, UTC)
     # The pin must have standing AT the moment it claims to have observed —
     # not at the verifier's local clock, which would break eternal
     # verifiability for an old but valid observation.
-    if not pin.has_standing_at(observed_at):
+    # §10.1 requires an epoch-VALID witness: the epoch's own inclusive window
+    # bounds the observation just as the pin's does.
+    if not epoch.covers(observed_at) or not pin.has_standing_at(observed_at):
         return False
     message = cosignature_message(note_bytes, timestamp)
     return keys.verify_strict(message, blob[_KEY_ID_LEN + _TIMESTAMP_LEN :], pin.ed25519_pub)
+
+
+def _counts_safely(blob: object, pin: WitnessPin, note_bytes: bytes, epoch: WitnessEpoch) -> bool:
+    """`_counts_as_corroboration` with per-LINE failure confinement.
+
+    Confining the failure to one line, rather than wrapping the whole scan,
+    is what stops an untrusted line from vetoing a later valid one: an
+    attacker could otherwise suppress genuine corroboration just by
+    prepending garbage under the witness's own name. The exception is
+    swallowed rather than logged because §11.4 permits this layer no
+    diagnostic beyond the independence warning.
+    """
+    try:
+        return _counts_as_corroboration(blob, pin, note_bytes, epoch)
+    except Exception:
+        return False
 
 
 def evaluate_corroboration(
@@ -532,20 +560,21 @@ def evaluate_corroboration(
     if epoch is None:
         return CorroborationVerdict(witnessed=False, warnings=[])
 
-    try:
-        for name, blob in signatures:
-            for pin in epoch.witnesses:
-                if pin.name != name or ROLE_CORROBORATION not in pin.roles:
-                    # A line naming someone else is a signed-note convention,
-                    # never a fatal condition (§9.2).
-                    continue
-                if _counts_as_corroboration(blob, pin, checkpoint.note_bytes):
-                    return CorroborationVerdict(
-                        witnessed=True, warnings=[WARN_INDEPENDENCE_NOT_ESTABLISHED]
-                    )
-    # Signature lines are untrusted input; a hostile shape must degrade, and
-    # the evidence-side caller in transparency.py relies on that.
-    except Exception:
+    # The epoch's scope is part of what makes a witness pinned FOR THIS LOG:
+    # an epoch that lists other origins says nothing about this checkpoint.
+    # Fail-closed, so an epoch with no origins corroborates nothing.
+    if checkpoint.origin not in epoch.log_origins:
         return CorroborationVerdict(witnessed=False, warnings=[])
+
+    for name, blob in signatures:
+        for pin in epoch.witnesses:
+            if pin.name != name or ROLE_CORROBORATION not in pin.roles:
+                # A line naming someone else is a signed-note convention,
+                # never a fatal condition (§9.2).
+                continue
+            if _counts_safely(blob, pin, checkpoint.note_bytes, epoch):
+                return CorroborationVerdict(
+                    witnessed=True, warnings=[WARN_INDEPENDENCE_NOT_ESTABLISHED]
+                )
 
     return CorroborationVerdict(witnessed=False, warnings=[])

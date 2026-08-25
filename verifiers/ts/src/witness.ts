@@ -418,6 +418,12 @@ const TIMESTAMP_LEN = 8
 const ED25519_SIG_LEN = 64
 const COSIGNATURE_BLOB_LEN = KEY_ID_LEN + TIMESTAMP_LEN + ED25519_SIG_LEN
 
+// Both cores must agree on which timestamps are representable at all:
+// Python's `datetime` stops at year 9999 while JavaScript's `Date` reaches
+// year 275760, so a cosignature past this bound would be rejected by one core
+// and accepted by the other. 253402300799 is 9999-12-31T23:59:59Z.
+export const MAX_COSIGNATURE_TIMESTAMP = 253402300799
+
 export const WARN_INDEPENDENCE_NOT_ESTABLISHED = 'witness_independence_not_established'
 
 /** The exact bytes a witness signs: header, time line, then the note body.
@@ -455,17 +461,25 @@ function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
 
 /** Whether one signature-line blob is a valid cosignature by `pin`.
  * Never throws: these bytes come from an untrusted note. */
-function countsAsCorroboration(blob: unknown, pin: WitnessPin, noteBytes: Uint8Array): boolean {
+function countsAsCorroboration(
+  blob: unknown,
+  pin: WitnessPin,
+  noteBytes: Uint8Array,
+  epoch: WitnessEpoch,
+): boolean {
   if (!(blob instanceof Uint8Array) || blob.length !== COSIGNATURE_BLOB_LEN) return false
   if (!equalBytes(blob.subarray(0, KEY_ID_LEN), cosignatureKeyId(pin.name, pin.ed25519Pub)))
     return false
   const view = new DataView(blob.buffer, blob.byteOffset + KEY_ID_LEN, TIMESTAMP_LEN)
   const seconds = view.getBigUint64(0, false)
-  if (seconds > BigInt(Number.MAX_SAFE_INTEGER) / 1000n) return false
+  if (seconds > BigInt(MAX_COSIGNATURE_TIMESTAMP)) return false
   const timestamp = Number(seconds)
   // Standing is judged at the moment the witness CLAIMS to have observed, not
   // at the verifier's local clock — an old but valid observation must keep
   // verifying forever.
+  // §10.1 requires an epoch-VALID witness: the epoch's own inclusive window
+  // bounds the observation just as the pin's does.
+  if (!epochCovers(epoch, timestamp * 1000)) return false
   if (!pinHasStandingAt(pin, timestamp * 1000)) return false
   const message = cosignatureMessage(noteBytes, timestamp)
   return verifyEd25519Strict(message, blob.subarray(KEY_ID_LEN + TIMESTAMP_LEN), pin.ed25519Pub)
@@ -488,18 +502,28 @@ export function evaluateCorroboration(
   const epoch = findEpoch(policy, epochId)
   if (epoch === undefined) return { witnessed: false, warnings: [] }
 
-  try {
-    for (const [name, blob] of signatures) {
-      for (const pin of epoch.witnesses) {
-        // A line naming someone else is a signed-note convention, never a
-        // fatal condition (§9.2).
-        if (pin.name !== name || !pin.roles.includes(ROLE_CORROBORATION)) continue
-        if (countsAsCorroboration(blob, pin, checkpoint.noteBytes))
-          return { witnessed: true, warnings: [WARN_INDEPENDENCE_NOT_ESTABLISHED] }
+  // The epoch's scope is part of what makes a witness pinned FOR THIS LOG: an
+  // epoch listing other origins says nothing about this checkpoint.
+  // Fail-closed, so an epoch with no origins corroborates nothing.
+  if (!epoch.logOrigins.includes(checkpoint.origin)) return { witnessed: false, warnings: [] }
+
+  for (const [name, blob] of signatures) {
+    for (const pin of epoch.witnesses) {
+      // A line naming someone else is a signed-note convention, never a
+      // fatal condition (§9.2).
+      if (pin.name !== name || !pin.roles.includes(ROLE_CORROBORATION)) continue
+      // Per-line confinement, NOT one try around the whole scan: an untrusted
+      // line that throws must not veto a later valid one, which would let an
+      // attacker suppress genuine corroboration by prepending garbage under
+      // the same name.
+      let counted = false
+      try {
+        counted = countsAsCorroboration(blob, pin, checkpoint.noteBytes, epoch)
+      } catch {
+        continue
       }
+      if (counted) return { witnessed: true, warnings: [WARN_INDEPENDENCE_NOT_ESTABLISHED] }
     }
-  } catch {
-    return { witnessed: false, warnings: [] }
   }
   return { witnessed: false, warnings: [] }
 }

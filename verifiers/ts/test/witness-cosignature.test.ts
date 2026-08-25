@@ -136,6 +136,76 @@ describe('reaching witnessed', () => {
   })
 })
 
+describe('review regressions (2026-08-25)', () => {
+  const withEpoch = (fields: Record<string, unknown>): unknown => {
+    const doc = policyDoc(b64uEncode(witnessPub)) as {
+      epochs: Array<Record<string, unknown>>
+    }
+    Object.assign(doc.epochs[0]!, fields)
+    return doc
+  }
+
+  it('rejects an expired epoch', () => {
+    const cp = checkpoint()
+    expect(
+      evaluate(cp, [[WITNESS_NAME, blob(cp)]], withEpoch({ not_after: '2021-01-01T00:00:00Z' }))
+        .witnessed,
+    ).toBe(false)
+  })
+
+  it('rejects an epoch scoped to another log origin', () => {
+    const cp = checkpoint()
+    expect(
+      evaluate(cp, [[WITNESS_NAME, blob(cp)]], withEpoch({ log_origins: ['other.example'] }))
+        .witnessed,
+    ).toBe(false)
+  })
+
+  it('corroborates nothing under an epoch with no origins', () => {
+    // Fail-closed: an empty origin scope is no scope, not every scope.
+    const cp = checkpoint()
+    expect(evaluate(cp, [[WITNESS_NAME, blob(cp)]], withEpoch({ log_origins: [] })).witnessed).toBe(
+      false,
+    )
+  })
+
+  it('does not let a hostile line veto a later valid one', () => {
+    // The attack: prepend garbage under the witness's own name. With one try
+    // around the whole scan, that aborted evaluation before the genuine
+    // cosignature on the next line was ever examined.
+    const cp = checkpoint()
+    const hostile = new Uint8Array(76)
+    hostile.set(cosignatureKeyId(WITNESS_NAME, witnessPub), 0)
+    new DataView(hostile.buffer).setBigUint64(4, 2n ** 64n - 1n, false)
+    const verdict = evaluate(
+      cp,
+      [[WITNESS_NAME, hostile], [WITNESS_NAME, blob(cp)]],
+      policyDoc(b64uEncode(witnessPub)),
+    )
+    expect(verdict.witnessed).toBe(true)
+  })
+
+  it.each([253402300800, Number(2n ** 64n - 1n)])(
+    'never counts a timestamp past year 9999 (%i)',
+    (timestamp) => {
+      // Python's datetime stops at 9999, JS Date reaches 275760; without a
+      // shared ceiling the same cosignature diverges across the cores.
+      const cp = checkpoint()
+      const out = new Uint8Array(76)
+      out.set(cosignatureKeyId(WITNESS_NAME, witnessPub), 0)
+      new DataView(out.buffer).setBigUint64(4, BigInt(timestamp), false)
+      const message = new Uint8Array([
+        ...new TextEncoder().encode(`cosignature/v1\ntime ${timestamp}\n`),
+        ...cp.noteBytes,
+      ])
+      out.set(ed25519.sign(message, witnessSeed), 12)
+      expect(evaluate(cp, [[WITNESS_NAME, out]], policyDoc(b64uEncode(witnessPub))).witnessed).toBe(
+        false,
+      )
+    },
+  )
+})
+
 describe('everything that must not count', () => {
   it.each([
     ['unpinned key', (cp: Checkpoint) => blob(cp, strangerSeed)],

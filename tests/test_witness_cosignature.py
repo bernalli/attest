@@ -365,6 +365,89 @@ def test_canonical_empty_policy_can_never_reach_witnessed(
     assert verdict.witnessed is False
 
 
+# --- review regressions (2026-08-25) --------------------
+
+
+def test_expired_epoch_does_not_count(log_keys: tuple[Any, Any], witness_keys: Any) -> None:
+    """§10.1 wants an epoch-VALID witness, not merely a resolvable epoch."""
+    log_ed, log_mldsa = log_keys
+    checkpoint = tlog.parse_checkpoint(_checkpoint_text(log_ed, log_mldsa))
+    blob = _cosign(checkpoint, witness_keys, 1700000000)
+    doc = _policy_doc(keys.b64u(witness_keys.pub))
+    doc["epochs"][0]["not_after"] = "2021-01-01T00:00:00Z"
+    assert _reject_case(checkpoint, [(_WITNESS_NAME, blob)], doc).witnessed is False
+
+
+def test_epoch_scoped_to_another_origin_does_not_count(
+    log_keys: tuple[Any, Any], witness_keys: Any
+) -> None:
+    """An epoch listing other logs says nothing about THIS checkpoint."""
+    log_ed, log_mldsa = log_keys
+    checkpoint = tlog.parse_checkpoint(_checkpoint_text(log_ed, log_mldsa))
+    blob = _cosign(checkpoint, witness_keys, 1700000000)
+    doc = _policy_doc(keys.b64u(witness_keys.pub))
+    doc["epochs"][0]["log_origins"] = ["other.example"]
+    assert _reject_case(checkpoint, [(_WITNESS_NAME, blob)], doc).witnessed is False
+
+
+def test_epoch_with_no_origins_corroborates_nothing(
+    log_keys: tuple[Any, Any], witness_keys: Any
+) -> None:
+    """Fail-closed: an empty origin scope is no scope, not every scope."""
+    log_ed, log_mldsa = log_keys
+    checkpoint = tlog.parse_checkpoint(_checkpoint_text(log_ed, log_mldsa))
+    blob = _cosign(checkpoint, witness_keys, 1700000000)
+    doc = _policy_doc(keys.b64u(witness_keys.pub))
+    doc["epochs"][0]["log_origins"] = []
+    assert _reject_case(checkpoint, [(_WITNESS_NAME, blob)], doc).witnessed is False
+
+
+def test_a_hostile_line_cannot_veto_a_later_valid_one(
+    log_keys: tuple[Any, Any], witness_keys: Any
+) -> None:
+    """The attack this closes: prepend garbage under the witness's own name.
+
+    With one `try` around the whole scan, a well-shaped blob carrying an
+    unrepresentable timestamp aborted evaluation before the genuine
+    cosignature on the next line was ever examined — suppressing real
+    corroboration for free.
+    """
+    log_ed, log_mldsa = log_keys
+    checkpoint = tlog.parse_checkpoint(_checkpoint_text(log_ed, log_mldsa))
+    good = _cosign(checkpoint, witness_keys, 1700000000)
+    hostile = (
+        witness.cosignature_key_id(_WITNESS_NAME, witness_keys.pub)
+        + struct.pack(">Q", 2**64 - 1)
+        + bytes(64)
+    )
+    verdict = _reject_case(
+        checkpoint,
+        [(_WITNESS_NAME, hostile), (_WITNESS_NAME, good)],
+        _policy_doc(keys.b64u(witness_keys.pub)),
+    )
+    assert verdict.witnessed is True
+
+
+@pytest.mark.parametrize("timestamp", [253402300800, 2**64 - 1])
+def test_timestamps_past_year_9999_never_count(
+    log_keys: tuple[Any, Any], witness_keys: Any, timestamp: int
+) -> None:
+    """Python's `datetime` stops at 9999, JS `Date` reaches 275760.
+
+    Without a shared ceiling the same cosignature would be refused by one
+    core and accepted by the other.
+    """
+    log_ed, log_mldsa = log_keys
+    checkpoint = tlog.parse_checkpoint(_checkpoint_text(log_ed, log_mldsa))
+    key_id = witness.cosignature_key_id(_WITNESS_NAME, witness_keys.pub)
+    message = b"cosignature/v1\n" + f"time {timestamp}\n".encode() + checkpoint.note_bytes
+    blob = key_id + struct.pack(">Q", timestamp) + keys.sign(message, witness_keys)
+    verdict = _reject_case(
+        checkpoint, [(_WITNESS_NAME, blob)], _policy_doc(keys.b64u(witness_keys.pub))
+    )
+    assert verdict.witnessed is False
+
+
 # --- end-to-end through evaluate_transparency ------------------------------
 
 
