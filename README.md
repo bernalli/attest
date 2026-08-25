@@ -154,14 +154,13 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   — resale velocity, the issuer-royalty incentive, and the CJEU case law
   (*UsedSoft*, *Tom Kabinet*) that makes transfer issuer-mediated rather than a
   general resale right.
-- **[Internet-Draft](https://datatracker.ietf.org/doc/draft-martinalli-open-purchase-receipts/).**
-  `draft-martinalli-open-purchase-receipts-00` was submitted to the IETF
-  Datatracker on 2026-08-06 and is an active Internet-Draft (individual
-  submission, Informational, expires 2027-02-07). It is a snapshot-profile
-  mirror of the living spec — it declares that it mirrors v0.1 revision 5 and
-  v0.2 revision 6 — so the specification in this repository, not the draft,
-  remains normative. The [XML source](ietf/draft-martinalli-open-purchase-receipts.xml)
-  lives here and builds clean to `-00` txt/html in CI. Being an I-D means the
+- **Internet-Draft.** A snapshot-profile mirror of this specification was
+  submitted to the IETF Datatracker on 2026-08-06 and accepted as an individual
+  submission (Informational, expires 2027-02-07) — it declares that it mirrors
+  v0.1 revision 5 and v0.2 revision 6, so the specification in this repository,
+  not the draft, remains normative. The [XML source](ietf/draft-bernalli-open-purchase-receipts.xml)
+  lives here and builds clean to txt/html in CI; the next revision goes out
+  under the name it now carries and replaces the first. Being an I-D means the
   document exists and can be cited as work in progress, nothing more: it is not
   endorsed by the IETF and has no formal standing in the standards process.
 - **[Standards-relationship annex](docs/spec/attest-standards-relationship.md).**

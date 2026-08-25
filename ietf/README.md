@@ -1,8 +1,8 @@
 # attest Internet-Draft — build toolchain
 
 This directory carries the IETF Internet-Draft source for attest:
-`draft-martinalli-open-purchase-receipts.xml` (docname
-`draft-martinalli-open-purchase-receipts-00`). This document is a
+`draft-bernalli-open-purchase-receipts.xml` (docname
+`draft-bernalli-open-purchase-receipts-00`). This document is a
 **snapshot profile**: it distills the core receipt format and hybrid
 signature profile from the living, normative specification
 (`docs/spec/attest-v0.1.md`, `docs/spec/attest-v0.2.md`) into Internet-Draft
@@ -18,7 +18,7 @@ authoring environment**: the system Ruby is `2.6.10` (`ruby -v`) and
 `gem install` could not reach a package index, so `kramdown-rfc` could not be
 installed there. Per the plan's own fallback clause, the draft is
 therefore **hand-authored directly as xml2rfc v3 XML**
-(`draft-martinalli-open-purchase-receipts.xml`), and only the `xml2rfc` pin
+(`draft-bernalli-open-purchase-receipts.xml`), and only the `xml2rfc` pin
 remains in the toolchain. There is no `.md` source for this draft; the `.xml`
 file is authoritative.
 
@@ -59,14 +59,14 @@ export UV_CACHE_DIR="$TMPDIR/uv-cache" UV_TOOL_DIR="$TMPDIR/uv-tools"
 
 ```sh
 mkdir -p ietf/build
-cp ietf/draft-martinalli-open-purchase-receipts.xml \
-   ietf/build/draft-martinalli-open-purchase-receipts-00.xml
+cp ietf/draft-bernalli-open-purchase-receipts.xml \
+   ietf/build/draft-bernalli-open-purchase-receipts-00.xml
 uvx --from xml2rfc==3.34.0 xml2rfc \
-    ietf/build/draft-martinalli-open-purchase-receipts-00.xml \
+    ietf/build/draft-bernalli-open-purchase-receipts-00.xml \
     --text --html --path ietf/build --no-network
 ```
 
-This produces `ietf/build/draft-martinalli-open-purchase-receipts-00.txt`
+This produces `ietf/build/draft-bernalli-open-purchase-receipts-00.txt`
 and `...-00.html` (git-ignored; `ietf/build/` is not committed).
 
 ### The document date is deliberately unset
@@ -95,9 +95,9 @@ attributes back for that one build.
 
 `xml2rfc`'s output filename tracks the **source file's own basename**, not
 the `docName` attribute declared inside the `<rfc>` element — building
-`draft-martinalli-open-purchase-receipts.xml` directly (the committed
+`draft-bernalli-open-purchase-receipts.xml` directly (the committed
 source's actual name, with no `-00` suffix) produces
-`draft-martinalli-open-purchase-receipts.txt`, not the `-00`-suffixed name
+`draft-bernalli-open-purchase-receipts.txt`, not the `-00`-suffixed name
 the docname implies. The CLI's own `-b`/`--basename` flag, which the
 `--help` text describes as "specify the base name for output files", does
 **not** do that in this pinned version: reading the installed
@@ -122,7 +122,7 @@ Both runs below completed cleanly (`--no-network`, zero warnings or errors)
 and produced a non-empty `.txt` with zero `ERROR`/`TODO` occurrences:
 
 ```sh
-grep -c 'ERROR\|TODO' ietf/build/draft-martinalli-open-purchase-receipts-00.txt
+grep -c 'ERROR\|TODO' ietf/build/draft-bernalli-open-purchase-receipts-00.txt
 # 0
 ```
 
@@ -149,10 +149,14 @@ note) before being treated as current.
 
 ## Submission — done on 2026-08-06
 
-`draft-martinalli-open-purchase-receipts-00` is an **active Internet-Draft**:
-<https://datatracker.ietf.org/doc/draft-martinalli-open-purchase-receipts/>
-(individual submission, Informational, expires 2027-02-07). The rendered text,
-HTML and XML are served from `ietf.org/archive/id/`.
+A snapshot-profile mirror of this specification was submitted to the IETF
+Datatracker on 2026-08-06 and accepted as an individual submission
+(Informational, expires 2027-02-07). It went out under an earlier document
+name; the source here carries the current one, and the next revision declares
+the first as the document it **replaces**, which the Datatracker tracks as a
+first-class relationship. An I-D's base name is fixed for the life of a
+document, so a new name always starts again at `-00` — that is expected, not a
+loss of standing.
 
 How it was done, for whoever does the next revision. Submission is a **manual
 action** for the maintainer and is not automated by anything here — the CI step
