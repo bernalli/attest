@@ -236,7 +236,6 @@ Every entry admitted to the log is a CLOSED, versioned, JCS-canonicalized object
 | `receipt` | `type` (`"receipt"`), `issuer` (lowercase DNS name), `core_sha256` (64 lowercase-hex chars) | `core_sha256` is the **signed-receipt-core hash** defined in §12 — never a hash of `payload` alone. `issuer` here is a NON-AUTHENTICATED hint only, a convenience for log browsing/filtering; a conforming verifier MUST NOT read it as attribution — the receipt's own signature is what binds it to an issuer. |
 | `revocation-record` (G5, TM-47, rev 5) | `type` (`"revocation-record"`), `issuer` (lowercase DNS name), `record_sha256` (64 lowercase-hex chars) | `record_sha256 = SHA-256(JCS(record))`, where `record` is the ENTIRE issuer-signed revocation record (design §3.1/§6, v0.1 §12.2) — including its own `signature` member, the same canonicalization `revocation.py`/`revocation.ts` already build and verify the record's signature over (`revocation.record_hash` / `recordHash`; one canonical form, never a second one). `issuer` here is the same NON-AUTHENTICATED browsing hint as `receipt`'s — the record's own signature (verified against the issuer's key manifest, §13) is what binds it to an issuer, never this entry. §15 item 5 defines the one behavioral consequence of a record's presence (or absence) in the log: the `refund_window` deadline-effectiveness rule. |
 | `transfer-record` (Stage 3, rev 6) | `type` (`"transfer-record"`), `issuer` (lowercase DNS name), `record_sha256` (64 lowercase-hex chars) | `record_sha256 = SHA-256(JCS(record))` over the ENTIRE signed transfer record (§17.1) — including its own `signature` member, the identical hashing discipline `revocation-record` above already establishes, applied to the new record shape. `issuer` here is the same NON-AUTHENTICATED browsing hint as `receipt`'s and `revocation-record`'s — the record's own signature (verified against the issuer's key manifest, §13) is what binds it to an issuer, never this entry. §17.2 defines the one behavioral consequence of a transfer record's presence (or absence) in the log: the log-required honoring rule (D2). |
-
 | `cessation-declaration` (Stage 4, rev 8) | `type` (`"cessation-declaration"`), `issuer` (lowercase DNS name), `record_sha256` (64 lowercase-hex chars) | `record_sha256 = SHA-256(JCS(record))` over the ENTIRE signed cessation declaration (§18.4) — including its own `signature` member, the same hashing discipline the two record types above establish. `issuer` here is the same NON-AUTHENTICATED browsing hint — the declaration's own signature (verified against the publisher's key manifest, §18.1) is what binds it, never this entry. Unlike `transfer-record`, this entry type is NOT load-bearing: §18.4 RECOMMENDS logging a declaration, for discoverability and for a date opposable to third parties, but a declaration that authenticates activates a grant whether or not it was ever logged. |
 
 An entry whose `type` is not one of these five, or whose member set is not exactly the required set, MUST be rejected by the log (never admitted) and, if encountered as evidence during verification, MUST resolve to `transparency: "not_checked"` (§10.2) rather than being partially trusted.
@@ -710,7 +709,7 @@ The publisher's manifest gets the same trust ladder as an issuer's (`verified` o
 
 ### 18.2 The license term and the sunset grant document
 
-**The license term.** `license.preservation_pledge` is an object, OPTIONAL, with exactly these three members. It declares the term and hash-binds the document that carries it, following the `terms_uri`/`legal_text_sha256` pattern its neighbours already use (v0.1 §5.5).
+**The license term.** `license.preservation_pledge` is an object, OPTIONAL, with these three REQUIRED members. It declares the term and hash-binds the document that carries it, following the `terms_uri`/`legal_text_sha256` pattern its neighbours already use (v0.1 §5.5). Unlike the grant document below, this object is **not closed**: it lives inside the payload, whose posture toward unrecognized members is tolerant (v0.1 §11.2), and a future pledge profile that needs a fourth member must not be a schema error on a verifier that predates it — which is the same reason an unrecognized `pledge` value is valid-with-warning.
 
 | Field | Type | Required | Semantics |
 | --- | --- | --- | --- |
@@ -728,7 +727,7 @@ The publisher's manifest gets the same trust ladder as an issuer's (`verified` o
 | `permissions` | array of enum, non-empty, sorted, duplicate-free | REQUIRED | MUST contain `deliver-to-holder`. MAY contain `redistribute-among-holders`. Registry-governed (attest-versioning.md §6.8). |
 | `activation` | object `{modes, fixed_date, successor_ids}` | REQUIRED | The trigger (§18.4). |
 | `unprotected_build` | boolean | REQUIRED | The publisher's commitment to release a build free of technological protection on activation. Without it a grant over a DRM-bound artifact promises delivery of something the holder still cannot open. |
-| `legal_text_uri` | string | REQUIRED | The prose grant. |
+| `legal_text_uri` | string, non-empty | REQUIRED | The prose grant. |
 | `legal_text_sha256` | string, 64 lowercase hex | REQUIRED | Hash-binds the prose so it cannot be silently rewritten, mirroring `license.legal_text_sha256` (v0.1 §5.5). |
 | `jurisdiction` | string, non-empty | REQUIRED | |
 | `issued_at` | string, ISO-8601 UTC `Z` | REQUIRED | Checked against the signer key's `[valid_from, valid_to]` window. |
@@ -738,7 +737,7 @@ The `activation` member:
 
 ```json
 "activation": {
-  "modes": ["publisher-declaration", "fixed-date"],
+  "modes": ["fixed-date", "publisher-declaration"],
   "fixed_date": "2046-01-01T00:00:00Z",
   "successor_ids": ["heritage.example"]
 }
@@ -746,6 +745,8 @@ The `activation` member:
 
 - `modes`: array, non-empty, sorted, duplicate-free, drawn from the registry at attest-versioning.md §6.9. `publisher-declaration` and `fixed-date` are active; `heartbeat-absence` is registered `reserved` and MUST NOT be honored by a conforming verifier — a grant listing it is not thereby invalid, but that mode contributes nothing to activation.
 - `fixed_date`: ISO-8601 UTC `Z`, or `null`. A non-null value REQUIRES `"fixed-date"` in `modes`.
+
+**Unregistered values in `permissions` and `modes` are carried, never fatal.** A value in either array that this document does not register is ignored: it grants nothing and activates nothing, but it does not make the grant fail authentication, exactly as `heartbeat-absence` does not. The reason is directional — registration is additive, so rejecting an unknown value would let a LATER registry entry retroactively invalidate grants signed before it existed, and a value nobody recognizes can only ever narrow what a verifier concludes, never widen it. `enum` in the table above therefore means "drawn from the registry", not "closed set".
 - `successor_ids`: array, possibly empty, of lowercase DNS domains, sorted and duplicate-free: the domains whose manifests (identical shape, v0.1 §7.1, same TOFU/TLS ladder) may sign the cessation declaration in the publisher's place.
 
 **Receipt binding.** The grant's own hash MUST equal `license.preservation_pledge.grant_sha256`. One canonical form, never a second one. A grant whose hash does not match does not correspond to this receipt and MUST be ignored — warning `grant_commitment_mismatch` — exactly as `transparency_entry_mismatch` (§10.2) ignores a mismatched log entry.
@@ -760,8 +761,8 @@ The `activation` member:
 
 The receipt hash-binds one grant: the FLOOR of that buyer's rights. A verifier MAY additionally hold later grant versions for the same (publisher, scope). Each supplied later version is evaluated independently AGAINST THE FLOOR — never against another later version, and never against whichever version the verifier happens to have accepted first — so the outcome does not depend on the order `later_grants` is presented in. A later version is accepted only if BOTH hold, relative to the FLOOR:
 
-1. **Currency** — `grant_version` strictly greater than the FLOOR's; the signer key `active` in the publisher's manifest chain. Two distinct authenticated grants sharing the same `grant_version` — the floor and a later version, or two later versions — is rollback-or-equivocation and is rejected, reported `grant_trust: "unverified_rotation"` — the same value and the same posture v0.1 §7.3 already uses for manifests. No new trust value.
-2. **Non-narrowing** — relative to the FLOOR: `permissions` a superset; `scope.artifact_series` unchanged (or newly set from `null`); `scope.artifacts` a superset; `unprotected_build` never going from `true` to `false`; `activation.modes` a superset; `activation.fixed_date` equal or earlier (or newly set from `null`); and `activation.successor_ids` a superset.
+1. **Currency** — `later.publisher` EQUAL to the floor's; `grant_version` strictly greater than the FLOOR's; the signer key `active` in the publisher's manifest chain. The `publisher` equality is a precondition of admissibility rather than a narrowing test, and it is load-bearing: `publisher` is what declaration coverage compares against (§18.4), so a later version free to change it could move WHO MAY SIGN the cessation that opens the grant. A supplied version naming a different publisher is not a later version of this grant at all; it is a different grant, and it is ignored. Two distinct authenticated grants sharing the same `grant_version` — the floor and a later version, or two later versions — is rollback-or-equivocation and is rejected, reported `grant_trust: "unverified_rotation"` — the same value and the same posture v0.1 §7.3 already uses for manifests. No new trust value.
+2. **Non-narrowing** — relative to the FLOOR: `permissions` a superset; `scope.artifact_series` unchanged (or newly set from `null`); `scope.artifacts` a superset; `unprotected_build` never going from `true` to `false`; `activation.modes` a superset; `activation.fixed_date` equal or earlier, or newly set from `null` — **removing it, non-null back to `null`, is narrowing**, being the limit case of pushing it further out; and `activation.successor_ids` a superset.
 
 The `activation` half of criterion 2 is what keeps the trigger from being narrowed after the sale. Pushing `fixed_date` further out, dropping a mode, or removing a designated successor each make activation strictly harder to reach for a buyer who has already paid — so each counts as narrowing, even though nothing about the permissions changed.
 
@@ -787,7 +788,7 @@ Activation is established by POSITIVE evidence, never from the absence of eviden
   "scope": { "artifact_series": null,
              "artifacts": ["9f2b4a1c0d3e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4"] },
   "declared_at": "2031-03-01T00:00:00Z",
-  "signature": { "kid": "heritage.example/2031-q1", "...": "..." }
+  "signature": { "kid": "heritage.example/keys/2031-q1#ed25519-1", "...": "..." }
 }
 ```
 
