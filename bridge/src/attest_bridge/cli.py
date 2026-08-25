@@ -767,9 +767,19 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
 
     game_id = product_key.removeprefix(_ITCH_PRODUCT_PREFIX)
     now = datetime.now(UTC)
+    # ONE clock read for the whole dry run. `enqueue_claim` used to take its
+    # own, and between the two this function builds a Ledger — a file touch, a
+    # connect, a schema script — so on a loaded machine the second read could
+    # land in the next whole second. `next_attempt_at` would then sit one
+    # second ahead of the `now` the poller queries with, `due_claims` would
+    # return nothing, and the claim would never be drained: no receipt, and no
+    # dead letter either, because nothing entered the loop that records one.
+    # ledger.py's own contract says timestamps are caller-supplied and it never
+    # reads a clock; supplying two unsynchronized ones broke that from here.
+    now_rfc3339 = now.strftime(_RFC3339)
     with tempfile.TemporaryDirectory() as tmp_dir:
         ledger = Ledger(Path(tmp_dir) / "dry-run-ledger.sqlite3")
-        token = ledger.enqueue_claim(_DRY_RUN_BUYER_EMAIL, game_id, now=_now_rfc3339())
+        token = ledger.enqueue_claim(_DRY_RUN_BUYER_EMAIL, game_id, now=now_rfc3339)
         purchase = _itch_dry_run_purchase(game_id, now=now)
         adapter = ItchAdapter(
             api_key=config.itch.api_key,

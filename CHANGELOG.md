@@ -69,6 +69,18 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the boundary between a strictly-parsed signed document and materialized
   untrusted evidence, which the fixed-date anchor path crossed in the wrong
   direction.
+- `attest-bridge itch-dry-run` could report "no receipt issued" about a race
+  inside itself. The command read the clock twice — once for the synthetic
+  purchase and the poller, once inside `enqueue_claim` — and built the Ledger
+  between the two reads, so a loaded machine could land the second one in the
+  next whole second. The claim's `next_attempt_at` then sat one second ahead
+  of the `now` the poller queried with, `due_claims` returned nothing, and the
+  claim was never drained: no receipt, and no dead letter either, because
+  nothing entered the loop that records one — leaving the merchant with a
+  failure message about their own setup and nothing to act on. One clock read
+  now serves the whole command, which is what `attest_bridge.ledger`'s own
+  contract ("timestamps are always caller-supplied; this module never reads a
+  clock") assumes of its callers.
 - A third divergence, found by independent review of the pair and present only
   in the TypeScript verifier, which had mirrored this package's earlier shape:
   `grant_trust` keyed on the `kid` of the supplied grant instead of on the
