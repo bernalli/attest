@@ -6,6 +6,36 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A second demo, `demo/pledge_dies.py`, and the archive gate it runs
+  against.** Stage 4 shipped the mechanism in 0.8.0; this is the mechanism
+  actually running, end to end, from a shell. A rights holder signs a sunset
+  grant at the time of sale, the store dies, the trigger fires, and an archive
+  that kept its own copy hands it over — but only against a valid receipt, an
+  activated grant, and an audience-bound proof of possession. Both triggers are
+  demonstrated: `publisher-declaration`, and `fixed-date` for when nobody is
+  left to declare, including the negative half where the backstop has not yet
+  been reached and the grant stays shut.
+
+- `demo/custodian.py`, a **non-normative reference** for the §18.7 gate. It is
+  deliberately outside the installed package, outside the conformance surface,
+  and has no CLI verb: attest defines a receipt format and a verifier, and does
+  not distribute content. Every check that verifies, authenticates or signs is
+  delegated to the real CLI; the module's own contribution is one authorisation
+  the CLI does not expose — whether the file about to be served is inside the
+  grant's scope — read from the floor grant, which §18.3's ratchet makes a
+  strictly conservative place to read it.
+
+- `demo/_driver.py`, the CLI helpers both demos share, and the canonical way to
+  run either: `python -m demo.<name>` from the repository root.
+
+### Changed
+
+- CI now executes both demos as scripts, not only through their pytest
+  wrappers. Running from a shell is the claim being made, and a claim nothing
+  executes decays quietly.
+
 ## [0.8.0] — 2026-08-25
 
 ### Added

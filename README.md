@@ -156,8 +156,10 @@ transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
 deadlines), and Stage 3 issuer-mediated transfer. (A v0.1-only verifier is
 required to reject v0.2 envelopes, so it is measured against the 51-leaf
-subset.) There is also an end-to-end demo that deletes a store's entire
-infrastructure mid-lifecycle and proves the receipt still verifies.
+subset.) There are also two end-to-end demos: one deletes a store's entire
+infrastructure mid-lifecycle and proves the receipt still verifies, and one
+carries that a step further — a rights holder's preservation pledge fires and
+an archive hands the file back, but only against the receipt.
 
 The published packages ship all of v0.2 — Stages 1 and 2 (hybrid signatures;
 transparency and anchoring) and Stage 3, issuer-mediated transfer, this
@@ -237,6 +239,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv -e '.[dev]'
 
 ```sh
 .venv/bin/python -m demo.store_dies
+.venv/bin/python -m demo.pledge_dies
 ```
 
 ```sh
@@ -249,7 +252,7 @@ and a TypeScript verifier quickstart:
 cd verifiers/ts && npm install && npm test
 ```
 
-See [demo/README.md](demo/README.md) for what each step of the demo proves, and
+See [demo/README.md](demo/README.md) for what each step of the demos proves, and
 [docs/spec/attest-v0.1.md](docs/spec/attest-v0.1.md) plus its companion
 [JSON Schema](docs/spec/schema/attest-receipt.schema.json) for the normative
 specification. [docs/spec/vectors/](docs/spec/vectors/) holds the conformance

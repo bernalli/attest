@@ -27,6 +27,12 @@ jobs:
       - run: uv run --frozen ruff format --check .
       - run: uv run --frozen mypy --strict src bridge/src witness/src
       - run: uv run --frozen python tools/check_spec_docs.py
+      # The demos are how the project answers "does this actually run?".
+      # The pytest wrappers already assert their outcomes, but running them
+      # as scripts is the claim being made — that someone can type this from
+      # a shell — and a claim nothing executes decays quietly.
+      - run: uv run --frozen python -m demo.store_dies
+      - run: uv run --frozen python -m demo.pledge_dies
       # Builds the Internet-Draft snapshot source (ietf/) with the pinned,
       # inline-references-only xml2rfc v3 toolchain (ietf/README.md). uvx is
       # already available here via astral-sh/setup-uv above, so no extra
