@@ -26,8 +26,9 @@ from attest_witness.config import ServerConfig, WitnessConfig, WitnessIdentity
 from attest_witness.service import (
     BadRequest,
     Conflict,
-    InconsistentProof,
+    CosignFailed,
     UnknownOrigin,
+    Unprocessable,
     UntrustedCheckpoint,
     WitnessService,
     origin_hash,
@@ -210,8 +211,9 @@ def test_an_empty_tree_with_a_fabricated_root_is_refused(
     witness that cosigned any other root at size 0 would let a log start its
     history from a value of its choosing."""
     text = log.checkpoint_text(root=b"\x11" * 32, tree_size=0)
-    with pytest.raises(BadRequest, match="empty-tree root"):
+    with pytest.raises(Unprocessable, match="empty-tree root") as excinfo:
         service.add_checkpoint(_body(0, [], text))
+    assert excinfo.value.status == 422, "C2SP assigns this 422, not 400"
     assert service._store.latest(ORIGIN) is None
 
 
@@ -305,16 +307,22 @@ def test_a_rollback_is_refused_and_changes_nothing(service: WitnessService, log:
     assert stored is not None and stored.tree_size == 7
 
 
-def test_two_different_checkpoints_at_one_size_conflict(
+def test_two_different_checkpoints_at_one_size_are_unprocessable(
     service: WitnessService, log: FakeLog
 ) -> None:
     """Equivocation, seen from the witness's side: same size, different root.
-    It has already spoken for one of them."""
+
+    C2SP is explicit that this is 422, not 409: "If the old size matches the
+    checkpoint size, the witness MUST check that the root hashes are also
+    identical. If they don't match ... 422". 409 is reserved for a client
+    whose idea of our stored size is stale — which this client's is not.
+    """
     log.append(4)
     service.add_checkpoint(_body(0, [], log.checkpoint_text()))
     forked = log.checkpoint_text(tree_size=4, root=b"\x42" * 32)
-    with pytest.raises(Conflict):
+    with pytest.raises(Unprocessable) as excinfo:
         service.add_checkpoint(_body(4, [], forked))
+    assert excinfo.value.status == 422
     stored = service._store.latest(ORIGIN)
     assert stored is not None and stored.root == log.root_at(4)
 
@@ -323,7 +331,7 @@ def test_an_invalid_consistency_proof_is_refused(service: WitnessService, log: F
     log.append(4)
     service.add_checkpoint(_body(0, [], log.checkpoint_text()))
     log.append(3)
-    with pytest.raises(InconsistentProof):
+    with pytest.raises(Unprocessable):
         service.add_checkpoint(_body(4, [bytes(32)], log.checkpoint_text()))
     stored = service._store.latest(ORIGIN)
     assert stored is not None and stored.tree_size == 4, "a bad proof advanced nothing"
@@ -333,16 +341,20 @@ def test_a_missing_consistency_proof_is_refused(service: WitnessService, log: Fa
     log.append(4)
     service.add_checkpoint(_body(0, [], log.checkpoint_text()))
     log.append(3)
-    with pytest.raises(InconsistentProof):
+    with pytest.raises(Unprocessable):
         service.add_checkpoint(_body(4, [], log.checkpoint_text()))
 
 
-def test_a_proof_on_a_first_submission_is_refused(service: WitnessService, log: FakeLog) -> None:
-    """There is nothing to be consistent with yet, so a proof is not a proof
-    of anything."""
+def test_a_proof_when_the_old_size_is_zero_is_refused(
+    service: WitnessService, log: FakeLog
+) -> None:
+    """C2SP: "If the proof is not empty when the old size is zero ... 422".
+    The empty tree is consistent with any tree, so no proof is necessary and a
+    supplied one is not a proof of anything."""
     log.append(4)
-    with pytest.raises(BadRequest, match="no prior state"):
+    with pytest.raises(Unprocessable) as excinfo:
         service.add_checkpoint(_body(0, [bytes(32)], log.checkpoint_text()))
+    assert excinfo.value.status == 422
 
 
 # --- monitoring -------------------------------------------------------------
@@ -469,7 +481,7 @@ def test_a_restarted_witness_still_refuses_a_fork(
         config, WitnessStore(config.database_path), clock=lambda: float(TIMESTAMP)
     )
     forked = log.checkpoint_text(tree_size=4, root=b"\x42" * 32)
-    with pytest.raises(Conflict):
+    with pytest.raises(Unprocessable):
         revived.add_checkpoint(_body(4, [], forked))
 
 
@@ -524,3 +536,107 @@ def test_the_read_and_the_write_happen_inside_one_transaction(
 
     assert [name for name, _ in events] == ["begin", "read", "write", "commit"]
     assert len({index for _, index in events}) == 1, "the read and the write must share one"
+
+
+def test_a_log_that_grows_from_an_empty_tree_is_still_cosigned(
+    service: WitnessService, log: FakeLog
+) -> None:
+    """The one path where the stored size is 0 but state EXISTS. It takes the
+    consistency branch rather than the first-submission branch, and RFC 6962
+    makes consistency from an empty tree hold with an empty proof — so a
+    witness that treated "no proof" as "no evidence" here would refuse a log
+    its first real growth, forever."""
+    service.add_checkpoint(_body(0, [], log.checkpoint_text()))
+    log.append(4)
+    service.add_checkpoint(_body(0, [], log.checkpoint_text()))
+    stored = service._store.latest(ORIGIN)
+    assert stored is not None and stored.tree_size == 4
+
+
+def test_a_signing_failure_is_reported_as_ours_not_as_the_clients(
+    tmp_path: Path, witness_keys: pq.HybridSigningKeys, log: FakeLog
+) -> None:
+    """A witness whose clock has stepped past the maximum cosignature
+    timestamp cannot sign — but the submission was valid. Reporting that as
+    400 would tell a client not to retry, losing a cosignature to a condition
+    that may already have passed."""
+    config = _config(tmp_path, witness_keys, {ORIGIN: log.log_key})
+    service = WitnessService(
+        config,
+        WitnessStore(config.database_path),
+        clock=lambda: float(witness_policy.MAX_COSIGNATURE_TIMESTAMP + 1),
+    )
+    log.append(4)
+    with pytest.raises(CosignFailed) as excinfo:
+        service.add_checkpoint(_body(0, [], log.checkpoint_text()))
+    assert excinfo.value.status == 500
+    assert service._store.latest(ORIGIN) is None, "a failed signature advanced nothing"
+
+
+# --- rules the C2SP text is explicit about, one test each ------------------
+
+
+@pytest.mark.parametrize("digits", ["00", "007", "0004"])
+def test_an_old_size_with_a_leading_zero_is_refused(digits: str) -> None:
+    """C2SP: the old size is "an ASCII decimal with no leading zeroes (unless
+    the size is zero, in which case the encoding MUST be `0`)". `int()` would
+    read "00" as 0 and cosign happily, making two different request bodies
+    mean the same thing to a service whose whole job is comparing sizes."""
+    with pytest.raises(BadRequest, match="leading zero"):
+        parse_submission(f"old {digits}\n\ncheckpoint\n".encode(), max_proof_lines=63)
+
+
+def test_a_bare_zero_old_size_is_still_accepted() -> None:
+    """The control for the rule above: "0" is the one encoding that starts
+    with a zero and is correct."""
+    assert parse_submission(b"old 0\n\ncheckpoint\n", max_proof_lines=63).old_size == 0
+
+
+def test_a_resubmission_carrying_proof_lines_is_refused(
+    service: WitnessService, log: FakeLog
+) -> None:
+    """At an equal size the only valid consistency proof is the empty one, so
+    a resubmission with proof lines attached is not the request it claims to
+    be — and cosigning it anyway would mean the witness never looked."""
+    log.append(4)
+    service.add_checkpoint(_body(0, [], log.checkpoint_text()))
+    with pytest.raises(Unprocessable) as excinfo:
+        service.add_checkpoint(_body(4, [bytes(32)], log.checkpoint_text()))
+    assert excinfo.value.status == 422
+
+
+def test_an_unknown_origin_in_a_malformed_note_is_still_404(
+    service: WitnessService,
+) -> None:
+    """The ordering claim, tested where it actually bites.
+
+    A note for a log this witness does not know, whose root does not even
+    decode, must come back "unknown origin" — not "malformed checkpoint".
+    Parsing before the allowlist lookup gives the second answer, which both
+    reveals that the note was inspected and does work for a stranger.
+    """
+    with pytest.raises(UnknownOrigin):
+        service.add_checkpoint(b"old 0\n\nunknown.example\n4\nnot-base64\n\n\xe2\x80\x94 x y\n")
+
+
+def test_a_malformed_note_for_a_known_origin_is_400(service: WitnessService) -> None:
+    """The other half of the pair: once the origin IS ours, a note we cannot
+    parse is a bad request, and saying so tells the operator of a log we
+    actually serve something useful."""
+    with pytest.raises(BadRequest):
+        service.add_checkpoint(f"old 0\n\n{ORIGIN}\n4\nnot-base64\n\n".encode())
+
+
+def test_a_witness_whose_clock_reads_zero_refuses_rather_than_signing(
+    tmp_path: Path, witness_keys: pq.HybridSigningKeys, log: FakeLog
+) -> None:
+    """A clock that has not been set yet reads the epoch. Signing then would
+    emit a cosignature that says "no timestamp" (C2SP), so the witness fails
+    the request as its own fault — 500, retryable — instead."""
+    config = _config(tmp_path, witness_keys, {ORIGIN: log.log_key})
+    service = WitnessService(config, WitnessStore(config.database_path), clock=lambda: 0.0)
+    log.append(4)
+    with pytest.raises(CosignFailed) as excinfo:
+        service.add_checkpoint(_body(0, [], log.checkpoint_text()))
+    assert excinfo.value.status == 500
+    assert service._store.latest(ORIGIN) is None

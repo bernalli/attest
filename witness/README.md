@@ -48,11 +48,23 @@ GET  <monitoring_prefix>/<sha256(origin) in lowercase hex>/checkpoint
 The submission body is C2SP's: `old <decimal size>`, then zero or more
 base64 consistency-proof lines, then a blank line, then the checkpoint note.
 Responses follow the specification's status assignments — `200` with the
-signature lines, `400` malformed or an old size past the tree size, `403` the
-checkpoint does not authenticate against the pinned key, `404` unknown origin,
-`409` old-size mismatch or a different checkpoint at an equal size (the body is
-the size we hold, media type `text/x.tlog.size`), `422` the consistency proof
-does not verify. C2SP's optional `sign-subtree` is not implemented.
+signature lines, `400` malformed, `403` the note parses but no trusted
+signature verifies, `404` unknown origin, `409` the claimed old size does not
+match the size we hold (body: that size, media type `text/x.tlog.size`), `422`
+well formed but not processable: a size-0 checkpoint with the wrong root, a
+proof supplied when the old size is zero, or a consistency proof that does not
+verify — which is also how a root mismatch at an equal size is reported.
+C2SP's optional `sign-subtree` is not implemented.
+
+One deliberate divergence, worth stating because it is a `SHOULD`: C2SP says
+witnesses SHOULD use ML-DSA-44 cosignatures. This one emits ML-DSA-65 under
+attest's own namespaced signature type (v0.2 §9.2, identifier
+`attest-cosignature-ml-dsa-65-v1`), alongside the interoperable Ed25519
+type-`0x04` leg. The reason is in the spec: attest's hybrid profile is
+ML-DSA-65 throughout, and C2SP's `0x06` is a different algorithm and a
+different note-signature shape. The Ed25519 leg is what any C2SP-conformant
+consumer reads; the second leg is additive and namespaced so it can never
+collide with a future assignment.
 
 ## Running it
 

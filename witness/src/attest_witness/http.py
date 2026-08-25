@@ -12,14 +12,24 @@ a socket.
 The status table, from the C2SP specification:
 
     200  every check passed; the body is our signature lines
-    400  malformed body, or an old size beyond the checkpoint's tree size
-    403  no signature verifies against the trusted log key
+    400  malformed body, an old size with a leading zero, an old size beyond
+         the checkpoint's tree size, or a note this witness cannot parse for a
+         log it does know
+    403  the note parses, but no signature from the trusted key verifies
     404  unknown checkpoint origin
-    409  old size mismatch, or a different checkpoint at an equal size.
-         The body is the tree size we hold, in decimal, with the media type
-         `text/x.tlog.size` — a client resynchronises from it in one round
-         trip, which is the whole reason the number is in the response.
-    422  the consistency proof does not verify
+    409  the claimed old size does not match the size we have cosigned — and
+         nothing else. The body is that size, in decimal, with the media type
+         `text/x.tlog.size`, so a desynchronised client resynchronises in one
+         round trip.
+    411  no usable Content-Length
+    413  the declared body length exceeds the configured bound
+    422  well formed, not processable: a size-0 checkpoint whose root is not
+         the empty-tree root, a non-empty proof when the old size is zero, or
+         a consistency proof that does not verify — including the degenerate
+         n-to-n case, which is how "the roots differ at an equal size" is
+         expressed
+    500  this witness could not sign, for a reason of its own — the request
+         was fine and the client should retry
 
 Two things this deliberately does NOT do. It adds no authentication beyond the
 pinned log signatures the protocol already requires — a witness's audience is

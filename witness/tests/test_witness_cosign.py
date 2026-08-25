@@ -260,3 +260,17 @@ def test_cosigning_the_whole_signed_note_produces_nothing_a_verifier_counts(
         text + wrong.lines, witness_policy_document([witness_pin(witness_keys)])
     )
     assert verdict.witnessed is False
+
+
+@pytest.mark.parametrize("timestamp", [0, -1])
+def test_a_non_positive_timestamp_is_refused_not_signed(
+    witness_keys: pq.HybridSigningKeys, timestamp: int
+) -> None:
+    """C2SP add-checkpoint: "The cosignature MUST NOT omit the timestamp, i.e.
+    the timestamp MUST NOT be zero." Zero is how the wire format spells "no
+    timestamp", so a cosignature carrying it asserts something other than what
+    this witness means — and the core's verifier would still accept it, which
+    is what makes signing one worse than failing."""
+    note = b"log.example\n4\nAAAA\n"
+    with pytest.raises(CosignError):
+        cosign(note, name=WITNESS_NAME, signing_keys=witness_keys, timestamp=timestamp)

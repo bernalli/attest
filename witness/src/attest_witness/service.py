@@ -10,10 +10,16 @@ The order of operations is the security property, and it is not the order the
 code would fall into naturally:
 
 1. Parse the body under fixed bounds.
-2. Parse the checkpoint far enough to learn its ORIGIN.
-3. Refuse an unknown origin (404) — before any state is read or written
-   (v0.2 §11.4: "Unknown origins are rejected before checkpoint or consistency
-   work can advance state").
+2. Read the origin the checkpoint DECLARES — its first line — without parsing
+   or validating anything else.
+3. Refuse an unknown origin (404) — before the note is parsed, before any key
+   is used, and before any state is read or written (v0.2 §11.4: "Unknown
+   origins are rejected before checkpoint or consistency work can advance
+   state"). Parsing the note first to obtain a validated origin looks
+   equivalent and is not: the parser checks the root encoding and every
+   signature line before it can say what the origin was, so an unknown log
+   with a malformed note would get a 400 describing a note this witness should
+   not have looked at.
 4. Authenticate the checkpoint against the pinned hybrid log key (403) —
    before the state transaction opens, because an unauthenticated checkpoint
    must not be able to make the witness do work.
@@ -87,8 +93,28 @@ class Conflict(ProtocolError):
         self.stored_size = stored_size
 
 
-class InconsistentProof(ProtocolError):
+class Unprocessable(ProtocolError):
+    """Well-formed request, contents C2SP refuses to process (422).
+
+    Three conditions share this status by specification: a size-0 checkpoint
+    whose root is not the empty-tree root, a non-empty proof when the old size
+    is zero, and a consistency proof — including the degenerate n-to-n one —
+    that does not verify.
+    """
+
     status = 422
+
+
+class CosignFailed(ProtocolError):
+    """This witness could not sign, for a reason of its own.
+
+    A 500 rather than a 400 on purpose: the request was fine. Telling a client
+    its submission was malformed when the fault is ours means it will not
+    retry, and a cosignature is lost to a condition that may already have
+    passed — a clock that stepped, for instance.
+    """
+
+    status = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +151,12 @@ def parse_submission(body: bytes, *, max_proof_lines: int) -> Submission:
     # the protocol accepts a decimal number and nothing else.
     if not digits.isascii() or not digits.isdigit():
         raise BadRequest("old size is not a decimal number")
+    if digits != "0" and digits.startswith("0"):
+        # C2SP: "encoded as an ASCII decimal with no leading zeroes (unless the
+        # size is zero, in which case the encoding MUST be `0`)". Accepting
+        # "007" would make two different request bodies mean the same thing,
+        # and a witness compares sizes for a living.
+        raise BadRequest("old size has a leading zero")
     old_size = int(digits)
 
     proof_lines = lines[1:]
@@ -149,6 +181,30 @@ def _b64_hash(line: str) -> bytes:
     if len(raw) != 32:
         raise ValueError("not a 32-byte hash")
     return raw
+
+
+# A checkpoint's first line is its origin (v0.2 §9.1). Bounded before use: the
+# body is already size-limited, but a lookup key is not a place to put an
+# unbounded slice of somebody's request.
+_MAX_ORIGIN_LEN: Final = 512
+
+
+def _declared_origin(checkpoint_text: str) -> str:
+    """The origin a submission CLAIMS, read without parsing anything else.
+
+    Deliberately not `parse_checkpoint(...).origin`: that validates the whole
+    note first, so an unknown origin in a malformed note would be answered as
+    a malformed note. A claim is all that is needed to decide whether this
+    witness has any business with it.
+    """
+    first_line, _, _ = checkpoint_text.partition("\n")
+    if not first_line or len(first_line) > _MAX_ORIGIN_LEN:
+        raise BadRequest("checkpoint does not begin with an origin line")
+    if not all("\x20" <= character <= "\x7e" for character in first_line):
+        # v0.2 §9.2's origin grammar. Refused as a malformed request rather
+        # than an unknown origin: this is not a name any log could have.
+        raise BadRequest("checkpoint origin is not printable ASCII")
+    return first_line
 
 
 def origin_hash(origin: str) -> str:
@@ -177,30 +233,42 @@ class WitnessService:
     def add_checkpoint(self, body: bytes) -> str:
         """Handle one submission. Returns the cosignature lines to send back."""
         submission = parse_submission(body, max_proof_lines=self._config.server.max_proof_lines)
-        try:
-            candidate = tlog.parse_checkpoint(submission.checkpoint_text)
-        except tlog.TlogError as exc:
-            raise BadRequest(f"checkpoint is malformed: {exc}") from exc
 
-        log_key = self._config.logs.get(candidate.origin)
+        # The origin is read from the note's FIRST LINE and matched against the
+        # allowlist before the checkpoint is parsed. Parsing first would look
+        # equivalent and is not: `parse_checkpoint` validates the root encoding
+        # and every signature line before it can tell anyone what the origin
+        # was, so a submission for an unknown log with a malformed root would
+        # come back 400 — a diagnostic about a log this witness has no business
+        # saying anything about, and work it should not have done.
+        log_key = self._config.logs.get(_declared_origin(submission.checkpoint_text))
         if log_key is None:
-            # Before anything else touches state or keys (v0.2 §11.4).
             raise UnknownOrigin("unknown log origin")
 
         try:
-            checkpoint = tlog.verify_checkpoint(
-                submission.checkpoint_text, log_key, candidate.origin
-            )
+            tlog.parse_checkpoint(submission.checkpoint_text)
         except tlog.TlogError as exc:
-            # C2SP: 403 when no signature verifies against a trusted key. The
-            # core's check is the hybrid AND of v0.2 §9.3 — an Ed25519-only
-            # note does not authenticate a checkpoint here.
+            # Parsed separately from authentication so the two failures keep
+            # their own statuses: C2SP's 403 is specifically "no signature from
+            # a trusted key verifies", which a note that cannot be parsed at
+            # all has not reached. Now that the origin is known to be one of
+            # ours, saying "malformed" tells its operator something useful.
+            raise BadRequest(f"checkpoint is malformed: {exc}") from exc
+
+        try:
+            checkpoint = tlog.verify_checkpoint(submission.checkpoint_text, log_key, log_key.origin)
+        except tlog.TlogError as exc:
+            # C2SP: 403 when no signature from a trusted key for the origin
+            # verifies. The core's check is the hybrid AND of v0.2 §9.3 — an
+            # Ed25519-only note does not authenticate a checkpoint here.
             raise UntrustedCheckpoint(f"checkpoint is not authentic: {exc}") from exc
 
         if checkpoint.tree_size < submission.old_size:
             raise BadRequest("old size exceeds the checkpoint's tree size")
         if checkpoint.tree_size == 0 and checkpoint.root != _EMPTY_TREE_ROOT:
-            raise BadRequest("tree size 0 with a root that is not the empty-tree root")
+            # C2SP assigns 422 here, not 400: the request is well formed, its
+            # contents are not processable.
+            raise Unprocessable("tree size 0 with a root that is not the empty-tree root")
 
         return self._advance(checkpoint, submission)
 
@@ -214,29 +282,33 @@ class WitnessService:
                 # client can resynchronise in one round trip.
                 raise Conflict("old size does not match stored state", stored_size=stored_size)
 
-            if stored is not None and checkpoint.tree_size == stored_size:
-                if checkpoint.note_bytes != stored.note_bytes:
-                    # Two different checkpoints at one size: the log has
-                    # equivocated, or a client is trying to make us say so.
-                    # Either way this witness has already spoken for the other
-                    # one and will not speak for this.
-                    raise Conflict(
-                        "a different checkpoint is already cosigned at this size",
-                        stored_size=stored_size,
-                    )
-            elif stored is not None:
-                if not tlog.verify_consistency(
-                    stored_size,
-                    stored.root,
-                    checkpoint.tree_size,
-                    checkpoint.root,
-                    list(submission.proof),
-                ):
-                    raise InconsistentProof("consistency proof does not verify")
-            elif submission.proof:
-                # Nothing to be consistent WITH: a first submission carries no
-                # proof, and one that does is not the request it claims to be.
-                raise BadRequest("consistency proof supplied with no prior state")
+            # ONE consistency check covers all three of C2SP's cases, because
+            # RFC 6962 already distinguishes them:
+            #
+            #   old 0            -> consistency from the empty tree holds for
+            #                       any tree with an EMPTY proof, and fails
+            #                       with a non-empty one, which is exactly the
+            #                       rule "if the proof is not empty when the
+            #                       old size is zero ... 422";
+            #   old == size      -> consistency from n to n holds only when the
+            #                       roots are identical and the proof is empty,
+            #                       which is the rule "if the old size matches
+            #                       the checkpoint size, the root hashes must
+            #                       also be identical ... 422";
+            #   old <  size      -> the ordinary proof.
+            #
+            # Writing the three as separate branches invited each of them to
+            # drift from the others: the first version compared note bytes by
+            # hand at equal sizes and accepted any proof lines alongside them.
+            base_root = _EMPTY_TREE_ROOT if stored is None else stored.root
+            if not tlog.verify_consistency(
+                submission.old_size,
+                base_root,
+                checkpoint.tree_size,
+                checkpoint.root,
+                list(submission.proof),
+            ):
+                raise Unprocessable("consistency proof does not verify")
 
             signature = self._cosign(checkpoint)
             cosigned_text = submission.checkpoint_text + signature.lines
@@ -266,7 +338,7 @@ class WitnessService:
                 timestamp=int(self._clock()),
             )
         except CosignError as exc:
-            raise BadRequest(f"cannot cosign this checkpoint: {exc}") from exc
+            raise CosignFailed(f"cannot cosign this checkpoint: {exc}") from exc
 
     def monitoring(self, hashed_origin: str) -> str:
         """The latest cosigned checkpoint for the log whose origin hashes to

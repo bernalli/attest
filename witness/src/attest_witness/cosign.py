@@ -80,6 +80,12 @@ def cosign(
     # would produce a line nobody can ever count — a failure visible only in
     # somebody else's verifier — so the ceiling is enforced HERE, before the
     # key is used.
+    if timestamp <= 0:
+        # C2SP add-checkpoint: "The cosignature MUST NOT omit the timestamp,
+        # i.e. the timestamp MUST NOT be zero." Zero is how the format spells
+        # "no timestamp", so signing one produces a cosignature that says
+        # something other than what this witness means.
+        raise CosignError(f"timestamp {timestamp} is not a positive POSIX time")
     if timestamp > witness_policy.MAX_COSIGNATURE_TIMESTAMP:
         raise CosignError(
             f"timestamp {timestamp} is past the maximum cosignature timestamp "

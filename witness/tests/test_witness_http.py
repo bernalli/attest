@@ -159,14 +159,20 @@ def test_a_body_over_the_bound_is_413_and_is_never_parsed(app: Any) -> None:
     assert status == "413 Payload Too Large"
 
 
-def test_only_the_declared_length_is_read(app: Any) -> None:
+def test_only_the_declared_length_is_read(app: Any, log: FakeLog) -> None:
     """A client that understates Content-Length gets exactly what it declared
     parsed as its request — the rest is not this request's body and is not
     ours to interpret. Reading past the declared length is also what hangs a
-    keep-alive connection until it times out."""
-    status, _, _ = call_app(
-        app, "POST", SUBMISSION, body=b"old 0\n\n" + b"A" * 70_000, content_length="10"
-    )
+    keep-alive connection until it times out.
+
+    The body is a VALID submission truncated by the declared length, so the
+    origin line still arrives and the request reaches the checkpoint parser:
+    the 400 is the truncation being seen, not a bad body being rejected before
+    anything was decided.
+    """
+    log.append(4)
+    body = _body(0, [], log.checkpoint_text())
+    status, _, _ = call_app(app, "POST", SUBMISSION, body=body, content_length=str(len(body) - 200))
     assert status == "400 Bad Request"
 
 
@@ -262,3 +268,34 @@ def test_no_response_body_echoes_the_request(app: Any) -> None:
     for path in (SUBMISSION, f"{MONITORING}/{marker.decode()}/checkpoint"):
         _, _, body = call_app(app, "POST", path, body=b"old 0\n" + marker + b"\n\nx")
         assert marker not in body
+
+
+def test_a_signing_failure_is_500_not_400(
+    tmp_path: Path, witness_keys: pq.HybridSigningKeys, log: FakeLog
+) -> None:
+    """The status a client acts on: 500 means retry, 400 means do not. A
+    witness that cannot sign has not been sent a bad request."""
+    from attest import witness as witness_policy
+
+    config = WitnessConfig(
+        identity=WitnessIdentity(name=WITNESS_NAME, signing_keys=witness_keys),
+        server=ServerConfig(
+            submission_prefix="/witness/v0",
+            monitoring_prefix=MONITORING,
+            max_request_bytes=65_536,
+            max_proof_lines=63,
+        ),
+        database_path=tmp_path / "state.sqlite3",
+        logs={ORIGIN: log.log_key},
+    )
+    broken = make_app(
+        WitnessService(
+            config,
+            WitnessStore(config.database_path),
+            clock=lambda: float(witness_policy.MAX_COSIGNATURE_TIMESTAMP + 1),
+        ),
+        config,
+    )
+    log.append(4)
+    status, _, _ = call_app(broken, "POST", SUBMISSION, body=_body(0, [], log.checkpoint_text()))
+    assert status == "500 Internal Server Error"
