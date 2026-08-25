@@ -465,6 +465,7 @@ def _evaluate_transparency_claim(
     log_keys: list[tlog.LogKey] | None,
     anchor_policy: anchor.AnchorPolicy | None,
     warnings: list[str],
+    witness_policy: object = None,
 ) -> tuple[str, str, str]:
     """Resolve `(transparency, corroboration, manifest_freshness)` from one
     evidence bundle (design doc "transparency/corroboration layer").
@@ -480,10 +481,10 @@ def _evaluate_transparency_claim(
     `log_keys`/`anchor_policy` missing is a configuration gap (the verifier
     wasn't set up for transparency checking) — degrades with a warning,
     never raises: the evidence side must never brick a receipt verification.
-    A malformed `log_keys`/`anchor_policy` is trusted-config, validated
-    eagerly and regardless of what the evidence looks like, so a config bug
-    always surfaces as `TransparencyError` rather than being masked by
-    coincidentally-also-unresolvable evidence.
+    A malformed `log_keys`/`anchor_policy`/`witness_policy` is trusted-config,
+    validated eagerly and regardless of what the evidence looks like, so a
+    config bug always surfaces as `TransparencyError` rather than being masked
+    by coincidentally-also-unresolvable evidence.
     """
     if transparency_evidence is None:
         return _TRANSPARENCY_NOT_CHECKED, _CORROBORATION_NONE, _MANIFEST_FRESHNESS_NOT_CHECKED
@@ -494,6 +495,12 @@ def _evaluate_transparency_claim(
 
     origin = _resolve_log_origin(log_keys)
     transparency_module._validate_policy(anchor_policy)
+    # The witness policy (v0.2 §11.4) rides the same trusted rail, so it gets
+    # the same eager validation: a malformed one is a configuration bug and
+    # must surface as an error, never be swallowed by the untrusted-evidence
+    # boundary below. Parsed here rather than inside `evaluate_transparency`
+    # for exactly that reason — inside, it would be past the boundary.
+    validated_witness_policy = transparency_module._validate_witness_policy(witness_policy)
 
     try:
         # This is verify()'s untrusted-evidence boundary. Canonicalize and
@@ -520,6 +527,7 @@ def _evaluate_transparency_claim(
             expected_origin=origin,
             policy=anchor_policy,
             expected_entry=expected_entry,
+            witness_policy=validated_witness_policy,
         )
         warnings.extend(result.warnings)
 
@@ -1149,6 +1157,7 @@ def verify(
     anchor_policy: anchor.AnchorPolicy | None = None,
     revocation_evidence: dict[str, Any] | None = None,
     transfer_view: list[dict[str, Any]] | None = None,
+    witness_policy: object = None,
 ) -> VerificationResult:
     """§6 steps 0-7. `max_revocation_records` bounds the untrusted revocation
     view: a larger view is not evaluated (revocation `"unknown"`). It fails
@@ -1412,6 +1421,7 @@ def verify(
             log_keys,
             anchor_policy,
             warnings,
+            witness_policy,
         )
     )
 

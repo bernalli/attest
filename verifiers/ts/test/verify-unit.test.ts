@@ -484,3 +484,66 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     ).toThrow(TypeError)
   })
 })
+
+// --- P1.1b: the witness policy reaches the transparency layer through verify() --
+// Mirrors tests/test_verify.py's wiring tests. The POSITIVE end-to-end path
+// (a pinned cosignature reaching `witnessed` through the public verifier) is
+// pinned by conformance group 39, which is language-neutral; what belongs here
+// is the trusted-rail discipline: a malformed policy must be loud, and an
+// omitted one must change nothing.
+describe('verify(): witness policy on the trusted rail (§11.4)', () => {
+  const witnessPolicyDoc = {
+    schema: 'attest-witness-policy-v1',
+    epochs: [
+      {
+        epoch_id: 'bootstrap-1',
+        not_before: '2020-01-01T00:00:00Z',
+        not_after: null,
+        log_origins: ['log.example'],
+        threshold: { n: 1, m: 1 },
+        witnesses: [
+          {
+            operator_id: 'witness.example',
+            control_group: 'witness.example',
+            name: 'witness.example/w1',
+            ed25519_pub_b64u: b64uEncode(ed25519.getPublicKey(new Uint8Array(32).fill(21))),
+            mldsa_65_pub_b64u: null,
+            roles: ['corroboration'],
+            not_before: '2020-01-01T00:00:00Z',
+            not_after: null,
+            affiliated_domains: ['witness.example'],
+          },
+        ],
+      },
+    ],
+  }
+
+  it('throws on a malformed witness policy, like a malformed logKeys', () => {
+    const hk = generateHybridLogKeys()
+    expect(() =>
+      verify(tEnvelopeBytes('none'), tTrustStore(), null, null, undefined, {
+        transparency: tLogBundle([tTransferRecord()], hk)[0],
+        logKeys: [tLogKey(hk)],
+        anchorPolicy: noHorizonPolicy(),
+        witnessPolicy: { schema: 'wrong', epochs: [] },
+      } as any),
+    ).toThrow()
+  })
+
+  it('accepts a well-formed witness policy without changing an uncorroborated result', () => {
+    const hk = generateHybridLogKeys()
+    const withPolicy = verify(tEnvelopeBytes('none'), tTrustStore(), null, null, undefined, {
+      transparency: tLogBundle([tTransferRecord()], hk)[0],
+      logKeys: [tLogKey(hk)],
+      anchorPolicy: noHorizonPolicy(),
+      witnessPolicy: witnessPolicyDoc,
+    } as any)
+    const withoutPolicy = verify(tEnvelopeBytes('none'), tTrustStore(), null, null, undefined, {
+      transparency: tLogBundle([tTransferRecord()], hk)[0],
+      logKeys: [tLogKey(hk)],
+      anchorPolicy: noHorizonPolicy(),
+    } as any)
+    expect(withPolicy.corroboration).toBe(withoutPolicy.corroboration)
+    expect(withPolicy.warnings).not.toContain('witness_independence_not_established')
+  })
+})

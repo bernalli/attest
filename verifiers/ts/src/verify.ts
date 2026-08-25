@@ -21,6 +21,7 @@ import {
   CORROBORATION_NONE,
   evaluateTransparency,
   validateLogKeys,
+  validateWitnessPolicy,
 } from './transparency.js'
 import {
   ERR, WARN, unsupportedAttestVersion, signaturesCount, unsupportedSigAlg, noTrustedManifest,
@@ -77,6 +78,11 @@ export interface VerifyTransparencyOptions {
   transparency?: JsonValue | null
   logKeys?: LogKey[] | null
   anchorPolicy?: AnchorPolicy | null
+  // P1.1b (v0.2 §11.4): the TRUSTED witness policy, on the same rail as
+  // `logKeys` — packaged with the verifier, never read off evidence. Omitting
+  // it preserves the previous result exactly; supplying it is what makes
+  // `corroboration: "witnessed"` reachable through the public verifier at all.
+  witnessPolicy?: unknown
   // G5 (v0.2 §8/§15 amendment, TM-47): one untrusted transparency evidence
   // bundle for a SPECIFIC `refund_window` revocation record in
   // `revocationView`, reusing the SAME `logKeys`/`anchorPolicy`
@@ -313,6 +319,7 @@ function evaluateTransparencyClaim(
   logKeys: LogKey[] | null,
   anchorPolicy: AnchorPolicy | null,
   warnings: string[],
+  witnessPolicy: unknown = null,
 ): TransparencyClaimOutcome {
   if (transparencyEvidence == null) return ZERO_TRANSPARENCY_CLAIM
 
@@ -328,6 +335,10 @@ function evaluateTransparencyClaim(
   // TransparencyError rather than being masked as "claim unresolvable").
   const origin = resolveLogOrigin(logKeys)
   validateAnchorPolicyOnly(anchorPolicy)
+  // Same discipline for the witness policy: verifier configuration, so a
+  // malformed one throws here rather than being swallowed by the
+  // untrusted-evidence boundary below.
+  const validatedWitnessPolicy = validateWitnessPolicy(witnessPolicy)
 
   try {
     // verify()'s untrusted-evidence boundary. Canonicalize and parse once so
@@ -360,6 +371,7 @@ function evaluateTransparencyClaim(
       expectedOrigin: origin,
       policy: anchorPolicy,
       expectedEntry,
+      witnessPolicy: validatedWitnessPolicy,
     })
     warnings.push(...result.warnings)
 
@@ -399,6 +411,7 @@ export function verify(
   const anchorPolicy = options.anchorPolicy ?? null
   const revocationEvidence = options.revocationEvidence ?? null
   const transferView = options.transferView ?? null
+  const witnessPolicy = options.witnessPolicy ?? null
 
   if (revocationView !== null && !Array.isArray(revocationView))
     throw new TypeError('revocation_view must be a list of records or None')
@@ -582,6 +595,7 @@ export function verify(
       logKeys,
       anchorPolicy,
       warnings,
+      witnessPolicy,
     )
     transparencyState = claimOutcome.transparency
     corroborationState = claimOutcome.corroboration

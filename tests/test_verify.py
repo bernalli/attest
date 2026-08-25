@@ -11,6 +11,7 @@ non-conforming envelope came to exist.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -1393,3 +1394,152 @@ def test_issuer_manifest_over_key_ceiling_rejected_before_canonicalization(
     assert result.schema == "invalid"
     assert result.ok is False
     assert not any(obj is oversized_manifest for obj in canonicalized)
+
+
+# --- P1.1b: the witness policy reaches the transparency layer through verify() --
+
+
+_WITNESS_ORIGIN = "log.example"
+_WITNESS_NAME = "witness.example/w1"
+_WITNESS_KP = keys.from_seed(bytes([21]) * 32)
+_WITNESS_OBSERVED_AT = 1700000000
+
+
+def _witness_policy_doc(**pin_overrides: Any) -> dict[str, Any]:
+    pin: dict[str, Any] = {
+        "operator_id": "witness.example",
+        "control_group": "witness.example",
+        "name": _WITNESS_NAME,
+        "ed25519_pub_b64u": keys.b64u(_WITNESS_KP.pub),
+        "mldsa_65_pub_b64u": None,
+        "roles": ["corroboration"],
+        "not_before": "2020-01-01T00:00:00Z",
+        "not_after": None,
+        "affiliated_domains": ["witness.example"],
+    }
+    pin.update(pin_overrides)
+    return {
+        "schema": "attest-witness-policy-v1",
+        "epochs": [
+            {
+                "epoch_id": "bootstrap-1",
+                "not_before": "2020-01-01T00:00:00Z",
+                "not_after": None,
+                "log_origins": [_WITNESS_ORIGIN],
+                "threshold": {"n": 1, "m": 1},
+                "witnesses": [pin],
+            }
+        ],
+    }
+
+
+def _cosigned_receipt_evidence(
+    envelope: dict[str, Any], hk: pq.HybridSigningKeys, *, cosign: bool = True
+) -> tuple[dict[str, Any], tlog.LogKey]:
+    """A 3-leaf log holding this receipt at index 1, its checkpoint optionally
+    carrying a pinned witness cosignature."""
+    from attest import witness as witness_module
+
+    entries = [{"type": "receipt", "issuer": ISSUER, "core_sha256": f"{i:064x}"} for i in range(3)]
+    entries[1] = {
+        "type": "receipt",
+        "issuer": ISSUER,
+        "core_sha256": tlog.receipt_core_hash(envelope),
+    }
+    leaves = [tlog.encode_entry(e) for e in entries]
+    text = tlog.sign_checkpoint(_WITNESS_ORIGIN, 3, tlog.build_tree(leaves), hk, _WITNESS_ORIGIN)
+    if cosign:
+        checkpoint = tlog.parse_checkpoint(text)
+        message = witness_module.cosignature_message(checkpoint.note_bytes, _WITNESS_OBSERVED_AT)
+        blob = (
+            witness_module.cosignature_key_id(_WITNESS_NAME, _WITNESS_KP.pub)
+            + _WITNESS_OBSERVED_AT.to_bytes(8, "big")
+            + keys.sign(message, _WITNESS_KP)
+        )
+        text += f"— {_WITNESS_NAME} {base64.b64encode(blob).decode()}\n"
+    evidence = {
+        "entry": dict(entries[1]),
+        "leaf_index": 1,
+        "tree_size": 3,
+        "inclusion_proof": [p.hex() for p in tlog.inclusion_proof(leaves, 1)],
+        "checkpoint": text,
+        "witness_policy_epoch": "bootstrap-1",
+    }
+    log_key = tlog.LogKey(
+        origin=_WITNESS_ORIGIN,
+        name=_WITNESS_ORIGIN,
+        ed25519_pub=hk.ed.pub,
+        mldsa_pub=hk.mldsa.pub,
+    )
+    return evidence, log_key
+
+
+def test_witness_policy_reaches_corroboration_through_verify() -> None:
+    """The policy travels on the trusted rail `log_keys`/`anchor_policy` already
+    use. Without this wiring `corroboration: "witnessed"` is reachable through
+    `evaluate_transparency` but not through the public verifier — so no
+    conformance leaf could ever exercise it."""
+    hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
+    envelope = issue.issue(make_payload(), KP, KID)
+    evidence, log_key = _cosigned_receipt_evidence(envelope, hk)
+    result = verify.verify(
+        _to_bytes(envelope),
+        _trust_store(_key_manifest()),
+        transparency=evidence,
+        log_keys=[log_key],
+        anchor_policy=anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
+        witness_policy=_witness_policy_doc(),
+    )
+    assert result.corroboration == "witnessed"
+    assert "witness_independence_not_established" in result.warnings
+
+
+def test_omitting_the_witness_policy_leaves_verify_unchanged() -> None:
+    """Zero behavior change for every existing caller (§10.2): the same
+    evidence, without the policy, stops at `logged`."""
+    hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
+    envelope = issue.issue(make_payload(), KP, KID)
+    evidence, log_key = _cosigned_receipt_evidence(envelope, hk)
+    result = verify.verify(
+        _to_bytes(envelope),
+        _trust_store(_key_manifest()),
+        transparency=evidence,
+        log_keys=[log_key],
+        anchor_policy=anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
+    )
+    assert result.corroboration == "logged"
+    assert "witness_independence_not_established" not in result.warnings
+
+
+def test_a_policy_without_a_matching_cosignature_stays_logged() -> None:
+    """The positive control's negative twin: the wiring must not invent
+    standing when the note carries no cosignature at all."""
+    hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
+    envelope = issue.issue(make_payload(), KP, KID)
+    evidence, log_key = _cosigned_receipt_evidence(envelope, hk, cosign=False)
+    result = verify.verify(
+        _to_bytes(envelope),
+        _trust_store(_key_manifest()),
+        transparency=evidence,
+        log_keys=[log_key],
+        anchor_policy=anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
+        witness_policy=_witness_policy_doc(),
+    )
+    assert result.corroboration == "logged"
+
+
+def test_a_malformed_witness_policy_raises_from_verify() -> None:
+    """Trusted configuration, so a defect is loud — same discipline as a
+    malformed `log_keys`."""
+    hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
+    envelope = issue.issue(make_payload(), KP, KID)
+    evidence, log_key = _cosigned_receipt_evidence(envelope, hk)
+    with pytest.raises(ValueError):
+        verify.verify(
+            _to_bytes(envelope),
+            _trust_store(_key_manifest()),
+            transparency=evidence,
+            log_keys=[log_key],
+            anchor_policy=anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
+            witness_policy={"schema": "wrong", "epochs": []},
+        )

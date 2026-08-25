@@ -356,7 +356,7 @@ export interface EvaluateTransparencyOptions {
  *
  * Same rail as `logKeys`: a malformed policy is a caller/configuration bug
  * and throws, while omitting it entirely preserves the previous result. */
-function validateWitnessPolicy(witnessPolicy: unknown): WitnessPolicy | null {
+export function validateWitnessPolicy(witnessPolicy: unknown): WitnessPolicy | null {
   if (witnessPolicy === null || witnessPolicy === undefined) return null
   try {
     return parseWitnessPolicy(witnessPolicy)
