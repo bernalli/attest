@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "attest-bridge",
     "attest-receipts",
+    "attest-witness",
 ]
 
 [[package]]
@@ -99,6 +100,17 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "attest-witness"
+version = "0.1.0"
+source = { editable = "witness" }
+dependencies = [
+    { name = "attest-receipts" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "attest-receipts", editable = "." }]
 
 [[package]]
 name = "attrs"

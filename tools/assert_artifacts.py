@@ -65,8 +65,24 @@ _CANONICAL_EMPTY_POLICY_BYTES = b'{"epochs":[],"schema":"attest-witness-policy-v
 # The two source declarations that, together, produce those bytes.
 _WITNESS_POLICY_DECLARATIONS = (
     f'SCHEMA_ID: Final = "{_WITNESS_POLICY_SCHEMA_ID}"',
-    'CANONICAL_EMPTY_POLICY_BYTES: Final = canon.canonical_bytes('
+    "CANONICAL_EMPTY_POLICY_BYTES: Final = canon.canonical_bytes("
     '{"schema": SCHEMA_ID, "epochs": []})',
+)
+
+# The reference witness (v0.2 §11.4) is an operator component that lives in
+# top-level `witness/` and MUST NOT ship in either public artifact: its source
+# describes a deployment, its example config names key files, and it is
+# classified `Private :: Do Not Upload`. hatchling's sdist default is
+# "everything not gitignored", so this is a live risk, not a theoretical one —
+# the exclusion in pyproject.toml is what prevents it and these patterns are
+# what prove the exclusion still works.
+#
+# Anchored on path components so the module `attest/witness.py` — which is the
+# opposite requirement, asserted as REQUIRED above — cannot match: "witness/"
+# needs a trailing slash and "attest_witness" is a different token entirely.
+_PRIVATE_WITNESS_FORBIDDEN = (
+    re.compile(r"(^|/)witness/", re.IGNORECASE),
+    re.compile(r"(^|/)attest_witness(?:[./]|$)", re.IGNORECASE),
 )
 
 # Declared limit: `npm pack --json` reports a FILE LIST, not file contents, so
@@ -101,6 +117,7 @@ _NPM_FORBIDDEN = (
     re.compile(r"(?:^|[./])private(?:[./]|$)", re.IGNORECASE),
     re.compile(r"(^|/)(src|tests?)/", re.IGNORECASE),
     re.compile(r"(^|/)tsconfig(\.[^/]*)?$", re.IGNORECASE),
+    *_PRIVATE_WITNESS_FORBIDDEN,
 )
 
 
@@ -109,6 +126,13 @@ def _require_member(
 ) -> None:
     if not any(predicate(m) for m in members):
         raise ArtifactError(f"{kind}: required member matching {description!r} not found")
+
+
+def _refuse_members(members: list[str], patterns: tuple[re.Pattern[str], ...], kind: str) -> None:
+    for member in members:
+        for pattern in patterns:
+            if pattern.search(member):
+                raise ArtifactError(f"{kind}: forbidden member shipped: {member!r}")
 
 
 def _is_exact_or_suffix(needle: str) -> Callable[[str], bool]:
@@ -163,9 +187,7 @@ def _assert_packaged_empty_witness_policy(source: str, kind: str) -> None:
         )
     for declaration in _WITNESS_POLICY_DECLARATIONS:
         if declaration not in source:
-            raise ArtifactError(
-                f"{kind}: packaged witness.py does not declare {declaration!r}"
-            )
+            raise ArtifactError(f"{kind}: packaged witness.py does not declare {declaration!r}")
 
 
 def assert_wheel(path: Path) -> None:
@@ -177,6 +199,7 @@ def assert_wheel(path: Path) -> None:
         witness_source = (
             z.read(_WITNESS_MODULE).decode("utf-8") if _WITNESS_MODULE in members else None
         )
+    _refuse_members(members, _PRIVATE_WITNESS_FORBIDDEN, "wheel")
     for needle in _WHEEL_REQUIRED_EXACT:
         _require_member(members, _is_exact(needle), needle, "wheel")
     _require_member(members, _basename_equals(_LICENSE_BASENAME), _LICENSE_BASENAME, "wheel")
@@ -193,6 +216,7 @@ def assert_sdist(path: Path) -> None:
             extracted = t.extractfile(witness_members[0])
             if extracted is not None:
                 witness_source = extracted.read().decode("utf-8")
+    _refuse_members(members, _PRIVATE_WITNESS_FORBIDDEN, "sdist")
     for needle in _SDIST_REQUIRED_EXACT:
         _require_member(members, _is_exact_or_suffix(needle), needle, "sdist")
     _require_member(members, _basename_equals(_LICENSE_BASENAME), _LICENSE_BASENAME, "sdist")
@@ -206,10 +230,7 @@ def assert_npm_tarball(pack_json: list[dict[str, Any]]) -> None:
     files = [f["path"] for f in pack_json[0].get("files", [])]
     for needle in _NPM_REQUIRED_EXACT:
         _require_member(files, _is_exact(needle), needle, "npm")
-    for f in files:
-        for pat in _NPM_FORBIDDEN:
-            if pat.search(f):
-                raise ArtifactError(f"npm: forbidden member shipped: {f!r}")
+    _refuse_members(files, _NPM_FORBIDDEN, "npm")
 
 
 def main(argv: list[str] | None = None) -> int:

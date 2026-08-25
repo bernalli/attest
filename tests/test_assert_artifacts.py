@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import tarfile
 import zipfile
 from pathlib import Path
@@ -36,9 +37,7 @@ def _member_bytes(name: str, witness_source: bytes = WITNESS_SOURCE) -> bytes:
     return witness_source if name.endswith("attest/witness.py") else b"x"
 
 
-def _make_wheel(
-    tmp: Path, members: list[str], witness_source: bytes = WITNESS_SOURCE
-) -> Path:
+def _make_wheel(tmp: Path, members: list[str], witness_source: bytes = WITNESS_SOURCE) -> Path:
     p = tmp / "attest_receipts-0.1.2-py3-none-any.whl"
     with zipfile.ZipFile(p, "w") as z:
         for m in members:
@@ -46,9 +45,7 @@ def _make_wheel(
     return p
 
 
-def _make_sdist(
-    tmp: Path, members: list[str], witness_source: bytes = WITNESS_SOURCE
-) -> Path:
+def _make_sdist(tmp: Path, members: list[str], witness_source: bytes = WITNESS_SOURCE) -> Path:
     p = tmp / "attest_receipts-0.1.2.tar.gz"
     with tarfile.open(p, "w:gz") as t:
         for m in members:
@@ -300,3 +297,66 @@ def test_npm_missing_witness_module_raises() -> None:
     side can honestly assert."""
     with pytest.raises(ArtifactError, match=r"dist/witness\.js"):
         assert_npm_tarball(_pack([f for f in NPM_OK if f != "dist/witness.js"]))
+
+
+# --- The private reference witness must never ship (v0.2 §11.4) --------------
+#
+# `witness/` is an operator component: its source describes a deployment and
+# its example config names key files. hatchling's sdist default is "everything
+# not gitignored", so the exclusion in pyproject.toml is load-bearing and these
+# tests are what keep it load-bearing. The paired "not a false positive" tests
+# below matter just as much: the OPPOSITE requirement — that the packaged
+# module `attest/witness.py` IS present — is asserted a few dozen lines up, and
+# a pattern that swallowed it would trade one packaging bug for a worse one.
+
+
+def test_sdist_forbidden_private_witness_workspace_raises(tmp_path: Path) -> None:
+    p = _make_sdist(tmp_path, [*SDIST_OK, "attest_receipts-0.1.2/witness/pyproject.toml"])
+    with pytest.raises(ArtifactError, match=re.escape("witness/pyproject.toml")):
+        assert_sdist(p)
+
+
+def test_sdist_forbidden_private_witness_example_config_raises(tmp_path: Path) -> None:
+    """The example config is the worst single file to ship: it is the shape of
+    an operator's deployment, key-file paths included."""
+    p = _make_sdist(tmp_path, [*SDIST_OK, "attest_receipts-0.1.2/witness/examples/witness.toml"])
+    with pytest.raises(ArtifactError, match=re.escape("witness.toml")):
+        assert_sdist(p)
+
+
+def test_sdist_forbidden_private_witness_package_raises(tmp_path: Path) -> None:
+    p = _make_sdist(
+        tmp_path,
+        [*SDIST_OK, "attest_receipts-0.1.2/witness/src/attest_witness/service.py"],
+    )
+    with pytest.raises(ArtifactError, match=re.escape("attest_witness")):
+        assert_sdist(p)
+
+
+def test_wheel_forbidden_private_witness_package_raises(tmp_path: Path) -> None:
+    """A wheel cannot pick this up by default, but a `packages = [...]` edit
+    could — and a wheel is what `pip install` actually consumes."""
+    p = _make_wheel(tmp_path, [*WHEEL_OK, "attest_witness/__init__.py"])
+    with pytest.raises(ArtifactError, match=re.escape("attest_witness")):
+        assert_wheel(p)
+
+
+def test_npm_forbidden_private_witness_raises() -> None:
+    with pytest.raises(ArtifactError, match=re.escape("attest_witness")):
+        assert_npm_tarball(_pack([*NPM_OK, "attest_witness/cli.py"]))
+
+
+def test_sdist_attest_witness_module_is_not_a_false_positive(tmp_path: Path) -> None:
+    """`src/attest/witness.py` is REQUIRED in the sdist. The exclusion pattern
+    must not match it: it is a file named witness.py, not a witness/ directory
+    and not the attest_witness package."""
+    assert_sdist(_make_sdist(tmp_path, SDIST_OK))
+
+
+def test_wheel_attest_witness_module_is_not_a_false_positive(tmp_path: Path) -> None:
+    assert_wheel(_make_wheel(tmp_path, WHEEL_OK))
+
+
+def test_npm_dist_witness_js_is_not_a_false_positive() -> None:
+    """`dist/witness.js` is REQUIRED in the npm tarball, for the same reason."""
+    assert_npm_tarball(_pack(NPM_OK))
