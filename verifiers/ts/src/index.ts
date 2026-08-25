@@ -75,5 +75,14 @@ export {
   pinCovers as witnessPinCovers,
   pinHasStandingAt as witnessPinHasStandingAt,
   isConflicted as witnessIsConflicted,
+  PQ_COSIGNATURE_SIG_TYPE as WITNESS_PQ_COSIGNATURE_SIG_TYPE,
+  evaluateActivationWitnessQuorum,
 } from './witness.js'
-export type { WitnessPolicy, WitnessEpoch, WitnessPin, Threshold } from './witness.js'
+export type {
+  WitnessPolicy,
+  WitnessEpoch,
+  WitnessPin,
+  Threshold,
+  ActivationWitnessQuorumResult,
+  ActivationWitnessQuorumOptions,
+} from './witness.js'

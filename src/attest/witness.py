@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final
 
-from attest import canon, keys, pq, tlog
+from attest import anchor, canon, keys, pq, tlog
 
 SCHEMA_ID: Final = "attest-witness-policy-v1"
 
@@ -578,3 +578,276 @@ def evaluate_corroboration(
                 )
 
     return CorroborationVerdict(witnessed=False, warnings=[])
+
+
+# --- Standalone activation-grade hybrid quorum (v0.2 §11.4) ----------------
+#
+# A STANDALONE primitive: §11.4 defines no grant consumer, and nothing below
+# knows about receipts, result vocabularies, or grant state. It answers one
+# question — did a quorum of pinned witnesses observe THIS checkpoint, and by
+# when — and returns the conservative time at which that became true.
+
+# The activation leg's own C2SP type: `0xff` (the registry's extension
+# mechanism) followed by an identifier distinct from the checkpoint's own
+# `attest-ml-dsa-65`. Sharing the checkpoint identifier would let a
+# checkpoint signature be presented as a witness assertion.
+PQ_COSIGNATURE_SIG_TYPE: Final = b"\xff" + b"attest-cosignature-ml-dsa-65-v1"
+_PQ_COSIGNATURE_BLOB_LEN: Final = _KEY_ID_LEN + _TIMESTAMP_LEN + pq.ML_DSA_65_SIG_LEN
+
+
+@dataclass(frozen=True)
+class ActivationWitnessQuorumResult:
+    """Quorum standing and conservative witness time — nothing else.
+
+    `witness_time` is `T = min(t_i)` over the counting votes, and is `None`
+    whenever `valid` is `False`: an invalid quorum has no time to report.
+    """
+
+    valid: bool
+    witness_time: int | None
+    counting_control_groups: tuple[str, ...]
+
+
+_INVALID_QUORUM: Final = ActivationWitnessQuorumResult(
+    valid=False, witness_time=None, counting_control_groups=()
+)
+
+
+@dataclass(frozen=True)
+class _CandidatePair:
+    """One pin's unambiguous `0x04`+`0xff` candidate, before any verification."""
+
+    pin: WitnessPin
+    timestamp: int
+    ed25519_signature: bytes
+    mldsa_signature: bytes
+
+
+def _at(timestamp: int) -> datetime:
+    """A POSIX second as the aware UTC instant the policy windows compare to."""
+    return datetime.fromtimestamp(timestamp, UTC)
+
+
+def _leg(blob: object, key_id: bytes, blob_len: int) -> tuple[int, bytes] | None:
+    """Structural match of one signature-line blob against one expected key ID.
+
+    Pure byte work — no signature is verified here, which is what lets the
+    committee ceiling and the ambiguity rule bite before any crypto.
+    """
+    if not isinstance(blob, bytes) or len(blob) != blob_len:
+        return None
+    if blob[:_KEY_ID_LEN] != key_id:
+        return None
+    timestamp = int.from_bytes(blob[_KEY_ID_LEN : _KEY_ID_LEN + _TIMESTAMP_LEN], "big")
+    if timestamp > MAX_COSIGNATURE_TIMESTAMP:
+        return None
+    return timestamp, blob[_KEY_ID_LEN + _TIMESTAMP_LEN :]
+
+
+def _candidate_for(
+    pin: WitnessPin, signatures: list[tuple[str, bytes]]
+) -> _CandidatePair | None | str:
+    """This pin's candidate pair, `None` if it presented none, or `"ambiguous"`.
+
+    Ambiguity is a hard failure rather than a choice, because choosing between
+    two candidate legs would mean verifying both — exactly the work §11.4
+    requires to be bounded before crypto begins.
+    """
+    if pin.mldsa_65_pub is None:
+        return None
+    ed_key_id = cosignature_key_id(pin.name, pin.ed25519_pub)
+    pq_key_id = tlog.key_hash(pin.name, PQ_COSIGNATURE_SIG_TYPE, pin.mldsa_65_pub)
+
+    ed_legs: list[tuple[int, bytes]] = []
+    pq_legs: list[tuple[int, bytes]] = []
+    for name, blob in signatures:
+        if name != pin.name:
+            # A line naming someone else is a signed-note convention (§9.2).
+            continue
+        ed_leg = _leg(blob, ed_key_id, _COSIGNATURE_BLOB_LEN)
+        if ed_leg is not None:
+            ed_legs.append(ed_leg)
+            continue
+        pq_leg = _leg(blob, pq_key_id, _PQ_COSIGNATURE_BLOB_LEN)
+        if pq_leg is not None:
+            pq_legs.append(pq_leg)
+
+    if len(ed_legs) > 1 or len(pq_legs) > 1:
+        return "ambiguous"
+    if not ed_legs or not pq_legs:
+        return None
+    (ed_time, ed_signature), (pq_time, pq_signature) = ed_legs[0], pq_legs[0]
+    # Both legs sign the byte-identical payload, timestamp included: legs
+    # carrying different times are not a pair at all.
+    if ed_time != pq_time:
+        return None
+    return _CandidatePair(
+        pin=pin,
+        timestamp=ed_time,
+        ed25519_signature=ed_signature,
+        mldsa_signature=pq_signature,
+    )
+
+
+def _verifies(candidate: _CandidatePair, note_bytes: bytes) -> bool:
+    """Fail-closed AND over both legs of one candidate pair.
+
+    Ed25519 first, and the ML-DSA leg is never reached when it fails: an
+    attacker who can put arbitrary lines in a note must not be able to buy
+    post-quantum verification work with a garbage classical signature.
+    """
+    message = cosignature_message(note_bytes, candidate.timestamp)
+    if not keys.verify_strict(message, candidate.ed25519_signature, candidate.pin.ed25519_pub):
+        return False
+    assert candidate.pin.mldsa_65_pub is not None  # guaranteed by `_candidate_for`
+    return pq.verify_strict(message, candidate.mldsa_signature, candidate.pin.mldsa_65_pub)
+
+
+def evaluate_activation_witness_quorum(
+    checkpoint_text: object,
+    *,
+    witness_policy: WitnessPolicy,
+    epoch_id: object,
+    expected_origin: str,
+    anchor_evidence: dict[str, Any],
+    anchor_policy: anchor.AnchorPolicy,
+    conflict_domain: str,
+) -> ActivationWitnessQuorumResult:
+    """Evaluate the reusable activation-grade hybrid quorum of §11.4.
+
+    Trusted configuration — the witness policy, the anchor policy, the
+    expected origin, the conflict domain — RAISES when malformed, on the same
+    rail as pinned log keys. Everything untrusted — the checkpoint text, its
+    signature lines, the anchor evidence — degrades to
+    `valid=False`, never an exception.
+
+    The evaluation order is normative, not incidental: the committee ceiling
+    and the one-candidate-per-control-group rule are enforced BEFORE any
+    signature verification, so a hostile policy or note cannot turn this
+    primitive into a work amplifier.
+
+    No local clock is consulted anywhere: an observation that was valid when
+    it was made stays verifiable forever.
+    """
+    # 1. Trusted configuration.
+    if not isinstance(witness_policy, WitnessPolicy):
+        raise WitnessError("witness_policy must be a parsed WitnessPolicy")
+    if not isinstance(anchor_policy, anchor.AnchorPolicy):
+        raise WitnessError("anchor_policy must be an anchor.AnchorPolicy")
+    anchor.validate_policy(anchor_policy)
+    expected_origin = _require_origin(expected_origin, "expected_origin")
+    conflict_domain = _require_dns_name(conflict_domain, "conflict_domain")
+
+    # 2. The named epoch, never a substitute for one that fails to resolve.
+    if not isinstance(epoch_id, str):
+        return _INVALID_QUORUM
+    epoch = witness_policy.epoch(epoch_id)
+    if epoch is None:
+        return _INVALID_QUORUM
+
+    # 3-4. Committee form. `threshold.n` counts distinct activation-role
+    # control groups, so the ceiling is a property of the epoch's MEMBERSHIP,
+    # not of the number the policy declares — and it is checked first, before
+    # the declared form, because it is the bound on work.
+    #
+    # Measured, not assumed: the ceiling here is REDUNDANT today. `n > 9` is
+    # already refused at parse time, so an epoch that trips the ceiling also
+    # trips the form check, and no case can distinguish the two — deleting
+    # either one alone leaves every parity case green, deleting both turns
+    # `committee-of-ten` red. It stays because §11.4 states it normatively
+    # ("MUST be enforced before any Ed25519 or ML-DSA-65 signature
+    # verification") and because a future policy revision that relaxes the
+    # parser must not silently relax this.
+    committee = {
+        pin.control_group for pin in epoch.witnesses if ROLE_SUNSET_ACTIVATION in pin.roles
+    }
+    if len(committee) > MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE:
+        return _INVALID_QUORUM
+    if len(committee) != epoch.threshold.n:
+        return _INVALID_QUORUM
+
+    # 5. Origin scope: an epoch listing other origins says nothing about this
+    # log. Fail-closed, so an epoch with no origins carries no quorum.
+    if expected_origin not in epoch.log_origins:
+        return _INVALID_QUORUM
+
+    # 6-7. The checkpoint is untrusted; parse it once, and only structurally
+    # (this primitive never authenticates the checkpoint — that is the
+    # caller's log key, not a witness's business).
+    if not isinstance(checkpoint_text, str):
+        return _INVALID_QUORUM
+    try:
+        checkpoint = tlog.parse_checkpoint(checkpoint_text)
+        signatures = tlog.note_signatures(checkpoint_text)
+    except tlog.TlogError:
+        return _INVALID_QUORUM
+    if checkpoint.origin != expected_origin:
+        return _INVALID_QUORUM
+
+    # 8. Conflict exclusion, before crypto and before pairing.
+    eligible = [
+        pin
+        for pin in epoch.witnesses
+        if ROLE_SUNSET_ACTIVATION in pin.roles and not epoch.is_conflicted(pin, conflict_domain)
+    ]
+
+    # 9. At most one unambiguous candidate pair per control group.
+    candidates: dict[str, _CandidatePair] = {}
+    for pin in eligible:
+        candidate = _candidate_for(pin, signatures)
+        if candidate is None:
+            continue
+        if isinstance(candidate, str):  # "ambiguous"
+            return _INVALID_QUORUM
+        if candidate.pin.control_group in candidates:
+            return _INVALID_QUORUM
+        candidates[candidate.pin.control_group] = candidate
+
+    # 10-11. Fail-closed AND over both legs, one pair per group at most.
+    verified = [
+        candidate
+        for candidate in candidates.values()
+        if _verifies(candidate, checkpoint.note_bytes)
+    ]
+    if not verified:
+        return _INVALID_QUORUM
+
+    # 12-14. `T = min(t_i)`: the conservative quorum time. Taking the maximum
+    # would let the latest signer stretch the anchor window every earlier
+    # observation is judged by.
+    quorum_time = min(candidate.timestamp for candidate in verified)
+
+    # 15-16. Epoch validity, pin validity and compromise state are all judged
+    # AT `T`, not at each leg's own timestamp.
+    if not epoch.covers(_at(quorum_time)):
+        return _INVALID_QUORUM
+    counting = [
+        candidate for candidate in verified if candidate.pin.has_standing_at(_at(quorum_time))
+    ]
+    if len(counting) < epoch.threshold.m:
+        return _INVALID_QUORUM
+
+    # 17-18. Every counting vote already refers to this checkpoint: its note
+    # body is inside the payload each leg signed. What remains is the skew.
+    times = [candidate.timestamp for candidate in counting]
+    latest = max(times)
+    if latest - min(times) > MAX_WITNESS_SKEW_SECONDS:
+        return _INVALID_QUORUM
+
+    # 19-21. A full `signed-note-v2` anchor over the complete signed note —
+    # cosignature lines included — is what ties these observations to a
+    # PQ-surviving time. A `note-v1` anchor commits to the unsigned header
+    # alone and so says nothing about the lines being counted here.
+    verdict = anchor.verify_anchor(anchor_evidence, checkpoint, anchor_policy)
+    if not verdict.pq_surviving or verdict.note_only or verdict.anchored_before is None:
+        return _INVALID_QUORUM
+    anchored_at = verdict.anchored_before
+    if not latest <= anchored_at <= quorum_time + MAX_WITNESS_ANCHOR_DELAY_SECONDS:
+        return _INVALID_QUORUM
+
+    # 22.
+    return ActivationWitnessQuorumResult(
+        valid=True,
+        witness_time=quorum_time,
+        counting_control_groups=tuple(sorted({c.pin.control_group for c in counting})),
+    )

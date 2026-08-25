@@ -9,12 +9,17 @@
 // not adversarial input (§10.2). Nothing here parses evidence or verifies a
 // signature.
 
+import { AnchorPolicy, validatePolicy, verifyAnchor } from './anchor.js'
 import { b64uDecode } from './b64u.js'
 import { canonicalBytes, loadsStrict } from './canon.js'
 import { parseStrictUtc } from './dates.js'
-import { ML_DSA_65_PK_LEN } from './mldsa.js'
+import {
+  ML_DSA_65_PK_LEN,
+  ML_DSA_65_SIG_LEN,
+  verifyStrict as verifyMlDsaStrict,
+} from './mldsa.js'
 import { verifyStrict as verifyEd25519Strict } from './ed25519.js'
-import { keyHash, type Checkpoint } from './tlog.js'
+import { TlogError, keyHash, noteSignatures, parseCheckpoint, type Checkpoint } from './tlog.js'
 
 export const SCHEMA_ID = 'attest-witness-policy-v1'
 
@@ -526,4 +531,299 @@ export function evaluateCorroboration(
     }
   }
   return { witnessed: false, warnings: [] }
+}
+
+// --- Standalone activation-grade hybrid quorum (v0.2 §11.4) ----------------
+//
+// A STANDALONE primitive: §11.4 defines no grant consumer, and nothing below
+// knows about receipts, result vocabularies, or grant state. It answers one
+// question — did a quorum of pinned witnesses observe THIS checkpoint, and by
+// when — and returns the conservative time at which that became true.
+// Mirrors src/attest/witness.py step for step.
+
+// The activation leg's own C2SP type: `0xff` (the registry's extension
+// mechanism) followed by an identifier distinct from the checkpoint's own
+// `attest-ml-dsa-65`. Sharing the checkpoint identifier would let a checkpoint
+// signature be presented as a witness assertion.
+export const PQ_COSIGNATURE_SIG_TYPE = new Uint8Array([
+  0xff,
+  ...new TextEncoder().encode('attest-cosignature-ml-dsa-65-v1'),
+])
+const PQ_COSIGNATURE_BLOB_LEN = KEY_ID_LEN + TIMESTAMP_LEN + ML_DSA_65_SIG_LEN
+
+/** Quorum standing and conservative witness time — nothing else.
+ *
+ * `witnessTime` is `T = min(t_i)` over the counting votes, and is `null`
+ * whenever `valid` is `false`: an invalid quorum has no time to report. */
+export interface ActivationWitnessQuorumResult {
+  readonly valid: boolean
+  readonly witnessTime: number | null
+  readonly countingControlGroups: readonly string[]
+}
+
+export interface ActivationWitnessQuorumOptions {
+  readonly witnessPolicy: WitnessPolicy
+  readonly epochId: unknown
+  readonly expectedOrigin: string
+  readonly anchorEvidence: unknown
+  readonly anchorPolicy: AnchorPolicy
+  readonly conflictDomain: string
+}
+
+const INVALID_QUORUM: ActivationWitnessQuorumResult = Object.freeze({
+  valid: false,
+  witnessTime: null,
+  countingControlGroups: Object.freeze([]),
+})
+
+/** One pin's unambiguous `0x04`+`0xff` candidate, before any verification. */
+interface CandidatePair {
+  readonly pin: WitnessPin
+  readonly timestamp: number
+  readonly ed25519Signature: Uint8Array
+  readonly mldsaSignature: Uint8Array
+}
+
+/** Structural match of one signature-line blob against one expected key ID.
+ *
+ * Pure byte work — no signature is verified here, which is what lets the
+ * committee ceiling and the ambiguity rule bite before any crypto. */
+function leg(
+  blob: unknown,
+  keyId: Uint8Array,
+  blobLen: number,
+): { timestamp: number; signature: Uint8Array } | null {
+  if (!(blob instanceof Uint8Array) || blob.length !== blobLen) return null
+  if (!equalBytes(blob.subarray(0, KEY_ID_LEN), keyId)) return null
+  const view = new DataView(blob.buffer, blob.byteOffset + KEY_ID_LEN, TIMESTAMP_LEN)
+  const seconds = view.getBigUint64(0, false)
+  if (seconds > BigInt(MAX_COSIGNATURE_TIMESTAMP)) return null
+  return { timestamp: Number(seconds), signature: blob.subarray(KEY_ID_LEN + TIMESTAMP_LEN) }
+}
+
+/** This pin's candidate pair, `null` if it presented none, `'ambiguous'` if it
+ * presented more than one of either leg.
+ *
+ * Ambiguity is a hard failure rather than a choice, because choosing between
+ * two candidate legs would mean verifying both — exactly the work §11.4
+ * requires to be bounded before crypto begins. */
+function candidateFor(
+  pin: WitnessPin,
+  signatures: ReadonlyArray<readonly [string, Uint8Array]>,
+): CandidatePair | null | 'ambiguous' {
+  if (pin.mldsa65Pub === null) return null
+  const edKeyId = cosignatureKeyId(pin.name, pin.ed25519Pub)
+  const pqKeyId = keyHash(pin.name, PQ_COSIGNATURE_SIG_TYPE, pin.mldsa65Pub)
+
+  const edLegs: Array<{ timestamp: number; signature: Uint8Array }> = []
+  const pqLegs: Array<{ timestamp: number; signature: Uint8Array }> = []
+  for (const [name, blob] of signatures) {
+    // A line naming someone else is a signed-note convention (§9.2).
+    if (name !== pin.name) continue
+    const ed = leg(blob, edKeyId, COSIGNATURE_BLOB_LEN)
+    if (ed !== null) {
+      edLegs.push(ed)
+      continue
+    }
+    const pq = leg(blob, pqKeyId, PQ_COSIGNATURE_BLOB_LEN)
+    if (pq !== null) pqLegs.push(pq)
+  }
+
+  if (edLegs.length > 1 || pqLegs.length > 1) return 'ambiguous'
+  if (edLegs.length === 0 || pqLegs.length === 0) return null
+  const ed = edLegs[0]!
+  const pq = pqLegs[0]!
+  // Both legs sign the byte-identical payload, timestamp included: legs
+  // carrying different times are not a pair at all.
+  if (ed.timestamp !== pq.timestamp) return null
+  return {
+    pin,
+    timestamp: ed.timestamp,
+    ed25519Signature: ed.signature,
+    mldsaSignature: pq.signature,
+  }
+}
+
+/** Fail-closed AND over both legs of one candidate pair.
+ *
+ * Ed25519 first, and the ML-DSA leg is never reached when it fails: an
+ * attacker who can put arbitrary lines in a note must not be able to buy
+ * post-quantum verification work with a garbage classical signature. */
+function verifiesBothLegs(candidate: CandidatePair, noteBytes: Uint8Array): boolean {
+  const message = cosignatureMessage(noteBytes, candidate.timestamp)
+  if (!verifyEd25519Strict(message, candidate.ed25519Signature, candidate.pin.ed25519Pub))
+    return false
+  // `mldsa65Pub` is non-null for every candidate — `candidateFor` returns
+  // `null` otherwise.
+  return verifyMlDsaStrict(message, candidate.mldsaSignature, candidate.pin.mldsa65Pub!)
+}
+
+/** Refuse anything that is not a policy this module itself parsed.
+ *
+ * The Python core gets this from `isinstance(WitnessPolicy)`. TypeScript
+ * interfaces are erased at runtime, so the check here is one of SHAPE: a
+ * parsed policy carries exactly `epochs`, and each of its epochs carries the
+ * camelCase fields `parseEpoch` produces. That is what catches the mistake
+ * this guard exists for — handing the raw JSON document (with its `schema`
+ * member and `epoch_id`/`not_before` keys) straight to the evaluator, which
+ * would otherwise resolve no epoch and look like an ordinary negative result
+ * instead of the configuration bug it is.
+ *
+ * Declared limit: an empty hand-built `{ epochs: [] }` is indistinguishable
+ * from a parsed empty policy here, while the Python core would reject it.
+ * Both cores return the same verdict for it (no epoch resolves), so no
+ * verification outcome diverges — only the diagnostic does. */
+function requireParsedPolicy(policy: unknown): asserts policy is WitnessPolicy {
+  if (typeof policy !== 'object' || policy === null || Array.isArray(policy))
+    throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
+  const members = Object.keys(policy)
+  if (members.length !== 1 || members[0] !== 'epochs')
+    throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
+  const epochs = (policy as { epochs: unknown }).epochs
+  if (!Array.isArray(epochs))
+    throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
+  for (const epoch of epochs) {
+    if (
+      typeof epoch !== 'object' ||
+      epoch === null ||
+      typeof (epoch as WitnessEpoch).epochId !== 'string' ||
+      typeof (epoch as WitnessEpoch).notBefore !== 'number' ||
+      typeof (epoch as WitnessEpoch).threshold !== 'object' ||
+      !Array.isArray((epoch as WitnessEpoch).witnesses)
+    )
+      throw new WitnessError('witnessPolicy must be a parsed WitnessPolicy')
+  }
+}
+
+/** Evaluate the reusable activation-grade hybrid quorum of §11.4.
+ *
+ * Trusted configuration — the witness policy, the anchor policy, the expected
+ * origin, the conflict domain — THROWS when malformed, on the same rail as
+ * pinned log keys. Everything untrusted — the checkpoint text, its signature
+ * lines, the anchor evidence — degrades to `valid: false`, never an exception.
+ *
+ * The evaluation order is normative, not incidental: the committee ceiling and
+ * the one-candidate-per-control-group rule are enforced BEFORE any signature
+ * verification, so a hostile policy or note cannot turn this primitive into a
+ * work amplifier.
+ *
+ * No local clock is consulted anywhere: an observation that was valid when it
+ * was made stays verifiable forever. */
+export function evaluateActivationWitnessQuorum(
+  checkpointText: unknown,
+  options: ActivationWitnessQuorumOptions,
+): ActivationWitnessQuorumResult {
+  const { witnessPolicy, epochId, anchorEvidence, anchorPolicy } = options
+
+  // 1. Trusted configuration.
+  requireParsedPolicy(witnessPolicy)
+  if (typeof anchorPolicy !== 'object' || anchorPolicy === null)
+    throw new WitnessError('anchorPolicy must be an AnchorPolicy')
+  validatePolicy(anchorPolicy)
+  const expectedOrigin = requireOrigin(options.expectedOrigin, 'expectedOrigin')
+  const conflictDomain = requireDnsName(options.conflictDomain, 'conflictDomain')
+
+  // 2. The named epoch, never a substitute for one that fails to resolve.
+  if (typeof epochId !== 'string') return INVALID_QUORUM
+  const epoch = findEpoch(witnessPolicy, epochId)
+  if (epoch === undefined) return INVALID_QUORUM
+
+  // 3-4. Committee form. `threshold.n` counts distinct activation-role control
+  // groups, so the ceiling is a property of the epoch's MEMBERSHIP, not of the
+  // number the policy declares — and it is checked first, before the declared
+  // form, because it is the bound on work.
+  //
+  // Measured, not assumed: the ceiling is REDUNDANT today. `n > 9` is already
+  // refused at parse time, so an epoch that trips the ceiling also trips the
+  // form check, and no case can distinguish the two — deleting either one
+  // alone leaves every parity case green, deleting both turns
+  // `committee-of-ten` red. It stays because §11.4 states it normatively and
+  // because a future policy revision that relaxes the parser must not silently
+  // relax this.
+  const committee = new Set(
+    epoch.witnesses
+      .filter((pin) => pin.roles.includes(ROLE_SUNSET_ACTIVATION))
+      .map((pin) => pin.controlGroup),
+  )
+  if (committee.size > MAX_ACTIVATION_WITNESS_COMMITTEE_SIZE) return INVALID_QUORUM
+  if (committee.size !== epoch.threshold.n) return INVALID_QUORUM
+
+  // 5. Origin scope: an epoch listing other origins says nothing about this
+  // log. Fail-closed, so an epoch with no origins carries no quorum.
+  if (!epoch.logOrigins.includes(expectedOrigin)) return INVALID_QUORUM
+
+  // 6-7. The checkpoint is untrusted; parse it once, and only structurally
+  // (this primitive never authenticates the checkpoint — that is the caller's
+  // log key, not a witness's business).
+  if (typeof checkpointText !== 'string') return INVALID_QUORUM
+  let checkpoint: Checkpoint
+  let signatures: Array<[string, Uint8Array]>
+  try {
+    checkpoint = parseCheckpoint(checkpointText)
+    signatures = noteSignatures(checkpointText)
+  } catch (error) {
+    if (error instanceof TlogError) return INVALID_QUORUM
+    throw error
+  }
+  if (checkpoint.origin !== expectedOrigin) return INVALID_QUORUM
+
+  // 8. Conflict exclusion, before crypto and before pairing.
+  const eligible = epoch.witnesses.filter(
+    (pin) => pin.roles.includes(ROLE_SUNSET_ACTIVATION) && !isConflicted(epoch, pin, conflictDomain),
+  )
+
+  // 9. At most one unambiguous candidate pair per control group.
+  const candidates = new Map<string, CandidatePair>()
+  for (const pin of eligible) {
+    const candidate = candidateFor(pin, signatures)
+    if (candidate === null) continue
+    if (candidate === 'ambiguous') return INVALID_QUORUM
+    if (candidates.has(candidate.pin.controlGroup)) return INVALID_QUORUM
+    candidates.set(candidate.pin.controlGroup, candidate)
+  }
+
+  // 10-11. Fail-closed AND over both legs, one pair per group at most.
+  const verified = [...candidates.values()].filter((candidate) =>
+    verifiesBothLegs(candidate, checkpoint.noteBytes),
+  )
+  if (verified.length === 0) return INVALID_QUORUM
+
+  // 12-14. `T = min(t_i)`: the conservative quorum time. Taking the maximum
+  // would let the latest signer stretch the anchor window every earlier
+  // observation is judged by.
+  const quorumTime = Math.min(...verified.map((candidate) => candidate.timestamp))
+
+  // 15-16. Epoch validity, pin validity and compromise state are all judged AT
+  // `T`, not at each leg's own timestamp.
+  if (!epochCovers(epoch, quorumTime * 1000)) return INVALID_QUORUM
+  const counting = verified.filter((candidate) =>
+    pinHasStandingAt(candidate.pin, quorumTime * 1000),
+  )
+  if (counting.length < epoch.threshold.m) return INVALID_QUORUM
+
+  // 17-18. Every counting vote already refers to this checkpoint: its note
+  // body is inside the payload each leg signed. What remains is the skew.
+  const times = counting.map((candidate) => candidate.timestamp)
+  const latest = Math.max(...times)
+  if (latest - Math.min(...times) > MAX_WITNESS_SKEW_SECONDS) return INVALID_QUORUM
+
+  // 19-21. A full `signed-note-v2` anchor over the complete signed note —
+  // cosignature lines included — is what ties these observations to a
+  // PQ-surviving time. A `note-v1` anchor commits to the unsigned header alone
+  // and so says nothing about the lines being counted here.
+  const verdict = verifyAnchor(anchorEvidence, checkpoint, anchorPolicy)
+  if (!verdict.pqSurviving || verdict.noteOnly || verdict.anchoredBefore === null)
+    return INVALID_QUORUM
+  const anchoredAt = verdict.anchoredBefore
+  if (!(latest <= anchoredAt && anchoredAt <= quorumTime + MAX_WITNESS_ANCHOR_DELAY_SECONDS))
+    return INVALID_QUORUM
+
+  // 22.
+  return Object.freeze({
+    valid: true,
+    witnessTime: quorumTime,
+    countingControlGroups: Object.freeze(
+      [...new Set(counting.map((candidate) => candidate.pin.controlGroup))].sort(),
+    ),
+  })
 }
