@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "attest-receipts"
-version = "0.6.0"
+version = "0.7.0"
 description = "attest reference implementation (v0.1 and v0.2) — cryptographically-signed, offline-verifiable purchase receipts"
 readme = "README.md"
 license = { file = "LICENSE" }
