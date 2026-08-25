@@ -107,8 +107,9 @@ def _minimal_spec_v02() -> str:
         + "taking the MAXIMUM over the verified proofs. The legal text that binds a buyer "
         + "is always the FLOOR's, and a later version differing in ANY of the three "
         + "prose-bearing members is reported. Scope coverage, and it is a gate: Grant "
-        + "coverage of a receipt is a DIFFERENT predicate from declaration coverage. The "
-        + "declaration step never stops at the first one that succeeds.\n"
+        + "coverage of a receipt is a DIFFERENT predicate from declaration coverage, and "
+        + "the artifact list must be present and non-empty. The declaration step never "
+        + "stops at the first one that succeeds.\n"
         + "\n## Appendix A — The custodian interface (non-normative)\n\nSketch.\n"
     )
 
@@ -1527,6 +1528,13 @@ def test_receipt_id_prose_row_absent_while_schema_pattern_present_is_an_error() 
             "Grant coverage of a receipt uses the same predicate",
             "spec_v02",
             "Grant coverage of a receipt is a DIFFERENT predicate",
+        ),
+        (
+            "empty artifact list left to a vacuous quantifier",
+            "present and non-empty",
+            "present",
+            "spec_v02",
+            "present and non-empty",
         ),
         (
             "declaration scan turned into a short circuit",

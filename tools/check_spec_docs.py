@@ -709,6 +709,11 @@ _STAGE4_REQUIRED_LITERALS: tuple[str, ...] = (
     "Grant coverage of a receipt is a DIFFERENT predicate",
     "never stops at the first one that succeeds",
     "ANY of the three prose-bearing members",
+    # A universal quantifier over an absent artifact list is vacuously true,
+    # which would make every grant cover every series-only receipt. The
+    # non-empty requirement is what stops a false activation from falling out
+    # of a quantifier, so it is pinned as a claim, not left in a table cell.
+    "present and non-empty",
 )
 
 _APPENDIX_A_HEADING = "## Appendix A — The custodian interface (non-normative)"
