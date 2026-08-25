@@ -292,7 +292,7 @@ def test_readme_answers_a_buyer_before_it_explains_cryptography(tmp_path: Path) 
     with zipfile.ZipFile(attest_path) as zf:
         readme = zf.read("README.html").decode("utf-8")
 
-    assert "This file is a purchase receipt." in readme
+    assert "This file is your receipt." in readme
     assert "If the store that sold you this is gone" in readme
 
     assert readme.index("Never share mylibrary.private.attest") < readme.index("Ed25519")

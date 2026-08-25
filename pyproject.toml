@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "attest-receipts"
 version = "0.7.0"
-description = "attest reference implementation (v0.1 and v0.2) — cryptographically-signed, offline-verifiable purchase receipts"
+description = "attest reference implementation: seller-signed purchase receipts the buyer holds, verifiable offline with no server to keep alive."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Samuele Martinalli" }]
-keywords = ["receipts", "ed25519", "digital-purchases", "consumer-protection", "offline-verification"]
+keywords = ["digital-ownership", "purchase-receipts", "receipts", "offline-verification", "ed25519", "consumer-protection", "drm-free", "digital-goods"]
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.12",

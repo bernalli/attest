@@ -4,6 +4,98 @@ Honest answers to the questions a skeptical first visitor asks. Same register as
 the [README](../README.md): where the answer is "no," this says why, and what the
 real lever is instead.
 
+## What is attest?
+
+A way to hold on to what you buy digitally. When you buy a game, a movie, an
+album or a book, the seller signs a receipt at checkout and hands it to you
+as a small file. That file is yours. Keep it on your disk, in cloud
+storage, on a USB stick. Anyone can check it's genuine without asking the seller: the
+check runs offline, on your own machine, and it keeps working after the store
+shuts down or your account disappears.
+
+Today this works where sellers ship DRM-free files and choose to sign —
+think GOG-style stores, itch.io, publishers selling directly. The longer-term
+aim is that closed platforms hand you one too. In the EU, sellers are
+already required to confirm every purchase on a durable medium — that's the
+receipt email in your inbox. attest is that same confirmation in a format a
+machine can verify and you can take with you. No
+store issues attest receipts yet. The standard, the tools and the test suite
+are done and free to use; what's missing is the first seller who signs.
+
+## How is this different from the receipt I already get by email?
+
+The email attests the same thing. The difference is who can verify it, and when.
+
+That confirmation email is a PDF anyone can forge in five minutes. It lives in
+an inbox, or behind the very account you're worried about losing. Every store
+formats it differently, so no machine can rely on it. And if you need to prove
+it's real twenty years from now, you need the store alive to ask — or a human
+willing to weigh the evidence for you.
+
+An attest receipt is signed with the seller's cryptographic key: faking one
+means breaking the signature, not editing a document. It's one standard
+format, so one free verifier works for every store that signs. Anyone can
+check it offline, on their own machine, trusting nobody and contacting nobody.
+It's bound to you: someone who copies your receipt can't prove it's theirs.
+And it carries machine-readable rules for revocation, and for transfer where
+the seller allows it. Same fact attested. Completely different lifespan.
+
+## Nobody forces a seller to adopt this. So what's the point?
+
+Nobody forces them, true. That's why there are two routes, and neither is a
+fantasy.
+
+For a DRM-free seller, the cost is close to zero and the reason is
+commercial. attest-bridge runs as one small self-hosted service next to the
+existing checkout — Stripe, itch.io or Shopify today — and turns every paid
+order into a signed receipt, automatically. What the seller gets for that is
+trust: "what you buy from me stays yours, even if I disappear" is a selling
+argument, the same one GOG built a whole brand on. An independent publisher
+can offer this tomorrow, and nobody can stop them.
+
+For everyone who won't sign voluntarily, the route is legal, not technical.
+EU law already obliges every online seller to confirm your purchase on a
+durable medium; that's why confirmation emails exist at all. attest is that
+same confirmation in a format a machine can verify and you can carry away. A
+regulator doesn't have to invent a new obligation, only require a usable
+format for one that already exists. The standard is written for exactly that
+moment: open and royalty-free, with two independent implementations, a
+conformance suite and an active IETF draft behind it.
+
+And the open bet is adoption itself. No store signs attest receipts today,
+and no regulator mandates them. If that never changes, attest stays a
+well-tested spec. The work right now is getting the first DRM-free sellers
+signing; everything else follows from there, or not at all.
+
+## The store that signed my receipts shut down years ago. What do I actually do with them?
+
+Two cases, and they're different.
+
+You have the file, because the store sold DRM-free and you downloaded it.
+Then the content is already yours, and the receipt keeps doing its job: it
+verifies offline against the store's published keys, forever, with nobody's
+permission, and it proves to anyone who needs to know — a successor honoring
+old purchases, an archive authorized to serve them, a buyer if resale was
+authorized — that your copy is legitimate. One limit, named: transfers are
+countersigned by the issuer, so today they stop when the issuer does. Making
+them survive the issuer has a name too, transfer-authority succession, and
+it's on the roadmap. So the rule on any DRM-free store is simple: download
+what you buy, and keep the file next to the receipt. Content plus proof, both
+in your hands.
+
+You don't have the file. Then the receipt alone doesn't bring it back. It
+proves you bought the thing; it isn't the thing, and no signature can conjure
+a file out of a dead server. What closes this gap is the Preservation Pledge,
+the piece of the standard in design right now: a license term the publisher
+signs at the moment of sale, committing that when they cease distribution the
+content becomes redistributable to valid receipt holders. The pledge
+activates on a signed end-of-life declaration from the publisher or from a
+successor they named, or when a backstop date passes. From that moment, any
+archive holding the content can hand you your copy against your receipt. One
+hole stays open: a publisher that vanishes silently, never having named a
+successor or a date. That case is tracked as an open problem in the threat
+model, and only a witnessed heartbeat scheme will close it.
+
 ## Is this centralized?
 
 No. There is no central attest authority, no registry that must exist, and no
@@ -107,8 +199,11 @@ depends on such a registry existing.
 
 None of those. attest is content-free: a receipt is evidence that a license was
 granted, and it never touches, wraps, hosts, or indexes the underlying work
-itself. It doesn't strip or bypass DRM, it isn't a marketplace or distribution
-channel, and it isn't a resale or transfer mechanism in this version (the
-`transferable` field is reserved, not implemented). Having a valid attest
+itself. It doesn't strip or bypass DRM, and it isn't a marketplace or
+distribution channel. It does support transfer, but only issuer-mediated: a
+signed transfer moves a receipt to a new holder with the issuer's
+countersignature, and today that stops working once the issuer is gone —
+making the transfer authority survive the issuer is unfinished work
+(transfer-authority succession, tracked on the roadmap). Having a valid attest
 receipt says only that an issuer signed a claim that a license was granted — it
 carries no copy of the work and grants no access to one.

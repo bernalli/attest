@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "attest-bridge"
 version = "0.1.0"
-description = "attest webhook bridge — self-hosted purchase-event to signed-receipt issuer (UNRELEASED)"
+description = "attest-bridge — turns a store into a receipt issuer: self-hosted, next to checkout, no code required (UNRELEASED)"
 requires-python = ">=3.12"
 dependencies = ["attest-receipts>=0.4.0"]
 classifiers = ["Private :: Do Not Upload"]
