@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,9 @@ import pytest
 from attest import cli, issue, keys, pq, revocation, ulid
 from demo import custodian as custodian_mod
 from demo.custodian import Custodian, Decision
+from demo.pledge_dies import run_demo
+
+CapSys = pytest.CaptureFixture[str]
 
 PUBLISHER = "pub.pledge.example"
 PUB_KID = f"{PUBLISHER}/keys/bootstrap-1#ed25519-1"
@@ -728,3 +732,81 @@ def test_a_hostile_request_never_raises(world: World, tmp_path: Path) -> None:
     assert isinstance(decision, Decision)
     assert decision.served is False
     assert decision.reason == "redemption_proof_invalid"
+
+
+# --------------------------------------------------------------------------
+# The demo itself: `demo/pledge_dies.py`, publisher-declaration pass.
+# --------------------------------------------------------------------------
+
+
+def test_the_pledge_fires_and_the_gate_delivers(tmp_path: Path, capsys: CapSys) -> None:
+    outcomes = run_demo(tmp_path)
+    narration = capsys.readouterr().out
+
+    assert outcomes["trigger"] == "publisher-declaration"
+    assert outcomes["receipt_id"]
+
+    # The store is gone before anything is asked of the gate.
+    assert outcomes["store_dir_deleted"] is True
+    assert not (tmp_path / "store").exists()
+
+    # Dormant first: the pledge exists, the trigger has not fired.
+    assert outcomes["verify_dormant"]["ok"] is True
+    assert outcomes["verify_dormant"]["grant"] == "dormant"
+    assert outcomes["refusal_dormant"] == "grant_not_activated"
+
+    # Then the rights holder declares, and only then does the grant activate.
+    assert outcomes["verify_activated"]["grant"] == "activated"
+
+    # The refusals that matter, at an ACTIVE grant.
+    assert outcomes["refusal_bad_receipt"] == "receipt_not_ok"
+    assert outcomes["refusal_bad_proof"] == "redemption_proof_invalid"
+    assert outcomes["refusal_replayed_proof"] == "redemption_proof_invalid"
+    assert outcomes["refusal_salt"] == "salt_disclosure_rejected"
+
+    # And the delivery, checked against the receipt that outlived the store.
+    assert outcomes["served"] == "served"
+    assert outcomes["check_artifact"]["match"] is True
+    assert outcomes["check_artifact_exit_code"] == 0
+
+    delivered = Path(outcomes["delivered"])
+    assert delivered.is_file()
+    assert delivered.read_bytes() == Path(outcomes["archived_copy"]).read_bytes()
+
+    for step in ("Step 6", "Step 8", "Step 9", "Step 11"):
+        assert step in narration
+
+
+def test_the_gate_refuses_before_the_declaration_exists(tmp_path: Path) -> None:
+    """The anti-overclaim guard: the demo must not mint the declaration and
+    then narrate a refusal it never really faced. The dormant refusal is
+    recorded while the declaration file does not yet exist on disk."""
+    outcomes = run_demo(tmp_path)
+
+    assert outcomes["declaration_existed_at_dormant_refusal"] is False
+    assert outcomes["refusal_dormant"] == "grant_not_activated"
+
+
+def test_the_buyer_secrets_are_owner_only(tmp_path: Path) -> None:
+    """Two secrets now, not one: the binding salt and the buyer's own signing
+    seed. Losing the seed is losing the ability to redeem at all."""
+    outcomes = run_demo(tmp_path)
+
+    for key in ("salt_path", "buyer_seed_path"):
+        mode = stat.S_IMODE(Path(outcomes[key]).stat().st_mode)
+        assert mode == 0o600, f"{key} is {oct(mode)}, expected 0o600"
+
+
+def test_the_demo_touches_nothing_outside_its_own_workspace(tmp_path: Path) -> None:
+    """The demo deletes a directory. The guard is not that it deletes the
+    right one, it is that it cannot reach past its own workspace."""
+    canary_root = tmp_path / "canary"
+    canary_root.mkdir()
+    canary = canary_root / "do-not-touch.txt"
+    canary.write_text("untouched", encoding="utf-8")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    run_demo(workspace)
+
+    assert canary.read_text(encoding="utf-8") == "untouched"
