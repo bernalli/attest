@@ -30,6 +30,18 @@ ratchet forbids a later grant from narrowing scope, the floor's scope is a
 subset of the effective one: reading the floor is therefore strictly
 conservative, never permissive.
 
+Honesty about that check: it is belt over braces, not the last line of
+defence it might look like. §18.4's coverage predicate already refuses to
+activate a grant that does not cover the receipt's work, artifact by
+artifact, so every construction tried against this gate was turned away by
+the verifier before the filter here was ever consulted. It stays because a
+gate that hands over bytes should decide for itself that it is allowed to,
+not because anything is known to slip past without it.
+
+Both files the requester owns — the receipt and the grant evidence — are
+frozen into storage the gate owns for the length of a call, because a path
+that is read more than once is a path that can change between reads.
+
 Refusals are verdicts, never exceptions. A gate that raises on hostile input
 leaks which check failed through the shape of the crash, and §18.7 asks for
 the opposite. The boundary is hostile input, and it is drawn deliberately:
@@ -183,9 +195,19 @@ class Custodian:
         has been frozen, it is refused before any other semantic check, so
         that the refusal cannot be read as a fallback.
         """
-        with self._receipt_snapshot(receipt) as frozen_receipt:
+        with (
+            self._receipt_snapshot(receipt) as frozen_receipt,
+            self._frozen(grant_view, "grant-view.json") as frozen_view,
+        ):
             if frozen_receipt is None:
                 return _refuse("receipt_not_ok", "the receipt could not be read as an envelope")
+            if frozen_view is None:
+                # No evidence the gate can hold still is no evidence at all,
+                # and nothing is owed without an activated grant.
+                return _refuse(
+                    "grant_not_activated",
+                    "the grant evidence could not be read",
+                )
 
             if offered_salt is not None:
                 return _refuse(
@@ -193,7 +215,7 @@ class Custodian:
                     "the buyer-binding salt is not a redemption proof and is never accepted here",
                 )
 
-            verdict = self._verify_receipt(frozen_receipt, grant_view)
+            verdict = self._verify_receipt(frozen_receipt, frozen_view)
             if verdict is None:
                 return _refuse("receipt_not_ok", "the receipt could not be read as an envelope")
 
@@ -235,7 +257,7 @@ class Custodian:
                     "the response does not prove possession of this receipt's key for this archive",
                 )
 
-            served_from = self._archived_copy(frozen_receipt, grant_view)
+            served_from = self._archived_copy(frozen_receipt, frozen_view)
             if served_from is None:
                 return _refuse(
                     "artifact_out_of_scope",
@@ -259,18 +281,35 @@ class Custodian:
     @contextmanager
     def _receipt_snapshot(self, receipt: Path) -> Iterator[Path | None]:
         """Freeze requester-owned receipt bytes for one custodian operation."""
+        with self._frozen(receipt, "receipt.attest.json") as snapshot:
+            yield snapshot
+
+    @contextmanager
+    def _frozen(self, source: Path, name: str) -> Iterator[Path | None]:
+        """Freeze a requester-owned file for the length of one operation.
+
+        Anything the requester holds is read more than once during a redeem —
+        the receipt by `verify`, by the redemption proof and by the artifact
+        step; the grant evidence by `verify` and by the scope filter — and a
+        path re-read is a path that can change between reads. Copying once
+        into storage the gate owns makes "the thing that was checked" and
+        "the thing that was used" the same bytes by construction.
+
+        Yields `None` when the source cannot be read at all, so the caller
+        reports a refusal instead of letting the error escape.
+        """
         try:
-            receipt_bytes = receipt.read_bytes()
+            payload = source.read_bytes()
         except (OSError, ValueError):
             yield None
             return
 
         self.challenge_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
-            prefix="attest-custodian-receipt-", dir=self.challenge_dir
+            prefix="attest-custodian-frozen-", dir=self.challenge_dir
         ) as scratch:
-            snapshot = Path(scratch) / "receipt.attest.json"
-            snapshot.write_bytes(receipt_bytes)
+            snapshot = Path(scratch) / name
+            snapshot.write_bytes(payload)
             yield snapshot
 
     def _verify_receipt(self, receipt: Path, grant_view: Path) -> dict[str, Any] | None:

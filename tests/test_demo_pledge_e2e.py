@@ -466,7 +466,9 @@ def _artifact_entry(filename: str, data: bytes) -> dict[str, Any]:
     }
 
 
-def _series_grant_view(world: World, tmp_path: Path) -> tuple[Path, str]:
+def _series_grant_view(
+    world: World, tmp_path: Path, *, artifacts: list[str] | None = None
+) -> tuple[Path, str]:
     grant_path = tmp_path / "series-grant.json"
     grant_report = _cli(
         [
@@ -478,6 +480,7 @@ def _series_grant_view(world: World, tmp_path: Path) -> tuple[Path, str]:
             PUBLISHER,
             "--artifact-series",
             SERIES,
+            *[a for h in (artifacts or []) for a in ("--artifact", h)],
             "--permission",
             "deliver-to-holder",
             "--mode",
@@ -542,6 +545,7 @@ def _signed_receipt_for_artifact(
     data: bytes,
     grant_sha256: str,
     receipt_id: str,
+    also: tuple[str, bytes] | None = None,
 ) -> Path:
     buyer_pub = keys.from_seed(
         keys.b64u_decode(world.buyer_seed.read_text(encoding="utf-8").strip())
@@ -559,7 +563,8 @@ def _signed_receipt_for_artifact(
         artifact_series=SERIES,
         terms_uri=f"https://{STORE}/attest/license-templates/standard-v1",
         legal_text_sha256=hashlib.sha256(LEGAL_BYTES).hexdigest(),
-        artifacts=[_artifact_entry(filename, data)],
+        artifacts=[_artifact_entry(filename, data)]
+        + ([_artifact_entry(*also)] if also is not None else []),
         revocability="none",
         drm="drm-free",
         end_of_life="sunset-grant",
