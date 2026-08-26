@@ -64,6 +64,11 @@ const keyManifest = (): JsonObject => {
 
 const WITH_EVIDENCE = '01JZ5PDHT0000G40R40M30E209'
 const WITHOUT_EVIDENCE = '01JZ5PDHT0000G40R40M30E20A'
+// Member names that deliberately do NOT match the ids they carry: pairing is
+// on the signed receipt_id (v0.2 §14), and a fixture whose names happen to
+// agree with its ids would stay green if that pairing were reverted.
+const LABEL_WITH = 'order-4711'
+const LABEL_WITHOUT = 'order-4712'
 
 // The second receipt has to carry its OWN receipt_id in the signed payload,
 // not merely a different member name: evidence is paired on the id inside the
@@ -80,8 +85,8 @@ function twoReceiptBundle(): Uint8Array {
   const issuer = m.issuer as string
   const blob: JsonObject = { issuer, key_manifests: [m], artifact_manifests: [] }
   return zipSync({
-    [`receipts/${WITH_EVIDENCE}.attest.json`]: envelope(),
-    [`receipts/${WITHOUT_EVIDENCE}.attest.json`]: otherReceipt(),
+    [`receipts/${LABEL_WITH}.attest.json`]: envelope(),
+    [`receipts/${LABEL_WITHOUT}.attest.json`]: otherReceipt(),
     [`manifests/${issuer}.json`]: canonicalBytes(blob),
     [`proofs/${WITH_EVIDENCE}.json`]: new TextEncoder().encode('{"leaf_index":0}'),
   })
@@ -117,7 +122,7 @@ describe('a verifier that cannot run says so about itself', () => {
     const failed = document.querySelector('article.unverifiable')
     expect(failed).not.toBeNull()
     const text = failed!.textContent ?? ''
-    expect(text).toContain(WITH_EVIDENCE)
+    expect(text).toContain(LABEL_WITH)
     expect(text).toMatch(/could not check/i)
     // The reason is shown rather than hidden: a configuration bug that only
     // reaches the console is a bug nobody reports.
@@ -132,6 +137,6 @@ describe('a verifier that cannot run says so about itself', () => {
     app.handleBytes('library.attest', twoReceiptBundle())
     const results = document.getElementById('results')!
     expect(results.querySelectorAll('article.result:not(.unverifiable)').length).toBe(1)
-    expect(results.textContent).toContain(WITHOUT_EVIDENCE)
+    expect(results.textContent).toContain(LABEL_WITHOUT)
   })
 })

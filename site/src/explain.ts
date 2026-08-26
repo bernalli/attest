@@ -228,7 +228,7 @@ const CATALOG: Record<Component, Record<string, Explanation>> = {
     logged: {
       label: 'Corroboration',
       tone: 'good',
-      text: 'The log’s own signed checkpoint covers this entry, so the log vouches for having published it — and that is the whole of it. This page pins no witness policy, so it does not examine cosignatures at all and reports none either way (spec §10.2, step 8). attest operates this log itself and no independent witness co-signs its checkpoints, which is why nothing here rises higher; until one does, a log serving two different histories to two different people could not be caught from this evidence alone (spec §10.3, §15).',
+      text: 'The log’s own signed checkpoint covers this entry, so the log vouches for having published it — and that is the whole of it. This page pins no witness policy, so it does not examine cosignatures at all and reports none either way (spec §10.2, step 8). Separately, and not from anything checked here: attest operates this log itself and states in the log’s own README that no independent witness co-signs its checkpoints. Take that as the operator’s word, not as a result — and while it holds, a log serving two different histories to two different people could not be caught from this evidence alone (spec §10.3, §15).',
     },
     witnessed: {
       label: 'Corroboration',
