@@ -48,12 +48,13 @@ describe('initApp wiring', () => {
     expect(document.getElementById('results')!.textContent).toContain('Receipt verifies')
   })
 
-  // The pin on main.ts's call site: with no proofs/ member nothing reaches
-  // verify()'s evidence channel and the page is silent about transparency;
-  // with one, the evidence arrives and the page says — in the verifier's own
-  // words — that it holds no pinned log configuration to judge it by. If
-  // main.ts stopped passing the fifth argument, the second half goes quiet
-  // and this test fails.
+  // The pin on main.ts's call site. With no proofs/ member nothing reaches
+  // verify()'s evidence channel and the page stays silent about transparency.
+  // With one — here a deliberately unusable stub — the evidence arrives, the
+  // pinned configuration judges it, and the verifier reports that it could
+  // not resolve the claim. Reaching that verdict at all takes BOTH halves:
+  // the evidence from the file and the pinned log from trusted-log.ts. Drop
+  // either from the call and this goes quiet.
   const bundleWith = (members: Record<string, Uint8Array>): Uint8Array => {
     const m = manifest()
     const issuer = m.issuer as string
@@ -65,15 +66,20 @@ describe('initApp wiring', () => {
     })
   }
 
-  it('does not mention transparency configuration for a bundle carrying no proof', () => {
+  it('says nothing about transparency for a bundle carrying no proof', () => {
     app.handleBytes('library.attest', bundleWith({}))
-    expect(document.getElementById('results')!.textContent).not.toContain('transparency_config_missing')
+    const text = document.getElementById('results')!.textContent ?? ''
+    expect(text).not.toContain('transparency_claim_unresolvable')
+    expect(text).toContain('"transparency": "not_checked"')
   })
 
-  it('feeds a bundle’s proofs/ evidence to verify, and reports the missing pinned configuration', () => {
+  it('feeds a bundle’s proofs/ evidence to the pinned log, and reports what came of it', () => {
     const evidence = new TextEncoder().encode('{"leaf_index":0}')
     app.handleBytes('library.attest', bundleWith({ ['proofs/01JZ5PDHT0000G40R40M30E209.json']: evidence }))
-    expect(document.getElementById('results')!.textContent).toContain('transparency_config_missing')
+    const text = document.getElementById('results')!.textContent ?? ''
+    expect(text).toContain('transparency_claim_unresolvable')
+    // Never this one again: it meant the page held no pinned log at all.
+    expect(text).not.toContain('transparency_config_missing')
   })
 
   it('shows the private-file refusal', () => {
