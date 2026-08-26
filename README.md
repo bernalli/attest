@@ -70,6 +70,16 @@ and you never downloaded the DRM-free file, no signature can conjure it back off
 a dead server. What survives is the proof — see the
 [FAQ](docs/faq.md) for exactly what that's worth in each case.
 
+There is a way to change that answer, and it now runs rather than being planned:
+a rights holder can sign a preservation pledge when they sell, and once that
+pledge fires, an archive holding its own copy can hand the file to whoever proves
+the receipt is theirs — and to nobody else. `python -m demo.pledge_dies` does
+exactly that, end to end, on your machine. What is missing is not the mechanism:
+it is a publisher who has signed one, an archive that holds anything, and prose
+written by a lawyer instead of the placeholder the demo carries. The archive
+gate the demo runs against is a non-normative reference, not a production gate;
+it names the three things it does not do in [`demo/README.md`](demo/README.md).
+
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations that agree on all 158
 conformance vector leaves. **Try it in your browser:**
@@ -156,8 +166,10 @@ transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
 deadlines), and Stage 3 issuer-mediated transfer. (A v0.1-only verifier is
 required to reject v0.2 envelopes, so it is measured against the 51-leaf
-subset.) There is also an end-to-end demo that deletes a store's entire
-infrastructure mid-lifecycle and proves the receipt still verifies.
+subset.) There are also two end-to-end demos: one deletes a store's entire
+infrastructure mid-lifecycle and proves the receipt still verifies, and one
+carries that a step further — a rights holder's preservation pledge fires and
+an archive hands the file back, but only against the receipt.
 
 The published packages ship all of v0.2 — Stages 1 and 2 (hybrid signatures;
 transparency and anchoring) and Stage 3, issuer-mediated transfer, this
@@ -204,7 +216,7 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   answered once instead of re-argued per issue.
 - **[Conformance program](docs/conformance.md).** One documented command, run with
   a third party's own adapter against the vector corpus, produces a pass/fail
-  report and a self-certification claim; both in-repo verifiers pass 130/130 through
+  report and a self-certification claim; both in-repo verifiers pass 158/158 through
   that exact path.
 
 ## Quickstart
@@ -236,7 +248,8 @@ uv venv --python 3.12 .venv && uv pip install --python .venv -e '.[dev]'
 ```
 
 ```sh
-.venv/bin/python demo/store_dies.py
+.venv/bin/python -m demo.store_dies
+.venv/bin/python -m demo.pledge_dies
 ```
 
 ```sh
@@ -249,7 +262,7 @@ and a TypeScript verifier quickstart:
 cd verifiers/ts && npm install && npm test
 ```
 
-See [demo/README.md](demo/README.md) for what each step of the demo proves, and
+See [demo/README.md](demo/README.md) for what each step of the demos proves, and
 [docs/spec/attest-v0.1.md](docs/spec/attest-v0.1.md) plus its companion
 [JSON Schema](docs/spec/schema/attest-receipt.schema.json) for the normative
 specification. [docs/spec/vectors/](docs/spec/vectors/) holds the conformance

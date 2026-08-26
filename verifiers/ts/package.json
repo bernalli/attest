@@ -1,6 +1,6 @@
 {
   "name": "attest-verifier",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Offline verifier for attest receipts: proof of purchase that outlives the store.",
   "license": "Apache-2.0",
   "author": "Samuele Martinalli",
