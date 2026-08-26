@@ -6,6 +6,14 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-08-26
+
+Version bump only, to keep the two implementations in lockstep. No change to
+the verifier: this release accompanies a demonstration of the Stage 4
+preservation pledge — an archive gate that hands a work back to a receipt
+holder once a sunset grant has been activated — which lives in the Python
+package's `demo/` directory and is not part of any published API.
+
 ## [0.8.0] — 2026-08-25
 
 ### Added

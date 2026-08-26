@@ -6,6 +6,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-08-26
+
 ### Added
 
 - **A second demo, `demo/pledge_dies.py`, and the archive gate it runs
@@ -22,10 +24,12 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deliberately outside the installed package, outside the conformance surface,
   and has no CLI verb: attest defines a receipt format and a verifier, and does
   not distribute content. Every check that verifies, authenticates or signs is
-  delegated to the real CLI; the module's own contribution is one authorisation
-  the CLI does not expose — whether the file about to be served is inside the
-  grant's scope — read from the floor grant, which §18.3's ratchet makes a
-  strictly conservative place to read it.
+  delegated to the real CLI. What the module adds is what the CLI cannot: the
+  gate mints its own redemption challenges, remembers them, and spends each on
+  the single request that uses it, so a captured transcript is worth exactly
+  one attempt. Both files the requester owns are frozen for the length of a
+  call, because a path read more than once is a path that can change between
+  reads.
 
 - `demo/_driver.py`, the CLI helpers both demos share, and the canonical way to
   run either: `python -m demo.<name>` from the repository root.
