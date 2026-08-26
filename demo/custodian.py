@@ -32,7 +32,10 @@ conservative, never permissive.
 
 Refusals are verdicts, never exceptions. A gate that raises on hostile input
 leaks which check failed through the shape of the crash, and §18.7 asks for
-the opposite.
+the opposite. The boundary is hostile input, and it is drawn deliberately:
+paths the OPERATOR supplies — where to mint a challenge, where to deliver —
+stay loud, because a custodian misconfigured by its own operator should fail
+where the operator can see it, not answer a stranger with a polite refusal.
 """
 
 from __future__ import annotations
@@ -209,9 +212,7 @@ class Custodian:
             )
 
         # The challenge is the custodian's own file, and this is where it is
-        # spent. Nothing about the audience needs checking here: the only
-        # challenge this gate will accept an answer to is one it minted for
-        # itself. A request that answers nobody's challenge, or answers a
+        # spent. A request that answers nobody's challenge, or answers a
         # superseded or already-spent one, is flattened into the same refusal
         # as a bad signature.
         if not self._redemption_proven(receipt, response):
@@ -302,6 +303,16 @@ class Custodian:
         with tempfile.TemporaryDirectory(prefix="attest-custodian-") as scratch:
             spent = Path(scratch) / "challenge.json"
             spent.write_bytes(minted)
+            # Defence in depth, and the reason it is not redundant: owning the
+            # directory is what makes the audience right by construction, and
+            # that ownership is an assumption about the filesystem, not
+            # something the code can see. Two custodians sharing a directory
+            # are keyed by the same `receipt_id` and would read each other's
+            # file, which is precisely the cross-archive replay §18.7 exists to
+            # forbid. One comparison costs nothing when the directory is
+            # private and restores the binding when it is not.
+            if _challenge_audience(spent) != self.audience:
+                return False
             return self._redemption_verified(receipt, spent, response)
 
     def _redemption_verified(self, receipt: Path, challenge: Path, response: Path) -> bool:
@@ -348,13 +359,30 @@ class Custodian:
                 continue
             if not candidate.is_file():
                 continue
-            digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+            try:
+                digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+            except OSError:
+                # A copy the process cannot read leaves the running exactly
+                # like one that is missing: the loop above already treats
+                # absence that way, and unreadability is the same fact.
+                continue
             if permitted is not None and digest not in permitted:
                 continue
             rc, report = _check_artifact(candidate, receipt)
             if rc == 0 and report.get("match") is True:
                 return candidate
         return None
+
+
+def _challenge_audience(path: Path) -> str | None:
+    """The audience a minted challenge names, or `None` if it does not name
+    one. Tolerant by construction: this is read on the refusal path, and a
+    reader that raises there would leak which check failed."""
+    challenge = _read_json(path)
+    if not isinstance(challenge, dict):
+        return None
+    audience = challenge.get("audience")
+    return audience if isinstance(audience, str) else None
 
 
 def _check_artifact(candidate: Path, receipt: Path) -> tuple[int, dict[str, Any]]:

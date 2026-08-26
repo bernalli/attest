@@ -109,10 +109,11 @@ An activated pledge is a promise to the **holder**, not to whoever turns up.
 | The buyer-binding salt offered as proof | `salt_disclosure_rejected` |
 | An archived copy that does not match the receipt, or falls outside the grant's scope | `artifact_out_of_scope` |
 
-Two of these are worth pausing on. The **replay** is refused because the
-custodian's own domain is inside the preimage the holder signs, so a
-response minted for one archive is meaningless at another — not discouraged,
-impossible. And the **salt** is refused even when everything else about the
+Two of these are worth pausing on. The **replay** is refused twice over: an
+answer is only ever checked against a challenge this archive minted and has
+not yet spent, and the custodian's own domain is inside the preimage the
+holder signs, so an answer produced for one archive means nothing at
+another. And the **salt** is refused even when everything else about the
 request is valid: it would work on a verifier, and handing it to a custodian
 is exactly how a holder gives away the ability to be impersonated
 everywhere. That is a prohibition, not a fallback, so the gate checks it
@@ -141,10 +142,19 @@ is the opposite case, and the difference is who can produce it.)
 
 ### What this gate does not cover
 
-Two gaps a production gate would close, stated plainly because a reference
+Three gaps a production gate would close, stated plainly because a reference
 that hides them teaches the wrong thing.
 
-It serves the file with a `shutil.copy` **by path**, after verifying the
+A receipt id is not a secret — it travels in the shareable bundle — and this
+archive keeps at most one outstanding challenge per receipt, spent by use.
+So anyone holding a copy of the public bundle can **burn** the challenge a
+legitimate holder is about to answer, by answering it wrongly first or by
+asking for a fresh one that supersedes it. Nobody gets bytes and nothing is
+disclosed; the holder simply has to ask again, and an attacker who keeps
+doing it keeps them asking. A production gate would key its challenges by
+nonce rather than by receipt, and let several stand at once.
+
+It also serves the file with a `shutil.copy` **by path**, after verifying the
 bytes at that path. Anyone with write access *inside* the archive directory
 can substitute the file between the check and the copy, and the delivery
 would carry bytes that were never verified. A real gate opens the file once

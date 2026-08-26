@@ -414,6 +414,11 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> World:
     )
 
 
+def _receipt_id_of(receipt: Path) -> str:
+    envelope = json.loads(receipt.read_text(encoding="utf-8"))
+    return str(envelope["payload"]["receipt_id"])
+
+
 def _gate(world: World, home: Path, **overrides: Any) -> Custodian:
     """A custodian whose challenge bookkeeping lives under `home`.
 
@@ -1154,3 +1159,69 @@ def test_the_backstop_stays_shut_until_the_pinned_header_passes_the_date(
 def test_an_unknown_trigger_is_refused_rather_than_guessed(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unsupported trigger"):
         run_demo(tmp_path, trigger="heartbeat-absence")
+
+
+# --------------------------------------------------------------------------
+# Defence in depth: what happens when the custodian's own storage is shared.
+# --------------------------------------------------------------------------
+
+
+def test_an_answer_to_a_neighbours_challenge_in_a_shared_directory_is_refused(
+    world: World, tmp_path: Path
+) -> None:
+    """Owning the challenge is the gate's primitive, and a shared directory
+    quietly takes it away: two custodians keyed by the same `receipt_id`
+    read each other's file. The audience is re-checked on the way out for
+    exactly this reason — a one-line defence that costs nothing when the
+    directory is private and restores §18.7's binding when it is not."""
+    shared = tmp_path / "shared-challenges"
+    ours = _gate(world, tmp_path, challenge_dir=shared)
+    neighbour = _gate(world, tmp_path, audience=OTHER_ARCHIVE, challenge_dir=shared)
+
+    # The neighbour mints; the holder answers the neighbour, legitimately.
+    neighbour.challenge(receipt=world.receipt)
+    response = _respond(
+        world, shared / f"{_receipt_id_of(world.receipt)}.json", tmp_path / "response.json"
+    )
+
+    decision = ours.redeem(
+        receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        response=response,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert decision.served is False
+    assert decision.reason == "redemption_proof_invalid"
+
+
+def test_an_unreadable_archive_copy_is_a_verdict_not_a_crash(world: World, tmp_path: Path) -> None:
+    """The archive's own storage is environment, not requester input — but
+    the module's invariant is absolute: refusals are verdicts, never
+    exceptions. A copy the process cannot read leaves the running like one
+    that is missing."""
+    archive = tmp_path / "unreadable-archive"
+    archive.mkdir()
+    blocked = archive / FILENAME
+    blocked.write_bytes(WORK_BYTES)
+    blocked.chmod(0o000)
+
+    gate = _gate(world, tmp_path, archive_dir=archive)
+    gate.challenge(receipt=world.receipt)
+    response = _respond(
+        world,
+        gate.challenge_dir / f"{_receipt_id_of(world.receipt)}.json",
+        tmp_path / "response.json",
+    )
+    try:
+        decision = gate.redeem(
+            receipt=world.receipt,
+            grant_view=world.grant_view_active,
+            response=response,
+            deliver_to=tmp_path / "out",
+        )
+    finally:
+        blocked.chmod(0o600)
+
+    assert decision.served is False
+    assert decision.reason == "artifact_out_of_scope"
