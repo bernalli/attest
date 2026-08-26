@@ -16,13 +16,18 @@ sunset grant has been activated. The interesting half is the refusals.
 Every decision that VERIFIES, AUTHENTICATES or SIGNS is delegated to the real
 `attest` CLI: `verify` for the receipt and the grant evidence, `grant
 challenge` for the nonce, `grant verify` for the audience-bound redemption
-proof, `check-artifact` for the bytes. This module contributes the checks the
-CLI does not expose — whether the challenge names this custodian's own
-audience, and whether the file it is about to hand over is inside the grant's
-own scope. The scope check is made against the FLOOR grant the receipt
-hash-binds, never against a later version an attacker might supply. Because
-§18.3's ratchet forbids a later grant from narrowing scope, the floor's scope
-is a subset of the effective one: reading the floor is therefore strictly
+proof, `check-artifact` for the bytes. This module contributes what the CLI
+does not: the POSSESSION and one-shot CONSUMPTION of the custodian's own
+challenges — a challenge is minted into the custodian's own directory,
+remembered there, and spent on the request that uses it — and the check that
+the file it is about to hand over is inside the grant's own scope. A request
+therefore never carries a challenge, only an answer to one this custodian
+already issued, which is what makes a response good exactly once.
+
+The scope check is made against the FLOOR grant the receipt hash-binds,
+never against a later version an attacker might supply. Because §18.3's
+ratchet forbids a later grant from narrowing scope, the floor's scope is a
+subset of the effective one: reading the floor is therefore strictly
 conservative, never permissive.
 
 Refusals are verdicts, never exceptions. A gate that raises on hostile input
@@ -35,6 +40,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,10 +62,20 @@ REASONS = frozenset(
 )
 
 #: `verify`'s `revocation` values that end the request. Today's CLI exposes a
-#: revocation view but no transfer view, so this demo cannot currently observe
-#: `transferred`; if a verifier verdict ever carries it, it is still the same
-#: refusal as a revoked receipt.
+#: revocation view but no transfer view, so the verdict's `revocation` member
+#: cannot currently read `transferred`; if it ever does, it is still the same
+#: refusal as a revoked receipt. The transfer itself is not invisible — see
+#: `TRANSFERRED_UNBACKED` below, which is how the gate sees it today.
 REVOCATION_REFUSED = frozenset({"revoked", "transferred"})
+
+#: The verifier warning that says, in so many words, "a transfer of this
+#: receipt was asserted and this verifier had no transfer view to resolve it
+#: against". It is worth refusing on because of who can produce it: `verify`
+#: emits it only for a record that authenticates against the ISSUER's own key
+#: AND names THIS receipt_id, so a passer-by cannot fabricate one. That is the
+#: opposite of the generic `invalid_revocation_ignored` state, which anyone
+#: can provoke and which this gate therefore ignores on purpose.
+TRANSFERRED_UNBACKED = "transferred_revocation_unbacked"
 
 
 @dataclass(frozen=True)
@@ -89,25 +105,39 @@ class Custodian:
     `audience` is the custodian's own lowercase DNS domain, and it is the
     reason a redemption proof cannot be replayed elsewhere: it is inside the
     preimage the holder signs (§18.7).
+
+    `challenge_dir` is the custodian's own memory: the challenges it has
+    minted and not yet spent live there, one per receipt at most.
     """
 
     audience: str
     archive_dir: Path
     trust_dir: Path
+    challenge_dir: Path
     anchor_policy: Path | None = None
     revocations: Path | None = None
 
     # -- the custodian's own file -------------------------------------------
 
-    def challenge(self, *, receipt: Path, out_dir: Path) -> Path:
-        """Mint a fresh challenge for this receipt, bound to this audience.
+    def challenge(self, *, receipt: Path) -> Path:
+        """Mint a fresh challenge for this receipt, bound to this audience,
+        and keep it.
 
-        The nonce is the custodian's own material, so a malformed challenge
-        stays a loud error rather than a refusal: it would be the gate's bug,
-        not the holder's request.
+        The file is written inside `challenge_dir` under the receipt's own
+        id: the holder is handed its CONTENTS, while the custodian keeps the
+        copy it will later spend. At most one challenge is outstanding per
+        receipt, so minting a second one supersedes the first — the answer to
+        a superseded challenge is no longer an answer to anything.
+
+        The nonce and the file are both the custodian's own material, so a
+        receipt that cannot even name a challenge here stays a loud error
+        rather than a refusal: nothing has been decided about a request yet.
         """
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out = out_dir / "challenge.json"
+        receipt_id = _receipt_id(receipt)
+        out = None if receipt_id is None else self._challenge_file(receipt_id)
+        if out is None:
+            raise ValueError(f"{receipt} does not name a receipt this custodian can challenge")
+        self.challenge_dir.mkdir(parents=True, exist_ok=True)
         _driver.run_cli_json(
             [
                 "grant",
@@ -129,7 +159,6 @@ class Custodian:
         *,
         receipt: Path,
         grant_view: Path,
-        challenge: Path,
         response: Path,
         deliver_to: Path,
         offered_salt: str | None = None,
@@ -166,6 +195,11 @@ class Custodian:
                 "revocation_blocked",
                 f"the receipt is {verdict.get('revocation')}",
             )
+        if TRANSFERRED_UNBACKED in _verdict_warnings(verdict):
+            return _refuse(
+                "revocation_blocked",
+                "the receipt has been transferred away, so this holder is no longer the one owed",
+            )
         if verdict.get("ok") is not True:
             return _refuse("receipt_not_ok", "the receipt did not verify")
         if verdict.get("grant") != "activated":
@@ -174,12 +208,13 @@ class Custodian:
                 f"the sunset grant is {verdict.get('grant')}, so nothing is owed yet",
             )
 
-        # The challenge is the custodian's own file. Bad challenge bytes are an
-        # operator bug and stay loud, while a well-formed challenge for another
-        # audience is flattened into the same refusal as a bad signature.
-        if _challenge_audience(challenge) != self.audience or not self._redemption_verified(
-            receipt, challenge, response
-        ):
+        # The challenge is the custodian's own file, and this is where it is
+        # spent. Nothing about the audience needs checking here: the only
+        # challenge this gate will accept an answer to is one it minted for
+        # itself. A request that answers nobody's challenge, or answers a
+        # superseded or already-spent one, is flattened into the same refusal
+        # as a bad signature.
+        if not self._redemption_proven(receipt, response):
             return _refuse(
                 "redemption_proof_invalid",
                 "the response does not prove possession of this receipt's key for this archive",
@@ -230,6 +265,45 @@ class Custodian:
             return None
         return verdict if isinstance(verdict, dict) else None
 
+    def _challenge_file(self, receipt_id: str) -> Path | None:
+        """Where this receipt's outstanding challenge lives, or `None` when
+        the id could not name a file inside `challenge_dir`.
+
+        A receipt is the requester's own file until the verifier has spoken,
+        so its `receipt_id` is the requester's string: a separator or a `..`
+        in it must not be able to aim the custodian's own bookkeeping
+        somewhere else.
+        """
+        name = f"{receipt_id}.json"
+        candidate = self.challenge_dir / name
+        if candidate.parent != self.challenge_dir or candidate.name != name:
+            return None
+        return candidate
+
+    def _redemption_proven(self, receipt: Path, response: Path) -> bool:
+        """Spend this receipt's outstanding challenge on this response.
+
+        The challenge leaves the custodian's directory BEFORE the answer is
+        known, so it is consumed by USE and not by success: a holder who
+        answers wrongly, or a thief who tries, burns it either way and the
+        next attempt has nothing to answer. A legitimate holder simply asks
+        for another one, which costs a round trip and buys the property that
+        no response is ever worth replaying.
+        """
+        receipt_id = _receipt_id(receipt)
+        pending = None if receipt_id is None else self._challenge_file(receipt_id)
+        if pending is None:
+            return False
+        try:
+            minted = pending.read_bytes()
+            pending.unlink()
+        except (OSError, ValueError):
+            return False
+        with tempfile.TemporaryDirectory(prefix="attest-custodian-") as scratch:
+            spent = Path(scratch) / "challenge.json"
+            spent.write_bytes(minted)
+            return self._redemption_verified(receipt, spent, response)
+
     def _redemption_verified(self, receipt: Path, challenge: Path, response: Path) -> bool:
         """§18.7's audience-bound proof, through the real verifier.
 
@@ -263,10 +337,14 @@ class Custodian:
         permitted = _granted_artifacts(grant_view)
         archive_root = self.archive_dir.resolve()
         for filename in _receipt_filenames(receipt):
-            candidate = (self.archive_dir / filename).resolve()
+            # Resolution itself is hostile ground: a filename carrying a NUL
+            # byte makes `resolve()` raise `ValueError` before containment is
+            # ever considered. A candidate the filesystem will not even name
+            # leaves the running exactly like one that is missing.
             try:
+                candidate = (self.archive_dir / filename).resolve()
                 candidate.relative_to(archive_root)
-            except ValueError:
+            except (OSError, ValueError):
                 continue
             if not candidate.is_file():
                 continue
@@ -297,11 +375,24 @@ def _read_json(path: Path) -> Any:
         return None
 
 
-def _challenge_audience(path: Path) -> str:
-    challenge = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(challenge, dict) or not isinstance(challenge.get("audience"), str):
-        raise ValueError(f"{path} is not a usable custodian challenge")
-    return str(challenge["audience"])
+def _verdict_warnings(verdict: dict[str, Any]) -> list[str]:
+    warnings = verdict.get("warnings")
+    if not isinstance(warnings, list):
+        return []
+    return [warning for warning in warnings if isinstance(warning, str)]
+
+
+def _receipt_id(receipt: Path) -> str | None:
+    """The id the receipt names, or `None` when it names none.
+
+    Read for bookkeeping only — which challenge belongs to which request —
+    never as a verification: by the time `redeem` uses it, `verify` has
+    already said the envelope is the issuer's own.
+    """
+    envelope = _read_json(receipt)
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    receipt_id = payload.get("receipt_id") if isinstance(payload, dict) else None
+    return receipt_id if isinstance(receipt_id, str) else None
 
 
 def _receipt_filenames(receipt: Path) -> list[str]:

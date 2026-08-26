@@ -434,22 +434,12 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
         audience=ARCHIVE,
         archive_dir=archive_dir,
         trust_dir=trust_dir,
+        challenge_dir=gate_dir,
         anchor_policy=anchor_policy_path,
     )
-    challenge_path = gate.challenge(receipt=imported_receipt, out_dir=gate_dir)
-    response_path = buyer_dir / "response.json"
-    _driver.run_cli_json(
-        [
-            "grant",
-            "respond",
-            "--challenge",
-            str(challenge_path),
-            "--holder-seed",
-            str(buyer_seed_path),
-            "--out",
-            str(response_path),
-        ]
-    )
+    # The archive mints the challenge and keeps it: Casey is handed its
+    # contents, and the copy the gate will spend never leaves the gate.
+    response_path = _answer_a_fresh_challenge(gate, imported_receipt, buyer_seed_path, buyer_dir)
     declaration_path = pub_dir / "declaration.json"
     # Recorded BEFORE the declaration is minted: a refusal narrated after the
     # trigger already exists would be theatre, not a demonstration.
@@ -457,7 +447,6 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
     outcomes["refusal_dormant"] = gate.redeem(
         receipt=imported_receipt,
         grant_view=grant_view_dormant,
-        challenge=challenge_path,
         response=response_path,
         deliver_to=delivered_dir,
     ).reason
@@ -504,6 +493,7 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
             audience=ARCHIVE,
             archive_dir=archive_dir,
             trust_dir=trust_dir,
+            challenge_dir=gate_dir,
             anchor_policy=anchor_policy_path,
         )
         active_view = {"grant": grant_doc, "anchor": {"proofs": [proof_after]}}
@@ -530,9 +520,9 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
             gate=gate,
             receipt=imported_receipt,
             grant_view=grant_view_active,
-            challenge=challenge_path,
             response=response_path,
             buyer_dir=buyer_dir,
+            buyer_seed=buyer_seed_path,
             gate_dir=gate_dir,
             archive_dir=archive_dir,
             trust_dir=trust_dir,
@@ -546,24 +536,12 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
         "Step 11: a fresh challenge, Casey's own signature over it, and the archive hands "
         "the file across"
     )
-    final_challenge = gate.challenge(receipt=imported_receipt, out_dir=gate_dir / "final")
-    final_response = buyer_dir / "final-response.json"
-    _driver.run_cli_json(
-        [
-            "grant",
-            "respond",
-            "--challenge",
-            str(final_challenge),
-            "--holder-seed",
-            str(buyer_seed_path),
-            "--out",
-            str(final_response),
-        ]
+    final_response = _answer_a_fresh_challenge(
+        gate, imported_receipt, buyer_seed_path, buyer_dir, "final-response.json"
     )
     decision = gate.redeem(
         receipt=imported_receipt,
         grant_view=grant_view_active,
-        challenge=final_challenge,
         response=final_response,
         deliver_to=delivered_dir,
     )
@@ -649,14 +627,45 @@ def _seeded_time_proof(seed: bytes, header_time: int) -> tuple[dict[str, Any], d
     return proof, policy
 
 
+def _answer_a_fresh_challenge(
+    gate: Custodian,
+    receipt: Path,
+    holder_seed: Path,
+    out_dir: Path,
+    name: str = "response.json",
+) -> Path:
+    """Ask the archive for a challenge and sign the answer to it.
+
+    Every request that must reach the gate's redemption-proof step needs one
+    of these: the custodian spends the challenge it is holding on the first
+    request that uses it, whatever that request's fate. Requests refused
+    earlier — a tampered receipt, the salt offered as proof — never touch it.
+    """
+    challenge = gate.challenge(receipt=receipt)
+    response = out_dir / name
+    _driver.run_cli_json(
+        [
+            "grant",
+            "respond",
+            "--challenge",
+            str(challenge),
+            "--holder-seed",
+            str(holder_seed),
+            "--out",
+            str(response),
+        ]
+    )
+    return response
+
+
 def _refusals_at_an_active_grant(
     *,
     gate: Custodian,
     receipt: Path,
     grant_view: Path,
-    challenge: Path,
     response: Path,
     buyer_dir: Path,
+    buyer_seed: Path,
     gate_dir: Path,
     archive_dir: Path,
     trust_dir: Path,
@@ -666,7 +675,11 @@ def _refusals_at_an_active_grant(
     """The four requests the gate turns away once the grant IS active."""
     refusals: dict[str, Any] = {}
 
-    # (a) A receipt with a byte flipped in the signed payload.
+    # (a) A receipt with a byte flipped in the signed payload. Refused before
+    # the proof step, so Casey's standing response is enough here: a request
+    # turned away this early never reaches the archive's challenge at all,
+    # which is why bad requests cannot burn a challenge somebody else is
+    # waiting to answer.
     tampered = buyer_dir / "tampered-receipt.attest.json"
     envelope = json.loads(receipt.read_text(encoding="utf-8"))
     envelope["payload"]["work"]["title"] = "Something Else Entirely"
@@ -674,59 +687,45 @@ def _refusals_at_an_active_grant(
     refusals["refusal_bad_receipt"] = gate.redeem(
         receipt=tampered,
         grant_view=grant_view,
-        challenge=challenge,
         response=response,
         deliver_to=delivered_dir,
     ).reason
 
-    # (b) Someone who holds the PUBLIC bundle but not Casey's seed.
+    # (b) Someone who holds the PUBLIC bundle but not Casey's seed. This one
+    # does reach the proof step, so it gets a challenge of its own — minted by
+    # the archive, as every challenge here is.
     thief_seed = buyer_dir / "thief.seed"
     _driver.run_cli_json(
         ["keygen", "--seed-out", str(thief_seed), "--pub-out", str(buyer_dir / "thief.pub")]
     )
-    forged = buyer_dir / "forged-response.json"
-    _driver.run_cli_json(
-        [
-            "grant",
-            "respond",
-            "--challenge",
-            str(challenge),
-            "--holder-seed",
-            str(thief_seed),
-            "--out",
-            str(forged),
-        ]
-    )
+    forged = _answer_a_fresh_challenge(gate, receipt, thief_seed, buyer_dir, "forged-response.json")
     refusals["refusal_bad_proof"] = gate.redeem(
         receipt=receipt,
         grant_view=grant_view,
-        challenge=challenge,
         response=forged,
         deliver_to=delivered_dir,
     ).reason
 
     # (c) A proof Casey legitimately made for ANOTHER archive, replayed here.
     # The audience is inside the signed preimage, which is what makes the
-    # replay impossible rather than merely discouraged.
-    elsewhere = Custodian(audience=OTHER_ARCHIVE, archive_dir=archive_dir, trust_dir=trust_dir)
-    other_challenge = elsewhere.challenge(receipt=receipt, out_dir=gate_dir / "elsewhere")
-    replayed = buyer_dir / "replayed-response.json"
-    _driver.run_cli_json(
-        [
-            "grant",
-            "respond",
-            "--challenge",
-            str(other_challenge),
-            "--holder-seed",
-            str(buyer_dir / "buyer.seed"),
-            "--out",
-            str(replayed),
-        ]
+    # replay impossible rather than merely discouraged. The other archive has
+    # a challenge directory of its own: two custodians sharing one would be
+    # one custodian wearing two hats.
+    elsewhere = Custodian(
+        audience=OTHER_ARCHIVE,
+        archive_dir=archive_dir,
+        trust_dir=trust_dir,
+        challenge_dir=gate_dir / "elsewhere",
     )
+    replayed = _answer_a_fresh_challenge(
+        elsewhere, receipt, buyer_seed, buyer_dir, "replayed-response.json"
+    )
+    # This archive is holding a challenge of its own at the time, so what
+    # refuses the request is the proof, not the absence of anything to prove.
+    gate.challenge(receipt=receipt)
     refusals["refusal_replayed_proof"] = gate.redeem(
         receipt=receipt,
         grant_view=grant_view,
-        challenge=challenge,
         response=replayed,
         deliver_to=delivered_dir,
     ).reason
@@ -737,7 +736,6 @@ def _refusals_at_an_active_grant(
     refusals["refusal_salt"] = gate.redeem(
         receipt=receipt,
         grant_view=grant_view,
-        challenge=challenge,
         response=response,
         deliver_to=delivered_dir,
         offered_salt=salt_b64u,

@@ -414,11 +414,18 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> World:
     )
 
 
-def _gate(world: World, **overrides: Any) -> Custodian:
+def _gate(world: World, home: Path, **overrides: Any) -> Custodian:
+    """A custodian whose challenge bookkeeping lives under `home`.
+
+    Every gate in this file gets a directory of its own: the challenges a
+    custodian has minted and not yet spent are its own state, and two gates
+    sharing that state would be one gate wearing two hats.
+    """
     kwargs: dict[str, Any] = {
         "audience": ARCHIVE,
         "archive_dir": world.archive_dir,
         "trust_dir": world.trust_dir,
+        "challenge_dir": home / "challenges",
     }
     kwargs.update(overrides)
     return Custodian(**kwargs)
@@ -472,20 +479,38 @@ def _signed_receipt_with_filename(world: World, tmp_path: Path, filename: str) -
     return receipt
 
 
+def _transferred_feed(world: World, tmp_path: Path) -> Path:
+    """A revocation feed carrying one issuer-signed `transferred` record for
+    the world's receipt — the only party who can produce one."""
+    mldsa_obj = json.loads(world.store_mldsa.read_text())
+    signer = pq.HybridSigningKeys(
+        ed=keys.from_seed(keys.b64u_decode(world.store_seed.read_text().strip())),
+        mldsa=pq.MLDSAKeyPair(
+            sk=keys.b64u_decode(mldsa_obj["sk"]), pub=keys.b64u_decode(mldsa_obj["pub"])
+        ),
+    )
+    receipt_id = json.loads(world.receipt.read_text())["payload"]["receipt_id"]
+    record = revocation.build_record(
+        receipt_id, "transferred", "2027-06-01T00:00:00Z", signer, STORE_KID
+    )
+    feed = tmp_path / "transferred-feed.json"
+    feed.write_text(json.dumps([record]), encoding="utf-8")
+    return feed
+
+
 # --------------------------------------------------------------------------
 # The one case that must succeed — without it the refusals prove nothing.
 # --------------------------------------------------------------------------
 
 
 def test_a_valid_redemption_is_served(world: World, tmp_path: Path) -> None:
-    gate = _gate(world)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
 
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
@@ -505,14 +530,13 @@ def test_the_salt_is_refused_as_a_redemption_proof(world: World, tmp_path: Path)
     """§18.7 forbids the buyer-binding salt as a redemption proof. The gate
     must refuse it even when everything else about the request is valid —
     that is what makes it a prohibition rather than a fallback."""
-    gate = _gate(world)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
 
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
         offered_salt=world.salt_b64u,
@@ -520,23 +544,26 @@ def test_the_salt_is_refused_as_a_redemption_proof(world: World, tmp_path: Path)
 
     assert decision.served is False
     assert decision.reason == "salt_disclosure_rejected"
+    # Refused before the proof step, so nothing was spent: the challenge this
+    # holder legitimately asked for is still theirs to answer properly.
+    assert challenge.is_file()
 
 
 def test_a_dormant_grant_is_refused(world: World, tmp_path: Path) -> None:
-    gate = _gate(world)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
 
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_dormant,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
 
     assert decision.served is False
     assert decision.reason == "grant_not_activated"
+    assert challenge.is_file()
 
 
 def test_a_tampered_receipt_is_refused(world: World, tmp_path: Path) -> None:
@@ -545,40 +572,42 @@ def test_a_tampered_receipt_is_refused(world: World, tmp_path: Path) -> None:
     envelope["payload"]["work"]["title"] = "Something Else Entirely"
     tampered.write_text(json.dumps(envelope), encoding="utf-8")
 
-    gate = _gate(world)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
 
     decision = gate.redeem(
         receipt=tampered,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
 
     assert decision.served is False
     assert decision.reason == "receipt_not_ok"
+    # The tampered envelope names the same receipt_id, so it could have
+    # reached for the outstanding challenge — it never gets that far.
+    assert challenge.is_file()
 
 
 def test_a_revoked_receipt_is_refused(world: World, tmp_path: Path) -> None:
     """An archive gate that never consults revocation is a weaker gate: the
     receipt still verifies, and the grant is still activated, but the deal it
     records has been undone."""
-    gate = _gate(world, revocations=world.revocable_revocations)
-    challenge = gate.challenge(receipt=world.revocable_receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path, revocations=world.revocable_revocations)
+    challenge = gate.challenge(receipt=world.revocable_receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
 
     decision = gate.redeem(
         receipt=world.revocable_receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
 
     assert decision.served is False
     assert decision.reason == "revocation_blocked"
+    assert challenge.is_file()
 
 
 def test_a_bogus_revocation_record_cannot_deny_an_irrevocable_receipt(
@@ -592,14 +621,13 @@ def test_a_bogus_revocation_record_cannot_deny_an_irrevocable_receipt(
     passer-by a denial-of-service against a holder they have no relationship
     with. The record is noise; the delivery happens.
     """
-    gate = _gate(world, revocations=world.revocations)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path, revocations=world.revocations)
+    challenge = gate.challenge(receipt=world.receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
 
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
@@ -608,16 +636,42 @@ def test_a_bogus_revocation_record_cannot_deny_an_irrevocable_receipt(
     assert decision.reason == "served"
 
 
+def test_a_transferred_receipt_is_refused(world: World, tmp_path: Path) -> None:
+    """The other side of the coin from the bogus record above.
+
+    A record saying this receipt was TRANSFERRED, signed by the issuer's own
+    key and naming this very receipt_id, makes the verifier warn
+    `transferred_revocation_unbacked` — it has no transfer view to resolve
+    the claim against. Only the issuer can produce that warning for this
+    receipt, so unlike the generic ignored-record state it is not a lever a
+    passer-by can pull, and the gate reads it: whoever is owed the copy, it
+    is no longer certainly the party in front of it.
+    """
+    gate = _gate(world, tmp_path, revocations=_transferred_feed(world, tmp_path))
+    challenge = gate.challenge(receipt=world.receipt)
+    response = _respond(world, challenge, tmp_path / "response.json")
+
+    decision = gate.redeem(
+        receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        response=response,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert decision.served is False
+    assert decision.reason == "revocation_blocked"
+    assert "transferred" in decision.detail
+
+
 def test_a_proof_signed_by_a_foreign_key_is_refused(world: World, tmp_path: Path) -> None:
     """The attacker holds the PUBLIC bundle but not the buyer's seed."""
-    gate = _gate(world)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
     response = _respond(world, challenge, tmp_path / "forged.json", seed=world.foreign_seed)
 
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
@@ -629,17 +683,16 @@ def test_a_proof_signed_by_a_foreign_key_is_refused(world: World, tmp_path: Path
 def test_a_proof_minted_for_another_custodian_is_refused(world: World, tmp_path: Path) -> None:
     """The audience is inside the signed preimage, so a response the holder
     legitimately produced for one archive cannot be replayed at another."""
-    elsewhere = _gate(world, audience=OTHER_ARCHIVE)
-    other_challenge = elsewhere.challenge(receipt=world.receipt, out_dir=tmp_path / "elsewhere")
+    elsewhere = _gate(world, tmp_path / "elsewhere", audience=OTHER_ARCHIVE)
+    other_challenge = elsewhere.challenge(receipt=world.receipt)
     replayed = _respond(world, other_challenge, tmp_path / "replayed.json")
 
-    gate = _gate(world)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path)
+    gate.challenge(receipt=world.receipt)
 
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=replayed,
         deliver_to=tmp_path / "out",
     )
@@ -648,21 +701,133 @@ def test_a_proof_minted_for_another_custodian_is_refused(world: World, tmp_path:
     assert decision.reason == "redemption_proof_invalid"
 
 
-def test_a_foreign_challenge_and_matching_response_are_refused(
+def test_a_response_to_another_custodians_challenge_is_refused(
     world: World, tmp_path: Path
 ) -> None:
-    """A requester cannot bring both halves of another custodian's transcript."""
-    elsewhere = _gate(world, audience=OTHER_ARCHIVE)
-    other_challenge = elsewhere.challenge(receipt=world.receipt, out_dir=tmp_path / "elsewhere")
-    other_response = _respond(world, other_challenge, tmp_path / "elsewhere-response.json")
+    """A requester cannot bring an answer from somebody else's transcript.
 
-    gate = _gate(world)
+    The twin here shares this gate's AUDIENCE, so the audience binding is
+    deliberately not what does the work: the two custodians differ only in
+    which challenge each is holding. The response answers the twin's nonce,
+    this gate spends its own, and the signature does not match it.
+    """
+    twin = _gate(world, tmp_path / "twin")
+    twin_challenge = twin.challenge(receipt=world.receipt)
+    twin_response = _respond(world, twin_challenge, tmp_path / "twin-response.json")
+
+    gate = _gate(world, tmp_path)
+    gate.challenge(receipt=world.receipt)
 
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_active,
-        challenge=other_challenge,
-        response=other_response,
+        response=twin_response,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert decision.served is False
+    assert decision.reason == "redemption_proof_invalid"
+
+
+def test_a_replayed_response_is_refused(world: World, tmp_path: Path) -> None:
+    """The reason the custodian owns its challenges: a response is good once.
+
+    The first request is the legitimate one and succeeds. Presenting the very
+    same response again — the transcript an eavesdropper, a shared machine or
+    a backup would hand an attacker — finds nothing left to answer, because
+    the challenge was spent by being used.
+    """
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
+    response = _respond(world, challenge, tmp_path / "response.json")
+
+    first = gate.redeem(
+        receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        response=response,
+        deliver_to=tmp_path / "out",
+    )
+    assert first.served is True
+    assert not challenge.exists()
+
+    replayed = gate.redeem(
+        receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        response=response,
+        deliver_to=tmp_path / "out-again",
+    )
+
+    assert replayed.served is False
+    assert replayed.reason == "redemption_proof_invalid"
+    assert replayed.delivered is None
+
+
+def test_a_failed_redemption_also_spends_the_challenge(world: World, tmp_path: Path) -> None:
+    """Consumption is by USE, not by success.
+
+    A challenge that survived a failed attempt would be an oracle: an
+    attacker could grind responses against one nonce for as long as they
+    liked. The holder's cost is a round trip; the attacker's is a fresh
+    challenge they cannot obtain without the receipt.
+    """
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
+    forged = _respond(world, challenge, tmp_path / "forged.json", seed=world.foreign_seed)
+    honest = _respond(world, challenge, tmp_path / "honest.json")
+
+    assert (
+        gate.redeem(
+            receipt=world.receipt,
+            grant_view=world.grant_view_active,
+            response=forged,
+            deliver_to=tmp_path / "out",
+        ).reason
+        == "redemption_proof_invalid"
+    )
+    assert not challenge.exists()
+
+    # The right answer to a spent challenge is no longer an answer at all.
+    after = gate.redeem(
+        receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        response=honest,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert after.served is False
+    assert after.reason == "redemption_proof_invalid"
+
+
+def test_a_request_answering_no_outstanding_challenge_is_refused(
+    world: World, tmp_path: Path
+) -> None:
+    """The defect this redesign closes, stated directly.
+
+    The requester writes their own challenge document — this custodian's
+    audience, this receipt's id, a nonce of their choosing — and signs a
+    perfectly well-formed response to it. There is nowhere left to hand it
+    in: `redeem` reads the challenge from the custodian's own directory, and
+    nothing was ever minted there for this receipt.
+    """
+    self_dealt = tmp_path / "self-dealt-challenge.json"
+    self_dealt.write_text(
+        json.dumps(
+            {
+                "receipt_id": json.loads(world.receipt.read_text())["payload"]["receipt_id"],
+                "audience": ARCHIVE,
+                "nonce": keys.b64u(os.urandom(32)),
+            }
+        ),
+        encoding="utf-8",
+    )
+    response = _respond(world, self_dealt, tmp_path / "self-dealt-response.json")
+
+    gate = _gate(world, tmp_path)
+
+    decision = gate.redeem(
+        receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        response=response,
         deliver_to=tmp_path / "out",
     )
 
@@ -679,14 +844,13 @@ def test_an_archive_copy_that_does_not_match_the_receipt_is_refused(
     drifted.mkdir()
     (drifted / FILENAME).write_bytes(WORK_BYTES + b"tampered")
 
-    gate = _gate(world, archive_dir=drifted)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path, archive_dir=drifted)
+    challenge = gate.challenge(receipt=world.receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
 
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
@@ -706,14 +870,13 @@ def test_an_archive_copy_named_by_absolute_receipt_path_is_refused(
     outside_file.write_bytes(WORK_BYTES)
     receipt = _signed_receipt_with_filename(world, tmp_path, str(outside_file))
 
-    gate = _gate(world, archive_dir=archive)
-    challenge = gate.challenge(receipt=receipt, out_dir=tmp_path / "gate")
+    gate = _gate(world, tmp_path, archive_dir=archive)
+    challenge = gate.challenge(receipt=receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
 
     decision = gate.redeem(
         receipt=receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
@@ -731,18 +894,44 @@ def test_an_archive_copy_named_by_parent_traversal_is_refused(world: World, tmp_
     outside_file.write_bytes(WORK_BYTES)
     receipt = _signed_receipt_with_filename(world, tmp_path, f"../outside/{FILENAME}")
 
-    gate = _gate(world, archive_dir=archive)
-    challenge = gate.challenge(receipt=receipt, out_dir=tmp_path / "gate")
+    gate = _gate(world, tmp_path, archive_dir=archive)
+    challenge = gate.challenge(receipt=receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
 
     decision = gate.redeem(
         receipt=receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
 
+    assert decision.served is False
+    assert decision.reason == "artifact_out_of_scope"
+
+
+def test_an_archive_copy_named_with_a_nul_byte_is_refused(world: World, tmp_path: Path) -> None:
+    """A filename the filesystem cannot even be asked about.
+
+    A NUL byte passes the receipt schema (`minLength: 1` and nothing more)
+    and is signed into the payload like any other name, but resolving it
+    raises `ValueError` rather than answering. A candidate that cannot be
+    named is out of the running exactly like one that is missing — and the
+    request gets a verdict, not a traceback.
+    """
+    receipt = _signed_receipt_with_filename(world, tmp_path, "pledged\x00game.bin")
+
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=receipt)
+    response = _respond(world, challenge, tmp_path / "response.json")
+
+    decision = gate.redeem(
+        receipt=receipt,
+        grant_view=world.grant_view_active,
+        response=response,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert isinstance(decision, Decision)
     assert decision.served is False
     assert decision.reason == "artifact_out_of_scope"
 
@@ -765,8 +954,8 @@ def test_a_refusal_delivers_no_bytes(
 ) -> None:
     """The canary: whatever the reason, the destination stays empty. A gate
     that refuses in its report but copies the file anyway is not a gate."""
-    gate = _gate(world)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
     seed = world.foreign_seed if case == "foreign_key" else None
     response = _respond(world, challenge, tmp_path / "response.json", seed=seed)
     deliver_to = tmp_path / "out"
@@ -774,7 +963,6 @@ def test_a_refusal_delivers_no_bytes(
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_dormant if case == "dormant" else world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=deliver_to,
         offered_salt=world.salt_b64u if case == "salt" else None,
@@ -802,13 +990,12 @@ def test_every_decision_reason_belongs_to_the_closed_vocabulary(
             "artifact_out_of_scope",
         }
     )
-    gate = _gate(world)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
     response = _respond(world, challenge, tmp_path / "response.json")
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=response,
         deliver_to=tmp_path / "out",
     )
@@ -818,10 +1005,14 @@ def test_every_decision_reason_belongs_to_the_closed_vocabulary(
 def test_the_revocation_vocabulary_covers_transfer_as_well_as_revocation() -> None:
     """A transferred receipt remains a refusal value for a future verdict.
 
-    Today's CLI has no transfer-view flag, so this demo cannot produce that
-    verdict; the constant pins how the gate treats it if a verifier reports it.
+    Today's CLI has no transfer-view flag, so the `revocation` member itself
+    cannot read `transferred`; the constant pins how the gate would treat it
+    if a verifier reported it. The transfer the gate CAN see today arrives as
+    a warning instead, and that name is pinned here too, because a warning
+    string is the whole load-bearing evidence of that refusal.
     """
     assert custodian_mod.REVOCATION_REFUSED == frozenset({"revoked", "transferred"})
+    assert custodian_mod.TRANSFERRED_UNBACKED == "transferred_revocation_unbacked"
 
 
 def test_a_hostile_request_never_raises(world: World, tmp_path: Path) -> None:
@@ -830,13 +1021,12 @@ def test_a_hostile_request_never_raises(world: World, tmp_path: Path) -> None:
     garbage = tmp_path / "garbage.json"
     garbage.write_text("{not json at all", encoding="utf-8")
 
-    gate = _gate(world)
-    challenge = gate.challenge(receipt=world.receipt, out_dir=tmp_path)
+    gate = _gate(world, tmp_path)
+    gate.challenge(receipt=world.receipt)
 
     decision = gate.redeem(
         receipt=world.receipt,
         grant_view=world.grant_view_active,
-        challenge=challenge,
         response=garbage,
         deliver_to=tmp_path / "out",
     )

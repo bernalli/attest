@@ -88,21 +88,24 @@ directory.
     then `check-artifact` confirms the delivered bytes against the receipt
     that outlived the store.
 
+The challenge in steps 8 and 11 is the **archive's**, not Casey's: the gate
+mints it, keeps it, and spends it on the first request that uses it, so an
+answer to it is worth exactly one attempt whether that attempt succeeds or
+fails. A request never brings a challenge of its own.
+
 ### What the gate turns away
 
 An activated pledge is a promise to the **holder**, not to whoever turns up.
-One current CLI gap is named here too: today's `attest verify` accepts a
-revocation view but no transfer view, so this demo cannot detect that a
-receipt has been transferred away.
 
 | Request | Outcome |
 | --- | --- |
 | The grant has not fired yet | `grant_not_activated` |
 | A receipt with a byte flipped in the signed payload | `receipt_not_ok` |
 | A receipt that has been revoked | `revocation_blocked` |
-| A receipt that has been transferred away | Transfer gap: today's CLI cannot see it |
+| A receipt that has been transferred away | `revocation_blocked` |
 | A proof signed by someone holding the public bundle but not Casey's seed | `redemption_proof_invalid` |
 | A proof Casey legitimately made **for a different archive**, replayed here | `redemption_proof_invalid` |
+| A response Casey already used here, presented a second time | `redemption_proof_invalid` |
 | The buyer-binding salt offered as proof | `salt_disclosure_rejected` |
 | An archived copy that does not match the receipt, or falls outside the grant's scope | `artifact_out_of_scope` |
 
@@ -115,16 +118,44 @@ is exactly how a holder gives away the ability to be impersonated
 everywhere. That is a prohibition, not a fallback, so the gate checks it
 first.
 
+The **transfer** arrives by a side door and is worth a line of its own.
+`attest verify` still has no transfer-view flag, so the verdict's
+`revocation` member never reads `transferred`; what it does carry, when an
+issuer-signed record says this very receipt was transferred and there is no
+transfer view to resolve the claim against, is the warning
+`transferred_revocation_unbacked`. Only the issuer can produce that warning,
+and only for that receipt id, so the gate reads it and refuses: whoever is
+owed the copy, it is no longer certainly the party at the door.
+
 Two things the gate deliberately does **not** do. It does not distinguish
-bad redemption proofs: a wrong key, a replayed response, or a challenge for
-another archive all give the same proof answer. Other refusal classes remain
-distinct in this demo because `Decision` is a narration object, not a wire
-protocol; a real gate would decide separately how much of that reason to tell
-the requester. And it does not treat a *bogus* revocation record as a reason
-to refuse — against an irrevocable receipt the verifier reports such a record
-as ignored, and a gate that read "something was ignored" as a refusal would
-hand any passer-by a denial-of-service against a holder they have no
-relationship with.
+bad redemption proofs: a wrong key, a replayed response, or an answer to
+another archive's challenge all give the same proof answer. Other refusal
+classes remain distinct in this demo because `Decision` is a narration
+object, not a wire protocol; a real gate would decide separately how much of
+that reason to tell the requester. And it does not treat a *bogus* revocation
+record as a reason to refuse — against an irrevocable receipt the verifier
+reports such a record as ignored, and a gate that read "something was
+ignored" as a refusal would hand any passer-by a denial-of-service against a
+holder they have no relationship with. (The transferred-record warning above
+is the opposite case, and the difference is who can produce it.)
+
+### What this gate does not cover
+
+Two gaps a production gate would close, stated plainly because a reference
+that hides them teaches the wrong thing.
+
+It serves the file with a `shutil.copy` **by path**, after verifying the
+bytes at that path. Anyone with write access *inside* the archive directory
+can substitute the file between the check and the copy, and the delivery
+would carry bytes that were never verified. A real gate opens the file once
+and serves from that descriptor, so the thing it checked is the thing it
+sends.
+
+And containment is decided on the **resolved** path, so a symlink inside the
+archive pointing outside it is refused. That is the safe direction, but it
+rules out a content-addressed archive that keeps its blobs on another volume
+and links to them — a shape common enough that a production gate would need
+an explicit allowlist of roots rather than a single directory.
 
 ### Why this is lawful, in this story
 
