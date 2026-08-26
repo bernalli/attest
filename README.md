@@ -76,7 +76,9 @@ pledge fires, an archive holding its own copy can hand the file to whoever prove
 the receipt is theirs — and to nobody else. `python -m demo.pledge_dies` does
 exactly that, end to end, on your machine. What is missing is not the mechanism:
 it is a publisher who has signed one, an archive that holds anything, and prose
-written by a lawyer instead of the placeholder the demo carries.
+written by a lawyer instead of the placeholder the demo carries. The archive
+gate the demo runs against is a non-normative reference, not a production gate;
+it names the three things it does not do in [`demo/README.md`](demo/README.md).
 
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations that agree on all 158
@@ -214,7 +216,7 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   answered once instead of re-argued per issue.
 - **[Conformance program](docs/conformance.md).** One documented command, run with
   a third party's own adapter against the vector corpus, produces a pass/fail
-  report and a self-certification claim; both in-repo verifiers pass 130/130 through
+  report and a self-certification claim; both in-repo verifiers pass 158/158 through
   that exact path.
 
 ## Quickstart

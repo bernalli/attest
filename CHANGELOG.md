@@ -40,6 +40,16 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   wrappers. Running from a shell is the claim being made, and a claim nothing
   executes decays quietly.
 
+### Fixed
+
+- **The public conformance claim was stale, and said two different things.**
+  The README claimed 130/130 in one place and 158 leaves in two others, and
+  `docs/conformance.md` — whose table is explicitly a CURRENT claim, not a
+  changelog — still carried 0.6.0 rows measured against a corpus revision two
+  growth steps behind. All four rows are re-measured, not edited: Python and
+  TypeScript both pass 158/158 on the v0.2 subset and 52/52 on v0.1, against
+  corpus revision `a74f7f3c…`, through the documented command.
+
 ## [0.8.0] — 2026-08-25
 
 ### Added
