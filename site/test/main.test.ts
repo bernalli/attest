@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { zipSync } from 'fflate'
 import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { initApp, type AppHandle } from '../src/main.js'
@@ -45,6 +46,34 @@ describe('initApp wiring', () => {
     app.handleManifestBytes(canonicalBytes(manifest()))
     expect(document.getElementById('manifest-zone')!.hidden).toBe(true)
     expect(document.getElementById('results')!.textContent).toContain('Receipt verifies')
+  })
+
+  // The pin on main.ts's call site: with no proofs/ member nothing reaches
+  // verify()'s evidence channel and the page is silent about transparency;
+  // with one, the evidence arrives and the page says — in the verifier's own
+  // words — that it holds no pinned log configuration to judge it by. If
+  // main.ts stopped passing the fifth argument, the second half goes quiet
+  // and this test fails.
+  const bundleWith = (members: Record<string, Uint8Array>): Uint8Array => {
+    const m = manifest()
+    const issuer = m.issuer as string
+    const blob: JsonObject = { issuer, key_manifests: [m], artifact_manifests: [] }
+    return zipSync({
+      ['receipts/01JZ5PDHT0000G40R40M30E209.attest.json']: envelope(),
+      [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      ...members,
+    })
+  }
+
+  it('does not mention transparency configuration for a bundle carrying no proof', () => {
+    app.handleBytes('library.attest', bundleWith({}))
+    expect(document.getElementById('results')!.textContent).not.toContain('transparency_config_missing')
+  })
+
+  it('feeds a bundle’s proofs/ evidence to verify, and reports the missing pinned configuration', () => {
+    const evidence = new TextEncoder().encode('{"leaf_index":0}')
+    app.handleBytes('library.attest', bundleWith({ ['proofs/01JZ5PDHT0000G40R40M30E209.json']: evidence }))
+    expect(document.getElementById('results')!.textContent).toContain('transparency_config_missing')
   })
 
   it('shows the private-file refusal', () => {

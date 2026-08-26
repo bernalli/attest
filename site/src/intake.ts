@@ -1,11 +1,15 @@
 import { loadsStrict } from 'attest-verifier'
-import type { JsonObject, TrustStore } from 'attest-verifier'
+import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
 import { parseBundle, BundleError } from './bundle.js'
 
 export interface VerifyJob {
   label: string
   envelopeBytes: Uint8Array
   trustStore: TrustStore
+  // v0.2 §14 evidence that travelled inside the same bundle as this receipt,
+  // or null when none did. Untrusted input on the same footing as the
+  // envelope itself: it is handed to the verifier, never believed here.
+  transparency: JsonValue | null
 }
 
 export type IntakeResult =
@@ -63,7 +67,16 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
         .map((r) => saltNotice(`The receipt ${r.name} in this bundle`))
       return {
         kind: 'jobs',
-        jobs: parsed.receipts.map((r) => ({ label: r.name, envelopeBytes: r.bytes, trustStore: parsed.trustStore })),
+        jobs: parsed.receipts.map((r) => ({
+          label: r.name,
+          envelopeBytes: r.bytes,
+          trustStore: parsed.trustStore,
+          // Matched by the receipt id the two member names share (v0.2 §14).
+          // A bundle that pairs them wrong buys nothing: the verifier derives
+          // the entry it expects from the envelope, so mismatched evidence
+          // degrades to `not_checked`, it never transfers standing.
+          transparency: parsed.proofs[r.name] ?? null,
+        })),
         ...(notices.length > 0 ? { notices } : {}),
       }
     } catch (e) {
@@ -99,12 +112,13 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
         label: fileName,
         envelopeBytes: bytes,
         trustStore: { manifests: { [issuer]: embedded }, provenance: { [issuer]: 'embedded' } },
+        transparency: null, // a bare envelope brings no proofs/ member with it
       }],
       ...notices,
     }
   }
   if (parsed) return { kind: 'needs-manifest', envelopeBytes: bytes, fileName, ...notices }
-  return { kind: 'jobs', jobs: [{ label: fileName, envelopeBytes: bytes, trustStore: EMPTY_TRUST }] }
+  return { kind: 'jobs', jobs: [{ label: fileName, envelopeBytes: bytes, trustStore: EMPTY_TRUST, transparency: null }] }
 }
 
 export function trustStoreFromManifestBytes(bytes: Uint8Array): TrustStore | null {

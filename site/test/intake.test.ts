@@ -37,6 +37,24 @@ describe('intake', () => {
     expect(runVerify(r.jobs[0].envelopeBytes, r.jobs[0].trustStore).result.signature).toBe('valid')
   })
 
+  it('hands each receipt its own proofs/ evidence, and nothing to the ones without', () => {
+    const { issuer, manifest } = keyManifest()
+    const blob: JsonObject = { issuer, key_manifests: [manifest], artifact_manifests: [] }
+    const withProof = '01JZ5PDHT0000G40R40M30E209'
+    const withoutProof = '01JZ5PDHT0000G40R40M30E20A'
+    const zip = zipSync({
+      [`receipts/${withProof}.attest.json`]: envelopeBytes(),
+      [`receipts/${withoutProof}.attest.json`]: envelopeBytes(),
+      [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`proofs/${withProof}.json`]: new TextEncoder().encode('{"leaf_index":0}'),
+    })
+    const r = intake('library.attest', zip)
+    if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
+    const byLabel = Object.fromEntries(r.jobs.map((j) => [j.label, j]))
+    expect(byLabel[withProof].transparency).not.toBeNull()
+    expect(byLabel[withoutProof].transparency).toBeNull()
+  })
+
   it('rejects a private zip with the private message', () => {
     const zip = zipSync({ ['salts.json']: new TextEncoder().encode('{}') })
     const r = intake('oops.attest', zip)

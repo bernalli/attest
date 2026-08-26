@@ -44,10 +44,23 @@ export function initApp(doc: Document): AppHandle {
   // again on every disclosure and on the manifest handover, and a warning that
   // disappears the moment the reader interacts with the page is a warning that
   // was never really there.
+  // The evidence channel carries ONLY what came out of the dropped file:
+  // `transparency`, the §10.2 bundle a `proofs/` member held. The other
+  // members of VerifyTransparencyOptions — `logKeys`, `anchorPolicy`,
+  // `witnessPolicy` — are the verifier's trusted, out-of-band configuration
+  // and are deliberately absent: this page pins no log. Passing evidence
+  // without them is not a gap being papered over, it is the honest reading —
+  // verify() answers `not_checked` and says `transparency_config_missing`,
+  // instead of the silence a caller that never opened the channel would get.
   function renderJobs(disclosure: Disclosure | null): void {
     results.replaceChildren(
       ...currentNotices.map((text) => message(doc, text)),
-      ...currentJobs.map((job) => renderResult(job.label, runVerify(job.envelopeBytes, job.trustStore, null, disclosure))),
+      ...currentJobs.map((job) =>
+        renderResult(
+          job.label,
+          runVerify(job.envelopeBytes, job.trustStore, null, disclosure, { transparency: job.transparency }),
+        ),
+      ),
     )
   }
 
@@ -87,7 +100,7 @@ export function initApp(doc: Document): AppHandle {
       )
       return
     }
-    currentJobs = [{ label: pendingEnvelope.fileName, envelopeBytes: pendingEnvelope.bytes, trustStore }]
+    currentJobs = [{ label: pendingEnvelope.fileName, envelopeBytes: pendingEnvelope.bytes, trustStore, transparency: null }]
     pendingEnvelope = null
     manifestZone.hidden = true
     renderJobs(null)
