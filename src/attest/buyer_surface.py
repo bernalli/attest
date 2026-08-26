@@ -27,6 +27,7 @@ logo in agreement for free: the mark's SVGs paint with ``currentColor``.
 
 from __future__ import annotations
 
+import html
 from typing import Final
 
 # --- Styling ----------------------------------------------------------------
@@ -86,8 +87,11 @@ def render_page(
     with no network at all.
 
     Args:
-        title: Document title, already plain text (no markup).
+        title: Document title as plain text; escaped here, so callers pass the
+            raw value rather than pre-escaping it.
         body: Rendered body markup, without the surrounding ``<body>`` tags.
+            This one is markup and is emitted as given: build it with the
+            helpers in this module, which escape what they interpolate.
         lang: BCP 47 language tag for the root element.
         extra_head: Markup inserted into ``<head>`` before the title, for
             per-page metadata such as a Content-Security-Policy or a
@@ -106,7 +110,7 @@ def render_page(
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
         f"{head_extra}"
-        f"<title>{title}</title>\n"
+        f"<title>{html.escape(title)}</title>\n"
         f"<style>{CORE_CSS}{extra_css}</style>\n"
         "</head>\n"
         "<body>\n"
@@ -124,7 +128,12 @@ _GENERIC_PRIVATE_NAME: Final = "*.private.attest"
 
 
 def _private_name(bundle_name: str | None) -> str:
-    """Return the private file's name, or the generic pattern."""
+    """Return the private file's name, or the generic pattern, unescaped.
+
+    Escaping belongs to whichever renderer emits markup — the plain-text form
+    must stay plain, or an email would show a buyer ``&amp;`` where their file
+    name has an ``&``.
+    """
     return _GENERIC_PRIVATE_NAME if bundle_name is None else f"{bundle_name}.private.attest"
 
 
@@ -143,7 +152,7 @@ def private_file_warning_html(bundle_name: str | None = None) -> str:
     Returns:
         A ``<div class="warning">`` block.
     """
-    name = _private_name(bundle_name)
+    name = html.escape(_private_name(bundle_name))
     return (
         '<div class="warning">\n'
         f"<h2>Never send {name} to anyone</h2>\n"

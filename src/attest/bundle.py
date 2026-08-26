@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import html
 import json
 import os
 import re
@@ -255,9 +256,13 @@ def _render_readme(name: str) -> str:
     The page is fully self-contained — styling included, nothing fetched — so
     it opens from the zip on a machine with no network, years from now.
     """
+    # The name lands in markup a buyer opens in a browser, and export() is
+    # library API: the value can be whatever the caller's own caller supplied.
+    # Escape once here; the warning block escapes its own copy, and
+    # render_page escapes the title.
     body = _README_BODY_TEMPLATE.replace(
         "__PRIVATE_WARNING__", buyer_surface.private_file_warning_html(name)
-    ).replace("__BUNDLE_NAME__", name)
+    ).replace("__BUNDLE_NAME__", html.escape(name))
     return buyer_surface.render_page(f"attest receipt bundle: {name}", body)
 
 

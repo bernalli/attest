@@ -115,6 +115,32 @@ def test_core_css_avoids_syntax_younger_than_the_documents_it_styles() -> None:
     assert "@media print" in buyer_surface.CORE_CSS
 
 
+def test_a_bundle_name_cannot_inject_markup_into_a_held_page() -> None:
+    """The bundle name is written into the README in several places, and a
+    README is opened in a browser by the person who bought something.
+
+    Callers inside this repo pass a slug they built themselves, but `export()`
+    is library API: a client that names a bundle after anything a person typed
+    would otherwise be writing that person's markup into a file another person
+    opens. Escaped at the point where the value becomes HTML, not by trusting
+    every caller to have sanitised first.
+    """
+    hostile = 'x"><script>alert(1)</script>'
+
+    warning = buyer_surface.private_file_warning_html(hostile)
+    assert "<script>" not in warning
+    assert "&lt;script&gt;" in warning
+
+    page = buyer_surface.render_page(hostile, "<p>body</p>")
+    assert "<script>" not in page
+
+    from attest import bundle
+
+    readme = bundle._render_readme(hostile)
+    assert "<script>" not in readme
+    assert "&lt;script&gt;" in readme
+
+
 def test_the_generator_is_reproducible() -> None:
     """Running the generator twice must not produce a third state: it is run by
     hand, and a non-deterministic generator would show up as a phantom diff."""
