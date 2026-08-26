@@ -35,7 +35,7 @@ import, before any leaf is checked.)
   with that leaf's absolute path in every argv token, splits the template with
   `shlex.split`, and invokes it as a fixed argv list (`shell=False` — never a
   shell string).
-- `--subset` selects `v0.1` (52 leaves) or `v0.2` (all leaves, currently 156) —
+- `--subset` selects `v0.1` (52 leaves) or `v0.2` (all leaves, currently 158) —
   see §4.
 - `--report FILE` additionally writes the machine-readable JSON report (§6)
   to `FILE`.
@@ -47,7 +47,7 @@ The runner prints one `FAIL <leaf-id>` block (with its mismatches) per
 non-passing leaf, then exactly one summary line:
 
 ```
-CONFORMANT (v0.2): 157/157 leaves pass — corpus revision <hex12>
+CONFORMANT (v0.2): 158/158 leaves pass — corpus revision <hex12>
 NOT CONFORMANT (v0.1): 49/52 leaves pass — 3 failing
 ```
 
@@ -130,7 +130,7 @@ either as a worked example of the contract above.
   negative control for a v0.2-only schema conditional, living inside an
   otherwise-v0.2-only group — see `docs/spec/vectors/README.md` for the full
   membership rationale. A v0.1-only implementation (one that never accepts v0.2's hybrid
-  profile) is measured against this subset, not against all 157.
+  profile) is measured against this subset, not against all 158.
 
 ## 5. The claim process
 

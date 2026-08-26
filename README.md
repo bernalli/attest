@@ -165,7 +165,7 @@ of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
 deadlines), and Stage 3 issuer-mediated transfer. (A v0.1-only verifier is
-required to reject v0.2 envelopes, so it is measured against the 51-leaf
+required to reject v0.2 envelopes, so it is measured against the 52-leaf
 subset.) There are also two end-to-end demos: one deletes a store's entire
 infrastructure mid-lifecycle and proves the receipt still verifies, and one
 carries that a step further — a rights holder's preservation pledge fires and

@@ -1678,3 +1678,82 @@ def _write(directory: Path, name: str, content: str) -> Path:
     path = directory / name
     path.write_text(content, encoding="utf-8")
     return path
+
+
+# --- check_corpus_counts ------------------------------------------------------
+#
+# This guard was rejected twice in review for missing claim shapes, and both
+# times the fix was protected by nothing but the reviewer's memory of which
+# shapes had failed. These pin them. Each case is written as the wrong number,
+# in the exact shape a real document used, so a pattern that stops matching
+# fails here rather than in the next release.
+
+
+def _corpus_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> list[str]:
+    """Run check_corpus_counts over a repository holding one document."""
+    vectors = tmp_path / "docs" / "spec" / "vectors"
+    # Three leaves in two groups, and a v0.1 subset of one: small, and nothing
+    # like the real numbers, so a pattern that happens to hardcode 158 or 52
+    # cannot pass by accident.
+    for group, leaf in (("01-a", "a"), ("01-a", "b"), ("26-b", "a")):
+        (vectors / group / leaf).mkdir(parents=True, exist_ok=True)
+        (vectors / group / leaf / "expected.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "doc.md").write_text(body, encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    return check_spec_docs.check_corpus_counts()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # The shapes that shipped stale, verbatim in form.
+        "The 130-leaf conformance corpus is the gate.",
+        "reproduce all 130 of them",
+        "`v0.2` (all leaves, currently 156)",
+        "130 leaf vectors across 2 groups",
+        "measured against the 51-leaf subset",
+        # Wrapped across a line break: the shape one version of the guard was
+        # blind to, which is why the match runs on folded text.
+        "measured against the 51-leaf\nsubset of the corpus",
+    ],
+)
+def test_corpus_counts_rejects_a_stale_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    assert _corpus_case(tmp_path, monkeypatch, body) != []
+
+
+def test_corpus_counts_accepts_the_true_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Group 01 is below the v0.1 ceiling and holds two leaves; group 26 is not.
+    body = "3 leaf vectors across 2 groups; a v0.1-only verifier meets the 2-leaf subset."
+    assert _corpus_case(tmp_path, monkeypatch, body) == []
+
+
+def test_corpus_counts_skips_a_changelog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A changelog records what the counts WERE, so its stale numbers are the
+    # point rather than a defect.
+    errors = _corpus_case(tmp_path, monkeypatch, "nothing here")
+    assert errors == []
+    (tmp_path / "CHANGELOG.md").write_text("The 130-leaf corpus grew.", encoding="utf-8")
+    assert check_spec_docs.check_corpus_counts() == []
+
+
+def test_corpus_exemptions_are_path_and_phrase_exact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The exemption excuses one sentence in one file, never a number wherever
+    # it appears: the same figure in the same file, in a shape the guard does
+    # match, is still reported.
+    monkeypatch.setattr(
+        check_spec_docs,
+        "_CORPUS_CLAIM_EXEMPTIONS",
+        {"doc.md": ("(130 leaves), the share routed to verify()",)},
+    )
+    body = (
+        "**verify()** (130 leaves), the share routed to verify(). The 130-leaf corpus is the gate."
+    )
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert len(errors) == 1
+    assert "130" in errors[0]

@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { runVerify, runChainAudit, runWitnessQuorum, runRedemption } from '../src/run.js'
 import { parseWitnessPolicy } from 'attest-verifier'
 import * as V from './helpers/vectors.js'
@@ -20,8 +22,21 @@ const leaves = allLeaves.filter(
 )
 
 describe('conformance corpus through the site adapter', () => {
-  it('discovers the full vector suite (>= 156 leaves)', () => {
-    expect(allLeaves.length).toBeGreaterThanOrEqual(156)
+  it('discovers every leaf the corpus holds', () => {
+    // Counted by walking the corpus here, independently of the loader under
+    // test: comparing the loader's output with itself would protect nothing,
+    // and a constant floor stops catching anything once the corpus outgrows
+    // it — which is how the number here came to sit at 156 while the corpus
+    // reached 158.
+    const walk = (dir: string): number =>
+      readdirSync(dir, { withFileTypes: true }).reduce(
+        (n, e) =>
+          e.isDirectory()
+            ? n + walk(join(dir, e.name))
+            : n + (e.name === 'expected.json' ? 1 : 0),
+        0,
+      )
+    expect(allLeaves.length).toBe(walk(V.VECTORS_ROOT))
   })
 
   it.each(leaves.map((d) => [V.vectorId(d), d] as const))('%s', (_id, dir) => {

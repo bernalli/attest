@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 import shlex
 import sys
@@ -195,8 +196,13 @@ def test_select_subset_v01_is_exactly_52_leaves_of_the_real_corpus() -> None:
 def test_select_subset_v02_is_the_full_real_corpus() -> None:
     leaves = cr.find_leaf_dirs(REAL_VECTORS)
     subset = cr.select_subset(leaves, REAL_VECTORS, "v0.2")
-    assert len(subset) >= 158
-    assert len(subset) == len(leaves)
+    # Both halves matter: the v0.2 subset is the whole corpus, and the whole
+    # corpus is what is actually on disk. The second assertion was a constant
+    # floor, which stops catching a truncated discovery the moment the corpus
+    # outgrows it.
+    on_disk = sum(1 for _root, _dirs, files in os.walk(REAL_VECTORS) if "expected.json" in files)
+    assert on_disk > 0
+    assert len(subset) == len(leaves) == on_disk
 
 
 # --------------------------------------------------------------------------

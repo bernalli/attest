@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import NamedTuple
 
@@ -1229,6 +1230,143 @@ def check_conformance_doc() -> list[str]:
     ]
 
 
+# Every place a document states the size of the conformance corpus, in any of
+# the shapes prose actually uses. The corpus grows whenever a stage ships, and
+# each growth has left at least one of these numbers behind: the 0.8.1 release
+# corrected two of them and still shipped six more, in five files, because the
+# search that followed looked for the exact strings just seen rather than for
+# the class of claim. This guard looks for the class.
+_CORPUS_CLAIM_PATTERNS = (
+    re.compile(r"\b(\d+)[- ]leaf conformance corpus\b"),
+    re.compile(r"\b(\d+)[- ]leaf corpus\b"),
+    re.compile(r"\b(\d+) leaf vectors\b"),
+    re.compile(r"\ball (\d+) conformance vector leaves\b"),
+    re.compile(r"\bnot all (\d+)\b"),
+    re.compile(r"\bnot against all (\d+)\b"),
+    re.compile(r"\b(\d+)/\1 leaves pass\b"),
+    re.compile(r"\bat least (\d+) leaves\b"),
+    # Shapes the first version of this guard missed, each found by a review
+    # reading the same documents by hand: a normative sentence telling a v0.2
+    # implementation to "reproduce all 130", and a parenthetical giving the
+    # subset size as "(all leaves, currently 156)". Both are corpus claims in
+    # every sense that matters, and neither looked like one to a pattern list
+    # written from the examples already in front of it.
+    re.compile(r"\breproduce all (\d+)\b"),
+    re.compile(r"\ball leaves, currently (\d+)\b"),
+    re.compile(r"\bevery leaf in the corpus \(currently (\d+)\)"),
+)
+
+# Claims about the v0.1 subset, which is a different number from the total.
+_SUBSET_CLAIM_PATTERNS = (
+    re.compile(r"\bthe (\d+)[- ]leaf subset\b"),
+    re.compile(r"\bv0\.1 subset \((\d+) leaves\b"),
+    re.compile(r"\b(\d+)[- ]leaf v0\.1 subset\b"),
+    re.compile(r"\bv0\.1.{0,3}\((\d+) leaves\)"),
+)
+
+_GROUP_CLAIM_PATTERN = re.compile(r"\b(\d+) leaf vectors across (\d+) groups\b")
+
+# Numbers that look like corpus claims but are not, each deliberate and each
+# checked by something else. Keyed by path AND exact phrase so the exemption
+# cannot widen: it excuses this sentence, not this file, and not this number
+# wherever else it appears. (It does not follow that editing the line makes the
+# guard fire — an earlier comment here claimed that, and a review measured it
+# false: the exempt phrase is a shape no pattern matches anyway. The exemption
+# is belt-and-braces against a future pattern that would.)
+_CORPUS_CLAIM_EXEMPTIONS = {
+    # The share of leaves routed to the `verify()` surface, not the corpus
+    # size. The four shares sum to the corpus, and a TypeScript guard test pins
+    # that sum (plus the redemption surface) — not each share, which move as
+    # the corpus grows. Rewriting this 130 to match the total would make the
+    # sentence false.
+    "verifiers/ts/README.md": ("**`verify()`** (130 leaves)",),
+}
+
+
+def _measured_corpus() -> tuple[int, int, int]:
+    """Count the corpus on disk: (leaves, groups, v0.1 subset size).
+
+    Reuses `conformance_runner`'s own discovery and subset rule rather than
+    restating them, so this guard cannot drift from the runner that produces
+    the numbers the documents quote.
+    """
+    # Imported from this file's own directory, not from _REPO_ROOT: the runner
+    # is this module's sibling wherever the repository root is pointed, and
+    # resolving it through _REPO_ROOT broke the moment a test pointed that at a
+    # fixture tree.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from conformance_runner import find_leaf_dirs, select_subset
+
+    vectors_root = _REPO_ROOT / "docs/spec/vectors"
+    leaves = find_leaf_dirs(vectors_root)
+    groups = sorted({leaf.relative_to(vectors_root).parts[0] for leaf in leaves})
+    subset = select_subset(leaves, vectors_root, "v0.1")
+    return len(leaves), len(groups), len(subset)
+
+
+def check_corpus_counts() -> list[str]:
+    """Report stated corpus sizes, in known claim shapes, that the disk denies.
+
+    Read that first line as the limit it is: this recognises the shapes it has
+    been taught, listed above, and a claim phrased in a new way passes. Judging
+    every figure near the corpus vocabulary instead was tried and abandoned —
+    technical prose is dense with numbers beside the word "leaves" that are
+    byte sizes, RFC numbers and section numbers, and that version reported 36
+    of them. What actually closes this class is removing the hand-written
+    numbers from the documents; that is a separate piece of work.
+
+    Scans every Markdown file in the repository — not a fixed list, because the
+    numbers that went stale were in files nobody thought to list. Matching runs
+    against the text with newlines folded to spaces: prose wraps, and the first
+    version of this guard was blind to `the 52-leaf\nsubset` for exactly that
+    reason, which its own red bench caught. Line numbers are recovered from the
+    match offset so a report still points at the right line.
+
+    Called directly from `main()`, like the other single-document guards.
+    """
+    total, groups, subset_size = _measured_corpus()
+    errors: list[str] = []
+    for path in sorted(_REPO_ROOT.rglob("*.md")):
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        if "node_modules" in rel or rel.startswith(".git/"):
+            continue
+        # The changelog records what the numbers WERE; that is its job.
+        if rel.endswith("CHANGELOG.md"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        for phrase in _CORPUS_CLAIM_EXEMPTIONS.get(rel, ()):
+            text = text.replace(phrase, "")
+        # Fold newlines to spaces, preserving length so offsets stay valid.
+        folded = text.replace("\n", " ")
+
+        def line_of(offset: int, _text: str = text) -> int:
+            return _text.count("\n", 0, offset) + 1
+
+        for pattern in _CORPUS_CLAIM_PATTERNS:
+            for match in pattern.finditer(folded):
+                claimed = int(match.group(1))
+                if claimed != total:
+                    errors.append(
+                        f"{rel}:{line_of(match.start())}: claims {claimed} corpus "
+                        f"leaves, but the corpus holds {total}"
+                    )
+        for pattern in _SUBSET_CLAIM_PATTERNS:
+            for match in pattern.finditer(folded):
+                claimed = int(match.group(1))
+                if claimed != subset_size:
+                    errors.append(
+                        f"{rel}:{line_of(match.start())}: claims a {claimed}-leaf "
+                        f"v0.1 subset, but the subset holds {subset_size}"
+                    )
+        for match in _GROUP_CLAIM_PATTERN.finditer(folded):
+            if int(match.group(2)) != groups:
+                errors.append(
+                    f"{rel}:{line_of(match.start())}: claims {match.group(2)} "
+                    f"vector groups, but there are {groups}"
+                )
+    return errors
+
+
 def collect_errors(
     threat_model: str,
     privacy: str,
@@ -1308,6 +1446,7 @@ def main() -> int:
     errors += check_standards_relationship()
     errors += check_internet_draft_snapshot()
     errors += check_conformance_doc()
+    errors += check_corpus_counts()
     for error in errors:
         print(f"ERROR {error}")
     return 1 if errors else 0

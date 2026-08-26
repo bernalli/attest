@@ -6,6 +6,53 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The stale conformance numbers the 0.8.1 fix did not reach.** That fix
+  corrected the README and the certification table; a census of every artefact a
+  human reads found six more, in five files, all saying the corpus is smaller
+  than it is: `CONTRIBUTING.md` (130 leaves / 38 groups, plus two suite counts
+  frozen at 2048 and 876), the README's own v0.1 subset (51 where the paragraph
+  above says 52), `docs/spec/vectors/README.md` (157), the standards annex and
+  the threat model (130-leaf corpus, twice each), and two more in
+  `docs/conformance.md`. Measured rather than edited: the corpus holds **158
+  leaves across 40 groups**, the v0.1 subset **52**, and the suites run **2484**
+  Python and **1231** TypeScript tests. The `130` in `verifiers/ts/README.md` is
+  left alone — there it is the share of leaves routed to `verify()`, one term of
+  a partition that sums to 158. (The TypeScript guard test pins the sum and the
+  redemption surface, not each individual share; the README said otherwise and
+  now says this.)
+
+### Added
+
+- **A guard against the corpus counts going stale, and an honest account of
+  what it does not cover.** `tools/check_spec_docs.py` measures the corpus on
+  disk — reusing `conformance_runner`'s own discovery and v0.1 subset rule
+  rather than restating them — and fails on any Markdown file whose stated leaf
+  count, group count or subset size disagrees. It scans every `.md` rather than
+  a fixed list, because the numbers that went stale were in files nobody would
+  have listed, and it matches with newlines folded to spaces, since one version
+  of it was blind to a claim wrapped across two lines.
+
+  It recognises the claim shapes it has been taught, so a count phrased a new
+  way still passes: this narrows the gap, it does not close it. Judging every
+  figure near the corpus vocabulary was tried and abandoned — technical prose
+  is dense with numbers beside the word "leaves" that are byte sizes, RFC
+  numbers and section numbers, and that version reported 36 of them. Removing
+  the hand-written numbers from the documents is the design that closes this,
+  and it is its own task. The shapes are pinned by unit tests, so the next
+  edit to the patterns fails here rather than in a release.
+- Two more stale counts a hand review caught after the guard's first draft, in
+  places the draft could not see: v0.1 §15 still measured a v0.1-only verifier
+  against a 51-leaf subset and told a v0.2 implementation to reproduce all 130,
+  and the conformance document still called the v0.2 subset "currently 156".
+  Both are corrected, v0.1 §15's group list gains the two v0.2 groups that
+  shipped without being named there, and the guard learned the two shapes it
+  had missed — it now reports exactly those three claims when they are wrong.
+- The two suite counts are gone from `CONTRIBUTING.md` instead of being
+  guarded: a number that changes with every merged test teaches nothing and
+  would fail CI on every green PR.
+
 ## [0.8.1] — 2026-08-26
 
 ### Added
