@@ -61,6 +61,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.parse import parse_qs, quote
 
+from attest import buyer_surface
 from attest_bridge.config import BridgeConfig
 from attest_bridge.core import IssuingCore
 from attest_bridge.delivery import Delivery
@@ -482,19 +483,20 @@ def _render_pair_landing(
     """
     shareable_href, private_href = (html.escape(href, quote=True) for href in hrefs)
     name = html.escape(pair.name)
-    body = (
-        '<!doctype html><html><head><meta charset="utf-8">'
-        "<title>Your receipt</title></head><body>"
-        "<h1>Your receipt</h1>"
-        "<p>Your receipt is two files. Download both.</p>"
+    # This page is where the delivery email sends a buyer whose attachments did
+    # not arrive, so it is a buyer-facing surface like the bundle README and the
+    # explainer page — it renders the same warning from the same source rather
+    # than keeping a shorter fourth wording of its own.
+    body = buyer_surface.render_page(
+        "Your receipt",
+        "<h1>Your receipt</h1>\n"
+        "<p>Your receipt is two files. Download both.</p>\n"
         f'<p><a href="{shareable_href}" download>{name}.attest</a> is your receipt. '
         "It is safe to share, and it can be checked by anyone, offline, even if this "
-        "store is gone.</p>"
-        f'<p><a href="{private_href}" download>{name}.private.attest</a> is the proof '
-        "that the receipt is yours. Never send it to anyone — not to a shop, not to "
-        "support. Whoever holds it can claim the purchase was theirs. Keep it with "
-        "your own files.</p>"
-        "</body></html>"
+        "store is gone.</p>\n"
+        f'<p><a href="{private_href}" download>{name}.private.attest</a> is the one to '
+        "keep to yourself.</p>\n"
+        f"{buyer_surface.private_file_warning_html(pair.name)}",
     ).encode()
     headers = [
         ("Content-Type", "text/html; charset=utf-8"),

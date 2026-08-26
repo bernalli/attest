@@ -29,6 +29,11 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`site/public/what-is-this.html` is generated, not edited.** It comes from
   `tools/gen_buyer_pages.py`, and a test regenerates and compares, so a hand edit
   fails instead of silently drifting the way the three copies did.
+- **The download landing page was a fourth copy, and it is the one the email
+  sends people to** when attachments do not arrive. It kept the shortest wording
+  of the four — no mention that one private file covers a whole library, no
+  pointer to `attest disclose` — so the buyer most likely to be confused got the
+  least help. It now renders the shared warning like the others.
 
 ### Fixed
 
@@ -37,6 +42,15 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   anywhere in this project — not in the library, the bridge, or the site. The
   sentence now describes what the format actually offers: a small file, kept
   wherever files are kept.
+- **A bundle name could write markup into the page a buyer opens.** Nothing
+  escaped it on the way into `README.html`, and `export()` is library API: the
+  bridge builds its own slug, but `attest export --name` takes the value as
+  given. Escaped now at each point where a value becomes HTML — the plain-text
+  warning stays unescaped on purpose, so an email shows a file name rather than
+  an entity. Related: substitution into the README template happens in a single
+  pass, because chained replacements let a name containing the literal text of a
+  placeholder be rewritten again inside the block just inserted — and the warning
+  would then name a private file that is not the one beside the bundle.
 - **The sample bundle the web verifier hands out was two revisions behind the
   template that produces it.** Anyone trying the verifier was shown a receipt
   that no longer resembled the ones this code writes. Regenerated, and pinned by

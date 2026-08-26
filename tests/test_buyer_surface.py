@@ -28,6 +28,21 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # --- Generated pages stay generated -----------------------------------------
 
 
+#: The pages the generator is expected to own, pinned here rather than read
+#: from the generator itself. Parametrizing off `generated_pages()` alone would
+#: make this suite agree with the generator about an empty set: if the list ever
+#: returned nothing, or pointed somewhere else, zero cases would run and the
+#: suite would stay green while nothing was pinned at all.
+EXPECTED_GENERATED = {"site/public/what-is-this.html"}
+
+
+def test_the_generator_still_owns_every_page_it_is_supposed_to() -> None:
+    """Guards the parametrized test below against silently having no cases."""
+    produced = {str(path.relative_to(REPO_ROOT)) for path in gen_buyer_pages.generated_pages()}
+
+    assert produced == EXPECTED_GENERATED
+
+
 @pytest.mark.parametrize("path", sorted(gen_buyer_pages.generated_pages()))
 def test_generated_page_matches_the_committed_file(path: Path) -> None:
     """A generated page edited by hand is a copy that has started to drift.
@@ -139,6 +154,30 @@ def test_a_bundle_name_cannot_inject_markup_into_a_held_page() -> None:
     readme = bundle._render_readme(hostile)
     assert "<script>" not in readme
     assert "&lt;script&gt;" in readme
+
+
+def test_a_bundle_name_containing_a_placeholder_does_not_rewrite_the_warning() -> None:
+    """Substitution happens in one pass, so nothing already substituted is
+    scanned again.
+
+    With a naive sequence of `.replace()` calls, a bundle name containing the
+    literal text of another placeholder gets substituted a second time inside
+    the block that was just inserted — and the warning then names a private
+    file that is not the one beside this bundle. A security warning that names
+    the wrong file is worse than no warning.
+    """
+    from attest import bundle
+
+    name = "a__BUNDLE_NAME__b"
+    readme = bundle._render_readme(name)
+
+    assert f"Never send {name}.private.attest to anyone" in readme
+
+    name = "c__PRIVATE_WARNING__d"
+    readme = bundle._render_readme(name)
+
+    assert f"Never send {name}.private.attest to anyone" in readme
+    assert readme.count('<div class="warning">') == 1
 
 
 def test_the_generator_is_reproducible() -> None:

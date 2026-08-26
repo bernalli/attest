@@ -72,6 +72,9 @@ _MAX_ENTRIES = 100_000  # central-directory entry count
 _READ_CHUNK = 1024 * 1024  # 1 MiB streaming read granularity
 _RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
+#: The placeholders `_render_readme` substitutes, matched in a single pass.
+_PLACEHOLDER_RE = re.compile("__BUNDLE_NAME__|__PRIVATE_WARNING__")
+
 #: Body of the bundle README, wrapped by ``buyer_surface.render_page`` at
 #: render time. Two placeholders: ``__BUNDLE_NAME__`` for the bundle stem, and
 #: ``__PRIVATE_WARNING__`` for the shared warning block, which is written once
@@ -260,9 +263,17 @@ def _render_readme(name: str) -> str:
     # library API: the value can be whatever the caller's own caller supplied.
     # Escape once here; the warning block escapes its own copy, and
     # render_page escapes the title.
-    body = _README_BODY_TEMPLATE.replace(
-        "__PRIVATE_WARNING__", buyer_surface.private_file_warning_html(name)
-    ).replace("__BUNDLE_NAME__", html.escape(name))
+    #
+    # One pass, so nothing already substituted is scanned again: chained
+    # .replace() calls let a name containing the literal text of the other
+    # placeholder be rewritten a second time inside the block just inserted,
+    # and the warning would then name a private file that is not the one
+    # beside this bundle.
+    substitutions = {
+        "__BUNDLE_NAME__": html.escape(name),
+        "__PRIVATE_WARNING__": buyer_surface.private_file_warning_html(name),
+    }
+    body = _PLACEHOLDER_RE.sub(lambda match: substitutions[match.group(0)], _README_BODY_TEMPLATE)
     return buyer_surface.render_page(f"attest receipt bundle: {name}", body)
 
 
