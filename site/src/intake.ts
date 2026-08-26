@@ -53,6 +53,33 @@ const deliveryOf = (bytes: Uint8Array): JsonObject | null => {
 const asObject = (v: unknown): JsonObject | null =>
   v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as JsonObject) : null
 
+// A proof member is keyed by the receipt id (v0.2 §14), so the pairing has to
+// read that id out of the SIGNED payload — never out of the receipt's own
+// member name. v0.1 §14.1 specifies `receipts/*.attest.json` with a wildcard:
+// this project's exporter happens to name the file after the id, but a
+// conforming bundle from anywhere else need not, and matching on the name
+// silently dropped valid evidence for those — `not_checked` reported with the
+// proof sitting right there in the same archive. Untrusted like everything
+// else here: a wrong id only fails to find evidence, it never transfers
+// standing, because the verifier derives the entry it expects from the
+// envelope itself.
+const receiptIdOf = (bytes: Uint8Array): string | null => {
+  try {
+    const envelope = asObject(loadsStrict(bytes))
+    const payload = envelope ? asObject(envelope['payload']) : null
+    const id = payload ? payload['receipt_id'] : undefined
+    return typeof id === 'string' ? id : null
+  } catch {
+    return null
+  }
+}
+
+// The id is attacker-supplied text and `proofs` is a plain object, so an id of
+// "__proto__" would otherwise resolve to Object.prototype and be handed on as
+// if it were evidence.
+const proofFor = (proofs: Record<string, JsonValue>, id: string | null): JsonValue | null =>
+  id !== null && Object.prototype.hasOwnProperty.call(proofs, id) ? proofs[id] : null
+
 export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
   if (fileName.endsWith('.private.attest')) return { kind: 'rejected', reason: PRIVATE_NAME_MSG }
 
@@ -71,11 +98,9 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
           label: r.name,
           envelopeBytes: r.bytes,
           trustStore: parsed.trustStore,
-          // Matched by the receipt id the two member names share (v0.2 §14).
-          // A bundle that pairs them wrong buys nothing: the verifier derives
-          // the entry it expects from the envelope, so mismatched evidence
-          // degrades to `not_checked`, it never transfers standing.
-          transparency: parsed.proofs[r.name] ?? null,
+          // Matched on the receipt id inside the signed payload (v0.2 §14),
+          // which is the only thing the proof member's name is keyed to.
+          transparency: proofFor(parsed.proofs, receiptIdOf(r.bytes)),
         })),
         ...(notices.length > 0 ? { notices } : {}),
       }

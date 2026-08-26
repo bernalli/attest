@@ -37,22 +37,46 @@ describe('intake', () => {
     expect(runVerify(r.jobs[0].envelopeBytes, r.jobs[0].trustStore).result.signature).toBe('valid')
   })
 
-  it('hands each receipt its own proofs/ evidence, and nothing to the ones without', () => {
+  // The receipt whose SIGNED payload names the id gets the evidence, whatever
+  // its member happens to be called: v0.1 §14.1 specifies `receipts/*.attest.
+  // json` with a wildcard, so a conforming exporter is free to name the file
+  // anything, and pairing on the filename dropped the proof on the floor.
+  it('pairs proofs/ evidence by the signed receipt id, not by the member name', () => {
     const { issuer, manifest } = keyManifest()
     const blob: JsonObject = { issuer, key_manifests: [manifest], artifact_manifests: [] }
-    const withProof = '01JZ5PDHT0000G40R40M30E209'
-    const withoutProof = '01JZ5PDHT0000G40R40M30E20A'
+    const proven = '01JZ5PDHT0000G40R40M30E209' // the id inside vector 01's payload
+    const other = '01JZ5PDHT0000G40R40M30E20A'
+    const envelope = loadsStrict(envelopeBytes()) as JsonObject
+    const otherPayload = { ...(envelope.payload as JsonObject), receipt_id: other }
+    const otherEnvelope = canonicalBytes({ ...envelope, payload: otherPayload })
     const zip = zipSync({
-      [`receipts/${withProof}.attest.json`]: envelopeBytes(),
-      [`receipts/${withoutProof}.attest.json`]: envelopeBytes(),
+      // Named by anything at all, and holding the receipt the proof is for.
+      ['receipts/order-4711.attest.json']: envelopeBytes(),
+      // Named by an id it does not carry, and holding a different receipt.
+      [`receipts/${proven}-copy.attest.json`]: otherEnvelope,
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
-      [`proofs/${withProof}.json`]: new TextEncoder().encode('{"leaf_index":0}'),
+      [`proofs/${proven}.json`]: new TextEncoder().encode('{"leaf_index":0}'),
     })
     const r = intake('library.attest', zip)
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
     const byLabel = Object.fromEntries(r.jobs.map((j) => [j.label, j]))
-    expect(byLabel[withProof].transparency).not.toBeNull()
-    expect(byLabel[withoutProof].transparency).toBeNull()
+    expect(byLabel['order-4711'].transparency).not.toBeNull()
+    expect(byLabel[`${proven}-copy`].transparency).toBeNull()
+  })
+
+  // `proofs` is a plain object and the id comes out of untrusted bytes.
+  it('never resolves a prototype member as evidence', () => {
+    const { issuer, manifest } = keyManifest()
+    const blob: JsonObject = { issuer, key_manifests: [manifest], artifact_manifests: [] }
+    const envelope = loadsStrict(envelopeBytes()) as JsonObject
+    const payload = { ...(envelope.payload as JsonObject), receipt_id: '__proto__' }
+    const zip = zipSync({
+      ['receipts/R1.attest.json']: canonicalBytes({ ...envelope, payload }),
+      [`manifests/${issuer}.json`]: canonicalBytes(blob),
+    })
+    const r = intake('library.attest', zip)
+    if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
+    expect(r.jobs[0].transparency).toBeNull()
   })
 
   it('rejects a private zip with the private message', () => {

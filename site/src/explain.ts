@@ -221,17 +221,17 @@ const CATALOG: Record<Component, Record<string, Explanation>> = {
   },
   corroboration: {
     none: {
-      label: 'Independent corroboration',
+      label: 'Corroboration',
       tone: 'neutral',
       text: 'Nobody beyond the issuer vouches for this receipt having been published — the ordinary state, and nothing against the receipt (spec §10.1). Whenever the row above degrades, this one degrades with it: the reference implementation sets both in the same step (spec §10.2), so any condition named up there explains this row too.',
     },
     logged: {
-      label: 'Independent corroboration',
+      label: 'Corroboration',
       tone: 'good',
-      text: 'The log’s own signed checkpoint covers this entry, so the log vouches for having published it. Nobody else does: no outside party co-signed that checkpoint, so a log serving two different histories to two different people could not be caught from this evidence alone (spec §10.3, §15). attest operates this log itself, and says so rather than letting you assume otherwise.',
+      text: 'The log’s own signed checkpoint covers this entry, so the log vouches for having published it — and that is the whole of it. This page pins no witness policy, so it does not examine cosignatures at all and reports none either way (spec §10.2, step 8). attest operates this log itself and no independent witness co-signs its checkpoints, which is why nothing here rises higher; until one does, a log serving two different histories to two different people could not be caught from this evidence alone (spec §10.3, §15).',
     },
     witnessed: {
-      label: 'Independent corroboration',
+      label: 'Corroboration',
       tone: 'good',
       text: 'A pinned co-signer with the corroboration role signed the checkpoint covering this entry, and its timestamped observation is on the record (spec §10.1, §11.4). That is the whole of the claim: an observation happened. It is NOT evidence that the co-signer is organizationally independent of the log — the spec forbids reading it that way and defines no way to establish independence at all (spec §10.1).',
     },
@@ -254,7 +254,7 @@ const FALLBACK: Record<Component, string> = {
   grant: 'Preservation pledge',
   grant_trust: 'Pledge signer',
   transparency: 'Transparency log',
-  corroboration: 'Independent corroboration',
+  corroboration: 'Corroboration',
   manifest_freshness: 'Key manifest freshness',
 }
 

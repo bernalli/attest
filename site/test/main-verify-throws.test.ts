@@ -65,13 +65,23 @@ const keyManifest = (): JsonObject => {
 const WITH_EVIDENCE = '01JZ5PDHT0000G40R40M30E209'
 const WITHOUT_EVIDENCE = '01JZ5PDHT0000G40R40M30E20A'
 
+// The second receipt has to carry its OWN receipt_id in the signed payload,
+// not merely a different member name: evidence is paired on the id inside the
+// envelope (v0.2 §14), so two members holding the same receipt are one
+// receipt, twice, and would both be handed the same proof.
+function otherReceipt(): Uint8Array {
+  const env = loadsStrict(envelope()) as JsonObject
+  const payload = { ...(env.payload as JsonObject), receipt_id: WITHOUT_EVIDENCE }
+  return canonicalBytes({ ...env, payload })
+}
+
 function twoReceiptBundle(): Uint8Array {
   const m = keyManifest()
   const issuer = m.issuer as string
   const blob: JsonObject = { issuer, key_manifests: [m], artifact_manifests: [] }
   return zipSync({
     [`receipts/${WITH_EVIDENCE}.attest.json`]: envelope(),
-    [`receipts/${WITHOUT_EVIDENCE}.attest.json`]: envelope(),
+    [`receipts/${WITHOUT_EVIDENCE}.attest.json`]: otherReceipt(),
     [`manifests/${issuer}.json`]: canonicalBytes(blob),
     [`proofs/${WITH_EVIDENCE}.json`]: new TextEncoder().encode('{"leaf_index":0}'),
   })

@@ -142,6 +142,12 @@ describe('attributeWarning', () => {
         tokens.push(m[2])
       }
     }
+    // Warning literals declared outside a dictionary, one per export, are
+    // just as emittable: RFC3161_WARNING is one, and the scrape used to walk
+    // straight past it.
+    for (const m of source.matchAll(
+      /^export const [A-Z0-9_]*WARNING[A-Z0-9_]* =\s*\n?\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1/gm,
+    )) tokens.push(m[2])
     // A regex that matched nothing — or matched only the easy half — would
     // make this test green on air. Pin the count and the awkward members.
     expect(tokens.length).toBeGreaterThanOrEqual(60)
@@ -151,6 +157,7 @@ describe('attributeWarning', () => {
       "ots 'sha256' op takes no operand",
       'grant_legal_text_changed',
       'post_horizon_unanchored',
+      'rfc3161 token accepted as opaque classical evidence, carries no post-horizon weight',
     ]) expect(tokens, hard).toContain(hard)
     const orphans = tokens.filter((t) => attributeWarning(t) === null && !(t in NO_ROW))
     expect(orphans).toEqual([])
@@ -177,10 +184,15 @@ describe('attributeWarning', () => {
     expect(attributeWarning('proof[0]: must be an object, got str')).toBe('transparency')
     expect(attributeWarning('ots proof has empty op-chain')).toBe('transparency')
     expect(attributeWarning('pinned header merkle_root does not match proof')).toBe('transparency')
+    expect(attributeWarning(
+      'rfc3161 token accepted as opaque classical evidence, carries no post-horizon weight',
+    )).toBe('transparency')
   })
 
   it('returns null for what belongs to no row', () => {
     for (const token of Object.keys(NO_ROW)) expect(attributeWarning(token), token).toBeNull()
     expect(attributeWarning("unknown payload field: 'colour'")).toBeNull()
+    // Same content pass, same answer (v0.1 §11.2).
+    expect(attributeWarning("unknown survivability.end_of_life value: 'escrow-2'")).toBeNull()
   })
 })

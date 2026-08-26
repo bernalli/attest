@@ -29,7 +29,7 @@ describe('renderResult', () => {
     expect(texts(el, '.component-name')).toEqual([
       'Signature', 'Schema', 'Buyer binding', 'Key trust',
       'Revocation', 'Preservation pledge', 'Pledge signer',
-      'Transparency log', 'Independent corroboration', 'Key manifest freshness',
+      'Transparency log', 'Corroboration', 'Key manifest freshness',
     ])
   })
 
@@ -131,7 +131,7 @@ describe('renderResult — warnings against the row they qualify', () => {
       [...el.querySelectorAll('.component')]
         .find((r) => r.querySelector('.component-name')!.textContent === name)!
         .querySelector('.component-warnings')?.textContent ?? ''
-    expect(rowFor('Independent corroboration')).toContain('corroboration_requires_rotation_chain')
+    expect(rowFor('Corroboration')).toContain('corroboration_requires_rotation_chain')
     expect(rowFor('Pledge signer')).toContain('grant_signer_not_publisher')
     expect(rowFor('Signature')).toContain('is retired')
     expect(rowFor('Key trust')).toContain('artifact_manifest_unauthenticated')
