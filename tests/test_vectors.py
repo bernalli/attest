@@ -473,6 +473,11 @@ def test_vectors_directory_is_nonempty() -> None:
     # `_LEAF_DIRS` is itself an rglob, so a floor protects nothing once the
     # corpus grows past it, and this one had sat two stages behind.
     on_disk = sum(1 for _root, _dirs, files in os.walk(VECTORS_DIR) if "expected.json" in files)
+    # Both halves, and the order matters: without the first, a vanished or
+    # empty VECTORS_DIR makes both counts 0 and this test — the one named for
+    # non-emptiness — passes while every parametrisation silently collapses to
+    # nothing. Replacing the old floor removed that guarantee with it.
+    assert on_disk > 0
     assert len(_LEAF_DIRS) == on_disk
 
 

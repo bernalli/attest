@@ -201,6 +201,7 @@ def test_select_subset_v02_is_the_full_real_corpus() -> None:
     # floor, which stops catching a truncated discovery the moment the corpus
     # outgrows it.
     on_disk = sum(1 for _root, _dirs, files in os.walk(REAL_VECTORS) if "expected.json" in files)
+    assert on_disk > 0
     assert len(subset) == len(leaves) == on_disk
 
 
