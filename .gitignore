@@ -41,3 +41,8 @@ node_modules/
 test-results/
 playwright-report/
 .playwright-mcp/
+
+# Transparency log: the UNSIGNED checkpoint candidate is a handoff between
+# `log append` and the signing ceremony, never a published artifact. Every
+# other file under site/public/log/ is committed and served.
+site/public/log/checkpoint.candidate
