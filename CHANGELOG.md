@@ -6,6 +6,21 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The stale conformance numbers the 0.8.1 fix did not reach.** That fix
+  corrected the README and the certification table; a census of every artefact a
+  human reads found six more, in five files, all saying the corpus is smaller
+  than it is: `CONTRIBUTING.md` (130 leaves / 38 groups, plus two suite counts
+  frozen at 2048 and 876), the README's own v0.1 subset (51 where the paragraph
+  above says 52), `docs/spec/vectors/README.md` (157), the standards annex and
+  the threat model (130-leaf corpus, twice each), and two more in
+  `docs/conformance.md`. Measured rather than edited: the corpus holds **158
+  leaves across 40 groups**, the v0.1 subset **52**, and the suites run **2484**
+  Python and **1231** TypeScript tests. The `130` in `verifiers/ts/README.md` is
+  left alone — there it is the share of leaves routed to `verify()`, and
+  `130 + 4 + 20 + 4 = 158` is the partition the guard test pins.
+
 ## [0.8.1] — 2026-08-26
 
 ### Added
