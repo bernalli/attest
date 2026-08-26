@@ -71,6 +71,14 @@ ignore = ["S101"]  # assert in tests
 # genuine redefinition anywhere else still fails the gate.
 "witness/tests/*" = ["F811"]
 
+# CORE_CSS is deliberately minified: it is inlined into the README.html of
+# every exported bundle, so each byte is paid again on every copy of every
+# receipt, and a byte ceiling is asserted in the test suite. Line breaks added
+# for the linter's benefit would be bytes charged to buyers. Scoped to this one
+# file so long lines anywhere else still fail the gate.
+"src/attest/buyer_surface.py" = ["E501"]
+"tools/gen_buyer_pages.py" = ["E501"]
+
 [tool.mypy]
 strict = true
 python_version = "3.12"

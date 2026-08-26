@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Any
 
-from attest import bundle
+from attest import bundle, buyer_surface
 from attest_bridge.config import DeliveryConfig
 from attest_bridge.ledger import Ledger
 from attest_bridge.pair import build_pair
@@ -151,9 +151,10 @@ def _build_message(
                 f"{bundle_name}.attest is your receipt. It is safe to share, and it can be "
                 "checked by anyone, offline, even if this store is gone.",
                 "",
-                f"{bundle_name}.private.attest is the proof that the receipt is yours. "
-                "Never forward it to anyone — not to a shop, not to support. Whoever holds "
-                "it can claim the purchase was theirs. Keep it with your own files.",
+                # Same warning as every other buyer-facing surface, rendered
+                # from the one source rather than reworded here: three
+                # hand-written copies of this drifted once already.
+                buyer_surface.private_file_warning_text(bundle_name),
                 "",
                 "If the attachments did not arrive, this page lets you download the "
                 "same two files:",

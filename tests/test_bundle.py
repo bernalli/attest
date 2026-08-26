@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from attest import bundle, issue, keys, manifests, verify
+from attest import bundle, buyer_surface, issue, keys, manifests, verify
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -295,9 +295,57 @@ def test_readme_answers_a_buyer_before_it_explains_cryptography(tmp_path: Path) 
     assert "This file is your receipt." in readme
     assert "If the store that sold you this is gone" in readme
 
-    assert readme.index("Never share mylibrary.private.attest") < readme.index("Ed25519")
+    # The ordering property is what matters here, not the wording: the warning
+    # must precede the cryptography. The warning text itself is now rendered
+    # from buyer_surface, so locate it the same way every surface does.
+    warning_heading = "Never send mylibrary.private.attest to anyone"
+    assert warning_heading in readme
+    assert readme.index(warning_heading) < readme.index("Ed25519")
     assert readme.index("unauthenticated_tofu") > readme.index(
         "If the store that sold you this is gone"
+    )
+
+
+def test_readme_is_self_contained_and_carries_its_own_styling(tmp_path: Path) -> None:
+    """A bundle README is opened from a zip on someone else's disk, possibly
+    years from now with no network at all. It must therefore reference nothing
+    external — no stylesheet, no script, no font, no image — and carry whatever
+    presentation it needs inline."""
+    envelope = _envelope(receipt_id="01J1V5B4M9Z8QWERTY1234568M")
+
+    attest_path, _private_path = bundle.export(
+        [envelope], [_key_manifest()], [], _legal_texts(), tmp_path, "mylibrary"
+    )
+
+    with zipfile.ZipFile(attest_path) as zf:
+        readme = zf.read("README.html").decode("utf-8")
+
+    assert "<style>" in readme
+    for external in ("<link", "<script", "@font-face", "http://", "https://", "url("):
+        assert external not in readme, f"README reaches outside itself: {external}"
+
+    # Both display situations a held page will actually meet.
+    assert "prefers-color-scheme" in readme
+    assert "@media print" in readme
+
+
+def test_readme_stays_under_the_held_page_byte_ceiling(tmp_path: Path) -> None:
+    """The README is injected into every exported bundle, so every byte here is
+    paid again on every copy of every receipt. The ceiling is asserted rather
+    than assumed: a budget nobody measures is a budget that gets exceeded."""
+    envelope = _envelope(receipt_id="01J1V5B4M9Z8QWERTY1234568N")
+
+    attest_path, _private_path = bundle.export(
+        [envelope], [_key_manifest()], [], _legal_texts(), tmp_path, "mylibrary"
+    )
+
+    with zipfile.ZipFile(attest_path) as zf:
+        readme_bytes = zf.read("README.html")
+
+    assert len(readme_bytes) <= buyer_surface.MAX_HELD_PAGE_BYTES, (
+        f"README.html is {len(readme_bytes)} bytes, over the "
+        f"{buyer_surface.MAX_HELD_PAGE_BYTES}-byte ceiling for a held page. "
+        "Shorten it, or decide deliberately to raise the ceiling."
     )
 
 
