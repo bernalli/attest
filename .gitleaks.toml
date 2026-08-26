@@ -1,0 +1,24 @@
+# Secret scanning for this repository.
+#
+# The default rule set runs unchanged. This file exists for one reason: to name
+# a single false positive precisely enough that scanning stays ON everywhere
+# else. An allowlist that silenced a rule, a file, or a directory would be the
+# wrong trade — the point of the scan is the secret nobody meant to commit.
+title = "attest"
+
+[extend]
+useDefault = true
+
+# `generic-api-key` is keyword-driven: it fires on an assignment whose target
+# contains "key", and `log_keys_path = ed25519_key.parent / "log-keys.pinned.json"`
+# has three of them while holding no key material at all — the value is a
+# FILENAME. The real key material this repository touches is generated at run
+# time and written outside the working tree (tools/gen_site_sample.py), which
+# is why there is nothing else here to exempt.
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "a path built from a variable whose name contains 'key'"
+condition = "AND"
+paths = ['''tools/gen_site_sample\.py''']
+regexes = ['''^ed25519_key\.parent$''']
