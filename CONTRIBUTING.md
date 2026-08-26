@@ -33,8 +33,8 @@ the full conformance suite before review:
 
 - reproduce the expected `VerificationResult` for **every** vector under
   `docs/spec/vectors/` — 158 leaf vectors across 40 groups, zero skipped;
-- keep both existing suites green: `.venv/bin/pytest -q` (Python, 2484 tests) and
-  `npm test` in `verifiers/ts/` (1231 tests, including the full 158-leaf conformance corpus);
+- keep both existing suites green: `.venv/bin/pytest -q` (Python) and `npm test`
+  in `verifiers/ts/` (TypeScript, which runs the full conformance corpus);
 - `ruff` + `mypy` clean for Python, `tsc --noEmit` clean for TypeScript.
 
 A **new independent implementation** proves conformance by running the public
