@@ -1,7 +1,7 @@
 import type { Disclosure } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes, type VerifyJob } from './intake.js'
 import { runVerify } from './run.js'
-import { renderResult, renderRejection } from './render.js'
+import { renderResult, renderRejection, renderVerifyFailure } from './render.js'
 import { b64uDecode } from './b64u.js'
 import { loadSample } from './sample.js'
 
@@ -55,12 +55,21 @@ export function initApp(doc: Document): AppHandle {
   function renderJobs(disclosure: Disclosure | null): void {
     results.replaceChildren(
       ...currentNotices.map((text) => message(doc, text)),
-      ...currentJobs.map((job) =>
-        renderResult(
-          job.label,
-          runVerify(job.envelopeBytes, job.trustStore, null, disclosure, { transparency: job.transparency }),
-        ),
-      ),
+      // Per job, never per batch: verify()'s trusted-config validation throws
+      // by design, and an exception escaping this map would abandon the whole
+      // `replaceChildren` call — leaving the page silently showing the
+      // PREVIOUS results, which is the worst outcome available. One receipt
+      // the page cannot check must not take the others down with it.
+      ...currentJobs.map((job) => {
+        try {
+          return renderResult(
+            job.label,
+            runVerify(job.envelopeBytes, job.trustStore, null, disclosure, { transparency: job.transparency }),
+          )
+        } catch (e) {
+          return renderVerifyFailure(job.label, e instanceof Error ? e.message : String(e))
+        }
+      }),
     )
   }
 

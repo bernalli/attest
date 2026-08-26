@@ -61,6 +61,32 @@ export function renderResult(label: string, run: VerifyRun): HTMLElement {
   return article
 }
 
+// The verifier itself could not run for this receipt — a fault in this page's
+// own configuration, not a judgement on the file. verify()'s trusted-config
+// checks throw by design (a configuration bug must never be swallowed), so
+// something has to catch them where a reader can see it. Two rules hold this
+// text together: it says nothing about the receipt's validity, in either
+// direction, and it shows the reason instead of burying it in the console,
+// because a fault nobody can see is a fault nobody reports.
+export function renderVerifyFailure(label: string, reason: string): HTMLElement {
+  const article = el('article', 'result unverifiable')
+  const header = el('header')
+  header.appendChild(el('h3', undefined, label))
+  article.appendChild(header)
+  article.appendChild(
+    el(
+      'p',
+      'verdict tone-neutral',
+      'This page could not check this receipt — the fault is in the verifier’s own ' +
+        'configuration, not in your file. Nothing here says whether the receipt is ' +
+        'genuine: it was never examined. Try the attest CLI, or a copy of this page ' +
+        'from another source.',
+    ),
+  )
+  article.appendChild(el('p', 'unverifiable-reason', reason))
+  return article
+}
+
 export function renderRejection(reason: string): HTMLElement {
   const article = el('article', 'result rejected')
   article.appendChild(el('p', 'verdict tone-bad', reason))

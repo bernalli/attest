@@ -38,6 +38,10 @@ h2 { margin-top: 2.2rem; }
 .notice { border-left: 4px solid var(--warn); padding-left: 0.8rem; color: var(--muted); }
 .result { border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; margin-top: 1.25rem; }
 .result.rejected { border-color: var(--bad); }
+/* Not a verdict on the receipt — the page could not run. Deliberately NOT
+   --bad: nothing was found wrong with the file, nothing was found right. */
+.result.unverifiable { border-color: var(--neutral); border-style: dashed; }
+.unverifiable-reason { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; color: var(--muted); margin: 0.4rem 0 0; }
 .verdict strong { font-size: 1.05rem; }
 .tone-good { --tone: var(--good); }
 .tone-warn { --tone: var(--warn); }
