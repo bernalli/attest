@@ -1275,8 +1275,10 @@ _GROUP_CLAIM_PATTERN = re.compile(r"\b(\d+) leaf vectors across (\d+) groups\b")
 # is belt-and-braces against a future pattern that would.)
 _CORPUS_CLAIM_EXEMPTIONS = {
     # The share of leaves routed to the `verify()` surface, not the corpus
-    # size: `130 + 4 + 20 + 4 = 158` is the partition a TypeScript guard test
-    # pins, and rewriting the 130 to match the total would break it.
+    # size. The four shares sum to the corpus, and a TypeScript guard test pins
+    # that sum (plus the redemption surface) — not each share, which move as
+    # the corpus grows. Rewriting this 130 to match the total would make the
+    # sentence false.
     "verifiers/ts/README.md": ("**`verify()`** (130 leaves)",),
 }
 

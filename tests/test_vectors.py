@@ -126,6 +126,7 @@ Vector-directory conventions (a "vector case" is any directory containing
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -468,7 +469,11 @@ def test_vectors_directory_is_nonempty() -> None:
     # `_LEAF_DIRS` (ALL leaves, every surface included) — `_VECTOR_DIRS`
     # alone (the `verify()`-routed subset) excludes group 36's chain-audit
     # leaves, group 40's quorum leaves and group 38's redemption leaves.
-    assert len(_LEAF_DIRS) >= 158
+    # Counted by walking the corpus here rather than floored at a constant:
+    # `_LEAF_DIRS` is itself an rglob, so a floor protects nothing once the
+    # corpus grows past it, and this one had sat two stages behind.
+    on_disk = sum(1 for _root, _dirs, files in os.walk(VECTORS_DIR) if "expected.json" in files)
+    assert len(_LEAF_DIRS) == on_disk
 
 
 def test_every_leaf_is_routed_to_exactly_one_surface() -> None:
