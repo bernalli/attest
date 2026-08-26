@@ -1288,7 +1288,11 @@ def _measured_corpus() -> tuple[int, int, int]:
     restating them, so this guard cannot drift from the runner that produces
     the numbers the documents quote.
     """
-    sys.path.insert(0, str(_REPO_ROOT / "tools"))
+    # Imported from this file's own directory, not from _REPO_ROOT: the runner
+    # is this module's sibling wherever the repository root is pointed, and
+    # resolving it through _REPO_ROOT broke the moment a test pointed that at a
+    # fixture tree.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from conformance_runner import find_leaf_dirs, select_subset
 
     vectors_root = _REPO_ROOT / "docs/spec/vectors"
@@ -1299,7 +1303,15 @@ def _measured_corpus() -> tuple[int, int, int]:
 
 
 def check_corpus_counts() -> list[str]:
-    """Every stated corpus size must match the corpus on disk.
+    """Report stated corpus sizes, in known claim shapes, that the disk denies.
+
+    Read that first line as the limit it is: this recognises the shapes it has
+    been taught, listed above, and a claim phrased in a new way passes. Judging
+    every figure near the corpus vocabulary instead was tried and abandoned —
+    technical prose is dense with numbers beside the word "leaves" that are
+    byte sizes, RFC numbers and section numbers, and that version reported 36
+    of them. What actually closes this class is removing the hand-written
+    numbers from the documents; that is a separate piece of work.
 
     Scans every Markdown file in the repository — not a fixed list, because the
     numbers that went stale were in files nobody thought to list. Matching runs

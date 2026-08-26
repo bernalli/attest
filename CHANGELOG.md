@@ -25,17 +25,23 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **A guard so the corpus counts cannot go stale again.**
-  `tools/check_spec_docs.py` now measures the corpus on disk — reusing
-  `conformance_runner`'s own discovery and v0.1 subset rule rather than
-  restating them — and fails on any Markdown file in the repository whose
-  stated leaf count, group count, or subset size disagrees. It scans every
-  `.md` rather than a fixed list, because the numbers that went stale were in
-  files nobody thought to list, and it matches with newlines folded to spaces:
-  the first version of the guard was blind to a claim wrapped across two lines,
-  which its own red bench caught before the guard shipped. The one deliberate
-  exemption is keyed by path and by exact phrase, so editing that line fails
-  the guard and forces a fresh look.
+- **A guard against the corpus counts going stale, and an honest account of
+  what it does not cover.** `tools/check_spec_docs.py` measures the corpus on
+  disk — reusing `conformance_runner`'s own discovery and v0.1 subset rule
+  rather than restating them — and fails on any Markdown file whose stated leaf
+  count, group count or subset size disagrees. It scans every `.md` rather than
+  a fixed list, because the numbers that went stale were in files nobody would
+  have listed, and it matches with newlines folded to spaces, since one version
+  of it was blind to a claim wrapped across two lines.
+
+  It recognises the claim shapes it has been taught, so a count phrased a new
+  way still passes: this narrows the gap, it does not close it. Judging every
+  figure near the corpus vocabulary was tried and abandoned — technical prose
+  is dense with numbers beside the word "leaves" that are byte sizes, RFC
+  numbers and section numbers, and that version reported 36 of them. Removing
+  the hand-written numbers from the documents is the design that closes this,
+  and it is its own task. The shapes are pinned by unit tests, so the next
+  edit to the patterns fails here rather than in a release.
 - Two more stale counts a hand review caught after the guard's first draft, in
   places the draft could not see: v0.1 §15 still measured a v0.1-only verifier
   against a 51-leaf subset and told a v0.2 implementation to reproduce all 130,

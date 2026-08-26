@@ -29,7 +29,7 @@
 //    at all, and every negative one must come back `false` rather than throw:
 //    a gate that fronts the delivery of content must not have an error path an
 //    attacker can distinguish from a refusal.
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { verify, isOk, auditChain, evaluateActivationWitnessQuorum, parseWitnessPolicy, verifyRedemption } from '../src/index.js'
@@ -57,8 +57,19 @@ const leaves = allLeaves.filter(
 const canonicalLeaves = leaves.filter((d) => existsSync(join(d, 'canonical.json')))
 
 describe('attest conformance vectors', () => {
-  it('discovers the full vector suite (>= 158 leaves)', () => {
-    expect(allLeaves.length).toBeGreaterThanOrEqual(158)
+  it('discovers every leaf the corpus holds', () => {
+    // Counted by walking the corpus here, independently of the loader under
+    // test. This was a constant floor (>= 158) until a review pointed out what
+    // a floor cannot do: once the corpus outgrows it, a loader that silently
+    // skips the new leaves still clears it. The floor it replaced had already
+    // sat two stages behind without ever failing.
+    const walk = (dir: string): number =>
+      readdirSync(dir, { withFileTypes: true }).reduce(
+        (n, e) =>
+          e.isDirectory() ? n + walk(join(dir, e.name)) : n + (e.name === 'expected.json' ? 1 : 0),
+        0,
+      )
+    expect(allLeaves.length).toBe(walk(V.VECTORS_ROOT))
   })
 
   it('routes every leaf to exactly one of the four surfaces', () => {
