@@ -4,7 +4,7 @@
   "description": "Offline verifier for attest receipts: proof of purchase that outlives the store.",
   "license": "Apache-2.0",
   "author": "Samuele Martinalli",
-  "homepage": "https://bernalli.github.io/attest/",
+  "homepage": "https://attest-receipts.org/",
   "repository": { "type": "git", "url": "git+https://github.com/bernalli/attest.git", "directory": "verifiers/ts" },
   "bugs": { "url": "https://github.com/bernalli/attest/issues" },
   "keywords": ["digital-ownership", "receipts", "verifier", "offline-verification", "ed25519", "drm-free", "digital-goods"],

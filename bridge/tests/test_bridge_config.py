@@ -247,7 +247,7 @@ def test_default_info_url_page_ships_with_the_site() -> None:
     # (4) what to do if the store is gone
     assert "gone" in text.lower() or "no longer" in text.lower() or "closed" in text.lower()
 
-    assert config_mod._DEFAULT_INFO_URL.startswith("https://bernalli.github.io/attest/")
+    assert config_mod._DEFAULT_INFO_URL.startswith("https://attest-receipts.org/")
     assert config_mod._DEFAULT_INFO_URL.rsplit("/", 1)[-1] == page.name
 
 

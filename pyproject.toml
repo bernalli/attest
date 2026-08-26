@@ -23,7 +23,7 @@ requires-python = ">=3.12"
 dependencies = ["pynacl>=1.5", "jsonschema>=4.21", "pqcrypto==0.4.0"]
 
 [project.urls]
-Homepage = "https://bernalli.github.io/attest/"
+Homepage = "https://attest-receipts.org/"
 Repository = "https://github.com/bernalli/attest"
 Documentation = "https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.2.md"
 Issues = "https://github.com/bernalli/attest/issues"

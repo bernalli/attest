@@ -84,7 +84,7 @@ it names the three things it does not do in [`demo/README.md`](demo/README.md).
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations that agree on all 158
 conformance vector leaves. **Try it in your browser:**
-<https://bernalli.github.io/attest/> — drop a `.attest` bundle (or the built-in
+<https://attest-receipts.org/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Be clear about the status: no
 store issues attest receipts in production yet, and there are no external reviews.
 The package version and the wire format are different things — receipts declare
@@ -104,7 +104,7 @@ another feature.
 Depending on why you landed on this page:
 
 - **You want to see whether it actually works.** Open the
-  [verifier](https://bernalli.github.io/attest/) and drop the built-in sample on it.
+  [verifier](https://attest-receipts.org/) and drop the built-in sample on it.
   It takes about thirty seconds, installs nothing, and you can disconnect from the
   network first — that is the whole point of the thing.
 - **You want to know whether any of this concerns you.** Read the
