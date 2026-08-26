@@ -28,7 +28,7 @@ from attest_bridge.model import ConfigError
 # Merchants are not going to write a good "what is this file" explainer
 # themselves, and most won't write one at all. Absent an explicit `info_url`,
 # every receipt email links here instead of failing config load.
-_DEFAULT_INFO_URL = "https://bernalli.github.io/attest/what-is-this.html"
+_DEFAULT_INFO_URL = "https://attest-receipts.org/what-is-this.html"
 
 
 @dataclass(frozen=True, slots=True)

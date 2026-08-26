@@ -43,7 +43,7 @@ smtp_username = "receipts@example.com"
 smtp_password_env = "SMTP_PASSWORD"
 from_address = "receipts@example.com"
 # Optional; omit to fall back to attest's canonical "what is this file?" page
-# (https://bernalli.github.io/attest/what-is-this.html), the same link every
+# (https://attest-receipts.org/what-is-this.html), the same link every
 # receipt email uses by default.
 info_url = "https://store.example.com/what-is-this-file"
 

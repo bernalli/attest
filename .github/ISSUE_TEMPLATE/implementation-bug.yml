@@ -15,7 +15,7 @@ body:
       options:
         - Python implementation (attest-receipts)
         - TypeScript verifier (attest-verifier)
-        - Web verifier (the page at bernalli.github.io/attest)
+        - Web verifier (the page at attest-receipts.org)
         - CLI
         - Webhook bridge
         - Somewhere else / not sure
