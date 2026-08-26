@@ -1267,8 +1267,12 @@ _SUBSET_CLAIM_PATTERNS = (
 _GROUP_CLAIM_PATTERN = re.compile(r"\b(\d+) leaf vectors across (\d+) groups\b")
 
 # Numbers that look like corpus claims but are not, each deliberate and each
-# checked by something else. Keyed by path so that editing one of these lines
-# fails this guard and forces a fresh look, which is the point.
+# checked by something else. Keyed by path AND exact phrase so the exemption
+# cannot widen: it excuses this sentence, not this file, and not this number
+# wherever else it appears. (It does not follow that editing the line makes the
+# guard fire — an earlier comment here claimed that, and a review measured it
+# false: the exempt phrase is a shape no pattern matches anyway. The exemption
+# is belt-and-braces against a future pattern that would.)
 _CORPUS_CLAIM_EXEMPTIONS = {
     # The share of leaves routed to the `verify()` surface, not the corpus
     # size: `130 + 4 + 20 + 4 = 158` is the partition a TypeScript guard test

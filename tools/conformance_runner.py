@@ -93,9 +93,9 @@ def in_v01_subset(lid: str) -> bool:
     """Whether leaf id ``lid`` belongs to the v0.1 conformance subset.
 
     Applies the leading-integer group rule (a leaf's top-level directory name
-    may carry a letter suffix, e.g. ``14b-...`` -> group 14) plus the single
-    pinned extra leaf id (``35i``, a v0.1-shaped receipt living inside the
-    otherwise-v0.2-only ``35-transfer`` group).
+    may carry a letter suffix, e.g. ``14b-...`` -> group 14) plus the pinned
+    extra leaf ids in ``V01_EXTRA_LEAF_IDS`` (``35i`` and ``37s``, v0.1-shaped
+    receipts living inside otherwise-v0.2-only groups).
     """
     if lid in V01_EXTRA_LEAF_IDS:
         return True
