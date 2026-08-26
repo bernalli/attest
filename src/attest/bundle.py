@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import html
 import json
 import os
 import re
@@ -55,7 +56,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from attest import canon, keys, manifests, verify
+from attest import buyer_surface, canon, keys, manifests, verify
 
 _PROVENANCE_BUNDLE = "bundle"
 _SECRET_FILE_MODE = 0o600  # disclose output carries delivery.salt (a bearer secret)
@@ -71,13 +72,15 @@ _MAX_ENTRIES = 100_000  # central-directory entry count
 _READ_CHUNK = 1024 * 1024  # 1 MiB streaming read granularity
 _RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
-_README_TEMPLATE = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>attest receipt bundle: __BUNDLE_NAME__</title>
-</head>
-<body>
+#: The placeholders `_render_readme` substitutes, matched in a single pass.
+_PLACEHOLDER_RE = re.compile("__BUNDLE_NAME__|__PRIVATE_WARNING__")
+
+#: Body of the bundle README, wrapped by ``buyer_surface.render_page`` at
+#: render time. Two placeholders: ``__BUNDLE_NAME__`` for the bundle stem, and
+#: ``__PRIVATE_WARNING__`` for the shared warning block, which is written once
+#: in ``buyer_surface`` and rendered identically on every buyer-facing surface
+#: rather than hand-copied here.
+_README_BODY_TEMPLATE = """\
 <h1>attest receipt bundle: __BUNDLE_NAME__</h1>
 
 <p>This file is your receipt. It proves you bought what's listed inside, and
@@ -103,17 +106,12 @@ tool to check this bundle — for example, the reference tool:
 <code>attest verify &lt;receipt_id&gt;</code>. That check runs entirely on
 your own computer; it never needs to reach the store.</p>
 
-<h2 style="color:#b00020">Never share __BUNDLE_NAME__.private.attest</h2>
+<h2>Two files, and only one is safe to share</h2>
 <p><strong>This file, __BUNDLE_NAME__.attest, is safe to share</strong> — it
-was built to contain no secrets. But it comes with a sibling file, and
-<strong>__BUNDLE_NAME__.private.attest is not safe to share</strong>: it
-holds the private information that proves these receipts belong to you
-specifically. Handing that file to anyone else hands them proof over your
-entire purchase history at once. Keep
-<code>__BUNDLE_NAME__.private.attest</code> for yourself. If you ever need
-to share or prove just one purchase, use
-<code>attest disclose &lt;receipt_id&gt;</code> instead — it shares only
-that one receipt, never your whole library.</p>
+was built to contain no secrets. It came with a sibling file, and that one is
+different.</p>
+
+__PRIVATE_WARNING__
 
 <h2>About the proofs/ folder (if present)</h2>
 <p>Some receipts in this bundle may come with a
@@ -134,10 +132,7 @@ live, at-verification-time TLS connection back to the issuer, a compliant
 verifier reports its trust level as <code>unauthenticated_tofu</code>
 rather than <code>verified</code>: the cryptographic signature is exactly
 as valid either way, it's specifically the freshness of that trust
-confirmation over the network that couldn't be re-checked just now.</p>
-</body>
-</html>
-"""
+confirmation over the network that couldn't be re-checked just now.</p>"""
 
 
 class BundleError(Exception):
@@ -259,7 +254,27 @@ def _group_manifests_by_issuer(
 
 
 def _render_readme(name: str) -> str:
-    return _README_TEMPLATE.replace("__BUNDLE_NAME__", name)
+    """Render the README that travels inside ``<name>.attest``.
+
+    The page is fully self-contained — styling included, nothing fetched — so
+    it opens from the zip on a machine with no network, years from now.
+    """
+    # The name lands in markup a buyer opens in a browser, and export() is
+    # library API: the value can be whatever the caller's own caller supplied.
+    # Escape once here; the warning block escapes its own copy, and
+    # render_page escapes the title.
+    #
+    # One pass, so nothing already substituted is scanned again: chained
+    # .replace() calls let a name containing the literal text of the other
+    # placeholder be rewritten a second time inside the block just inserted,
+    # and the warning would then name a private file that is not the one
+    # beside this bundle.
+    substitutions = {
+        "__BUNDLE_NAME__": html.escape(name),
+        "__PRIVATE_WARNING__": buyer_surface.private_file_warning_html(name),
+    }
+    body = _PLACEHOLDER_RE.sub(lambda match: substitutions[match.group(0)], _README_BODY_TEMPLATE)
+    return buyer_surface.render_page(f"attest receipt bundle: {name}", body)
 
 
 def _raise_secret_output_appeared(path: Path, *, label: str, exc: BaseException) -> None:

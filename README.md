@@ -38,7 +38,8 @@ anyone's click. Here's how:
 
 When you buy something digital, the seller signs a receipt and hands it to you.
 That's the whole mechanism. The receipt is a small file: keep it on a disk, in
-cloud storage, even printed as a QR code. Anyone can check it's genuine with free
+cloud storage, in a backup — anywhere you keep files that matter. Anyone can
+check it's genuine with free
 tools, offline, no account needed. If the store closes tomorrow, the receipt
 still verifies twenty years from now. It's the part of your purchase nobody can
 take away.

@@ -31,6 +31,8 @@ from attest_bridge.delivery import (
 from attest_bridge.ledger import Ledger
 from conftest import ISSUER, LEGAL_TEXT, LEGAL_TEXT_SHA256
 
+from attest import buyer_surface
+
 _SALT = "not-a-real-secret-but-treat-it-like-one"
 _RECEIPT_ID = "r_test_0001"
 # The slug the bundle filename derives from `merchant.example.com`.
@@ -396,7 +398,12 @@ def test_send_body_names_the_private_file_and_warns_not_to_forward() -> None:
     assert private_name in text
     assert shareable_name in text
     assert "never" in text.lower()
-    assert "forward" in text.lower()
+    # The body carries the shared warning verbatim rather than a reworded copy:
+    # this surface is one of the three that drifted apart when each kept its own.
+    assert (
+        buyer_surface.private_file_warning_text(private_name.removesuffix(".private.attest"))
+        in text
+    )
     # The pre-existing pointers survive the rewrite.
     assert "https://receipts.example.com/r/tok_abc123" in text
     assert "https://merchant.example.com/attest/what-is-this" in text

@@ -6,7 +6,63 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The receipt a buyer opens now carries its own presentation, and the pages
+  that explain it say one thing once.** The `README.html` inside every `.attest`
+  had no styling at all beyond a single hardcoded red on one heading — on the
+  one artefact a buyer actually receives inside their purchase. It now ships a
+  small inline stylesheet: one column, a heading scale, a warning box, dark mode,
+  and a print rule. Everything is inline and nothing is fetched, because the page
+  is opened from a zip on someone else's disk, possibly with no network and
+  possibly long after this project is gone — `tests/test_bundle.py` asserts that
+  it reaches outside itself for nothing.
+- **The private-file warning has one wording and one weight.** It was written by
+  hand three times — in the bundle README, in the delivery email, and on
+  `what-is-this.html` — with no shared text and, worse, three different visual
+  weights for one identical risk, the weakest of them on the surface where the
+  risk is most concrete. All three now render it from `attest.buyer_surface`,
+  and a test compares the surfaces word for word rather than in spirit. The
+  wording keeps what each copy did best: the concrete analogy from the page, the
+  reason from the README (one private file covers a whole library, not one
+  purchase), and the pointer to `attest disclose` for proving a single purchase.
+- **`site/public/what-is-this.html` is generated, not edited.** It comes from
+  `tools/gen_buyer_pages.py`, and a test regenerates and compares, so a hand edit
+  fails instead of silently drifting the way the three copies did.
+- **The download landing page was a fourth copy, and it is the one the email
+  sends people to** when attachments do not arrive. It kept the shortest wording
+  of the four — no mention that one private file covers a whole library, no
+  pointer to `attest disclose` — so the buyer most likely to be confused got the
+  least help. It now renders the shared warning like the others.
+
 ### Fixed
+
+- **A promise in the README that no code kept.** The opening paragraph said a
+  receipt could be kept "even printed as a QR code". There is no QR export
+  anywhere in this project — not in the library, the bridge, or the site. The
+  sentence now describes what the format actually offers: a small file, kept
+  wherever files are kept.
+- **A bundle name could write markup into the page a buyer opens.** Nothing
+  escaped it on the way into `README.html`, and `export()` is library API: the
+  bridge builds its own slug, but `attest export --name` takes the value as
+  given. Escaped now at each point where a value becomes HTML — the plain-text
+  warning stays unescaped on purpose, so an email shows a file name rather than
+  an entity. Related: substitution into the README template happens in a single
+  pass, because chained replacements let a name containing the literal text of a
+  placeholder be rewritten again inside the block just inserted — and the warning
+  would then name a private file that is not the one beside the bundle.
+- **The sample bundle the web verifier hands out was two revisions behind the
+  template that produces it.** Anyone trying the verifier was shown a receipt
+  that no longer resembled the ones this code writes. Regenerated, and pinned by
+  a test so the next drift fails instead of shipping.
+
+### Added
+
+- **A byte ceiling on the pages a buyer holds** (`buyer_surface.
+  MAX_HELD_PAGE_BYTES`), asserted in the suite. The README is injected into every
+  exported bundle, so each byte is paid again on every copy of every receipt: a
+  budget nobody measures is a budget that gets exceeded. The rendered README is
+  currently 4541 bytes against a 5000-byte ceiling.
 
 - **The stale conformance numbers the 0.8.1 fix did not reach.** That fix
   corrected the README and the certification table; a census of every artefact a
