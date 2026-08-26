@@ -70,6 +70,14 @@ and you never downloaded the DRM-free file, no signature can conjure it back off
 a dead server. What survives is the proof — see the
 [FAQ](docs/faq.md) for exactly what that's worth in each case.
 
+There is a way to change that answer, and it now runs rather than being planned:
+a rights holder can sign a preservation pledge when they sell, and once that
+pledge fires, an archive holding its own copy can hand the file to whoever proves
+the receipt is theirs — and to nobody else. `python -m demo.pledge_dies` does
+exactly that, end to end, on your machine. What is missing is not the mechanism:
+it is a publisher who has signed one, an archive that holds anything, and prose
+written by a lawyer instead of the placeholder the demo carries.
+
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations that agree on all 158
 conformance vector leaves. **Try it in your browser:**
