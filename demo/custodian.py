@@ -44,6 +44,8 @@ import hashlib
 import json
 import shutil
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -136,24 +138,30 @@ class Custodian:
         receipt that cannot even name a challenge here stays a loud error
         rather than a refusal: nothing has been decided about a request yet.
         """
-        receipt_id = _receipt_id(receipt)
-        out = None if receipt_id is None else self._challenge_file(receipt_id)
-        if out is None:
-            raise ValueError(f"{receipt} does not name a receipt this custodian can challenge")
-        self.challenge_dir.mkdir(parents=True, exist_ok=True)
-        _driver.run_cli_json(
-            [
-                "grant",
-                "challenge",
-                "--receipt",
-                str(receipt),
-                "--audience",
-                self.audience,
-                "--out",
-                str(out),
-            ]
-        )
-        return out
+        # `challenge` snapshots too: it derives the custodian-owned filename and
+        # asks the CLI to read the same requester-owned receipt. Without a frozen
+        # copy, a mid-call swap could key one receipt and mint a challenge for
+        # another.
+        with self._receipt_snapshot(receipt) as frozen_receipt:
+            if frozen_receipt is None:
+                raise ValueError(f"{receipt} does not name a receipt this custodian can challenge")
+            receipt_id = _receipt_id(frozen_receipt)
+            out = None if receipt_id is None else self._challenge_file(receipt_id)
+            if out is None:
+                raise ValueError(f"{receipt} does not name a receipt this custodian can challenge")
+            _driver.run_cli_json(
+                [
+                    "grant",
+                    "challenge",
+                    "--receipt",
+                    str(frozen_receipt),
+                    "--audience",
+                    self.audience,
+                    "--out",
+                    str(out),
+                ]
+            )
+            return out
 
     # -- the request --------------------------------------------------------
 
@@ -171,74 +179,99 @@ class Custodian:
         `offered_salt` exists only to demonstrate a prohibition: the
         buyer-binding salt proves the binding to a verifier, and is exactly
         the wrong thing to hand a custodian, who would then be able to
-        impersonate the holder everywhere. It is refused first, before any
-        other check, so that the refusal cannot be read as a fallback.
+        impersonate the holder everywhere. Once the requester-owned receipt
+        has been frozen, it is refused before any other semantic check, so
+        that the refusal cannot be read as a fallback.
         """
-        if offered_salt is not None:
-            return _refuse(
-                "salt_disclosure_rejected",
-                "the buyer-binding salt is not a redemption proof and is never accepted here",
-            )
+        with self._receipt_snapshot(receipt) as frozen_receipt:
+            if frozen_receipt is None:
+                return _refuse("receipt_not_ok", "the receipt could not be read as an envelope")
 
-        verdict = self._verify_receipt(receipt, grant_view)
-        if verdict is None:
-            return _refuse("receipt_not_ok", "the receipt could not be read as an envelope")
+            if offered_salt is not None:
+                return _refuse(
+                    "salt_disclosure_rejected",
+                    "the buyer-binding salt is not a redemption proof and is never accepted here",
+                )
 
-        # Order matters, and not the order the checks are written in the spec.
-        # A revoked receipt is ALSO `ok: false`, so asking `ok` first would
-        # report every revocation as a generic verification failure and lose
-        # the only fact the holder can act on. Authenticity still comes first:
-        # `revocation` is only meaningful once the envelope is known to be the
-        # issuer's own, or a forged receipt could pick its own refusal.
-        authentic = verdict.get("signature") == "valid" and verdict.get("schema") == "valid"
-        if not authentic:
-            return _refuse("receipt_not_ok", "the receipt is not a valid signed envelope")
-        if verdict.get("revocation") in REVOCATION_REFUSED:
-            return _refuse(
-                "revocation_blocked",
-                f"the receipt is {verdict.get('revocation')}",
-            )
-        if TRANSFERRED_UNBACKED in _verdict_warnings(verdict):
-            return _refuse(
-                "revocation_blocked",
-                "the receipt has been transferred away, so this holder is no longer the one owed",
-            )
-        if verdict.get("ok") is not True:
-            return _refuse("receipt_not_ok", "the receipt did not verify")
-        if verdict.get("grant") != "activated":
-            return _refuse(
-                "grant_not_activated",
-                f"the sunset grant is {verdict.get('grant')}, so nothing is owed yet",
-            )
+            verdict = self._verify_receipt(frozen_receipt, grant_view)
+            if verdict is None:
+                return _refuse("receipt_not_ok", "the receipt could not be read as an envelope")
 
-        # The challenge is the custodian's own file, and this is where it is
-        # spent. A request that answers nobody's challenge, or answers a
-        # superseded or already-spent one, is flattened into the same refusal
-        # as a bad signature.
-        if not self._redemption_proven(receipt, response):
-            return _refuse(
-                "redemption_proof_invalid",
-                "the response does not prove possession of this receipt's key for this archive",
-            )
+            # Order matters, and not the order the checks are written in the spec.
+            # A revoked receipt is ALSO `ok: false`, so asking `ok` first would
+            # report every revocation as a generic verification failure and lose
+            # the only fact the holder can act on. Authenticity still comes first:
+            # `revocation` is only meaningful once the envelope is known to be the
+            # issuer's own, or a forged receipt could pick its own refusal.
+            authentic = verdict.get("signature") == "valid" and verdict.get("schema") == "valid"
+            if not authentic:
+                return _refuse("receipt_not_ok", "the receipt is not a valid signed envelope")
+            if verdict.get("revocation") in REVOCATION_REFUSED:
+                return _refuse(
+                    "revocation_blocked",
+                    f"the receipt is {verdict.get('revocation')}",
+                )
+            if TRANSFERRED_UNBACKED in _verdict_warnings(verdict):
+                return _refuse(
+                    "revocation_blocked",
+                    "the receipt has been transferred away, so this holder is no longer "
+                    "the one owed",
+                )
+            if verdict.get("ok") is not True:
+                return _refuse("receipt_not_ok", "the receipt did not verify")
+            if verdict.get("grant") != "activated":
+                return _refuse(
+                    "grant_not_activated",
+                    f"the sunset grant is {verdict.get('grant')}, so nothing is owed yet",
+                )
 
-        served_from = self._archived_copy(receipt, grant_view)
-        if served_from is None:
-            return _refuse(
-                "artifact_out_of_scope",
-                "no archived copy matches both this receipt and the grant's scope",
-            )
+            # The challenge is the custodian's own file, and this is where it is
+            # spent. A request that answers nobody's challenge, or answers a
+            # superseded or already-spent one, is flattened into the same refusal
+            # as a bad signature.
+            if not self._redemption_proven(frozen_receipt, response):
+                return _refuse(
+                    "redemption_proof_invalid",
+                    "the response does not prove possession of this receipt's key for this archive",
+                )
 
-        deliver_to.mkdir(parents=True, exist_ok=True)
-        delivered = deliver_to / served_from.name
-        shutil.copy(served_from, delivered)
-        return Decision(
-            served=True,
-            reason="served",
-            detail=f"delivered {delivered.name} against a verified receipt and an activated grant",
-            delivered=delivered,
-        )
+            served_from = self._archived_copy(frozen_receipt, grant_view)
+            if served_from is None:
+                return _refuse(
+                    "artifact_out_of_scope",
+                    "no archived copy matches both this receipt and the grant's scope",
+                )
+
+            deliver_to.mkdir(parents=True, exist_ok=True)
+            delivered = deliver_to / served_from.name
+            shutil.copy(served_from, delivered)
+            return Decision(
+                served=True,
+                reason="served",
+                detail=(
+                    f"delivered {delivered.name} against a verified receipt and an activated grant"
+                ),
+                delivered=delivered,
+            )
 
     # -- the individual checks ----------------------------------------------
+
+    @contextmanager
+    def _receipt_snapshot(self, receipt: Path) -> Iterator[Path | None]:
+        """Freeze requester-owned receipt bytes for one custodian operation."""
+        try:
+            receipt_bytes = receipt.read_bytes()
+        except (OSError, ValueError):
+            yield None
+            return
+
+        self.challenge_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="attest-custodian-receipt-", dir=self.challenge_dir
+        ) as scratch:
+            snapshot = Path(scratch) / "receipt.attest.json"
+            snapshot.write_bytes(receipt_bytes)
+            yield snapshot
 
     def _verify_receipt(self, receipt: Path, grant_view: Path) -> dict[str, Any] | None:
         """The receipt and the grant evidence, through the real verifier.
@@ -284,36 +317,48 @@ class Custodian:
     def _redemption_proven(self, receipt: Path, response: Path) -> bool:
         """Spend this receipt's outstanding challenge on this response.
 
-        The challenge leaves the custodian's directory BEFORE the answer is
-        known, so it is consumed by USE and not by success: a holder who
-        answers wrongly, or a thief who tries, burns it either way and the
-        next attempt has nothing to answer. A legitimate holder simply asks
-        for another one, which costs a round trip and buys the property that
-        no response is ever worth replaying.
+        The challenge leaves its receipt-id path BEFORE the answer is known,
+        so that pending challenge is consumed by USE and not by success: a
+        holder who answers wrongly, or a thief who tries, burns it either way.
+        A later mint at the same receipt-id path is a different challenge and
+        is not touched by this claim, so a legitimate holder simply asks for
+        another one. One round trip buys the property that no response is ever
+        worth replaying.
         """
         receipt_id = _receipt_id(receipt)
         pending = None if receipt_id is None else self._challenge_file(receipt_id)
         if pending is None:
             return False
+        if not self.challenge_dir.is_dir():
+            return False
         try:
-            minted = pending.read_bytes()
-            pending.unlink()
+            with tempfile.TemporaryDirectory(
+                prefix="attest-custodian-claim-", dir=self.challenge_dir
+            ) as scratch:
+                spent = Path(scratch) / pending.name
+                try:
+                    # Same-directory rename is the claim: whoever moves the
+                    # pending path owns those bytes, and a later mint recreates
+                    # a separate outstanding challenge.
+                    pending.replace(spent)
+                except FileNotFoundError:
+                    return False
+                except OSError:
+                    return False
+
+                # Defence in depth, and the reason it is not redundant: owning the
+                # directory is what makes the audience right by construction, and
+                # that ownership is an assumption about the filesystem, not
+                # something the code can see. Two custodians sharing a directory
+                # are keyed by the same `receipt_id` and would read each other's
+                # file, which is precisely the cross-archive replay §18.7 exists to
+                # forbid. One comparison costs nothing when the directory is
+                # private and restores the binding when it is not.
+                if _challenge_audience(spent) != self.audience:
+                    return False
+                return self._redemption_verified(receipt, spent, response)
         except (OSError, ValueError):
             return False
-        with tempfile.TemporaryDirectory(prefix="attest-custodian-") as scratch:
-            spent = Path(scratch) / "challenge.json"
-            spent.write_bytes(minted)
-            # Defence in depth, and the reason it is not redundant: owning the
-            # directory is what makes the audience right by construction, and
-            # that ownership is an assumption about the filesystem, not
-            # something the code can see. Two custodians sharing a directory
-            # are keyed by the same `receipt_id` and would read each other's
-            # file, which is precisely the cross-archive replay §18.7 exists to
-            # forbid. One comparison costs nothing when the directory is
-            # private and restores the binding when it is not.
-            if _challenge_audience(spent) != self.audience:
-                return False
-            return self._redemption_verified(receipt, spent, response)
 
     def _redemption_verified(self, receipt: Path, challenge: Path, response: Path) -> bool:
         """§18.7's audience-bound proof, through the real verifier.

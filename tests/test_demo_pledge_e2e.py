@@ -68,6 +68,8 @@ class World:
     receipt: Path
     trust_dir: Path
     archive_dir: Path
+    pub_seed: Path
+    pub_mldsa: Path
     store_seed: Path
     store_mldsa: Path
     buyer_seed: Path
@@ -400,6 +402,8 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> World:
         receipt=receipt,
         trust_dir=trust,
         archive_dir=arch,
+        pub_seed=pub_seed,
+        pub_mldsa=pub_mldsa,
         store_seed=store_seed,
         store_mldsa=store_mldsa,
         buyer_seed=buyer_seed,
@@ -450,6 +454,153 @@ def _respond(world: World, challenge: Path, out: Path, seed: Path | None = None)
         ]
     )
     return out
+
+
+def _artifact_entry(filename: str, data: bytes) -> dict[str, Any]:
+    return {
+        "role": "installer",
+        "platform": "linux-x86_64",
+        "filename": filename,
+        "size_bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def _series_grant_view(world: World, tmp_path: Path) -> tuple[Path, str]:
+    grant_path = tmp_path / "series-grant.json"
+    grant_report = _cli(
+        [
+            "grant",
+            "issue",
+            "--grant-version",
+            "1",
+            "--publisher",
+            PUBLISHER,
+            "--artifact-series",
+            SERIES,
+            "--permission",
+            "deliver-to-holder",
+            "--mode",
+            "publisher-declaration",
+            "--legal-text-uri",
+            f"https://{PUBLISHER}/pledge/series-grant-v1.json",
+            "--legal-text-sha256",
+            hashlib.sha256(LEGAL_BYTES).hexdigest(),
+            "--jurisdiction",
+            "IT",
+            "--issued-at",
+            EPOCH,
+            "--seed",
+            str(world.pub_seed),
+            "--kid",
+            PUB_KID,
+            "--mldsa-seed",
+            str(world.pub_mldsa),
+            "--out",
+            str(grant_path),
+        ]
+    )
+    declaration_path = tmp_path / "series-declaration.json"
+    _cli(
+        [
+            "grant",
+            "declare",
+            "--publisher",
+            PUBLISHER,
+            "--artifact-series",
+            SERIES,
+            "--declared-at",
+            "2027-01-01T00:00:00Z",
+            "--seed",
+            str(world.pub_seed),
+            "--kid",
+            PUB_KID,
+            "--mldsa-seed",
+            str(world.pub_mldsa),
+            "--out",
+            str(declaration_path),
+        ]
+    )
+    view = tmp_path / "series-grant-view-active.json"
+    view.write_text(
+        json.dumps(
+            {
+                "grant": json.loads(grant_path.read_text(encoding="utf-8")),
+                "declarations": [json.loads(declaration_path.read_text(encoding="utf-8"))],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return view, str(grant_report["grant_sha256"])
+
+
+def _signed_receipt_for_artifact(
+    world: World,
+    tmp_path: Path,
+    *,
+    filename: str,
+    data: bytes,
+    grant_sha256: str,
+    receipt_id: str,
+) -> Path:
+    buyer_pub = keys.from_seed(
+        keys.b64u_decode(world.buyer_seed.read_text(encoding="utf-8").strip())
+    ).pub
+    payload = issue.build_payload(
+        issuer_id=STORE,
+        display_name="The Store That Pledged",
+        buyer_identifier="casey@example.com",
+        buyer_identifier_type="email",
+        buyer_salt=keys.b64u_decode(world.salt_b64u),
+        buyer_pubkey=buyer_pub,
+        title="Pledged Game",
+        publisher="Indie Games Co-op",
+        identifiers={"issuer_sku": "PLEDGE-001"},
+        artifact_series=SERIES,
+        terms_uri=f"https://{STORE}/attest/license-templates/standard-v1",
+        legal_text_sha256=hashlib.sha256(LEGAL_BYTES).hexdigest(),
+        artifacts=[_artifact_entry(filename, data)],
+        revocability="none",
+        drm="drm-free",
+        end_of_life="sunset-grant",
+        eol_commitment_uri=f"https://{PUBLISHER}/pledge/series-grant-v1.json",
+        eol_commitment_sha256=grant_sha256,
+        publisher_id=PUBLISHER,
+        preservation_pledge={
+            "pledge": "sunset-grant-v1",
+            "grant_uri": f"https://{PUBLISHER}/pledge/series-grant-v1.json",
+            "grant_sha256": grant_sha256,
+        },
+        issued_at=EPOCH,
+        receipt_id=receipt_id,
+        attest_version="0.2",
+    )
+    slug = filename.replace(".", "-")
+    payload_path = tmp_path / f"payload-{slug}.json"
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+    salt_path = tmp_path / f"receipt-{slug}.salt"
+    salt_path.write_text(world.salt_b64u, encoding="utf-8")
+    receipt = tmp_path / f"receipt-{slug}.attest.json"
+    _cli(
+        [
+            "issue",
+            "--payload",
+            str(payload_path),
+            "--seed",
+            str(world.store_seed),
+            "--kid",
+            STORE_KID,
+            "--salt",
+            str(salt_path),
+            "--attest-version",
+            "0.2",
+            "--mldsa-key",
+            str(world.store_mldsa),
+            "--out",
+            str(receipt),
+        ]
+    )
+    return receipt
 
 
 def _signed_receipt_with_filename(world: World, tmp_path: Path, filename: str) -> Path:
@@ -524,6 +675,67 @@ def test_a_valid_redemption_is_served(world: World, tmp_path: Path) -> None:
     assert decision.reason == "served"
     assert decision.delivered is not None
     assert decision.delivered.read_bytes() == WORK_BYTES
+
+
+def test_redeem_freezes_the_receipt_before_artifact_selection(
+    world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    grant_view, grant_sha256 = _series_grant_view(world, tmp_path)
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    first_bytes = b"first receipt artifact\n"
+    second_bytes = b"second receipt artifact\n"
+    (archive / "first.bin").write_bytes(first_bytes)
+    (archive / "second.bin").write_bytes(second_bytes)
+    first_receipt = _signed_receipt_for_artifact(
+        world,
+        tmp_path,
+        filename="first.bin",
+        data=first_bytes,
+        grant_sha256=grant_sha256,
+        receipt_id="01ARZ3NDEKTSV4RRFFQ69G5FA1",
+    )
+    second_receipt = _signed_receipt_for_artifact(
+        world,
+        tmp_path,
+        filename="second.bin",
+        data=second_bytes,
+        grant_sha256=grant_sha256,
+        receipt_id="01ARZ3NDEKTSV4RRFFQ69G5FA2",
+    )
+    request_receipt = tmp_path / "request.attest.json"
+    request_receipt.write_bytes(first_receipt.read_bytes())
+
+    gate = _gate(world, tmp_path, archive_dir=archive)
+    challenge = gate.challenge(receipt=request_receipt)
+    response = _respond(world, challenge, tmp_path / "response.json")
+
+    original_run_cli = custodian_mod._driver.run_cli
+    swapped = False
+
+    def swap_after_redemption_verify(argv: list[str]) -> tuple[int, str, str]:
+        nonlocal swapped
+        result = original_run_cli(argv)
+        if argv[:2] == ["grant", "verify"] and not swapped:
+            request_receipt.write_bytes(second_receipt.read_bytes())
+            swapped = True
+        return result
+
+    monkeypatch.setattr(custodian_mod._driver, "run_cli", swap_after_redemption_verify)
+
+    decision = gate.redeem(
+        receipt=request_receipt,
+        grant_view=grant_view,
+        response=response,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert swapped is True
+    assert decision.served is True
+    assert decision.delivered is not None
+    assert decision.delivered.name == "first.bin"
+    assert decision.delivered.read_bytes() == first_bytes
+    assert not (tmp_path / "out" / "second.bin").exists()
 
 
 # --------------------------------------------------------------------------
@@ -801,6 +1013,63 @@ def test_a_failed_redemption_also_spends_the_challenge(world: World, tmp_path: P
 
     assert after.served is False
     assert after.reason == "redemption_proof_invalid"
+
+
+def test_challenge_claim_does_not_unlink_a_fresh_mint(
+    world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate = _gate(world, tmp_path)
+    challenge = gate.challenge(receipt=world.receipt)
+    response = _respond(world, challenge, tmp_path / "response.json")
+
+    original_read_bytes = Path.read_bytes
+    original_run_cli = custodian_mod._driver.run_cli
+    minted_during_old_read = False
+    fresh_challenge: Path | None = None
+
+    def remint_after_old_read(path: Path) -> bytes:
+        nonlocal fresh_challenge, minted_during_old_read
+        data = original_read_bytes(path)
+        if path == challenge and fresh_challenge is None:
+            fresh_challenge = gate.challenge(receipt=world.receipt)
+            minted_during_old_read = True
+        return data
+
+    def remint_after_atomic_claim(argv: list[str]) -> tuple[int, str, str]:
+        nonlocal fresh_challenge
+        if (
+            argv[:2] == ["grant", "verify"]
+            and fresh_challenge is None
+            and not minted_during_old_read
+        ):
+            fresh_challenge = gate.challenge(receipt=world.receipt)
+        return original_run_cli(argv)
+
+    monkeypatch.setattr(Path, "read_bytes", remint_after_old_read)
+    monkeypatch.setattr(custodian_mod._driver, "run_cli", remint_after_atomic_claim)
+
+    first = gate.redeem(
+        receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        response=response,
+        deliver_to=tmp_path / "out",
+    )
+
+    assert first.served is True
+    assert fresh_challenge is not None
+    assert fresh_challenge.exists()
+
+    fresh_response = _respond(world, fresh_challenge, tmp_path / "fresh-response.json")
+    second = gate.redeem(
+        receipt=world.receipt,
+        grant_view=world.grant_view_active,
+        response=fresh_response,
+        deliver_to=tmp_path / "out-again",
+    )
+
+    assert second.served is True
+    assert second.delivered is not None
+    assert second.delivered.read_bytes() == WORK_BYTES
 
 
 def test_a_request_answering_no_outstanding_challenge_is_refused(

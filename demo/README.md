@@ -116,8 +116,8 @@ holder signs, so an answer produced for one archive means nothing at
 another. And the **salt** is refused even when everything else about the
 request is valid: it would work on a verifier, and handing it to a custodian
 is exactly how a holder gives away the ability to be impersonated
-everywhere. That is a prohibition, not a fallback, so the gate checks it
-first.
+everywhere. That is a prohibition, not a fallback, so once the receipt input
+has been frozen, the gate checks it before the authenticity and proof work.
 
 The **transfer** arrives by a side door and is worth a line of its own.
 `attest verify` still has no transfer-view flag, so the verdict's
