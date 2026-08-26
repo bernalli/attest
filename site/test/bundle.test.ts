@@ -6,9 +6,14 @@ import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { parseBundle, BundleError, PrivateBundleError, DEFAULT_CAPS } from '../src/bundle.js'
 import { runVerify } from '../src/run.js'
-import { VECTORS_ROOT } from './helpers/vectors.js'
+import { VECTORS_ROOT, logKeys, anchorPolicy } from './helpers/vectors.js'
 
 const V01 = join(VECTORS_ROOT, '01-valid-minimal')
+// The one conformance leaf that ships a receipt AND the §10.2 evidence that
+// stands for it, so a proofs/ member can be tested as evidence rather than as
+// bytes: expected.json pins transparency/corroboration to "logged".
+const V28 = join(VECTORS_ROOT, '28-transparency', 'a-logged-trust-unchanged')
+const V28_RECEIPT_ID = '01JZ5PDHT0000G40R40M30E209'
 
 // Build a real .attest-shaped zip from the 01-valid-minimal vector: its
 // envelope + its key manifest wrapped in the export format
@@ -92,5 +97,66 @@ describe('parseBundle', () => {
       ['receipts/b.attest.json']: new Uint8Array(800),
     })
     expect(() => parseBundle(zip, { ...DEFAULT_CAPS, maxTotalBytes: 1000 })).toThrow(/cap/)
+  })
+})
+
+// A bundle shaped the way the reference exporter writes one when a receipt's
+// transparency evidence travelled with it: receipts/<ULID>.attest.json +
+// manifests/<issuer>.json + proofs/<ULID>.json (v0.2 §14).
+function bundleWithMembers(extra: Record<string, Uint8Array>): Uint8Array {
+  const d = loadsStrict(new Uint8Array(readFileSync(join(V28, 'manifests.json')))) as JsonObject
+  const manifests = d.manifests as JsonObject
+  const issuer = Object.keys(manifests)[0]
+  const blob: JsonObject = { issuer, key_manifests: [manifests[issuer]], artifact_manifests: [] }
+  return zipSync({
+    [`receipts/${V28_RECEIPT_ID}.attest.json`]: new Uint8Array(readFileSync(join(V28, 'envelope.json'))),
+    [`manifests/${issuer}.json`]: canonicalBytes(blob),
+    ...extra,
+  })
+}
+const evidenceBytes = (): Uint8Array => new Uint8Array(readFileSync(join(V28, 'transparency.json')))
+
+describe('parseBundle — proofs/ members (v0.2 §14)', () => {
+  it('carries a proof as evidence a verifier can actually stand on', () => {
+    const parsed = parseBundle(bundleWithMembers({ [`proofs/${V28_RECEIPT_ID}.json`]: evidenceBytes() }))
+    expect(Object.keys(parsed.proofs)).toEqual([V28_RECEIPT_ID])
+    // The bundle supplies EVIDENCE only. The standing appears when the
+    // verifier's own pinned configuration evaluates it — never because the
+    // bundle said so.
+    const run = runVerify(parsed.receipts[0].bytes, parsed.trustStore, null, null, {
+      transparency: parsed.proofs[V28_RECEIPT_ID],
+      logKeys: logKeys(V28),
+      anchorPolicy: anchorPolicy(V28),
+    })
+    expect(run.result.transparency).toBe('logged')
+    expect(run.result.corroboration).toBe('logged')
+  })
+
+  it('leaves proofs empty for a bundle that carries none', () => {
+    expect(parseBundle(bundleWithMembers({})).proofs).toEqual({})
+  })
+
+  // v0.2 §14: a conforming importer MUST reject every proofs shape but
+  // proofs/<ULID>.json. The page derives no filesystem path, but the grammar
+  // is the spec's, not the filesystem's — a member that does not name a
+  // receipt id cannot be matched to a receipt at all.
+  it.each([
+    ['a nested path', `proofs/nested/${V28_RECEIPT_ID}.json`],
+    ['a non-.json suffix', `proofs/${V28_RECEIPT_ID}.txt`],
+    ['a name that is not a ULID', 'proofs/not-a-ulid.json'],
+    ['a lowercase ULID', `proofs/${V28_RECEIPT_ID.toLowerCase()}.json`],
+    ['a ULID outside the timestamp-prefix range', 'proofs/8ZZZZZZZZZZZZZZZZZZZZZZZZZ.json'],
+  ])('rejects %s under proofs/', (_label, member) => {
+    expect(() => parseBundle(bundleWithMembers({ [member]: evidenceBytes() }))).toThrow(BundleError)
+  })
+
+  it('rejects a proof member that is not readable JSON', () => {
+    const zip = bundleWithMembers({ [`proofs/${V28_RECEIPT_ID}.json`]: new TextEncoder().encode('{oops') })
+    expect(() => parseBundle(zip)).toThrow(BundleError)
+  })
+
+  it('drops a proof whose evidence is not an object, mirroring the reference importer', () => {
+    const zip = bundleWithMembers({ [`proofs/${V28_RECEIPT_ID}.json`]: new TextEncoder().encode('[]') })
+    expect(parseBundle(zip).proofs).toEqual({})
   })
 })

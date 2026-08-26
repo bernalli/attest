@@ -1,21 +1,44 @@
 import { describe, it, expect } from 'vitest'
-import { explain, explainVerdict, COMPONENTS } from '../src/explain.js'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { explain, explainVerdict, attributeWarning, COMPONENTS, GROUPS } from '../src/explain.js'
+import type { Component } from '../src/explain.js'
 
-const KNOWN: Record<string, string[]> = {
+const KNOWN: Record<Component, string[]> = {
   signature: ['valid', 'invalid'],
   schema: ['valid', 'invalid', 'not_checked'],
-  revocation: ['unknown', 'revoked', 'invalid_revocation_ignored', 'not_revoked_as_of:2026-01-01T00:00:00Z'],
   binding: ['proven', 'not_proven', 'not_checked'],
   trust: ['verified', 'unauthenticated_tofu', 'unverified_rotation'],
+  revocation: [
+    'unknown', 'revoked', 'invalid_revocation_ignored', 'transferred',
+    'not_revoked_as_of:2026-01-01T00:00:00Z',
+  ],
+  grant: ['not_checked', 'none', 'dormant', 'activated', 'invalid_grant_ignored'],
+  grant_trust: [
+    'not_checked', 'verified', 'unauthenticated_tofu', 'unverified_rotation', 'signer_mismatch',
+  ],
+  transparency: [
+    'not_checked', 'logged', 'equivocation_detected', 'anchored_before:2026-08-26T00:00:00Z',
+  ],
+  corroboration: ['none', 'logged', 'witnessed'],
+  manifest_freshness: ['not_checked', 'verified_as_of:7'],
 }
 
-describe('explain', () => {
-  it('covers every known component value with real copy', () => {
+describe('the ten components', () => {
+  it('are exactly the components of the three question groups, in order', () => {
+    expect(COMPONENTS).toEqual(GROUPS.flatMap((g) => g.components))
+    expect(new Set(COMPONENTS).size).toBe(10)
+    expect(GROUPS.map((g) => g.components.length)).toEqual([4, 3, 3])
+  })
+
+  it('covers every allowed value of the result contract with real copy', () => {
     for (const component of COMPONENTS) {
       for (const value of KNOWN[component]) {
         const e = explain(component, value)
         expect(e.label.length, `${component}/${value}`).toBeGreaterThan(0)
-        expect(e.text.length, `${component}/${value}`).toBeGreaterThan(40) // a real sentence, not a stub
+        // A real sentence, not a stub — and never the generic fallback.
+        expect(e.text.length, `${component}/${value}`).toBeGreaterThan(40)
+        expect(e.text, `${component}/${value}`).not.toContain('does not have dedicated wording')
       }
     }
   })
@@ -24,10 +47,30 @@ describe('explain', () => {
     expect(explain('signature', 'valid').tone).toBe('good')
     expect(explain('signature', 'invalid').tone).toBe('bad')
     expect(explain('revocation', 'revoked').tone).toBe('bad')
+    expect(explain('revocation', 'transferred').tone).toBe('bad')
     expect(explain('revocation', 'unknown').tone).toBe('neutral')
     expect(explain('trust', 'unauthenticated_tofu').tone).toBe('warn')
-    expect(explain('trust', 'unverified_rotation').tone).toBe('warn')
     expect(explain('binding', 'proven').tone).toBe('good')
+    // Informational by construction (spec §10, §18.5): a component that can
+    // never move `ok` must never be painted as a failure of the receipt.
+    expect(explain('grant', 'not_checked').tone).toBe('neutral')
+    expect(explain('grant', 'dormant').tone).toBe('good')
+    expect(explain('grant', 'invalid_grant_ignored').tone).toBe('warn')
+    expect(explain('grant_trust', 'signer_mismatch').tone).toBe('warn')
+    expect(explain('corroboration', 'none').tone).toBe('neutral')
+    // The one hard verdict of the transparency layer (spec §10.3).
+    expect(explain('transparency', 'equivocation_detected').tone).toBe('bad')
+  })
+
+  it('reads a parametric value’s argument back into the sentence', () => {
+    expect(explain('transparency', 'anchored_before:2026-08-26T00:00:00Z').text)
+      .toContain('2026-08-26T00:00:00Z')
+    expect(explain('manifest_freshness', 'verified_as_of:7').text).toContain('7 entries')
+    expect(explain('revocation', 'not_revoked_as_of:2026-01-01T00:00:00Z').text)
+      .toContain('2026-01-01T00:00:00Z')
+    // A prefix belongs to ONE component: the same suffix under another must
+    // not borrow its wording.
+    expect(explain('transparency', 'verified_as_of:7').text).toContain('does not have dedicated wording')
   })
 
   it('never throws on unknown values (future-proof fallback)', () => {
@@ -39,5 +82,117 @@ describe('explain', () => {
   it('explains the verdict', () => {
     expect(explainVerdict(true).tone).toBe('good')
     expect(explainVerdict(false).tone).toBe('bad')
+  })
+})
+
+// Three things the spec forbids the copy from saying, or requires it to say.
+// They are pinned here because they are the difference between a page that
+// explains the protocol and a page that overstates it.
+describe('the three normative constraints on the copy', () => {
+  it('never sells `witnessed` as organizational independence (spec §10.1)', () => {
+    const text = explain('corroboration', 'witnessed').text
+    expect(text).toMatch(/NOT evidence that/)
+    expect(text).toMatch(/independen/i)
+    // §10.1: "v1 defines no positive independence certificate or inference rule"
+    expect(text).toMatch(/no way to establish independence/i)
+  })
+
+  it('reads `verified_as_of:<N>` as a tree size, and not as the key’s state today (spec §10.4)', () => {
+    const text = explain('manifest_freshness', 'verified_as_of:12').text
+    expect(text).toContain('12 entries')
+    expect(text).toMatch(/not seconds/)
+    expect(text).toMatch(/nothing about those keys NOW/)
+  })
+
+  it('says a `grant_trust` that diverges from `grant` is normal (spec §18.5)', () => {
+    const text = explain('grant_trust', 'verified').text
+    expect(text).toMatch(/best available value/)
+    expect(text).toMatch(/not a contradiction/)
+  })
+})
+
+// Every wire token the verifier can emit either lands on a row or is on this
+// list with a reason. Read out of the verifier's own source rather than copied
+// here, so a token added upstream fails this test instead of falling silently
+// into the flat list — where the whole point of attribution is lost.
+const NO_ROW: Record<string, string> = {
+  'license.drm is drm-bound (design vector 18)':
+    'content warning, independent of the crypto pipeline; moves no component (v0.1 §11.2)',
+  'unknown payload field': 'same content pass; forward-compatibility signal, never a schema verdict',
+  mixed_keyset_active_ed_only_sibling:
+    '§13.1: no result field classifies hybrid strength, "because none exists"',
+  grant_commitment_divergence:
+    '§18.2: emitted from the signed payload alone, with or without grant evidence',
+}
+
+describe('attributeWarning', () => {
+  const MESSAGES = join(__dirname, '..', '..', 'verifiers', 'ts', 'src', 'messages.ts')
+
+  it('covers every warning token the verifier declares', () => {
+    const source = readFileSync(MESSAGES, 'utf8')
+    const dicts = source.matchAll(
+      /export const (WARN|ANCHOR_WARN|TRANSPARENCY_WARN|VERIFY_TRANSPARENCY_WARN|TRANSFER_WARN|GRANT_WARN) = \{([\s\S]*?)\n\} as const/g,
+    )
+    const tokens: string[] = []
+    for (const [, , body] of dicts) {
+      // Both quote styles: three of the anchor literals and the revocability
+      // one are double-quoted because they contain apostrophes, and a
+      // single-quote-only reader silently skipped exactly those four.
+      for (const m of body.matchAll(/^\s{2}[A-Z0-9_]+:\s*\n?\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1/gm)) {
+        tokens.push(m[2])
+      }
+    }
+    // Warning literals declared outside a dictionary, one per export, are
+    // just as emittable: RFC3161_WARNING is one, and the scrape used to walk
+    // straight past it.
+    for (const m of source.matchAll(
+      /^export const [A-Z0-9_]*WARNING[A-Z0-9_]* =\s*\n?\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1/gm,
+    )) tokens.push(m[2])
+    // A regex that matched nothing — or matched only the easy half — would
+    // make this test green on air. Pin the count and the awkward members.
+    expect(tokens.length).toBeGreaterThanOrEqual(60)
+    for (const hard of [
+      "revocation record ignored: license.revocability is 'none' (irrevocable)",
+      "ots proof 'ops' must be a list",
+      "ots 'sha256' op takes no operand",
+      'grant_legal_text_changed',
+      'post_horizon_unanchored',
+      'rfc3161 token accepted as opaque classical evidence, carries no post-horizon weight',
+    ]) expect(tokens, hard).toContain(hard)
+    const orphans = tokens.filter((t) => attributeWarning(t) === null && !(t in NO_ROW))
+    expect(orphans).toEqual([])
+  })
+
+  it('routes the token families to their component', () => {
+    expect(attributeWarning('transparency_config_missing')).toBe('transparency')
+    expect(attributeWarning('log_equivocation_detected')).toBe('transparency')
+    expect(attributeWarning('corroboration_requires_rotation_chain')).toBe('corroboration')
+    expect(attributeWarning('witness_independence_not_established')).toBe('corroboration')
+    expect(attributeWarning('revocation_unlogged_deadline')).toBe('revocation')
+    expect(attributeWarning('transfer_double_assignment_conflict')).toBe('revocation')
+    expect(attributeWarning('grant_scope_uncovered')).toBe('grant')
+    // The one grant literal that is about the SIGNER, per §18.5's own table.
+    expect(attributeWarning('grant_signer_not_publisher')).toBe('grant_trust')
+    expect(attributeWarning('artifact_manifest_unauthenticated')).toBe('trust')
+  })
+
+  it('routes the free-text warnings too', () => {
+    expect(attributeWarning('key acme.example/2026a is retired')).toBe('signature')
+    expect(attributeWarning("revocation record for '01J' failed verification, ignored")).toBe('revocation')
+    expect(attributeWarning('revocation view exceeds 256 records (300 supplied), not evaluated')).toBe('revocation')
+    expect(attributeWarning('evidence.checkpoint is required')).toBe('transparency')
+    expect(attributeWarning('proof[0]: must be an object, got str')).toBe('transparency')
+    expect(attributeWarning('ots proof has empty op-chain')).toBe('transparency')
+    expect(attributeWarning('pinned header merkle_root does not match proof')).toBe('transparency')
+    expect(attributeWarning(
+      'rfc3161 token accepted as opaque classical evidence, carries no post-horizon weight',
+    )).toBe('transparency')
+  })
+
+  it('returns null for what belongs to no row', () => {
+    for (const token of Object.keys(NO_ROW)) expect(attributeWarning(token), token).toBeNull()
+    expect(attributeWarning("unknown payload field: 'colour'")).toBeNull()
+    // Same content pass, same answer (v0.1 §11.2).
+    expect(attributeWarning("unknown survivability.end_of_life value: 'escrow-2'")).toBeNull()
   })
 })

@@ -1,7 +1,8 @@
 import type { Disclosure } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes, type VerifyJob } from './intake.js'
 import { runVerify } from './run.js'
-import { renderResult, renderRejection } from './render.js'
+import { renderResult, renderRejection, renderVerifyFailure } from './render.js'
+import { LOG_KEYS, ANCHOR_POLICY } from './trusted-log.js'
 import { b64uDecode } from './b64u.js'
 import { loadSample } from './sample.js'
 
@@ -44,10 +45,37 @@ export function initApp(doc: Document): AppHandle {
   // again on every disclosure and on the manifest handover, and a warning that
   // disappears the moment the reader interacts with the page is a warning that
   // was never really there.
+  // Two channels that must never be confused. `transparency` is EVIDENCE and
+  // comes out of the dropped file — the §10.2 bundle a `proofs/` member held.
+  // `logKeys` and `anchorPolicy` are this verifier's own pinned
+  // CONFIGURATION, compiled into the page and never read off the material
+  // being checked (v0.2 §7.3). Both are needed: supplying evidence with no
+  // pinned log is not a check, and pinning a log with no evidence has nothing
+  // to check. `witnessPolicy` stays absent, and that is a statement rather
+  // than an omission — no independent witness co-signs this log's
+  // checkpoints, so `corroboration` must never be able to reach `witnessed`.
   function renderJobs(disclosure: Disclosure | null): void {
     results.replaceChildren(
       ...currentNotices.map((text) => message(doc, text)),
-      ...currentJobs.map((job) => renderResult(job.label, runVerify(job.envelopeBytes, job.trustStore, null, disclosure))),
+      // Per job, never per batch: verify()'s trusted-config validation throws
+      // by design, and an exception escaping this map would abandon the whole
+      // `replaceChildren` call — leaving the page silently showing the
+      // PREVIOUS results, which is the worst outcome available. One receipt
+      // the page cannot check must not take the others down with it.
+      ...currentJobs.map((job) => {
+        try {
+          return renderResult(
+            job.label,
+            runVerify(job.envelopeBytes, job.trustStore, null, disclosure, {
+              transparency: job.transparency,
+              logKeys: LOG_KEYS,
+              anchorPolicy: ANCHOR_POLICY,
+            }),
+          )
+        } catch (e) {
+          return renderVerifyFailure(job.label, e instanceof Error ? e.message : String(e))
+        }
+      }),
     )
   }
 
@@ -87,7 +115,7 @@ export function initApp(doc: Document): AppHandle {
       )
       return
     }
-    currentJobs = [{ label: pendingEnvelope.fileName, envelopeBytes: pendingEnvelope.bytes, trustStore }]
+    currentJobs = [{ label: pendingEnvelope.fileName, envelopeBytes: pendingEnvelope.bytes, trustStore, transparency: null }]
     pendingEnvelope = null
     manifestZone.hidden = true
     renderJobs(null)

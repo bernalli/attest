@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { zipSync } from 'fflate'
 import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { initApp, type AppHandle } from '../src/main.js'
@@ -45,6 +46,40 @@ describe('initApp wiring', () => {
     app.handleManifestBytes(canonicalBytes(manifest()))
     expect(document.getElementById('manifest-zone')!.hidden).toBe(true)
     expect(document.getElementById('results')!.textContent).toContain('Receipt verifies')
+  })
+
+  // The pin on main.ts's call site. With no proofs/ member nothing reaches
+  // verify()'s evidence channel and the page stays silent about transparency.
+  // With one — here a deliberately unusable stub — the evidence arrives, the
+  // pinned configuration judges it, and the verifier reports that it could
+  // not resolve the claim. Reaching that verdict at all takes BOTH halves:
+  // the evidence from the file and the pinned log from trusted-log.ts. Drop
+  // either from the call and this goes quiet.
+  const bundleWith = (members: Record<string, Uint8Array>): Uint8Array => {
+    const m = manifest()
+    const issuer = m.issuer as string
+    const blob: JsonObject = { issuer, key_manifests: [m], artifact_manifests: [] }
+    return zipSync({
+      ['receipts/01JZ5PDHT0000G40R40M30E209.attest.json']: envelope(),
+      [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      ...members,
+    })
+  }
+
+  it('says nothing about transparency for a bundle carrying no proof', () => {
+    app.handleBytes('library.attest', bundleWith({}))
+    const text = document.getElementById('results')!.textContent ?? ''
+    expect(text).not.toContain('transparency_claim_unresolvable')
+    expect(text).toContain('"transparency": "not_checked"')
+  })
+
+  it('feeds a bundle’s proofs/ evidence to the pinned log, and reports what came of it', () => {
+    const evidence = new TextEncoder().encode('{"leaf_index":0}')
+    app.handleBytes('library.attest', bundleWith({ ['proofs/01JZ5PDHT0000G40R40M30E209.json']: evidence }))
+    const text = document.getElementById('results')!.textContent ?? ''
+    expect(text).toContain('transparency_claim_unresolvable')
+    // Never this one again: it meant the page held no pinned log at all.
+    expect(text).not.toContain('transparency_config_missing')
   })
 
   it('shows the private-file refusal', () => {
