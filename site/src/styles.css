@@ -49,12 +49,23 @@ h2 { margin-top: 2.2rem; }
 .tone-neutral { --tone: var(--neutral); }
 .verdict.tone-good strong { color: var(--good); }
 .verdict.tone-bad strong { color: var(--bad); }
-.components { margin: 1rem 0 0; }
+/* Three questions, ten rows. The heading carries the question and the line
+   under it says what the group can and cannot settle, so a reader who stops
+   at the headings still leaves with something true. */
+.group { margin-top: 1.4rem; }
+.group-question { margin: 0; font-size: 1rem; }
+.group-note { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.92rem; }
+.components { margin: 0.6rem 0 0; }
 .component { border-left: 4px solid var(--tone, var(--neutral)); padding: 0.15rem 0 0.15rem 0.8rem; margin: 0.7rem 0; }
 .component dt { display: flex; gap: 0.6rem; align-items: baseline; }
 .component-name { font-weight: 600; }
 .component-value { color: var(--tone, var(--neutral)); }
 .component dd { margin: 0.15rem 0 0; color: var(--muted); }
+/* A warning shown against the row it qualifies. It borrows the row's tone
+   rather than shouting in red: it explains a value, it is not a second
+   verdict on top of it. */
+.component-warnings ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+.component-warnings li { color: var(--tone, var(--neutral)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
 .warnings h4, .errors h4 { margin: 0.8rem 0 0.2rem; }
 .errors { color: var(--bad); }
 .raw { overflow-x: auto; background: color-mix(in srgb, var(--fg) 5%, var(--bg)); padding: 0.75rem; border-radius: 8px; }
