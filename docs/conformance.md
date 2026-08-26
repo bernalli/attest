@@ -35,7 +35,7 @@ import, before any leaf is checked.)
   with that leaf's absolute path in every argv token, splits the template with
   `shlex.split`, and invokes it as a fixed argv list (`shell=False` — never a
   shell string).
-- `--subset` selects `v0.1` (52 leaves) or `v0.2` (all leaves, currently 156) —
+- `--subset` selects `v0.1` (52 leaves) or `v0.2` (all leaves, currently 158) —
   see §4.
 - `--report FILE` additionally writes the machine-readable JSON report (§6)
   to `FILE`.

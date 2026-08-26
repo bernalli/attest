@@ -36,8 +36,8 @@ RUNNER_NAME = "attest-conformance-runner"
 
 # v0.1 subset rule (mirrors docs/spec/vectors/README.md verbatim): groups
 # whose leading integer is <= V01_MAX_GROUP, or in V01_EXTRA_GROUPS, plus the
-# single extra leaf id(s) in V01_EXTRA_LEAF_IDS (35i: a v0.1-shaped receipt
-# living inside the otherwise-v0.2-only 35-transfer group).
+# extra leaf ids in V01_EXTRA_LEAF_IDS (35i and 37s: v0.1-shaped receipts
+# living inside otherwise-v0.2-only groups).
 V01_MAX_GROUP = 25
 V01_EXTRA_GROUPS = frozenset({29, 31})
 V01_EXTRA_LEAF_IDS = frozenset(

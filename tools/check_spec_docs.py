@@ -1245,12 +1245,23 @@ _CORPUS_CLAIM_PATTERNS = (
     re.compile(r"\bnot against all (\d+)\b"),
     re.compile(r"\b(\d+)/\1 leaves pass\b"),
     re.compile(r"\bat least (\d+) leaves\b"),
+    # Shapes the first version of this guard missed, each found by a review
+    # reading the same documents by hand: a normative sentence telling a v0.2
+    # implementation to "reproduce all 130", and a parenthetical giving the
+    # subset size as "(all leaves, currently 156)". Both are corpus claims in
+    # every sense that matters, and neither looked like one to a pattern list
+    # written from the examples already in front of it.
+    re.compile(r"\breproduce all (\d+)\b"),
+    re.compile(r"\ball leaves, currently (\d+)\b"),
+    re.compile(r"\bevery leaf in the corpus \(currently (\d+)\)"),
 )
 
 # Claims about the v0.1 subset, which is a different number from the total.
 _SUBSET_CLAIM_PATTERNS = (
     re.compile(r"\bthe (\d+)[- ]leaf subset\b"),
     re.compile(r"\bv0\.1 subset \((\d+) leaves\b"),
+    re.compile(r"\b(\d+)[- ]leaf v0\.1 subset\b"),
+    re.compile(r"\bv0\.1.{0,3}\((\d+) leaves\)"),
 )
 
 _GROUP_CLAIM_PATTERN = re.compile(r"\b(\d+) leaf vectors across (\d+) groups\b")

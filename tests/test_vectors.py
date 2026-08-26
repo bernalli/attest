@@ -460,10 +460,10 @@ def test_vectors_directory_is_nonempty() -> None:
     # leaves (35, 2026-07-23, §17 Stage 3) + 4 transfer-chain leaves (36,
     # 2026-07-23, §17.5) + 13 witness-corroboration leaves (39, 2026-08-25,
     # §10.1/§11.4) + 20 witness-quorum leaves (40, 2026-08-25, §11.4) +
-    # 23 preservation-pledge leaves (37, 2026-08-26, §18) + 4 redemption
+    # 24 preservation-pledge leaves (37, 2026-08-26, §18) + 4 redemption
     # leaves (38, 2026-08-26, §18.7):
     # 19 a/b, 20 a-c, 21 a-g, 22 a-c, 23 a/b, 24, 25 a/b, 26 a-h, 28 a-n,
-    # 29 a/c, 30 a/b, 31 a-e, 32 a-c, 33 a-d, 35 a-k, 36 a-d, 37 a-w,
+    # 29 a/c, 30 a/b, 31 a-e, 32 a-c, 33 a-d, 35 a-k, 36 a-d, 37 a-x,
     # 38 a-d, 39 a-m, 40 a-t. Counted over
     # `_LEAF_DIRS` (ALL leaves, every surface included) — `_VECTOR_DIRS`
     # alone (the `verify()`-routed subset) excludes group 36's chain-audit

@@ -18,8 +18,10 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docs/conformance.md`. Measured rather than edited: the corpus holds **158
   leaves across 40 groups**, the v0.1 subset **52**, and the suites run **2484**
   Python and **1231** TypeScript tests. The `130` in `verifiers/ts/README.md` is
-  left alone — there it is the share of leaves routed to `verify()`, and
-  `130 + 4 + 20 + 4 = 158` is the partition the guard test pins.
+  left alone — there it is the share of leaves routed to `verify()`, one term of
+  a partition that sums to 158. (The TypeScript guard test pins the sum and the
+  redemption surface, not each individual share; the README said otherwise and
+  now says this.)
 
 ### Added
 
@@ -34,6 +36,13 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   which its own red bench caught before the guard shipped. The one deliberate
   exemption is keyed by path and by exact phrase, so editing that line fails
   the guard and forces a fresh look.
+- Two more stale counts a hand review caught after the guard's first draft, in
+  places the draft could not see: v0.1 §15 still measured a v0.1-only verifier
+  against a 51-leaf subset and told a v0.2 implementation to reproduce all 130,
+  and the conformance document still called the v0.2 subset "currently 156".
+  Both are corrected, v0.1 §15's group list gains the two v0.2 groups that
+  shipped without being named there, and the guard learned the two shapes it
+  had missed — it now reports exactly those three claims when they are wrong.
 - The two suite counts are gone from `CONTRIBUTING.md` instead of being
   guarded: a number that changes with every merged test teaches nothing and
   would fail CI on every green PR.
