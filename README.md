@@ -143,7 +143,9 @@ bytes, the issuer's key material, and, optionally, a revocation feed.
 
 attest is a normative specification for a signed receipt envelope, a restricted
 JSON canonicalization profile, a pinned Ed25519 signing/verification ruleset,
-issuer key/artifact manifests with rotation and compromise handling, a layered
+issuer key/artifact manifests with rotation and compromise handling — including a
+compromise that is absorbing for whoever has seen it, and time-boxed against
+anchored evidence rather than retroactive without limit — a layered
 offline verification algorithm, revocation-by-class semantics, and buyer-binding
 proof — plus a Python reference implementation and an independent TypeScript
 verifier.

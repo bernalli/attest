@@ -53,6 +53,10 @@ listed in the project's documentation.
 ## If this log stops
 
 Nothing already issued breaks. Proofs stay verifiable offline forever, because a
-proof carries the checkpoint it was issued under. What stops is growth: no new
+proof carries the checkpoint it was issued under. An anchor taken from this log
+does one more thing than prove existence: it can also SAVE a receipt from a
+compromise declaration the issuer publishes later, since a signature anchored
+strictly before that declaration was anchored is one the issuer cannot take back
+(spec v0.2 §19). What stops is growth: no new
 entries, no successor checkpoints. That is the honest failure mode, and it is why
 the evidence travels inside the bundle rather than living only here.

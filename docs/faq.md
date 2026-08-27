@@ -76,10 +76,15 @@ Then the content is already yours, and the receipt keeps doing its job: it
 verifies offline against the store's published keys, forever, with nobody's
 permission, and it proves to anyone who needs to know — a successor honoring
 old purchases, an archive authorized to serve them, a buyer if resale was
-authorized — that your copy is legitimate. One limit, named: transfers are
-countersigned by the issuer, so today they stop when the issuer does. Making
+authorized — that your copy is legitimate. Two limits, both named. Transfers are
+countersigned by the issuer, so today they stop when the issuer does; making
 them survive the issuer has a name too, transfer-authority succession, and
-it's on the roadmap. So the rule on any DRM-free store is simple: download
+it's on the roadmap. And "forever" holds against the store disappearing, not
+against the store declaring its own signing key compromised: that declaration
+still destroys receipts that were never logged and anchored. A receipt whose
+signature was anchored in a public log before the store's own compromise
+declaration was anchored survives it — that one the store cannot take back.
+Anchor what you buy, and the second limit stops applying to you. So the rule on any DRM-free store is simple: download
 what you buy, and keep the file next to the receipt. Content plus proof, both
 in your hands.
 
