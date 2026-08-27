@@ -59,13 +59,6 @@ def _receipt() -> dict[str, Any]:
     return issue.issue(make_payload(), KP, KID)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known duplicate-kid defect predating this work; it closes when key resolution "
-        "becomes fail-closed on duplicates."
-    ),
-)
 def test_duplicate_trusted_kid_cannot_hide_compromise_from_status_floor() -> None:
     """v0.1 §7.3: *any* held entry that marks K compromised must win.
 
@@ -82,6 +75,24 @@ def test_duplicate_trusted_kid_cannot_hide_compromise_from_status_floor() -> Non
     )
 
     result = verify.verify(_wire(_receipt()), _trust(trusted))
+
+    assert result.signature == "invalid"
+    assert any("compromised" in error for error in result.errors)
+
+
+def test_duplicate_claim_kid_cannot_hide_compromise_from_status_floor() -> None:
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)])
+    claim = _manifest(
+        [
+            _entry(KID, KP, "active"),
+            _entry(KID, KP, "compromised"),
+            _entry(DECLARER_KID, DECLARER_KP),
+        ]
+    )
+
+    result = verify.verify(
+        _wire(_receipt()), _trust(trusted), compromise_view=[{"manifest": claim}]
+    )
 
     assert result.signature == "invalid"
     assert any("compromised" in error for error in result.errors)

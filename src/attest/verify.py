@@ -719,6 +719,19 @@ def _compromise_key_material_matches(
     return _b64u_bytes_equal(claim_entry.get("pub_ml_dsa_65"), trusted_entry.get("pub_ml_dsa_65"))
 
 
+def _entries_for_kid(manifest: dict[str, Any], kid: str) -> tuple[dict[str, Any], ...]:
+    entries = manifest.get("keys", [])
+    if not isinstance(entries, list):
+        return ()
+    return tuple(entry for entry in entries if isinstance(entry, dict) and entry.get("kid") == kid)
+
+
+def _manifest_marks_kid_compromised(manifest: dict[str, Any], kid: str) -> bool:
+    return any(
+        entry.get("status") == _STATUS_COMPROMISED for entry in _entries_for_kid(manifest, kid)
+    )
+
+
 def _vouching_signers(
     claim_manifest: dict[str, Any],
     held_manifests: list[dict[str, Any]],
@@ -739,13 +752,11 @@ def _vouching_signers(
         return signer_kid, ()
     signers: list[dict[str, Any]] = []
     for held_manifest in held_manifests:
-        signer_entry = manifests.find_key(held_manifest, signer_kid)
-        if signer_entry is None:
-            continue
-        if not _within_validity(issued_at, signer_entry):
-            continue
-        if manifests.verify_signature_block(signable, sig_block, signer_entry):
-            signers.append(signer_entry)
+        for signer_entry in _entries_for_kid(held_manifest, signer_kid):
+            if not _within_validity(issued_at, signer_entry):
+                continue
+            if manifests.verify_signature_block(signable, sig_block, signer_entry):
+                signers.append(signer_entry)
     return signer_kid, tuple(signers)
 
 
@@ -775,11 +786,10 @@ def _authenticated_compromise_claims(
         if not isinstance(manifest_version, int) or isinstance(manifest_version, bool):
             _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
             continue
-        claim_entry = manifests.find_key(claim_manifest, kid)
-        if (
-            claim_entry is None
-            or claim_entry.get("status") != _STATUS_COMPROMISED
-            or not _compromise_key_material_matches(claim_entry, trusted_entry)
+        if not any(
+            claim_entry.get("status") == _STATUS_COMPROMISED
+            and _compromise_key_material_matches(claim_entry, trusted_entry)
+            for claim_entry in _entries_for_kid(claim_manifest, kid)
         ):
             _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
             continue
@@ -807,8 +817,7 @@ def _held_manifest_marks_signer_compromised_at_or_before(
             continue
         if version > declaration_version:
             continue
-        entry = manifests.find_key(held_manifest, signer_kid)
-        if entry is not None and entry.get("status") == _STATUS_COMPROMISED:
+        if _manifest_marks_kid_compromised(held_manifest, signer_kid):
             return True
     return False
 
@@ -891,18 +900,18 @@ def _resolve_compromise_cutoff(
 
 def _resolve_key_status(
     trusted_entry: dict[str, Any],
+    trusted_manifest: dict[str, Any],
     chain: list[dict[str, Any]] | None,
     authenticated_claims: tuple[_CompromiseClaim, ...],
     kid: str,
 ) -> object:
-    if trusted_entry.get("status") == _STATUS_COMPROMISED:
+    if _manifest_marks_kid_compromised(trusted_manifest, kid):
         return _STATUS_COMPROMISED
     if chain is not None:
         for manifest in chain:
             if not isinstance(manifest, dict):
                 continue
-            entry = manifests.find_key(manifest, kid)
-            if entry is not None and entry.get("status") == _STATUS_COMPROMISED:
+            if _manifest_marks_kid_compromised(manifest, kid):
                 return _STATUS_COMPROMISED
     if authenticated_claims:
         return _STATUS_COMPROMISED
@@ -2328,7 +2337,7 @@ def verify(
             kid,
             warnings,
         )
-        status = _resolve_key_status(entry, chain, authenticated_claims, kid)
+        status = _resolve_key_status(entry, manifest, chain, authenticated_claims, kid)
         compromised_rescued = False
         if status == _STATUS_COMPROMISED:
             disposition = _compromised_key_disposition(
@@ -2426,7 +2435,7 @@ def verify(
             kid,
             warnings,
         )
-        status = _resolve_key_status(entry, chain, authenticated_claims, kid)
+        status = _resolve_key_status(entry, manifest, chain, authenticated_claims, kid)
         compromised_rescued = False
         if status == _STATUS_COMPROMISED:
             disposition = _compromised_key_disposition(

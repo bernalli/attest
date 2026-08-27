@@ -7,11 +7,13 @@ export function parseStrictUtc(s: unknown): number | null {
   const m = STRICT.exec(s)
   if (!m) return null
   const [, y, mo, d, h, mi, se] = m.map(Number) as unknown as number[]
-  const t = Date.UTC(y!, mo! - 1, d!, h!, mi!, se!)
+  if (y! === 0) return null
+  const back = new Date(Date.UTC(y!, mo! - 1, d!, h!, mi!, se!))
+  if (y! >= 1 && y! <= 99) back.setUTCFullYear(y!)
+  const t = back.getTime()
   // reject impossible values that Date.UTC would roll over (e.g. month 13, day 32,
   // hour 24, minute 60, second 60) — all six components must round-trip, matching
   // Python strptime '%Y-%m-%dT%H:%M:%SZ' which rejects any out-of-range field.
-  const back = new Date(t)
   if (
     back.getUTCFullYear() !== y! ||
     back.getUTCMonth() !== mo! - 1 ||
