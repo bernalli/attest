@@ -94,6 +94,33 @@ def key_entry(
     return entry
 
 
+def duplicate_kids(entries: Any) -> list[str]:
+    """Sorted list of `kid` values appearing on 2+ `keys[]` entries.
+
+    Fail-closed on malformed input and never raises: a non-list `entries`, a
+    non-dict member, and a non-str `kid` are ignored — none of them can ever
+    resolve anyway. Shared by `build_key_manifest` (issuance guard),
+    `verify_key_manifest` (structural rejection) and `verify.py`'s
+    resolved-manifest preflight (V-L.3, v0.1 §7.1 amendment 2026-08-26).
+    """
+    if not isinstance(entries, list):
+        return []
+    seen: set[str] = set()
+    dups: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        kid = entry.get("kid")
+        # `isinstance(True, int)` is True in Python but a bool is never a kid;
+        # only genuine strings are compared, so no cross-type collision can
+        # make two distinct entries look like a duplicate pair.
+        if isinstance(kid, str):
+            if kid in seen:
+                dups.add(kid)
+            seen.add(kid)
+    return sorted(dups)
+
+
 def find_key(manifest: dict[str, Any], kid: str) -> dict[str, Any] | None:
     """Return the `keys[]` entry with the given `kid`, or None if absent."""
     entries = manifest.get("keys", [])
@@ -207,7 +234,28 @@ def build_key_manifest(
     *,
     previous: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    # V-L.3 (v0.1 §7.1, 2026-08-26 amendment) — refuse to SIGN an ambiguous
+    # manifest, before anything is compared against `previous`: with duplicate
+    # entries, array order would decide which lifecycle status wins.
+    dups = duplicate_kids(key_entries)
+    if dups:
+        raise ValueError(
+            f"duplicate kid(s) in key_entries: {dups} — every keys[] entry must "
+            "have a unique kid; with duplicates, array order would decide which "
+            "lifecycle status wins (v0.1 §7.1, 2026-08-26 amendment)"
+        )
     if previous is not None:
+        # An ambiguous predecessor is not a usable source of status
+        # monotonicity: fail loudly rather than let one of its entries win by
+        # position (composition contract with the V-J.5 keyset-preservation
+        # check, which runs next).
+        previous_dups = duplicate_kids(previous.get("keys"))
+        if previous_dups:
+            raise ValueError(
+                f"duplicate kid(s) in the previous manifest: {previous_dups} — an "
+                "ambiguous predecessor cannot establish status monotonicity "
+                "(v0.1 §7.1, 2026-08-26 amendment)"
+            )
         _check_keyset_preservation(previous, key_entries)
     manifest: dict[str, Any] = {
         "issuer": issuer,
@@ -379,6 +427,10 @@ def rotate_key_manifest(
     - `new_entry`'s kid must not already exist in `existing["keys"]` — reusing
       a kid would append a second `keys[]` entry sharing it, a silent no-op
       for the operator since `find_key` returns the first (old-status) match.
+    - the resulting manifest must keep at least one `active` key — an issuer
+      must never rotate itself into a manifest it cannot revoke under or
+      rotate away from (v0.1 §7.3, 2026-08-26 amendment). This is an issuance
+      rule only: already-published degenerate manifests verify unchanged.
     - `existing` must itself be well-formed for the fields read here: `keys`
       a list of objects with string `kid`s, `manifest_version` a non-bool
       integer, `issuer` a string — a malformed trusted manifest is a
@@ -460,6 +512,21 @@ def rotate_key_manifest(
         updated.append(entry)
     if new_entry is not None:
         updated.append(new_entry)
+
+    # V-L.4 (v0.1 §7.3, 2026-08-26 amendment) — issuance-side only: a rotation
+    # result with no active key is a dead end of the issuer's own making. It is
+    # deliberately NOT a check in `build_key_manifest`, so already-published or
+    # deliberately degenerate single-key trust stores (conformance vectors 12
+    # and 13) keep verifying byte-for-byte.
+    if not any(isinstance(e, dict) and e.get("status") == _ACTIVE for e in updated):
+        raise ValueError(
+            "rotation would leave zero active keys — a manifest with no active key "
+            "is a dead end: no new revocation record can authenticate (§12.1 needs "
+            "an active signer) and no successor manifest can be continuous (§7.3). "
+            "Add a replacement key (--new-kid) in the same rotation, or wind down "
+            "via a cessation declaration (v0.2 §18.4) instead of retiring the last "
+            "active key"
+        )
 
     new_version = existing_version + 1
     return build_key_manifest(

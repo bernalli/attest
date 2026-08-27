@@ -919,3 +919,96 @@ def test_rotate_raises_valueerror_on_malformed_new_entry(new_entry: Any, match: 
         manifests.rotate_key_manifest(
             _two_active_v1(), KP2, KID2, "2026-03-01T00:00:00Z", new_entry=new_entry
         )
+
+
+# --- V-L.3 / V-L.4: issuance-side guards (v0.1 §7.1, §7.3 2026-08-26) --------
+
+
+def _hand_signed_manifest(
+    entries: list[dict[str, Any]],
+    kp: keys.SigningKeyPair,
+    kid: str,
+    *,
+    version: int = 1,
+) -> dict[str, Any]:
+    """A manifest signed WITHOUT `build_key_manifest`.
+
+    The issuance guard makes the public builder unusable for constructing the
+    ambiguous manifests these tests must exercise — which is the point of the
+    guard. A hostile or legacy issuer can still publish one, so the verifier
+    side has to be tested against the shape the builder now refuses.
+    """
+    body: dict[str, Any] = {
+        "issuer": ISSUER,
+        "manifest_version": version,
+        "issued_at": "2026-01-01T00:00:00Z",
+        "keys": entries,
+    }
+    body["manifest_signature"] = {
+        "kid": kid,
+        "sig": keys.b64u(keys.sign(manifests._signable(body), kp)),
+    }
+    return body
+
+
+def test_build_key_manifest_rejects_duplicate_kids() -> None:
+    """v0.1 §7.1: an issuer implementation MUST refuse to sign an ambiguous manifest."""
+    entries = [
+        manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active"),
+        manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised"),
+    ]
+    with pytest.raises(ValueError, match="duplicate kid"):
+        manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, KID1)
+
+
+def test_build_key_manifest_rejects_an_ambiguous_previous_manifest() -> None:
+    """An ambiguous predecessor is not a usable source of status monotonicity:
+    it must fail loudly rather than have one of its entries win by position
+    (composition contract with the V-J.5 keyset-preservation check)."""
+    previous = _hand_signed_manifest(
+        [
+            manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active"),
+            manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised"),
+        ],
+        KP1,
+        KID1,
+    )
+    successor = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised")]
+    with pytest.raises(ValueError, match="duplicate kid"):
+        manifests.build_key_manifest(
+            ISSUER, 2, "2026-06-01T00:00:00Z", successor, KP1, KID1, previous=previous
+        )
+
+
+def test_duplicate_kids_helper_ignores_malformed_entries() -> None:
+    """Fail-closed on malformed input: non-dict entries and non-str kids can
+    never resolve, so they are ignored rather than raising."""
+    entries: list[Any] = [None, {"kid": 7}, {"kid": "a"}, {"kid": "a"}, {"kid": "b"}]
+    assert manifests.duplicate_kids(entries) == ["a"]
+
+
+def test_duplicate_kids_helper_tolerates_a_non_list() -> None:
+    """`keys` arriving as a non-list must not raise out of the helper."""
+    assert manifests.duplicate_kids("not-a-list") == []  # type: ignore[arg-type]
+    assert manifests.duplicate_kids(7) == []  # type: ignore[arg-type]
+
+
+def test_rotate_rejects_zero_active_result() -> None:
+    """v0.1 §7.3: an issuer must not rotate itself into a manifest with no active key."""
+    entries = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active")]
+    existing = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, KID1)
+    with pytest.raises(ValueError, match="zero active keys"):
+        manifests.rotate_key_manifest(
+            existing, KP1, KID1, "2026-06-01T00:00:00Z", retire_kids=[KID1]
+        )
+
+
+def test_rotate_retiring_last_key_with_replacement_is_fine() -> None:
+    """The negative control: the guard must not block a legitimate wind-in."""
+    entries = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active")]
+    existing = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, KID1)
+    new_entry = manifests.key_entry(KID2, KP2.pub, "2026-06-01T00:00:00Z", None, "active")
+    rotated = manifests.rotate_key_manifest(
+        existing, KP1, KID1, "2026-06-01T00:00:00Z", new_entry=new_entry, retire_kids=[KID1]
+    )
+    assert manifests.check_continuity(existing, rotated) is True

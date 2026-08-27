@@ -46,8 +46,21 @@ def _manifest(
     signing_kid: str = KID,
 ) -> dict[str, Any]:
     signed_version = version if isinstance(version, int) and not isinstance(version, bool) else 1
-    built = manifests.build_key_manifest(
-        ISSUER, signed_version, ISSUED_AT, entries, signing_kp, signing_kid
+    # Signed WITHOUT the public builder: since the v0.1 §7.1 amendment
+    # (2026-08-26) `build_key_manifest` refuses a duplicated `kid`, and these
+    # fixtures are hostile or already-published manifests, not issuance. The
+    # body and signature are byte-identical to the builder's output for every
+    # manifest the builder still accepts.
+    built: dict[str, Any] = {
+        "issuer": ISSUER,
+        "manifest_version": signed_version,
+        "issued_at": ISSUED_AT,
+        "keys": entries,
+    }
+    built["manifest_signature"] = manifests.sign_signature_block(
+        manifests._signable(built),  # type: ignore[attr-defined]
+        signing_kp,
+        signing_kid,
     )
     if version is MISSING:
         built.pop("manifest_version", None)
