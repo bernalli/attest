@@ -203,8 +203,12 @@ def _check_keyset_preservation(previous: dict[str, Any], key_entries: list[dict[
     previous_entries = previous.get("keys")
     if not isinstance(previous_entries, list):
         raise ValueError("previous manifest keys must be a list")
+    if not isinstance(key_entries, list):
+        raise ValueError("successor manifest keys must be a list")
     current_by_kid: dict[str, list[dict[str, Any]]] = {}
     for entry in key_entries:
+        if not isinstance(entry, dict):
+            raise ValueError("successor manifest contains a malformed key entry")
         kid = entry.get("kid")
         if isinstance(kid, str):
             current_by_kid.setdefault(kid, []).append(entry)
@@ -271,7 +275,11 @@ def verify_key_manifest(manifest: dict[str, Any]) -> bool:
     entry = find_key(manifest, sig_block.get("kid", ""))
     if entry is None:
         return False
-    return verify_signature_block(_signable(manifest), sig_block, entry)
+    try:
+        signable = _signable(manifest)
+    except (TypeError, canon.CanonError):
+        return False
+    return verify_signature_block(signable, sig_block, entry)
 
 
 def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool:
@@ -307,9 +315,11 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
     # candidate lists for it. Otherwise an attacker reuses a trusted kid, swaps in
     # its own pub, self-signs, and passes — continuity becomes cryptographically
     # hollow (2026-07-13 review, finding 1).
-    return verify_signature_block(
-        _signable(candidate), candidate["manifest_signature"], signer_entry
-    )
+    try:
+        signable = _signable(candidate)
+    except (TypeError, canon.CanonError):
+        return False
+    return verify_signature_block(signable, candidate["manifest_signature"], signer_entry)
 
 
 def rotate_key_manifest(

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from attest import issue, keys, manifests, verify
+from attest import canon, issue, keys, manifests, verify
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -108,6 +108,25 @@ def test_verify_key_manifest_nonstr_pub_false_no_raise() -> None:
     m = _v1_manifest()
     m["keys"][0]["pub"] = 12345  # wrong-typed pub encoding
     assert not manifests.verify_key_manifest(m)
+
+
+def test_verify_key_manifest_fails_closed_on_out_of_range_integer_from_wire() -> None:
+    manifest = _v1_manifest()
+    manifest["manifest_version"] = 9007199254740992
+    parsed = canon.loads_strict(json.dumps(manifest).encode())
+
+    assert manifests.verify_key_manifest(parsed) is False
+    assert manifests.check_continuity(_v1_manifest(), parsed) is False
+    assert manifests.check_continuity(parsed, _v1_manifest()) is False
+
+
+def test_verify_key_manifest_fails_closed_on_float() -> None:
+    manifest = _v1_manifest()
+    manifest["manifest_version"] = 1.0
+
+    assert manifests.verify_key_manifest(manifest) is False
+    assert manifests.check_continuity(_v1_manifest(), manifest) is False
+    assert manifests.check_continuity(manifest, _v1_manifest()) is False
 
 
 # --- check_continuity --------------------------------------------------------
@@ -719,6 +738,32 @@ def test_build_key_manifest_previous_rejects_previous_kid_omission() -> None:
             KP2,
             KID2,
             previous=v1,
+        )
+
+
+def test_build_key_manifest_previous_rejects_malformed_successor_key_entry() -> None:
+    with pytest.raises(ValueError, match="successor manifest contains a malformed key entry"):
+        manifests.build_key_manifest(
+            ISSUER,
+            2,
+            "2026-06-01T00:00:00Z",
+            [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z"), None],
+            KP1,
+            KID1,
+            previous=_v1_manifest(),
+        )
+
+
+def test_build_key_manifest_previous_rejects_non_list_successor_keys() -> None:
+    with pytest.raises(ValueError, match="successor manifest keys must be a list"):
+        manifests.build_key_manifest(
+            ISSUER,
+            2,
+            "2026-06-01T00:00:00Z",
+            "not-a-list",
+            KP1,
+            KID1,
+            previous=_v1_manifest(),
         )
 
 
