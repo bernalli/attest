@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import pytest
 from hypothesis import given
@@ -98,3 +99,26 @@ def test_roundtrip_and_idempotence(obj: object) -> None:
     s = canon.dumps(obj)
     parsed = canon.loads_strict(s.encode())
     assert canon.dumps(parsed) == s
+
+
+def _nest(levels: int) -> Any:
+    nested: Any = []
+    for _ in range(levels):
+        nested = [nested]
+    return nested
+
+
+def test_canonical_bytes_reports_unserializable_depth_as_canon_error() -> None:
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        canon.canonical_bytes(_nest(20_000))
+
+
+def test_canonical_bytes_reports_a_cycle_as_canon_error() -> None:
+    cyclic: dict[str, Any] = {}
+    cyclic["self"] = cyclic
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        canon.canonical_bytes(cyclic)
+
+
+def test_canonical_bytes_still_accepts_the_deepest_parsable_document() -> None:
+    assert canon.canonical_bytes(_nest(canon.MAX_DEPTH - 1))

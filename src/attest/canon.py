@@ -90,7 +90,16 @@ def _serialize(obj: Any, out: list[str]) -> None:
 
 def dumps(obj: object) -> str:
     out: list[str] = []
-    _serialize(obj, out)
+    try:
+        _serialize(obj, out)
+    except RecursionError as exc:
+        # A body too deep (or self-referential) to serialize is not
+        # representable in the profile, exactly like a float or an
+        # out-of-range integer -- and it MUST leave this module in the
+        # CanonError family, or it escapes every fail-closed boundary that
+        # catches CanonError/ValueError (manifests, revocation, transfer,
+        # verify). Mirrors `loads_strict`'s own RecursionError belt.
+        raise CanonError("maximum nesting depth exceeded") from exc
     return "".join(out)
 
 

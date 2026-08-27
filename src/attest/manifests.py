@@ -315,6 +315,10 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
     # candidate lists for it. Otherwise an attacker reuses a trusted kid, swaps in
     # its own pub, self-signs, and passes — continuity becomes cryptographically
     # hollow (2026-07-13 review, finding 1).
+    # Defense in depth only: `verify_key_manifest(candidate)` above already
+    # canonicalizes the same object behind the same guard, so this branch is
+    # unreachable today and carries no coverage. It stays so that reordering
+    # the self-consistency check can never reopen the fail-closed hole.
     try:
         signable = _signable(candidate)
     except (TypeError, canon.CanonError):

@@ -8,9 +8,12 @@ import json
 from typing import Any
 
 import pytest
+from hypothesis import HealthCheck, example, given, settings
+from hypothesis import strategies as st
 
 from attest import canon, issue, keys, manifests, verify
 from tests.helpers import make_payload
+from tests.strategies import malformed_manifests as malformed
 
 ISSUER = "store.example.com"
 SERIES = "store.example.com/works/EXG-001"
@@ -26,6 +29,12 @@ KID3 = f"{ISSUER}/keys/test#ed25519-3"
 
 _ARTIFACT_SHA256 = hashlib.sha256(b"attest-test-artifact-manifest-v1").hexdigest()
 
+PROPERTY_SETTINGS = settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+
 
 def _artifact() -> dict[str, Any]:
     return {
@@ -40,6 +49,23 @@ def _artifact() -> dict[str, Any]:
 def _v1_manifest(status: str = "active") -> dict[str, Any]:
     entries = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, status)]
     return manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, KID1)
+
+
+def _nest(levels: int) -> Any:
+    nested: Any = []
+    for _ in range(levels):
+        nested = [nested]
+    return nested
+
+
+def _signed(body: dict[str, Any]) -> dict[str, Any]:
+    """Sign `body` as-is, so a hostile keys[] survives into a SELF-CONSISTENT
+    manifest — the only shape that reaches `_preserves_absorbing_compromises`."""
+    signed = dict(body)
+    signed["manifest_signature"] = manifests.sign_signature_block(
+        canon.canonical_bytes(body), KP1, KID1
+    )
+    return signed
 
 
 # --- key_entry -------------------------------------------------------------
@@ -111,6 +137,10 @@ def test_verify_key_manifest_nonstr_pub_false_no_raise() -> None:
 
 
 def test_verify_key_manifest_fails_closed_on_out_of_range_integer_from_wire() -> None:
+    """`loads_strict` rejects floats but NOT integers outside the I-JSON safe
+    range, so the library's own strict parser hands the verifier a dict its own
+    canonicalizer refuses. The two `check_continuity` assertions are satisfied by
+    its `verify_key_manifest` precondition, not by its own canonicalization guard."""
     manifest = _v1_manifest()
     manifest["manifest_version"] = 9007199254740992
     parsed = canon.loads_strict(json.dumps(manifest).encode())
@@ -121,12 +151,23 @@ def test_verify_key_manifest_fails_closed_on_out_of_range_integer_from_wire() ->
 
 
 def test_verify_key_manifest_fails_closed_on_float() -> None:
+    """`loads_strict` rejects floats outright, so this manifest can only be
+    built in-process. The two `check_continuity` assertions are satisfied by
+    its `verify_key_manifest` precondition, not by its own canonicalization guard."""
     manifest = _v1_manifest()
     manifest["manifest_version"] = 1.0
 
     assert manifests.verify_key_manifest(manifest) is False
     assert manifests.check_continuity(_v1_manifest(), manifest) is False
     assert manifests.check_continuity(manifest, _v1_manifest()) is False
+
+
+def test_verify_key_manifest_fails_closed_on_stack_busting_body() -> None:
+    manifest = _v1_manifest()
+    manifest["hostile"] = _nest(2000)
+
+    assert manifests.verify_key_manifest(manifest) is False
+    assert manifests.check_continuity(_v1_manifest(), manifest) is False
 
 
 # --- check_continuity --------------------------------------------------------
@@ -198,6 +239,67 @@ def test_continuity_issuer_mismatch_false() -> None:
         "evil.example.com", 2, "2026-06-01T00:00:00Z", entries, KP1, KID1
     )
     assert not manifests.check_continuity(trusted, candidate)
+
+
+def test_check_continuity_refuses_malformed_successor_key_entry() -> None:
+    candidate = _signed(
+        {
+            "issuer": ISSUER,
+            "manifest_version": 2,
+            "issued_at": "2026-06-01T00:00:00Z",
+            "keys": [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z"), None],
+        }
+    )
+
+    assert manifests.verify_key_manifest(candidate) is True
+    assert manifests.check_continuity(_v1_manifest(), candidate) is False
+
+
+def test_check_continuity_refuses_malformed_predecessor_key_entry() -> None:
+    trusted = _signed(
+        {
+            "issuer": ISSUER,
+            "manifest_version": 1,
+            "issued_at": "2026-01-01T00:00:00Z",
+            "keys": [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z"), None],
+        }
+    )
+    candidate = _signed(
+        {
+            "issuer": ISSUER,
+            "manifest_version": 2,
+            "issued_at": "2026-06-01T00:00:00Z",
+            "keys": [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z")],
+        }
+    )
+
+    assert manifests.verify_key_manifest(trusted) is True
+    assert manifests.check_continuity(trusted, candidate) is False
+
+
+def test_check_continuity_refuses_predecessor_entry_without_string_kid() -> None:
+    trusted = _signed(
+        {
+            "issuer": ISSUER,
+            "manifest_version": 1,
+            "issued_at": "2026-01-01T00:00:00Z",
+            "keys": [
+                manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z"),
+                {"kid": 7, "pub": "AAAA", "valid_from": "2026-01-01T00:00:00Z", "status": "active"},
+            ],
+        }
+    )
+    candidate = _signed(
+        {
+            "issuer": ISSUER,
+            "manifest_version": 2,
+            "issued_at": "2026-06-01T00:00:00Z",
+            "keys": [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z")],
+        }
+    )
+
+    assert manifests.verify_key_manifest(trusted) is True
+    assert manifests.check_continuity(trusted, candidate) is False
 
 
 # --- build_artifact_manifest / verify_artifact_manifest ---------------------
@@ -741,29 +843,29 @@ def test_build_key_manifest_previous_rejects_previous_kid_omission() -> None:
         )
 
 
-def test_build_key_manifest_previous_rejects_malformed_successor_key_entry() -> None:
+@PROPERTY_SETTINGS
+@given(bad=st.sampled_from(malformed.NON_DICT_ENTRIES))
+@example(bad=None)
+def test_build_key_manifest_previous_rejects_any_malformed_successor_entry(bad: Any) -> None:
     with pytest.raises(ValueError, match="successor manifest contains a malformed key entry"):
         manifests.build_key_manifest(
             ISSUER,
             2,
             "2026-06-01T00:00:00Z",
-            [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z"), None],
+            [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z"), bad],
             KP1,
             KID1,
             previous=_v1_manifest(),
         )
 
 
-def test_build_key_manifest_previous_rejects_non_list_successor_keys() -> None:
+@PROPERTY_SETTINGS
+@given(bad=st.sampled_from(malformed.NON_LIST_KEYS))
+@example(bad="not-a-list")
+def test_build_key_manifest_previous_rejects_any_non_list_successor_keys(bad: Any) -> None:
     with pytest.raises(ValueError, match="successor manifest keys must be a list"):
         manifests.build_key_manifest(
-            ISSUER,
-            2,
-            "2026-06-01T00:00:00Z",
-            "not-a-list",
-            KP1,
-            KID1,
-            previous=_v1_manifest(),
+            ISSUER, 2, "2026-06-01T00:00:00Z", bad, KP1, KID1, previous=_v1_manifest()
         )
 
 
