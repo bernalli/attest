@@ -1572,3 +1572,67 @@ def test_an_oversized_integer_literal_from_the_wire_is_a_verdict_not_a_crash() -
 
     assert result.signature == "invalid"
     assert any("invalid JSON" in e for e in result.errors)
+
+
+# --- V-L.3: an ambiguous issuer manifest is refused whole (v0.1 §7.1) --------
+
+
+def _hand_signed_manifest(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Sign a manifest WITHOUT `build_key_manifest`, which since the v0.1 §7.1
+    amendment refuses a duplicated `kid` — the shape a hostile or legacy issuer
+    can still publish, and the one the verifier must refuse."""
+    body: dict[str, Any] = {
+        "issuer": ISSUER,
+        "manifest_version": 1,
+        "issued_at": "2026-01-01T00:00:00Z",
+        "keys": entries,
+    }
+    body["manifest_signature"] = manifests.sign_signature_block(
+        manifests._signable(body),  # type: ignore[attr-defined]
+        KP,
+        KID,
+    )
+    return body
+
+
+def test_duplicate_kid_unrelated_to_the_signature_still_rejects_the_receipt() -> None:
+    """The case the status floor alone does not catch: the duplicated kid is
+    NOT the one that signed the receipt, so no `compromised` marking fires and
+    step 3 would resolve the signing key straight through `find_key`."""
+    envelope = issue.issue(make_payload(), KP, KID)
+    manifest = _hand_signed_manifest(
+        [
+            manifests.key_entry(KID, KP.pub, "2026-01-01T00:00:00Z", None, "active"),
+            manifests.key_entry(
+                COMPROMISED_KID, COMPROMISED_KP.pub, "2026-01-01T00:00:00Z", None, "active"
+            ),
+            manifests.key_entry(
+                COMPROMISED_KID, COMPROMISED_KP.pub, "2026-01-01T00:00:00Z", None, "retired"
+            ),
+        ]
+    )
+
+    result = verify.verify(_to_bytes(envelope), _trust_store(manifest))
+
+    assert result.ok is False
+    assert result.signature == "invalid"
+    assert result.schema == "invalid"
+    assert any("duplicate kid" in error for error in result.errors)
+
+
+def test_duplicate_of_the_signing_kid_rejects_in_both_element_orders() -> None:
+    """The pair proves order never decides: both orders reach the same verdict
+    and the same error."""
+    envelope = issue.issue(make_payload(), KP, KID)
+    active = manifests.key_entry(KID, KP.pub, "2026-01-01T00:00:00Z", None, "active")
+    compromised = manifests.key_entry(KID, KP.pub, "2026-01-01T00:00:00Z", None, "compromised")
+
+    verdicts = [
+        verify.verify(_to_bytes(envelope), _trust_store(_hand_signed_manifest(list(entries))))
+        for entries in ([active, compromised], [compromised, active])
+    ]
+
+    for result in verdicts:
+        assert result.ok is False
+        assert any("duplicate kid" in error for error in result.errors)
+    assert verdicts[0].errors == verdicts[1].errors

@@ -2219,6 +2219,19 @@ def verify(
                     schema=_SCHEMA_INVALID,
                 )
 
+            # V-L.3 (v0.1 §7.1, 2026-08-26 amendment) — an ambiguous trusted
+            # manifest is refused whole, before any key is resolved. Without
+            # this, a duplicate on a kid the signature does NOT use left the
+            # receipt certifiable: step 3 resolves the signing key with
+            # `find_key` directly and never passes through
+            # `verify_key_manifest`.
+            dup_kids = manifests.duplicate_kids(issuer_manifest_keys)
+            if dup_kids:
+                return _invalid(
+                    f"issuer manifest lists duplicate kid(s): {dup_kids}",
+                    schema=_SCHEMA_INVALID,
+                )
+
             if payload.get("attest_version") == "0.2" and manifests.has_active_ed_only_sibling(
                 issuer_manifest
             ):

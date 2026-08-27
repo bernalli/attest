@@ -284,14 +284,34 @@ def test_authenticated_declaration_duplicate_entries_are_all_consulted_in_both_o
 
 
 def test_claimed_compromised_material_may_match_second_trusted_entry_for_same_kid() -> None:
-    trusted = _manifest(3, [_entry("active", kp=SIGNER), _entry("active", kp=SECOND)])
+    """The claimed material must be matched against EVERY trusted entry for the
+    kid, not only the first.
+
+    Since the v0.1 §7.1 amendment (2026-08-26) an ambiguous manifest is refused
+    whole by `verify()`'s preflight when it is the TRUST ANCHOR, so the anchor
+    case now rejects structurally. The material match itself still runs for
+    every source the preflight does not cover, so the property is pinned on a
+    chain member, where it remains reachable.
+    """
+    ambiguous = _manifest(3, [_entry("active", kp=SIGNER), _entry("active", kp=SECOND)])
     claim_entries = [_entry("compromised", kp=SECOND)]
 
-    result = _run(trusted, compromise_view=[_claim(2, claim_entries)])
+    anchored = _run(ambiguous, compromise_view=[_claim(2, claim_entries)])
 
-    assert result.signature == "invalid"
-    assert result.errors == (f"key {KID} is compromised",)
-    _assert_retracted_once(result)
+    assert anchored.signature == "invalid"
+    assert any("duplicate kid" in error for error in anchored.errors)
+
+    # The material match itself reads every trusted entry for the kid. That
+    # code is only reachable through a trust anchor, which the preflight now
+    # refuses, so the property is pinned directly on the resolver instead of
+    # being silently dropped: a regression back to a first-match comparison
+    # stays detectable.
+    entries_for_kid = verify._entries_for_kid(ambiguous, KID)  # type: ignore[attr-defined]
+    claimed = claim_entries[0]
+
+    assert len(entries_for_kid) == 2
+    assert verify._compromise_key_material_matches(claimed, entries_for_kid[0]) is False  # type: ignore[attr-defined]
+    assert verify._compromise_key_material_matches(claimed, entries_for_kid[1]) is True  # type: ignore[attr-defined]
 
 
 def test_retraction_warning_is_emitted_once_for_multiple_independent_sources() -> None:

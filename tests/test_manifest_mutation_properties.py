@@ -253,6 +253,12 @@ def test_p4_continuity_signer_status_reads_every_duplicate_entry(
         DECLARER_KID,  # type: ignore[attr-defined]
     )
 
-    assert manifests.verify_key_manifest(predecessor) is True
+    # Since the v0.1 §7.1 amendment (2026-08-26) the ambiguous predecessor is
+    # refused by self-consistency itself, one layer above continuity. That
+    # would make the property below vacuous through `check_continuity` alone,
+    # so the signer-status predicate is asserted directly: a regression from
+    # reading EVERY entry back to a first-match read stays detectable.
+    assert manifests.verify_key_manifest(predecessor) is False
     assert manifests.verify_key_manifest(successor) is True
+    assert manifests._kid_is_active_for_continuity(predecessor, DECLARER_KID) is False  # type: ignore[attr-defined]
     assert manifests.check_continuity(predecessor, successor) is False
