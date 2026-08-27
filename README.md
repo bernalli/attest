@@ -82,7 +82,7 @@ gate the demo runs against is a non-normative reference, not a production gate;
 it names the three things it does not do in [`demo/README.md`](demo/README.md).
 
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
-only) are independent Python and TypeScript implementations that agree on all 158
+only) are independent Python and TypeScript implementations that agree on all 178
 conformance vector leaves. **Try it in your browser:**
 <https://attest-receipts.org/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Be clear about the status: no
@@ -161,12 +161,12 @@ amount of protocol fixes that.
 
 Spec v0.1 is complete and v0.2 is specified and implemented on `main`, with two
 independent implementations — a Python reference implementation and a TypeScript
-verifier — that agree on all 158 conformance vector leaves across 40 groups: 52
+verifier — that agree on all 178 conformance vector leaves across 41 groups: 53
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
 deadlines), and Stage 3 issuer-mediated transfer. (A v0.1-only verifier is
-required to reject v0.2 envelopes, so it is measured against the 52-leaf
+required to reject v0.2 envelopes, so it is measured against the 53-leaf
 subset.) There are also two end-to-end demos: one deletes a store's entire
 infrastructure mid-lifecycle and proves the receipt still verifies, and one
 carries that a step further — a rights holder's preservation pledge fires and
@@ -217,7 +217,7 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   answered once instead of re-argued per issue.
 - **[Conformance program](docs/conformance.md).** One documented command, run with
   a third party's own adapter against the vector corpus, produces a pass/fail
-  report and a self-certification claim; both in-repo verifiers pass 158/158 through
+  report and a self-certification claim; both in-repo verifiers pass 178/178 through
   that exact path.
 
 ## Quickstart
@@ -346,7 +346,7 @@ mark, which has not happened. Conformance claims follow the self-certification
 process in [docs/conformance.md](docs/conformance.md).
 
 **Contributing.** See [`CONTRIBUTING.md`](CONTRIBUTING.md). Implementation pull
-requests must pass all 158 conformance vector leaves and keep both the Python and
+requests must pass all 178 conformance vector leaves and keep both the Python and
 TypeScript suites green.
 
 **Contact.** Use GitHub Issues for technical bugs, GitHub Discussions for

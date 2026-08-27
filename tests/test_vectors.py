@@ -101,6 +101,22 @@ Vector-directory conventions (a "vector case" is any directory containing
     list. Group 37's `expected.json` carries `grant` and `grant_trust`, the
     only group where either appears, and carries none of Stage 2's three
     (same discipline as groups 33 and 35).
+  - optional `compromise-view.json` (group 41 only, v0.1 rev 8 §7.3 / v0.2
+    rev 9 §19): a JSON ARRAY of untrusted compromise-declaration claims
+    `[{"manifest": <a v0.1 §7.1 key manifest>, "evidence": <a §10.2 evidence
+    bundle for that manifest's own key-manifest log entry>}]`, fed to
+    `verify()` as `compromise_view=` and reusing group 41's own
+    `log-keys.json`/`anchor-policy.json`. It rides the caller's configuration
+    rail (like `revocation.json`/`transfer-view.json`, never the receipt
+    presenter's), and each claim self-authenticates against the leaf's own
+    `manifests.json` and pinned material, so nothing in it is trusted by
+    arrival. The keyword is passed ONLY by the leaves that ship the file, so
+    every leaf outside group 41 replays exactly as it did before the channel
+    existed. Group 41's Stage-2 leaves DO carry `transparency`/
+    `corroboration`/`manifest_freshness` in `expected.json` whenever they ship
+    receipt-side evidence of their own, on the same grounds as group 28's —
+    the §19 rescue is decided from the receipt's own anchored standing, so
+    that standing has to be visible in the expected result.
   - `redemption.json` (group 38 only, v0.2 §18.7): a leaf containing this
     file is a FOURTH surface, EXCLUDED from the other three parametrizations
     and driven by `test_redemption_vectors`, which calls
@@ -269,6 +285,13 @@ def _transfer_view(vector_dir: Path) -> list[dict[str, Any]] | None:
     return _load_json(path)  # type: ignore[no-any-return]
 
 
+def _compromise_view(vector_dir: Path) -> list[dict[str, Any]] | None:
+    path = vector_dir / "compromise-view.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
 def _witness_policy(vector_dir: Path) -> dict[str, Any] | None:
     path = vector_dir / "witness-policy.json"
     if not path.exists():
@@ -290,6 +313,15 @@ def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
     trust_store = _trust_store(vector_dir)
     disclosure = _disclosure(vector_dir)
     revocation_view = _revocation_view(vector_dir)
+    # Group 41's compromise-declaration channel is handed over only by the
+    # leaves that ship one, so every other leaf in the corpus is replayed
+    # through exactly the call it was replayed through before the channel
+    # existed — the file's presence is the whole gate (see this module's
+    # docstring).
+    compromise_view = _compromise_view(vector_dir)
+    compromise_kwargs: dict[str, Any] = (
+        {} if compromise_view is None else {"compromise_view": compromise_view}
+    )
 
     result = verify.verify(
         envelope_bytes,
@@ -303,6 +335,7 @@ def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
         transfer_view=_transfer_view(vector_dir),
         witness_policy=_witness_policy(vector_dir),
         grant_view=_grant_view(vector_dir),
+        **compromise_kwargs,
     )
 
     assert result.signature == expected["signature"]

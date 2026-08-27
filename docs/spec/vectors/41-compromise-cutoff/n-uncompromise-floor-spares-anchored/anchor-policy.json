@@ -1,0 +1,10 @@
+{
+  "crqc_horizon": null,
+  "pinned_headers": {
+    "b22b080bb939696883cbf8d1875f7c7221dfaa1a69e2d54f53989ec0b9d73373": {
+      "header_hash": "b22b080bb939696883cbf8d1875f7c7221dfaa1a69e2d54f53989ec0b9d73373",
+      "merkle_root": "23ee507eba067ba7a6d08e898e9468133e3da4a7866cde6826e44da296de521e",
+      "time": 1752105600
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "binding": "not_checked",
+  "corroboration": "logged",
+  "errors_contains": [
+    "compromised"
+  ],
+  "manifest_freshness": "verified_as_of:1",
+  "ok": false,
+  "revocation": "unknown",
+  "schema": "not_checked",
+  "signature": "invalid",
+  "transparency": "anchored_before:2025-08-01T00:00:00Z",
+  "trust": "verified",
+  "warnings": [
+    "compromise_rescue_requires_anchored_receipt"
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "artifact_manifest_chains": {},
+  "artifact_manifests": {},
+  "chains": {},
+  "manifests": {
+    "store.example.com": {
+      "issued_at": "2025-09-20T00:00:00Z",
+      "issuer": "store.example.com",
+      "keys": [
+        {
+          "kid": "store.example.com/keys/2025-01#ed25519-1",
+          "pub": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+          "status": "active",
+          "valid_from": "2025-01-01T00:00:00Z",
+          "valid_to": null
+        },
+        {
+          "kid": "store.example.com/keys/2025-04#ed25519-2",
+          "pub": "ypOsFwUYcHHWe4PH_w7-gQjo7EUwV113JoeTM9vavnw",
+          "status": "compromised",
+          "valid_from": "2025-01-01T00:00:00Z",
+          "valid_to": null
+        }
+      ],
+      "manifest_signature": {
+        "kid": "store.example.com/keys/2025-04#ed25519-2",
+        "sig": "fViejk8kHCKP5H4iIYWvBvEHnA9aydWXHcqfQCqXtwTSY57c5SJCTRfbDTA_0yJb_lfhvHpeU3Qz0QgOt3BGBg"
+      },
+      "manifest_version": 4
+    }
+  },
+  "provenance": {
+    "store.example.com": "tls"
+  }
+}
