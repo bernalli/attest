@@ -45,8 +45,9 @@ function bucketWarnings(warnings: string[]): {
   return { byComponent, unattributed }
 }
 
-function componentRow(component: Component, value: string, warnings: string[]): HTMLElement {
-  const e = explain(component, value)
+function componentRow(component: Component, run: VerifyRun, warnings: string[]): HTMLElement {
+  const value = run.result[component]
+  const e = explain(component, value, run.result)
   const row = el('div', `component tone-${e.tone}`)
   const dt = el('dt')
   dt.appendChild(el('span', 'component-name', e.label))
@@ -88,7 +89,7 @@ export function renderResult(label: string, run: VerifyRun): HTMLElement {
     section.appendChild(el('p', 'group-note', group.note))
     const dl = el('dl', 'components')
     for (const component of group.components) {
-      dl.appendChild(componentRow(component, run.result[component], byComponent.get(component) ?? []))
+      dl.appendChild(componentRow(component, run, byComponent.get(component) ?? []))
     }
     section.appendChild(dl)
     article.appendChild(section)

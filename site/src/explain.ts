@@ -47,7 +47,7 @@ export const GROUPS: ComponentGroup[] = [
   },
   {
     question: 'Has anyone else seen it?',
-    note: 'Whether this receipt was published in a public, append-only log. This is corroboration, never authenticity: nothing in this group can rescue an invalid receipt, and nothing here is needed to make a valid one valid (spec §10).',
+    note: 'Whether this receipt was published in a public, append-only log. This is corroboration, never authenticity, except for the narrow §19 compromise-cutoff rescue named on the Signature row: outside that case, nothing here is needed to make a valid receipt valid (spec §10, §19).',
     components: ['transparency', 'corroboration', 'manifest_freshness'],
   },
 ]
@@ -295,7 +295,83 @@ const PARAMETRIC: {
   },
 ]
 
-export function explain(component: Component, value: string): Explanation {
+const COMPROMISE_RESCUE_APPLIED = 'compromise_rescue_applied'
+const COMPROMISE_CUTOFF_UNANCHORED = 'compromise_cutoff_unanchored'
+const COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT = 'compromise_rescue_requires_anchored_receipt'
+const COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF = 'compromise_rescue_receipt_after_cutoff'
+const COMPROMISE_CUTOFF_CLAIM_IGNORED = 'compromise_cutoff_claim_ignored'
+
+const hasWarning = (result: VerificationResult | undefined, warning: string): boolean =>
+  result?.warnings.includes(warning) ?? false
+
+const hasCompromisedKeyError = (result: VerificationResult | undefined): boolean =>
+  result?.errors.some((error) => /^key .+ is compromised$/.test(error)) ?? false
+
+const compromiseFloorVisible = (result: VerificationResult | undefined): boolean =>
+  result?.trust === 'unverified_rotation' && hasCompromisedKeyError(result)
+
+function explainSignature(value: string, result: VerificationResult | undefined): Explanation | null {
+  if (value === 'valid') {
+    if (hasWarning(result, COMPROMISE_RESCUE_APPLIED)) {
+      return {
+        label: 'Signature',
+        tone: 'good',
+        text: 'This receipt’s exact signature was anchored in a public log strictly before the issuer’s compromise declaration was. The store cannot take back what the timeline already proves (spec v0.2 §19).',
+      }
+    }
+    if (hasWarning(result, COMPROMISE_CUTOFF_UNANCHORED)) {
+      return {
+        label: 'Signature',
+        tone: 'good',
+        text: 'The signature checks out and the receipt has anchored standing. The compromise declaration itself carries no anchored time, and a declaration without a provable time cannot invalidate a receipt with one (spec v0.2 §19).',
+      }
+    }
+    return null
+  }
+  if (value !== 'invalid' || !hasCompromisedKeyError(result)) return null
+  if (hasWarning(result, COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF)) {
+    return {
+      label: 'Signature',
+      tone: 'bad',
+      text: 'This key was declared compromised, and this receipt was anchored only after the compromise was declared and anchored. That puts it in the unprovable zone, so the verifier fails closed (spec v0.2 §19).',
+    }
+  }
+  if (compromiseFloorVisible(result)) {
+    return {
+      label: 'Signature',
+      tone: 'bad',
+      text: 'The issuer’s current key list says this key is fine. An earlier, signed version of that same list declared it compromised, and a compromise cannot be taken back — so this verifier treats it as compromised (spec v0.1 §7.3).',
+    }
+  }
+  return {
+    label: 'Signature',
+    tone: 'bad',
+    text: 'This key was declared compromised by its issuer, and this verifier was given no anchored proof that the receipt predates that declaration. The receipt may be genuine — nothing here can tell, so the verifier fails closed (spec v0.1 §7.3, v0.2 §19).',
+  }
+}
+
+function explainTrust(value: string, result: VerificationResult | undefined): Explanation | null {
+  if (value !== 'unverified_rotation' || !compromiseFloorVisible(result)) return null
+  return {
+    label: 'Key trust',
+    tone: 'warn',
+    text: 'The issuer rewrote the history of its own keys: an earlier signed manifest marked this key compromised, but a later key list tried to make that marking disappear. The verifier reports unverified_rotation and keeps the compromised status (spec v0.1 §7.3).',
+  }
+}
+
+export function explain(
+  component: Component,
+  value: string,
+  result?: VerificationResult,
+): Explanation {
+  if (component === 'signature') {
+    const signature = explainSignature(value, result)
+    if (signature) return signature
+  }
+  if (component === 'trust') {
+    const trust = explainTrust(value, result)
+    if (trust) return trust
+  }
   const hit = CATALOG[component][value]
   if (hit) return hit
   for (const p of PARAMETRIC) {
@@ -374,6 +450,13 @@ const EXACT: Record<string, Component> = {
   transfer_record_unlogged: 'revocation',
   transfer_not_yet_transferable: 'revocation',
   transfer_double_assignment_conflict: 'revocation',
+  // v0.2 §19 compromise-cutoff warnings qualify the signature row: they say
+  // why a compromised-key signature was rescued, rejected, or ignored.
+  [COMPROMISE_RESCUE_APPLIED]: 'signature',
+  [COMPROMISE_CUTOFF_UNANCHORED]: 'signature',
+  [COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT]: 'signature',
+  [COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF]: 'signature',
+  [COMPROMISE_CUTOFF_CLAIM_IGNORED]: 'signature',
   // §18.5's ten literals. Nine describe the grant; one describes its SIGNER,
   // and the spec pairs it with `grant_trust: "signer_mismatch"` explicitly.
   grant_narrowing_ignored: 'grant',

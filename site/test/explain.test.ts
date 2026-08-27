@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { explain, explainVerdict, attributeWarning, COMPONENTS, GROUPS } from '../src/explain.js'
 import type { Component } from '../src/explain.js'
+import type { VerificationResult } from 'attest-verifier'
 
 const KNOWN: Record<Component, string[]> = {
   signature: ['valid', 'invalid'],
@@ -23,6 +24,15 @@ const KNOWN: Record<Component, string[]> = {
   corroboration: ['none', 'logged', 'witnessed'],
   manifest_freshness: ['not_checked', 'verified_as_of:7'],
 }
+
+const result = (over: Partial<VerificationResult> = {}): VerificationResult => ({
+  signature: 'valid', schema: 'valid', revocation: 'unknown',
+  binding: 'not_checked', trust: 'verified',
+  transparency: 'not_checked', corroboration: 'none', manifest_freshness: 'not_checked',
+  grant: 'not_checked', grant_trust: 'not_checked',
+  warnings: [], errors: [],
+  ...over,
+})
 
 describe('the ten components', () => {
   it('are exactly the components of the three question groups, in order', () => {
@@ -109,6 +119,71 @@ describe('the three normative constraints on the copy', () => {
     expect(text).toMatch(/best available value/)
     expect(text).toMatch(/not a contradiction/)
   })
+
+  it('does not repeat the old absolute transparency-rescue claim after spec §19', () => {
+    const note = GROUPS.find((group) => group.question === 'Has anyone else seen it?')!.note
+    expect(note).toMatch(/except/)
+    expect(note).toMatch(/§19/)
+    expect(note).not.toMatch(/nothing in this group can rescue an invalid receipt/i)
+  })
+})
+
+describe('compromise-cutoff copy', () => {
+  it('distinguishes an unrescued compromised key from generic signature failure', () => {
+    const text = explain('signature', 'invalid', result({
+      signature: 'invalid',
+      errors: ['key store.example.com/keys/2025-01#ed25519-1 is compromised'],
+    })).text
+    expect(text).toMatch(/declared compromised/)
+    expect(text).toMatch(/no anchored proof/)
+    expect(text).toMatch(/may be genuine/)
+  })
+
+  it('explains the after-cutoff invalid-signature zone', () => {
+    const text = explain('signature', 'invalid', result({
+      signature: 'invalid',
+      warnings: ['compromise_rescue_receipt_after_cutoff'],
+      errors: ['key store.example.com/keys/2025-01#ed25519-1 is compromised'],
+    })).text
+    expect(text).toMatch(/anchored only after/i)
+    expect(text).toMatch(/compromise/)
+    expect(text).toMatch(/unprovable zone/)
+  })
+
+  it('explains an anchored-before rescue as a timeline proof', () => {
+    const text = explain('signature', 'valid', result({
+      warnings: ['compromise_rescue_applied'],
+    })).text
+    expect(text).toMatch(/exact signature/)
+    expect(text).toMatch(/strictly before/)
+    expect(text).toMatch(/cannot take back/)
+    expect(text).toMatch(/v0\.2/)
+  })
+
+  it('explains the unanchored-cutoff rescue separately', () => {
+    const text = explain('signature', 'valid', result({
+      warnings: ['compromise_cutoff_unanchored'],
+    })).text
+    expect(text).toMatch(/declaration itself/)
+    expect(text).toMatch(/no anchored time/)
+    expect(text).toMatch(/cannot invalidate/)
+  })
+
+  it('explains the monotone floor and its trust cause', () => {
+    const r = result({
+      signature: 'invalid',
+      trust: 'unverified_rotation',
+      errors: ['key store.example.com/keys/2025-01#ed25519-1 is compromised'],
+    })
+    const signature = explain('signature', 'invalid', r).text
+    const trust = explain('trust', 'unverified_rotation', r).text
+    expect(signature).toMatch(/current key list/)
+    expect(signature).toMatch(/earlier, signed version/)
+    expect(signature).toMatch(/cannot be taken back/)
+    expect(signature).toMatch(/v0\.1/)
+    expect(trust).toMatch(/rewrote the history/)
+    expect(trust).toMatch(/own keys/)
+  })
 })
 
 // Every wire token the verifier can emit either lands on a row or is on this
@@ -170,6 +245,9 @@ describe('attributeWarning', () => {
     expect(attributeWarning('witness_independence_not_established')).toBe('corroboration')
     expect(attributeWarning('revocation_unlogged_deadline')).toBe('revocation')
     expect(attributeWarning('transfer_double_assignment_conflict')).toBe('revocation')
+    expect(attributeWarning('compromise_rescue_applied')).toBe('signature')
+    expect(attributeWarning('compromise_rescue_receipt_after_cutoff')).toBe('signature')
+    expect(attributeWarning('compromise_cutoff_unanchored')).toBe('signature')
     expect(attributeWarning('grant_scope_uncovered')).toBe('grant')
     // The one grant literal that is about the SIGNER, per §18.5's own table.
     expect(attributeWarning('grant_signer_not_publisher')).toBe('grant_trust')
