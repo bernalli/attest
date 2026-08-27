@@ -262,6 +262,7 @@ export const COMPROMISE_WARN = {
   RESCUE_REQUIRES_ANCHORED_RECEIPT: 'compromise_rescue_requires_anchored_receipt',
   RESCUE_RECEIPT_AFTER_CUTOFF: 'compromise_rescue_receipt_after_cutoff',
   CUTOFF_CLAIM_IGNORED: 'compromise_cutoff_claim_ignored',
+  MARKING_RETRACTED: 'compromise_marking_retracted',
 } as const
 
 // v0.2 Stage 3 (§17.2-§17.4, verbatim; TS parity: Python's verify.py) —

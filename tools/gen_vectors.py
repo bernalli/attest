@@ -7185,7 +7185,7 @@ def gen_41_compromise_cutoff() -> None:
             "trust": "unverified_rotation",
             "ok": False,
             "errors_contains": ["compromised"],
-            "warnings": [],
+            "warnings": ["compromise_marking_retracted"],
         },
     )
 
@@ -7206,7 +7206,10 @@ def gen_41_compromise_cutoff() -> None:
             "trust": "verified",
             "ok": False,
             "errors_contains": ["compromised"],
-            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+            "warnings": [
+                "compromise_marking_retracted",
+                "compromise_rescue_requires_anchored_receipt",
+            ],
         },
         log_keys=[_log_key()],
         anchor_policy=_empty_anchor_policy(),
@@ -7234,7 +7237,7 @@ def gen_41_compromise_cutoff() -> None:
             "manifest_freshness": "not_checked",
             "ok": True,
             "errors": [],
-            "warnings": ["compromise_cutoff_unanchored"],
+            "warnings": ["compromise_marking_retracted", "compromise_cutoff_unanchored"],
         },
         transparency=receipt_n,
         log_keys=[_log_key()],
@@ -7281,7 +7284,10 @@ def gen_41_compromise_cutoff() -> None:
             "trust": "verified",
             "ok": False,
             "errors_contains": ["compromised"],
-            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+            "warnings": [
+                "compromise_marking_retracted",
+                "compromise_rescue_requires_anchored_receipt",
+            ],
         },
         log_keys=[_log_key()],
         anchor_policy=_empty_anchor_policy(),
@@ -7328,7 +7334,7 @@ def gen_41_compromise_cutoff() -> None:
             "manifest_freshness": "not_checked",
             "ok": True,
             "errors": [],
-            "warnings": ["compromise_cutoff_unanchored"],
+            "warnings": ["compromise_marking_retracted", "compromise_cutoff_unanchored"],
         },
         transparency=receipt_r,
         log_keys=[_log_key()],
@@ -7357,12 +7363,40 @@ def gen_41_compromise_cutoff() -> None:
             "manifest_freshness": "not_checked",
             "ok": False,
             "errors_contains": ["compromised"],
-            "warnings": ["compromise_rescue_receipt_after_cutoff"],
+            "warnings": ["compromise_marking_retracted", "compromise_rescue_receipt_after_cutoff"],
         },
         transparency=receipt_r,
         log_keys=[_log_key()],
         anchor_policy=_policy(header_r1, header_r2),
         compromise_view=[_claim(v2, claim_r)],
+    )
+
+    # --- (u) stale-pin-not-a-retraction -----------------------------------
+    # Same shape as (m), but this verifier's trusted pin is v1 — OLDER than the
+    # declaration. The floor still kills the unanchored receipt, and no
+    # retraction is reported: a stale pin is not an issuer rewriting its
+    # history, it is a verifier that is behind.
+    bundle = _log([_manifest_entry(v2)], "u")
+    claim_u, _ = bundle(0, 1)
+    write_vector(
+        "41-compromise-cutoff/u-stale-pin-not-a-retraction",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, v1, "tls")),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+        },
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
+        compromise_view=[_claim(v2, claim_u)],
     )
 
     # --- (t) keyset-omission-breaks-continuity ----------------------------

@@ -223,3 +223,220 @@ def test_oversize_compromise_view_fails_safe_without_changing_valid_receipt() ->
     result = verify.verify(_wire(_receipt()), _trust(trusted), compromise_view=oversized)
 
     assert result.signature == "valid"
+
+
+# --- v0.1 §7.3 rev 8: retraction provenance -------------------------------------
+# The floor already kills the receipt. What was undecidable from the result alone
+# is WHERE the marking came from: an issuer whose CURRENT trusted list no longer
+# carries the marking, while a strictly OLDER signed source of its own does, has
+# rewritten its own history. That fact is reported as a warning, never as a
+# verdict — it accompanies both the kill and the §19 rescue unchanged.
+
+RETRACTED = "compromise_marking_retracted"
+
+
+def _warns_retracted(result: verify.VerificationResult) -> bool:
+    return RETRACTED in result.warnings
+
+
+def test_retraction_from_the_version_chain_is_reported() -> None:
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=2)
+    older = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=1
+    )
+
+    result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[older]))
+
+    assert result.signature == "invalid"
+    assert _warns_retracted(result)
+
+
+def test_retraction_from_an_authenticated_claim_is_reported() -> None:
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=2)
+    claim = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=1
+    )
+
+    result = verify.verify(
+        _wire(_receipt()), _trust(trusted), compromise_view=[{"manifest": claim}]
+    )
+
+    assert result.signature == "invalid"
+    assert _warns_retracted(result)
+
+
+def test_trusted_manifest_carrying_the_marking_is_not_a_retraction() -> None:
+    # The issuer never took anything back: its current list still says so.
+    trusted = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=2
+    )
+    older = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=1
+    )
+
+    result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[older]))
+
+    assert result.signature == "invalid"
+    assert not _warns_retracted(result)
+
+
+def test_a_stale_pin_is_not_a_retraction() -> None:
+    # The marking source is NEWER than what this verifier pinned: the issuer is
+    # not rewriting history, the verifier is behind. The floor still kills.
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=1)
+    newer = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=2
+    )
+
+    result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[newer]))
+
+    assert result.signature == "invalid"
+    assert any("compromised" in error for error in result.errors)
+    assert not _warns_retracted(result)
+
+
+def test_equal_versions_are_not_a_retraction() -> None:
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=2)
+    same = _manifest([_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=2)
+
+    result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[same]))
+
+    assert result.signature == "invalid"
+    assert not _warns_retracted(result)
+
+
+# No float here: a float `manifest_version` is not representable in the
+# attest-JCS profile, so it can never reach a verifier over the wire.
+@pytest.mark.parametrize("bad_version", ["2", True, None])
+def test_a_noninteger_trusted_version_cannot_establish_a_retraction(bad_version: object) -> None:
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=bad_version)
+    older = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=1
+    )
+
+    result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[older]))
+
+    assert not _warns_retracted(result)
+
+
+@pytest.mark.parametrize("bad_version", ["1", True, None])
+def test_a_noninteger_source_version_cannot_establish_a_retraction(bad_version: object) -> None:
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=2)
+    older = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=bad_version
+    )
+
+    result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[older]))
+
+    assert not _warns_retracted(result)
+
+
+@pytest.mark.parametrize("order", ["active_first", "compromised_first"])
+def test_a_duplicate_in_the_trusted_list_still_blocks_the_retraction(order: str) -> None:
+    # The trusted manifest DOES carry the marking, on one of two entries for the
+    # kid: whichever order they appear in, this is not a retraction. An
+    # implementation reading the first matching entry gets this wrong in one of
+    # the two orders.
+    pair = [_entry(KID, KP, "active"), _entry(KID, KP, "compromised")]
+    if order == "compromised_first":
+        pair.reverse()
+    trusted = _manifest([*pair, _entry(DECLARER_KID, DECLARER_KP)], version=2)
+    older = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=1
+    )
+
+    result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[older]))
+
+    assert result.signature == "invalid"
+    assert not _warns_retracted(result)
+
+
+@pytest.mark.parametrize("order", ["active_first", "compromised_first"])
+def test_a_duplicate_in_a_chain_manifest_still_establishes_the_retraction(order: str) -> None:
+    pair = [_entry(KID, KP, "active"), _entry(KID, KP, "compromised")]
+    if order == "compromised_first":
+        pair.reverse()
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=2)
+    older = _manifest([*pair, _entry(DECLARER_KID, DECLARER_KP)], version=1)
+
+    result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[older]))
+
+    assert result.signature == "invalid"
+    assert _warns_retracted(result)
+
+
+@pytest.mark.parametrize("order", ["active_first", "compromised_first"])
+def test_a_duplicate_in_a_claim_manifest_still_establishes_the_retraction(order: str) -> None:
+    pair = [_entry(KID, KP, "active"), _entry(KID, KP, "compromised")]
+    if order == "compromised_first":
+        pair.reverse()
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=2)
+    claim = _manifest([*pair, _entry(DECLARER_KID, DECLARER_KP)], version=1)
+
+    result = verify.verify(
+        _wire(_receipt()), _trust(trusted), compromise_view=[{"manifest": claim}]
+    )
+
+    assert result.signature == "invalid"
+    assert _warns_retracted(result)
+
+
+def test_a_kid_the_trusted_list_omits_entirely_never_reaches_the_provenance_rule() -> None:
+    """C1.1 says a kid the trusted manifest omits satisfies the no-entry
+    condition. Through the public entry point that clause is UNREACHABLE: key
+    resolution fails first with "no key ... in issuer manifest" and the status
+    is never resolved, so no marking and no provenance exist to report. This
+    pins the real behavior rather than the unreachable one — the clause is
+    about the predicate's shape, not about a path a receipt can take.
+    """
+    trusted = _manifest([_entry(DECLARER_KID, DECLARER_KP)], version=2)
+    older = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=1
+    )
+
+    result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[older]))
+
+    assert not result.ok
+    assert any("no key" in error for error in result.errors)
+    assert not _warns_retracted(result)
+
+
+def test_the_retraction_warning_is_emitted_exactly_once() -> None:
+    trusted = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=3)
+    older_a = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=1
+    )
+    older_b = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=2
+    )
+
+    result = verify.verify(
+        _wire(_receipt()),
+        _trust(trusted, chain=[older_a, older_b]),
+        compromise_view=[{"manifest": older_a}],
+    )
+
+    assert result.warnings.count(RETRACTED) == 1
+
+
+def test_the_retraction_warning_changes_no_other_component() -> None:
+    # Provenance, never a verdict: the same scenario with and without the
+    # retraction must agree on every field but this one warning.
+    trusted_retracting = _manifest([_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP)], version=2)
+    older = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=1
+    )
+    trusted_marking = _manifest(
+        [_entry(KID, KP, "compromised"), _entry(DECLARER_KID, DECLARER_KP)], version=2
+    )
+
+    with_warning = verify.verify(_wire(_receipt()), _trust(trusted_retracting, chain=[older]))
+    without = verify.verify(_wire(_receipt()), _trust(trusted_marking, chain=[older]))
+
+    assert _warns_retracted(with_warning) and not _warns_retracted(without)
+    assert with_warning.ok == without.ok
+    assert with_warning.signature == without.signature
+    assert with_warning.schema == without.schema
+    assert with_warning.trust == without.trust
+    assert with_warning.revocation == without.revocation
+    assert [w for w in with_warning.warnings if w != RETRACTED] == list(without.warnings)

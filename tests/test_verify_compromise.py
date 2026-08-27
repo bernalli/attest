@@ -289,7 +289,12 @@ def test_compromised_declaring_signer_establishes_floor_but_no_cutoff() -> None:
 
     assert result.signature == "valid"
     assert result.ok is True
-    assert result.warnings == ("compromise_cutoff_unanchored",)
+    # The trusted manifest here no longer carries the marking that the older
+    # claimed manifest does, so v0.1 §7.3 rev 8 also reports the provenance.
+    assert result.warnings == (
+        "compromise_marking_retracted",
+        "compromise_cutoff_unanchored",
+    )
 
 
 def test_cutoff_evaluator_warnings_propagate_when_entry_mismatches() -> None:

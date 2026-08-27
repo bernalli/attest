@@ -49,7 +49,7 @@ error. The closedness is in canonicalization and semantics, not in what
 fields a payload may carry: attest's signing step is not a choice among
 proof suites but one mandatory canonicalization profile, attest-JCS (v0.1
 §9), whose output is byte-exact across the Python and TypeScript reference
-implementations by construction of the 178-leaf conformance corpus — a
+implementations by construction of the 179-leaf conformance corpus — a
 verifier that does not reproduce attest-JCS exactly cannot verify an attest
 receipt at all. Choosing a purpose-built envelope over a Verifiable
 Credential is choosing that fixed-core, single-canonicalization,
@@ -160,7 +160,7 @@ is that trading that no-canonicalization simplicity for a strict, narrow,
 corpus-enforced canonicalizer is the safer engineering trade-off when the
 signed bytes must be recoverable from a parsed JSON object in any language,
 rather than preserved from whichever producer happened to serialize the
-wire form — and the 178-leaf conformance corpus, exercised byte-identically
+wire form — and the 179-leaf conformance corpus, exercised byte-identically
 by the Python and TypeScript reference verifiers, is what makes that bet
 checkable rather than merely asserted.
 

@@ -10,6 +10,7 @@
   "transparency": "anchored_before:2025-08-01T00:00:00Z",
   "trust": "verified",
   "warnings": [
+    "compromise_marking_retracted",
     "compromise_cutoff_unanchored"
   ]
 }

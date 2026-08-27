@@ -331,3 +331,125 @@ describe('v0.2 §19 compromiseView adversarial boundaries', () => {
     }
   })
 })
+
+// --- v0.1 §7.3 rev 8: retraction provenance (parity with Python) ---------------
+// The floor already kills. What was undecidable from the result alone is WHERE
+// the marking came from: a trusted list that no longer carries it, while a
+// strictly OLDER signed source of the issuer's own does, is a rewritten history.
+
+const RETRACTED = 'compromise_marking_retracted'
+
+function manifestWith(keys: Record<string, unknown>[], version: unknown): JsonObject {
+  return signManifest({
+    issuer: ISSUER, manifest_version: version, issued_at: ISSUED_AT, keys,
+  })
+}
+
+const targetActive = () => keyEntry(TARGET_KID, targetPub, 'active')
+const targetCompromised = () => keyEntry(TARGET_KID, targetPub, 'compromised')
+const declarerActive = () => keyEntry(DECLARER_KID, declarerPub, 'active')
+
+const cleanTrusted = (version: unknown = 2) =>
+  manifestWith([targetActive(), declarerActive()], version)
+const markingSource = (version: unknown = 1) =>
+  manifestWith([targetCompromised(), declarerActive()], version)
+
+describe('v0.1 §7.3 retraction provenance', () => {
+  it('reports a retraction established by the version chain', () => {
+    const result = verifyWith(store(cleanTrusted(), { [ISSUER]: [markingSource(1)] }), null)
+    expect(result.signature).toBe('invalid')
+    expect(result.warnings).toContain(RETRACTED)
+  })
+
+  it('reports a retraction established by an authenticated declaration', () => {
+    const result = verifyWith(store(cleanTrusted()), [{ manifest: markingSource(1) }])
+    expect(result.signature).toBe('invalid')
+    expect(result.warnings).toContain(RETRACTED)
+  })
+
+  it('does not report one when the trusted list itself carries the marking', () => {
+    const trusted = manifestWith([targetCompromised(), declarerActive()], 2)
+    const result = verifyWith(store(trusted, { [ISSUER]: [markingSource(1)] }), null)
+    expect(result.signature).toBe('invalid')
+    expect(result.warnings).not.toContain(RETRACTED)
+  })
+
+  it('does not report one for a stale pin, and still kills the receipt', () => {
+    // The marking source is NEWER: the verifier is behind, the issuer took
+    // nothing back.
+    const result = verifyWith(store(cleanTrusted(1), { [ISSUER]: [markingSource(2)] }), null)
+    expect(result.signature).toBe('invalid')
+    expect(result.warnings).not.toContain(RETRACTED)
+  })
+
+  it('does not report one when the versions are equal', () => {
+    const result = verifyWith(store(cleanTrusted(2), { [ISSUER]: [markingSource(2)] }), null)
+    expect(result.signature).toBe('invalid')
+    expect(result.warnings).not.toContain(RETRACTED)
+  })
+
+  for (const bad of ['2', true, null]) {
+    it(`does not report one when the trusted version is ${JSON.stringify(bad)}`, () => {
+      const result = verifyWith(store(cleanTrusted(bad), { [ISSUER]: [markingSource(1)] }), null)
+      expect(result.warnings).not.toContain(RETRACTED)
+    })
+    it(`does not report one when the source version is ${JSON.stringify(bad)}`, () => {
+      const result = verifyWith(store(cleanTrusted(2), { [ISSUER]: [markingSource(bad)] }), null)
+      expect(result.warnings).not.toContain(RETRACTED)
+    })
+  }
+
+  for (const reversed of [false, true]) {
+    const pair = () => {
+      const p = [targetActive(), targetCompromised()]
+      return reversed ? p.reverse() : p
+    }
+    const label = reversed ? 'compromised first' : 'active first'
+
+    it(`a duplicate in the trusted list blocks the retraction (${label})`, () => {
+      // The trusted manifest DOES carry the marking on one of two entries:
+      // first-match reading gets this wrong in one of the two orders.
+      const trusted = manifestWith([...pair(), declarerActive()], 2)
+      const result = verifyWith(store(trusted, { [ISSUER]: [markingSource(1)] }), null)
+      expect(result.signature).toBe('invalid')
+      expect(result.warnings).not.toContain(RETRACTED)
+    })
+
+    it(`a duplicate in a chain manifest still establishes it (${label})`, () => {
+      const older = manifestWith([...pair(), declarerActive()], 1)
+      const result = verifyWith(store(cleanTrusted(2), { [ISSUER]: [older] }), null)
+      expect(result.warnings).toContain(RETRACTED)
+    })
+
+    it(`a duplicate in a claimed manifest still establishes it (${label})`, () => {
+      const claim = manifestWith([...pair(), declarerActive()], 1)
+      const result = verifyWith(store(cleanTrusted(2)), [{ manifest: claim }])
+      expect(result.warnings).toContain(RETRACTED)
+    })
+  }
+
+  it('emits the warning exactly once across independent sources', () => {
+    const result = verifyWith(
+      store(cleanTrusted(3), { [ISSUER]: [markingSource(1), markingSource(2)] }),
+      [{ manifest: markingSource(1) }],
+    )
+    expect(result.warnings.filter((w) => w === RETRACTED)).toHaveLength(1)
+  })
+
+  it('changes no other component of the result', () => {
+    const withWarning = verifyWith(store(cleanTrusted(2), { [ISSUER]: [markingSource(1)] }), null)
+    const without = verifyWith(
+      store(manifestWith([targetCompromised(), declarerActive()], 2),
+        { [ISSUER]: [markingSource(1)] }),
+      null,
+    )
+    expect(withWarning.warnings).toContain(RETRACTED)
+    expect(without.warnings).not.toContain(RETRACTED)
+    expect(withWarning.ok).toBe(without.ok)
+    expect(withWarning.signature).toBe(without.signature)
+    expect(withWarning.schema).toBe(without.schema)
+    expect(withWarning.trust).toBe(without.trust)
+    expect(withWarning.revocation).toBe(without.revocation)
+    expect(withWarning.warnings.filter((w) => w !== RETRACTED)).toEqual(without.warnings)
+  })
+})
