@@ -8,6 +8,34 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A compromised signing key no longer destroys every receipt it ever signed —
+  only the ones that cannot prove they came first.** Until now a `compromised`
+  key invalidated its whole output unconditionally (v0.1 §7.3), the only sound
+  rule while nothing outside the issuer could date a signature: a back-dated
+  forgery and a genuine sale looked alike. A transparency anchor dates it, so
+  spec v0.2 §19 time-boxes the kill for verifiers that can evaluate anchored
+  existence. A receipt whose signed-receipt-core is anchored strictly before the
+  issuer's own anchored compromise declaration now verifies as if the key had
+  been retired; one anchored at or after it is still rejected, because equality
+  fails closed — same-block ordering is not proof of precedence. The promise
+  this buys is narrow, and the spec states it in those words: *the store cannot
+  take back a receipt whose signed-receipt-core was anchored before the store's
+  own anchored compromise declaration.* Un-anchored stock stays destructible
+  exactly as before, and nothing in this repository may claim more. The stated
+  residual is a theft window: whoever anchors forged receipts after stealing the
+  key but before the declaration is anchored gets the same rescue an honest
+  buyer gets. That window is bounded by theft-to-declaration latency, not by
+  zero — and the alternative, letting the issuer declare when the compromise
+  began, hands the pen back to the party the rule exists to constrain.
+- **A compromise marking is absorbing: no version of a key list can take it
+  back.** v0.1 §7.3 now says so as a floor over everything a verifier holds — an
+  issuer who re-lists a compromised kid as `active` in a later manifest, or
+  drops it, no longer un-compromises it for any verifier that has seen the
+  earlier declaration. This is what makes the rescue above safe to grant: a kill
+  the issuer could quietly erase would be no baseline to measure a cutoff
+  against. It is evidence-bound like everything else here, so the honest claim
+  is not that a marking is globally irreversible but that it is irreversible for
+  any verifier that has seen it.
 - **The receipt a buyer opens now carries its own presentation, and the pages
   that explain it say one thing once.** The `README.html` inside every `.attest`
   had no styling at all beyond a single hardcoded red on one heading — on the
@@ -57,6 +85,22 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a test so the next drift fails instead of shipping.
 
 ### Added
+
+- **`compromise_view`, a third evidence channel on the verifier's own
+  configuration rail.** Python keyword `compromise_view=`, TypeScript option
+  `compromiseView`, vector file `compromise-view.json`: an array of claims, each
+  one a key manifest declaring a kid compromised together with the evidence
+  bundle for that manifest's own log entry. It travels the rail `revocation_view`
+  and `transfer_view` already travel — supplied by the caller, never read off
+  the receipt's presenter — and nothing in it is trusted by arrival. Every claim
+  re-authenticates against the verifier's own trust store, pinned log keys and
+  pinned headers before it counts for anything, which is why the view can safely
+  cross any transport. Evidence that can only narrow the set of valid signatures
+  is admitted on weaker terms than evidence that can widen it: a claim
+  authenticated against any key the verifier holds establishes the compromised
+  floor, while establishing the cutoff that can rescue receipts additionally
+  requires a declaring signer that was active or retired when it signed. A
+  conforming verifier accepts at least 64 claims per view.
 
 - **A byte ceiling on the pages a buyer holds** (`buyer_surface.
   MAX_HELD_PAGE_BYTES`), asserted in the suite. The README is injected into every
