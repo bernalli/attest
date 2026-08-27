@@ -16,7 +16,7 @@ import { computeCommitment, verifyChallenge } from './commitment.js'
 import { b64uEncode } from './b64u.js'
 import { TlogError, LogKey, receiptCoreHash, encodeEntry } from './tlog.js'
 import { AnchorPolicy, validatePolicy as validateAnchorPolicyOnly } from './anchor.js'
-import { parseIsoLenient } from './dates.js'
+import { parseIsoLenient, parseStrictUtc } from './dates.js'
 import {
   TransparencyError,
   TRANSPARENCY_NOT_CHECKED,
@@ -698,7 +698,12 @@ function resolveCompromiseCutoff(
     })
     for (const warning of result.warnings) appendWarningOnce(warnings, warning)
     if (!result.transparency.startsWith(ANCHORED_BEFORE_PREFIX)) continue
-    const cutoff = parseIsoLenient(result.transparency.slice(ANCHORED_BEFORE_PREFIX.length))
+    const cutoffTimestamp = result.transparency.slice(ANCHORED_BEFORE_PREFIX.length)
+    const cutoff = parseStrictUtc(cutoffTimestamp) ?? (
+      typeof cutoffTimestamp === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(cutoffTimestamp)
+        ? parseIsoLenient(cutoffTimestamp)
+        : null
+    )
     if (cutoff === null) continue
     if (best === null || cutoff < best) best = cutoff
   }
@@ -802,7 +807,12 @@ export function verify(
       }
       return invalid(keyCompromised(kid))
     }
-    const receiptAnchor = parseIsoLenient(transparencyState.slice(ANCHORED_BEFORE_PREFIX.length))
+    const receiptAnchorTimestamp = transparencyState.slice(ANCHORED_BEFORE_PREFIX.length)
+    const receiptAnchor = parseStrictUtc(receiptAnchorTimestamp) ?? (
+      typeof receiptAnchorTimestamp === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(receiptAnchorTimestamp)
+        ? parseIsoLenient(receiptAnchorTimestamp)
+        : null
+    )
     if (receiptAnchor === null) {
       if (compromiseView !== null || authenticatedClaims.length > 0) {
         appendWarningOnce(warnings, COMPROMISE_WARN.RESCUE_REQUIRES_ANCHORED_RECEIPT)

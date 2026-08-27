@@ -26,8 +26,8 @@ export function parseStrictUtc(s: unknown): number | null {
 
 /** Whether `value` has the signed UTC wire shape used by Stage 3 side
  * documents (`YYYY-MM-DDTHH:MM:SSZ`) and names a real UTC calendar instant.
- * This deliberately leaves `parseIsoLenient` unchanged for pre-Stage-3 paths
- * that retain Python's lenient ISO parsing behavior. */
+ * `parseIsoLenient` delegates to Date.parse, whose timezone-less ISO handling
+ * uses the host's local time. */
 export function validStage3UtcTimestamp(value: unknown): value is string {
   return typeof value === 'string' && parseStrictUtc(value) !== null
 }
