@@ -3,7 +3,7 @@ import { bytesToHex } from '@noble/curves/utils.js'
 import { JsonObject, JsonValue, canonicalBytes, dumps, CanonError, loadsStrict } from './canon.js'
 import {
   TrustStore, findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
-  artifactChainContinuous, verifyArtifactManifest,
+  artifactChainContinuous, verifyArtifactManifest, signableManifestBytes, verifySignatureBlock,
 } from './manifests.js'
 import { verifyStrict, Ed25519LengthError } from './ed25519.js'
 import { verifyStrict as verifyMldsaStrict, ML_DSA_65_ALG } from './mldsa.js'
@@ -16,6 +16,7 @@ import { computeCommitment, verifyChallenge } from './commitment.js'
 import { b64uEncode } from './b64u.js'
 import { TlogError, LogKey, receiptCoreHash, encodeEntry } from './tlog.js'
 import { AnchorPolicy, validatePolicy as validateAnchorPolicyOnly } from './anchor.js'
+import { parseIsoLenient, parseStrictUtc } from './dates.js'
 import {
   TransparencyError,
   TRANSPARENCY_NOT_CHECKED,
@@ -29,7 +30,7 @@ import {
   ERR, WARN, unsupportedAttestVersion, signaturesCount, unsupportedSigAlg, noTrustedManifest,
   noKeyInManifest, keyCompromised, keyRetired, issuedAtOutsideWindow, malformedKeyMaterial,
   malformedSigMaterial, unknownField, unknownEol, keyEntryNotHybrid, pyRepr, codePointLength,
-  VERIFY_TRANSPARENCY_WARN, manifestExceedsKeys,
+  VERIFY_TRANSPARENCY_WARN, COMPROMISE_WARN, manifestExceedsKeys,
 } from './messages.js'
 
 // attest_version values this verifier's verify() step 1 accepts (v0.1 single-sig,
@@ -42,6 +43,9 @@ const SUPPORTED_ATTEST_VERSIONS = new Set(['0.1', '0.2'])
 const MANIFEST_FRESHNESS_NOT_CHECKED = 'not_checked'
 const CLAIM_TYPE_RECEIPT = 'receipt'
 const CLAIM_TYPE_KEY_MANIFEST = 'key-manifest'
+const ANCHORED_BEFORE_PREFIX = 'anchored_before:'
+const MAX_COMPROMISE_CLAIMS = 64
+const MAX_JCS_INTEGER = 2n ** 53n
 
 // This outer cap must COVER everything the downstream evaluators' own inner
 // caps accept, or evaluator-valid evidence gets falsely rejected here.
@@ -125,6 +129,11 @@ export interface VerifyTransparencyOptions {
   // `unknown` rather than a shaped interface because it is UNTRUSTED evidence:
   // every member is validated inside the evaluation, never by the type system.
   grantView?: unknown
+  // v0.1 rev 8 / v0.2 §19's evidence channel: untrusted key-manifest
+  // compromise declarations. Authenticated declarations only ever strengthen
+  // one status, `compromised`; the anchored-cutoff rescue is evaluated later
+  // against the receipt's own transparency claim.
+  compromiseView?: JsonValue[] | null
 }
 // attest-versioning.md §6.7 registers `sunset-grant` as `active`: it is the
 // label a Stage 4 receipt carries (§18.6 makes it schema-REQUIRED once
@@ -320,15 +329,17 @@ interface TransparencyClaimOutcome {
   transparency: string
   corroboration: string
   manifestFreshness: string
+  claimType: string | null
 }
 
 const ZERO_TRANSPARENCY_CLAIM: TransparencyClaimOutcome = {
   transparency: TRANSPARENCY_NOT_CHECKED,
   corroboration: CORROBORATION_NONE,
   manifestFreshness: MANIFEST_FRESHNESS_NOT_CHECKED,
+  claimType: null,
 }
 
-/** Resolve `{transparency, corroboration, manifestFreshness}` from one
+/** Resolve transparency result components and the evidence claim type from one
  * evidence bundle. Computed independently of the receipt's own pass/fail
  * verdict — called once, early, regardless of whether the receipt later
  * turns out invalid (e.g. a compromised key), so that corroboration can
@@ -392,7 +403,12 @@ function evaluateTransparencyClaim(
     )
     if (expectedEntry === null) {
       warnings.push(VERIFY_TRANSPARENCY_WARN.CLAIM_UNRESOLVABLE)
-      return ZERO_TRANSPARENCY_CLAIM
+      return {
+        transparency: TRANSPARENCY_NOT_CHECKED,
+        corroboration: CORROBORATION_NONE,
+        manifestFreshness: MANIFEST_FRESHNESS_NOT_CHECKED,
+        claimType,
+      }
     }
 
     const result = evaluateTransparency(materializedEvidence, {
@@ -419,7 +435,12 @@ function evaluateTransparencyClaim(
       }
     }
 
-    return { transparency: transparencyState, corroboration: corroborationState, manifestFreshness: manifestFreshnessState }
+    return {
+      transparency: transparencyState,
+      corroboration: corroborationState,
+      manifestFreshness: manifestFreshnessState,
+      claimType,
+    }
   } catch {
     // Deliberately encloses every untrusted claim phase above, including
     // post-evaluation freshness/rotation logic. Confines hostile mapping
@@ -427,6 +448,281 @@ function evaluateTransparencyClaim(
     warnings.push(VERIFY_TRANSPARENCY_WARN.CLAIM_UNRESOLVABLE)
     return ZERO_TRANSPARENCY_CLAIM
   }
+}
+
+interface CompromiseClaim {
+  manifest: JsonObject
+  materializedManifest: Record<string, unknown>
+  manifestVersion: number
+  evidence: unknown
+  signerKid: string
+  vouchingSigners: JsonObject[]
+}
+
+function appendWarningOnce(warnings: string[], warning: string): void {
+  if (!warnings.includes(warning)) warnings.push(warning)
+}
+
+function normalizeCompromiseValue(value: unknown): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'bigint') {
+    if (!(value > -MAX_JCS_INTEGER && value < MAX_JCS_INTEGER)) throw new Error('integer out of JCS range')
+    return Number(value)
+  }
+  if (typeof value === 'number') return value
+  if (Array.isArray(value)) return value.map((item) => normalizeCompromiseValue(item))
+  if (isPlainRecord(value)) {
+    const out: Record<string, unknown> = Object.create(null)
+    for (const key of Object.keys(value)) out[key] = normalizeCompromiseValue(value[key])
+    return out
+  }
+  throw new Error('value is not JSON materializable')
+}
+
+function materializeCompromiseView(compromiseView: JsonValue[] | null): unknown[] | null {
+  if (compromiseView === null) return null
+  try {
+    const normalized = normalizeCompromiseValue(compromiseView)
+    const serialized = JSON.stringify(normalized)
+    if (typeof serialized !== 'string' || codePointLength(serialized) > MAX_TRANSPARENCY_EVIDENCE_LEN) {
+      return null
+    }
+    const materialized: unknown = JSON.parse(serialized)
+    if (!Array.isArray(materialized) || materialized.length > MAX_COMPROMISE_CLAIMS) return null
+    return materialized
+  } catch {
+    return null
+  }
+}
+
+function strictObjectFromMaterialized(value: Record<string, unknown>): JsonObject | null {
+  try {
+    const serialized = JSON.stringify(value)
+    if (typeof serialized !== 'string') return null
+    const parsed = loadsStrict(new TextEncoder().encode(serialized))
+    return obj(parsed)
+  } catch {
+    return null
+  }
+}
+
+function entriesForKid(manifest: JsonObject, kid: string): JsonObject[] {
+  const keys = manifest['keys']
+  if (!Array.isArray(keys)) return []
+  const entries: JsonObject[] = []
+  for (const rawEntry of keys) {
+    const entry = obj(rawEntry)
+    if (entry !== null && entry['kid'] === kid) entries.push(entry)
+  }
+  return entries
+}
+
+function manifestMarksKidCompromised(manifest: JsonObject, kid: string): boolean {
+  return entriesForKid(manifest, kid).some((entry) => entry['status'] === 'compromised')
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false
+  for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return false
+  return true
+}
+
+function b64uBytesEqual(left: unknown, right: unknown): boolean {
+  if (typeof left !== 'string' || typeof right !== 'string') return false
+  try {
+    return equalBytes(b64uDecode(left), b64uDecode(right))
+  } catch {
+    return false
+  }
+}
+
+function compromiseKeyMaterialMatches(claimEntry: JsonObject, trustedEntry: JsonObject): boolean {
+  if (!b64uBytesEqual(claimEntry['pub'], trustedEntry['pub'])) return false
+  if (!('pub_ml_dsa_65' in trustedEntry)) return true
+  return b64uBytesEqual(claimEntry['pub_ml_dsa_65'], trustedEntry['pub_ml_dsa_65'])
+}
+
+function heldIssuerManifests(trustedManifest: JsonObject, chain: JsonObject[] | undefined, issuerId: string): JsonObject[] {
+  const held = [trustedManifest, ...(chain ?? [])]
+  return held.filter((manifest) => manifest['issuer'] === issuerId)
+}
+
+function vouchingSigners(claimManifest: JsonObject, heldManifests: JsonObject[]): [string | null, JsonObject[]] {
+  const sigBlock = obj(claimManifest['manifest_signature'])
+  if (sigBlock === null || typeof sigBlock['kid'] !== 'string') return [null, []]
+  const signerKid = sigBlock['kid']
+  let signable: Uint8Array
+  try {
+    signable = signableManifestBytes(claimManifest)
+  } catch {
+    return [signerKid, []]
+  }
+
+  const issuedAt = claimManifest['issued_at']
+  if (typeof issuedAt !== 'string') return [signerKid, []]
+  const signers: JsonObject[] = []
+  for (const heldManifest of heldManifests) {
+    for (const signerEntry of entriesForKid(heldManifest, signerKid)) {
+      if (!withinValidity(issuedAt, signerEntry)) continue
+      if (verifySignatureBlock(signable, sigBlock, signerEntry)) signers.push(signerEntry)
+    }
+  }
+  return [signerKid, signers]
+}
+
+function authenticatedCompromiseClaims(
+  compromiseClaims: unknown[] | null,
+  trustedManifest: JsonObject,
+  trustedEntry: JsonObject,
+  chain: JsonObject[] | undefined,
+  issuerId: string,
+  kid: string,
+  warnings: string[],
+): CompromiseClaim[] {
+  if (compromiseClaims === null || compromiseClaims.length === 0) return []
+
+  const heldManifests = heldIssuerManifests(trustedManifest, chain, issuerId)
+  const authenticated: CompromiseClaim[] = []
+  for (const claim of compromiseClaims) {
+    if (!isPlainRecord(claim)) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+      continue
+    }
+    const materializedManifest = claim['manifest']
+    if (!isPlainRecord(materializedManifest) || materializedManifest['issuer'] !== issuerId) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+      continue
+    }
+    const manifestVersion = materializedManifest['manifest_version']
+    if (typeof manifestVersion !== 'number' || !Number.isInteger(manifestVersion)) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+      continue
+    }
+    const claimManifest = strictObjectFromMaterialized(materializedManifest)
+    if (claimManifest === null) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+      continue
+    }
+    const declaresCompromise = entriesForKid(claimManifest, kid).some(
+      (entry) => entry['status'] === 'compromised' && compromiseKeyMaterialMatches(entry, trustedEntry),
+    )
+    if (!declaresCompromise) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+      continue
+    }
+    const [signerKid, signers] = vouchingSigners(claimManifest, heldManifests)
+    if (signerKid === null || signers.length === 0) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+      continue
+    }
+    authenticated.push({
+      manifest: claimManifest,
+      materializedManifest,
+      manifestVersion,
+      evidence: claim['evidence'] ?? null,
+      signerKid,
+      vouchingSigners: signers,
+    })
+  }
+  return authenticated
+}
+
+function manifestVersionAsBigInt(value: unknown): bigint | null {
+  if (typeof value === 'bigint') return value
+  if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value)
+  return null
+}
+
+function heldManifestMarksSignerCompromisedAtOrBefore(
+  heldManifests: JsonObject[],
+  signerKid: string,
+  declarationVersion: number,
+): boolean {
+  const declarationVersionBigint = BigInt(declarationVersion)
+  for (const heldManifest of heldManifests) {
+    const version = manifestVersionAsBigInt(heldManifest['manifest_version'])
+    if (version === null || version > declarationVersionBigint) continue
+    if (manifestMarksKidCompromised(heldManifest, signerKid)) return true
+  }
+  return false
+}
+
+function claimHasCutoffSigner(claim: CompromiseClaim, heldManifests: JsonObject[]): boolean {
+  for (const signerEntry of claim.vouchingSigners) {
+    if (signerEntry['status'] !== 'active' && signerEntry['status'] !== 'retired') continue
+    if (heldManifestMarksSignerCompromisedAtOrBefore(heldManifests, claim.signerKid, claim.manifestVersion)) continue
+    return true
+  }
+  return false
+}
+
+function resolveCompromiseCutoff(
+  authenticatedClaims: CompromiseClaim[],
+  trustedManifest: JsonObject,
+  chain: JsonObject[] | undefined,
+  issuerId: string,
+  logKeys: LogKey[],
+  anchorPolicy: AnchorPolicy,
+  warnings: string[],
+): number | null {
+  if (authenticatedClaims.length === 0) return null
+
+  const origin = resolveLogOrigin(logKeys)
+  validateAnchorPolicyOnly(anchorPolicy)
+  const heldManifests = heldIssuerManifests(trustedManifest, chain, issuerId)
+  let best: number | null = null
+  for (const claim of authenticatedClaims) {
+    if (!claimHasCutoffSigner(claim, heldManifests)) continue
+    let manifestSha256: string
+    try {
+      manifestSha256 = bytesToHex(sha256(canonicalBytes(claim.manifest)))
+    } catch {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+      continue
+    }
+    const expectedEntry = validatedTransparencyEntry({
+      type: CLAIM_TYPE_KEY_MANIFEST,
+      issuer: claim.materializedManifest['issuer'],
+      manifest_version: claim.manifestVersion,
+      manifest_sha256: manifestSha256,
+    })
+    if (expectedEntry === null) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+      continue
+    }
+    const result = evaluateTransparency(claim.evidence, {
+      logKeys,
+      expectedOrigin: origin,
+      policy: anchorPolicy,
+      expectedEntry,
+    })
+    for (const warning of result.warnings) appendWarningOnce(warnings, warning)
+    if (!result.transparency.startsWith(ANCHORED_BEFORE_PREFIX)) continue
+    const cutoffTimestamp = result.transparency.slice(ANCHORED_BEFORE_PREFIX.length)
+    const cutoff = parseStrictUtc(cutoffTimestamp) ?? (
+      typeof cutoffTimestamp === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(cutoffTimestamp)
+        ? parseIsoLenient(cutoffTimestamp)
+        : null
+    )
+    if (cutoff === null) continue
+    if (best === null || cutoff < best) best = cutoff
+  }
+  return best
+}
+
+function resolveKeyStatus(
+  trustedEntry: JsonObject,
+  trustedManifest: JsonObject,
+  chain: JsonObject[] | undefined,
+  authenticatedClaims: CompromiseClaim[],
+  kid: string,
+): unknown {
+  if (manifestMarksKidCompromised(trustedManifest, kid)) return 'compromised'
+  for (const manifest of chain ?? []) {
+    if (manifestMarksKidCompromised(manifest, kid)) return 'compromised'
+  }
+  if (authenticatedClaims.length > 0) return 'compromised'
+  return trustedEntry['status']
 }
 
 export function verify(
@@ -442,6 +738,7 @@ export function verify(
   const transferView = options.transferView ?? null
   const witnessPolicy = options.witnessPolicy ?? null
   const grantView = options.grantView ?? null
+  const compromiseView = options.compromiseView ?? null
 
   if (revocationView !== null && !Array.isArray(revocationView))
     throw new TypeError('revocation_view must be a list of records or None')
@@ -450,6 +747,8 @@ export function verify(
   // dict keys by classifyRevocation's transferred-branch resolver.
   if (transferView !== null && !Array.isArray(transferView))
     throw new TypeError('transfer_view must be a list of claims or None')
+  if (compromiseView !== null && !Array.isArray(compromiseView))
+    throw new TypeError('compromise_view must be a list of claims or None')
   // Same caller-contract enforcement for Stage 4's channel: a lone grant
   // DOCUMENT passed where the evidence object belongs would otherwise be read
   // member by member and resolve to `not_checked`, silently reporting "no
@@ -482,6 +781,8 @@ export function verify(
   let transparencyState: string = TRANSPARENCY_NOT_CHECKED
   let corroborationState: string = CORROBORATION_NONE
   let manifestFreshnessState: string = MANIFEST_FRESHNESS_NOT_CHECKED
+  let transparencyClaimType: string | null = null
+  const materializedCompromiseView = materializeCompromiseView(compromiseView)
   const invalid = (message: string, schema: Schema = 'not_checked'): VerificationResult => {
     errors.push(message)
     return {
@@ -490,6 +791,54 @@ export function verify(
       warnings: [...warnings], errors: [...errors],
       grant: GRANT_NOT_CHECKED, grant_trust: GRANT_TRUST_NOT_CHECKED,
     }
+  }
+
+  const compromisedKeyDisposition = (
+    kid: string,
+    entry: JsonObject,
+    trustedManifest: JsonObject,
+    chain: JsonObject[] | undefined,
+    authenticatedClaims: CompromiseClaim[],
+  ): VerificationResult | null => {
+    if (logKeys === null || anchorPolicy === null) return invalid(keyCompromised(kid))
+    if (transparencyClaimType !== CLAIM_TYPE_RECEIPT || !transparencyState.startsWith(ANCHORED_BEFORE_PREFIX)) {
+      if (compromiseView !== null || authenticatedClaims.length > 0) {
+        appendWarningOnce(warnings, COMPROMISE_WARN.RESCUE_REQUIRES_ANCHORED_RECEIPT)
+      }
+      return invalid(keyCompromised(kid))
+    }
+    const receiptAnchorTimestamp = transparencyState.slice(ANCHORED_BEFORE_PREFIX.length)
+    const receiptAnchor = parseStrictUtc(receiptAnchorTimestamp) ?? (
+      typeof receiptAnchorTimestamp === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(receiptAnchorTimestamp)
+        ? parseIsoLenient(receiptAnchorTimestamp)
+        : null
+    )
+    if (receiptAnchor === null) {
+      if (compromiseView !== null || authenticatedClaims.length > 0) {
+        appendWarningOnce(warnings, COMPROMISE_WARN.RESCUE_REQUIRES_ANCHORED_RECEIPT)
+      }
+      return invalid(keyCompromised(kid))
+    }
+
+    const cutoff = resolveCompromiseCutoff(
+      authenticatedClaims,
+      trustedManifest,
+      chain,
+      typeof issuerId === 'string' ? issuerId : '',
+      logKeys,
+      anchorPolicy,
+      warnings,
+    )
+    if (cutoff === null) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_UNANCHORED)
+      return null
+    }
+    if (receiptAnchor < cutoff) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.RESCUE_APPLIED)
+      return null
+    }
+    appendWarningOnce(warnings, COMPROMISE_WARN.RESCUE_RECEIPT_AFTER_CUTOFF)
+    return invalid(keyCompromised(kid))
   }
 
   // --- G1 normative ceiling (attest-versioning.md §5 amendment; v0.1 §11/
@@ -640,6 +989,7 @@ export function verify(
     transparencyState = claimOutcome.transparency
     corroborationState = claimOutcome.corroboration
     manifestFreshnessState = claimOutcome.manifestFreshness
+    transparencyClaimType = claimOutcome.claimType
   }
 
   // Step 1 — envelope shape: attest_version supported; signatures length ==
@@ -684,12 +1034,21 @@ export function verify(
     // Step 3 (shared with v0.1) — key resolution + status + validity window
     const entry = findKey(manifest, kid)
     if (entry == null) return invalid(noKeyInManifest(kid))
-    const status = entry['status']
-    if (status === 'compromised') return invalid(keyCompromised(kid))
-    if (status !== 'active' && status !== 'retired') return invalid(`key ${kid} has unusable status`)
+    const chain = trustStore.chains?.[issuerId]
+    const authenticatedClaims = authenticatedCompromiseClaims(
+      materializedCompromiseView, manifest, entry, chain, issuerId, kid, warnings,
+    )
+    const status = resolveKeyStatus(entry, manifest, chain, authenticatedClaims, kid)
+    let compromisedRescued = false
+    if (status === 'compromised') {
+      const disposition = compromisedKeyDisposition(kid, entry, manifest, chain, authenticatedClaims)
+      if (disposition !== null) return disposition
+      compromisedRescued = true
+    }
+    if (!compromisedRescued && status !== 'active' && status !== 'retired') return invalid(`key ${kid} has unusable status`)
     const issuedAt = payload['issued_at']
     if (typeof issuedAt !== 'string' || !withinValidity(issuedAt, entry)) return invalid(issuedAtOutsideWindow(issuedAt))
-    if (status === 'retired') warnings.push(keyRetired(kid))
+    if (!compromisedRescued && status === 'retired') warnings.push(keyRetired(kid))
 
     // Hybrid-only: the resolved key entry must itself carry an ML-DSA-65
     // public key, or there is nothing to verify the second leg against.
@@ -735,14 +1094,23 @@ export function verify(
     // Step 3 — key resolution + status + validity window
     const entry = findKey(manifest, kid)
     if (entry == null) return invalid(noKeyInManifest(kid))
-    const status = entry['status']
-    if (status === 'compromised') return invalid(keyCompromised(kid))
+    const chain = trustStore.chains?.[issuerId]
+    const authenticatedClaims = authenticatedCompromiseClaims(
+      materializedCompromiseView, manifest, entry, chain, issuerId, kid, warnings,
+    )
+    const status = resolveKeyStatus(entry, manifest, chain, authenticatedClaims, kid)
+    let compromisedRescued = false
+    if (status === 'compromised') {
+      const disposition = compromisedKeyDisposition(kid, entry, manifest, chain, authenticatedClaims)
+      if (disposition !== null) return disposition
+      compromisedRescued = true
+    }
     // Fail closed on a missing/unknown status instead of validating like an active
     // key (2026-07-13 review, finding 4).
-    if (status !== 'active' && status !== 'retired') return invalid(`key ${kid} has unusable status`)
+    if (!compromisedRescued && status !== 'active' && status !== 'retired') return invalid(`key ${kid} has unusable status`)
     const issuedAt = payload['issued_at']
     if (typeof issuedAt !== 'string' || !withinValidity(issuedAt, entry)) return invalid(issuedAtOutsideWindow(issuedAt))
-    if (status === 'retired') warnings.push(keyRetired(kid))
+    if (!compromisedRescued && status === 'retired') warnings.push(keyRetired(kid))
 
     // Step 4 — signature
     let pub: Uint8Array, sig: Uint8Array

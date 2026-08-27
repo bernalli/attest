@@ -254,6 +254,15 @@ export const VERIFY_TRANSPARENCY_WARN = {
   REVOCATION_UNLOGGED_DEADLINE: 'revocation_unlogged_deadline',
 } as const
 
+// v0.1 rev 8 / v0.2 §19 anchored compromise cutoff.
+export const COMPROMISE_WARN = {
+  RESCUE_APPLIED: 'compromise_rescue_applied',
+  CUTOFF_UNANCHORED: 'compromise_cutoff_unanchored',
+  RESCUE_REQUIRES_ANCHORED_RECEIPT: 'compromise_rescue_requires_anchored_receipt',
+  RESCUE_RECEIPT_AFTER_CUTOFF: 'compromise_rescue_receipt_after_cutoff',
+  CUTOFF_CLAIM_IGNORED: 'compromise_cutoff_claim_ignored',
+} as const
+
 // v0.2 Stage 3 (§17.2-§17.4, verbatim; TS parity: Python's verify.py) —
 // transferred-class backing warnings for classifyRevocation's transferred
 // branch (revocation.ts).

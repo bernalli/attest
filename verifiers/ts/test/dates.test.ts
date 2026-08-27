@@ -19,6 +19,12 @@ describe('dates', () => {
     // valid non-midnight time round-trips (exercises H/M/S checks on the happy path)
     expect(parseStrictUtc('2025-06-15T13:45:30Z')).toBe(Date.UTC(2025, 5, 15, 13, 45, 30))
   })
+  it('strict handles low four-digit years with Python strptime parity', () => {
+    const t = parseStrictUtc('0001-01-01T00:00:00Z')
+    expect(t).not.toBeNull()
+    expect(new Date(t!).getUTCFullYear()).toBe(1)
+    expect(parseStrictUtc('0000-01-01T00:00:00Z')).toBeNull()
+  })
   it('lenient parses ISO with offset/fraction', () => {
     expect(parseIsoLenient('2025-08-01T12:00:00Z')).toBe(Date.UTC(2025, 7, 1, 12, 0, 0))
     expect(parseIsoLenient('nope')).toBeNull()

@@ -1,0 +1,17 @@
+{
+  "binding": "not_checked",
+  "corroboration": "logged",
+  "errors_contains": [
+    "compromised"
+  ],
+  "manifest_freshness": "not_checked",
+  "ok": false,
+  "revocation": "unknown",
+  "schema": "not_checked",
+  "signature": "invalid",
+  "transparency": "logged",
+  "trust": "verified",
+  "warnings": [
+    "compromise_rescue_requires_anchored_receipt"
+  ]
+}

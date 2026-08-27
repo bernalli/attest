@@ -47,6 +47,25 @@ export function findKey(manifest: JsonObject, kid: string): JsonObject | null {
   return null
 }
 
+// The repo does not guarantee `kid` uniqueness inside keys[]. Status decisions
+// MUST read every entry: with duplicates of differing status, a first-match
+// read lets the array's ORDER decide the verdict. Mirrors manifests.py.
+function entriesForKidLocal(manifest: JsonObject, kid: string): JsonObject[] {
+  const keys = manifest['keys']
+  if (!Array.isArray(keys)) return []
+  const matches: JsonObject[] = []
+  for (const e of keys) {
+    const o = asObject(e)
+    if (o !== null && o['kid'] === kid) matches.push(o)
+  }
+  return matches
+}
+
+function kidIsActiveForContinuity(manifest: JsonObject, kid: string): boolean {
+  const entries = entriesForKidLocal(manifest, kid)
+  return entries.length > 0 && entries.every((entry) => entry['status'] === 'active')
+}
+
 export function signableManifestBytes(manifest: JsonObject): Uint8Array {
   const body: JsonObject = Object.create(null)
   for (const k of Object.keys(manifest)) if (k !== 'manifest_signature') body[k] = manifest[k]!
@@ -105,6 +124,37 @@ export function withinValidity(issuedAt: unknown, entry: JsonObject): boolean {
   return issued <= toMs
 }
 
+function preservesAbsorbingCompromises(trusted: JsonObject, candidate: JsonObject): boolean {
+  const trustedEntries = trusted['keys']
+  const candidateEntries = candidate['keys']
+  if (!Array.isArray(trustedEntries) || !Array.isArray(candidateEntries)) return false
+
+  const candidateByKid = new Map<string, JsonObject[]>()
+  for (const rawEntry of candidateEntries) {
+    const entry = asObject(rawEntry)
+    if (entry === null) return false
+    const kid = entry['kid']
+    if (typeof kid === 'string') {
+      const entries = candidateByKid.get(kid)
+      if (entries === undefined) candidateByKid.set(kid, [entry])
+      else entries.push(entry)
+    }
+  }
+
+  for (const rawEntry of trustedEntries) {
+    const entry = asObject(rawEntry)
+    if (entry === null) return false
+    const kid = entry['kid']
+    if (typeof kid !== 'string') return false
+    const currentEntries = candidateByKid.get(kid)
+    if (currentEntries === undefined) return false
+    if (entry['status'] === 'compromised' && currentEntries.some((current) => current['status'] !== 'compromised')) {
+      return false
+    }
+  }
+  return true
+}
+
 function withinReleaseWindow(at: unknown, entry: JsonObject): boolean {
   const t = parseStrictUtc(at)
   const from = parseStrictUtc(entry['valid_from'])
@@ -123,12 +173,15 @@ export function checkContinuity(trusted: JsonObject, candidate: JsonObject): boo
     const tv = trusted['manifest_version'], cv = candidate['manifest_version']
     if (typeof tv !== 'bigint' || typeof cv !== 'bigint' || cv !== tv + 1n) return false
     const sigBlock = asObject(candidate['manifest_signature'])
-    if (!sigBlock || typeof sigBlock['kid'] !== 'string') return false
-    const signer = findKey(trusted, sigBlock['kid'])
-    if (signer === null || signer['status'] !== 'active') return false
+    if (!sigBlock) return false
+    const signerKid = sigBlock['kid']
+    if (typeof signerKid !== 'string') return false
+    const signer = findKey(trusted, signerKid)
+    if (signer === null || !kidIsActiveForContinuity(trusted, signerKid)) return false
     // The signer key must also cover the candidate's issuance window, consistent
     // with verifyArtifactManifest (2026-07-13 review, finding 12).
     if (!withinValidity(candidate['issued_at'], signer)) return false
+    if (!preservesAbsorbingCompromises(trusted, candidate)) return false
     // Bind continuity to the key TRUSTED vouches for: verify the candidate's
     // signature under trusted's pub for signer_kid, NOT the candidate's own
     // (attacker-substitutable) entry (2026-07-13 review, finding 1).

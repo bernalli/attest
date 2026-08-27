@@ -180,6 +180,8 @@ def test_leaf_id_is_posix_relative(mini_corpus: Path) -> None:
         ("33-z/a", False),
         ("35-transfer/i-v01-transferable-null-pubkey-ok", True),
         ("35-transfer/j-other", False),
+        ("41-compromise-cutoff/f-stage1-fail-closed", True),
+        ("41-compromise-cutoff/a-other", False),
         ("36-chain/a", False),
     ],
 )
@@ -187,10 +189,10 @@ def test_in_v01_subset_rule(lid: str, expected: bool) -> None:
     assert cr.in_v01_subset(lid) is expected
 
 
-def test_select_subset_v01_is_exactly_52_leaves_of_the_real_corpus() -> None:
+def test_select_subset_v01_is_exactly_53_leaves_of_the_real_corpus() -> None:
     leaves = cr.find_leaf_dirs(REAL_VECTORS)
     subset = cr.select_subset(leaves, REAL_VECTORS, "v0.1")
-    assert len(subset) == 52
+    assert len(subset) == 53
 
 
 def test_select_subset_v02_is_the_full_real_corpus() -> None:

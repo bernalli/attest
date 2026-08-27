@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import pytest
 from hypothesis import given
@@ -98,3 +99,46 @@ def test_roundtrip_and_idempotence(obj: object) -> None:
     s = canon.dumps(obj)
     parsed = canon.loads_strict(s.encode())
     assert canon.dumps(parsed) == s
+
+
+def _nest(levels: int) -> Any:
+    nested: Any = []
+    for _ in range(levels):
+        nested = [nested]
+    return nested
+
+
+def test_canonical_bytes_reports_unserializable_depth_as_canon_error() -> None:
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        canon.canonical_bytes(_nest(20_000))
+
+
+def test_canonical_bytes_reports_a_cycle_as_canon_error() -> None:
+    cyclic: dict[str, Any] = {}
+    cyclic["self"] = cyclic
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        canon.canonical_bytes(cyclic)
+
+
+def test_canonical_bytes_still_accepts_the_deepest_parsable_document() -> None:
+    assert canon.canonical_bytes(_nest(canon.MAX_DEPTH - 1))
+
+
+def test_loads_strict_reports_an_oversized_integer_literal_as_canon_error() -> None:
+    with pytest.raises(canon.CanonError, match="invalid JSON: "):
+        canon.loads_strict(b'{"n":' + b"9" * 4400 + b"}")
+
+
+def test_loads_strict_leaves_this_modules_own_errors_untouched() -> None:
+    """Taxonomy pinning for the generic `ValueError` net in `loads_strict`:
+    `CanonError` is a `ValueError` subclass, so a bare net there would catch the
+    errors `_pairs_hook` and `_reject_float` raise from inside `json.loads`,
+    demoting `DuplicateKeyError` to its base class and re-prefixing a message
+    `tools/gen_vectors.py` documents."""
+    with pytest.raises(canon.DuplicateKeyError) as duplicate:
+        canon.loads_strict(b'{"a":1,"a":2}')
+    assert str(duplicate.value) == "duplicate object key: 'a'"
+
+    with pytest.raises(canon.CanonError) as bad_float:
+        canon.loads_strict(b'{"a":1.5}')
+    assert str(bad_float.value) == "floats are not allowed in the attest-JCS profile"

@@ -1,0 +1,15 @@
+{
+  "crqc_horizon": null,
+  "pinned_headers": {
+    "5c48c4d13af505691401464a66ac5c080fdb30cfa462572ad419962b1d6b1fa9": {
+      "header_hash": "5c48c4d13af505691401464a66ac5c080fdb30cfa462572ad419962b1d6b1fa9",
+      "merkle_root": "cf58890cde69ffb2478a293d02e4b51504573bdf23888f41cfb39d02eb0c6fa6",
+      "time": 1752105600
+    },
+    "99619309cce2225cba5b608a162a7c7b6c8f8bc974744cf3d6afcd5555bab3f5": {
+      "header_hash": "99619309cce2225cba5b608a162a7c7b6c8f8bc974744cf3d6afcd5555bab3f5",
+      "merkle_root": "b0b5fcf692d7872bced8a9b0f91f7eb231a3fb6639633ea776f2b55b7aafa4b9",
+      "time": 1754006400
+    }
+  }
+}

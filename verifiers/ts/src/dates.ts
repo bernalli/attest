@@ -7,11 +7,13 @@ export function parseStrictUtc(s: unknown): number | null {
   const m = STRICT.exec(s)
   if (!m) return null
   const [, y, mo, d, h, mi, se] = m.map(Number) as unknown as number[]
-  const t = Date.UTC(y!, mo! - 1, d!, h!, mi!, se!)
+  if (y! === 0) return null
+  const back = new Date(Date.UTC(y!, mo! - 1, d!, h!, mi!, se!))
+  if (y! >= 1 && y! <= 99) back.setUTCFullYear(y!)
+  const t = back.getTime()
   // reject impossible values that Date.UTC would roll over (e.g. month 13, day 32,
   // hour 24, minute 60, second 60) — all six components must round-trip, matching
   // Python strptime '%Y-%m-%dT%H:%M:%SZ' which rejects any out-of-range field.
-  const back = new Date(t)
   if (
     back.getUTCFullYear() !== y! ||
     back.getUTCMonth() !== mo! - 1 ||
@@ -26,8 +28,8 @@ export function parseStrictUtc(s: unknown): number | null {
 
 /** Whether `value` has the signed UTC wire shape used by Stage 3 side
  * documents (`YYYY-MM-DDTHH:MM:SSZ`) and names a real UTC calendar instant.
- * This deliberately leaves `parseIsoLenient` unchanged for pre-Stage-3 paths
- * that retain Python's lenient ISO parsing behavior. */
+ * `parseIsoLenient` delegates to Date.parse, whose timezone-less ISO handling
+ * uses the host's local time. */
 export function validStage3UtcTimestamp(value: unknown): value is string {
   return typeof value === 'string' && parseStrictUtc(value) !== null
 }

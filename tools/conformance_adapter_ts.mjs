@@ -19,7 +19,7 @@
 // of verifiers/ts/test/helpers/vectors.ts byte-for-byte, including the
 // strict-parse (bigint) routing for manifests.json, revocation.json,
 // transparency.json, revocation-evidence.json, transfer-view.json,
-// grant-view.json and chain.json — and the exact verify(...)/auditChain(...)
+// compromise-view.json, grant-view.json and chain.json — and the exact verify(...)/auditChain(...)
 // call shapes of verifiers/ts/test/conformance.test.ts. Those two files
 // remain the source of truth for this adapter's behavior; this file is NOT
 // generated from them and must be kept in sync by hand.
@@ -131,6 +131,12 @@ function revocationEvidence(dir) {
 // group 35 (transfer conformance corpus, v0.2 §17 Stage 3) only.
 function transferView(dir) {
   const p = join(dir, 'transfer-view.json')
+  return existsSync(p) ? loadJsonValueStrict(p) : null
+}
+
+// group 41 (anchored-cutoff compromise corpus, v0.2 §19) only.
+function compromiseView(dir) {
+  const p = join(dir, 'compromise-view.json')
   return existsSync(p) ? loadJsonValueStrict(p) : null
 }
 
@@ -305,6 +311,7 @@ function runLeaf(dir) {
     anchorPolicy: anchorPolicy(dir),
     revocationEvidence: revocationEvidence(dir),
     transferView: transferView(dir),
+    compromiseView: compromiseView(dir),
     witnessPolicy: witnessPolicy(dir),
     grantView: grantView(dir),
   })

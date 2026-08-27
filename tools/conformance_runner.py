@@ -36,8 +36,8 @@ RUNNER_NAME = "attest-conformance-runner"
 
 # v0.1 subset rule (mirrors docs/spec/vectors/README.md verbatim): groups
 # whose leading integer is <= V01_MAX_GROUP, or in V01_EXTRA_GROUPS, plus the
-# extra leaf ids in V01_EXTRA_LEAF_IDS (35i and 37s: v0.1-shaped receipts
-# living inside otherwise-v0.2-only groups).
+# extra leaf ids in V01_EXTRA_LEAF_IDS (35i, 37s and 41f: leaves a v0.1-only
+# verifier must reproduce, living inside otherwise-v0.2-only groups).
 V01_MAX_GROUP = 25
 V01_EXTRA_GROUPS = frozenset({29, 31})
 V01_EXTRA_LEAF_IDS = frozenset(
@@ -47,6 +47,14 @@ V01_EXTRA_LEAF_IDS = frozenset(
         # v0.1 receipt carrying `license.preservation_pledge` stays schema-valid
         # and a v0.1-only verifier must reproduce it. Same mechanism as 35i.
         "37-preservation-pledge/s-v01-negative-control",
+        # 41f: the anchored-cutoff rescue (v0.2 §19) is reachable only by a
+        # Stage-2-capable verifier, and this leaf ships no Stage-2 material at
+        # all — so a v0.1-only verifier must reproduce its unconditional
+        # compromised-key rejection, exactly as it reproduces vector 13's.
+        # Unlike 35i and 37s the receipt here is not the distinguishing part
+        # (its siblings carry the same one): the ABSENCE of the evidence
+        # channel is.
+        "41-compromise-cutoff/f-stage1-fail-closed",
     }
 )
 
@@ -94,8 +102,9 @@ def in_v01_subset(lid: str) -> bool:
 
     Applies the leading-integer group rule (a leaf's top-level directory name
     may carry a letter suffix, e.g. ``14b-...`` -> group 14) plus the pinned
-    extra leaf ids in ``V01_EXTRA_LEAF_IDS`` (``35i`` and ``37s``, v0.1-shaped
-    receipts living inside otherwise-v0.2-only groups).
+    extra leaf ids in ``V01_EXTRA_LEAF_IDS`` (``35i``, ``37s`` and ``41f``,
+    leaves inside otherwise-v0.2-only groups that a v0.1-only verifier must
+    still reproduce).
     """
     if lid in V01_EXTRA_LEAF_IDS:
         return True

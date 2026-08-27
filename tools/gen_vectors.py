@@ -880,6 +880,7 @@ def write_vector(
     transfer_view: list[dict[str, Any]] | None = None,
     witness_policy: dict[str, Any] | None = None,
     grant_view: dict[str, Any] | None = None,
+    compromise_view: list[dict[str, Any]] | None = None,
 ) -> None:
     """`transparency`/`log_keys`/`anchor_policy` (group 28 only, design doc
     "transparency/corroboration layer") are the untrusted evidence bundle and
@@ -913,7 +914,18 @@ def write_vector(
     `transparency.json`. The untrusted evidence names the epoch it claims
     (`witness_policy_epoch`); the trusted policy is what says who that epoch
     pins. Absent for every leaf outside group 39, so `verify()` sees `None`
-    there and `corroboration: "witnessed"` stays unreachable."""
+    there and `corroboration: "witnessed"` stays unreachable.
+
+    `compromise_view` (group 41 only, v0.1 rev 8 §7.3 / v0.2 rev 9 §19) is a
+    list of UNTRUSTED compromise-declaration claims `[{"manifest": <a v0.1
+    §7.1 key manifest>, "evidence": <a §10.2 evidence bundle for that
+    manifest's own key-manifest log entry>}]`, written to
+    `compromise-view.json` and fed to `verify()` as `compromise_view=`. It
+    rides the caller's configuration rail — the same rail as `revocation_view`
+    and `transfer_view`, never the receipt presenter's — and every claim in it
+    self-authenticates against the verifier's OWN trust store, pinned log keys
+    and pinned headers (§19.3), which is why carrying it over an untrusted
+    transport is safe. Absent for every leaf outside group 41."""
     vector_dir = VECTORS_DIR / name
     if payload is not None:
         _write_json(vector_dir / "payload.json", payload)
@@ -945,6 +957,8 @@ def write_vector(
         _write_json(vector_dir / "witness-policy.json", witness_policy)
     if grant_view is not None:
         _write_json(vector_dir / "grant-view.json", grant_view)
+    if compromise_view is not None:
+        _write_json(vector_dir / "compromise-view.json", compromise_view)
 
 
 def write_redemption_vector(
@@ -6490,6 +6504,870 @@ def gen_40_witness_quorum() -> None:
     )
 
 
+# --- group 41: compromise-cutoff (v0.1 rev 8 §7.3, v0.2 rev 9 §19) ---------
+#
+# Additional fixed inputs for the anchored-cutoff rescue and the monotone
+# `compromised` floor. Two issuer keys carry the whole group: `ISSUER_KID` (K)
+# signs the receipts the amendment is about, and `ROTATED_KID` (K2) signs every
+# key manifest — including the declaration that marks K `compromised`, which K
+# itself may never sign (`manifests.rotate_key_manifest`'s self-exclusion
+# guard: the attacker holds the key you are declaring compromised).
+#
+# Leaf (j) is hybrid, and there K2 needs its OWN ML-DSA-65 leg: an ACTIVE
+# Ed25519-only sibling inside a hybrid manifest is exactly G6's mixed-keyset
+# condition (v0.2 §2.3/§13), whose warning would otherwise ride along on a leaf
+# that is about something else. Seed byte 62 continues the numbering above
+# (1-6, 9, 26, 28-30, 32-39, 41-61 and 137-139 taken).
+
+COMPROMISE_DECLARED_AT = "2025-07-08T00:00:00Z"  # v2, the declaring manifest itself
+COMPROMISE_V3_ISSUED_AT = "2025-08-20T00:00:00Z"  # every v3 variant
+COMPROMISE_V4_ISSUED_AT = "2025-09-20T00:00:00Z"  # v4, where K2 is in turn compromised
+
+# Three pinned Bitcoin headers at strictly increasing times — H1 < H2 < H3,
+# 2025-07-10 / 2025-08-01 / 2025-09-01, all after `ISSUED_AT` since nothing can
+# be anchored before it exists. The times ARE the fixture of this group: which
+# side of the cutoff a receipt's anchored existence proof falls on is the whole
+# question. The equality case (g) deliberately reuses ONE header for both
+# sides rather than two headers sharing a time, because same-block ambiguity is
+# what §19.1 fails closed on.
+COMPROMISE_H1 = 1_752_105_600
+COMPROMISE_H2 = 1_754_006_400
+COMPROMISE_H3 = 1_756_684_800
+COMPROMISE_H1_ISO = "2025-07-10T00:00:00Z"
+COMPROMISE_H2_ISO = "2025-08-01T00:00:00Z"
+COMPROMISE_H3_ISO = "2025-09-01T00:00:00Z"
+
+COMPROMISE_MLDSA_PK, COMPROMISE_MLDSA_SK = ML_DSA_65.key_derive(bytes([62]) * 32)
+
+
+def _compromise_oracle_sign(msg: bytes) -> bytes:
+    """DEV-ONLY deterministic ML-DSA-65 signing under K2's own key material —
+    `_oracle_sign` above is hard-wired to `HYBRID_MLDSA_SK`, which is K's."""
+    return ML_DSA_65.sign(COMPROMISE_MLDSA_SK, msg, deterministic=True)
+
+
+def gen_41_compromise_cutoff() -> None:
+    """v0.1 rev 8 §7.3 + v0.2 rev 9 §19: key compromise stops being a switch
+    the issuer can flip in both directions, and stops reaching backwards past
+    the moment it was declared.
+
+    Two rules, one fixture. The FLOOR (v0.1 §7.3, leaves l-t) makes a
+    `compromised` marking absorbing: a `kid` is `compromised` for a verifier
+    that holds the marking in ANY evidence it already has for the issuer — its
+    trusted manifest, a member of the §7.4 version chain, or an authenticated
+    compromise declaration — so re-listing that `kid` as `active` in a later
+    manifest no longer un-does anything, and the regression (or a silent
+    keyset omission) additionally breaks rotation continuity. The RESCUE (v0.2
+    §19, leaves a-k) bounds the marking in time for a Stage-2-capable
+    verifier: a receipt whose signed-receipt-core reached
+    `anchored_before:<T_r>` STRICTLY earlier than the anchored time `T_c` of
+    the declaring manifest survives, because a thief cannot mine a Bitcoin
+    header in the past.
+
+    Shared fixture: manifest v1 (K and K2 both `active`) -> v2, which marks K
+    `compromised` and is signed by K2; a `revocability: "none"` receipt signed
+    by K (the class v0.1 §6.2 sells as invalidable by compromise alone); three
+    pinned headers H1 < H2 < H3. Leaves l-t extend it with a v3 that regresses
+    K back to `active` (or drops it entirely) and a v4 that marks K2
+    compromised in turn — all three built with `manifests.build_key_manifest`
+    directly rather than `rotate_key_manifest`, because these are the hostile
+    manifests the amendment exists to catch and the rotation helper is being
+    taught to refuse to emit them.
+
+    - (a) receipt anchored at H1, declaration anchored at H2 -> rescued,
+      `compromise_rescue_applied`.
+    - (b) receipt anchored at H2, declaration at H1 -> the receipt is not
+      provably older than the declaration, so it dies with
+      `compromise_rescue_receipt_after_cutoff`.
+    - (c) receipt only `logged` (no anchor at all), declaration anchored ->
+      the log operator's word is not an external timestamp; dies with
+      `compromise_rescue_requires_anchored_receipt`. Group 28's leaf `i` pins
+      the same "corroboration never rescues" property from the other side.
+    - (d) receipt anchored, declaration only `logged` -> survives with
+      `compromise_cutoff_unanchored`: a declaration with no provable time
+      cannot destroy stock with one, or an issuer would simply never anchor.
+    - (e) the same, with no `compromise-view.json` at all.
+    - (f) the (a) fixture with every Stage-2 file removed -> a verifier that
+      cannot evaluate existence evidence rejects unconditionally, byte-for-byte
+      as vector `13-compromised-key` does. The group's v0.1 subset leaf.
+    - (g) receipt and declaration anchored to the SAME header -> equality
+      fails closed (§19.1: same-block ambiguity is not proof of precedence).
+    - (h) two declarations, anchored at H1 and H3, receipt at H2 -> the cutoff
+      is the MINIMUM, so the later declaration cannot launder the earlier one.
+    - (i) a fabricated declaration, self-consistent but signed by a `kid` no
+      manifest the verifier holds ever listed, anchored at the same header as
+      the receipt -> contributes nothing (`compromise_cutoff_claim_ignored`)
+      and the receipt survives, where an accepted claim would have killed it.
+    - (j) (a) again over a v0.2 hybrid envelope and manifest.
+    - (k) the receipt's own transparency claim is a KEY-MANIFEST claim, not a
+      receipt claim -> it proves the manifest existed, never that the
+      receipt's signature did, so the rescue is unavailable.
+    - (l) trusted v3 re-lists K `active` and the verifier holds the chain
+      [v1, v2, v3] -> the floor still resolves K as `compromised` and kills the
+      receipt, with NO Stage-2 configuration anywhere: the floor is v0.1's
+      rule, not Stage 2's.
+    - (m) the same regression seen through a `compromise_view` claim instead
+      of a chain, evidence only `logged` -> §19.3 items 1-3a establish the
+      status; item 4, the anchor, is what is missing, so the receipt (which
+      holds no anchored standing either) dies.
+    - (n) (m) with an ANCHORED receipt -> the floor establishes THAT the key
+      is compromised, the missing anchor leaves WHEN undetermined, and the
+      anchored receipt survives: the floor is not an indiscriminate kill.
+    - (o) the (l) chain with a receipt signed by K2, which was never
+      compromised -> nothing to kill, but the regression still degrades the
+      issuer to `trust: "unverified_rotation"`. Isolates the continuity half
+      of the rule from the status-resolution half.
+    - (p) the declaring signer K2 is itself `compromised` in the trusted
+      manifest -> the floor still stands (§19.3 item 3a: evidence that can
+      only NARROW the valid set is accepted on wider terms), which is what
+      stops a thief from cancelling an honest declaration by marking its
+      signer.
+    - (q) NEGATIVE CONTROL: [K `retired`, then K `active` again] -> untouched.
+      The rule is about `compromised` and nothing else; if this leaf ever goes
+      red, a general status ordering has been implemented instead of a floor
+      on one status.
+    - (r) (p)'s fixture with both sides anchored -> the same claim that floors
+      establishes NO cutoff, because a verifier holding no chain cannot tell
+      whether the signer's own compromise preceded or followed the
+      declaration (§19.3 item 3b, fail-closed). The receipt anchored after
+      survives as the no-cutoff case.
+    - (s) (r) plus the chain [v1, v2, v3, v4], which DATES K2's compromise to
+      v4, after the declaration -> the cutoff holds and the receipt anchored
+      after it dies. `trust` stays `unverified_rotation` from v3's regression:
+      that discontinuity does not cancel the signer's cutoff.
+    - (t) trusted v3 OMITS K entirely instead of re-listing it -> keyset
+      preservation (v0.1 §7.3) makes that a discontinuity too; the twin of
+      (o), with the same receipt signed by K2, isolating the omission from any
+      kill.
+    """
+    payload = issue.build_payload(**_base_payload_kwargs())  # revocability: "none"
+    _assert_schema_valid(payload)
+    envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)  # genuinely signed by K while active
+    envelope_k2 = issue.issue(payload, ROTATED_KP, ROTATED_KID)  # a receipt K2 signed
+
+    def _entry(kid: str, kp: keys.SigningKeyPair, status: str) -> dict[str, Any]:
+        return manifests.key_entry(kid, kp.pub, KEY_VALID_FROM, None, status)
+
+    k_active = _entry(ISSUER_KID, ISSUER_KP, "active")
+    k_retired = _entry(ISSUER_KID, ISSUER_KP, "retired")
+    k_compromised = _entry(ISSUER_KID, ISSUER_KP, "compromised")
+    k2_active = _entry(ROTATED_KID, ROTATED_KP, "active")
+    k2_compromised = _entry(ROTATED_KID, ROTATED_KP, "compromised")
+
+    def _manifest(version: int, issued_at: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        """Signed by K2 throughout. `build_key_manifest` is deliberate for the
+        v3/v4 fixtures: they regress or drop a `compromised` key, which is
+        exactly what `rotate_key_manifest` must refuse to emit — the hostile
+        manifests have to be assembled by hand, as an attacker would."""
+        manifest = manifests.build_key_manifest(
+            ISSUER_ID, version, issued_at, entries, ROTATED_KP, ROTATED_KID
+        )
+        assert manifests.verify_key_manifest(manifest) is True
+        return manifest
+
+    v1 = _manifest(1, MANIFEST_ISSUED_AT, [k_active, k2_active])
+    v2 = manifests.rotate_key_manifest(
+        v1, ROTATED_KP, ROTATED_KID, COMPROMISE_DECLARED_AT, compromise_kids=[ISSUER_KID]
+    )
+    assert manifests.check_continuity(v1, v2) is True
+    declared_entry = manifests.find_key(v2, ISSUER_KID)
+    assert declared_entry is not None and declared_entry["status"] == "compromised"
+
+    # The three hostile successors. v3-reactivated is the un-compromise the
+    # floor exists to defeat; v3-omit is the same move made by deletion; v4
+    # marks the DECLARING key compromised, which is how a thief would try to
+    # disqualify an honest declaration.
+    v3_reactivated = _manifest(3, COMPROMISE_V3_ISSUED_AT, [k_active, k2_active])
+    v3_omit = _manifest(3, COMPROMISE_V3_ISSUED_AT, [k2_active])
+    v3_still_compromised = _manifest(3, COMPROMISE_V3_ISSUED_AT, [k_compromised, k2_active])
+    v4 = _manifest(4, COMPROMISE_V4_ISSUED_AT, [k_active, k2_compromised])
+
+    # The negative control's own two-manifest history: retired, then active
+    # again. Legitimate today and legitimate after this amendment.
+    w1 = _manifest(1, MANIFEST_ISSUED_AT, [k_retired, k2_active])
+    w2 = _manifest(2, COMPROMISE_DECLARED_AT, [k_active, k2_active])
+    assert manifests.check_continuity(w1, w2) is True
+
+    def _receipt_entry(env: dict[str, Any]) -> dict[str, Any]:
+        return {"type": "receipt", "issuer": ISSUER_ID, "core_sha256": tlog.receipt_core_hash(env)}
+
+    def _manifest_entry(manifest: dict[str, Any]) -> dict[str, Any]:
+        """The §8 key-manifest entry for `manifest`, in the log's own CLOSED
+        four-member shape (`tlog.encode_entry`): `manifest_version` is part of
+        it, so a verifier recomputing this entry from a compromise-declaration
+        claim must read the version off the claimed manifest too."""
+        return {
+            "type": "key-manifest",
+            "issuer": manifest["issuer"],
+            "manifest_version": manifest["manifest_version"],
+            "manifest_sha256": hashlib.sha256(canon.canonical_bytes(manifest)).hexdigest(),
+        }
+
+    def _log(entries: list[dict[str, Any]], tag: str) -> Any:
+        """One transparency log per leaf, holding that leaf's entries in the
+        order they were submitted. `bundle(index, tree_size, header_time)`
+        returns the §10.2 evidence proving `entries[index]`'s inclusion in the
+        tree of the first `tree_size` entries, plus the pinned header its OTS
+        anchor lands on (or `None` when the leaf wants that entry to stay
+        `logged`). Two bundles asking for the same `tree_size` share one
+        checkpoint and therefore ONE header — which is how leaf (g) puts a
+        receipt and a declaration in the same Bitcoin block."""
+        encoded = [tlog.encode_entry(entry) for entry in entries]
+
+        def bundle(
+            index: int, tree_size: int, header_time: int | None = None
+        ) -> tuple[dict[str, Any], anchor.PinnedHeader | None]:
+            checkpoint = _sign_checkpoint_oracle(
+                LOG_ORIGIN, tree_size, tlog.build_tree(encoded[:tree_size])
+            )
+            evidence: dict[str, Any] = {
+                "entry": entries[index],
+                "leaf_index": index,
+                "tree_size": tree_size,
+                "inclusion_proof": _hex_proof(tlog.inclusion_proof(encoded[:tree_size], index)),
+                "checkpoint": checkpoint,
+            }
+            if header_time is None:
+                return evidence, None
+            # A genuine single-`["sha256"]`-op OTS anchor over
+            # SHA-256(checkpoint.signed_note_bytes), declaring the v2 profile
+            # (§11.1) so no `anchor_note_only` warning rides along — the same
+            # shape `32-anchor-v2/a-v2-valid` and group 33 use.
+            signed_note = tlog.parse_checkpoint(checkpoint).signed_note_bytes
+            header_hash = hashlib.sha256(
+                f"attest-vectors-41-{tag}-{tree_size}-header".encode()
+            ).hexdigest()
+            merkle_root = hashlib.sha256(hashlib.sha256(signed_note).digest()).digest().hex()
+            evidence["anchors"] = {
+                "checkpoint": checkpoint,
+                "proofs": [
+                    {
+                        "kind": "ots",
+                        "ops": [["sha256"]],
+                        "header_merkle_root": merkle_root,
+                        "header_hash": header_hash,
+                        "header_time": header_time,
+                    }
+                ],
+                "anchor_profile": "signed-note-v2",
+            }
+            return evidence, anchor.PinnedHeader(
+                header_hash=header_hash, merkle_root=merkle_root, time=header_time
+            )
+
+        return bundle
+
+    def _policy(*headers: anchor.PinnedHeader | None) -> anchor.AnchorPolicy:
+        return anchor.AnchorPolicy(
+            pinned_headers={header.header_hash: header for header in headers if header is not None},
+            crqc_horizon=None,
+        )
+
+    def _claim(manifest: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+        return {"manifest": manifest, "evidence": evidence}
+
+    trust_v2 = _trust_material((ISSUER_ID, v2, "tls"))
+
+    # --- (a) rescued-anchored-before-cutoff -------------------------------
+    bundle = _log([_receipt_entry(envelope), _manifest_entry(v2)], "a")
+    receipt_a, header_a1 = bundle(0, 1, COMPROMISE_H1)
+    claim_a, header_a2 = bundle(1, 2, COMPROMISE_H2)
+    write_vector(
+        "41-compromise-cutoff/a-rescued-anchored-before-cutoff",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H1_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": True,
+            "errors": [],
+            "warnings": ["compromise_rescue_applied"],
+        },
+        transparency=receipt_a,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_a1, header_a2),
+        compromise_view=[_claim(v2, claim_a)],
+    )
+
+    # --- (b) anchored-after-cutoff-fails ----------------------------------
+    bundle = _log([_manifest_entry(v2), _receipt_entry(envelope)], "b")
+    claim_b, header_b1 = bundle(0, 1, COMPROMISE_H1)
+    receipt_b, header_b2 = bundle(1, 2, COMPROMISE_H2)
+    write_vector(
+        "41-compromise-cutoff/b-anchored-after-cutoff-fails",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H2_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_receipt_after_cutoff"],
+        },
+        transparency=receipt_b,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_b1, header_b2),
+        compromise_view=[_claim(v2, claim_b)],
+    )
+
+    # --- (c) logged-only-fails --------------------------------------------
+    bundle = _log([_manifest_entry(v2), _receipt_entry(envelope)], "c")
+    claim_c, header_c1 = bundle(0, 1, COMPROMISE_H1)
+    receipt_c, _ = bundle(1, 2)
+    write_vector(
+        "41-compromise-cutoff/c-logged-only-fails",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": "logged",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+        },
+        transparency=receipt_c,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_c1),
+        compromise_view=[_claim(v2, claim_c)],
+    )
+
+    # --- (d) cutoff-logged-only-survives ----------------------------------
+    bundle = _log([_receipt_entry(envelope), _manifest_entry(v2)], "d")
+    receipt_d, header_d1 = bundle(0, 1, COMPROMISE_H1)
+    claim_d, _ = bundle(1, 2)
+    write_vector(
+        "41-compromise-cutoff/d-cutoff-logged-only-survives",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H1_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": True,
+            "errors": [],
+            "warnings": ["compromise_cutoff_unanchored"],
+        },
+        transparency=receipt_d,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_d1),
+        compromise_view=[_claim(v2, claim_d)],
+    )
+
+    # --- (e) no-cutoff-evidence-survives ----------------------------------
+    bundle = _log([_receipt_entry(envelope)], "e")
+    receipt_e, header_e1 = bundle(0, 1, COMPROMISE_H1)
+    write_vector(
+        "41-compromise-cutoff/e-no-cutoff-evidence-survives",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H1_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": True,
+            "errors": [],
+            "warnings": ["compromise_cutoff_unanchored"],
+        },
+        transparency=receipt_e,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_e1),
+    )
+
+    # --- (f) stage1-fail-closed (the v0.1 subset leaf) --------------------
+    write_vector(
+        "41-compromise-cutoff/f-stage1-fail-closed",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": [],
+        },
+    )
+
+    # --- (g) boundary-equal-fails -----------------------------------------
+    # Both bundles read the tree at size 2, so both carry the SAME checkpoint
+    # and land on the SAME pinned header: T_r == T_c exactly.
+    bundle = _log([_receipt_entry(envelope), _manifest_entry(v2)], "g")
+    receipt_g, header_g = bundle(0, 2, COMPROMISE_H1)
+    claim_g, header_g_same = bundle(1, 2, COMPROMISE_H1)
+    assert header_g is not None and header_g_same is not None
+    assert header_g.header_hash == header_g_same.header_hash
+    write_vector(
+        "41-compromise-cutoff/g-boundary-equal-fails",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H1_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_receipt_after_cutoff"],
+        },
+        transparency=receipt_g,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_g),
+        compromise_view=[_claim(v2, claim_g)],
+    )
+
+    # --- (h) earliest-cutoff-wins -----------------------------------------
+    bundle = _log(
+        [
+            _manifest_entry(v2),
+            _receipt_entry(envelope),
+            _manifest_entry(v3_still_compromised),
+        ],
+        "h",
+    )
+    claim_h_early, header_h1 = bundle(0, 1, COMPROMISE_H1)
+    receipt_h, header_h2 = bundle(1, 2, COMPROMISE_H2)
+    claim_h_late, header_h3 = bundle(2, 3, COMPROMISE_H3)
+    write_vector(
+        "41-compromise-cutoff/h-earliest-cutoff-wins",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H2_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_receipt_after_cutoff"],
+        },
+        transparency=receipt_h,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_h1, header_h2, header_h3),
+        compromise_view=[
+            _claim(v2, claim_h_early),
+            _claim(v3_still_compromised, claim_h_late),
+        ],
+    )
+
+    # --- (i) unvouched-declaration-ignored --------------------------------
+    # A self-consistent manifest that lists K `compromised` with the right
+    # public key, signed by a `kid` the trusted manifest never listed. It is
+    # anchored to the same header as the receipt, so an accepted claim would
+    # kill by the equality rule of (g) — the receipt surviving is the whole
+    # evidence that the claim was refused, not merely outrun.
+    rogue_declaration = manifests.build_key_manifest(
+        ISSUER_ID,
+        2,
+        COMPROMISE_DECLARED_AT,
+        [k_compromised, _entry(ROGUE_KID, ROGUE_KP, "active")],
+        ROGUE_KP,
+        ROGUE_KID,
+    )
+    assert manifests.verify_key_manifest(rogue_declaration) is True
+    assert manifests.find_key(v2, ROGUE_KID) is None
+    bundle = _log([_receipt_entry(envelope), _manifest_entry(rogue_declaration)], "i")
+    receipt_i, header_i = bundle(0, 2, COMPROMISE_H1)
+    claim_i, _ = bundle(1, 2, COMPROMISE_H1)
+    write_vector(
+        "41-compromise-cutoff/i-unvouched-declaration-ignored",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H1_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": True,
+            "errors": [],
+            "warnings": ["compromise_cutoff_claim_ignored", "compromise_cutoff_unanchored"],
+        },
+        transparency=receipt_i,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_i),
+        compromise_view=[_claim(rogue_declaration, claim_i)],
+    )
+
+    # --- (j) hybrid-rescued -----------------------------------------------
+    def _hybrid_entry(
+        kid: str, kp: keys.SigningKeyPair, mldsa_pk: bytes, status: str
+    ) -> dict[str, Any]:
+        return manifests.key_entry(
+            kid, kp.pub, KEY_VALID_FROM, None, status, pub_ml_dsa_65=mldsa_pk
+        )
+
+    def _hybrid_k2_manifest(
+        version: int, issued_at: str, entries: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Hybrid manifest signed by K2 — `_hybrid_manifest` above is
+        single-key and hard-wired to K's oracle, and this group needs a second
+        listed key to do the signing."""
+        body: dict[str, Any] = {
+            "issuer": ISSUER_ID,
+            "manifest_version": version,
+            "issued_at": issued_at,
+            "keys": entries,
+        }
+        signable = manifests._signable(body)
+        body["manifest_signature"] = {
+            "kid": ROTATED_KID,
+            "sig": keys.b64u(keys.sign(signable, ROTATED_KP)),
+            "sig_ml_dsa_65": keys.b64u(_compromise_oracle_sign(signable)),
+        }
+        assert manifests.verify_key_manifest(body) is True
+        return body
+
+    hybrid_k_compromised = _hybrid_entry(ISSUER_KID, ISSUER_KP, HYBRID_MLDSA_PK, "compromised")
+    hybrid_k2_active = _hybrid_entry(ROTATED_KID, ROTATED_KP, COMPROMISE_MLDSA_PK, "active")
+    hybrid_v2 = _hybrid_k2_manifest(
+        2, COMPROMISE_DECLARED_AT, [hybrid_k_compromised, hybrid_k2_active]
+    )
+    assert manifests.has_active_ed_only_sibling(hybrid_v2) is False  # no G6 warning rides along
+
+    hybrid_payload = issue.build_payload(**_base_payload_kwargs(attest_version="0.2"))
+    _assert_schema_valid(hybrid_payload)
+    hybrid_envelope = _hybrid_envelope(hybrid_payload, ISSUER_KP, ISSUER_KID)
+    bundle = _log([_receipt_entry(hybrid_envelope), _manifest_entry(hybrid_v2)], "j")
+    receipt_j, header_j1 = bundle(0, 1, COMPROMISE_H1)
+    claim_j, header_j2 = bundle(1, 2, COMPROMISE_H2)
+    write_vector(
+        "41-compromise-cutoff/j-hybrid-rescued",
+        payload=hybrid_payload,
+        envelope=hybrid_envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, hybrid_v2, "tls")),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H1_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": True,
+            "errors": [],
+            "warnings": ["compromise_rescue_applied"],
+        },
+        transparency=receipt_j,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_j1, header_j2),
+        compromise_view=[_claim(hybrid_v2, claim_j)],
+    )
+
+    # --- (k) manifest-claim-does-not-rescue -------------------------------
+    # One entry serves both channels here: the trusted manifest IS the
+    # declaration, so its key-manifest log entry is at once the receipt's
+    # (mis-aimed) transparency claim and the cutoff claim. The rotation chain
+    # is supplied because a `manifest_version: 2` key-manifest claim without
+    # one is downgraded for an unrelated reason (§10.2, leaf 28h).
+    bundle = _log([_manifest_entry(v2)], "k")
+    manifest_claim_k, header_k = bundle(0, 1, COMPROMISE_H2)
+    write_vector(
+        "41-compromise-cutoff/k-manifest-claim-does-not-rescue",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, v2, "tls"), chains={ISSUER_ID: [v1, v2]}),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H2_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "verified_as_of:1",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+        },
+        transparency=manifest_claim_k,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_k),
+        compromise_view=[_claim(v2, manifest_claim_k)],
+    )
+
+    # --- (l) uncompromise-chain-floor -------------------------------------
+    write_vector(
+        "41-compromise-cutoff/l-uncompromise-chain-floor",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, v3_reactivated, "tls"),
+            chains={ISSUER_ID: [v1, v2, v3_reactivated]},
+        ),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "unverified_rotation",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": [],
+        },
+    )
+
+    # --- (m) uncompromise-view-floor --------------------------------------
+    bundle = _log([_manifest_entry(v2)], "m")
+    claim_m, _ = bundle(0, 1)
+    write_vector(
+        "41-compromise-cutoff/m-uncompromise-view-floor",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, v3_reactivated, "tls")),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+        },
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
+        compromise_view=[_claim(v2, claim_m)],
+    )
+
+    # --- (n) uncompromise-floor-spares-anchored ---------------------------
+    bundle = _log([_receipt_entry(envelope), _manifest_entry(v2)], "n")
+    receipt_n, header_n = bundle(0, 1, COMPROMISE_H1)
+    claim_n, _ = bundle(1, 2)
+    write_vector(
+        "41-compromise-cutoff/n-uncompromise-floor-spares-anchored",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, v3_reactivated, "tls")),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H1_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": True,
+            "errors": [],
+            "warnings": ["compromise_cutoff_unanchored"],
+        },
+        transparency=receipt_n,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_n),
+        compromise_view=[_claim(v2, claim_n)],
+    )
+
+    # --- (o) status-regression-breaks-continuity --------------------------
+    write_vector(
+        "41-compromise-cutoff/o-status-regression-breaks-continuity",
+        payload=payload,
+        envelope=envelope_k2,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, v3_reactivated, "tls"),
+            chains={ISSUER_ID: [v1, v2, v3_reactivated]},
+        ),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "unverified_rotation",
+            "ok": True,
+            "errors": [],
+            "warnings": [],
+        },
+    )
+
+    # --- (p) declaring-signer-compromised-still-floors --------------------
+    bundle = _log([_manifest_entry(v2)], "p")
+    claim_p, _ = bundle(0, 1)
+    write_vector(
+        "41-compromise-cutoff/p-declaring-signer-compromised-still-floors",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, v4, "tls")),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+        },
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
+        compromise_view=[_claim(v2, claim_p)],
+    )
+
+    # --- (q) retired-reactivation-untouched (negative control) ------------
+    write_vector(
+        "41-compromise-cutoff/q-retired-reactivation-untouched",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, w2, "tls"), chains={ISSUER_ID: [w1, w2]}),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": [],
+        },
+    )
+
+    # --- (r) compromised-signer-establishes-no-cutoff ---------------------
+    bundle = _log([_manifest_entry(v2), _receipt_entry(envelope)], "r")
+    claim_r, header_r1 = bundle(0, 1, COMPROMISE_H1)
+    receipt_r, header_r2 = bundle(1, 2, COMPROMISE_H2)
+    write_vector(
+        "41-compromise-cutoff/r-compromised-signer-establishes-no-cutoff",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, v4, "tls")),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": f"anchored_before:{COMPROMISE_H2_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": True,
+            "errors": [],
+            "warnings": ["compromise_cutoff_unanchored"],
+        },
+        transparency=receipt_r,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_r1, header_r2),
+        compromise_view=[_claim(v2, claim_r)],
+    )
+
+    # --- (s) chain-dates-the-signer-cutoff-holds --------------------------
+    write_vector(
+        "41-compromise-cutoff/s-chain-dates-the-signer-cutoff-holds",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, v4, "tls"),
+            chains={ISSUER_ID: [v1, v2, v3_reactivated, v4]},
+        ),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "unverified_rotation",
+            "transparency": f"anchored_before:{COMPROMISE_H2_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_receipt_after_cutoff"],
+        },
+        transparency=receipt_r,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_r1, header_r2),
+        compromise_view=[_claim(v2, claim_r)],
+    )
+
+    # --- (t) keyset-omission-breaks-continuity ----------------------------
+    write_vector(
+        "41-compromise-cutoff/t-keyset-omission-breaks-continuity",
+        payload=payload,
+        envelope=envelope_k2,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, v3_omit, "tls"),
+            chains={ISSUER_ID: [v1, v2, v3_omit]},
+        ),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "unverified_rotation",
+            "ok": True,
+            "errors": [],
+            "warnings": [],
+        },
+    )
+
+
 def main() -> None:
     _clear_leaf_dirs(VECTORS_DIR)
     VECTORS_DIR.mkdir(parents=True, exist_ok=True)
@@ -6533,6 +7411,7 @@ def main() -> None:
     gen_38_redemption()
     gen_39_witness_corroboration()
     gen_40_witness_quorum()
+    gen_41_compromise_cutoff()
     leaf_count = sum(1 for _ in VECTORS_DIR.rglob("expected.json"))
     print(f"generated {leaf_count} vector cases under {VECTORS_DIR}")
 

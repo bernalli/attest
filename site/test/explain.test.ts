@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { explain, explainVerdict, attributeWarning, COMPONENTS, GROUPS } from '../src/explain.js'
 import type { Component } from '../src/explain.js'
+import type { VerificationResult } from 'attest-verifier'
 
 const KNOWN: Record<Component, string[]> = {
   signature: ['valid', 'invalid'],
@@ -23,6 +24,15 @@ const KNOWN: Record<Component, string[]> = {
   corroboration: ['none', 'logged', 'witnessed'],
   manifest_freshness: ['not_checked', 'verified_as_of:7'],
 }
+
+const result = (over: Partial<VerificationResult> = {}): VerificationResult => ({
+  signature: 'valid', schema: 'valid', revocation: 'unknown',
+  binding: 'not_checked', trust: 'verified',
+  transparency: 'not_checked', corroboration: 'none', manifest_freshness: 'not_checked',
+  grant: 'not_checked', grant_trust: 'not_checked',
+  warnings: [], errors: [],
+  ...over,
+})
 
 describe('the ten components', () => {
   it('are exactly the components of the three question groups, in order', () => {
@@ -109,6 +119,107 @@ describe('the three normative constraints on the copy', () => {
     expect(text).toMatch(/best available value/)
     expect(text).toMatch(/not a contradiction/)
   })
+
+  it('does not repeat the old absolute transparency-rescue claim after spec §19', () => {
+    const note = GROUPS.find((group) => group.question === 'Has anyone else seen it?')!.note
+    expect(note).toMatch(/except/)
+    expect(note).toMatch(/§19/)
+    expect(note).not.toMatch(/nothing in this group can rescue an invalid receipt/i)
+  })
+})
+
+describe('compromise-cutoff copy', () => {
+  it('distinguishes an unrescued compromised key from generic signature failure', () => {
+    const text = explain('signature', 'invalid', result({
+      signature: 'invalid',
+      errors: ['key store.example.com/keys/2025-01#ed25519-1 is compromised'],
+    })).text
+    expect(text).toMatch(/declared compromised/)
+    expect(text).toMatch(/no anchored proof/)
+    expect(text).toMatch(/may be genuine/)
+  })
+
+  it('explains the after-cutoff invalid-signature zone', () => {
+    const text = explain('signature', 'invalid', result({
+      signature: 'invalid',
+      warnings: ['compromise_rescue_receipt_after_cutoff'],
+      errors: ['key store.example.com/keys/2025-01#ed25519-1 is compromised'],
+    })).text
+    expect(text).toMatch(/not anchored strictly before/i)
+    expect(text).toMatch(/compromise/)
+    expect(text).toMatch(/Equality is not proof of precedence/)
+  })
+
+  it('explains an anchored-before rescue as a timeline proof', () => {
+    const text = explain('signature', 'valid', result({
+      warnings: ['compromise_rescue_applied'],
+    })).text
+    expect(text).toMatch(/exact signature/)
+    expect(text).toMatch(/strictly before/)
+    expect(text).toMatch(/cannot take back/)
+    expect(text).toMatch(/v0\.2/)
+  })
+
+  it('explains the unanchored-cutoff rescue separately', () => {
+    const text = explain('signature', 'valid', result({
+      warnings: ['compromise_cutoff_unanchored'],
+    })).text
+    expect(text).toMatch(/no anchored compromise cutoff was established/)
+    expect(text).toMatch(/could not establish one/)
+    expect(text).toMatch(/cannot invalidate/)
+    // 41r: there the declaration IS anchored; the cutoff dies on §19.3 item 3b.
+    expect(text).not.toMatch(/declaration itself carries no anchored time/)
+  })
+
+  it('explains the monotone floor and its trust cause', () => {
+    const r = result({
+      signature: 'invalid',
+      trust: 'unverified_rotation',
+      errors: ['key store.example.com/keys/2025-01#ed25519-1 is compromised'],
+    })
+    const signature = explain('signature', 'invalid', r).text
+    const trust = explain('trust', 'unverified_rotation', r).text
+    expect(signature).toMatch(/resolves to compromised/)
+    expect(signature).toMatch(/not taken back by a later key list/)
+    expect(signature).toMatch(/v0\.1/)
+    // §19.6 item 5: never claim the marking is globally irreversible.
+    expect(signature).toMatch(/not about everyone/)
+    expect(trust).toMatch(/rewriting the history/)
+    expect(trust).toMatch(/own keys/)
+  })
+
+  // The SAME five result fields are produced with no uncompromise attempt at
+  // all: a trusted manifest that lists the key `compromised` plus any
+  // manifest-chain discontinuity (verify.ts resolves `trust` before step 3 and
+  // never resets it, and site/src/bundle.ts builds `chains` from every bundle).
+  // Copy that asserts the uncompromise story would be a lie on that input.
+  it('does not invent an uncompromise story out of an ordinary chain gap', () => {
+    const r = result({
+      signature: 'invalid',
+      trust: 'unverified_rotation',
+      errors: ['key store.example.com/keys/2025-01#ed25519-1 is compromised'],
+    })
+    expect(explain('signature', 'invalid', r).text)
+      .not.toMatch(/current key list says this key is fine/)
+    expect(explain('trust', 'unverified_rotation', r).text)
+      .not.toMatch(/The issuer rewrote the history/)
+    expect(explain('trust', 'unverified_rotation', r).text)
+      .toMatch(/Other gaps in the history produce this same value/)
+  })
+
+  // The error literal is a cross-language wire surface like the warning tokens:
+  // read it out of the verifier's own source, or a rename upstream silently
+  // collapses all five §19 stories into the generic `invalid` copy.
+  it('matches the library’s own compromised-key error literal, byte for byte', () => {
+    const source = readFileSync(
+      join(__dirname, '..', '..', 'verifiers', 'ts', 'src', 'messages.ts'), 'utf8')
+    const m = source.match(/export const keyCompromised = \([^)]*\) =>\s*`([^`]*)`/)
+    expect(m, 'keyCompromised no longer has the shape this test scrapes').not.toBeNull()
+    const literal = m![1]!.replace('${kid}', 'store.example.com/keys/2025-01#ed25519-1')
+    const text = explain('signature', 'invalid', result({ signature: 'invalid', errors: [literal] })).text
+    expect(text).toMatch(/declared compromised/)
+    expect(text).not.toContain('tampered with, corrupted, malformed')
+  })
 })
 
 // Every wire token the verifier can emit either lands on a row or is on this
@@ -170,6 +281,9 @@ describe('attributeWarning', () => {
     expect(attributeWarning('witness_independence_not_established')).toBe('corroboration')
     expect(attributeWarning('revocation_unlogged_deadline')).toBe('revocation')
     expect(attributeWarning('transfer_double_assignment_conflict')).toBe('revocation')
+    expect(attributeWarning('compromise_rescue_applied')).toBe('signature')
+    expect(attributeWarning('compromise_rescue_receipt_after_cutoff')).toBe('signature')
+    expect(attributeWarning('compromise_cutoff_unanchored')).toBe('signature')
     expect(attributeWarning('grant_scope_uncovered')).toBe('grant')
     // The one grant literal that is about the SIGNER, per §18.5's own table.
     expect(attributeWarning('grant_signer_not_publisher')).toBe('grant_trust')
