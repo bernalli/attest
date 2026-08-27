@@ -88,6 +88,7 @@ describe('attest conformance vectors', () => {
       anchorPolicy: V.anchorPolicy(dir),
       revocationEvidence: V.revocationEvidence(dir),
       transferView: V.transferView(dir),
+      compromiseView: V.compromiseView(dir),
       witnessPolicy: V.witnessPolicy(dir),
       grantView: V.grantView(dir),
     })

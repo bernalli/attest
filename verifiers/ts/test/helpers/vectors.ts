@@ -110,6 +110,11 @@ export function transferView(dir: string): JsonValue[] | null {
   const p = join(dir, 'transfer-view.json')
   return existsSync(p) ? (loadJsonValueStrict(p) as JsonValue[]) : null
 }
+// group 41 (anchored-cutoff compromise corpus, v0.2 §19) only.
+export function compromiseView(dir: string): JsonValue[] | null {
+  const p = join(dir, 'compromise-view.json')
+  return existsSync(p) ? (loadJsonValueStrict(p) as JsonValue[]) : null
+}
 // group 39 (witness-corroboration conformance corpus, v0.2 §11.4, P1.1b)
 // only: the TRUSTED `attest-witness-policy-v1` DOCUMENT, fed to verify() as
 // `witnessPolicy`. Same rail as logKeys/anchorPolicy — verifier

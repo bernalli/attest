@@ -82,8 +82,10 @@ gate the demo runs against is a non-normative reference, not a production gate;
 it names the three things it does not do in [`demo/README.md`](demo/README.md).
 
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
-only) are independent Python and TypeScript implementations that agree on all 178
-conformance vector leaves. **Try it in your browser:**
+only) are independent Python and TypeScript implementations. Their published
+self-certification claims are recorded in [`docs/conformance.md`](docs/conformance.md);
+the corpus now contains 178 leaves, and a release may claim the §19-expanded corpus
+only once both implementations reproduce all 178. **Try it in your browser:**
 <https://attest-receipts.org/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Be clear about the status: no
 store issues attest receipts in production yet, and there are no external reviews.
@@ -159,9 +161,9 @@ amount of protocol fixes that.
 
 ## Status
 
-Spec v0.1 is complete and v0.2 is specified and implemented on `main`, with two
-independent implementations — a Python reference implementation and a TypeScript
-verifier — that agree on all 178 conformance vector leaves across 41 groups: 53
+Spec v0.1 is complete and v0.2 is specified, with two independent
+implementations — a Python reference implementation and a TypeScript verifier —
+measured by the shared conformance corpus, now 178 leaves across 41 groups: 53
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
@@ -217,8 +219,8 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   answered once instead of re-argued per issue.
 - **[Conformance program](docs/conformance.md).** One documented command, run with
   a third party's own adapter against the vector corpus, produces a pass/fail
-  report and a self-certification claim; both in-repo verifiers pass 178/178 through
-  that exact path.
+  report and a self-certification claim; the recorded pass counts live in that
+  document and must be updated only from a fresh runner report.
 
 ## Quickstart
 

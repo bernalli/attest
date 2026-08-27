@@ -16,7 +16,7 @@ The loader functions below duplicate (never import) the ~60 lines of vector-
 loading logic in `tests/test_vectors.py`, which remains the source of truth
 for their semantics (envelope-bytes XOR rule, `TrustStore` construction,
 `disclosure`/`revocation_view`/`transparency`/`log_keys`/`anchor_policy`/
-`revocation_evidence`/`transfer_view`/`witness_policy` loaders, the group-36
+`revocation_evidence`/`transfer_view`/`compromise_view`/`witness_policy` loaders, the group-36
 `chain.json` routing to `transfer.audit_chain`, and the group-40
 `witness-quorum.json` routing to
 `witness.evaluate_activation_witness_quorum`). Deliberately NOT imported from `tests/`:
@@ -127,6 +127,13 @@ def _revocation_evidence(leaf: Path) -> dict[str, Any] | None:
 
 def _transfer_view(leaf: Path) -> list[dict[str, Any]] | None:
     path = leaf / "transfer-view.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
+def _compromise_view(leaf: Path) -> list[dict[str, Any]] | None:
+    path = leaf / "compromise-view.json"
     if not path.exists():
         return None
     return _load_json(path)  # type: ignore[no-any-return]
@@ -278,6 +285,10 @@ def _run_leaf(leaf: Path) -> dict[str, Any]:
         )
         return _chain_result_to_json(chain_result)
 
+    compromise_view = _compromise_view(leaf)
+    compromise_kwargs: dict[str, Any] = (
+        {} if compromise_view is None else {"compromise_view": compromise_view}
+    )
     verify_result = verify.verify(
         _envelope_bytes(leaf),
         _trust_store(leaf),
@@ -290,6 +301,7 @@ def _run_leaf(leaf: Path) -> dict[str, Any]:
         transfer_view=_transfer_view(leaf),
         witness_policy=_witness_policy(leaf),
         grant_view=_grant_view(leaf),
+        **compromise_kwargs,
     )
     return _verify_result_to_json(verify_result)
 

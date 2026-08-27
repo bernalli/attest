@@ -123,9 +123,10 @@ either as a worked example of the contract above.
   against `docs/spec/attest-v0.2.md`.
 - **v0.1** — the 53-leaf subset: every leaf whose top-level group directory's
   leading integer is ≤ 25, plus groups `29-limits` and
-  `31-manifest-currency`, plus two pinned leaf ids,
-  `35-transfer/i-v01-transferable-null-pubkey-ok` (`35i`) and
-  `37-preservation-pledge/s-v01-negative-control` (`37s`). Both are included
+  `31-manifest-currency`, plus three pinned leaf ids,
+  `35-transfer/i-v01-transferable-null-pubkey-ok` (`35i`),
+  `37-preservation-pledge/s-v01-negative-control` (`37s`), and
+  `41-compromise-cutoff/f-stage1-fail-closed` (`41f`). They are included
   because each is itself an `attest_version: "0.1"` receipt — a v0.1-shaped
   negative control for a v0.2-only schema conditional, living inside an
   otherwise-v0.2-only group — see `docs/spec/vectors/README.md` for the full
