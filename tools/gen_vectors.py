@@ -2102,7 +2102,27 @@ def gen_21_canon_strict() -> None:
         deep_payload = issue.build_payload(**_base_payload_kwargs())
         # envelope text depth at "x" = {envelope {payload [x nesting...]}} = 2 + levels
         deep_payload["x"] = _nested_list(depth_target - 2)
-        deep_envelope = issue.issue(deep_payload, ISSUER_KP, ISSUER_KID)
+        if depth_target <= 256:
+            deep_envelope = issue.issue(deep_payload, ISSUER_KP, ISSUER_KID)
+        else:
+            # Since the nesting-depth ceiling reached the serializer and the
+            # issuance path (v0.1 §11.3, rev 9), `issue.issue` refuses to emit
+            # this envelope -- which is the point of the amendment. The hostile
+            # wire is therefore assembled by hand, exactly as an attacker would,
+            # on the same pattern leaf (e) already uses for the lone surrogate.
+            # The payload itself sits ON the ceiling, so it still signs; only the
+            # envelope wrapped around it is one level past.
+            deep_sig = keys.sign(canon.canonical_bytes(deep_payload), ISSUER_KP)
+            deep_envelope = {
+                "payload": deep_payload,
+                "signatures": [
+                    {
+                        "kid": ISSUER_KID,
+                        "alg": issue.ALG_ED25519,
+                        "sig": keys.b64u(deep_sig),
+                    }
+                ],
+            }
         deep_raw = json.dumps(deep_envelope).encode("utf-8")
         assert _text_max_depth(deep_raw.decode("utf-8")) == depth_target
         if depth_target <= 256:
@@ -6551,7 +6571,7 @@ def gen_41_compromise_cutoff() -> None:
     the issuer can flip in both directions, and stops reaching backwards past
     the moment it was declared.
 
-    Two rules, one fixture. The FLOOR (v0.1 §7.3, leaves l-t) makes a
+    Two rules, one fixture. The FLOOR (v0.1 §7.3, leaves l-u) makes a
     `compromised` marking absorbing: a `kid` is `compromised` for a verifier
     that holds the marking in ANY evidence it already has for the issuer — its
     trusted manifest, a member of the §7.4 version chain, or an authenticated
@@ -6639,6 +6659,10 @@ def gen_41_compromise_cutoff() -> None:
       preservation (v0.1 §7.3) makes that a discontinuity too; the twin of
       (o), with the same receipt signed by K2, isolating the omission from any
       kill.
+    - (u) same shape as (m), but this verifier's trusted pin is v1, OLDER than
+      the v2 declaration. The floor still kills the unanchored receipt, but no
+      retraction is reported: a stale pin is a verifier that is behind, not an
+      issuer rewriting its history.
     """
     payload = issue.build_payload(**_base_payload_kwargs())  # revocability: "none"
     _assert_schema_valid(payload)
@@ -7165,7 +7189,7 @@ def gen_41_compromise_cutoff() -> None:
             "trust": "unverified_rotation",
             "ok": False,
             "errors_contains": ["compromised"],
-            "warnings": [],
+            "warnings": ["compromise_marking_retracted"],
         },
     )
 
@@ -7186,7 +7210,10 @@ def gen_41_compromise_cutoff() -> None:
             "trust": "verified",
             "ok": False,
             "errors_contains": ["compromised"],
-            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+            "warnings": [
+                "compromise_marking_retracted",
+                "compromise_rescue_requires_anchored_receipt",
+            ],
         },
         log_keys=[_log_key()],
         anchor_policy=_empty_anchor_policy(),
@@ -7214,7 +7241,7 @@ def gen_41_compromise_cutoff() -> None:
             "manifest_freshness": "not_checked",
             "ok": True,
             "errors": [],
-            "warnings": ["compromise_cutoff_unanchored"],
+            "warnings": ["compromise_marking_retracted", "compromise_cutoff_unanchored"],
         },
         transparency=receipt_n,
         log_keys=[_log_key()],
@@ -7261,7 +7288,10 @@ def gen_41_compromise_cutoff() -> None:
             "trust": "verified",
             "ok": False,
             "errors_contains": ["compromised"],
-            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+            "warnings": [
+                "compromise_marking_retracted",
+                "compromise_rescue_requires_anchored_receipt",
+            ],
         },
         log_keys=[_log_key()],
         anchor_policy=_empty_anchor_policy(),
@@ -7308,7 +7338,7 @@ def gen_41_compromise_cutoff() -> None:
             "manifest_freshness": "not_checked",
             "ok": True,
             "errors": [],
-            "warnings": ["compromise_cutoff_unanchored"],
+            "warnings": ["compromise_marking_retracted", "compromise_cutoff_unanchored"],
         },
         transparency=receipt_r,
         log_keys=[_log_key()],
@@ -7337,12 +7367,40 @@ def gen_41_compromise_cutoff() -> None:
             "manifest_freshness": "not_checked",
             "ok": False,
             "errors_contains": ["compromised"],
-            "warnings": ["compromise_rescue_receipt_after_cutoff"],
+            "warnings": ["compromise_marking_retracted", "compromise_rescue_receipt_after_cutoff"],
         },
         transparency=receipt_r,
         log_keys=[_log_key()],
         anchor_policy=_policy(header_r1, header_r2),
         compromise_view=[_claim(v2, claim_r)],
+    )
+
+    # --- (u) stale-pin-not-a-retraction -----------------------------------
+    # Same shape as (m), but this verifier's trusted pin is v1 — OLDER than the
+    # declaration. The floor still kills the unanchored receipt, and no
+    # retraction is reported: a stale pin is not an issuer rewriting its
+    # history, it is a verifier that is behind.
+    bundle = _log([_manifest_entry(v2)], "u")
+    claim_u, _ = bundle(0, 1)
+    write_vector(
+        "41-compromise-cutoff/u-stale-pin-not-a-retraction",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, v1, "tls")),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+        },
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
+        compromise_view=[_claim(v2, claim_u)],
     )
 
     # --- (t) keyset-omission-breaks-continuity ----------------------------

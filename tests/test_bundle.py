@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from attest import bundle, buyer_surface, issue, keys, manifests, verify
+from attest import bundle, buyer_surface, canon, issue, keys, manifests, verify
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -647,3 +647,38 @@ def test_import_happy_path_unaffected_by_default_caps(tmp_path: Path) -> None:
     )
     imported = bundle.import_bundle(attest_path, private_path)
     assert len(imported.receipts) == 1
+
+
+def _deep_chain(levels: int) -> Any:
+    nested: Any = "leaf"
+    for _ in range(levels):
+        nested = {"n": nested}
+    return nested
+
+
+# `disclose` is the SECOND reference emitter of a receipt envelope: it assembles
+# a new object one level around the payload, plus `delivery`. A ceiling that
+# lived only in `issue.issue` would leave this door open.
+
+
+def test_disclose_refuses_a_disclosure_past_the_nesting_ceiling(tmp_path: Path) -> None:
+    receipt_id = "01J1V5B4M9Z8QWERTY1234568G"
+    envelope = _envelope(receipt_id=receipt_id, salt=SALT_A)
+    # Hand-deepened: issuance can no longer emit this, but a hostile or legacy
+    # envelope can still reach `disclose`.
+    envelope["payload"]["_depth_probe"] = _deep_chain(canon.MAX_DEPTH - 1)
+
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        bundle.disclose([envelope], [_key_manifest()], {receipt_id: SALT_A}, receipt_id, tmp_path)
+
+
+def test_disclose_emits_only_what_the_strict_parser_accepts(tmp_path: Path) -> None:
+    receipt_id = "01J1V5B4M9Z8QWERTY1234568H"
+    envelope = _envelope(receipt_id=receipt_id, salt=SALT_A)
+    envelope["payload"]["_depth_probe"] = _deep_chain(canon.MAX_DEPTH - 4)
+
+    out_path = bundle.disclose(
+        [envelope], [_key_manifest()], {receipt_id: SALT_A}, receipt_id, tmp_path
+    )
+
+    assert canon.loads_strict(out_path.read_bytes())

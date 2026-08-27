@@ -6,6 +6,15 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`canonicalBytes` enforces the 256-level nesting-depth ceiling**, in parity
+  with the Python implementation and with the profile's own parser: one level
+  past it throws `CanonError` with the same literal the parser uses, so a
+  conforming issuer cannot produce bytes no conforming parser accepts. Deep or
+  cyclic input from a caller now fails as a `CanonError` at the ceiling instead
+  of overflowing the native stack with a `RangeError`.
+
 ## [0.8.1] — 2026-08-26
 
 Version bump only, to keep the two implementations in lockstep. No change to

@@ -1277,19 +1277,36 @@ def test_envelope_nesting_depth_over_ceiling_rejected() -> None:
     reported the same way any other malformed envelope is, `schema:
     "not_checked"` (never the `"invalid"` conformance-surface tag the
     byte-size/manifest-array ceilings use, since those run AFTER a
-    successful parse)."""
-    nested: Any = "leaf"
-    for _ in range(validate.MAX_JSON_DEPTH + 1):
-        nested = {"n": nested}
-    payload = make_payload()
-    payload["_depth_probe"] = nested  # unrecognized top-level field, schema-legal (§11.2)
-    envelope = issue.issue(payload, KP, KID)
+    successful parse).
 
-    result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+    The hostile wire is assembled TEXTUALLY rather than through `issue.issue`:
+    since the ceiling reached the serializer and the issuance path (v0.1 §11.3,
+    rev 9) a conforming issuer can no longer produce these bytes, and an
+    attacker never went through one. The depth is exactly
+    `MAX_JSON_DEPTH + 1` — the envelope object itself is level 1 and the
+    payload chain adds `MAX_JSON_DEPTH` more."""
+    depth = validate.MAX_JSON_DEPTH
+    raw = b'{"payload":' + b'{"n":' * depth + b"1" + b"}" * depth + b',"signatures":[]}'
+
+    result = verify.verify(raw, _trust_store(_key_manifest()))
 
     assert result.schema == "not_checked"
     assert any("maximum nesting depth exceeded" in e for e in result.errors)
     assert result.ok is False
+
+
+def test_issued_envelopes_are_always_parsable() -> None:
+    """The property C-5 denied, at the issuance entry point: what a conforming
+    issuer emits, the profile's own parser accepts. Before rev 9 a payload one
+    level under the ceiling produced an envelope one level over it."""
+    for levels in (canon.MAX_DEPTH - 4, canon.MAX_DEPTH - 3, canon.MAX_DEPTH - 2):
+        nested: Any = "leaf"
+        for _ in range(levels):
+            nested = {"n": nested}
+        payload = make_payload()
+        payload["_depth_probe"] = nested
+        envelope = issue.issue(payload, KP, KID)
+        assert canon.loads_strict(_to_bytes(envelope))
 
 
 def test_envelope_shallow_nesting_not_rejected_for_depth() -> None:

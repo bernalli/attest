@@ -80,6 +80,7 @@ export const ERR = {
   FLOATS_NOT_ALLOWED: 'floats are not allowed in the attest-JCS profile',
   LONE_SURROGATE: 'lone surrogate not allowed in the attest-JCS profile',
   TYPE_NOT_JSON: 'type not representable in JSON',
+  MAX_NESTING_DEPTH: 'maximum nesting depth exceeded',
   // v0.2 hybrid envelope (Ed25519 + ML-DSA-65) — byte-identical to verify.py.
   hybridSigCount: 'hybrid envelope requires exactly two signatures',
   hybridAlgs: 'hybrid envelope requires algs Ed25519 and ML-DSA-65 in order',
@@ -261,6 +262,7 @@ export const COMPROMISE_WARN = {
   RESCUE_REQUIRES_ANCHORED_RECEIPT: 'compromise_rescue_requires_anchored_receipt',
   RESCUE_RECEIPT_AFTER_CUTOFF: 'compromise_rescue_receipt_after_cutoff',
   CUTOFF_CLAIM_IGNORED: 'compromise_cutoff_claim_ignored',
+  MARKING_RETRACTED: 'compromise_marking_retracted',
 } as const
 
 // v0.2 Stage 3 (§17.2-§17.4, verbatim; TS parity: Python's verify.py) —

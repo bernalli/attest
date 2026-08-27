@@ -104,6 +104,14 @@ def issue(
     if delivery:
         envelope["delivery"] = delivery
 
+    # The payload was canonicalized above, but the ENVELOPE wraps it in one more
+    # level. A deep `delivery.issuer_manifest` can also push the assembled object
+    # over; `delivery.salt` is scalar but still covered by the assembled-envelope
+    # check. A conforming issuer MUST NOT emit a receipt no conforming
+    # verifier can parse (v0.1 §11.3), so the assembled object is checked here,
+    # after assembly and before it leaves this function.
+    canon.check_object_depth(envelope)
+
     return envelope
 
 

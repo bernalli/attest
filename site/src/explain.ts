@@ -300,12 +300,22 @@ const COMPROMISE_CUTOFF_UNANCHORED = 'compromise_cutoff_unanchored'
 const COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT = 'compromise_rescue_requires_anchored_receipt'
 const COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF = 'compromise_rescue_receipt_after_cutoff'
 const COMPROMISE_CUTOFF_CLAIM_IGNORED = 'compromise_cutoff_claim_ignored'
+const COMPROMISE_MARKING_RETRACTED = 'compromise_marking_retracted'
 
 const hasWarning = (result: VerificationResult | undefined, warning: string): boolean =>
   result?.warnings.includes(warning) ?? false
 
 const hasCompromisedKeyError = (result: VerificationResult | undefined): boolean =>
   result?.errors.some((error) => /^key .+ is compromised$/.test(error)) ?? false
+
+const RETRACTION_CONTEXT =
+  'The issuer\u2019s own signed history also establishes that an earlier signed version of its key list declared this key compromised, while the higher-version list this verifier now trusts does not carry that marking. A compromise this verifier has already seen is not taken back by a later key list (spec v0.1 \u00a77.3).'
+
+// The retraction is reported on leaves whose trust is "verified" too (41m, 41n,
+// 41p, 41r): gating the story on `compromiseFloorVisible` alone would tell it
+// only on the two leaves that also lost rotation continuity.
+const withRetractionContext = (text: string, result: VerificationResult | undefined): string =>
+  hasWarning(result, COMPROMISE_MARKING_RETRACTED) ? `${text} ${RETRACTION_CONTEXT}` : text
 
 const compromiseFloorVisible = (result: VerificationResult | undefined): boolean =>
   result?.trust === 'unverified_rotation' && hasCompromisedKeyError(result)
@@ -316,14 +326,14 @@ function explainSignature(value: string, result: VerificationResult | undefined)
       return {
         label: 'Signature',
         tone: 'good',
-        text: 'This receipt’s exact signature was anchored in a public log strictly before the issuer’s compromise declaration was. The store cannot take back what the timeline already proves (spec v0.2 §19).',
+        text: withRetractionContext('This receipt’s exact signature was anchored in a public log strictly before the issuer’s compromise declaration was. The store cannot take back what the timeline already proves (spec v0.2 §19).', result),
       }
     }
     if (hasWarning(result, COMPROMISE_CUTOFF_UNANCHORED)) {
       return {
         label: 'Signature',
         tone: 'good',
-        text: 'The signature checks out and this receipt has anchored standing, while no anchored compromise cutoff was established from the evidence this verifier holds — either none was offered, or what was offered could not establish one (spec v0.2 §19.3). A compromise declaration this verifier cannot date cannot invalidate a receipt it can. This is the weaker branch of the rescue: it rests on the absence of a datable declaration, not on proof that this receipt came first (spec v0.2 §19.6 items 4 and 6).',
+        text: withRetractionContext('The signature checks out and this receipt has anchored standing, while no anchored compromise cutoff was established from the evidence this verifier holds — either none was offered, or what was offered could not establish one (spec v0.2 §19.3). A compromise declaration this verifier cannot date cannot invalidate a receipt it can. This is the weaker branch of the rescue: it rests on the absence of a datable declaration, not on proof that this receipt came first (spec v0.2 §19.6 items 4 and 6).', result),
       }
     }
     return null
@@ -333,7 +343,15 @@ function explainSignature(value: string, result: VerificationResult | undefined)
     return {
       label: 'Signature',
       tone: 'bad',
-      text: 'This key was declared compromised, and this receipt’s signature was not anchored strictly before that declaration was: it was anchored at the same moment or later. Equality is not proof of precedence — two things in the same block cannot be ordered — so the verifier fails closed (spec v0.2 §19.1).',
+      text: withRetractionContext('This key was declared compromised, and this receipt’s signature was not anchored strictly before that declaration was: it was anchored at the same moment or later. Equality is not proof of precedence — two things in the same block cannot be ordered — so the verifier fails closed (spec v0.2 §19.1).', result),
+    }
+  }
+  if (compromiseFloorVisible(result) && hasWarning(result, COMPROMISE_MARKING_RETRACTED)) {
+    // The verifier ESTABLISHED the retraction: say it as a fact, never deduce it.
+    return {
+      label: 'Signature',
+      tone: 'bad',
+      text: 'This key resolves to compromised for this verifier, and the issuer\u2019s own signed history contradicts its current key list: an earlier signed version of the list declared this key compromised, and the higher-version list this verifier now trusts does not carry that marking. A compromise this verifier has already seen is not taken back by a later key list. That is a statement about THIS verifier and not about everyone \u2014 a verifier that never saw the earlier evidence never sees the marking (spec v0.1 \u00a77.3, v0.2 \u00a719.6 item 5).',
     }
   }
   if (compromiseFloorVisible(result)) {
@@ -346,12 +364,19 @@ function explainSignature(value: string, result: VerificationResult | undefined)
   return {
     label: 'Signature',
     tone: 'bad',
-    text: 'This key was declared compromised by its issuer, and this verifier holds no anchored proof of THIS receipt’s own signature predating that declaration — an anchored time that belongs to some other claim, such as the issuer’s key manifest, does not stand in for it. The receipt may be genuine; nothing here can tell, so the verifier fails closed (spec v0.1 §7.3, v0.2 §19).',
+    text: withRetractionContext('This key was declared compromised by its issuer, and this verifier holds no anchored proof of THIS receipt’s own signature predating that declaration — an anchored time that belongs to some other claim, such as the issuer’s key manifest, does not stand in for it. The receipt may be genuine; nothing here can tell, so the verifier fails closed (spec v0.1 §7.3, v0.2 §19).', result),
   }
 }
 
 function explainTrust(value: string, result: VerificationResult | undefined): Explanation | null {
   if (value !== 'unverified_rotation' || !compromiseFloorVisible(result)) return null
+  if (hasWarning(result, COMPROMISE_MARKING_RETRACTED)) {
+    return {
+      label: 'Key trust',
+      tone: 'warn',
+      text: 'The issuer rewrote the history of its own keys: an earlier signed manifest marks this receipt\u2019s signing key compromised, and a later, higher-version list drops the marking. It changes nothing here: a compromise this verifier has seen stays (spec v0.1 \u00a77.3).',
+    }
+  }
   return {
     label: 'Key trust',
     tone: 'warn',
@@ -457,6 +482,7 @@ const EXACT: Record<string, Component> = {
   [COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT]: 'signature',
   [COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF]: 'signature',
   [COMPROMISE_CUTOFF_CLAIM_IGNORED]: 'signature',
+  [COMPROMISE_MARKING_RETRACTED]: 'signature',
   // §18.5's ten literals. Nine describe the grant; one describes its SIGNER,
   // and the spec pairs it with `grant_trust: "signer_mismatch"` explicitly.
   grant_narrowing_ignored: 'grant',

@@ -165,6 +165,9 @@ describe('the §19 copy each group-41 leaf produces through the site adapter', (
     // signature row tells the after-cutoff story, the trust row tells the floor.
     's-chain-dates-the-signer-cutoff-holds': /not anchored strictly before/,
     't-keyset-omission-breaks-continuity': /Ed25519 signature over the canonical payload/,
+    // 41u is 41m with an OLDER trusted pin: same signature story, but the
+    // verifier holds no evidence of a retraction, so the trust row stays hedged.
+    'u-stale-pin-not-a-retraction': /no anchored proof/,
   }
 
   const g41 = leaves.filter((d) => V.vectorId(d).startsWith('41-compromise-cutoff/'))
@@ -188,9 +191,23 @@ describe('the §19 copy each group-41 leaf produces through the site adapter', (
     const text = explain('signature', run.result.signature, run.result).text
     expect(text, leaf).toMatch(SIGNATURE_STORY[leaf]!)
     expect(text, leaf).not.toContain('does not have dedicated wording')
+    // v0.1 §7.3 rev 8: wherever the verifier ESTABLISHED the retraction, the
+    // signature row must say so. Four of the six leaves carrying the warning
+    // have trust "verified", so gating this story on the rotation value alone
+    // told it on the minority of cases — and nothing pinned that.
+    if (run.result.warnings.includes('compromise_marking_retracted')) {
+      expect(text, leaf).toMatch(/does not carry that marking/)
+    }
     if (run.result.trust === 'unverified_rotation') {
-      expect(explain('trust', 'unverified_rotation', run.result).text, leaf)
-        .toMatch(/Continuity of the issuer’s key manifest history could not be proven|manifest history has a gap/)
+      const trustText = explain('trust', 'unverified_rotation', run.result).text
+      // v0.1 §7.3 rev 8: with the retraction ESTABLISHED the copy says it as a
+      // fact; without the warning the hedged wording stays exactly as it was.
+      if (run.result.warnings.includes('compromise_marking_retracted')) {
+        expect(trustText, leaf).toMatch(/The issuer rewrote the history of its own keys/)
+      } else {
+        expect(trustText, leaf)
+          .toMatch(/Continuity of the issuer’s key manifest history could not be proven|manifest history has a gap/)
+      }
     }
   })
 })

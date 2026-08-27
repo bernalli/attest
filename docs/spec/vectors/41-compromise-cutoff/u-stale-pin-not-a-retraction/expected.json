@@ -9,7 +9,6 @@
   "signature": "invalid",
   "trust": "verified",
   "warnings": [
-    "compromise_marking_retracted",
     "compromise_rescue_requires_anchored_receipt"
   ]
 }

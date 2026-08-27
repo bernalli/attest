@@ -582,6 +582,8 @@ function authenticatedCompromiseClaims(
   if (compromiseClaims === null || compromiseClaims.length === 0) return []
 
   const heldManifests = heldIssuerManifests(trustedManifest, chain, issuerId)
+  const trustedForKid = entriesForKid(trustedManifest, kid)
+  const trustedEntriesForKid = trustedForKid.length > 0 ? trustedForKid : [trustedEntry]
   const authenticated: CompromiseClaim[] = []
   for (const claim of compromiseClaims) {
     if (!isPlainRecord(claim)) {
@@ -604,7 +606,12 @@ function authenticatedCompromiseClaims(
       continue
     }
     const declaresCompromise = entriesForKid(claimManifest, kid).some(
-      (entry) => entry['status'] === 'compromised' && compromiseKeyMaterialMatches(entry, trustedEntry),
+      // v0.1 §7.3 (rev 8): the claimed compromised entry may match ANY trusted
+      // entry for the kid, not only the one findKey happened to return first.
+      // With duplicates a first-match comparison lets the array's ORDER decide
+      // whether a genuine declaration authenticates. Python parity: verify.py.
+      (entry) => entry['status'] === 'compromised'
+        && trustedEntriesForKid.some((candidate) => compromiseKeyMaterialMatches(entry, candidate)),
     )
     if (!declaresCompromise) {
       appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
@@ -708,6 +715,41 @@ function resolveCompromiseCutoff(
     if (best === null || cutoff < best) best = cutoff
   }
   return best
+}
+
+/**
+ * v0.1 §7.3 (rev 8): did the issuer take its own marking back?
+ *
+ * True only when the trusted manifest carries an integer version, does NOT mark
+ * the kid compromised on ANY of its entries, and some held source that does mark
+ * it carries an integer version strictly lower. Provenance, never a verdict: the
+ * floor has already decided by the time this runs.
+ *
+ * Every entry for the kid is consulted in every manifest (via
+ * manifestMarksKidCompromised): reading the first matching entry would let the
+ * array's ORDER decide whether the issuer rewrote its history. Versions go
+ * through manifestVersionAsBigInt because loadsStrict yields bigint, so a
+ * `typeof === 'number'` test would silently never match.
+ */
+function markingProvenanceIsARetraction(
+  trustedManifest: JsonObject,
+  chain: JsonObject[] | undefined,
+  authenticatedClaims: CompromiseClaim[],
+  kid: string,
+): boolean {
+  const trustedVersion = manifestVersionAsBigInt(trustedManifest['manifest_version'])
+  if (trustedVersion === null) return false
+  if (manifestMarksKidCompromised(trustedManifest, kid)) return false
+  const sources: JsonObject[] = [
+    ...(chain ?? []),
+    ...authenticatedClaims.map((claim) => claim.manifest),
+  ]
+  for (const source of sources) {
+    if (!manifestMarksKidCompromised(source, kid)) continue
+    const sourceVersion = manifestVersionAsBigInt(source['manifest_version'])
+    if (sourceVersion !== null && sourceVersion < trustedVersion) return true
+  }
+  return false
 }
 
 function resolveKeyStatus(
@@ -1041,6 +1083,12 @@ export function verify(
     const status = resolveKeyStatus(entry, manifest, chain, authenticatedClaims, kid)
     let compromisedRescued = false
     if (status === 'compromised') {
+      // At the point of RESOLUTION and before the §19 disposition, so it reads
+      // identically in the kill branch and the rescue branch and its position
+      // in the array is deterministic.
+      if (markingProvenanceIsARetraction(manifest, chain, authenticatedClaims, kid)) {
+        appendWarningOnce(warnings, COMPROMISE_WARN.MARKING_RETRACTED)
+      }
       const disposition = compromisedKeyDisposition(kid, entry, manifest, chain, authenticatedClaims)
       if (disposition !== null) return disposition
       compromisedRescued = true
@@ -1101,6 +1149,12 @@ export function verify(
     const status = resolveKeyStatus(entry, manifest, chain, authenticatedClaims, kid)
     let compromisedRescued = false
     if (status === 'compromised') {
+      // At the point of RESOLUTION and before the §19 disposition, so it reads
+      // identically in the kill branch and the rescue branch and its position
+      // in the array is deterministic.
+      if (markingProvenanceIsARetraction(manifest, chain, authenticatedClaims, kid)) {
+        appendWarningOnce(warnings, COMPROMISE_WARN.MARKING_RETRACTED)
+      }
       const disposition = compromisedKeyDisposition(kid, entry, manifest, chain, authenticatedClaims)
       if (disposition !== null) return disposition
       compromisedRescued = true

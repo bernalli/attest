@@ -8,6 +8,21 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The 256-level nesting-depth ceiling now holds at both ends of the
+  canonicalization profile, not just at parse.** `canonical_bytes`/`dumps`
+  refused nothing on the way out, so a conforming issuer could sign a payload
+  that no conforming verifier would ever parse; the ceiling is a property of the
+  attest-JCS profile, and serialization now raises `CanonError` with the
+  parser's own literal one level past it. Cycles are refused deterministically
+  at the ceiling instead of at Python's recursion limit. `issue.issue` and
+  `bundle.disclose` additionally refuse a receipt envelope whose assembled JSON
+  nests beyond the ceiling — the envelope wraps the payload in one more level,
+  and a deep `delivery.issuer_manifest` can cross it through the delivery
+  branch. New
+  public `canon.check_object_depth`, which walks iteratively so hostile input
+  fails as a `CanonError` rather than a `RecursionError`. Verification behavior
+  is unchanged: such documents were already rejected unconditionally at parse.
+
 - **A compromised signing key no longer destroys every receipt it ever signed —
   only the ones that cannot prove they came first.** Until now a `compromised`
   key invalidated its whole output unconditionally (v0.1 §7.3), the only sound

@@ -21,6 +21,10 @@ describe('loadsStrict', () => {
   it('rejects invalid UTF-8 bytes', () => {
     expect(() => loadsStrict(Uint8Array.from([0x22, 0xff, 0x22]))).toThrow(/not valid UTF-8/)
   })
+  it('rejects truncated JSON', () => {
+    expect(() => loadsStrict(enc('{"a":[1,2'))).toThrow(CanonError)
+    expect(() => loadsStrict(enc('{"a":[1,2'))).toThrow(/invalid JSON/)
+  })
   it('preserves NFD (no NFC normalization)', () => {
     const v = loadsStrict(enc('{"t":"Cafe\\u0301"}')) as Record<string, string>
     expect(v['t']).toBe('Café') // still decomposed, length 5

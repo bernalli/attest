@@ -145,6 +145,7 @@ _WARN_COMPROMISE_CUTOFF_UNANCHORED = "compromise_cutoff_unanchored"
 _WARN_COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT = "compromise_rescue_requires_anchored_receipt"
 _WARN_COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF = "compromise_rescue_receipt_after_cutoff"
 _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED = "compromise_cutoff_claim_ignored"
+_WARN_COMPROMISE_MARKING_RETRACTED = "compromise_marking_retracted"
 _MAX_COMPROMISE_CLAIMS = 64
 
 # G6 mixed-keyset prohibition (v0.2 §2.3/§13 amendment) — the wire warning
@@ -786,9 +787,17 @@ def _authenticated_compromise_claims(
         if not isinstance(manifest_version, int) or isinstance(manifest_version, bool):
             _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
             continue
+        # v0.1 §7.3 (rev 8): the claimed compromised entry may match ANY trusted
+        # entry for the kid, not only the one `find_key` happened to return
+        # first. With duplicate entries a first-match comparison lets the
+        # array's ORDER decide whether a genuine declaration authenticates.
+        trusted_entries_for_kid = _entries_for_kid(trusted_manifest, kid) or (trusted_entry,)
         if not any(
             claim_entry.get("status") == _STATUS_COMPROMISED
-            and _compromise_key_material_matches(claim_entry, trusted_entry)
+            and any(
+                _compromise_key_material_matches(claim_entry, candidate)
+                for candidate in trusted_entries_for_kid
+            )
             for claim_entry in _entries_for_kid(claim_manifest, kid)
         ):
             _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
@@ -896,6 +905,53 @@ def _resolve_compromise_cutoff(
         except TypeError:
             continue
     return best
+
+
+def _integer_manifest_version(manifest: dict[str, Any]) -> int | None:
+    """`manifest_version` only when it is a genuine integer.
+
+    `bool` is excluded explicitly: it subclasses `int`, and a `true` on the
+    wire must not be allowed to order versions.
+    """
+    version = manifest.get("manifest_version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return None
+    return version
+
+
+def _marking_provenance_is_a_retraction(
+    trusted_manifest: dict[str, Any],
+    chain: list[dict[str, Any]] | None,
+    authenticated_claims: tuple[_CompromiseClaim, ...],
+    kid: str,
+) -> bool:
+    """v0.1 §7.3 (rev 8): did the issuer take its own marking back?
+
+    True only when the trusted manifest carries an integer version, does NOT
+    mark the kid compromised on ANY of its entries, and some held source that
+    does mark it carries an integer version strictly lower. Provenance, never a
+    verdict: the floor has already decided by the time this runs.
+
+    Every entry for the kid is consulted in every manifest (via
+    `_manifest_marks_kid_compromised`): reading the first matching entry would
+    let the array's ORDER decide whether the issuer rewrote its history.
+    """
+    trusted_version = _integer_manifest_version(trusted_manifest)
+    if trusted_version is None:
+        return False
+    if _manifest_marks_kid_compromised(trusted_manifest, kid):
+        return False
+    sources: list[dict[str, Any]] = []
+    if chain is not None:
+        sources.extend(manifest for manifest in chain if isinstance(manifest, dict))
+    sources.extend(claim.manifest for claim in authenticated_claims)
+    for source in sources:
+        if not _manifest_marks_kid_compromised(source, kid):
+            continue
+        source_version = _integer_manifest_version(source)
+        if source_version is not None and source_version < trusted_version:
+            return True
+    return False
 
 
 def _resolve_key_status(
@@ -2340,6 +2396,11 @@ def verify(
         status = _resolve_key_status(entry, manifest, chain, authenticated_claims, kid)
         compromised_rescued = False
         if status == _STATUS_COMPROMISED:
+            # Emitted at the point of RESOLUTION and before the §19 disposition,
+            # so it reads identically in the kill branch and the rescue branch
+            # and its position in the array is deterministic.
+            if _marking_provenance_is_a_retraction(manifest, chain, authenticated_claims, kid):
+                _append_warning_once(warnings, _WARN_COMPROMISE_MARKING_RETRACTED)
             disposition = _compromised_key_disposition(
                 kid, entry, manifest, chain, authenticated_claims
             )
@@ -2438,6 +2499,11 @@ def verify(
         status = _resolve_key_status(entry, manifest, chain, authenticated_claims, kid)
         compromised_rescued = False
         if status == _STATUS_COMPROMISED:
+            # Emitted at the point of RESOLUTION and before the §19 disposition,
+            # so it reads identically in the kill branch and the rescue branch
+            # and its position in the array is deterministic.
+            if _marking_provenance_is_a_retraction(manifest, chain, authenticated_claims, kid):
+                _append_warning_once(warnings, _WARN_COMPROMISE_MARKING_RETRACTED)
             disposition = _compromised_key_disposition(
                 kid, entry, manifest, chain, authenticated_claims
             )

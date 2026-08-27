@@ -14,6 +14,11 @@ export interface JsonObject { [k: string]: JsonValue }
 // attest-versioning.md §5's structural-ceilings amendment (v0.1 §11.3)
 // refers to -- schema.ts's MAX_JSON_DEPTH aliases this rather than defining
 // a second, smaller one.
+// Enforced at BOTH ends of the profile, in parity with the Python
+// `canon.MAX_DEPTH`: `serialize` refuses one level past it with the parser's
+// own literal, so no conforming issuer can sign a document no conforming
+// parser will accept, and a deep or cyclic structure from a caller dies as a
+// CanonError at the ceiling rather than as a native RangeError at the stack.
 export const MAX_DEPTH = 256
 class Reader {
   i = 0
@@ -197,7 +202,7 @@ function serializeString(s: string): string {
   return out + '"'
 }
 
-function serialize(v: JsonValue): string {
+function serialize(v: JsonValue, depth = 1): string {
   if (v === null) return 'null'
   if (typeof v === 'boolean') return v ? 'true' : 'false'
   if (typeof v === 'bigint') {
@@ -205,11 +210,17 @@ function serialize(v: JsonValue): string {
     return v.toString()
   }
   if (typeof v === 'string') return serializeString(v)
-  if (Array.isArray(v)) return '[' + v.map(serialize).join(',') + ']'
+  if (Array.isArray(v)) {
+    if (depth > MAX_DEPTH) throw new CanonError(ERR.MAX_NESTING_DEPTH)
+    // Explicit arrow, never `v.map(serialize)`: map would pass the ELEMENT
+    // INDEX as the depth argument and the ceiling would move per element.
+    return '[' + v.map((x) => serialize(x, depth + 1)).join(',') + ']'
+  }
   if (typeof v === 'object') {
+    if (depth > MAX_DEPTH) throw new CanonError(ERR.MAX_NESTING_DEPTH)
     // JS Array.prototype.sort default compares by UTF-16 code units == Python utf-16-be byte order.
     const keys = Object.keys(v).sort()
-    return '{' + keys.map((k) => serializeString(k) + ':' + serialize(v[k]!)).join(',') + '}'
+    return '{' + keys.map((k) => serializeString(k) + ':' + serialize(v[k]!, depth + 1)).join(',') + '}'
   }
   throw new CanonError(ERR.TYPE_NOT_JSON)
 }

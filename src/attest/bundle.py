@@ -650,6 +650,13 @@ def disclose(
     if delivery:
         disclosed["delivery"] = delivery
 
+    # Second reference emitter of a receipt envelope: `disclosed` wraps the
+    # payload in one more level, and `delivery` can push it over on its own. A
+    # conforming issuer MUST NOT write a receipt no conforming verifier can
+    # parse (v0.1 §11.3), so the check runs on the ASSEMBLED object, before the
+    # file is created.
+    canon.check_object_depth(disclosed)
+
     if out.is_symlink():
         raise BundleError(f"disclose output {out} is a symlink; refusing to overwrite it")
     target = out / f"{receipt_id}.attest.json" if out.is_dir() else out

@@ -242,7 +242,7 @@ describe('attributeWarning', () => {
   it('covers every warning token the verifier declares', () => {
     const source = readFileSync(MESSAGES, 'utf8')
     const dicts = source.matchAll(
-      /export const (WARN|ANCHOR_WARN|TRANSPARENCY_WARN|VERIFY_TRANSPARENCY_WARN|TRANSFER_WARN|GRANT_WARN) = \{([\s\S]*?)\n\} as const/g,
+      /export const (WARN|ANCHOR_WARN|TRANSPARENCY_WARN|VERIFY_TRANSPARENCY_WARN|TRANSFER_WARN|GRANT_WARN|COMPROMISE_WARN) = \{([\s\S]*?)\n\} as const/g,
     )
     const tokens: string[] = []
     for (const [, , body] of dicts) {

@@ -8,5 +8,7 @@
   "schema": "not_checked",
   "signature": "invalid",
   "trust": "unverified_rotation",
-  "warnings": []
+  "warnings": [
+    "compromise_marking_retracted"
+  ]
 }
