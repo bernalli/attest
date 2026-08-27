@@ -191,6 +191,13 @@ describe('the §19 copy each group-41 leaf produces through the site adapter', (
     const text = explain('signature', run.result.signature, run.result).text
     expect(text, leaf).toMatch(SIGNATURE_STORY[leaf]!)
     expect(text, leaf).not.toContain('does not have dedicated wording')
+    // v0.1 §7.3 rev 8: wherever the verifier ESTABLISHED the retraction, the
+    // signature row must say so. Four of the six leaves carrying the warning
+    // have trust "verified", so gating this story on the rotation value alone
+    // told it on the minority of cases — and nothing pinned that.
+    if (run.result.warnings.includes('compromise_marking_retracted')) {
+      expect(text, leaf).toMatch(/does not carry that marking/)
+    }
     if (run.result.trust === 'unverified_rotation') {
       const trustText = explain('trust', 'unverified_rotation', run.result).text
       // v0.1 §7.3 rev 8: with the retraction ESTABLISHED the copy says it as a

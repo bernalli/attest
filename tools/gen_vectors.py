@@ -6571,7 +6571,7 @@ def gen_41_compromise_cutoff() -> None:
     the issuer can flip in both directions, and stops reaching backwards past
     the moment it was declared.
 
-    Two rules, one fixture. The FLOOR (v0.1 §7.3, leaves l-t) makes a
+    Two rules, one fixture. The FLOOR (v0.1 §7.3, leaves l-u) makes a
     `compromised` marking absorbing: a `kid` is `compromised` for a verifier
     that holds the marking in ANY evidence it already has for the issuer — its
     trusted manifest, a member of the §7.4 version chain, or an authenticated
@@ -6659,6 +6659,10 @@ def gen_41_compromise_cutoff() -> None:
       preservation (v0.1 §7.3) makes that a discontinuity too; the twin of
       (o), with the same receipt signed by K2, isolating the omission from any
       kill.
+    - (u) same shape as (m), but this verifier's trusted pin is v1, OLDER than
+      the v2 declaration. The floor still kills the unanchored receipt, but no
+      retraction is reported: a stale pin is a verifier that is behind, not an
+      issuer rewriting its history.
     """
     payload = issue.build_payload(**_base_payload_kwargs())  # revocability: "none"
     _assert_schema_valid(payload)

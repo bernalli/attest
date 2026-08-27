@@ -285,6 +285,7 @@ Checked against [`docs/spec/attest-v0.1.md`](../attest-v0.1.md) §7.3 and [`docs
 | 41r | `r-compromised-signer-establishes-no-cutoff` | (p) with both sides anchored → the claim that floors establishes no cutoff, because without a chain the signer's own compromise cannot be dated. |
 | 41s | `s-chain-dates-the-signer-cutoff-holds` | (r) plus the chain that dates the signer's compromise AFTER the declaration → the cutoff holds and the later receipt dies; the unrelated discontinuity does not cancel it. |
 | 41t | `t-keyset-omission-breaks-continuity` | Trusted v3 OMITS the key instead of re-listing it → keyset preservation makes that a discontinuity too; the twin of (o). |
+| 41u | `u-stale-pin-not-a-retraction` | Trusted v1 is older than the v2 declaration carried in `compromise-view.json` → the floor still kills the unanchored receipt, but no `compromise_marking_retracted` warning is emitted, because this is a stale pin rather than an issuer rewriting its history. |
 
 ## Regeneration
 
