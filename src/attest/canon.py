@@ -183,7 +183,19 @@ def loads_strict(data: bytes) -> object:
         )
     except json.JSONDecodeError as exc:
         raise CanonError(f"invalid JSON: {exc}") from exc
+    except CanonError:
+        # `_pairs_hook` and `_reject_float` already raise this module's own
+        # errors from inside `json.loads`. Re-wrapping them would demote
+        # `DuplicateKeyError` to its base class and re-prefix a message that
+        # `tools/gen_vectors.py` documents, so they pass through untouched.
+        raise
     except RecursionError as exc:  # belt-and-suspenders: the depth cap should prevent this
         raise CanonError("maximum nesting depth exceeded") from exc
+    except ValueError as exc:
+        # Python 3.11+ refuses an integer literal over 4300 digits with a bare
+        # `ValueError` from `int()`, which is neither a decode error nor one of
+        # ours. Without this it escapes `loads_strict` as-is and past every
+        # boundary that catches `CanonError` — `verify()` included.
+        raise CanonError(f"invalid JSON: {exc}") from exc
     _reject_surrogates(parsed)
     return parsed

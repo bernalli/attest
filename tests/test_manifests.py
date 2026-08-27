@@ -877,3 +877,45 @@ def test_rotate_rejects_status_change_for_already_compromised_kid() -> None:
 
     with pytest.raises(ValueError):
         manifests.rotate_key_manifest(v2, KP2, KID2, "2026-07-01T00:00:00Z", retire_kids=[KID1])
+
+
+_ROTATE_ENTRY = manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z")
+
+
+@pytest.mark.parametrize(
+    "existing,match",
+    [
+        (
+            {"issuer": ISSUER, "manifest_version": 1, "keys": [_ROTATE_ENTRY, None]},
+            "list of objects",
+        ),
+        ({"issuer": ISSUER, "manifest_version": 1, "keys": "x"}, "list of objects"),
+        (
+            {"issuer": ISSUER, "manifest_version": 1, "keys": [dict(_ROTATE_ENTRY, kid=[])]},
+            "string kid",
+        ),
+        ({"issuer": ISSUER, "manifest_version": True, "keys": [_ROTATE_ENTRY]}, "integer"),
+        ({"issuer": ISSUER, "manifest_version": "1", "keys": [_ROTATE_ENTRY]}, "integer"),
+        ({"issuer": 7, "manifest_version": 1, "keys": [_ROTATE_ENTRY]}, "string"),
+    ],
+)
+def test_rotate_raises_valueerror_on_malformed_existing(existing: Any, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        manifests.rotate_key_manifest(
+            existing, KP1, KID1, "2026-03-01T00:00:00Z", retire_kids=[KID1]
+        )
+
+
+@pytest.mark.parametrize(
+    "new_entry,match",
+    [
+        (object(), "object"),
+        ({}, "string kid"),
+        ({"kid": []}, "string kid"),
+    ],
+)
+def test_rotate_raises_valueerror_on_malformed_new_entry(new_entry: Any, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        manifests.rotate_key_manifest(
+            _two_active_v1(), KP2, KID2, "2026-03-01T00:00:00Z", new_entry=new_entry
+        )

@@ -359,6 +359,11 @@ def rotate_key_manifest(
     - `new_entry`'s kid must not already exist in `existing["keys"]` — reusing
       a kid would append a second `keys[]` entry sharing it, a silent no-op
       for the operator since `find_key` returns the first (old-status) match.
+    - `existing` must itself be well-formed for the fields read here: `keys`
+      a list of objects with string `kid`s, `manifest_version` a non-bool
+      integer, `issuer` a string — a malformed trusted manifest is a
+      `ValueError` like every other refusal here, never an
+      `AttributeError`/`KeyError` escaping to the caller.
 
     The caller's `existing` manifest is never mutated (keys are copied).
     """
@@ -378,8 +383,24 @@ def rotate_key_manifest(
             "recovery manifest with a different, still-active key"
         )
 
-    existing_keys: list[dict[str, Any]] = existing["keys"]
-    existing_kids = {entry.get("kid") for entry in existing_keys}
+    existing_keys = existing.get("keys")
+    if not isinstance(existing_keys, list) or not all(
+        isinstance(entry, dict) for entry in existing_keys
+    ):
+        raise ValueError("existing manifest keys must be a list of objects")
+    existing_version = existing.get("manifest_version")
+    if not isinstance(existing_version, int) or isinstance(existing_version, bool):
+        raise ValueError("existing manifest_version must be an integer")
+    existing_issuer = existing.get("issuer")
+    if not isinstance(existing_issuer, str):
+        raise ValueError("existing manifest issuer must be a string")
+    existing_kids: set[str] = set()
+    for entry in existing_keys:
+        kid = entry.get("kid")
+        if not isinstance(kid, str):
+            raise ValueError("existing manifest key entries must have string kid")
+        existing_kids.add(kid)
+
     unknown = (retire | compromise) - existing_kids
     if unknown:
         raise ValueError(f"cannot change status of unknown kid(s): {sorted(unknown)}")
@@ -395,11 +416,18 @@ def rotate_key_manifest(
     if already_compromised:
         raise ValueError(f"compromised kid(s) cannot change status: {sorted(already_compromised)}")
 
-    if new_entry is not None and new_entry.get("kid") in existing_kids:
-        raise ValueError(
-            f"new key kid {new_entry.get('kid')!r} already exists in the manifest — use "
-            "--retire-kid/--compromise-kid to change an existing key's status, not --new-kid"
-        )
+    if new_entry is not None:
+        try:
+            new_kid = new_entry.get("kid")
+        except AttributeError as exc:
+            raise ValueError("new key entry must be an object") from exc
+        if not isinstance(new_kid, str):
+            raise ValueError("new key entry must have string kid")
+        if new_kid in existing_kids:
+            raise ValueError(
+                f"new key kid {new_kid!r} already exists in the manifest — use "
+                "--retire-kid/--compromise-kid to change an existing key's status, not --new-kid"
+            )
 
     updated: list[dict[str, Any]] = []
     for entry in existing_keys:
@@ -413,9 +441,9 @@ def rotate_key_manifest(
     if new_entry is not None:
         updated.append(new_entry)
 
-    new_version = existing["manifest_version"] + 1
+    new_version = existing_version + 1
     return build_key_manifest(
-        existing["issuer"],
+        existing_issuer,
         new_version,
         issued_at,
         updated,

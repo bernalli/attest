@@ -1543,3 +1543,15 @@ def test_a_malformed_witness_policy_raises_from_verify() -> None:
             anchor_policy=anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
             witness_policy={"schema": "wrong", "epochs": []},
         )
+
+
+def test_an_oversized_integer_literal_from_the_wire_is_a_verdict_not_a_crash() -> None:
+    """Python 3.11+ refuses an integer literal over 4300 digits with a bare
+    `ValueError` from `int()`. Reaching the library's public entry point from
+    the wire, it must come back as a fail-closed verdict: the boundary here
+    catches `canon.CanonError`, so anything else escapes to the caller."""
+    wire = b'{"payload":{"n":' + b"9" * 4400 + b'},"signatures":[]}'
+    result = verify.verify(wire, verify.TrustStore(manifests={}, provenance={}))
+
+    assert result.signature == "invalid"
+    assert any("invalid JSON" in e for e in result.errors)
