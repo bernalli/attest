@@ -184,7 +184,11 @@ def build_key_manifest(
     key_entries: list[dict[str, Any]],
     signing_kp: keys.SigningKeyPair | pq.HybridSigningKeys,
     signing_kid: str,
+    *,
+    previous: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if previous is not None:
+        _check_keyset_preservation(previous, key_entries)
     manifest: dict[str, Any] = {
         "issuer": issuer,
         "manifest_version": manifest_version,
@@ -193,6 +197,56 @@ def build_key_manifest(
     }
     manifest["manifest_signature"] = _sign_manifest(manifest, signing_kp, signing_kid)
     return manifest
+
+
+def _check_keyset_preservation(previous: dict[str, Any], key_entries: list[dict[str, Any]]) -> None:
+    previous_entries = previous.get("keys")
+    if not isinstance(previous_entries, list):
+        raise ValueError("previous manifest keys must be a list")
+    current_by_kid: dict[str, dict[str, Any]] = {}
+    for entry in key_entries:
+        kid = entry.get("kid")
+        if isinstance(kid, str):
+            current_by_kid[kid] = entry
+
+    for entry in previous_entries:
+        if not isinstance(entry, dict):
+            raise ValueError("previous manifest contains a malformed key entry")
+        kid = entry.get("kid")
+        if not isinstance(kid, str):
+            raise ValueError("previous manifest contains a key entry without a string kid")
+        current = current_by_kid.get(kid)
+        if current is None:
+            raise ValueError(f"previous kid {kid!r} omitted from successor manifest")
+        if entry.get("status") == _COMPROMISED and current.get("status") != _COMPROMISED:
+            raise ValueError(f"compromised kid {kid!r} cannot change status")
+
+
+def _preserves_absorbing_compromises(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    trusted_entries = trusted.get("keys")
+    candidate_entries = candidate.get("keys")
+    if not isinstance(trusted_entries, list) or not isinstance(candidate_entries, list):
+        return False
+    candidate_by_kid: dict[str, dict[str, Any]] = {}
+    for entry in candidate_entries:
+        if not isinstance(entry, dict):
+            return False
+        kid = entry.get("kid")
+        if isinstance(kid, str):
+            candidate_by_kid[kid] = entry
+
+    for entry in trusted_entries:
+        if not isinstance(entry, dict):
+            return False
+        kid = entry.get("kid")
+        if not isinstance(kid, str):
+            return False
+        candidate_entry = candidate_by_kid.get(kid)
+        if candidate_entry is None:
+            return False
+        if entry.get("status") == _COMPROMISED and candidate_entry.get("status") != _COMPROMISED:
+            return False
+    return True
 
 
 def verify_key_manifest(manifest: dict[str, Any]) -> bool:
@@ -241,6 +295,8 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
     # finding 12).
     if not _within_window(candidate.get("issued_at"), signer_entry):
         return False
+    if not _preserves_absorbing_compromises(trusted, candidate):
+        return False
     # Bind continuity to the key TRUSTED vouches for: the candidate's signature
     # must verify under the pub `trusted` holds for signer_kid, NOT the pub the
     # candidate lists for it. Otherwise an attacker reuses a trusted kid, swaps in
@@ -265,9 +321,11 @@ def rotate_key_manifest(
     `signing_kp`/`signing_kid`.
 
     `retired` is planned end-of-use (past signatures stay valid, verify.py only
-    warns); `compromised` is an incident (verify.py fails closed, invalidating
-    every past signature by that key). Callers pick the one whose consequence
-    they mean.
+    warns); `compromised` is an incident (fail-closed; since v0.2 §19 a
+    Stage-2-capable verifier spares receipts anchored strictly before the
+    declaring manifest's own anchored time — log and anchor this manifest
+    promptly or the marking cannot bite anchored stock). Callers pick the one
+    whose consequence they mean.
 
     Fail-closed guards (all raise `ValueError`):
     - at least one change must be requested (a new key or a status change);
@@ -277,6 +335,8 @@ def rotate_key_manifest(
       holds it too); sign with a different, still-active key;
     - every kid to retire/compromise must exist in `existing["keys"]` — a
       typo'd kid is an error, never a silent no-op;
+    - a kid already marked `compromised` may not be touched by a status-change
+      request — there is no un-compromise ceremony;
     - `new_entry`'s kid must not already exist in `existing["keys"]` — reusing
       a kid would append a second `keys[]` entry sharing it, a silent no-op
       for the operator since `find_key` returns the first (old-status) match.
@@ -304,6 +364,17 @@ def rotate_key_manifest(
     unknown = (retire | compromise) - existing_kids
     if unknown:
         raise ValueError(f"cannot change status of unknown kid(s): {sorted(unknown)}")
+    already_compromised: set[str] = set()
+    for entry in existing_keys:
+        kid = entry.get("kid")
+        if (
+            isinstance(kid, str)
+            and entry.get("status") == _COMPROMISED
+            and kid in (retire | compromise)
+        ):
+            already_compromised.add(kid)
+    if already_compromised:
+        raise ValueError(f"compromised kid(s) cannot change status: {sorted(already_compromised)}")
 
     if new_entry is not None and new_entry.get("kid") in existing_kids:
         raise ValueError(
@@ -325,7 +396,13 @@ def rotate_key_manifest(
 
     new_version = existing["manifest_version"] + 1
     return build_key_manifest(
-        existing["issuer"], new_version, issued_at, updated, signing_kp, signing_kid
+        existing["issuer"],
+        new_version,
+        issued_at,
+        updated,
+        signing_kp,
+        signing_kid,
+        previous=existing,
     )
 
 

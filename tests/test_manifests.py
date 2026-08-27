@@ -660,3 +660,73 @@ def test_rotate_rejects_new_kid_already_present() -> None:
             "2026-06-01T00:00:00Z",
             new_entry=manifests.key_entry(KID2, KP2.pub, "2026-06-01T00:00:00Z"),
         )
+
+
+def test_continuity_rejects_compromised_status_regression() -> None:
+    v1 = _two_active_v1()
+    v2 = manifests.rotate_key_manifest(
+        v1, KP2, KID2, "2026-06-01T00:00:00Z", compromise_kids=[KID1]
+    )
+    entries_v3 = [
+        manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active"),
+        manifests.key_entry(KID2, KP2.pub, "2026-01-01T00:00:00Z", None, "active"),
+    ]
+    v3 = manifests.build_key_manifest(ISSUER, 3, "2026-07-01T00:00:00Z", entries_v3, KP2, KID2)
+
+    assert not manifests.check_continuity(v2, v3)
+
+
+def test_continuity_rejects_omitted_prior_kid() -> None:
+    v1 = _two_active_v1()
+    entries_v2 = [manifests.key_entry(KID2, KP2.pub, "2026-01-01T00:00:00Z", None, "active")]
+    v2 = manifests.build_key_manifest(ISSUER, 2, "2026-06-01T00:00:00Z", entries_v2, KP2, KID2)
+
+    assert not manifests.check_continuity(v1, v2)
+
+
+def test_build_key_manifest_previous_rejects_compromised_status_regression() -> None:
+    v1 = _two_active_v1()
+    v2 = manifests.rotate_key_manifest(
+        v1, KP2, KID2, "2026-06-01T00:00:00Z", compromise_kids=[KID1]
+    )
+    regressed_entries = [
+        manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active"),
+        manifests.key_entry(KID2, KP2.pub, "2026-01-01T00:00:00Z", None, "active"),
+    ]
+
+    with pytest.raises(ValueError):
+        manifests.build_key_manifest(
+            ISSUER,
+            3,
+            "2026-07-01T00:00:00Z",
+            regressed_entries,
+            KP2,
+            KID2,
+            previous=v2,
+        )
+
+
+def test_build_key_manifest_previous_rejects_previous_kid_omission() -> None:
+    v1 = _two_active_v1()
+    entries_v2 = [manifests.key_entry(KID2, KP2.pub, "2026-01-01T00:00:00Z", None, "active")]
+
+    with pytest.raises(ValueError):
+        manifests.build_key_manifest(
+            ISSUER,
+            2,
+            "2026-06-01T00:00:00Z",
+            entries_v2,
+            KP2,
+            KID2,
+            previous=v1,
+        )
+
+
+def test_rotate_rejects_status_change_for_already_compromised_kid() -> None:
+    v1 = _two_active_v1()
+    v2 = manifests.rotate_key_manifest(
+        v1, KP2, KID2, "2026-06-01T00:00:00Z", compromise_kids=[KID1]
+    )
+
+    with pytest.raises(ValueError):
+        manifests.rotate_key_manifest(v2, KP2, KID2, "2026-07-01T00:00:00Z", retire_kids=[KID1])

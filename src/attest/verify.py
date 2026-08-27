@@ -26,7 +26,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from attest import (
     anchor,
@@ -138,6 +138,14 @@ _WARN_ROTATION_CHAIN_REQUIRED = "corroboration_requires_rotation_chain"
 # string (TS parity: messages.ts).
 _WARN_REVOCATION_UNLOGGED_DEADLINE = "revocation_unlogged_deadline"
 _ANCHORED_BEFORE_PREFIX = "anchored_before:"
+
+# v0.1 rev 8 / v0.2 §19 anchored compromise cutoff.
+_WARN_COMPROMISE_RESCUE_APPLIED = "compromise_rescue_applied"
+_WARN_COMPROMISE_CUTOFF_UNANCHORED = "compromise_cutoff_unanchored"
+_WARN_COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT = "compromise_rescue_requires_anchored_receipt"
+_WARN_COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF = "compromise_rescue_receipt_after_cutoff"
+_WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED = "compromise_cutoff_claim_ignored"
+_MAX_COMPROMISE_CLAIMS = 64
 
 # G6 mixed-keyset prohibition (v0.2 §2.3/§13 amendment) — the wire warning
 # string, exact and cross-language (TS parity: messages.ts).
@@ -262,7 +270,7 @@ class VerificationResult:
     independently so a caller can degrade gracefully instead of getting a
     single opaque true/false."""
 
-    signature: str  # "valid" | "invalid"
+    signature: str  # "valid" | "invalid" (with v0.2 §19's anchored rescue carve-out)
     schema: str  # "valid" | "invalid" | "not_checked"
     revocation: (
         str  # "unknown" | "not_revoked_as_of:<T>" | "revoked" | "invalid_revocation_ignored"
@@ -318,6 +326,14 @@ class VerificationResult:
             and self.revocation not in (_REVOCATION_REVOKED, _REVOCATION_TRANSFERRED)
             and not self.errors
         )
+
+
+@dataclass(frozen=True)
+class _CompromiseClaim:
+    manifest: dict[str, Any]
+    evidence: object
+    signer_kid: str
+    vouching_signers: tuple[dict[str, Any], ...]
 
 
 def _parse_date(value: str) -> datetime:
@@ -528,9 +544,9 @@ def _evaluate_transparency_claim(
     anchor_policy: anchor.AnchorPolicy | None,
     warnings: list[str],
     witness_policy: object = None,
-) -> tuple[str, str, str]:
-    """Resolve `(transparency, corroboration, manifest_freshness)` from one
-    evidence bundle (design doc "transparency/corroboration layer").
+) -> tuple[str, str, str, str | None]:
+    """Resolve transparency result components plus the evidence claim type
+    from one evidence bundle (design doc "transparency/corroboration layer").
 
     Computed independently of the receipt's own pass/fail verdict — called
     once, early, regardless of whether the receipt later turns out invalid
@@ -556,11 +572,21 @@ def _evaluate_transparency_claim(
     `--witness-policy` when it loads the file, before `verify()` is called.
     """
     if transparency_evidence is None:
-        return _TRANSPARENCY_NOT_CHECKED, _CORROBORATION_NONE, _MANIFEST_FRESHNESS_NOT_CHECKED
+        return (
+            _TRANSPARENCY_NOT_CHECKED,
+            _CORROBORATION_NONE,
+            _MANIFEST_FRESHNESS_NOT_CHECKED,
+            None,
+        )
 
     if log_keys is None or anchor_policy is None:
         warnings.append(_WARN_TRANSPARENCY_CONFIG_MISSING)
-        return _TRANSPARENCY_NOT_CHECKED, _CORROBORATION_NONE, _MANIFEST_FRESHNESS_NOT_CHECKED
+        return (
+            _TRANSPARENCY_NOT_CHECKED,
+            _CORROBORATION_NONE,
+            _MANIFEST_FRESHNESS_NOT_CHECKED,
+            None,
+        )
 
     origin = _resolve_log_origin(log_keys)
     transparency_module._validate_policy(anchor_policy)
@@ -588,7 +614,12 @@ def _evaluate_transparency_claim(
         )
         if expected_entry is None:
             warnings.append(_WARN_TRANSPARENCY_CLAIM_UNRESOLVABLE)
-            return _TRANSPARENCY_NOT_CHECKED, _CORROBORATION_NONE, _MANIFEST_FRESHNESS_NOT_CHECKED
+            return (
+                _TRANSPARENCY_NOT_CHECKED,
+                _CORROBORATION_NONE,
+                _MANIFEST_FRESHNESS_NOT_CHECKED,
+                claim_type,
+            )
 
         result = transparency_module.evaluate_transparency(
             materialized_evidence,
@@ -621,14 +652,257 @@ def _evaluate_transparency_claim(
                 corroboration_state = _CORROBORATION_NONE
                 warnings.append(_WARN_ROTATION_CHAIN_REQUIRED)
 
-        return transparency_state, corroboration_state, manifest_freshness_state
+        return transparency_state, corroboration_state, manifest_freshness_state, claim_type
     # This intentionally encloses every untrusted claim phase above, including
     # post-evaluation freshness/rotation logic. It confines hostile mapping
     # access and equality implementations; never catch BaseException so
     # interrupts and process-control exceptions still propagate.
     except Exception:
         warnings.append(_WARN_TRANSPARENCY_CLAIM_UNRESOLVABLE)
-        return _TRANSPARENCY_NOT_CHECKED, _CORROBORATION_NONE, _MANIFEST_FRESHNESS_NOT_CHECKED
+        return (
+            _TRANSPARENCY_NOT_CHECKED,
+            _CORROBORATION_NONE,
+            _MANIFEST_FRESHNESS_NOT_CHECKED,
+            None,
+        )
+
+
+def _append_warning_once(warnings: list[str], warning: str) -> None:
+    if warning not in warnings:
+        warnings.append(warning)
+
+
+def _materialize_compromise_view(
+    compromise_view: list[dict[str, Any]] | None,
+) -> list[Any] | None:
+    if compromise_view is None:
+        return None
+    try:
+        serialized = canon.dumps(compromise_view)
+        if len(serialized) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
+            return None
+        materialized: object = json.loads(serialized)
+    except Exception:
+        return None
+    if not isinstance(materialized, list) or len(materialized) > _MAX_COMPROMISE_CLAIMS:
+        return None
+    return materialized
+
+
+def _held_issuer_manifests(
+    trusted_manifest: dict[str, Any],
+    chain: list[dict[str, Any]] | None,
+    issuer_id: str,
+) -> list[dict[str, Any]]:
+    held = [trusted_manifest]
+    if chain is not None:
+        held.extend(member for member in chain if isinstance(member, dict))
+    return [member for member in held if member.get("issuer") == issuer_id]
+
+
+def _b64u_bytes_equal(left: object, right: object) -> bool:
+    if not isinstance(left, str) or not isinstance(right, str):
+        return False
+    try:
+        return keys.b64u_decode(left) == keys.b64u_decode(right)
+    except (TypeError, ValueError):
+        return False
+
+
+def _compromise_key_material_matches(
+    claim_entry: dict[str, Any], trusted_entry: dict[str, Any]
+) -> bool:
+    if not _b64u_bytes_equal(claim_entry.get("pub"), trusted_entry.get("pub")):
+        return False
+    if "pub_ml_dsa_65" not in trusted_entry:
+        return True
+    return _b64u_bytes_equal(claim_entry.get("pub_ml_dsa_65"), trusted_entry.get("pub_ml_dsa_65"))
+
+
+def _vouching_signers(
+    claim_manifest: dict[str, Any],
+    held_manifests: list[dict[str, Any]],
+) -> tuple[str | None, tuple[dict[str, Any], ...]]:
+    sig_block = claim_manifest.get("manifest_signature")
+    if not isinstance(sig_block, dict):
+        return None, ()
+    signer_kid = sig_block.get("kid")
+    if not isinstance(signer_kid, str):
+        return None, ()
+    try:
+        signable = manifests._signable(claim_manifest)
+    except (TypeError, canon.CanonError):
+        return signer_kid, ()
+
+    issued_at = claim_manifest.get("issued_at")
+    if not isinstance(issued_at, str):
+        return signer_kid, ()
+    signers: list[dict[str, Any]] = []
+    for held_manifest in held_manifests:
+        signer_entry = manifests.find_key(held_manifest, signer_kid)
+        if signer_entry is None:
+            continue
+        if not _within_validity(issued_at, signer_entry):
+            continue
+        if manifests.verify_signature_block(signable, sig_block, signer_entry):
+            signers.append(signer_entry)
+    return signer_kid, tuple(signers)
+
+
+def _authenticated_compromise_claims(
+    compromise_claims: list[Any] | None,
+    trusted_manifest: dict[str, Any],
+    trusted_entry: dict[str, Any],
+    chain: list[dict[str, Any]] | None,
+    issuer_id: str,
+    kid: str,
+    warnings: list[str],
+) -> tuple[_CompromiseClaim, ...]:
+    if not compromise_claims:
+        return ()
+
+    held_manifests = _held_issuer_manifests(trusted_manifest, chain, issuer_id)
+    authenticated: list[_CompromiseClaim] = []
+    for claim in compromise_claims:
+        if not isinstance(claim, dict):
+            _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
+            continue
+        claim_manifest = claim.get("manifest")
+        if not isinstance(claim_manifest, dict) or claim_manifest.get("issuer") != issuer_id:
+            _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
+            continue
+        claim_entry = manifests.find_key(claim_manifest, kid)
+        if (
+            claim_entry is None
+            or claim_entry.get("status") != _STATUS_COMPROMISED
+            or not _compromise_key_material_matches(claim_entry, trusted_entry)
+        ):
+            _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
+            continue
+        signer_kid, signers = _vouching_signers(claim_manifest, held_manifests)
+        if signer_kid is None or not signers:
+            _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
+            continue
+        authenticated.append(
+            _CompromiseClaim(
+                manifest=claim_manifest,
+                evidence=claim.get("evidence"),
+                signer_kid=signer_kid,
+                vouching_signers=signers,
+            )
+        )
+    return tuple(authenticated)
+
+
+def _held_manifest_marks_signer_compromised_at_or_before(
+    held_manifests: list[dict[str, Any]], signer_kid: str, declaration_version: int
+) -> bool:
+    for held_manifest in held_manifests:
+        version = held_manifest.get("manifest_version")
+        if not isinstance(version, int) or isinstance(version, bool):
+            continue
+        if version > declaration_version:
+            continue
+        entry = manifests.find_key(held_manifest, signer_kid)
+        if entry is not None and entry.get("status") == _STATUS_COMPROMISED:
+            return True
+    return False
+
+
+def _claim_has_cutoff_signer(claim: _CompromiseClaim, held_manifests: list[dict[str, Any]]) -> bool:
+    declaration_version = claim.manifest.get("manifest_version")
+    if not isinstance(declaration_version, int) or isinstance(declaration_version, bool):
+        return False
+    for signer_entry in claim.vouching_signers:
+        if signer_entry.get("status") not in (_STATUS_ACTIVE, _STATUS_RETIRED):
+            continue
+        if _held_manifest_marks_signer_compromised_at_or_before(
+            held_manifests, claim.signer_kid, declaration_version
+        ):
+            continue
+        return True
+    return False
+
+
+def _resolve_compromise_cutoff(
+    authenticated_claims: tuple[_CompromiseClaim, ...],
+    trusted_manifest: dict[str, Any],
+    chain: list[dict[str, Any]] | None,
+    issuer_id: str,
+    log_keys: list[tlog.LogKey],
+    anchor_policy: anchor.AnchorPolicy,
+    warnings: list[str],
+) -> datetime | None:
+    """v0.2 §19.3: minimum anchored declaration time for a kid, or None."""
+    if not authenticated_claims:
+        return None
+
+    origin = _resolve_log_origin(log_keys)
+    transparency_module._validate_policy(anchor_policy)
+    held_manifests = _held_issuer_manifests(trusted_manifest, chain, issuer_id)
+    best: datetime | None = None
+    for claim in authenticated_claims:
+        if not _claim_has_cutoff_signer(claim, held_manifests):
+            continue
+        try:
+            manifest_sha256 = hashlib.sha256(canon.canonical_bytes(claim.manifest)).hexdigest()
+        except (TypeError, canon.CanonError):
+            _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
+            continue
+        expected_entry = _validated_transparency_entry(
+            {
+                "type": _CLAIM_TYPE_KEY_MANIFEST,
+                "issuer": claim.manifest.get("issuer"),
+                "manifest_version": claim.manifest.get("manifest_version"),
+                "manifest_sha256": manifest_sha256,
+            }
+        )
+        if expected_entry is None:
+            _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
+            continue
+        result = transparency_module.evaluate_transparency(
+            cast(dict[str, Any], claim.evidence),
+            log_keys=log_keys,
+            expected_origin=origin,
+            policy=anchor_policy,
+            expected_entry=expected_entry,
+        )
+        for warning in result.warnings:
+            _append_warning_once(warnings, warning)
+        if not result.transparency.startswith(_ANCHORED_BEFORE_PREFIX):
+            continue
+        cutoff = _parse_iso(result.transparency[len(_ANCHORED_BEFORE_PREFIX) :])
+        if cutoff is None:
+            continue
+        if best is None:
+            best = cutoff
+            continue
+        try:
+            if cutoff < best:
+                best = cutoff
+        except TypeError:
+            continue
+    return best
+
+
+def _resolve_key_status(
+    trusted_entry: dict[str, Any],
+    chain: list[dict[str, Any]] | None,
+    authenticated_claims: tuple[_CompromiseClaim, ...],
+    kid: str,
+) -> object:
+    if trusted_entry.get("status") == _STATUS_COMPROMISED:
+        return _STATUS_COMPROMISED
+    if chain is not None:
+        for manifest in chain:
+            if not isinstance(manifest, dict):
+                continue
+            entry = manifests.find_key(manifest, kid)
+            if entry is not None and entry.get("status") == _STATUS_COMPROMISED:
+                return _STATUS_COMPROMISED
+    if authenticated_claims:
+        return _STATUS_COMPROMISED
+    return trusted_entry.get("status")
 
 
 def _parse_iso(value: object) -> datetime | None:
@@ -1639,6 +1913,7 @@ def verify(
     anchor_policy: anchor.AnchorPolicy | None = None,
     revocation_evidence: dict[str, Any] | None = None,
     transfer_view: list[dict[str, Any]] | None = None,
+    compromise_view: list[dict[str, Any]] | None = None,
     witness_policy: object = None,
     grant_view: dict[str, Any] | None = None,
 ) -> VerificationResult:
@@ -1695,6 +1970,13 @@ def verify(
     `signature`, `schema`, `revocation`, `binding`, `trust` or `ok`. A caller
     that never supplies it gets `not_checked`/`not_checked` and a byte-for-byte
     unchanged result, exactly like every Stage 2/3 addition before it.
+
+    `compromise_view` is v0.1 rev 8 / v0.2 §19's fourth sanctioned exception
+    to the Stage 2 informational rule: a caller-supplied list of key-manifest
+    compromise declarations. Authenticated declarations only ever strengthen
+    one status, `compromised`; a Stage-2-capable verifier may then spare a
+    receipt whose own receipt claim was anchored strictly before the earliest
+    anchored compromise declaration for the signing key.
     """
     # Caller-contract enforcement (security): a non-list `revocation_view`
     # must fail loud. If a lone record OBJECT slipped through here,
@@ -1709,6 +1991,8 @@ def verify(
     # dict keys by `_resolve_transfer_backing`.
     if transfer_view is not None and not isinstance(transfer_view, list):
         raise TypeError("transfer_view must be a list of claims or None")
+    if compromise_view is not None and not isinstance(compromise_view, list):
+        raise TypeError("compromise_view must be a list of claims or None")
     # Same caller-contract enforcement for Stage 4's channel: a lone grant
     # DOCUMENT passed where the evidence object belongs would otherwise be
     # read member by member and resolve to `not_checked`, silently reporting
@@ -1729,6 +2013,8 @@ def verify(
     transparency_state = _TRANSPARENCY_NOT_CHECKED
     corroboration_state = _CORROBORATION_NONE
     manifest_freshness_state = _MANIFEST_FRESHNESS_NOT_CHECKED
+    transparency_claim_type: str | None = None
+    materialized_compromise_view = _materialize_compromise_view(compromise_view)
 
     def _invalid(message: str, *, schema: str = _SCHEMA_NOT_CHECKED) -> VerificationResult:
         errors.append(message)
@@ -1744,6 +2030,48 @@ def verify(
             warnings=tuple(warnings),
             errors=tuple(errors),
         )
+
+    def _compromised_key_disposition(
+        kid: str,
+        entry: dict[str, Any],
+        trusted_manifest: dict[str, Any],
+        chain: list[dict[str, Any]] | None,
+        authenticated_claims: tuple[_CompromiseClaim, ...],
+    ) -> VerificationResult | None:
+        if log_keys is None or anchor_policy is None:
+            return _invalid(f"key {kid} is compromised")
+        if transparency_claim_type != _CLAIM_TYPE_RECEIPT or not transparency_state.startswith(
+            _ANCHORED_BEFORE_PREFIX
+        ):
+            if compromise_view is not None or authenticated_claims:
+                _append_warning_once(warnings, _WARN_COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT)
+            return _invalid(f"key {kid} is compromised")
+        receipt_anchor = _parse_iso(transparency_state[len(_ANCHORED_BEFORE_PREFIX) :])
+        if receipt_anchor is None:
+            if compromise_view is not None or authenticated_claims:
+                _append_warning_once(warnings, _WARN_COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT)
+            return _invalid(f"key {kid} is compromised")
+
+        cutoff = _resolve_compromise_cutoff(
+            authenticated_claims,
+            trusted_manifest,
+            chain,
+            issuer_id if isinstance(issuer_id, str) else "",
+            log_keys,
+            anchor_policy,
+            warnings,
+        )
+        if cutoff is None:
+            _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_UNANCHORED)
+            return None
+        try:
+            if receipt_anchor < cutoff:
+                _append_warning_once(warnings, _WARN_COMPROMISE_RESCUE_APPLIED)
+                return None
+        except TypeError:
+            pass
+        _append_warning_once(warnings, _WARN_COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF)
+        return _invalid(f"key {kid} is compromised")
 
     # --- G1 normative ceiling (attest-versioning.md §5 amendment; v0.1 §11/
     # §15, v0.2 §6/§16): the raw envelope MUST NOT exceed MAX_ENVELOPE_BYTES.
@@ -1906,21 +2234,24 @@ def verify(
     # to rescue an otherwise-rejected receipt, and demonstrating that
     # requires computing it regardless of the eventual verdict (design fix 6
     # / vector 28i's property) — see `_evaluate_transparency_claim`.
-    transparency_state, corroboration_state, manifest_freshness_state = (
-        _evaluate_transparency_claim(
-            envelope,
-            issuer_id if isinstance(issuer_id, str) else None,
+    (
+        transparency_state,
+        corroboration_state,
+        manifest_freshness_state,
+        transparency_claim_type,
+    ) = _evaluate_transparency_claim(
+        envelope,
+        issuer_id if isinstance(issuer_id, str) else None,
+        issuer_manifest,
+        _rotation_chain_verified(
+            trust_store.chains.get(issuer_id) if isinstance(issuer_id, str) else None,
             issuer_manifest,
-            _rotation_chain_verified(
-                trust_store.chains.get(issuer_id) if isinstance(issuer_id, str) else None,
-                issuer_manifest,
-            ),
-            transparency,
-            log_keys,
-            anchor_policy,
-            warnings,
-            witness_policy,
-        )
+        ),
+        transparency,
+        log_keys,
+        anchor_policy,
+        warnings,
+        witness_policy,
     )
 
     # --- Step 1: envelope well-formed; attest_version supported; signatures
@@ -1983,10 +2314,26 @@ def verify(
         if entry is None:
             return _invalid(f"no key {kid!r} in issuer manifest")
 
-        status = entry.get("status")
+        chain = trust_store.chains.get(issuer_id)
+        authenticated_claims = _authenticated_compromise_claims(
+            materialized_compromise_view,
+            manifest,
+            entry,
+            chain,
+            issuer_id,
+            kid,
+            warnings,
+        )
+        status = _resolve_key_status(entry, chain, authenticated_claims, kid)
+        compromised_rescued = False
         if status == _STATUS_COMPROMISED:
-            return _invalid(f"key {kid} is compromised")
-        if status not in (_STATUS_ACTIVE, _STATUS_RETIRED):
+            disposition = _compromised_key_disposition(
+                kid, entry, manifest, chain, authenticated_claims
+            )
+            if disposition is not None:
+                return disposition
+            compromised_rescued = True
+        if not compromised_rescued and status not in (_STATUS_ACTIVE, _STATUS_RETIRED):
             return _invalid(f"key {kid} has unusable status {status!r}")
 
         issued_at = payload.get("issued_at")
@@ -2065,10 +2412,26 @@ def verify(
         if entry is None:
             return _invalid(f"no key {kid!r} in issuer manifest")
 
-        status = entry.get("status")
+        chain = trust_store.chains.get(issuer_id)
+        authenticated_claims = _authenticated_compromise_claims(
+            materialized_compromise_view,
+            manifest,
+            entry,
+            chain,
+            issuer_id,
+            kid,
+            warnings,
+        )
+        status = _resolve_key_status(entry, chain, authenticated_claims, kid)
+        compromised_rescued = False
         if status == _STATUS_COMPROMISED:
-            return _invalid(f"key {kid} is compromised")
-        if status not in (_STATUS_ACTIVE, _STATUS_RETIRED):
+            disposition = _compromised_key_disposition(
+                kid, entry, manifest, chain, authenticated_claims
+            )
+            if disposition is not None:
+                return disposition
+            compromised_rescued = True
+        if not compromised_rescued and status not in (_STATUS_ACTIVE, _STATUS_RETIRED):
             # Fail closed on missing/unknown status instead of validating
             # like an active key (2026-07-13 review, finding 4).
             return _invalid(f"key {kid} has unusable status {status!r}")
