@@ -274,7 +274,14 @@ describe('verify(): anchored compromise cutoff (§19)', () => {
 
     expect(result.signature).toBe('valid')
     expect(isOk(result)).toBe(true)
-    expect(result.warnings).toEqual(['anchor_note_only', COMPROMISE_WARN.CUTOFF_UNANCHORED])
+    // The trusted v3 re-lists the key as active while the older v2 declaration
+    // marks it compromised: that is a retraction, so v0.1 §7.3 rev 8 reports
+    // its provenance alongside the unchanged verdict.
+    expect(result.warnings).toEqual([
+      'anchor_note_only',
+      COMPROMISE_WARN.MARKING_RETRACTED,
+      COMPROMISE_WARN.CUTOFF_UNANCHORED,
+    ])
     expect(result.errors).toEqual([])
   })
 
@@ -286,7 +293,10 @@ describe('verify(): anchored compromise cutoff (§19)', () => {
     })
 
     expect(result.signature).toBe('invalid')
-    expect(result.warnings).toEqual([COMPROMISE_WARN.RESCUE_REQUIRES_ANCHORED_RECEIPT])
+    expect(result.warnings).toEqual([
+      COMPROMISE_WARN.MARKING_RETRACTED,
+      COMPROMISE_WARN.RESCUE_REQUIRES_ANCHORED_RECEIPT,
+    ])
     expect(result.errors).toEqual([`key ${KID} is compromised`])
   })
 
