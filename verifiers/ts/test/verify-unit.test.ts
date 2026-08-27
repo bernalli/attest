@@ -615,7 +615,7 @@ describe('verify(): witness policy on the trusted rail (§11.4)', () => {
 // Mirrors tests/test_verify.py's Python-side trio (Python reference).
 // --------------------------------------------------------------------------
 describe('verify(): V-L.8 publisher_claim_unattested (design vector "publisher authority")', () => {
-  function pPayload(publisherId?: string): Record<string, unknown> {
+  function pPayload(publisherId?: unknown): Record<string, unknown> {
     const work: Record<string, unknown> = { title: 'T', publisher: 'P', identifiers: { issuer_sku: 'X' }, artifact_series: 'series-x' }
     if (publisherId !== undefined) work['publisher_id'] = publisherId
     return {
@@ -631,11 +631,19 @@ describe('verify(): V-L.8 publisher_claim_unattested (design vector "publisher a
     }
   }
 
-  function pEnvelopeBytes(publisherId?: string): Uint8Array {
-    const payload = parse(pPayload(publisherId))
+  function pEnvelopeBytesFromPayload(body: Record<string, unknown>): Uint8Array {
+    const payload = parse(body)
     const sig = ed25519.sign(canonicalBytes(payload), tIssuerSeed)
     const envelope = { payload, signatures: [{ kid: T_KID, alg: 'Ed25519', sig: b64uEncode(sig) }] }
-    return enc(JSON.stringify(envelope))
+    // `parse` round-trips numbers through loadsStrict, which returns them as
+    // BigInt (canon.ts's parseNumber) -- JSON.stringify can't serialize BigInt
+    // natively, so put it back on the wire as a JSON number (same idiom as
+    // evaluate-grant.test.ts:663).
+    return enc(JSON.stringify(envelope, (_k, v) => (typeof v === 'bigint' ? Number(v) : v)))
+  }
+
+  function pEnvelopeBytes(publisherId?: unknown): Uint8Array {
+    return pEnvelopeBytesFromPayload(pPayload(publisherId))
   }
 
   it('warns when work.publisher_id differs from issuer.id', () => {
@@ -646,11 +654,35 @@ describe('verify(): V-L.8 publisher_claim_unattested (design vector "publisher a
 
   it('is silent when work.publisher_id equals issuer.id', () => {
     const result = verify(pEnvelopeBytes(T_ISSUER), tTrustStore())
+    expect(isOk(result)).toBe(true)
     expect(result.warnings).not.toContain('publisher_claim_unattested')
   })
 
   it('is silent when work.publisher_id is absent', () => {
     const result = verify(pEnvelopeBytes(), tTrustStore())
+    expect(isOk(result)).toBe(true)
     expect(result.warnings).not.toContain('publisher_claim_unattested')
+  })
+
+  it.each([
+    ['publisher_id object', pPayload({})],
+    ['publisher_id array', pPayload([])],
+    ['publisher_id null', pPayload(null)],
+    ['publisher_id non-string', pPayload(7)],
+    ['work array', { ...pPayload(), work: [] }],
+    ['work null', { ...pPayload(), work: null }],
+    ['work string', { ...pPayload(), work: 'not-an-object' }],
+  ])('does not throw or warn on hostile %s', (_label, body) => {
+    const result = verify(pEnvelopeBytesFromPayload(body), tTrustStore())
+    expect(result.signature).toBe('valid')
+    expect(result.schema).toBe('invalid')
+    expect(result.warnings).not.toContain('publisher_claim_unattested')
+  })
+
+  it('warns for an empty string publisher_id because it is still a string claim', () => {
+    const result = verify(pEnvelopeBytes(''), tTrustStore())
+    expect(result.signature).toBe('valid')
+    expect(result.schema).toBe('invalid')
+    expect(result.warnings).toContain('publisher_claim_unattested')
   })
 })

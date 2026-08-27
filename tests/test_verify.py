@@ -350,13 +350,67 @@ def test_publisher_claim_equal_to_issuer_is_silent() -> None:
     payload = make_payload(work={"publisher_id": ISSUER})
     envelope = issue.issue(payload, KP, KID)
     result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+    assert result.ok is True
     assert "publisher_claim_unattested" not in result.warnings
 
 
 def test_publisher_claim_absent_is_silent() -> None:
     envelope = issue.issue(make_payload(), KP, KID)
     result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+    assert result.ok is True
     assert "publisher_claim_unattested" not in result.warnings
+
+
+def test_publisher_claim_hostile_shapes_do_not_crash_or_warn() -> None:
+    """Signed but schema-invalid wire payloads must not escape `_content_warnings`.
+
+    Non-string `publisher_id` values are not a publisher claim for V-L.8; arrays
+    and null/non-object `work` blocks must also stay silent and non-throwing.
+    """
+    cases = [
+        make_payload(work={"publisher_id": {}}),
+        make_payload(work={"publisher_id": []}),
+        make_payload(work={"publisher_id": None}),
+        make_payload(work={"publisher_id": 7}),
+        make_payload(work=[]),
+        make_payload(work=None),
+        make_payload(work="not-an-object"),
+    ]
+    for payload in cases:
+        envelope = {
+            "payload": payload,
+            "signatures": [
+                {
+                    "kid": KID,
+                    "alg": "Ed25519",
+                    "sig": keys.b64u(keys.sign(canon.canonical_bytes(payload), KP)),
+                }
+            ],
+        }
+
+        result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+
+        assert result.signature == "valid"
+        assert result.schema == "invalid"
+        assert "publisher_claim_unattested" not in result.warnings
+
+
+def test_empty_string_publisher_claim_warns_like_any_string_claim() -> None:
+    payload = make_payload(work={"publisher_id": ""})
+    envelope = {
+        "payload": payload,
+        "signatures": [
+            {
+                "kid": KID,
+                "alg": "Ed25519",
+                "sig": keys.b64u(keys.sign(canon.canonical_bytes(payload), KP)),
+            }
+        ],
+    }
+    result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+    assert result.signature == "valid"
+    assert result.schema == "invalid"
+    assert "publisher_claim_unattested" in result.warnings
 
 
 # --- step 6: revocation-by-class (design §3.1/§6) --------------------------------
