@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+from typing import Any
 
 import pytest
 
@@ -135,3 +137,63 @@ class TestReceiptHash:
         payload = make_payload()
         reordered = {k: payload[k] for k in reversed(list(payload))}
         assert issue.receipt_hash(payload) == issue.receipt_hash(reordered)
+
+
+def _chain(levels: int) -> Any:
+    """A dict chain of exactly `levels` nesting levels, ending in a scalar."""
+    nested: Any = "leaf"
+    for _ in range(levels):
+        nested = {"n": nested}
+    return nested
+
+
+# An envelope wraps the payload in one more level, so a payload that sits
+# exactly ON the ceiling assembles to an envelope one level PAST it. That gap
+# is the whole reason the ceiling in the serializer is not enough on its own:
+# `issue.issue` canonicalizes the PAYLOAD, never the envelope it returns.
+
+
+def test_issue_accepts_a_payload_whose_envelope_lands_on_the_ceiling() -> None:
+    payload = make_payload()
+    payload["_depth_probe"] = _chain(canon.MAX_DEPTH - 2)
+    envelope = issue.issue(payload, _kp(), _KID)
+    # emittible implies parsable -- the negation of the asymmetry
+    assert canon.loads_strict(json.dumps(envelope).encode())
+
+
+def test_issue_refuses_a_payload_whose_envelope_passes_the_ceiling() -> None:
+    payload = make_payload()
+    payload["_depth_probe"] = _chain(canon.MAX_DEPTH - 1)
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        issue.issue(payload, _kp(), _KID)
+
+
+def test_issue_counts_the_manifest_snapshot_towards_the_ceiling() -> None:
+    # The payload alone is shallow here: only `delivery.issuer_manifest` pushes
+    # the assembled envelope past the ceiling. A guard that looked at the
+    # payload would pass this and emit an unparsable receipt.
+    deep_manifest = _chain(canon.MAX_DEPTH - 1)
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        issue.issue(make_payload(), _kp(), _KID, manifest_snapshot=deep_manifest)
+
+
+@pytest.mark.parametrize(
+    "levels",
+    [
+        canon.MAX_DEPTH - 4,
+        canon.MAX_DEPTH - 3,
+        canon.MAX_DEPTH - 2,
+        canon.MAX_DEPTH - 1,
+        canon.MAX_DEPTH,
+    ],
+)
+def test_whatever_issue_emits_is_parsable(levels: int) -> None:
+    # The property C-5 denied, walked across the exact boundary: for every
+    # payload `issue.issue` accepts, the emitted envelope parses.
+    payload = make_payload()
+    payload["_depth_probe"] = _chain(levels)
+    try:
+        envelope = issue.issue(payload, _kp(), _KID)
+    except canon.CanonError:
+        return
+    assert canon.loads_strict(json.dumps(envelope).encode())

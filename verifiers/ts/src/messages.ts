@@ -80,6 +80,7 @@ export const ERR = {
   FLOATS_NOT_ALLOWED: 'floats are not allowed in the attest-JCS profile',
   LONE_SURROGATE: 'lone surrogate not allowed in the attest-JCS profile',
   TYPE_NOT_JSON: 'type not representable in JSON',
+  MAX_NESTING_DEPTH: 'maximum nesting depth exceeded',
   // v0.2 hybrid envelope (Ed25519 + ML-DSA-65) — byte-identical to verify.py.
   hybridSigCount: 'hybrid envelope requires exactly two signatures',
   hybridAlgs: 'hybrid envelope requires algs Ed25519 and ML-DSA-65 in order',

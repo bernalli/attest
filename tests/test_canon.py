@@ -142,3 +142,119 @@ def test_loads_strict_leaves_this_modules_own_errors_untouched() -> None:
     with pytest.raises(canon.CanonError) as bad_float:
         canon.loads_strict(b'{"a":1.5}')
     assert str(bad_float.value) == "floats are not allowed in the attest-JCS profile"
+
+
+def _nest_dicts(levels: int) -> Any:
+    nested: Any = {}
+    for _ in range(levels):
+        nested = {"k": nested}
+    return nested
+
+
+def _nest_mixed(levels: int) -> Any:
+    nested: Any = {}
+    for i in range(levels):
+        nested = [nested] if i % 2 else {"k": nested}
+    return nested
+
+
+# The ceiling is a property of the attest-JCS profile, not of the parser: the
+# serializer refuses one level past it with the parser's own literal, so no
+# conforming issuer can sign a document no conforming parser will accept.
+# `_nest*(levels)` builds a tree of depth `levels + 1`, so `MAX_DEPTH` levels is
+# one past the ceiling and `MAX_DEPTH - 1` sits exactly on it.
+
+
+def test_canonical_bytes_rejects_lists_one_level_past_the_ceiling() -> None:
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        canon.canonical_bytes(_nest(canon.MAX_DEPTH))
+
+
+def test_canonical_bytes_accepts_dicts_at_the_ceiling() -> None:
+    assert canon.canonical_bytes(_nest_dicts(canon.MAX_DEPTH - 1))
+
+
+def test_canonical_bytes_rejects_dicts_one_level_past_the_ceiling() -> None:
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        canon.canonical_bytes(_nest_dicts(canon.MAX_DEPTH))
+
+
+def test_canonical_bytes_accepts_mixed_containers_at_the_ceiling() -> None:
+    assert canon.canonical_bytes(_nest_mixed(canon.MAX_DEPTH - 1))
+
+
+def test_canonical_bytes_rejects_mixed_containers_one_level_past_the_ceiling() -> None:
+    # The count must not depend on the container type: alternating dict/list
+    # nesting has to hit the ceiling at exactly the same depth as either alone.
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        canon.canonical_bytes(_nest_mixed(canon.MAX_DEPTH))
+
+
+@given(
+    levels=st.integers(min_value=canon.MAX_DEPTH - 6, max_value=canon.MAX_DEPTH + 6),
+    shape=st.sampled_from(("list", "dict", "mixed")),
+    leaf=st.one_of(st.none(), st.booleans(), st.integers(-(2**53) + 1, 2**53 - 1), st.text()),
+    key=st.sampled_from(("k", "\r", "10", "2", "é", "😀", "")),
+)
+def test_whatever_the_serializer_emits_the_strict_parser_accepts(
+    levels: int, shape: str, leaf: Any, key: str
+) -> None:
+    # Direction (1) of the profile's boundary contract, which was FALSE before
+    # the ceiling reached the serializer: a document deeper than the ceiling
+    # used to serialize and then fail to parse. Probed around the boundary
+    # rather than on random shallow trees, because that is where it broke.
+    builders = {
+        "list": lambda n: _nest(n),
+        "dict": lambda n: _nest_dicts(n),
+        "mixed": lambda n: _nest_mixed(n),
+    }
+    tree = builders[shape](levels)
+    payload = {key: tree, "leaf": leaf}
+    try:
+        raw = canon.canonical_bytes(payload)
+    except canon.CanonError:
+        return  # refused at serialization: the contract says nothing more
+    assert canon.loads_strict(raw) == payload
+
+
+# `check_object_depth` is the guard the issuance path uses on an ASSEMBLED
+# envelope. It is deliberately iterative: the object arrives from the caller,
+# and a recursive walk would die with RecursionError -- outside the CanonError
+# family that every fail-closed boundary in this package catches.
+
+
+def test_check_object_depth_accepts_the_deepest_representable_document() -> None:
+    canon.check_object_depth(_nest(canon.MAX_DEPTH - 1))
+    canon.check_object_depth(_nest_dicts(canon.MAX_DEPTH - 1))
+    canon.check_object_depth(_nest_mixed(canon.MAX_DEPTH - 1))
+
+
+def test_check_object_depth_rejects_one_level_past_the_ceiling() -> None:
+    for build in (_nest, _nest_dicts, _nest_mixed):
+        with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+            canon.check_object_depth(build(canon.MAX_DEPTH))
+
+
+def test_check_object_depth_is_iterative_not_recursive() -> None:
+    # Far past any interpreter recursion limit: the profile error must win, and
+    # the failure must NOT be a RecursionError leaking out of the guard.
+    with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+        canon.check_object_depth(_nest(50_000))
+
+
+def test_check_object_depth_rejects_a_cycle_deterministically() -> None:
+    direct: dict[str, Any] = {}
+    direct["self"] = direct
+    indirect_a: dict[str, Any] = {}
+    indirect_b: dict[str, Any] = {"a": indirect_a}
+    indirect_a["b"] = indirect_b
+    for cyclic in (direct, indirect_a):
+        with pytest.raises(canon.CanonError, match="maximum nesting depth exceeded"):
+            canon.check_object_depth(cyclic)
+
+
+def test_check_object_depth_accepts_sharing_that_is_not_a_cycle() -> None:
+    # A shared subtree is legitimate and repeats no level: rejecting it would
+    # refuse documents the profile represents perfectly well.
+    shared = {"x": [1, 2, 3]}
+    canon.check_object_depth({"a": shared, "b": shared, "c": [shared, shared]})

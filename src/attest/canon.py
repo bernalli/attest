@@ -12,11 +12,16 @@ import json
 from typing import Any
 
 _INT_MAX = 2**53  # exclusive
-MAX_DEPTH = 256  # matches the TS parser cap; bounds parse/reject-surrogate recursion.
+MAX_DEPTH = 256  # matches the TS cap; bounds parse/reject-surrogate recursion.
 # Public (2026-07-22 fix wave): this is the single normative nesting-depth
 # ceiling attest-versioning.md §5's structural-ceilings amendment (v0.1 §11.3)
 # refers to — `validate.MAX_JSON_DEPTH` aliases this constant rather than
 # defining a second, smaller one.
+# It is enforced at BOTH ends of the profile, not just at parse: a structure
+# nested deeper is not representable in attest-JCS, exactly like a float or an
+# out-of-range integer, so `_serialize` refuses it with the parser's own
+# literal. Without that, a conforming issuer could sign a payload no
+# conforming verifier could ever parse.
 _ESCAPES = {
     0x08: "\\b",
     0x09: "\\t",
@@ -52,7 +57,7 @@ def _serialize_string(s: str) -> str:
     return "".join(out)
 
 
-def _serialize(obj: Any, out: list[str]) -> None:
+def _serialize(obj: Any, out: list[str], depth: int = 1) -> None:
     if obj is None:
         out.append("null")
     elif isinstance(obj, bool):  # MUST precede int (bool subclasses int)
@@ -66,13 +71,17 @@ def _serialize(obj: Any, out: list[str]) -> None:
     elif isinstance(obj, str):
         out.append(_serialize_string(obj))
     elif isinstance(obj, list):
+        if depth > MAX_DEPTH:
+            raise CanonError("maximum nesting depth exceeded")
         out.append("[")
         for i, item in enumerate(obj):
             if i:
                 out.append(",")
-            _serialize(item, out)
+            _serialize(item, out, depth + 1)
         out.append("]")
     elif isinstance(obj, dict):
+        if depth > MAX_DEPTH:
+            raise CanonError("maximum nesting depth exceeded")
         for k in obj:
             if not isinstance(k, str):
                 raise CanonError(f"non-string object key: {k!r}")
@@ -82,7 +91,7 @@ def _serialize(obj: Any, out: list[str]) -> None:
                 out.append(",")
             out.append(_serialize_string(k))
             out.append(":")
-            _serialize(obj[k], out)
+            _serialize(obj[k], out, depth + 1)
         out.append("}")
     else:
         raise CanonError(f"type not representable in JSON: {type(obj).__name__}")
@@ -106,6 +115,29 @@ def dumps(obj: object) -> str:
 def canonical_bytes(obj: object) -> bytes:
     """The only byte form ever signed or hashed in attest."""
     return dumps(obj).encode("utf-8")
+
+
+def check_object_depth(obj: object) -> None:
+    """Refuse a structure nested deeper than the profile's ceiling.
+
+    Deliberately ITERATIVE. `_serialize`'s own ceiling covers everything this
+    module canonicalizes, but an issuer assembles its receipt envelope AROUND a
+    canonicalized payload -- one level more -- and that assembled object is
+    never itself passed through `canonical_bytes`. Walking it recursively would
+    raise `RecursionError` on hostile input, which is outside the `CanonError`
+    family every fail-closed boundary in this package catches, so the walk uses
+    an explicit stack and the ceiling decides. A self-referential structure
+    exceeds every finite depth and is rejected by the same rule.
+    """
+    stack: list[tuple[Any, int]] = [(obj, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if isinstance(node, (list, dict)):
+            if depth > MAX_DEPTH:
+                raise CanonError("maximum nesting depth exceeded")
+            children = node.values() if isinstance(node, dict) else node
+            for child in children:
+                stack.append((child, depth + 1))
 
 
 def _pairs_hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

@@ -2102,7 +2102,27 @@ def gen_21_canon_strict() -> None:
         deep_payload = issue.build_payload(**_base_payload_kwargs())
         # envelope text depth at "x" = {envelope {payload [x nesting...]}} = 2 + levels
         deep_payload["x"] = _nested_list(depth_target - 2)
-        deep_envelope = issue.issue(deep_payload, ISSUER_KP, ISSUER_KID)
+        if depth_target <= 256:
+            deep_envelope = issue.issue(deep_payload, ISSUER_KP, ISSUER_KID)
+        else:
+            # Since the nesting-depth ceiling reached the serializer and the
+            # issuance path (v0.1 §11.3, rev 9), `issue.issue` refuses to emit
+            # this envelope -- which is the point of the amendment. The hostile
+            # wire is therefore assembled by hand, exactly as an attacker would,
+            # on the same pattern leaf (e) already uses for the lone surrogate.
+            # The payload itself sits ON the ceiling, so it still signs; only the
+            # envelope wrapped around it is one level past.
+            deep_sig = keys.sign(canon.canonical_bytes(deep_payload), ISSUER_KP)
+            deep_envelope = {
+                "payload": deep_payload,
+                "signatures": [
+                    {
+                        "kid": ISSUER_KID,
+                        "alg": issue.ALG_ED25519,
+                        "sig": keys.b64u(deep_sig),
+                    }
+                ],
+            }
         deep_raw = json.dumps(deep_envelope).encode("utf-8")
         assert _text_max_depth(deep_raw.decode("utf-8")) == depth_target
         if depth_target <= 256:
