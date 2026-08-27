@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import warnings as warnings_module
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -682,3 +683,126 @@ def test_disclose_emits_only_what_the_strict_parser_accepts(tmp_path: Path) -> N
     )
 
     assert canon.loads_strict(out_path.read_bytes())
+
+
+# --- V-L.2: member names are unique (v0.1 §14.1, 2026-08-26) ----------------
+
+
+def test_export_refuses_duplicate_receipt_ids(tmp_path: Path) -> None:
+    """Two receipts sharing one id would collide on `receipts/<id>.attest.json`."""
+    dup_id = "01HZX0000000000000000000AA"
+    envelopes = [_envelope(receipt_id=dup_id), _envelope(receipt_id=dup_id, salt=SALT_B)]
+
+    with pytest.raises(bundle.BundleError, match="duplicate receipt_id"):
+        bundle.export(envelopes, [_key_manifest()], [], _legal_texts(), tmp_path, "lib")
+
+    # No partial bundle is left behind by a refusal.
+    assert not (tmp_path / "lib.attest").exists()
+    assert not (tmp_path / "lib.private.attest").exists()
+
+
+def test_export_refuses_three_receipts_sharing_one_id(tmp_path: Path) -> None:
+    """Ambiguity is a property of the set, not of a pair."""
+    dup_id = "01HZX0000000000000000000AA"
+    envelopes = [
+        _envelope(receipt_id=dup_id),
+        _envelope(receipt_id=dup_id, salt=SALT_B),
+        _envelope(receipt_id=dup_id, salt=None),
+    ]
+
+    with pytest.raises(bundle.BundleError, match="duplicate receipt_id"):
+        bundle.export(envelopes, [_key_manifest()], [], _legal_texts(), tmp_path, "lib")
+
+
+def test_export_still_accepts_distinct_receipt_ids(tmp_path: Path) -> None:
+    """Negative control: ids differing by one character are not duplicates."""
+    envelopes = [
+        _envelope(receipt_id="01HZX0000000000000000000AA"),
+        _envelope(receipt_id="01HZX0000000000000000000AB", salt=SALT_B),
+    ]
+
+    attest_path, _ = bundle.export(
+        envelopes, [_key_manifest()], [], _legal_texts(), tmp_path, "lib"
+    )
+
+    assert len(bundle.import_bundle(attest_path).receipts) == 2
+
+
+def _duplicate_member(source: Path, target: Path, member: str, payload: bytes) -> None:
+    """Copy `source` to `target`, appending a second entry under `member`.
+
+    `zipfile` emits a `UserWarning: Duplicate name` here — that warning is the
+    very symptom the export guard turns into a refusal, and it is expected in
+    a fixture that builds the hostile archive on purpose.
+    """
+    with zipfile.ZipFile(source) as src, zipfile.ZipFile(target, "w") as dst:
+        for info in src.infolist():
+            dst.writestr(info.filename, src.read(info.filename))
+        with warnings_module.catch_warnings():
+            warnings_module.simplefilter("ignore")
+            dst.writestr(member, payload)
+
+
+def test_import_rejects_duplicate_receipt_member_name(tmp_path: Path) -> None:
+    """Name-based reads resolve every duplicate to one entry; import must refuse."""
+    receipt_id = "01HZX0000000000000000000AA"
+    ok_path, _ = bundle.export(
+        [_envelope(receipt_id=receipt_id)], [_key_manifest()], [], _legal_texts(), tmp_path, "ok"
+    )
+    hostile = tmp_path / "dup.attest"
+    _duplicate_member(ok_path, hostile, f"receipts/{receipt_id}.attest.json", b'{"payload": {}}')
+
+    with pytest.raises(bundle.BundleError, match="repeats member name"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_rejects_a_duplicate_in_any_member_family(tmp_path: Path) -> None:
+    """A repeated `manifests/` name is two trust states for one issuer — same refusal."""
+    ok_path, _ = bundle.export(
+        [_envelope(receipt_id="01HZX0000000000000000000AA")],
+        [_key_manifest()],
+        [],
+        _legal_texts(),
+        tmp_path,
+        "ok",
+    )
+    with zipfile.ZipFile(ok_path) as zf:
+        manifest_member = next(n for n in zf.namelist() if n.startswith("manifests/"))
+    hostile = tmp_path / "dup-manifest.attest"
+    _duplicate_member(ok_path, hostile, manifest_member, b"{}")
+
+    with pytest.raises(bundle.BundleError, match="repeats member name"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_rejects_a_duplicate_whose_two_entries_are_byte_identical(tmp_path: Path) -> None:
+    """Identical bytes are still an ambiguous central directory: refuse, never guess."""
+    receipt_id = "01HZX0000000000000000000AA"
+    ok_path, _ = bundle.export(
+        [_envelope(receipt_id=receipt_id)], [_key_manifest()], [], _legal_texts(), tmp_path, "ok"
+    )
+    member = f"receipts/{receipt_id}.attest.json"
+    with zipfile.ZipFile(ok_path) as zf:
+        same_bytes = zf.read(member)
+    hostile = tmp_path / "dup-identical.attest"
+    _duplicate_member(ok_path, hostile, member, same_bytes)
+
+    with pytest.raises(bundle.BundleError, match="repeats member name"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_rejects_a_duplicate_in_the_private_archive(tmp_path: Path) -> None:
+    """The private archive gets the same guard as the shareable one."""
+    ok_path, private_path = bundle.export(
+        [_envelope(receipt_id="01HZX0000000000000000000AA")],
+        [_key_manifest()],
+        [],
+        _legal_texts(),
+        tmp_path,
+        "ok",
+    )
+    hostile_private = tmp_path / "dup.private.attest"
+    _duplicate_member(private_path, hostile_private, "salts.json", b"{}")
+
+    with pytest.raises(bundle.BundleError, match="repeats member name"):
+        bundle.import_bundle(ok_path, hostile_private)

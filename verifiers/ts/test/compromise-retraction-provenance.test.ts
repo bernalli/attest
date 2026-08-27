@@ -376,15 +376,29 @@ describe('compromise retraction provenance', () => {
     expectRetractedOnce(result)
   })
 
-  it('accepts claimed compromised material matching the second trusted entry for the kid', () => {
+  // Since the v0.1 §7.1 amendment (2026-08-26) an ambiguous TRUST ANCHOR is
+  // refused whole by verify()'s preflight, one layer above the material match.
+  // The receipt is still rejected, with the structural error instead of the
+  // compromise one.
+  //
+  // Consequence, stated rather than hidden: on the TRUSTED operand the "match
+  // the claimed material against every entry for the kid" property is no
+  // longer reachable from here, and the TypeScript resolver is module-private,
+  // so this file cannot pin it. That fallback is kept as defence in depth and
+  // is pinned on the Python side, in
+  // tests/test_compromise_retraction_provenance.py, which asserts the resolver
+  // and the material comparison directly. The property on the operands the
+  // preflight does NOT cover — the chain member and the claimed manifest —
+  // stays pinned by the both-orders cases above.
+  it('refuses an ambiguous trust anchor before the claimed material is matched', () => {
     const trusted = manifest(3n, [entry('active', { signingSeed: SIGNER }), entry('active', { signingSeed: SECOND })])
     const claimEntries = [entry('compromised', { signingSeed: SECOND })]
 
     const result = run(trusted, { compromiseView: [claim(2n, claimEntries)] })
 
     expect(result.signature).toBe('invalid')
-    expect(result.errors).toEqual([`key ${KID} is compromised`])
-    expectRetractedOnce(result)
+    expect(result.schema).toBe('invalid')
+    expect(result.errors.some((e) => e.includes('duplicate kid'))).toBe(true)
   })
 
   it('emits the retraction warning once for multiple independent sources', () => {

@@ -81,6 +81,17 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
     throw new BundleError('not a readable zip archive — expected a .attest bundle or a .attest.json receipt')
   }
 
+  // V-L.6 (v0.1 §14.1, 2026-08-26 amendment): entryCount is incremented per
+  // raw central-directory entry inside `filter`, BEFORE Record keys collapse —
+  // a mismatch against the surviving key count means duplicate member names,
+  // which silently shadow each other (and diverge from the reference importer,
+  // which resolves every duplicate to the LAST entry instead of the first).
+  const uniqueNames = Object.keys(entries).length
+  if (entryCount !== uniqueNames)
+    throw new BundleError(
+      `bundle central directory repeats ${entryCount - uniqueNames} member name(s) — refusing to import: duplicated members shadow each other`,
+    )
+
   // Declared sizes are header data and can lie low; the inflated lengths are
   // authoritative (mirrors the reference importer's streamed-size rule).
   let actualTotal = 0

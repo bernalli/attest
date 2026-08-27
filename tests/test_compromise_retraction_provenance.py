@@ -305,7 +305,10 @@ def test_claimed_compromised_material_may_match_second_trusted_entry_for_same_ki
     # code is only reachable through a trust anchor, which the preflight now
     # refuses, so the property is pinned directly on the resolver instead of
     # being silently dropped: a regression back to a first-match comparison
-    # stays detectable.
+    # stays detectable. This does NOT prove the composed fallback expression in
+    # `_authenticated_compromise_claims` through public verification — that
+    # path is now unreachable when the anchor is ambiguous, and the fallback is
+    # kept as defence in depth, not as live behaviour.
     entries_for_kid = verify._entries_for_kid(ambiguous, KID)  # type: ignore[attr-defined]
     claimed = claim_entries[0]
 
