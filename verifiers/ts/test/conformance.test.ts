@@ -1,4 +1,4 @@
-// The conformance merge gate (40 vector groups / 158 leaves): this suite discovers every leaf under
+// The conformance merge gate (41 vector groups / 178 leaves): this suite discovers every leaf under
 // `docs/spec/vectors/` and asserts the produced VerificationResult matches
 // its `expected.json`, using the exact same match rules as the Python
 // reference's `tests/test_vectors.py`. Passing this suite in full IS the
@@ -9,7 +9,9 @@
 // parametrization rather than being run twice:
 //
 //  - the default: verify(), for every leaf that ships none of the three files
-//    below (130 leaves). Two of its optional leaf files are Stage 4's:
+//    below (150 leaves). Three of its optional leaf files are:
+//      * `compromise-view.json` (group 41, v0.2 §19): key-manifest
+//        compromise declarations, fed as `compromiseView`.
 //      * `grant-view.json` (group 37, v0.2 §18.4): the evidence OBJECT
 //        `{grant[, later_grants][, declarations][, anchor]}`, fed as
 //        `grantView`. Its presence is the §18.4 capability gate, so a leaf
@@ -189,7 +191,9 @@ if (canonicalLeaves.length > 0) {
       it(`canonical bytes: ${V.vectorId(dir)}`, () => {
         const env = loadsStrict(V.envelopeBytes(dir)) as JsonObject
         const expected = new Uint8Array(readFileSync(join(dir, 'canonical.json')))
-        expect(canonicalBytes(env.payload)).toEqual(expected)
+        const payload = env['payload']
+        if (payload === undefined) throw new Error('canonical leaf missing payload')
+        expect(canonicalBytes(payload)).toEqual(expected)
       })
     }
   })

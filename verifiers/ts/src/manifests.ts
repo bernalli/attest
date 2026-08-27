@@ -105,6 +105,37 @@ export function withinValidity(issuedAt: unknown, entry: JsonObject): boolean {
   return issued <= toMs
 }
 
+function preservesAbsorbingCompromises(trusted: JsonObject, candidate: JsonObject): boolean {
+  const trustedEntries = trusted['keys']
+  const candidateEntries = candidate['keys']
+  if (!Array.isArray(trustedEntries) || !Array.isArray(candidateEntries)) return false
+
+  const candidateByKid = new Map<string, JsonObject[]>()
+  for (const rawEntry of candidateEntries) {
+    const entry = asObject(rawEntry)
+    if (entry === null) return false
+    const kid = entry['kid']
+    if (typeof kid === 'string') {
+      const entries = candidateByKid.get(kid)
+      if (entries === undefined) candidateByKid.set(kid, [entry])
+      else entries.push(entry)
+    }
+  }
+
+  for (const rawEntry of trustedEntries) {
+    const entry = asObject(rawEntry)
+    if (entry === null) return false
+    const kid = entry['kid']
+    if (typeof kid !== 'string') return false
+    const currentEntries = candidateByKid.get(kid)
+    if (currentEntries === undefined) return false
+    if (entry['status'] === 'compromised' && currentEntries.some((current) => current['status'] !== 'compromised')) {
+      return false
+    }
+  }
+  return true
+}
+
 function withinReleaseWindow(at: unknown, entry: JsonObject): boolean {
   const t = parseStrictUtc(at)
   const from = parseStrictUtc(entry['valid_from'])
@@ -129,6 +160,7 @@ export function checkContinuity(trusted: JsonObject, candidate: JsonObject): boo
     // The signer key must also cover the candidate's issuance window, consistent
     // with verifyArtifactManifest (2026-07-13 review, finding 12).
     if (!withinValidity(candidate['issued_at'], signer)) return false
+    if (!preservesAbsorbingCompromises(trusted, candidate)) return false
     // Bind continuity to the key TRUSTED vouches for: verify the candidate's
     // signature under trusted's pub for signer_kid, NOT the candidate's own
     // (attacker-substitutable) entry (2026-07-13 review, finding 1).
