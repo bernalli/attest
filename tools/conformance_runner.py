@@ -39,9 +39,11 @@ RUNNER_NAME = "attest-conformance-runner"
 # extra leaf ids in V01_EXTRA_LEAF_IDS (35i, 37s and 41f: leaves a v0.1-only
 # verifier must reproduce, living inside otherwise-v0.2-only groups).
 # 44 and 45 (the V-L guards, v0.1 §7.1/§12.3 2026-08-26 amendment) are v0.1
-# conformance like 29/31: both exercise v0.1-only surfaces.
+# conformance like 29/31: both exercise v0.1-only surfaces. 42 (the
+# publisher-claim floor, v0.1 §11.2 rev 11) is the same shape again: the
+# warning is payload-deterministic and independent of `attest_version`.
 V01_MAX_GROUP = 25
-V01_EXTRA_GROUPS = frozenset({29, 31, 44, 45})
+V01_EXTRA_GROUPS = frozenset({29, 31, 42, 44, 45})
 V01_EXTRA_LEAF_IDS = frozenset(
     {
         "35-transfer/i-v01-transferable-null-pubkey-ok",

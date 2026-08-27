@@ -1,15 +1,12 @@
 {
   "binding": "not_checked",
   "errors": [],
-  "grant": "dormant",
-  "grant_trust": "verified",
   "ok": true,
   "revocation": "unknown",
   "schema": "valid",
   "signature": "valid",
   "trust": "verified",
   "warnings": [
-    "publisher_claim_unattested",
-    "grant_narrowing_ignored"
+    "publisher_claim_unattested"
   ]
 }

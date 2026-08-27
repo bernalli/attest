@@ -5063,7 +5063,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", []),
+        expected=_pledge_expected("dormant", "verified", ["publisher_claim_unattested"]),
         grant_view={"grant": floor},
     )
 
@@ -5076,7 +5076,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("activated", "verified", []),
+        expected=_pledge_expected("activated", "verified", ["publisher_claim_unattested"]),
         grant_view={"grant": floor, "declarations": [declaration]},
     )
 
@@ -5104,7 +5104,11 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_c, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=_pledge_trust("tls", PLEDGE_SUCCESSOR_ID),
-        expected=_pledge_expected("activated", "verified", ["grant_activated_by_successor"]),
+        expected=_pledge_expected(
+            "activated",
+            "verified",
+            ["publisher_claim_unattested", "grant_activated_by_successor"],
+        ),
         grant_view={"grant": floor_c, "declarations": [declaration_c]},
     )
 
@@ -5119,7 +5123,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_declaration_ignored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_declaration_ignored"]
+        ),
         grant_view={"grant": floor, "declarations": [declaration_forged]},
     )
 
@@ -5149,7 +5155,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_e, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_declaration_ignored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_declaration_ignored"]
+        ),
         grant_view={"grant": floor_e, "declarations": [declaration_e]},
     )
 
@@ -5169,7 +5177,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=_pledge_trust("tls", PLEDGE_MARKETPLACE_ID),
-        expected=_pledge_expected("dormant", "verified", ["grant_declaration_ignored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_declaration_ignored"]
+        ),
         grant_view={"grant": floor, "declarations": [declaration_f]},
     )
 
@@ -5195,7 +5205,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope_g,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("activated", "verified", []),
+        expected=_pledge_expected("activated", "verified", ["publisher_claim_unattested"]),
         anchor_policy=policy_g,
         grant_view={"grant": floor_g, "anchor": {"proofs": [proof_g]}},
     )
@@ -5208,7 +5218,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope_g,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_unanchored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_unanchored"]
+        ),
         anchor_policy=policy_g,
         grant_view={"grant": floor_g},
     )
@@ -5225,7 +5237,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope_g,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_unanchored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_unanchored"]
+        ),
         anchor_policy=policy_i,
         grant_view={"grant": floor_g, "anchor": {"proofs": [proof_i]}},
     )
@@ -5252,7 +5266,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("not_checked", "not_checked", []),
+        expected=_pledge_expected("not_checked", "not_checked", ["publisher_claim_unattested"]),
         grant_view={},
     )
 
@@ -5274,7 +5288,9 @@ def gen_37_preservation_pledge() -> None:
         envelope_raw=None,
         trust=_pledge_trust("tls", PLEDGE_MARKETPLACE_ID),
         expected=_pledge_expected(
-            "invalid_grant_ignored", "signer_mismatch", ["grant_signer_not_publisher"]
+            "invalid_grant_ignored",
+            "signer_mismatch",
+            ["publisher_claim_unattested", "grant_signer_not_publisher"],
         ),
         grant_view={"grant": floor_l},
     )
@@ -5293,7 +5309,9 @@ def gen_37_preservation_pledge() -> None:
         envelope_raw=None,
         trust=trust,
         expected=_pledge_expected(
-            "invalid_grant_ignored", "verified", ["grant_commitment_mismatch"]
+            "invalid_grant_ignored",
+            "verified",
+            ["publisher_claim_unattested", "grant_commitment_mismatch"],
         ),
         grant_view={"grant": floor},
     )
@@ -5317,7 +5335,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_n, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_narrowing_ignored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_narrowing_ignored"]
+        ),
         grant_view={"grant": floor_n, "later_grants": [later_n]},
     )
 
@@ -5347,7 +5367,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_o, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("activated", "verified", []),
+        expected=_pledge_expected("activated", "verified", ["publisher_claim_unattested"]),
         anchor_policy=policy_o,
         grant_view={
             "grant": floor_o,
@@ -5367,7 +5387,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "unverified_rotation", []),
+        expected=_pledge_expected("dormant", "unverified_rotation", ["publisher_claim_unattested"]),
         grant_view={"grant": floor, "later_grants": [twin_p]},
     )
 
@@ -5381,7 +5401,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=_pledge_trust("bundle"),
-        expected=_pledge_expected("dormant", "unauthenticated_tofu", []),
+        expected=_pledge_expected(
+            "dormant", "unauthenticated_tofu", ["publisher_claim_unattested"]
+        ),
         grant_view={"grant": floor},
     )
 
@@ -5419,7 +5441,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_r, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_scope_uncovered"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_scope_uncovered"]
+        ),
         grant_view={"grant": floor_r, "declarations": [declaration_r]},
     )
 
@@ -5476,7 +5500,7 @@ def gen_37_preservation_pledge() -> None:
         expected=_pledge_expected(
             "not_checked",
             "not_checked",
-            [],
+            ["publisher_claim_unattested"],
             schema="invalid",
             ok=False,
             errors_contains=["pubkey"],
@@ -5525,7 +5549,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_v, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("invalid_grant_ignored", "verified", []),
+        expected=_pledge_expected(
+            "invalid_grant_ignored", "verified", ["publisher_claim_unattested"]
+        ),
         grant_view={"grant": floor_v},
     )
 
@@ -5554,7 +5580,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_w, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("invalid_grant_ignored", "verified", []),
+        expected=_pledge_expected(
+            "invalid_grant_ignored", "verified", ["publisher_claim_unattested"]
+        ),
         grant_view={"grant": floor_w, "declarations": [declaration_w]},
     )
 
@@ -5595,7 +5623,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_x, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=_pledge_trust("bundle", PLEDGE_MARKETPLACE_ID),
-        expected=_pledge_expected("invalid_grant_ignored", "unauthenticated_tofu", []),
+        expected=_pledge_expected(
+            "invalid_grant_ignored", "unauthenticated_tofu", ["publisher_claim_unattested"]
+        ),
         grant_view={"grant": floor_x},
     )
 
@@ -7426,6 +7456,83 @@ def gen_41_compromise_cutoff() -> None:
     )
 
 
+# --- vector 42: publisher-claim (V-L.8, v0.1 §11.2 2026-08-26 amendment) ------
+
+
+def gen_42_publisher_claim() -> None:
+    """v0.1 §11.2 (2026-08-26): `work.publisher_id` present and differing from
+    `issuer.id` is warned `publisher_claim_unattested`, payload-deterministically
+    and independent of `attest_version` and of trust-store contents.
+
+    Leaf (a) is signed against a trust store that has never heard of the
+    claimed publisher domain at all — the point being that the warning cannot
+    be switched off by what the verifier happens to trust. (b) and (c) are the
+    silent cases: self-publishing needs no claim to attest, and no claim means
+    nothing to warn about.
+    """
+    trust = _issuer_only_trust()
+
+    payload_a = issue.build_payload(**_base_payload_kwargs(publisher_id=PLEDGE_PUBLISHER_ID))
+    _assert_schema_valid(payload_a)
+    write_vector(
+        "42-publisher-claim/a-claim-differs-warn",
+        payload=payload_a,
+        envelope=issue.issue(payload_a, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": ["publisher_claim_unattested"],
+        },
+    )
+
+    payload_b = issue.build_payload(**_base_payload_kwargs(publisher_id=ISSUER_ID))
+    _assert_schema_valid(payload_b)
+    write_vector(
+        "42-publisher-claim/b-self-publisher-silent",
+        payload=payload_b,
+        envelope=issue.issue(payload_b, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": [],
+        },
+    )
+
+    payload_c = issue.build_payload(**_base_payload_kwargs())
+    _assert_schema_valid(payload_c)
+    write_vector(
+        "42-publisher-claim/c-no-claim-silent",
+        payload=payload_c,
+        envelope=issue.issue(payload_c, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": [],
+        },
+    )
+
+
 # --- vector 44: manifest-duplicate-kid (V-L.3, v0.1 §7.1 2026-08-26) ----------
 
 
@@ -7597,6 +7704,7 @@ def main() -> None:
     gen_39_witness_corroboration()
     gen_40_witness_quorum()
     gen_41_compromise_cutoff()
+    gen_42_publisher_claim()
     gen_44_manifest_duplicate_kid()
     gen_45_revocation_anchor_status()
     leaf_count = sum(1 for _ in VECTORS_DIR.rglob("expected.json"))

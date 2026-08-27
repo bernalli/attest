@@ -35,7 +35,7 @@ import, before any leaf is checked.)
   with that leaf's absolute path in every argv token, splits the template with
   `shlex.split`, and invokes it as a fixed argv list (`shell=False` — never a
   shell string).
-- `--subset` selects `v0.1` (58 leaves) or `v0.2` (all leaves, currently 184) —
+- `--subset` selects `v0.1` (61 leaves) or `v0.2` (all leaves, currently 187) —
   see §4.
 - `--report FILE` additionally writes the machine-readable JSON report (§6)
   to `FILE`.
@@ -47,8 +47,8 @@ The runner prints one `FAIL <leaf-id>` block (with its mismatches) per
 non-passing leaf, then exactly one summary line:
 
 ```
-CONFORMANT (v0.2): 184/184 leaves pass — corpus revision <hex12>
-NOT CONFORMANT (v0.1): 55/58 leaves pass — 3 failing
+CONFORMANT (v0.2): 187/187 leaves pass — corpus revision <hex12>
+NOT CONFORMANT (v0.1): 58/61 leaves pass — 3 failing
 ```
 
 Exit code: `0` if conformant, `1` if not, `2` on a usage/environment error
@@ -119,11 +119,11 @@ either as a worked example of the contract above.
 
 ## 4. Subsets
 
-- **v0.2** — every leaf in the corpus (currently 184). Measures conformance
+- **v0.2** — every leaf in the corpus (currently 187). Measures conformance
   against `docs/spec/attest-v0.2.md`.
-- **v0.1** — the 58-leaf subset: every leaf whose top-level group directory's
+- **v0.1** — the 61-leaf subset: every leaf whose top-level group directory's
   leading integer is ≤ 25, plus groups `29-limits`,
-  `31-manifest-currency`, `44-manifest-duplicate-kid`, and
+  `31-manifest-currency`, `42-publisher-claim`, `44-manifest-duplicate-kid`, and
   `45-revocation-anchor-status`, plus three pinned leaf ids,
   `35-transfer/i-v01-transferable-null-pubkey-ok` (`35i`),
   `37-preservation-pledge/s-v01-negative-control` (`37s`), and
@@ -132,7 +132,7 @@ either as a worked example of the contract above.
   negative control for a v0.2-only schema conditional, living inside an
   otherwise-v0.2-only group — see `docs/spec/vectors/README.md` for the full
   membership rationale. A v0.1-only implementation (one that never accepts v0.2's hybrid
-  profile) is measured against this subset, not against all 184.
+  profile) is measured against this subset, not against all 187.
 
 ## 5. The claim process
 

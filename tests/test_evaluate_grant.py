@@ -1046,7 +1046,11 @@ def test_verify_without_grant_view_is_byte_identical_to_the_pre_stage_4_result()
     assert result.grant == "not_checked"
     assert result.grant_trust == "not_checked"
     assert result.ok is True
-    assert result.warnings == ()
+    # v0.1 §11.2 (2026-08-26 amendment): `work.publisher_id` ("pub.example")
+    # differs from `issuer.id` ("store.example.com") on every fixture in this
+    # file, and that warning is independent of Stage 4 entirely — it is the
+    # ONE component this "byte-identical" assertion no longer holds for.
+    assert result.warnings == ("publisher_claim_unattested",)
 
 
 def test_verify_reports_an_activated_grant_without_touching_ok() -> None:

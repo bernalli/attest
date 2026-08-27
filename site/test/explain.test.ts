@@ -230,6 +230,8 @@ const NO_ROW: Record<string, string> = {
   'license.drm is drm-bound (design vector 18)':
     'content warning, independent of the crypto pipeline; moves no component (v0.1 §11.2)',
   'unknown payload field': 'same content pass; forward-compatibility signal, never a schema verdict',
+  publisher_claim_unattested:
+    'content warning, independent of the crypto pipeline; moves no component (v0.1 §11.2)',
   mixed_keyset_active_ed_only_sibling:
     '§13.1: no result field classifies hybrid strength, "because none exists"',
   grant_commitment_divergence:

@@ -1095,7 +1095,11 @@ describe('verify() integration — Stage 4 takes NO exception (D6)', () => {
     expect(result.grant).toBe('not_checked')
     expect(result.grant_trust).toBe('not_checked')
     expect(isOk(result)).toBe(true)
-    expect(result.warnings).toEqual([])
+    // v0.1 §11.2 (2026-08-26 amendment): `work.publisher_id` differs from
+    // `issuer.id` on this fixture, and that warning is independent of Stage 4
+    // entirely — it is the ONE component this "byte-identical" assertion no
+    // longer holds for.
+    expect(result.warnings).toEqual(['publisher_claim_unattested'])
   })
 
   it('reports an activated grant without touching ok', () => {

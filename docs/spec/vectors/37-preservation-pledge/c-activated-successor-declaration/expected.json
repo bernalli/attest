@@ -9,6 +9,7 @@
   "signature": "valid",
   "trust": "verified",
   "warnings": [
+    "publisher_claim_unattested",
     "grant_activated_by_successor"
   ]
 }
