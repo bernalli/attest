@@ -325,6 +325,28 @@ describe('key-manifest continuity compromise floor', () => {
     expect(chainContinuous([v1, v2, duplicateResurrection])).toBe(false)
   })
 
+  it('rejects a duplicate signer kid when any predecessor entry says compromised', () => {
+    const v1 = signManifest(
+      manifestBody(1, [
+        keyEntry(KID, signingPub, 'active'),
+        keyEntry(DECLARER_KID, declarerPub, 'active'),
+        keyEntry(DECLARER_KID, declarerPub, 'compromised'),
+      ]),
+      DECLARER_KID,
+      declarerSeed,
+    )
+    const v2 = signManifest(
+      manifestBody(2, [
+        keyEntry(KID, signingPub, 'active'),
+        keyEntry(DECLARER_KID, declarerPub, 'compromised'),
+      ]),
+      DECLARER_KID,
+      declarerSeed,
+    )
+
+    expect(checkContinuity(v1, v2)).toBe(false)
+  })
+
   it('makes a held chain compromise binding even when the trusted manifest reactivates the key', () => {
     const v1 = manifestV1()
     const v2 = manifestV2Compromised()

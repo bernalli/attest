@@ -107,6 +107,26 @@ def find_key(manifest: dict[str, Any], kid: str) -> dict[str, Any] | None:
     return None
 
 
+def _entries_for_kid(manifest: dict[str, Any], kid: str) -> tuple[dict[str, Any], ...]:
+    """Every `keys[]` entry carrying `kid` — the repo does not guarantee uniqueness.
+
+    Status decisions MUST read all of them: with duplicate entries of differing
+    status, a first-match read lets the array's ORDER decide the verdict.
+    """
+    entries = manifest.get("keys", [])
+    if not isinstance(entries, list):
+        return ()
+    return tuple(entry for entry in entries if isinstance(entry, dict) and entry.get("kid") == kid)
+
+
+def _kid_is_active_for_continuity(manifest: dict[str, Any], kid: str) -> bool:
+    """True only when EVERY entry for `kid` says `active` (and at least one exists)."""
+    matching_entries = _entries_for_kid(manifest, kid)
+    return bool(matching_entries) and all(
+        entry.get("status") == _ACTIVE for entry in matching_entries
+    )
+
+
 def sign_signature_block(
     payload: bytes,
     signing_kp: keys.SigningKeyPair | pq.HybridSigningKeys,
@@ -301,7 +321,7 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
     except (KeyError, TypeError):
         return False
     signer_entry = find_key(trusted, signer_kid)
-    if signer_entry is None or signer_entry.get("status") != _ACTIVE:
+    if signer_entry is None or not _kid_is_active_for_continuity(trusted, signer_kid):
         return False
     # The signer key must also cover the candidate's issuance in its validity
     # window (consistency with verify_artifact_manifest) (2026-07-13 review,

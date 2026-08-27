@@ -47,6 +47,25 @@ export function findKey(manifest: JsonObject, kid: string): JsonObject | null {
   return null
 }
 
+// The repo does not guarantee `kid` uniqueness inside keys[]. Status decisions
+// MUST read every entry: with duplicates of differing status, a first-match
+// read lets the array's ORDER decide the verdict. Mirrors manifests.py.
+function entriesForKidLocal(manifest: JsonObject, kid: string): JsonObject[] {
+  const keys = manifest['keys']
+  if (!Array.isArray(keys)) return []
+  const matches: JsonObject[] = []
+  for (const e of keys) {
+    const o = asObject(e)
+    if (o !== null && o['kid'] === kid) matches.push(o)
+  }
+  return matches
+}
+
+function kidIsActiveForContinuity(manifest: JsonObject, kid: string): boolean {
+  const entries = entriesForKidLocal(manifest, kid)
+  return entries.length > 0 && entries.every((entry) => entry['status'] === 'active')
+}
+
 export function signableManifestBytes(manifest: JsonObject): Uint8Array {
   const body: JsonObject = Object.create(null)
   for (const k of Object.keys(manifest)) if (k !== 'manifest_signature') body[k] = manifest[k]!
@@ -154,9 +173,11 @@ export function checkContinuity(trusted: JsonObject, candidate: JsonObject): boo
     const tv = trusted['manifest_version'], cv = candidate['manifest_version']
     if (typeof tv !== 'bigint' || typeof cv !== 'bigint' || cv !== tv + 1n) return false
     const sigBlock = asObject(candidate['manifest_signature'])
-    if (!sigBlock || typeof sigBlock['kid'] !== 'string') return false
-    const signer = findKey(trusted, sigBlock['kid'])
-    if (signer === null || signer['status'] !== 'active') return false
+    if (!sigBlock) return false
+    const signerKid = sigBlock['kid']
+    if (typeof signerKid !== 'string') return false
+    const signer = findKey(trusted, signerKid)
+    if (signer === null || !kidIsActiveForContinuity(trusted, signerKid)) return false
     // The signer key must also cover the candidate's issuance window, consistent
     // with verifyArtifactManifest (2026-07-13 review, finding 12).
     if (!withinValidity(candidate['issued_at'], signer)) return false

@@ -12,6 +12,8 @@ P2  no crash          — malformed manifest data reaches every entry point as
                         a rejection, never as an unhandled exception.
 P3  no resurrection   — a successor listing a compromised kid as anything
                         else is never accepted, by either gate.
+P4  active signer      — continuity may use the first signer entry for key
+                        material, but signer status must observe every duplicate.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from typing import Any
 
 import pytest
 from hypothesis import HealthCheck, example, given, settings
+from hypothesis import strategies as st
 
 from attest import issue, keys, manifests, verify
 from tests.helpers import make_payload
@@ -117,17 +120,6 @@ KNOWN_DUPLICATE_KID_DEFECT = _manifest(
 # --- P1: the compromise floor is absorbing ----------------------------------
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "Known duplicate-kid defect, predating this work and already pinned by "
-        "tests/test_compromise_adversarial.py::"
-        "test_duplicate_trusted_kid_cannot_hide_compromise_from_status_floor: key "
-        "resolution reads the FIRST keys[] entry, so a duplicate placed before the "
-        "compromised one hides it. When that defect closes, this test becomes the "
-        "proof it closed for every mutation, not just the pinned example."
-    ),
-)
 @PROPERTY_SETTINGS
 @given(manifest=malformed.manifests_marking_kid_compromised(WELL_FORMED, KID))
 @example(manifest=KNOWN_DUPLICATE_KID_DEFECT)
@@ -224,3 +216,31 @@ def test_p3_successor_can_never_resurrect_a_compromised_kid(
     )
 
     assert manifests.check_continuity(COMPROMISED_PREDECESSOR, successor) is False
+
+
+@PROPERTY_SETTINGS
+@given(
+    active_before=st.integers(min_value=1, max_value=3),
+    active_after=st.integers(min_value=0, max_value=3),
+)
+@example(active_before=1, active_after=0)
+def test_p4_continuity_signer_status_reads_every_duplicate_entry(
+    active_before: int, active_after: int
+) -> None:
+    signer_entries = [_entry(DECLARER_KID, DECLARER_KP, "active") for _ in range(active_before)]
+    signer_entries.append(_entry(DECLARER_KID, DECLARER_KP, "compromised"))
+    signer_entries.extend(_entry(DECLARER_KID, DECLARER_KP, "active") for _ in range(active_after))
+    predecessor = _manifest([_entry(KID, KP), *signer_entries])
+    successor = _manifest(
+        [_entry(KID, KP), _entry(DECLARER_KID, DECLARER_KP, "compromised")], version=2
+    )
+    successor["issued_at"] = SUCCESSOR_ISSUED_AT
+    successor["manifest_signature"] = manifests.sign_signature_block(
+        manifests._signable(successor),
+        DECLARER_KP,
+        DECLARER_KID,  # type: ignore[attr-defined]
+    )
+
+    assert manifests.verify_key_manifest(predecessor) is True
+    assert manifests.verify_key_manifest(successor) is True
+    assert manifests.check_continuity(predecessor, successor) is False
