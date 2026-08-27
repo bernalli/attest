@@ -112,6 +112,12 @@ _REVOCATION_TRANSFERRED = "transferred"
 # inflate the feed's reported freshness either (V-L.5).
 _ANCHOR_STATUSES = frozenset({_RECORD_STATUS_REVOKED, _REVOCATION_TRANSFERRED})
 
+# V-L.8 (design vector "publisher authority"): `work.publisher_id` is an
+# unattested claim under v0.1 alone — no manifest resolution or grant
+# evaluation backs it — so a receipt asserting a rights holder distinct from
+# its own issuer gets a warning, never an exception (TS parity: messages.ts).
+_WARN_PUBLISHER_CLAIM_UNATTESTED = "publisher_claim_unattested"
+
 # Fixed literals (v0.2 §17.2-§17.4, verbatim; TS parity: messages.ts).
 _WARN_TRANSFERRED_REVOCATION_UNBACKED = "transferred_revocation_unbacked"
 _WARN_TRANSFER_RECORD_UNLOGGED = "transfer_record_unlogged"
@@ -394,6 +400,17 @@ def _content_warnings(payload: dict[str, Any]) -> list[str]:
         # always written this as `typeof eol !== 'string' || !KNOWN_EOL.has(eol)`.
         if not isinstance(eol, str) or eol not in _KNOWN_EOL_VALUES:
             found.append(f"unknown survivability.end_of_life value: {eol!r}")
+
+    # V-L.8: `work.publisher_id` differing from `issuer.id` is a rights-holder
+    # claim this v0.1-only check cannot attest — neither field is trusted to
+    # be a dict/string, since the payload is untrusted wire data (§18.5's own
+    # crash history: a `status: {}` once escaped as a raw TypeError).
+    issuer_block = payload.get("issuer")
+    issuer_id = issuer_block.get("id") if isinstance(issuer_block, dict) else None
+    work_block = payload.get("work")
+    publisher_id = work_block.get("publisher_id") if isinstance(work_block, dict) else None
+    if isinstance(publisher_id, str) and isinstance(issuer_id, str) and publisher_id != issuer_id:
+        found.append(_WARN_PUBLISHER_CLAIM_UNATTESTED)
 
     return found
 

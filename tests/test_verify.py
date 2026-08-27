@@ -336,6 +336,29 @@ def test_unknown_end_of_life_value_emits_warning() -> None:
     assert any("end_of_life" in w for w in result.warnings)
 
 
+def test_publisher_claim_differing_from_issuer_warns() -> None:
+    """Valid v0.1 receipt with `work.publisher_id` != `issuer.id`; the trust
+    store holds no manifest for `pub.example`, so the claim is unattested."""
+    payload = make_payload(work={"publisher_id": "pub.example"})
+    envelope = issue.issue(payload, KP, KID)
+    result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+    assert result.ok is True
+    assert "publisher_claim_unattested" in result.warnings
+
+
+def test_publisher_claim_equal_to_issuer_is_silent() -> None:
+    payload = make_payload(work={"publisher_id": ISSUER})
+    envelope = issue.issue(payload, KP, KID)
+    result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+    assert "publisher_claim_unattested" not in result.warnings
+
+
+def test_publisher_claim_absent_is_silent() -> None:
+    envelope = issue.issue(make_payload(), KP, KID)
+    result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+    assert "publisher_claim_unattested" not in result.warnings
+
+
 # --- step 6: revocation-by-class (design §3.1/§6) --------------------------------
 #
 # revocability=="none" -> a matching, signature-valid record is itself invalid
