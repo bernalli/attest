@@ -106,6 +106,12 @@ _RECORD_STATUS_REVOKED = "revoked"
 # `_REVOCATION_REVOKED`'s existing dual use above.
 _REVOCATION_TRANSFERRED = "transferred"
 
+# v0.1 §12.3 (2026-08-26 amendment): only records whose status is a REGISTERED
+# revocation-statement literal may drive the freshness anchor T. Any other
+# status "is not a revocation statement" (§12) — and a non-statement must not
+# inflate the feed's reported freshness either (V-L.5).
+_ANCHOR_STATUSES = frozenset({_RECORD_STATUS_REVOKED, _REVOCATION_TRANSFERRED})
+
 # Fixed literals (v0.2 §17.2-§17.4, verbatim; TS parity: messages.ts).
 _WARN_TRANSFERRED_REVOCATION_UNBACKED = "transferred_revocation_unbacked"
 _WARN_TRANSFER_RECORD_UNLOGGED = "transfer_record_unlogged"
@@ -380,7 +386,13 @@ def _content_warnings(payload: dict[str, Any]) -> list[str]:
     survivability = payload.get("survivability")
     if isinstance(survivability, dict):
         eol = survivability.get("end_of_life")
-        if eol not in _KNOWN_EOL_VALUES:
+        # `x not in <frozenset>` RAISES on an unhashable x, and the payload is
+        # untrusted wire data: a signed receipt carrying
+        # `survivability.end_of_life: {}` crashed verify() with a TypeError.
+        # Only a string can ever be a registered value, so the type check is
+        # also the guard — and it restores parity with verify.ts, which has
+        # always written this as `typeof eol !== 'string' || !KNOWN_EOL.has(eol)`.
+        if not isinstance(eol, str) or eol not in _KNOWN_EOL_VALUES:
             found.append(f"unknown survivability.end_of_life value: {eol!r}")
 
     return found
@@ -998,11 +1010,25 @@ def _max_revoked_at(view: list[dict[str, Any]]) -> str | None:
     itself). Malformed entries (non-dict, missing/unparseable `revoked_at`)
     are skipped, never crash; naive/aware datetime mixes that can't be
     compared are likewise skipped rather than raising.
+
+    Restricted further to records whose `status` is a registered
+    revocation-statement literal (`_ANCHOR_STATUSES`): an issuer-signed record
+    with an unregistered status and a far-future `revoked_at` must not inflate
+    T (v0.1 §12.3, 2026-08-26 amendment). §12 already rules such a record is
+    not a revocation statement, so it cannot speak for the feed's freshness
+    either.
     """
     best_dt: datetime | None = None
     best_raw: str | None = None
     for record in view:
         if not isinstance(record, dict):
+            continue
+        status = record.get("status")
+        # `x not in frozenset` RAISES on an unhashable x, and the revocation
+        # view is untrusted wire data: a record carrying `status: {}` would
+        # crash a function documented never to raise. Only a string can ever
+        # be a registered literal, so the type check is also the guard.
+        if not isinstance(status, str) or status not in _ANCHOR_STATUSES:
             continue
         parsed = _parse_iso(record.get("revoked_at"))
         if parsed is None:
@@ -1314,9 +1340,11 @@ def _classify_revocation(
       logging remains optional corroboration for them, never a gate.
 
     The `not_revoked_as_of:<T>` freshness anchor is computed over ALL
-    authenticated records in the view (any receipt_id), not the raw view —
-    so unsigned junk can neither revoke nor inflate T. With no authenticated
-    records at all, T has no trustworthy value and the result is `unknown`.
+    authenticated STATEMENT-STATUS records in the view (any receipt_id;
+    `status` `revoked`/`transferred` only, §12.3 as amended 2026-08-26), not
+    the raw view — so neither unsigned junk nor a signed non-statement can
+    revoke or inflate T. With no authenticated statement-status records at
+    all, T has no trustworthy value and the result is `unknown`.
 
     An oversized view (more than `max_records` entries) is not evaluated —
     never truncated (a subset could misreport), never raised. It fails CLOSED

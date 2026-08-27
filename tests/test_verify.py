@@ -541,9 +541,14 @@ def test_not_revoked_as_of_unknown_when_only_unauthenticated_records() -> None:
 
 
 def test_valid_record_with_non_revoked_status_is_not_a_revocation() -> None:
-    """Only status=='revoked' drives revocation. A validly-signed record with a
-    different status is not a revocation (but still authenticates the feed, so
-    it can anchor T)."""
+    """Only a registered revocation-statement status counts, for BOTH questions.
+
+    A validly-signed record with an unregistered status is not a revocation
+    (§12) and, since the v0.1 §12.3 amendment (2026-08-26), does not anchor T
+    either: a non-statement must not speak for the freshness of the feed.
+    Before that amendment this same record reported
+    `not_revoked_as_of:2026-07-05T00:00:00Z`.
+    """
     payload = make_payload(license={"revocability": "policy"})
     envelope = issue.issue(payload, KP, KID)
     record = revocation.build_record(
@@ -552,8 +557,63 @@ def test_valid_record_with_non_revoked_status_is_not_a_revocation() -> None:
     result = verify.verify(
         _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[record]
     )
+    assert result.revocation == "unknown"
+    assert result.ok is True
+
+
+def test_a_statement_status_record_still_anchors_the_freshness_of_the_feed() -> None:
+    """The negative control: the filter must not silence a legitimate anchor."""
+    payload = make_payload(license={"revocability": "policy"})
+    envelope = issue.issue(payload, KP, KID)
+    other = revocation.build_record(
+        "01HZX0000000000000000000AA", "revoked", "2026-07-05T00:00:00Z", KP, KID
+    )
+
+    result = verify.verify(
+        _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[other]
+    )
+
     assert result.revocation == "not_revoked_as_of:2026-07-05T00:00:00Z"
     assert result.ok is True
+
+
+def test_an_unhashable_status_does_not_crash_the_anchor() -> None:
+    """The revocation view is untrusted wire data. Membership of a status in
+    the registered-literal set must not raise on an unhashable value —
+    `{} not in frozenset(...)` is a `TypeError`, in a function documented never
+    to raise."""
+    payload = make_payload(license={"revocability": "policy"})
+    envelope = issue.issue(payload, KP, KID)
+    record = revocation.build_record(
+        "01HZX0000000000000000000AA", "revoked", "2026-07-05T00:00:00Z", KP, KID
+    )
+    for hostile in ({"status": "revoked"}, ["revoked"], 7, True, None):
+        record["status"] = hostile
+
+        result = verify.verify(
+            _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[record]
+        )
+
+        assert result.revocation == "unknown"
+
+
+def test_an_unregistered_status_cannot_inflate_a_genuine_anchor() -> None:
+    """A far-future non-statement beside a genuine older statement: the anchor
+    must report the OLDER genuine timestamp, never the far-future one."""
+    payload = make_payload(license={"revocability": "policy"})
+    envelope = issue.issue(payload, KP, KID)
+    genuine = revocation.build_record(
+        "01HZX0000000000000000000AA", "revoked", "2026-07-05T00:00:00Z", KP, KID
+    )
+    junk = revocation.build_record(
+        "01HZX0000000000000000000AB", "recalled", "2099-01-01T00:00:00Z", KP, KID
+    )
+
+    for view in ([genuine, junk], [junk, genuine]):
+        result = verify.verify(
+            _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=list(view)
+        )
+        assert result.revocation == "not_revoked_as_of:2026-07-05T00:00:00Z"
 
 
 # --- G5 (TM-47): revocation-record log entries + deadline effectiveness ----------
@@ -1636,3 +1696,31 @@ def test_duplicate_of_the_signing_kid_rejects_in_both_element_orders() -> None:
         assert result.ok is False
         assert any("duplicate kid" in error for error in result.errors)
     assert verdicts[0].errors == verdicts[1].errors
+
+
+def test_an_unhashable_end_of_life_does_not_crash_verification() -> None:
+    """`x not in <frozenset>` raises on an unhashable x, and the payload is
+    untrusted wire data: a SIGNED receipt whose `survivability.end_of_life` is
+    an object or an array used to escape `verify()` as a `TypeError`.
+
+    The TypeScript verifier has always guarded this with a `typeof` check, so
+    the crash was also a parity divergence no parity test could see — the TS
+    side passed while Python died.
+    """
+    for hostile in ({}, [], 7, True, None):
+        payload = make_payload()
+        payload["survivability"]["end_of_life"] = hostile
+        envelope = {
+            "payload": payload,
+            "signatures": [
+                {
+                    "kid": KID,
+                    "alg": "Ed25519",
+                    "sig": keys.b64u(keys.sign(canon.canonical_bytes(payload), KP)),
+                }
+            ],
+        }
+
+        result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+
+        assert any("end_of_life" in warning for warning in result.warnings)
