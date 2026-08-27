@@ -160,3 +160,140 @@ describe('parseBundle — proofs/ members (v0.2 §14)', () => {
     expect(parseBundle(zip).proofs).toEqual({})
   })
 })
+
+// --- V-L.6: a central directory repeating a member name (v0.1 §14.1) --------
+
+// Minimal STORED zip writer that, unlike zipSync's Record input, CAN repeat a
+// member name — the exact shape a pre-fix export produced.
+function crc32(data: Uint8Array): number {
+  let c = 0xffffffff
+  for (let i = 0; i < data.length; i++) {
+    c ^= data[i]
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
+  }
+  return (c ^ 0xffffffff) >>> 0
+}
+
+function storedZip(entries: [string, Uint8Array][]): Uint8Array {
+  const enc = new TextEncoder()
+  const locals: Uint8Array[] = []
+  const centrals: Uint8Array[] = []
+  let offset = 0
+  for (const [name, data] of entries) {
+    const n = enc.encode(name)
+    const crc = crc32(data)
+    const local = new Uint8Array(30 + n.length + data.length)
+    const lv = new DataView(local.buffer)
+    lv.setUint32(0, 0x04034b50, true)
+    lv.setUint16(4, 20, true)
+    lv.setUint32(14, crc, true)
+    lv.setUint32(18, data.length, true)
+    lv.setUint32(22, data.length, true)
+    lv.setUint16(26, n.length, true)
+    local.set(n, 30)
+    local.set(data, 30 + n.length)
+    const central = new Uint8Array(46 + n.length)
+    const cv = new DataView(central.buffer)
+    cv.setUint32(0, 0x02014b50, true)
+    cv.setUint16(4, 20, true)
+    cv.setUint16(6, 20, true)
+    cv.setUint32(16, crc, true)
+    cv.setUint32(20, data.length, true)
+    cv.setUint32(24, data.length, true)
+    cv.setUint16(28, n.length, true)
+    cv.setUint32(42, offset, true)
+    central.set(n, 46)
+    locals.push(local)
+    centrals.push(central)
+    offset += local.length
+  }
+  const cdSize = centrals.reduce((s, c) => s + c.length, 0)
+  const eocd = new Uint8Array(22)
+  const ev = new DataView(eocd.buffer)
+  ev.setUint32(0, 0x06054b50, true)
+  ev.setUint16(8, entries.length, true)
+  ev.setUint16(10, entries.length, true)
+  ev.setUint32(12, cdSize, true)
+  ev.setUint32(16, offset, true)
+  const out = new Uint8Array(offset + cdSize + 22)
+  let p = 0
+  for (const b of [...locals, ...centrals, eocd]) {
+    out.set(b, p)
+    p += b.length
+  }
+  return out
+}
+
+describe('parseBundle: duplicate member names', () => {
+  const NAME = 'receipts/01HZX0000000000000000000AA.attest.json'
+  const env = () => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
+
+  // The writer itself is verified first: a throw on the duplicated archive
+  // proves nothing unless the non-duplicated one round-trips.
+  it('round-trips a hand-built zip without duplicates', () => {
+    const parsed = parseBundle(storedZip([[NAME, env()]]))
+    expect(parsed.receipts).toHaveLength(1)
+  })
+
+  it('rejects a central directory that repeats a member name', () => {
+    expect(() => parseBundle(storedZip([[NAME, env()], [NAME, env()]]))).toThrow(BundleError)
+    expect(() => parseBundle(storedZip([[NAME, env()], [NAME, env()]]))).toThrow(/repeats/)
+  })
+
+  it('rejects a repeat whose two entries are byte-identical', () => {
+    const bytes = env()
+    expect(() => parseBundle(storedZip([[NAME, bytes], [NAME, bytes]]))).toThrow(/repeats/)
+  })
+
+  it('rejects three entries under one name and reports the count', () => {
+    expect(() => parseBundle(storedZip([[NAME, env()], [NAME, env()], [NAME, env()]]))).toThrow(
+      /repeats 2 member name/,
+    )
+  })
+
+  it('rejects a repeat in a non-receipt member family', () => {
+    const other = 'manifests/store.example.com.json'
+    const blob = new TextEncoder().encode('{}')
+    expect(() =>
+      parseBundle(storedZip([[NAME, env()], [other, blob], [other, blob]])),
+    ).toThrow(/repeats/)
+  })
+
+  it('does not false-positive on distinct names', () => {
+    // Distinct member names AND distinct payload ids: the same envelope under
+    // two names now trips the receipt-id guard instead, which is its own test.
+    const second = 'receipts/01HZX0000000000000000000AB.attest.json'
+    const envelope = JSON.parse(new TextDecoder().decode(env()))
+    envelope.payload.receipt_id = '01HZX0000000000000000000AB'
+    const secondBytes = new TextEncoder().encode(JSON.stringify(envelope))
+    const parsed = parseBundle(storedZip([[NAME, env()], [second, secondBytes]]))
+    expect(parsed.receipts).toHaveLength(2)
+  })
+})
+
+describe('parseBundle: receipt payload ids', () => {
+  const NAME = 'receipts/01HZX0000000000000000000AA.attest.json'
+  const env = () => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
+
+  function withReceiptId(id: unknown): Uint8Array {
+    const envelope = JSON.parse(new TextDecoder().decode(env()))
+    envelope.payload.receipt_id = id
+    return new TextEncoder().encode(JSON.stringify(envelope))
+  }
+
+  it.each([['../../escaped'], ['/tmp/escaped'], ['01hzx0000000000000000000aa'], ['']])(
+    'refuses a receipt_id that is not an uppercase ULID (%s)',
+    (id) => {
+      expect(() => parseBundle(storedZip([[NAME, withReceiptId(id)]]))).toThrow(/invalid receipt_id/)
+    },
+  )
+
+  it('refuses a non-string receipt_id', () => {
+    expect(() => parseBundle(storedZip([[NAME, withReceiptId(7)]]))).toThrow(/invalid receipt_id/)
+  })
+
+  it('refuses two distinct member names carrying one receipt_id', () => {
+    const other = 'receipts/01HZX0000000000000000000AB.attest.json'
+    expect(() => parseBundle(storedZip([[NAME, env()], [other, env()]]))).toThrow(/more than once/)
+  })
+})

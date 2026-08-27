@@ -34,7 +34,7 @@ from conftest import ISSUER, LEGAL_TEXT, LEGAL_TEXT_SHA256
 from attest import buyer_surface
 
 _SALT = "not-a-real-secret-but-treat-it-like-one"
-_RECEIPT_ID = "r_test_0001"
+_RECEIPT_ID = "01HZX0000000000000000000AA"
 # The slug the bundle filename derives from `merchant.example.com`.
 _SLUG = "merchant-example-com"
 # Shape-faithful to what `attest.issue.issue` embeds at issuance: the issuer's
@@ -303,7 +303,7 @@ def test_issuer_id_that_reduces_to_an_empty_slug_is_a_failed_result() -> None:
 def test_receipt_id_argument_must_match_the_payload() -> None:
     fakes: list[_FakeSMTP] = []
 
-    result = _send(_config(), _fake_factory(fakes), receipt_id="r_test_9999")
+    result = _send(_config(), _fake_factory(fakes), receipt_id="01HZX0000000000000000000ZZ")
 
     assert result == DeliveryResult(status="failed", detail="bundle build failed")
     assert fakes == []
@@ -472,12 +472,23 @@ def _envelope_for(receipt_id: str) -> dict[str, Any]:
     return envelope
 
 
+def _ulid_for(purchase_id: str) -> str:
+    """A schema-shaped receipt id derived from the purchase id.
+
+    Export derives a bundle member name from `receipt_id`, so it now refuses
+    anything that is not the uppercase ULID the schema pins: a fixture id like
+    `r_cs_retry` is a state the bridge cannot produce.
+    """
+    suffix = "".join(c for c in purchase_id.upper() if c in "0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+    return ("01HZX" + suffix.ljust(21, "0"))[:26]
+
+
 def _record_undelivered(ledger: Ledger, purchase_id: str) -> None:
     ledger.record_receipt(
         "stripe",
         purchase_id,
-        f"r_{purchase_id}",
-        _envelope_for(f"r_{purchase_id}"),
+        _ulid_for(purchase_id),
+        _envelope_for(_ulid_for(purchase_id)),
         "buyer@example.com",
         f"token_{purchase_id}",
         "2026-07-24T10:00:00Z",
@@ -542,7 +553,7 @@ def test_a_raising_sweep_send_does_not_abort_later_rows(tmp_path: Any) -> None:
 
     class RaisingDelivery:
         def send(self, **kwargs: Any) -> DeliveryResult:
-            if kwargs["receipt_id"] == "r_cs_bad":
+            if kwargs["receipt_id"] == _ulid_for("cs_bad"):
                 raise RuntimeError("broken transport")
             return DeliveryResult("sent", None)
 
@@ -614,7 +625,7 @@ def test_default_factory_uses_smtp_ssl_for_port_465(monkeypatch: pytest.MonkeyPa
     delivery = Delivery(_config(port=465), legal_texts=_LEGAL_TEXTS)  # default factory
     result = delivery.send(
         to_email="buyer@example.com",
-        receipt_id="r_test_0001",
+        receipt_id="01HZX0000000000000000000AA",
         work_title="Stardrift Chronicles",
         envelope=_ENVELOPE,
         download_url="https://receipts.example.com/r/tok_abc123",
@@ -643,7 +654,7 @@ def test_default_factory_uses_smtp_with_starttls_for_non_465_port(
     delivery = Delivery(_config(port=587), legal_texts=_LEGAL_TEXTS)
     result = delivery.send(
         to_email="buyer@example.com",
-        receipt_id="r_test_0001",
+        receipt_id="01HZX0000000000000000000AA",
         work_title="Stardrift Chronicles",
         envelope=_ENVELOPE,
         download_url="https://receipts.example.com/r/tok_abc123",
@@ -791,7 +802,7 @@ def test_config_none_returns_skipped_no_smtp_and_never_calls_factory() -> None:
     delivery = Delivery(None, smtp_factory=factory)
     result = delivery.send(
         to_email="buyer@example.com",
-        receipt_id="r_test_0001",
+        receipt_id="01HZX0000000000000000000AA",
         work_title="Stardrift Chronicles",
         envelope=_ENVELOPE,
         download_url="https://receipts.example.com/r/tok_abc123",

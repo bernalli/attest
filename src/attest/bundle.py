@@ -52,6 +52,7 @@ import os
 import re
 import stat
 import zipfile
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -154,6 +155,24 @@ def _proof_member_receipt_id(filename: str) -> str:
     receipt_id = relative.removesuffix(".json")
     if relative != f"{receipt_id}.json" or _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
         raise BundleError(f"invalid proof member path {filename!r}; expected proofs/<ULID>.json")
+    return receipt_id
+
+
+def _receipt_payload_id(envelope: object, filename: str) -> str:
+    """Return the receipt id inside an imported envelope, strictly shaped.
+
+    A bundle is attacker-supplied and `cli.py` derives an on-disk filename from
+    this value, exactly as it does for `proofs/` members. The receipt schema
+    pins ids to ULIDs, so accept only that shape — never an absolute path, a
+    traversal component, or a case/normalization variant that would collide
+    with a sibling on a case-insensitive or normalizing filesystem.
+    """
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    receipt_id = payload.get("receipt_id") if isinstance(payload, dict) else None
+    if not isinstance(receipt_id, str) or _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+        raise BundleError(
+            f"receipt entry {filename!r} has invalid receipt_id; expected uppercase ULID"
+        )
     return receipt_id
 
 
@@ -374,12 +393,25 @@ def export(
     recipient never receives. Existing callers that never pass `proofs=` see
     zero behavior change (no `proofs/` member is written at all).
     """
+    seen_ids: dict[str, int] = {}
     for envelope in receipts:
         payload = envelope.get("payload")
         if not isinstance(payload, dict):
             raise BundleError("receipt envelope missing object member 'payload'")
+        receipt_id = payload.get("receipt_id")
+        if not isinstance(receipt_id, str) or _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+            raise BundleError("receipt payload has invalid receipt_id; expected uppercase ULID")
+        seen_ids[receipt_id] = seen_ids.get(receipt_id, 0) + 1
         for digest in _referenced_legal_hashes(payload):
             _check_legal_text(digest, legal_texts)
+    duplicate_ids = sorted(rid for rid, n in seen_ids.items() if n > 1)
+    if duplicate_ids:
+        raise BundleError(
+            f"duplicate receipt_id(s) across receipts: {duplicate_ids} — member "
+            "names receipts/<receipt_id>.attest.json would collide, and name-based "
+            "reads on import silently shadow one of the pair (v0.1 §14.1, "
+            "2026-08-26 amendment)"
+        )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     attest_path = out_dir / f"{name}.attest"
@@ -479,6 +511,24 @@ def _guard_zip(zf: zipfile.ZipFile, max_entries: int, max_total_bytes: int) -> N
         )
 
 
+def _reject_duplicate_member_names(zf: zipfile.ZipFile) -> None:
+    """v0.1 §14.1 (2026-08-26 amendment): a central directory repeating a member
+    name is rejected whole. Name-based reads (`zf.open(<str>)`) resolve EVERY
+    duplicate to one entry, so a duplicated member silently shadows its sibling
+    — while both entries remain physically present in the file. Import must
+    never guess; recovery of an already-circulating duplicated bundle is an
+    operator action (extract by entry, re-export a clean bundle)."""
+    counts = Counter(zf.namelist())
+    duplicates = sorted(name for name, n in counts.items() if n > 1)
+    if duplicates:
+        raise BundleError(
+            f"bundle central directory repeats member name(s): {duplicates} — "
+            "refusing to import: duplicated members shadow each other on name-based "
+            "reads. Both entries are still physically present in this file; extract "
+            "them with a tool that reads by entry, then re-export a clean bundle"
+        )
+
+
 def _loads(data: bytes) -> Any:
     """Parse bundle-internal JSON through the strict canonical parser (rejects
     duplicate keys, floats, BOMs) so imported trust material matches what the
@@ -511,6 +561,7 @@ def import_bundle(
     possible bomb.
     """
     receipts: list[dict[str, Any]] = []
+    seen_receipt_ids: set[str] = set()
     key_manifests_by_issuer: dict[str, list[dict[str, Any]]] = {}
     artifact_manifests: dict[str, list[dict[str, Any]]] = {}
     legal_texts: dict[str, bytes] = {}
@@ -525,9 +576,15 @@ def import_bundle(
 
     with zipfile.ZipFile(attest_path, "r") as zf:
         _guard_zip(zf, max_entries, max_total_bytes)
+        _reject_duplicate_member_names(zf)
         for filename in sorted(zf.namelist()):
             if filename.startswith("receipts/") and filename.endswith(".attest.json"):
-                receipts.append(_loads(budget.read(zf, filename)))
+                envelope = _loads(budget.read(zf, filename))
+                receipt_id = _receipt_payload_id(envelope, filename)
+                if receipt_id in seen_receipt_ids:
+                    raise BundleError(f"bundle lists receipt_id {receipt_id!r} more than once")
+                seen_receipt_ids.add(receipt_id)
+                receipts.append(envelope)
             elif filename.startswith("manifests/") and filename.endswith(".json"):
                 blob = _loads(budget.read(zf, filename))
                 issuer = blob.get("issuer")
@@ -586,6 +643,7 @@ def import_bundle(
     if private_path is not None:
         with zipfile.ZipFile(private_path, "r") as zf:
             _guard_zip(zf, max_entries, max_total_bytes)
+            _reject_duplicate_member_names(zf)
             if "salts.json" in zf.namelist():
                 raw_salts: dict[str, str] = _loads(budget.read(zf, "salts.json"))
                 salts = {receipt_id: keys.b64u_decode(s) for receipt_id, s in raw_salts.items()}

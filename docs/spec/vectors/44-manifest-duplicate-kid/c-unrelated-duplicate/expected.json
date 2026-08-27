@@ -1,0 +1,12 @@
+{
+  "binding": "not_checked",
+  "errors_contains": [
+    "duplicate kid"
+  ],
+  "ok": false,
+  "revocation": "unknown",
+  "schema": "invalid",
+  "signature": "invalid",
+  "trust": "verified",
+  "warnings": []
+}

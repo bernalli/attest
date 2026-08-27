@@ -919,3 +919,216 @@ def test_rotate_raises_valueerror_on_malformed_new_entry(new_entry: Any, match: 
         manifests.rotate_key_manifest(
             _two_active_v1(), KP2, KID2, "2026-03-01T00:00:00Z", new_entry=new_entry
         )
+
+
+# --- V-L.3 / V-L.4: issuance-side guards (v0.1 §7.1, §7.3 2026-08-26) --------
+
+
+def _hand_signed_manifest(
+    entries: list[dict[str, Any]],
+    kp: keys.SigningKeyPair,
+    kid: str,
+    *,
+    version: int = 1,
+) -> dict[str, Any]:
+    """A manifest signed WITHOUT `build_key_manifest`.
+
+    The issuance guard makes the public builder unusable for constructing the
+    ambiguous manifests these tests must exercise — which is the point of the
+    guard. A hostile or legacy issuer can still publish one, so the verifier
+    side has to be tested against the shape the builder now refuses.
+    """
+    body: dict[str, Any] = {
+        "issuer": ISSUER,
+        "manifest_version": version,
+        "issued_at": "2026-01-01T00:00:00Z",
+        "keys": entries,
+    }
+    body["manifest_signature"] = {
+        "kid": kid,
+        "sig": keys.b64u(keys.sign(manifests._signable(body), kp)),
+    }
+    return body
+
+
+def test_build_key_manifest_rejects_duplicate_kids() -> None:
+    """v0.1 §7.1: an issuer implementation MUST refuse to sign an ambiguous manifest."""
+    entries = [
+        manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active"),
+        manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised"),
+    ]
+    with pytest.raises(ValueError, match="duplicate kid"):
+        manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, KID1)
+
+
+def test_build_key_manifest_rejects_an_ambiguous_previous_manifest() -> None:
+    """An ambiguous predecessor is not a usable source of status monotonicity:
+    it must fail loudly rather than have one of its entries win by position
+    (composition contract with the V-J.5 keyset-preservation check)."""
+    previous = _hand_signed_manifest(
+        [
+            manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active"),
+            manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised"),
+        ],
+        KP1,
+        KID1,
+    )
+    successor = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised")]
+    with pytest.raises(ValueError, match="duplicate kid"):
+        manifests.build_key_manifest(
+            ISSUER, 2, "2026-06-01T00:00:00Z", successor, KP1, KID1, previous=previous
+        )
+
+
+def test_duplicate_kids_helper_ignores_malformed_entries() -> None:
+    """Fail-closed on malformed input: non-dict entries and non-str kids can
+    never resolve, so they are ignored rather than raising."""
+    entries: list[Any] = [None, {"kid": 7}, {"kid": "a"}, {"kid": "a"}, {"kid": "b"}]
+    assert manifests.duplicate_kids(entries) == ["a"]
+
+
+def test_duplicate_kids_helper_tolerates_a_non_list() -> None:
+    """`keys` arriving as a non-list must not raise out of the helper."""
+    assert manifests.duplicate_kids("not-a-list") == []  # type: ignore[arg-type]
+    assert manifests.duplicate_kids(7) == []  # type: ignore[arg-type]
+
+
+@PROPERTY_SETTINGS
+@given(
+    kids=st.lists(st.text(min_size=1), min_size=1, max_size=5, unique=True),
+    noise=st.lists(
+        st.sampled_from([None, True, 7, [], {}, {"kid": 7}, {"kid": None}, {"status": "active"}]),
+        max_size=5,
+    ),
+)
+def test_duplicate_kids_guard_is_order_and_noise_independent(
+    kids: list[str], noise: list[Any]
+) -> None:
+    duplicated = kids[: min(3, len(kids))]
+    entries: list[Any] = [{"kid": kid} for kid in kids]
+    entries.extend({"kid": kid} for kid in reversed(duplicated))
+    entries.extend(noise)
+
+    assert manifests.duplicate_kids(entries) == sorted(duplicated)
+    with pytest.raises(ValueError, match="duplicate kid"):
+        manifests.build_key_manifest(
+            ISSUER,
+            1,
+            "2026-01-01T00:00:00Z",
+            entries,  # type: ignore[arg-type]
+            KP1,
+            KID1,
+        )
+
+
+def test_rotate_rejects_zero_active_result() -> None:
+    """v0.1 §7.3: an issuer must not rotate itself into a manifest with no active key."""
+    entries = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active")]
+    existing = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, KID1)
+    with pytest.raises(ValueError, match="zero active keys"):
+        manifests.rotate_key_manifest(
+            existing, KP1, KID1, "2026-06-01T00:00:00Z", retire_kids=[KID1]
+        )
+
+
+def test_rotate_retiring_last_key_with_replacement_is_fine() -> None:
+    """The negative control: the guard must not block a legitimate wind-in."""
+    entries = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active")]
+    existing = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, KID1)
+    new_entry = manifests.key_entry(KID2, KP2.pub, "2026-06-01T00:00:00Z", None, "active")
+    rotated = manifests.rotate_key_manifest(
+        existing, KP1, KID1, "2026-06-01T00:00:00Z", new_entry=new_entry, retire_kids=[KID1]
+    )
+    assert manifests.check_continuity(existing, rotated) is True
+
+
+@PROPERTY_SETTINGS
+@given(active_count=st.integers(min_value=1, max_value=5), replacement=st.booleans())
+def test_rotate_zero_active_guard_is_count_based(active_count: int, replacement: bool) -> None:
+    entries = [
+        manifests.key_entry(
+            f"{ISSUER}/keys/property-active-{i}",
+            KP1.pub,
+            "2026-01-01T00:00:00Z",
+            None,
+            "active",
+        )
+        for i in range(active_count)
+    ]
+    signing_kid = entries[0]["kid"]
+    existing = manifests.build_key_manifest(
+        ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, signing_kid
+    )
+    retire_all = [entry["kid"] for entry in reversed(entries)]
+
+    if replacement:
+        new_entry = manifests.key_entry(
+            f"{ISSUER}/keys/property-replacement-{active_count}",
+            KP2.pub,
+            "2026-06-01T00:00:00Z",
+            None,
+            "active",
+        )
+        rotated = manifests.rotate_key_manifest(
+            existing,
+            KP1,
+            signing_kid,
+            "2026-06-01T00:00:00Z",
+            new_entry=new_entry,
+            retire_kids=retire_all,
+        )
+        assert any(entry.get("status") == "active" for entry in rotated["keys"])
+    else:
+        with pytest.raises(ValueError, match="zero active keys"):
+            manifests.rotate_key_manifest(
+                existing, KP1, signing_kid, "2026-06-01T00:00:00Z", retire_kids=retire_all
+            )
+
+
+def test_find_key_fails_closed_on_ambiguous_kid() -> None:
+    """v0.1 §7.1: resolution against an ambiguous kid fails closed rather than
+    picking an element by position."""
+    entries = [
+        manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active"),
+        manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised"),
+    ]
+    manifest = _hand_signed_manifest(entries, KP1, KID1)
+    assert manifests.find_key(manifest, KID1) is None
+    # The unambiguous sibling in the same manifest still resolves.
+    assert manifests.find_key(_hand_signed_manifest(entries[:1], KP1, KID1), KID1) is not None
+
+
+def test_find_key_fails_closed_on_three_entries_for_one_kid() -> None:
+    """Ambiguity is a property of the array, not of a pair."""
+    entry = manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active")
+    manifest = _hand_signed_manifest([dict(entry), dict(entry), dict(entry)], KP1, KID1)
+    assert manifests.find_key(manifest, KID1) is None
+
+
+def test_verify_key_manifest_rejects_duplicate_kids_both_orders() -> None:
+    """Self-consistency fails in BOTH element orders — order never decides."""
+    a = manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active")
+    c = manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised")
+    for entries in ([a, c], [c, a]):
+        assert (
+            manifests.verify_key_manifest(_hand_signed_manifest(list(entries), KP1, KID1)) is False
+        )
+
+
+def test_verify_key_manifest_rejects_duplicate_of_unrelated_kid() -> None:
+    """A duplicate anywhere in keys[] makes the whole manifest non-conforming,
+    even when the duplicated kid is not the signer's."""
+    entries = [
+        manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active"),
+        manifests.key_entry(KID2, KP2.pub, "2026-01-01T00:00:00Z", None, "active"),
+        manifests.key_entry(KID2, KP2.pub, "2026-01-01T00:00:00Z", None, "retired"),
+    ]
+    assert manifests.verify_key_manifest(_hand_signed_manifest(entries, KP1, KID1)) is False
+
+
+def test_verify_key_manifest_still_accepts_a_degenerate_single_key_manifest() -> None:
+    """Negative control: the shipped retired/compromised trust-store shapes
+    (conformance vectors 12 and 13) keep verifying byte-for-byte."""
+    for status in ("retired", "compromised"):
+        entries = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, status)]
+        assert manifests.verify_key_manifest(_hand_signed_manifest(entries, KP1, KID1)) is True

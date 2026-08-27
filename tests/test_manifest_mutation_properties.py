@@ -81,14 +81,26 @@ def _entry(kid: str, kp: keys.SigningKeyPair, status: str = "active") -> dict[st
 
 
 def _manifest(entries: list[dict[str, Any]], version: object = 1) -> dict[str, Any]:
-    return manifests.build_key_manifest(
-        ISSUER,
-        version,  # type: ignore[arg-type]  # hostile view may not meet the manifest schema
-        VALID_FROM,
-        entries,
+    """Sign a manifest WITHOUT the public builder.
+
+    These are hostile or already-published views, not issuance: since the
+    v0.1 §7.1 amendment (2026-08-26) `build_key_manifest` refuses to sign a
+    duplicated `kid`, which is exactly the shape the verifier side must still
+    be tested against. The body and signature are byte-identical to what the
+    builder produces for every manifest the builder still accepts.
+    """
+    body: dict[str, Any] = {
+        "issuer": ISSUER,
+        "manifest_version": version,
+        "issued_at": VALID_FROM,
+        "keys": entries,
+    }
+    body["manifest_signature"] = manifests.sign_signature_block(
+        manifests._signable(body),  # type: ignore[attr-defined]
         DECLARER_KP,
         DECLARER_KID,
     )
+    return body
 
 
 def _trust(manifest: dict[str, Any]) -> verify.TrustStore:
@@ -241,6 +253,12 @@ def test_p4_continuity_signer_status_reads_every_duplicate_entry(
         DECLARER_KID,  # type: ignore[attr-defined]
     )
 
-    assert manifests.verify_key_manifest(predecessor) is True
+    # Since the v0.1 §7.1 amendment (2026-08-26) the ambiguous predecessor is
+    # refused by self-consistency itself, one layer above continuity. That
+    # would make the property below vacuous through `check_continuity` alone,
+    # so the signer-status predicate is asserted directly: a regression from
+    # reading EVERY entry back to a first-match read stays detectable.
+    assert manifests.verify_key_manifest(predecessor) is False
     assert manifests.verify_key_manifest(successor) is True
+    assert manifests._kid_is_active_for_continuity(predecessor, DECLARER_KID) is False  # type: ignore[attr-defined]
     assert manifests.check_continuity(predecessor, successor) is False

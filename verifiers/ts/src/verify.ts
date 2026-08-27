@@ -3,6 +3,7 @@ import { bytesToHex } from '@noble/curves/utils.js'
 import { JsonObject, JsonValue, canonicalBytes, dumps, CanonError, loadsStrict } from './canon.js'
 import {
   TrustStore, findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
+  duplicateKids,
   artifactChainContinuous, verifyArtifactManifest, signableManifestBytes, verifySignatureBlock,
 } from './manifests.js'
 import { verifyStrict, Ed25519LengthError } from './ed25519.js'
@@ -30,7 +31,7 @@ import {
   ERR, WARN, unsupportedAttestVersion, signaturesCount, unsupportedSigAlg, noTrustedManifest,
   noKeyInManifest, keyCompromised, keyRetired, issuedAtOutsideWindow, malformedKeyMaterial,
   malformedSigMaterial, unknownField, unknownEol, keyEntryNotHybrid, pyRepr, codePointLength,
-  VERIFY_TRANSPARENCY_WARN, COMPROMISE_WARN, manifestExceedsKeys,
+  VERIFY_TRANSPARENCY_WARN, COMPROMISE_WARN, manifestExceedsKeys, manifestDuplicateKids,
 } from './messages.js'
 
 // attest_version values this verifier's verify() step 1 accepts (v0.1 single-sig,
@@ -934,6 +935,15 @@ export function verify(
       const preflightKeys = issuerManifestForTransparency['keys']
       if (Array.isArray(preflightKeys) && preflightKeys.length > MAX_MANIFEST_KEYS) {
         return invalid(manifestExceedsKeys(MAX_MANIFEST_KEYS), 'invalid')
+      }
+      // V-L.3 (v0.1 §7.1, 2026-08-26 amendment) — an ambiguous trusted manifest
+      // is refused whole, before any key is resolved. Without this, a duplicate
+      // on a kid the signature does NOT use left the receipt certifiable: step 3
+      // resolves the signing key with findKey directly and never passes through
+      // verifyKeyManifest.
+      const dupKids = duplicateKids(preflightKeys)
+      if (dupKids.length > 0) {
+        return invalid(manifestDuplicateKids(dupKids), 'invalid')
       }
       if (payload['attest_version'] === '0.2' && hasActiveEdOnlySibling(issuerManifestForTransparency)) {
         warnings.push(WARN.MIXED_KEYSET_ACTIVE_ED_ONLY_SIBLING)

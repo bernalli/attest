@@ -35,14 +35,26 @@ def _entry(kid: str, kp: keys.SigningKeyPair, status: str = "active") -> dict[st
 
 
 def _manifest(entries: list[dict[str, Any]], version: object = 1) -> dict[str, Any]:
-    return manifests.build_key_manifest(
-        ISSUER,
-        version,  # type: ignore[arg-type]  # hostile view may not meet the manifest schema
-        VALID_FROM,
-        entries,
+    """Sign a manifest WITHOUT the public builder.
+
+    These are hostile or already-published views, not issuance: since the
+    v0.1 §7.1 amendment (2026-08-26) `build_key_manifest` refuses to sign a
+    duplicated `kid`, which is exactly the shape the verifier side must still
+    be tested against. The body and signature are byte-identical to what the
+    builder produces for every manifest the builder still accepts.
+    """
+    body: dict[str, Any] = {
+        "issuer": ISSUER,
+        "manifest_version": version,
+        "issued_at": VALID_FROM,
+        "keys": entries,
+    }
+    body["manifest_signature"] = manifests.sign_signature_block(
+        manifests._signable(body),  # type: ignore[attr-defined]
         DECLARER_KP,
         DECLARER_KID,
     )
+    return body
 
 
 def _trust(
@@ -62,22 +74,33 @@ def _receipt() -> dict[str, Any]:
 def test_duplicate_trusted_kid_cannot_hide_compromise_from_status_floor() -> None:
     """v0.1 §7.3: *any* held entry that marks K compromised must win.
 
-    The manifest is self-signed and the first duplicate is active, so an
-    implementation that only calls ``find_key`` observes the wrong entry.
-    The second, signed entry is still evidence the verifier possesses.
+    Since the v0.1 §7.1 amendment (2026-08-26) an ambiguous TRUSTED manifest is
+    refused whole by `verify()`'s preflight, one layer above the status floor:
+    the receipt is still rejected, with the structural error instead of the
+    compromise one. The floor itself is what still decides for every manifest
+    the preflight does not cover — a chain member, below — so both facts are
+    pinned here.
     """
-    trusted = _manifest(
-        [
-            _entry(KID, KP, "active"),
-            _entry(KID, KP, "compromised"),
-            _entry(DECLARER_KID, DECLARER_KP, "active"),
-        ]
+    duplicated = [
+        _entry(KID, KP, "active"),
+        _entry(KID, KP, "compromised"),
+        _entry(DECLARER_KID, DECLARER_KP, "active"),
+    ]
+
+    structural = verify.verify(_wire(_receipt()), _trust(_manifest(duplicated)))
+
+    assert structural.signature == "invalid"
+    assert any("duplicate kid" in error for error in structural.errors)
+
+    # The same ambiguity held as evidence rather than as the trust anchor: the
+    # floor must still read EVERY entry for the kid, whatever the order.
+    clean = _manifest([_entry(KID, KP, "active"), _entry(DECLARER_KID, DECLARER_KP, "active")])
+    from_chain = verify.verify(
+        _wire(_receipt()), _trust(clean, chain=[_manifest(duplicated), clean])
     )
 
-    result = verify.verify(_wire(_receipt()), _trust(trusted))
-
-    assert result.signature == "invalid"
-    assert any("compromised" in error for error in result.errors)
+    assert from_chain.signature == "invalid"
+    assert any("compromised" in error for error in from_chain.errors)
 
 
 def test_duplicate_claim_kid_cannot_hide_compromise_from_status_floor() -> None:

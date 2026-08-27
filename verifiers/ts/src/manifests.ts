@@ -37,14 +37,43 @@ function asObject(v: JsonValue | undefined): JsonObject | null {
 export const MAX_MANIFEST_KEYS = 256
 export const MAX_ARTIFACT_ENTRIES = 4096
 
+// Sorted list of `kid` values appearing on 2+ keys[] entries. Fail-closed on
+// malformed input and never throws: a non-array `entries`, a non-object member
+// and a non-string `kid` are ignored — none of them can ever resolve anyway.
+// Byte-identical semantics to manifests.py's `duplicate_kids` (V-L.3, v0.1
+// §7.1 amendment 2026-08-26).
+export function duplicateKids(entries: unknown): string[] {
+  if (!Array.isArray(entries)) return []
+  const seen = new Set<string>()
+  const dups = new Set<string>()
+  for (const e of entries) {
+    const o = asObject(e)
+    const kid = o ? o['kid'] : undefined
+    if (typeof kid !== 'string') continue
+    if (seen.has(kid)) dups.add(kid)
+    seen.add(kid)
+  }
+  return [...dups].sort()
+}
+
+// Returns the keys[] entry with the given `kid` — or null if absent OR
+// AMBIGUOUS (2+ entries share `kid`): with duplicates, element order would
+// decide which lifecycle status wins, so resolution fails closed instead of
+// picking by position (V-L.3, v0.1 §7.1 amendment 2026-08-26). This selects
+// the entry carrying the cryptographic material; a lifecycle STATUS is never
+// decided here — that reads every entry for the kid.
 export function findKey(manifest: JsonObject, kid: string): JsonObject | null {
   const keys = manifest['keys']
   if (!Array.isArray(keys)) return null
+  let found: JsonObject | null = null
   for (const e of keys) {
     const o = asObject(e)
-    if (o && o['kid'] === kid) return o
+    if (o && o['kid'] === kid) {
+      if (found !== null) return null
+      found = o
+    }
   }
-  return null
+  return found
 }
 
 // The repo does not guarantee `kid` uniqueness inside keys[]. Status decisions
@@ -101,6 +130,11 @@ export function verifyKeyManifest(manifest: JsonObject): boolean {
     // G1 ceiling: an oversized array is not evaluated at all.
     const entriesForCeiling = manifest['keys']
     if (Array.isArray(entriesForCeiling) && entriesForCeiling.length > MAX_MANIFEST_KEYS) return false
+    // v0.1 §7.1 (2026-08-26 amendment): a keys[] array listing any kid twice
+    // is rejected in BOTH element orders and wherever a key manifest is
+    // consumed, never resolved by position. The duplicated kid need not be
+    // the signer's.
+    if (duplicateKids(entriesForCeiling).length > 0) return false
     const sigBlock = asObject(manifest['manifest_signature'])
     if (!sigBlock) return false
     const kid = sigBlock['kid']

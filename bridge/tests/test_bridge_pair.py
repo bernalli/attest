@@ -24,7 +24,7 @@ from conftest import ISSUER, LEGAL_TEXT, LEGAL_TEXT_SHA256
 from attest import bundle
 
 _SALT = "not-a-real-secret-but-treat-it-like-one"
-_RECEIPT_ID = "r_test_0001"
+_RECEIPT_ID = "01HZX0000000000000000000AA"
 _SLUG = "merchant-example-com"
 _ISSUER_MANIFEST: dict[str, Any] = {"issuer": ISSUER, "manifest_version": 1, "keys": []}
 
@@ -109,7 +109,7 @@ def test_unsafe_receipt_id_never_reaches_a_filename(bad_id: str) -> None:
 
 def test_receipt_id_argument_must_match_the_envelope_payload() -> None:
     with pytest.raises(bundle.BundleError):
-        build_pair(_envelope(), "r_test_9999", _LEGAL_TEXTS)
+        build_pair(_envelope(), "01HZX0000000000000000000ZZ", _LEGAL_TEXTS)
 
 
 def test_missing_legal_text_raises_bundle_error() -> None:

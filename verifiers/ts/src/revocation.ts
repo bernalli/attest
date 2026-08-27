@@ -317,11 +317,17 @@ export function classifyRevocation(
   const manifestOk = verifyKeyManifest(issuerManifest)
   const auth: boolean[] = view.map((r) => { const o = asObject(r); return manifestOk && o !== null && verifyRecordSignature(o, issuerManifest) })
 
-  // freshness anchor T = max revoked_at over AUTHENTICATED records of ANY receipt_id
+  // freshness anchor T = max revoked_at over AUTHENTICATED STATEMENT-STATUS
+  // records (status revoked/transferred, v0.1 §12.3 2026-08-26 amendment) of
+  // ANY receipt_id. §12 already rules any other status is not a revocation
+  // statement, so it must not speak for the feed's freshness either.
   let anchorMs = -Infinity, anchorRaw: string | null = null
   view.forEach((r, i) => {
     if (!auth[i]) return
-    const o = asObject(r)!; const raw = o['revoked_at']
+    const o = asObject(r)!
+    const status = o['status']
+    if (status !== 'revoked' && status !== REVOCATION_TRANSFERRED) return
+    const raw = o['revoked_at']
     const ms = parseIsoLenient(raw)
     if (ms !== null && ms > anchorMs) { anchorMs = ms; anchorRaw = typeof raw === 'string' ? raw : null }
   })

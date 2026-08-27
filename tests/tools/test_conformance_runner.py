@@ -189,10 +189,13 @@ def test_in_v01_subset_rule(lid: str, expected: bool) -> None:
     assert cr.in_v01_subset(lid) is expected
 
 
-def test_select_subset_v01_is_exactly_53_leaves_of_the_real_corpus() -> None:
+def test_select_subset_v01_is_exactly_58_leaves_of_the_real_corpus() -> None:
+    # 53 before the V-L guards (2026-08-26, v0.1 rev 10) added groups
+    # 44-manifest-duplicate-kid (3 leaves) and 45-revocation-anchor-status (2),
+    # both v0.1 conformance.
     leaves = cr.find_leaf_dirs(REAL_VECTORS)
     subset = cr.select_subset(leaves, REAL_VECTORS, "v0.1")
-    assert len(subset) == 53
+    assert len(subset) == 58
 
 
 def test_select_subset_v02_is_the_full_real_corpus() -> None:

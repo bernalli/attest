@@ -140,6 +140,8 @@ export const envelopeExceedsBytes = (max: number) => `envelope exceeds ${max} by
 // entirely by canon.ts's own parse-time cap, which reports "maximum nesting
 // depth exceeded" (invalidJson()), never this message.
 export const manifestExceedsKeys = (max: number) => `issuer manifest exceeds ${max} keys`
+export const manifestDuplicateKids = (kids: string[]) =>
+  `issuer manifest lists duplicate kid(s): ${pyRepr(kids)}`
 
 // --------------------------------------------------------------------------
 // Stage 2 (tlog/anchor/transparency): AnchorVerdict.warnings and

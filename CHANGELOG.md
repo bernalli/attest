@@ -8,6 +8,54 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Four validation guards that were simply missing, on both sides of the
+  protocol and in all three implementations.** A key manifest may no longer
+  list one `kid` twice: with duplicate entries the array's ORDER decided which
+  lifecycle `status` won, so the same signed content verified or failed
+  depending on element position. Signing such a manifest is now refused, and a
+  verifier refuses one it is handed — in both element orders, and whether or
+  not the duplicated `kid` is the one that signed the receipt. That last case
+  is the one that was actually open: a duplicate on an unrelated `kid` left the
+  receipt certifying `ok: true`, because key resolution never passed through
+  the manifest's own self-consistency check. Key rotation additionally refuses
+  a result that would leave no `active` key, which is a dead end of the
+  issuer's own making — nothing could authenticate a revocation under it, and
+  nothing could succeed it continuously; deliberate wind-down has its own
+  instrument, the cessation declaration. The freshness anchor `T` reported in
+  `not_revoked_as_of:` now counts only records whose `status` is a registered
+  revocation statement, so an issuer-signed record carrying an unregistered
+  status and a far-future timestamp can no longer inflate the freshness
+  reported for every receipt in the view. And bundle member names must be
+  unique: export refuses two receipts sharing one `receipt_id`, and both
+  reference importers reject an archive whose central directory repeats a
+  member name instead of silently resolving it — the two importers previously
+  disagreed on the very same file, one reading the last entry twice and the
+  other collapsing the pair to one. (V-L.2–V-L.6; v0.1 §7.1, §7.3, §12.3,
+  §14.1, rev 10; conformance vectors `44-manifest-duplicate-kid` and
+  `45-revocation-anchor-status`.)
+
+- **A path traversal on bundle import, and it was already there.** The CLI
+  derives an on-disk filename from a receipt's own `receipt_id` when importing
+  a bundle, exactly as it does for proof members — but only the proof members
+  had been hardened. A bundle carrying `../../x` as a receipt id therefore
+  wrote outside the directory the holder chose. Both reference importers now
+  refuse any receipt id that is not the uppercase ULID the schema pins, and
+  refuse two members that carry one id under different names; export refuses
+  the same shapes before writing anything. That also settles, in the only
+  direction that is safe, the case of two ids equivalent under case folding or
+  Unicode normalisation: they are not valid ids at all, so they can no longer
+  collide when the archive is extracted on a case-insensitive or normalising
+  filesystem.
+
+- **Two crashes on untrusted input, one of them older than this work.** In
+  Python, testing a value for membership of a fixed set RAISES when the value
+  is not hashable, and both the revocation view and the receipt payload are
+  wire data: a record carrying an object as its `status`, and a signed receipt
+  carrying an object as `survivability.end_of_life`, made verification raise
+  instead of refuse. The TypeScript verifier compares with strict inequality
+  and was never affected, so both were parity divergences that no parity test
+  could observe. Both are now guarded by type before membership.
+
 - **The 256-level nesting-depth ceiling now holds at both ends of the
   canonicalization profile, not just at parse.** `canonical_bytes`/`dumps`
   refused nothing on the way out, so a conforming issuer could sign a payload

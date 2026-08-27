@@ -7426,6 +7426,133 @@ def gen_41_compromise_cutoff() -> None:
     )
 
 
+# --- vector 44: manifest-duplicate-kid (V-L.3, v0.1 §7.1 2026-08-26) ----------
+
+
+def _dup_kid_manifest(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Hand-signed: `build_key_manifest` now REFUSES a duplicated kid, which is
+    the point of the amendment. Body + `manifests._signable` + Ed25519, like
+    `_hybrid_manifest`."""
+    body: dict[str, Any] = {
+        "issuer": ISSUER_ID,
+        "manifest_version": 1,
+        "issued_at": MANIFEST_ISSUED_AT,
+        "keys": entries,
+    }
+    signable = manifests._signable(body)
+    body["manifest_signature"] = {
+        "kid": ISSUER_KID,
+        "sig": keys.b64u(keys.sign(signable, ISSUER_KP)),
+    }
+    return body
+
+
+def gen_44_manifest_duplicate_kid() -> None:
+    """v0.1 §7.1 (2026-08-26): a keys[] array listing one kid twice is rejected
+    in BOTH element orders and wherever the duplicate sits.
+
+    Measured pre-fix behaviour on the code this amendment lands on, which is
+    NOT what the plan assumed: with the §7.3 absorbing status floor already in
+    place, `a` and `b` were ALREADY rejected in both orders, with the error
+    that the key is compromised — the floor reads every entry for the kid, so
+    order had stopped deciding for the SIGNING kid. The case the floor cannot
+    see is `c`, a duplicate on a kid the signature does not use: it verified
+    `ok: true`. That leaf carries the real pre/post delta; `a` and `b` pin that
+    the two orders now also agree on the same structural error rather than on
+    the compromise one.
+    """
+    payload = issue.build_payload(**_base_payload_kwargs())
+    _assert_schema_valid(payload)
+    envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)
+    active = manifests.key_entry(ISSUER_KID, ISSUER_KP.pub, KEY_VALID_FROM, None, "active")
+    compromised = manifests.key_entry(
+        ISSUER_KID, ISSUER_KP.pub, KEY_VALID_FROM, None, "compromised"
+    )
+    expected = {
+        "signature": "invalid",
+        "schema": "invalid",
+        "revocation": "unknown",
+        "binding": "not_checked",
+        "trust": "verified",
+        "ok": False,
+        "errors_contains": ["duplicate kid"],
+        "warnings": [],
+    }
+    for leaf, entries in (
+        ("a-active-first", [active, compromised]),
+        ("b-compromised-first", [compromised, active]),
+    ):
+        trust = _trust_material((ISSUER_ID, _dup_kid_manifest(list(entries)), "tls"))
+        write_vector(
+            f"44-manifest-duplicate-kid/{leaf}",
+            payload=payload,
+            envelope=envelope,
+            envelope_raw=None,
+            trust=trust,
+            expected=expected,
+        )
+    unrelated = [
+        manifests.key_entry(ISSUER_KID, ISSUER_KP.pub, KEY_VALID_FROM, None, "active"),
+        manifests.key_entry(ROTATED_KID, ROTATED_KP.pub, KEY_VALID_FROM, None, "active"),
+        manifests.key_entry(ROTATED_KID, ROTATED_KP.pub, KEY_VALID_FROM, None, "retired"),
+    ]
+    trust = _trust_material((ISSUER_ID, _dup_kid_manifest(unrelated), "tls"))
+    write_vector(
+        "44-manifest-duplicate-kid/c-unrelated-duplicate",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected=expected,
+    )
+
+
+# --- vector 45: revocation-anchor-status (V-L.5, v0.1 §12.3 2026-08-26) -------
+
+
+def gen_45_revocation_anchor_status() -> None:
+    """v0.1 §12.3 (2026-08-26): only statement-status records (revoked,
+    transferred) drive T.
+
+    An issuer-signed record with an unregistered status and a far-future
+    `revoked_at`, covered by the signer's open-ended validity window,
+    previously inflated `not_revoked_as_of:` to 2099 for any receipt in the
+    view (`a`: an unrelated receipt_id) and even for the receipt it named
+    (`b`: a matching receipt_id, which §12 already refuses to treat as a
+    revocation). Post-amendment both report the bare literal `unknown`.
+    """
+    payload = issue.build_payload(**_base_payload_kwargs(revocability="policy"))
+    _assert_schema_valid(payload)
+    envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)
+    trust = _issuer_only_trust()
+    expected = {
+        "signature": "valid",
+        "schema": "valid",
+        "revocation": "unknown",
+        "binding": "not_checked",
+        "trust": "verified",
+        "ok": True,
+        "errors": [],
+        "warnings": [],
+    }
+    for leaf, target in (
+        ("a-unrelated-unknown-status", PRIOR_RECEIPT_ID),
+        ("b-matching-unknown-status", RECEIPT_ID),
+    ):
+        record = revocation.build_record(
+            target, "recalled", "2099-01-01T00:00:00Z", ISSUER_KP, ISSUER_KID
+        )
+        write_vector(
+            f"45-revocation-anchor-status/{leaf}",
+            payload=payload,
+            envelope=envelope,
+            envelope_raw=None,
+            trust=trust,
+            expected=expected,
+            revocation_record=record,
+        )
+
+
 def main() -> None:
     _clear_leaf_dirs(VECTORS_DIR)
     VECTORS_DIR.mkdir(parents=True, exist_ok=True)
@@ -7470,6 +7597,8 @@ def main() -> None:
     gen_39_witness_corroboration()
     gen_40_witness_quorum()
     gen_41_compromise_cutoff()
+    gen_44_manifest_duplicate_kid()
+    gen_45_revocation_anchor_status()
     leaf_count = sum(1 for _ in VECTORS_DIR.rglob("expected.json"))
     print(f"generated {leaf_count} vector cases under {VECTORS_DIR}")
 
