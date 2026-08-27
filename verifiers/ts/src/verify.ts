@@ -186,6 +186,16 @@ function contentWarnings(payload: JsonObject): string[] {
   if (license && license['drm'] === 'drm-bound') w.push(WARN.DRM_BOUND)
   const surv = obj(payload['survivability'])
   if (surv) { const eol = surv['end_of_life']; if (typeof eol !== 'string' || !KNOWN_EOL.has(eol)) w.push(unknownEol(eol)) }
+  // V-L.8: `work.publisher_id` differing from `issuer.id` is a rights-holder
+  // claim this v0.1-only check cannot attest — neither field is trusted to
+  // be a string, since the payload is untrusted wire data. `obj()` rejects
+  // arrays and `null` (both pass a naive `typeof x === 'object'` check).
+  const issuerBlock = obj(payload['issuer'])
+  const issuerId = issuerBlock ? issuerBlock['id'] : undefined
+  const workBlock = obj(payload['work'])
+  const publisherId = workBlock ? workBlock['publisher_id'] : undefined
+  if (typeof publisherId === 'string' && typeof issuerId === 'string' && publisherId !== issuerId)
+    w.push(WARN.PUBLISHER_CLAIM_UNATTESTED)
   return w
 }
 

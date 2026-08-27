@@ -608,3 +608,49 @@ describe('verify(): witness policy on the trusted rail (§11.4)', () => {
     }
   })
 })
+
+// --------------------------------------------------------------------------
+// V-L.8 (design vector "publisher authority"): work.publisher_id differing
+// from issuer.id is an unattested rights-holder claim under v0.1 alone.
+// Mirrors tests/test_verify.py's Python-side trio (Python reference).
+// --------------------------------------------------------------------------
+describe('verify(): V-L.8 publisher_claim_unattested (design vector "publisher authority")', () => {
+  function pPayload(publisherId?: string): Record<string, unknown> {
+    const work: Record<string, unknown> = { title: 'T', publisher: 'P', identifiers: { issuer_sku: 'X' }, artifact_series: 'series-x' }
+    if (publisherId !== undefined) work['publisher_id'] = publisherId
+    return {
+      attest_version: '0.1', issued_at: '2026-01-02T00:00:00Z', receipt_id: T_OLD_ID, supersedes: null,
+      issuer: { id: T_ISSUER, display_name: 'Example Store' },
+      work,
+      license: {
+        grant: 'perpetual', revocability: 'none', transferable: false, drm: 'drm-free',
+        terms_uri: 'https://x/t', legal_text_sha256: 'a'.repeat(64),
+      },
+      buyer: { commitment: 'A'.repeat(43), identifier_type: 'email', pubkey: b64uEncode(tHolderPub) },
+      survivability: { end_of_life: 'none', eol_commitment_sha256: null, eol_commitment_uri: null, redownload_right: true },
+    }
+  }
+
+  function pEnvelopeBytes(publisherId?: string): Uint8Array {
+    const payload = parse(pPayload(publisherId))
+    const sig = ed25519.sign(canonicalBytes(payload), tIssuerSeed)
+    const envelope = { payload, signatures: [{ kid: T_KID, alg: 'Ed25519', sig: b64uEncode(sig) }] }
+    return enc(JSON.stringify(envelope))
+  }
+
+  it('warns when work.publisher_id differs from issuer.id', () => {
+    const result = verify(pEnvelopeBytes('pub.example'), tTrustStore())
+    expect(isOk(result)).toBe(true)
+    expect(result.warnings).toContain('publisher_claim_unattested')
+  })
+
+  it('is silent when work.publisher_id equals issuer.id', () => {
+    const result = verify(pEnvelopeBytes(T_ISSUER), tTrustStore())
+    expect(result.warnings).not.toContain('publisher_claim_unattested')
+  })
+
+  it('is silent when work.publisher_id is absent', () => {
+    const result = verify(pEnvelopeBytes(), tTrustStore())
+    expect(result.warnings).not.toContain('publisher_claim_unattested')
+  })
+})

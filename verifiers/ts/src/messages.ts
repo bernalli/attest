@@ -101,6 +101,10 @@ export const WARN = {
   ARTIFACT_MANIFEST_UNVERSIONED: 'artifact_manifest_unversioned',
   ARTIFACT_MANIFEST_UNAUTHENTICATED: 'artifact_manifest_unauthenticated',
   ARTIFACT_MANIFEST_ISSUER_MISMATCH: 'artifact_manifest_issuer_mismatch',
+  // V-L.8 (design vector "publisher authority") — the wire warning string,
+  // exact and cross-language (Python parity: verify.py's
+  // `_WARN_PUBLISHER_CLAIM_UNATTESTED`).
+  PUBLISHER_CLAIM_UNATTESTED: 'publisher_claim_unattested',
 } as const
 
 export const unsupportedAttestVersion = (v: unknown) => `unsupported attest_version: ${pyRepr(v)}`
