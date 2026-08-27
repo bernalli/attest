@@ -64,6 +64,11 @@ def test_loads_strict_rejects_floats_and_bad_utf8() -> None:
         canon.loads_strict(b'\xff{"a":1}')
 
 
+def test_loads_strict_rejects_truncated_json() -> None:
+    with pytest.raises(canon.CanonError, match="invalid JSON: "):
+        canon.loads_strict(b'{"a":[1,2')
+
+
 def test_dumps_rejects_lone_surrogate_value() -> None:
     with pytest.raises(canon.CanonError):
         canon.dumps({"a": "\ud800"})

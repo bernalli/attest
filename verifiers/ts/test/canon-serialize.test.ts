@@ -25,6 +25,11 @@ describe('canonicalBytes / dumps', () => {
     const bytes = canonicalBytes(loadsStrict(enc('{"t":"Cafe\\u0301"}')))
     expect(dec(bytes)).toBe('{"t":"Café"}')
   })
+  it('rejects runtime values outside the JSON value set', () => {
+    expect(() => canonicalBytes(1 as unknown as JsonValue)).toThrow(/type not representable in JSON/)
+    expect(() => canonicalBytes({ k: undefined } as unknown as JsonValue))
+      .toThrow(/type not representable in JSON/)
+  })
 })
 
 // The nesting-depth ceiling is a property of the attest-JCS profile, enforced at

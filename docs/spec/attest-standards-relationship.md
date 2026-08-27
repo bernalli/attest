@@ -208,12 +208,14 @@ schema validation or signature verification ever run (v0.1 §9's "Correction"
 paragraph walks the exact failure path). Layered alongside that restriction:
 outright rejection of a duplicate object member name as a parse failure (RFC
 8785 requires rejection, never silent last-value-wins deduplication, and
-attest-JCS enforces that literally), a parse-tree nesting-depth cap (v0.1
-§11.3), and rejection of lone UTF-16 surrogates whether they arrive as
-literal bytes or as `\uXXXX` escapes. None of this competes with JCS; each
-rule narrows the accepted input set within RFC 8785's own envelope, so any
-attest-JCS-canonical document remains a valid RFC 8785 document that a
-general-purpose JCS canonicalizer would reproduce unchanged.
+attest-JCS enforces that literally), a profile nesting-depth ceiling enforced
+both while parsing and while producing canonical bytes (v0.1 §11.3), and
+rejection of lone UTF-16 surrogates whether they arrive as literal bytes or as
+`\uXXXX` escapes. None of this competes with JCS; each rule narrows the
+accepted input set within RFC 8785's own envelope, and the serializer-side
+depth ceiling prevents attest-JCS from emitting a document its own parser
+would reject, so any attest-JCS-canonical document remains a valid RFC 8785
+document that a general-purpose JCS canonicalizer would reproduce unchanged.
 
 ## 5. C2PA
 
