@@ -47,6 +47,24 @@ const RECEIPT_ID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
 // is not ours; the grammar is kept because a member name that is not a
 // receipt id cannot name the receipt its evidence is supposed to stand for,
 // and accepting one would mean guessing.
+// The receipt id inside an imported envelope, strictly shaped — mirrors the
+// reference importer's `_receipt_payload_id`. A bundle is attacker-supplied and
+// the id is used as an identity, so accept only the ULID shape, never a
+// traversal component or a case/normalization variant of a sibling.
+function receiptPayloadId(name: string, bytes: Uint8Array): string {
+  let envelope: JsonObject | null
+  try {
+    envelope = asObject(loadsStrict(bytes))
+  } catch {
+    throw new BundleError(`receipt entry ${name} is not valid canonical JSON`)
+  }
+  const payload = asObject(envelope?.['payload'])
+  const receiptId = payload?.['receipt_id']
+  if (typeof receiptId !== 'string' || !RECEIPT_ID_RE.test(receiptId))
+    throw new BundleError(`receipt entry ${name} has invalid receipt_id; expected uppercase ULID`)
+  return receiptId
+}
+
 function proofMemberReceiptId(name: string): string {
   const relative = name.slice('proofs/'.length)
   const receiptId = relative.endsWith('.json') ? relative.slice(0, -'.json'.length) : ''
@@ -107,8 +125,14 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
   const keyManifestsByIssuer = new Map<string, JsonObject[]>()
   const proofs: Record<string, JsonValue> = {}
 
+  const receiptIds = new Set<string>()
+
   for (const name of Object.keys(entries).sort()) {
     if (name.startsWith('receipts/') && name.endsWith('.attest.json')) {
+      const receiptId = receiptPayloadId(name, entries[name])
+      if (receiptIds.has(receiptId))
+        throw new BundleError(`bundle lists receipt_id ${receiptId} more than once`)
+      receiptIds.add(receiptId)
       receipts.push({ name: name.slice('receipts/'.length, -'.attest.json'.length), bytes: entries[name] })
     } else if (name.startsWith('manifests/') && name.endsWith('.json')) {
       let blob: JsonObject | null

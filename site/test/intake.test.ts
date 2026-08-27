@@ -66,6 +66,11 @@ describe('intake', () => {
 
   // `proofs` is a plain object and the id comes out of untrusted bytes.
   it('never resolves a prototype member as evidence', () => {
+    // Since the 2026-08-26 receipt-id hardening this shape does not reach the
+    // evidence lookup at all: `__proto__` is not the uppercase ULID the schema
+    // pins, and the importer refuses the whole bundle. Refusing is strictly
+    // stronger than resolving to null, so the property is asserted at the
+    // point where it now holds.
     const { issuer, manifest } = keyManifest()
     const blob: JsonObject = { issuer, key_manifests: [manifest], artifact_manifests: [] }
     const envelope = loadsStrict(envelopeBytes()) as JsonObject
@@ -75,8 +80,8 @@ describe('intake', () => {
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
     })
     const r = intake('library.attest', zip)
-    if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
-    expect(r.jobs[0].transparency).toBeNull()
+    expect(r.kind).toBe('rejected')
+    if (r.kind === 'rejected') expect(r.reason).toMatch(/invalid receipt_id/)
   })
 
   it('rejects a private zip with the private message', () => {

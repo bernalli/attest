@@ -260,8 +260,40 @@ describe('parseBundle: duplicate member names', () => {
   })
 
   it('does not false-positive on distinct names', () => {
+    // Distinct member names AND distinct payload ids: the same envelope under
+    // two names now trips the receipt-id guard instead, which is its own test.
     const second = 'receipts/01HZX0000000000000000000AB.attest.json'
-    const parsed = parseBundle(storedZip([[NAME, env()], [second, env()]]))
+    const envelope = JSON.parse(new TextDecoder().decode(env()))
+    envelope.payload.receipt_id = '01HZX0000000000000000000AB'
+    const secondBytes = new TextEncoder().encode(JSON.stringify(envelope))
+    const parsed = parseBundle(storedZip([[NAME, env()], [second, secondBytes]]))
     expect(parsed.receipts).toHaveLength(2)
+  })
+})
+
+describe('parseBundle: receipt payload ids', () => {
+  const NAME = 'receipts/01HZX0000000000000000000AA.attest.json'
+  const env = () => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
+
+  function withReceiptId(id: unknown): Uint8Array {
+    const envelope = JSON.parse(new TextDecoder().decode(env()))
+    envelope.payload.receipt_id = id
+    return new TextEncoder().encode(JSON.stringify(envelope))
+  }
+
+  it.each([['../../escaped'], ['/tmp/escaped'], ['01hzx0000000000000000000aa'], ['']])(
+    'refuses a receipt_id that is not an uppercase ULID (%s)',
+    (id) => {
+      expect(() => parseBundle(storedZip([[NAME, withReceiptId(id)]]))).toThrow(/invalid receipt_id/)
+    },
+  )
+
+  it('refuses a non-string receipt_id', () => {
+    expect(() => parseBundle(storedZip([[NAME, withReceiptId(7)]]))).toThrow(/invalid receipt_id/)
+  })
+
+  it('refuses two distinct member names carrying one receipt_id', () => {
+    const other = 'receipts/01HZX0000000000000000000AB.attest.json'
+    expect(() => parseBundle(storedZip([[NAME, env()], [other, env()]]))).toThrow(/more than once/)
   })
 })

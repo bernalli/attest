@@ -143,18 +143,17 @@ def test_export_refuses_receipts_without_an_object_payload(tmp_path: Path, broke
         ("r\u00e9ceipt", "re\u0301ceipt"),
     ],
 )
-def test_export_treats_case_or_normalization_variants_as_distinct_members(
+def test_export_refuses_receipt_ids_that_are_not_ulids(
     tmp_path: Path, first_id: str, second_id: str
 ) -> None:
-    """Case- and NFC/NFD-equivalent identifiers are NOT duplicates under the
-    2026-08-26 amendment, which speaks of two receipts sharing ONE receipt_id.
+    """Case- and NFC/NFD-equivalent identifiers cannot safely create distinct members.
 
-    The archive is well-formed here: two distinct member names, no repeated
-    entry in the central directory, and import resolves both. The residual
-    hazard is at EXTRACTION time on a case-insensitive or normalizing
-    filesystem, which is a different surface from the one this guard covers —
-    recorded rather than silently folded into the equality test, because
-    choosing a folding is a normative decision, not an implementation detail.
+    This test asserted exactly this from the specification alone, and it was
+    right where the first implementation was not: the amendment's equality test
+    on `receipt_id` is not enough on its own, because the id is used as a path
+    component on import. Export now refuses any id that is not the uppercase
+    ULID the schema pins, which is what makes a case- or normalization-variant
+    pair impossible to produce in the first place.
     """
     out_dir = tmp_path / "normalized-collision"
     out_dir.mkdir()
@@ -163,14 +162,10 @@ def test_export_treats_case_or_normalization_variants_as_distinct_members(
         envelope_with_receipt_id(second_id, bytes([2]) * 16),
     ]
 
-    public_path, _ = bundle.export(
-        receipts, [key_manifest()], [], legal_texts(), out_dir, "receipts"
-    )
+    with pytest.raises(bundle.BundleError, match="invalid receipt_id"):
+        bundle.export(receipts, [key_manifest()], [], legal_texts(), out_dir, "receipts")
 
-    with zipfile.ZipFile(public_path) as archive:
-        names = archive.namelist()
-    assert len(names) == len(set(names))
-    assert len(bundle.import_bundle(public_path).receipts) == 2
+    assert list(out_dir.iterdir()) == []
 
 
 def test_import_rejects_duplicate_receipt_members_with_different_physical_content(

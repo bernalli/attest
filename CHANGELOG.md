@@ -34,6 +34,19 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   §14.1, rev 10; conformance vectors `44-manifest-duplicate-kid` and
   `45-revocation-anchor-status`.)
 
+- **A path traversal on bundle import, and it was already there.** The CLI
+  derives an on-disk filename from a receipt's own `receipt_id` when importing
+  a bundle, exactly as it does for proof members — but only the proof members
+  had been hardened. A bundle carrying `../../x` as a receipt id therefore
+  wrote outside the directory the holder chose. Both reference importers now
+  refuse any receipt id that is not the uppercase ULID the schema pins, and
+  refuse two members that carry one id under different names; export refuses
+  the same shapes before writing anything. That also settles, in the only
+  direction that is safe, the case of two ids equivalent under case folding or
+  Unicode normalisation: they are not valid ids at all, so they can no longer
+  collide when the archive is extracted on a case-insensitive or normalising
+  filesystem.
+
 - **Two crashes on untrusted input, one of them older than this work.** In
   Python, testing a value for membership of a fixed set RAISES when the value
   is not hashable, and both the revocation view and the receipt payload are

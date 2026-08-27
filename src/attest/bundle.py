@@ -158,6 +158,24 @@ def _proof_member_receipt_id(filename: str) -> str:
     return receipt_id
 
 
+def _receipt_payload_id(envelope: object, filename: str) -> str:
+    """Return the receipt id inside an imported envelope, strictly shaped.
+
+    A bundle is attacker-supplied and `cli.py` derives an on-disk filename from
+    this value, exactly as it does for `proofs/` members. The receipt schema
+    pins ids to ULIDs, so accept only that shape — never an absolute path, a
+    traversal component, or a case/normalization variant that would collide
+    with a sibling on a case-insensitive or normalizing filesystem.
+    """
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    receipt_id = payload.get("receipt_id") if isinstance(payload, dict) else None
+    if not isinstance(receipt_id, str) or _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+        raise BundleError(
+            f"receipt entry {filename!r} has invalid receipt_id; expected uppercase ULID"
+        )
+    return receipt_id
+
+
 @dataclass(frozen=True)
 class ImportedBundle:
     """Everything `import_bundle()` reconstructed from a `.attest` (and,
@@ -381,8 +399,9 @@ def export(
         if not isinstance(payload, dict):
             raise BundleError("receipt envelope missing object member 'payload'")
         receipt_id = payload.get("receipt_id")
-        if isinstance(receipt_id, str):
-            seen_ids[receipt_id] = seen_ids.get(receipt_id, 0) + 1
+        if not isinstance(receipt_id, str) or _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+            raise BundleError("receipt payload has invalid receipt_id; expected uppercase ULID")
+        seen_ids[receipt_id] = seen_ids.get(receipt_id, 0) + 1
         for digest in _referenced_legal_hashes(payload):
             _check_legal_text(digest, legal_texts)
     duplicate_ids = sorted(rid for rid, n in seen_ids.items() if n > 1)
@@ -542,6 +561,7 @@ def import_bundle(
     possible bomb.
     """
     receipts: list[dict[str, Any]] = []
+    seen_receipt_ids: set[str] = set()
     key_manifests_by_issuer: dict[str, list[dict[str, Any]]] = {}
     artifact_manifests: dict[str, list[dict[str, Any]]] = {}
     legal_texts: dict[str, bytes] = {}
@@ -559,7 +579,12 @@ def import_bundle(
         _reject_duplicate_member_names(zf)
         for filename in sorted(zf.namelist()):
             if filename.startswith("receipts/") and filename.endswith(".attest.json"):
-                receipts.append(_loads(budget.read(zf, filename)))
+                envelope = _loads(budget.read(zf, filename))
+                receipt_id = _receipt_payload_id(envelope, filename)
+                if receipt_id in seen_receipt_ids:
+                    raise BundleError(f"bundle lists receipt_id {receipt_id!r} more than once")
+                seen_receipt_ids.add(receipt_id)
+                receipts.append(envelope)
             elif filename.startswith("manifests/") and filename.endswith(".json"):
                 blob = _loads(budget.read(zf, filename))
                 issuer = blob.get("issuer")

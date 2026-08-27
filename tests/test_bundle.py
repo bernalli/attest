@@ -806,3 +806,90 @@ def test_import_rejects_a_duplicate_in_the_private_archive(tmp_path: Path) -> No
 
     with pytest.raises(bundle.BundleError, match="repeats member name"):
         bundle.import_bundle(ok_path, hostile_private)
+
+
+def test_import_refuses_a_receipt_id_that_would_escape_the_output_directory(
+    tmp_path: Path,
+) -> None:
+    """A bundle is attacker-supplied and the CLI derives an on-disk filename
+    from the payload's `receipt_id`, exactly as it does for `proofs/` members.
+    A traversal component there must be refused at import, not written."""
+    ok_path, _ = bundle.export(
+        [_envelope(receipt_id="01HZX0000000000000000000AA")],
+        [_key_manifest()],
+        [],
+        _legal_texts(),
+        tmp_path,
+        "ok",
+    )
+    member = "receipts/01HZX0000000000000000000AA.attest.json"
+    # S108 is about a program USING a temp path; here it is hostile input the
+    # importer must refuse, which is the opposite.
+    hostile_absolute = "/tmp/escaped"  # noqa: S108
+    for hostile_id in ("../../escaped", hostile_absolute, "01hzx0000000000000000000aa", ""):
+        with zipfile.ZipFile(ok_path) as src:
+            envelope = json.loads(src.read(member))
+        envelope["payload"]["receipt_id"] = hostile_id
+        hostile = tmp_path / f"hostile-{abs(hash(hostile_id))}.attest"
+        with zipfile.ZipFile(ok_path) as src, zipfile.ZipFile(hostile, "w") as dst:
+            for info in src.infolist():
+                if info.filename == member:
+                    dst.writestr(info.filename, json.dumps(envelope))
+                else:
+                    dst.writestr(info.filename, src.read(info.filename))
+
+        with pytest.raises(bundle.BundleError, match="invalid receipt_id"):
+            bundle.import_bundle(hostile)
+
+
+def test_import_refuses_a_non_string_receipt_id(tmp_path: Path) -> None:
+    """Parity with the browser importer, which has its own case for this: a
+    `receipt_id` that is not a string at all never reaches the filename."""
+    ok_path, _ = bundle.export(
+        [_envelope(receipt_id="01HZX0000000000000000000AA")],
+        [_key_manifest()],
+        [],
+        _legal_texts(),
+        tmp_path,
+        "ok",
+    )
+    member = "receipts/01HZX0000000000000000000AA.attest.json"
+    for hostile_id in (7, True, None, ["01HZX0000000000000000000AA"], {}):
+        with zipfile.ZipFile(ok_path) as src:
+            envelope = json.loads(src.read(member))
+        envelope["payload"]["receipt_id"] = hostile_id
+        hostile = tmp_path / f"nonstring-{type(hostile_id).__name__}.attest"
+        with zipfile.ZipFile(ok_path) as src, zipfile.ZipFile(hostile, "w") as dst:
+            for info in src.infolist():
+                payload = json.dumps(envelope) if info.filename == member else None
+                dst.writestr(
+                    info.filename,
+                    payload if payload is not None else src.read(info.filename),
+                )
+
+        with pytest.raises(bundle.BundleError, match="invalid receipt_id"):
+            bundle.import_bundle(hostile)
+
+
+def test_import_refuses_two_members_carrying_the_same_payload_receipt_id(
+    tmp_path: Path,
+) -> None:
+    """Distinct member names can still carry one `receipt_id`, which the
+    member-name guard alone cannot see."""
+    ok_path, _ = bundle.export(
+        [_envelope(receipt_id="01HZX0000000000000000000AA")],
+        [_key_manifest()],
+        [],
+        _legal_texts(),
+        tmp_path,
+        "ok",
+    )
+    member = "receipts/01HZX0000000000000000000AA.attest.json"
+    hostile = tmp_path / "same-id-two-names.attest"
+    with zipfile.ZipFile(ok_path) as src, zipfile.ZipFile(hostile, "w") as dst:
+        for info in src.infolist():
+            dst.writestr(info.filename, src.read(info.filename))
+        dst.writestr("receipts/01HZX0000000000000000000AB.attest.json", src.read(member))
+
+    with pytest.raises(bundle.BundleError, match="more than once"):
+        bundle.import_bundle(hostile)
