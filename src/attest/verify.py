@@ -771,6 +771,10 @@ def _authenticated_compromise_claims(
         if not isinstance(claim_manifest, dict) or claim_manifest.get("issuer") != issuer_id:
             _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
             continue
+        manifest_version = claim_manifest.get("manifest_version")
+        if not isinstance(manifest_version, int) or isinstance(manifest_version, bool):
+            _append_warning_once(warnings, _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED)
+            continue
         claim_entry = manifests.find_key(claim_manifest, kid)
         if (
             claim_entry is None

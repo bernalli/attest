@@ -203,11 +203,11 @@ def _check_keyset_preservation(previous: dict[str, Any], key_entries: list[dict[
     previous_entries = previous.get("keys")
     if not isinstance(previous_entries, list):
         raise ValueError("previous manifest keys must be a list")
-    current_by_kid: dict[str, dict[str, Any]] = {}
+    current_by_kid: dict[str, list[dict[str, Any]]] = {}
     for entry in key_entries:
         kid = entry.get("kid")
         if isinstance(kid, str):
-            current_by_kid[kid] = entry
+            current_by_kid.setdefault(kid, []).append(entry)
 
     for entry in previous_entries:
         if not isinstance(entry, dict):
@@ -215,10 +215,12 @@ def _check_keyset_preservation(previous: dict[str, Any], key_entries: list[dict[
         kid = entry.get("kid")
         if not isinstance(kid, str):
             raise ValueError("previous manifest contains a key entry without a string kid")
-        current = current_by_kid.get(kid)
-        if current is None:
+        current_entries = current_by_kid.get(kid)
+        if current_entries is None:
             raise ValueError(f"previous kid {kid!r} omitted from successor manifest")
-        if entry.get("status") == _COMPROMISED and current.get("status") != _COMPROMISED:
+        if entry.get("status") == _COMPROMISED and any(
+            current.get("status") != _COMPROMISED for current in current_entries
+        ):
             raise ValueError(f"compromised kid {kid!r} cannot change status")
 
 
@@ -227,13 +229,13 @@ def _preserves_absorbing_compromises(trusted: dict[str, Any], candidate: dict[st
     candidate_entries = candidate.get("keys")
     if not isinstance(trusted_entries, list) or not isinstance(candidate_entries, list):
         return False
-    candidate_by_kid: dict[str, dict[str, Any]] = {}
+    candidate_by_kid: dict[str, list[dict[str, Any]]] = {}
     for entry in candidate_entries:
         if not isinstance(entry, dict):
             return False
         kid = entry.get("kid")
         if isinstance(kid, str):
-            candidate_by_kid[kid] = entry
+            candidate_by_kid.setdefault(kid, []).append(entry)
 
     for entry in trusted_entries:
         if not isinstance(entry, dict):
@@ -241,10 +243,13 @@ def _preserves_absorbing_compromises(trusted: dict[str, Any], candidate: dict[st
         kid = entry.get("kid")
         if not isinstance(kid, str):
             return False
-        candidate_entry = candidate_by_kid.get(kid)
-        if candidate_entry is None:
+        candidate_entries_for_kid = candidate_by_kid.get(kid)
+        if candidate_entries_for_kid is None:
             return False
-        if entry.get("status") == _COMPROMISED and candidate_entry.get("status") != _COMPROMISED:
+        if entry.get("status") == _COMPROMISED and any(
+            candidate_entry.get("status") != _COMPROMISED
+            for candidate_entry in candidate_entries_for_kid
+        ):
             return False
     return True
 
