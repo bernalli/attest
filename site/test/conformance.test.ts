@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { runVerify, runChainAudit, runWitnessQuorum, runRedemption } from '../src/run.js'
 import { parseWitnessPolicy } from 'attest-verifier'
 import * as V from './helpers/vectors.js'
+import { explain } from '../src/explain.js'
 import { b64uDecode } from '../src/b64u.js'
 
 const allLeaves = V.findLeafDirs()
@@ -134,5 +135,62 @@ describe('conformance corpus through the site adapter: redemption (group 38)', (
       input.holder_pubkey_b64u,
     )
     expect(verified).toBe(exp.verified)
+  })
+})
+
+// The copy each group-41 leaf ACTUALLY produces, driven by the corpus rather
+// than by hand-built results: a story that no leaf can reach, or two stories
+// that one leaf could reach, shows up here and not in review.
+describe('the §19 copy each group-41 leaf produces through the site adapter', () => {
+  const SIGNATURE_STORY: Record<string, RegExp> = {
+    'a-rescued-anchored-before-cutoff': /strictly before/,
+    'b-anchored-after-cutoff-fails': /not anchored strictly before/,
+    'c-logged-only-fails': /no anchored proof/,
+    'd-cutoff-logged-only-survives': /no anchored compromise cutoff was established/,
+    'e-no-cutoff-evidence-survives': /no anchored compromise cutoff was established/,
+    'f-stage1-fail-closed': /no anchored proof/,
+    'g-boundary-equal-fails': /Equality is not proof of precedence/,
+    'h-earliest-cutoff-wins': /not anchored strictly before/,
+    'i-unvouched-declaration-ignored': /no anchored compromise cutoff was established/,
+    'j-hybrid-rescued': /strictly before/,
+    'k-manifest-claim-does-not-rescue': /no anchored proof/,
+    'l-uncompromise-chain-floor': /not taken back by a later key list/,
+    'm-uncompromise-view-floor': /no anchored proof/,
+    'n-uncompromise-floor-spares-anchored': /no anchored compromise cutoff was established/,
+    'o-status-regression-breaks-continuity': /Ed25519 signature over the canonical payload/,
+    'p-declaring-signer-compromised-still-floors': /no anchored proof/,
+    'q-retired-reactivation-untouched': /Ed25519 signature over the canonical payload/,
+    'r-compromised-signer-establishes-no-cutoff': /no anchored compromise cutoff was established/,
+    // 41s satisfies BOTH the after-cutoff branch and the floor branch: the
+    // signature row tells the after-cutoff story, the trust row tells the floor.
+    's-chain-dates-the-signer-cutoff-holds': /not anchored strictly before/,
+    't-keyset-omission-breaks-continuity': /Ed25519 signature over the canonical payload/,
+  }
+
+  const g41 = leaves.filter((d) => V.vectorId(d).startsWith('41-compromise-cutoff/'))
+
+  it('covers every leaf of the group', () => {
+    expect(g41.length).toBe(Object.keys(SIGNATURE_STORY).length)
+  })
+
+  it.each(g41.map((d) => [V.vectorId(d), d] as const))('%s', (id, dir) => {
+    const run = runVerify(V.envelopeBytes(dir), V.trustStore(dir), V.revocationView(dir), V.disclosure(dir), {
+      transparency: V.transparencyEvidence(dir),
+      logKeys: V.logKeys(dir),
+      anchorPolicy: V.anchorPolicy(dir),
+      revocationEvidence: V.revocationEvidence(dir),
+      transferView: V.transferView(dir),
+      compromiseView: V.compromiseView(dir),
+      witnessPolicy: V.witnessPolicy(dir),
+      grantView: V.grantView(dir),
+    })
+    const leaf = id.slice('41-compromise-cutoff/'.length)
+    const text = explain('signature', run.result.signature, run.result).text
+    expect(text, leaf).toMatch(SIGNATURE_STORY[leaf]!)
+    expect(text, leaf).not.toContain('does not have dedicated wording')
+    if (run.result.trust === 'unverified_rotation') {
+      expect(explain('trust', 'unverified_rotation', run.result).text, leaf)
+        .toMatch(/Continuity of the issuer’s key manifest history could not be proven|manifest history has a gap/)
+    }
   })
 })

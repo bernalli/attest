@@ -47,7 +47,7 @@ export const GROUPS: ComponentGroup[] = [
   },
   {
     question: 'Has anyone else seen it?',
-    note: 'Whether this receipt was published in a public, append-only log. This is corroboration, never authenticity, except for the narrow §19 compromise-cutoff rescue named on the Signature row: outside that case, nothing here is needed to make a valid receipt valid (spec §10, §19).',
+    note: 'Whether this receipt was published in a public, append-only log. This is corroboration, never authenticity, with one narrow exception named on the Signature row: an ANCHORED time on the Transparency row — not mere publication, which is never enough — can spare a receipt whose signing key its issuer later declared compromised (spec §19). Outside that case, nothing here is needed to make a valid receipt valid, and being logged has never made an invalid one valid (spec §10).',
     components: ['transparency', 'corroboration', 'manifest_freshness'],
   },
 ]
@@ -323,7 +323,7 @@ function explainSignature(value: string, result: VerificationResult | undefined)
       return {
         label: 'Signature',
         tone: 'good',
-        text: 'The signature checks out and the receipt has anchored standing. The compromise declaration itself carries no anchored time, and a declaration without a provable time cannot invalidate a receipt with one (spec v0.2 §19).',
+        text: 'The signature checks out and this receipt has anchored standing, while no anchored compromise cutoff was established from the evidence this verifier holds — either none was offered, or what was offered could not establish one (spec v0.2 §19.3). A compromise declaration this verifier cannot date cannot invalidate a receipt it can. This is the weaker branch of the rescue: it rests on the absence of a datable declaration, not on proof that this receipt came first (spec v0.2 §19.6 items 4 and 6).',
       }
     }
     return null
@@ -333,20 +333,20 @@ function explainSignature(value: string, result: VerificationResult | undefined)
     return {
       label: 'Signature',
       tone: 'bad',
-      text: 'This key was declared compromised, and this receipt was anchored only after the compromise was declared and anchored. That puts it in the unprovable zone, so the verifier fails closed (spec v0.2 §19).',
+      text: 'This key was declared compromised, and this receipt’s signature was not anchored strictly before that declaration was: it was anchored at the same moment or later. Equality is not proof of precedence — two things in the same block cannot be ordered — so the verifier fails closed (spec v0.2 §19.1).',
     }
   }
   if (compromiseFloorVisible(result)) {
     return {
       label: 'Signature',
       tone: 'bad',
-      text: 'The issuer’s current key list says this key is fine. An earlier, signed version of that same list declared it compromised, and a compromise cannot be taken back — so this verifier treats it as compromised (spec v0.1 §7.3).',
+      text: 'This key resolves to compromised for this verifier, and continuity of the issuer’s manifest history could not be proven (see Key trust below). A compromise this verifier has already seen is not taken back by a later key list: if an earlier signed manifest declared this key compromised, a newer list that drops the marking does not restore it. That is a statement about THIS verifier and not about everyone — a verifier that never saw the earlier manifest never sees the marking (spec v0.1 §7.3, v0.2 §19.6 item 5).',
     }
   }
   return {
     label: 'Signature',
     tone: 'bad',
-    text: 'This key was declared compromised by its issuer, and this verifier was given no anchored proof that the receipt predates that declaration. The receipt may be genuine — nothing here can tell, so the verifier fails closed (spec v0.1 §7.3, v0.2 §19).',
+    text: 'This key was declared compromised by its issuer, and this verifier holds no anchored proof of THIS receipt’s own signature predating that declaration — an anchored time that belongs to some other claim, such as the issuer’s key manifest, does not stand in for it. The receipt may be genuine; nothing here can tell, so the verifier fails closed (spec v0.1 §7.3, v0.2 §19).',
   }
 }
 
@@ -355,7 +355,7 @@ function explainTrust(value: string, result: VerificationResult | undefined): Ex
   return {
     label: 'Key trust',
     tone: 'warn',
-    text: 'The issuer rewrote the history of its own keys: an earlier signed manifest marked this key compromised, but a later key list tried to make that marking disappear. The verifier reports unverified_rotation and keeps the compromised status (spec v0.1 §7.3).',
+    text: 'Continuity of the issuer’s key manifest history could not be proven, and this receipt’s signing key resolves to compromised. One shape this takes is an issuer rewriting the history of its own keys — an earlier signed manifest marks a key compromised, a later list drops the marking — and it changes nothing here: a compromise this verifier has seen stays. Other gaps in the history produce this same value, and all of them leave key provenance in doubt (spec v0.1 §7.3).',
   }
 }
 

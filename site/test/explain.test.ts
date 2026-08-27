@@ -145,9 +145,9 @@ describe('compromise-cutoff copy', () => {
       warnings: ['compromise_rescue_receipt_after_cutoff'],
       errors: ['key store.example.com/keys/2025-01#ed25519-1 is compromised'],
     })).text
-    expect(text).toMatch(/anchored only after/i)
+    expect(text).toMatch(/not anchored strictly before/i)
     expect(text).toMatch(/compromise/)
-    expect(text).toMatch(/unprovable zone/)
+    expect(text).toMatch(/Equality is not proof of precedence/)
   })
 
   it('explains an anchored-before rescue as a timeline proof', () => {
@@ -164,9 +164,11 @@ describe('compromise-cutoff copy', () => {
     const text = explain('signature', 'valid', result({
       warnings: ['compromise_cutoff_unanchored'],
     })).text
-    expect(text).toMatch(/declaration itself/)
-    expect(text).toMatch(/no anchored time/)
+    expect(text).toMatch(/no anchored compromise cutoff was established/)
+    expect(text).toMatch(/could not establish one/)
     expect(text).toMatch(/cannot invalidate/)
+    // 41r: there the declaration IS anchored; the cutoff dies on §19.3 item 3b.
+    expect(text).not.toMatch(/declaration itself carries no anchored time/)
   })
 
   it('explains the monotone floor and its trust cause', () => {
@@ -177,12 +179,46 @@ describe('compromise-cutoff copy', () => {
     })
     const signature = explain('signature', 'invalid', r).text
     const trust = explain('trust', 'unverified_rotation', r).text
-    expect(signature).toMatch(/current key list/)
-    expect(signature).toMatch(/earlier, signed version/)
-    expect(signature).toMatch(/cannot be taken back/)
+    expect(signature).toMatch(/resolves to compromised/)
+    expect(signature).toMatch(/not taken back by a later key list/)
     expect(signature).toMatch(/v0\.1/)
-    expect(trust).toMatch(/rewrote the history/)
+    // §19.6 item 5: never claim the marking is globally irreversible.
+    expect(signature).toMatch(/not about everyone/)
+    expect(trust).toMatch(/rewriting the history/)
     expect(trust).toMatch(/own keys/)
+  })
+
+  // The SAME five result fields are produced with no uncompromise attempt at
+  // all: a trusted manifest that lists the key `compromised` plus any
+  // manifest-chain discontinuity (verify.ts resolves `trust` before step 3 and
+  // never resets it, and site/src/bundle.ts builds `chains` from every bundle).
+  // Copy that asserts the uncompromise story would be a lie on that input.
+  it('does not invent an uncompromise story out of an ordinary chain gap', () => {
+    const r = result({
+      signature: 'invalid',
+      trust: 'unverified_rotation',
+      errors: ['key store.example.com/keys/2025-01#ed25519-1 is compromised'],
+    })
+    expect(explain('signature', 'invalid', r).text)
+      .not.toMatch(/current key list says this key is fine/)
+    expect(explain('trust', 'unverified_rotation', r).text)
+      .not.toMatch(/The issuer rewrote the history/)
+    expect(explain('trust', 'unverified_rotation', r).text)
+      .toMatch(/Other gaps in the history produce this same value/)
+  })
+
+  // The error literal is a cross-language wire surface like the warning tokens:
+  // read it out of the verifier's own source, or a rename upstream silently
+  // collapses all five §19 stories into the generic `invalid` copy.
+  it('matches the library’s own compromised-key error literal, byte for byte', () => {
+    const source = readFileSync(
+      join(__dirname, '..', '..', 'verifiers', 'ts', 'src', 'messages.ts'), 'utf8')
+    const m = source.match(/export const keyCompromised = \([^)]*\) =>\s*`([^`]*)`/)
+    expect(m, 'keyCompromised no longer has the shape this test scrapes').not.toBeNull()
+    const literal = m![1]!.replace('${kid}', 'store.example.com/keys/2025-01#ed25519-1')
+    const text = explain('signature', 'invalid', result({ signature: 'invalid', errors: [literal] })).text
+    expect(text).toMatch(/declared compromised/)
+    expect(text).not.toContain('tampered with, corrupted, malformed')
   })
 })
 
