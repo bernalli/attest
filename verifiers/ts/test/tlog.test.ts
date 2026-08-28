@@ -251,6 +251,9 @@ function validTransferRecordEntry(): Record<string, unknown> {
 function validCessationDeclarationEntry(): Record<string, unknown> {
   return { type: 'cessation-declaration', issuer: 'pub.example', record_sha256: 'e'.repeat(64) }
 }
+function validPublisherAuthorizationEntry(): Record<string, unknown> {
+  return { type: 'publisher-authorization', issuer: 'pub.example', record_sha256: 'f'.repeat(64) }
+}
 
 describe('encodeEntry', () => {
   it('accepts a valid key-manifest entry and round-trips through canonicalBytes', () => {
@@ -318,6 +321,14 @@ describe('encodeEntry', () => {
     const encoded = encodeEntry(entry)
     expect(encoded).toBeInstanceOf(Uint8Array)
     const expectedJson = '{"issuer":"pub.example","record_sha256":"' + 'e'.repeat(64) + '","type":"cessation-declaration"}'
+    expect(new TextDecoder().decode(encoded)).toBe(expectedJson)
+  })
+
+  it('accepts a valid publisher-authorization entry (v0.2 §8/§20.2)', () => {
+    const entry = validPublisherAuthorizationEntry()
+    const encoded = encodeEntry(entry)
+    expect(encoded).toBeInstanceOf(Uint8Array)
+    const expectedJson = '{"issuer":"pub.example","record_sha256":"' + 'f'.repeat(64) + '","type":"publisher-authorization"}'
     expect(new TextDecoder().decode(encoded)).toBe(expectedJson)
   })
 

@@ -61,7 +61,7 @@ import { verifySeededAnchor, passesHorizon } from './anchor.js'
 import { GRANT_WARN } from './messages.js'
 
 const ACTIVE = 'active'
-const MAX_JCS_INTEGER = 2n ** 53n - 1n
+export const MAX_JCS_INTEGER = 2n ** 53n - 1n
 
 // The eleven members of a sunset grant (§18.2) and the four of a cessation
 // declaration (§18.4). Both documents are CLOSED — the log-entry discipline
@@ -121,13 +121,13 @@ export const MAX_GRANT_DECLARATIONS = 64
 
 // --- shared shape predicates -------------------------------------------------
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
 
 /** The lowercase-DNS shape of `issuer.id`, reused verbatim for `publisher`,
  * `work.publisher_id` and every `successor_ids` entry (§18.1). */
-function isDnsName(value: unknown): value is string {
+export function isDnsName(value: unknown): value is string {
   return typeof value === 'string' && ISSUER_RE.test(value)
 }
 
@@ -135,7 +135,7 @@ function isHex64(value: unknown): value is string {
   return typeof value === 'string' && HEX64_RE.test(value)
 }
 
-function isNonEmptyString(value: unknown): value is string {
+export function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
 }
 
@@ -147,7 +147,7 @@ function isNonEmptyString(value: unknown): value is string {
  * `activation.modes` accept any non-empty string, so an attacker can reach
  * that disagreement with a hand-built grant; without this helper the two cores
  * would accept and reject different documents on identical bytes. */
-function codePointLess(a: string, b: string): boolean {
+export function codePointLess(a: string, b: string): boolean {
   const left = [...a]
   const right = [...b]
   const shared = Math.min(left.length, right.length)
@@ -165,7 +165,7 @@ function codePointLess(a: string, b: string): boolean {
  * `activation.successor_ids`. Set containment later compares these as sets;
  * pinning the wire order here is what keeps two canonicalizations of the same
  * grant byte-identical. Mirrors grant.py's `_sorted_unique`. */
-function sortedUnique(values: unknown, itemOk: (item: unknown) => boolean): values is string[] {
+export function sortedUnique(values: unknown, itemOk: (item: unknown) => boolean): values is string[] {
   if (!Array.isArray(values)) return false
   if (!values.every((item) => itemOk(item))) return false
   for (let i = 0; i + 1 < values.length; i++) {
@@ -176,7 +176,7 @@ function sortedUnique(values: unknown, itemOk: (item: unknown) => boolean): valu
 
 /** Whether `o`'s own key set is EXACTLY `expected` — the closed-document
  * discipline of §8, spelled once for all four member sets here. */
-function hasExactMembers(o: Record<string, unknown>, expected: ReadonlySet<string>): boolean {
+export function hasExactMembers(o: Record<string, unknown>, expected: ReadonlySet<string>): boolean {
   const keys = Object.keys(o)
   return keys.length === expected.size && keys.every((k) => expected.has(k))
 }
@@ -188,7 +188,7 @@ function hasExactMembers(o: Record<string, unknown>, expected: ReadonlySet<strin
  * Returning the validated object rather than a bare boolean is what lets every
  * caller index it afterwards without a second, weaker check standing in for
  * the first one. */
-function scopeOrNull(scope: unknown): Record<string, unknown> | null {
+export function scopeOrNull(scope: unknown): Record<string, unknown> | null {
   if (!isPlainObject(scope) || !hasExactMembers(scope, SCOPE_MEMBERS)) return null
   const series = scope['artifact_series']
   if (series !== null && !isNonEmptyString(series)) return null
@@ -302,7 +302,7 @@ export function declarationHash(declaration: JsonObject): string {
  * `[valid_from, valid_to]` window must cover the document's OWN signed time
  * (never the verifier's clock), and the signature must verify over
  * `JCS(document)` with `signature` removed, under the §13 AND-rule. */
-function verifySignedDocument(
+export function verifySignedDocument(
   document: Record<string, unknown>,
   keyManifest: JsonObject,
   timestampMember: string,
@@ -666,7 +666,7 @@ export function proseDiffers(floor: unknown, later: unknown): boolean {
 
 // --- structural ceilings (§18.4) ---------------------------------------------
 
-function withinCeiling(supplied: unknown, ceiling: number): boolean {
+export function withinCeiling(supplied: unknown, ceiling: number): boolean {
   if (supplied === null || supplied === undefined) return true
   if (!Array.isArray(supplied)) return false
   return supplied.length <= ceiling
