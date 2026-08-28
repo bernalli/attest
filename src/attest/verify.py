@@ -162,6 +162,11 @@ _WARN_COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF = "compromise_rescue_receipt_after_
 _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED = "compromise_cutoff_claim_ignored"
 _WARN_COMPROMISE_MARKING_RETRACTED = "compromise_marking_retracted"
 _MAX_COMPROMISE_CLAIMS = 64
+# Same ceiling shape as the compromise rail: a transfer view is a list of
+# claims, and admitting it PER CLAIM needs a count bound of its own -- the
+# whole-view byte cap it used to rely on is gone with the whole-view
+# materialization.
+_MAX_TRANSFER_CLAIMS = 64
 
 # G6 mixed-keyset prohibition (v0.2 §2.3/§13 amendment) — the wire warning
 # string, exact and cross-language (TS parity: messages.ts).
@@ -644,7 +649,15 @@ def _evaluate_transparency_claim(
         # parse once so every following phase sees one ordinary JSON object,
         # never a stateful mapping/value supplied by the caller. The size cap
         # prevents decoding an arbitrarily large serialized evidence bundle.
-        serialized_evidence = canon.dumps(transparency_evidence)
+        # The copy of the value's OWN data runs FIRST and refuses on a node
+        # budget: the byte cap below is compared against a serialization that
+        # has ALREADY been produced, so a caller value whose iteration never
+        # ends would hang here before any cap could fire -- and a hang reaches
+        # no `except` clause, which is why the enclosing one is not a defence
+        # against it.
+        serialized_evidence = canon.dumps(
+            _own_data_copy(transparency_evidence, [_MAX_EVIDENCE_NODES])
+        )
         if len(serialized_evidence) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
             raise ValueError("transparency evidence exceeds materialization limit")
         materialized_evidence = json.loads(serialized_evidence)
@@ -1391,7 +1404,11 @@ def _revocation_deadline_satisfied(
         # `_evaluate_transparency_claim`: canonicalize and parse once so
         # every following phase sees one ordinary JSON object, never a
         # stateful mapping/value supplied by the caller.
-        serialized_evidence = canon.dumps(revocation_evidence)
+        # Own-data copy first, for the same reason as the transparency sink:
+        # the byte cap cannot fire on a serialization that never returns.
+        serialized_evidence = canon.dumps(
+            _own_data_copy(revocation_evidence, [_MAX_EVIDENCE_NODES])
+        )
         if len(serialized_evidence) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
             return False
         materialized_evidence = json.loads(serialized_evidence)
@@ -1485,18 +1502,28 @@ def _resolve_transfer_backing(
     assignment (§17.4) — `_WARN_TRANSFER_DOUBLE_ASSIGNMENT` — and the
     EARLIEST log index (first-logged) wins.
     """
+    # Admitted PER CLAIM, not as one indivisible view: a claim that cannot be
+    # represented is set aside ALONE, and a genuine claim with full backing
+    # still reaches its verdict beside it. Admitting the view as a whole would
+    # let one malformed sibling delete a real transfer -- a FALSE VALID, since
+    # the receipt would read as never transferred.
     try:
-        serialized = canon.dumps(transfer_view)
-        if len(serialized) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
+        if not isinstance(transfer_view, list):
             return None
-        materialized = json.loads(serialized)
+        materialized_claims = _materialize_evidence_array(transfer_view, _MAX_TRANSFER_CLAIMS)
     # Adversarial-boundary confinement (never BaseException), mirroring
     # `_revocation_deadline_satisfied`: a hostile `transfer_view` list/dict's
     # `__eq__`/`__getitem__` must not escape as a bare exception.
     except Exception:
         return None
-    if not isinstance(materialized, list):
+    if materialized_claims is None:
         return None
+    if len(materialized_claims) > _MAX_TRANSFER_CLAIMS:
+        # The count ceiling is not "one bad claim": it truncates evaluation,
+        # and a truncated transfer view cannot be told apart from a view with
+        # no transfer in it. Fail closed by declining to resolve any backing.
+        return None
+    materialized = materialized_claims
 
     receipt_id = payload.get("receipt_id")
     manifest_ok = manifests.verify_key_manifest(issuer_manifest)
