@@ -747,9 +747,11 @@ def _own_data_copy(value: object, budget: list[int]) -> object:
     Keys that COLLAPSE refuse the unit rather than reduce it. A `str` subclass
     with an overridden `__hash__`/`__eq__` coexists in a caller dict beside the
     plain string it shadows, and copying both keys out to their own data leaves
-    ONE member. `canon.dumps` refuses that shape too (it counts the canonical
-    member names it emits against `dict.__len__`), and `canon.loads_strict`
-    refuses the duplicate byte form RFC 8785 forbids -- three refusals of the
+    ONE member. `canon.dumps` refuses that shape too, through a different
+    guard: the second key's own-data name already collides with one already
+    emitted, so `DuplicateKeyError` fires mid-pass, before the mapping's own
+    `dict.__len__` is ever compared. `canon.loads_strict` refuses the
+    duplicate byte form RFC 8785 forbids -- three refusals of the
     same shape, deliberately. Letting insertion order pick the surviving value
     is a choice the attacker makes; non-admission is the direction this
     boundary already fails in.
