@@ -20,6 +20,7 @@ lives in `verify.py` (§6 step 6), the one module that has both.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime
 from typing import Any
 
@@ -27,6 +28,11 @@ from attest import canon, keys, manifests, pq
 
 _DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
+# The receipt schema pins ids to ULIDs. This is the SAME predicate `bundle.py`
+# keeps, deliberately restated rather than imported: `revocation` sits below
+# `bundle` (bundle -> verify -> revocation), so importing it would close an
+# import cycle. Any change to the shape belongs to both.
+_RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 
 def _parse_date(value: str) -> datetime:
@@ -100,22 +106,51 @@ def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]
     improvement #17). To verify a single record, use `verify_record`,
     which composes both halves.
     """
-    sig_block = record.get("signature")
-    if not isinstance(sig_block, dict):
-        return False
-    entry = manifests.find_key(key_manifest, sig_block.get("kid", ""))
-    if entry is None or entry.get("status") != _ACTIVE:
-        return False
-    body = {k: v for k, v in record.items() if k != "signature"}
     try:
-        revoked_at = _parse_date(record["revoked_at"])
+        if not isinstance(record, dict):
+            return False
+        # Required fields are typed BEFORE anything authenticates: a record the
+        # issuer signed but left malformed (no `receipt_id`, or one that is not
+        # a receipt id at all) must not authenticate, or it feeds the freshness
+        # anchor a statement about a receipt it does not name. 12.1 fails closed
+        # on malformed/wrong-typed/missing input, and this is that rule.
+        # `status` is deliberately NOT typed here: an UNREGISTERED status must
+        # stay SILENT and merely fail to revoke (V-L.5 pins this for future
+        # status values), and refusing authentication over it would turn that
+        # silence into an ignored-record warning -- measured, 4 tests.
+        # Every read is an own-item read (`dict.get`/`dict.items`), so a hostile
+        # accessor cannot steer or raise past it -- the reads that used to sit
+        # OUTSIDE this `try` are now inside it, and the caught family is the
+        # broad one its TypeScript twin and `transfer.py` already use.
+        receipt_id = dict.get(record, "receipt_id")
+        revoked_at_value = dict.get(record, "revoked_at")
+        sig_block = dict.get(record, "signature")
+        if (
+            not isinstance(receipt_id, str)
+            or _RECEIPT_ID_RE.fullmatch(str.__str__(receipt_id)) is None
+            or not isinstance(revoked_at_value, str)
+            or not isinstance(sig_block, dict)
+        ):
+            return False
+        kid = dict.get(sig_block, "kid")
+        if not isinstance(kid, str):
+            return False
+        entry = manifests.find_key(key_manifest, kid)
+        if entry is None or entry.get("status") != _ACTIVE:
+            return False
+        body = {
+            k: v
+            for k, v in dict.items(record)
+            if not (isinstance(k, str) and str.__str__(k) == "signature")
+        }
+        revoked_at = _parse_date(revoked_at_value)
         if revoked_at < _parse_date(entry["valid_from"]):
             return False
         valid_to = entry.get("valid_to")
         if valid_to is not None and revoked_at > _parse_date(valid_to):
             return False
         return manifests.verify_signature_block(canon.canonical_bytes(body), sig_block, entry)
-    except (KeyError, ValueError, TypeError):
+    except Exception:
         return False
 
 
@@ -139,6 +174,9 @@ def verify_record(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
     hardening review). Composes `manifests.verify_key_manifest` +
     `verify_record_signature`; loop-over-records callers hoist the former.
     """
-    return manifests.verify_key_manifest(key_manifest) and verify_record_signature(
-        record, key_manifest
-    )
+    try:
+        return manifests.verify_key_manifest(key_manifest) and verify_record_signature(
+            record, key_manifest
+        )
+    except Exception:
+        return False

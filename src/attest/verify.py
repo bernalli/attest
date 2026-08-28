@@ -818,7 +818,7 @@ _VIEW_MEMBER_ABSENT = object()
 _VIEW_MEMBER_COLLAPSED = object()
 
 
-def _own_view_member(view: dict[str, Any], member: str) -> object:
+def _own_view_member(view: dict[str, Any], member: str, budget: list[int] | None = None) -> object:
     """Find a rail-defined member by its OWN key data, never by dict lookup.
 
     A `dict` lookup compares the probe against STORED keys, so a `str` subclass
@@ -831,6 +831,12 @@ def _own_view_member(view: dict[str, Any], member: str) -> object:
     """
     found: object = _VIEW_MEMBER_ABSENT
     for key, item in dict.items(view):
+        if budget is not None:
+            # A record that is ALREADY inadmissible must not be able to buy
+            # unbounded work with the diagnostic read that follows it.
+            budget[0] -= 1
+            if budget[0] < 0:
+                return _VIEW_MEMBER_COLLAPSED
         if isinstance(key, str) and str.__str__(key) == member:
             if found is not _VIEW_MEMBER_ABSENT:
                 return _VIEW_MEMBER_COLLAPSED
@@ -1638,14 +1644,45 @@ def _classify_revocation(
     `transfer_view` was never supplied at all — in which case the resolver is
     never reached, and this function appends the unbacked warning directly.
     """
-    if not revocation_view:  # None or empty: no data, no freshness anchor either way
+    if revocation_view is None:  # no data, no freshness anchor either way
         return _REVOCATION_UNKNOWN
+
+    # 18.4: the caller's view is ADMITTED ONCE, per record, before anything
+    # reads it -- and from here on ONLY the reconstruction is read. Two
+    # properties depend on that being the first thing this function does:
+    #
+    #   * the two passes below correlate authentication with matching by
+    #     `id()`, which assumes both passes see the SAME objects. A `list`
+    #     subclass whose `__iter__` returns FRESH objects on the second pass
+    #     satisfies `isinstance(..., list)` and desynchronizes them, so a
+    #     genuinely signed, matching record can be reported `not_revoked`.
+    #     Plain reconstructed records have stable identity, which closes it by
+    #     construction rather than by a defensive read.
+    #   * the bytes a signature is verified over and the values consumed
+    #     afterwards must come from ONE reconstruction. Reading the live
+    #     object a second time is what lets a caller authenticate one value
+    #     and be judged on another, with the issuer's genuine signature.
+    #
+    # The element count comes from `list.__len__` and never from iteration:
+    # an unbounded `__iter__` would hang the verifier before any ceiling could
+    # fire, and no `except` clause is ever reached by a value that does not
+    # return. A view that is not a list keeps the caller-contract behaviour it
+    # has always had -- 18.4 leaves the declared container shape to the rail.
+    supplied: int
+    admitted_view: Any
+    if isinstance(revocation_view, list):
+        supplied = list.__len__(revocation_view)
+        if supplied == 0:
+            return _REVOCATION_UNKNOWN
+    else:
+        if not revocation_view:
+            return _REVOCATION_UNKNOWN
+        supplied = len(revocation_view)
 
     license_block = payload.get("license")
     revocability = license_block.get("revocability") if isinstance(license_block, dict) else None
 
-    if len(revocation_view) > max_records:
-        supplied = len(revocation_view)
+    if supplied > max_records:
         if revocability in (_REVOCABILITY_POLICY, _REVOCABILITY_REFUND_WINDOW):
             # Revocable receipt + an untrusted view too large to evaluate: fail
             # closed. "unknown" here would keep ok=true, letting an append-only
@@ -1664,6 +1701,15 @@ def _classify_revocation(
             )
         return _REVOCATION_UNKNOWN
 
+    if isinstance(revocation_view, list):
+        # Per RECORD: an inadmissible record is set aside ALONE (it lands as
+        # `None` and no pass treats it as a record), and its admissibility
+        # decides no sibling's. The ceiling is already known to hold here, so
+        # this never walks more than `max_records` elements.
+        admitted_view = _materialize_evidence_array(revocation_view, max_records) or []
+    else:
+        admitted_view = revocation_view
+
     receipt_id = payload.get("receipt_id")
 
     # Authenticated records (any receipt_id) drive the freshness anchor; only
@@ -1675,7 +1721,7 @@ def _classify_revocation(
     authenticated_ids: set[int] = set()
     authenticated: list[dict[str, Any]] = []
     if manifest_ok:
-        for record in revocation_view:
+        for record in admitted_view:
             if isinstance(record, dict) and revocation.verify_record_signature(
                 record, issuer_manifest
             ):
@@ -1688,9 +1734,37 @@ def _classify_revocation(
     # A matching, authenticated `status == "transferred"` record (Stage 3,
     # §17.3) is collected separately — it is not a "revoked"-status statement,
     # so it plays no part in the "revoked"-status dispatch below.
+    # A record that was NOT ADMITTED still has to be VISIBLE if it claims to be
+    # about this receipt: 12.2 makes an unauthenticated matching record an
+    # ignore WITH A WARNING, which is what stops a forged record from silently
+    # disappearing, and an inadmissible record is less than unauthenticated.
+    # The claim is read the only way the boundary allows -- the diagnostic
+    # member alone, through the same own-data primitives, never the value that
+    # made the record inadmissible -- and it decides NOTHING but the warning.
+    if isinstance(revocation_view, list):
+        diagnostic_budget = [_MAX_EVIDENCE_NODES]
+        for index, admitted_record in enumerate(admitted_view):
+            if admitted_record is not None:
+                continue
+            original = list.__getitem__(revocation_view, index)
+            if not isinstance(original, dict):
+                continue
+            claimed = _own_view_member(original, "receipt_id", diagnostic_budget)
+            if claimed is _VIEW_MEMBER_ABSENT or claimed is _VIEW_MEMBER_COLLAPSED:
+                continue
+            if not isinstance(claimed, str):
+                continue
+            claimed_admitted, claimed_id = _admit_evidence_value(
+                claimed, _VIEW_ARRAY_ELEMENT_NESTING
+            )
+            if claimed_admitted and claimed_id == receipt_id:
+                warnings.append(
+                    f"revocation record for {receipt_id!r} failed verification, ignored"
+                )
+
     valid: list[dict[str, Any]] = []
     transferred_matches: list[dict[str, Any]] = []
-    for record in revocation_view:
+    for record in admitted_view:
         if not isinstance(record, dict) or record.get("receipt_id") != receipt_id:
             continue
         if id(record) not in authenticated_ids:
