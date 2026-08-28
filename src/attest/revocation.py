@@ -26,6 +26,15 @@ from typing import Any
 
 from attest import canon, keys, manifests, pq
 
+# Preflight bound on an untrusted revocation view: a legitimate view is an
+# issuer's records for one receipt -- realistically single digits; 10k is far
+# above any legitimate case and keeps hostile worst-case work bounded. Public
+# because both entry points that admit the rail read it here (`verify()` binds
+# its own `_MAX_REVOCATION_RECORDS` to it, `transfer.audit_chain()` uses it
+# directly): a ceiling restated in two places is a ceiling that will drift.
+# Mirrored by the TS verifier's MAX_REVOCATION_RECORDS.
+MAX_REVOCATION_RECORDS = 10_000
+
 _DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
 # The receipt schema pins ids to ULIDs. This is the SAME predicate `bundle.py`

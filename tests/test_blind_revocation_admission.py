@@ -121,13 +121,6 @@ _CHAMELEON_OPEN_QUESTION = pytest.mark.xfail(
     reason="open: honouring a record whose reconstruction does not authenticate",
 )
 
-# The audit surface is a SECOND public entry point for the same rails and has
-# no admission of its own yet; it is the next task, not this one.
-_AWAITS_AUDIT_CHAIN_TASK = pytest.mark.xfail(
-    strict=True,
-    reason="transfer.audit_chain admits its rails only from the audit-surface task",
-)
-
 
 def _key_manifest() -> dict[str, Any]:
     entries = [manifests.key_entry(KID, ISSUER_KP.pub, "2026-01-01T00:00:00Z", None, "active")]
@@ -443,7 +436,6 @@ def test_audit_chain_rejects_chameleon_transfer_link_and_preserves_later_valid_l
     assert result.link_status == ("invalid", "valid")
 
 
-@_AWAITS_AUDIT_CHAIN_TASK
 def test_audit_chain_sets_aside_hostile_revocation_record_and_honors_genuine_backing() -> None:
     hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
     p0 = _chain_payload(CHAIN_OLD_ID, HOLDER_KP)

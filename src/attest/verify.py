@@ -87,13 +87,10 @@ _REVOCATION_REVOKED = "revoked"
 _REVOCATION_INVALID_IGNORED = "invalid_revocation_ignored"
 _REVOCATION_NOT_REVOKED_PREFIX = "not_revoked_as_of:"
 
-# Preflight bound on the untrusted revocation view (review improvement #17):
-# a legitimate view for one verify() call is an issuer's records for one
-# receipt — realistically single digits; 10k is far above any legitimate
-# case and keeps hostile worst-case work bounded. Injectable per call via
-# `verify(..., max_revocation_records=...)`. Mirrored by the TS verifier's
-# MAX_REVOCATION_RECORDS.
-_MAX_REVOCATION_RECORDS = 10_000
+# Preflight bound on the untrusted revocation view (review improvement #17),
+# defined by the module that owns the rail and injectable per call via
+# `verify(..., max_revocation_records=...)`.
+_MAX_REVOCATION_RECORDS = revocation.MAX_REVOCATION_RECORDS
 
 _REVOCABILITY_NONE = "none"
 _REVOCABILITY_REFUND_WINDOW = "refund_window"
@@ -162,11 +159,10 @@ _WARN_COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF = "compromise_rescue_receipt_after_
 _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED = "compromise_cutoff_claim_ignored"
 _WARN_COMPROMISE_MARKING_RETRACTED = "compromise_marking_retracted"
 _MAX_COMPROMISE_CLAIMS = 64
-# Same ceiling shape as the compromise rail: a transfer view is a list of
-# claims, and admitting it PER CLAIM needs a count bound of its own -- the
-# whole-view byte cap it used to rely on is gone with the whole-view
-# materialization.
-_MAX_TRANSFER_CLAIMS = 64
+# Same ceiling shape as the compromise rail, defined by the module that owns
+# the rail: `transfer.audit_chain()` admits the same view against the same
+# number, and a ceiling restated in two places is a ceiling that will drift.
+_MAX_TRANSFER_CLAIMS = transfer.MAX_TRANSFER_CLAIMS
 
 # G6 mixed-keyset prohibition (v0.2 §2.3/§13 amendment) — the wire warning
 # string, exact and cross-language (TS parity: messages.ts).
@@ -236,7 +232,7 @@ _HEX_LOWER = frozenset("0123456789abcdef")
 # _MAX_OPS_PER_PROOF, _MAX_OP_HEX_LEN) ~ 8.5MB, plus inclusion/consistency
 # proofs (~8KB) — ~10MB total. The cap still bounds hostile materialization
 # before the JSON decoder performs a second full traversal.
-_MAX_TRANSPARENCY_EVIDENCE_LEN = 10_000_000
+_MAX_TRANSPARENCY_EVIDENCE_LEN = canon.MAX_ADMISSION_BYTES
 
 
 @dataclass(frozen=True)
@@ -727,134 +723,23 @@ def _append_warning_once(warnings: list[str], warning: str) -> None:
         warnings.append(warning)
 
 
-_MAX_EVIDENCE_NODES = _MAX_TRANSPARENCY_EVIDENCE_LEN
-
-
-def _own_data_copy(value: object, budget: list[int]) -> object:
-    """Copy a caller-supplied value's OWN data into exact plain types.
-
-    `canon.dumps` walks a mapping with `for k in obj`, reads its members with
-    `obj[k]` and walks a sequence with `enumerate(obj)` -- all shadowable --
-    and its byte ceiling is compared against a serialization it has ALREADY
-    produced. A subclass whose iteration never ends therefore hangs the
-    verifier before any ceiling can fire, which is the one way 18.4's
-    "reconstruction is bounded and fails closed" can still be broken from a
-    WELL-TYPED view. (Strings and the two scalars are no longer shadowable
-    there: `_serialize` takes their own data itself. CONTAINERS still are, and
-    that is why this copy remains the guarantee rather than a belt.) The copy
-    runs FIRST, through the base classes' own unshadowable accessors, and
-    refuses on a node budget rather than after the work is already done.
-
-    A subtype is never refused for BEING a subtype (18.4): its own data is
-    copied out into the exact plain type and the instance does not survive.
-    `int.__int__`/`str.__str__` are the own-data spellings for the two scalars
-    whose serialization hook a subclass can override -- `_serialize` now uses
-    the same two spellings itself, so for the scalars this copy is a belt, and
-    for the containers around them it is the guarantee.
-
-    The budget can never change an admissible/inadmissible answer: every node
-    costs at least one byte of canonical form, so a structure over
-    `_MAX_EVIDENCE_NODES` nodes cannot fit under the byte ceiling either. It
-    only makes the refusal REACHABLE.
-
-    Keys that COLLAPSE refuse the unit rather than reduce it. A `str` subclass
-    with an overridden `__hash__`/`__eq__` coexists in a caller dict beside the
-    plain string it shadows, and copying both keys out to their own data leaves
-    ONE member. `canon.dumps` refuses that shape too, through a different
-    guard: the second key's own-data name already collides with one already
-    emitted, so `DuplicateKeyError` fires mid-pass, before the mapping's own
-    `dict.__len__` is ever compared. `canon.loads_strict` refuses the
-    duplicate byte form RFC 8785 forbids -- three refusals of the
-    same shape, deliberately. Letting insertion order pick the surviving value
-    is a choice the attacker makes; non-admission is the direction this
-    boundary already fails in.
-    """
-    budget[0] -= 1
-    if budget[0] < 0:
-        raise ValueError("evidence exceeds the admission node budget")
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return int.__int__(value)
-    if isinstance(value, str):
-        return str.__str__(value)
-    if isinstance(value, list):
-        return [
-            _own_data_copy(list.__getitem__(value, index), budget)
-            for index in range(list.__len__(value))
-        ]
-    if isinstance(value, dict):
-        copied: dict[Any, Any] = {}
-        for key, item in dict.items(value):
-            copied[_own_data_copy(key, budget)] = _own_data_copy(item, budget)
-        if len(copied) != dict.__len__(value):
-            raise ValueError("evidence keys collapse under own-data copy")
-        return copied
-    return value
-
-
-def _admit_evidence_value(value: object, nesting: int = 0) -> tuple[bool, object]:
-    """Admit caller evidence by the shared simple-value reconstruction boundary.
-
-    `nesting` is how many of the enclosing VIEW's containers this value sits
-    inside. v0.1 11.3's depth ceiling is measured over the canonicalized view
-    AS A WHOLE (18.4), so a document in a view-object's array is admitted to
-    254 levels, not 256. Admitting an element at its OWN top level and only
-    discovering the excess when the whole view is re-canonicalized discards the
-    element's SIBLINGS too, where 20.3 requires the one inadmissible document
-    to be set aside on its own -- and it is what makes a 255-deep element
-    behave differently from a float in the very same position.
-    """
-    probe: object = value
-    for _ in range(nesting):
-        probe = [probe]
-    try:
-        serialized = canon.dumps(_own_data_copy(probe, [_MAX_EVIDENCE_NODES]))
-        if len(serialized) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
-            return False, None
-        materialized = canon.loads_strict(serialized.encode("utf-8"))
-    except Exception:
-        return False, None
-    for _ in range(nesting):
-        materialized = cast("list[Any]", materialized)[0]
-    return True, materialized
-
-
-def _materialize_evidence_value(value: object, nesting: int = 0) -> object | None:
-    admitted, materialized = _admit_evidence_value(value, nesting)
-    return materialized if admitted else None
-
-
-_VIEW_MEMBER_NESTING = 1
-_VIEW_ARRAY_ELEMENT_NESTING = 2
-_VIEW_MEMBER_ABSENT = object()
-_VIEW_MEMBER_COLLAPSED = object()
-
-
-def _own_view_member(view: dict[str, Any], member: str, budget: list[int] | None = None) -> object:
-    """Find a rail-defined member by its OWN key data, never by dict lookup.
-
-    A `dict` lookup compares the probe against STORED keys, so a `str` subclass
-    key with a matching hash and a hostile `__eq__` can either raise — refusing
-    a view the rail defines — or answer True for a key that is not the member,
-    steering the read. Comparing `str.__str__` of each own key against the
-    member name removes both: the comparison sees stored data only. Two keys
-    that collapse onto one member name make that member inadmissible rather
-    than letting insertion order pick a winner.
-    """
-    found: object = _VIEW_MEMBER_ABSENT
-    for key, item in dict.items(view):
-        if budget is not None:
-            # A record that is ALREADY inadmissible must not be able to buy
-            # unbounded work with the diagnostic read that follows it.
-            budget[0] -= 1
-            if budget[0] < 0:
-                return _VIEW_MEMBER_COLLAPSED
-        if isinstance(key, str) and str.__str__(key) == member:
-            if found is not _VIEW_MEMBER_ABSENT:
-                return _VIEW_MEMBER_COLLAPSED
-            found = item
-    return found
+# §18.4's admission boundary has exactly ONE spelling, in `canon` — the leaf
+# module both public entry points that admit caller rails can import
+# (`verify()` here, `transfer.audit_chain()` there, which cannot import this
+# module without closing the cycle `verify -> transfer`). These names are the
+# vocabulary the rest of this module reads; they bind to that one boundary
+# rather than restating it, because a boundary with two spellings is a boundary
+# that will diverge.
+_MAX_EVIDENCE_NODES = canon.MAX_ADMISSION_NODES
+_own_data_copy = canon.own_data_copy
+_admit_evidence_value = canon.admit_value
+_materialize_evidence_value = canon.materialize_value
+_own_view_member = canon.own_view_member
+_materialize_evidence_array = canon.materialize_array
+_VIEW_MEMBER_NESTING = canon.VIEW_MEMBER_NESTING
+_VIEW_ARRAY_ELEMENT_NESTING = canon.VIEW_ARRAY_ELEMENT_NESTING
+_VIEW_MEMBER_ABSENT = canon.VIEW_MEMBER_ABSENT
+_VIEW_MEMBER_COLLAPSED = canon.VIEW_MEMBER_COLLAPSED
 
 
 def _admit_single_view_member(
@@ -866,40 +751,6 @@ def _admit_single_view_member(
     admitted, materialized = _admit_evidence_value(supplied, _VIEW_MEMBER_NESTING)
     if admitted:
         reconstructed[member] = materialized
-
-
-def _materialize_evidence_array(value: object, ceiling: int) -> list[Any] | None:
-    """Admit an array-valued member PER ELEMENT (§18.4).
-
-    The member itself is inadmissible only for a property of the MEMBER: its
-    own array data cannot be read, it is not an array, or its element count
-    exceeds the member's ceiling. An element that is not admissible is set
-    aside alone and no element's admissibility decides another's.
-
-    The element count and the elements come from `list.__len__`/
-    `list.__getitem__`, never from `for item in value`: `__iter__` is
-    shadowable, and a subclass whose iteration never ends would hang the
-    verifier before any ceiling can fire.
-    """
-    if not isinstance(value, list):
-        return None
-    try:
-        count = list.__len__(value)
-        if count > ceiling:
-            # A count-ceiling excess is NOT "one bad member": §18.4 makes it
-            # truncate evaluation fail-closed toward `not_checked`, and the
-            # predicate that does so judges COUNT alone. Dropping the member
-            # here would leave the view with the member ABSENT, which reads as
-            # "within every ceiling" and would FORGIVE the excess. Report the
-            # excess instead, with placeholders and no per-element work, so the
-            # ceiling check still fires before any signature is verified.
-            return [None] * (ceiling + 1)
-        return [
-            _materialize_evidence_value(list.__getitem__(value, index), _VIEW_ARRAY_ELEMENT_NESTING)
-            for index in range(count)
-        ]
-    except Exception:
-        return None
 
 
 def _materialize_grant_view(grant_view: dict[str, Any]) -> dict[str, Any] | None:

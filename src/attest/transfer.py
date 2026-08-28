@@ -60,11 +60,20 @@ _LOG_ENTRY_TYPE = "transfer-record"
 # is a malformed shape, checked before any cryptographic work.
 _HOLDER_AUTH_SIG_B64U_LEN = 86
 
-# Same literal VALUE as `verify._MAX_TRANSPARENCY_EVIDENCE_LEN` (this module
-# cannot import `verify` — that would be an import cycle, since `verify.py`
-# imports `transfer.py`). Bounds the untrusted evidence bundle's
-# canonicalized size before it is ever parsed.
-_MAX_TRANSFER_EVIDENCE_LEN = 10_000_000
+# Bounds the untrusted evidence bundle's canonicalized size before it is ever
+# parsed. Bound to the leaf module's own ceiling, which is the one
+# `verify._MAX_TRANSPARENCY_EVIDENCE_LEN` is bound to as well: this module
+# cannot import `verify` — that would close the cycle `verify -> transfer` —
+# and a size ceiling restated in two places is a ceiling that will drift.
+_MAX_TRANSFER_EVIDENCE_LEN = canon.MAX_ADMISSION_BYTES
+
+# A transfer view is a list of claims, and admitting it PER CLAIM needs a count
+# bound of its own -- the whole-view byte cap it used to rely on is gone with
+# the whole-view materialization. Public because `verify.py` binds its own
+# `_MAX_TRANSFER_CLAIMS` to it: the transfer rail's ceiling belongs to the
+# transfer module, and the two entry points that admit the rail must not be
+# able to drift apart on the number.
+MAX_TRANSFER_CLAIMS = 64
 
 # Same literal VALUE as `verify._ANCHORED_BEFORE_PREFIX` — `transparency.
 # TransparencyResult.transparency` renders this dynamically, never as a
@@ -360,7 +369,7 @@ def record_logged_standing(
 
     `evidence` is untrusted: canonicalized and re-parsed once via
     `canon.dumps`/`json.loads` (bounded by `_MAX_TRANSFER_EVIDENCE_LEN`, the
-    SAME literal value as `verify._MAX_TRANSPARENCY_EVIDENCE_LEN`) so every
+    shared `canon.MAX_ADMISSION_BYTES` ceiling) so every
     later phase sees one ordinary JSON object, never a stateful/hostile
     mapping. `record`/`issuer_id` feed the EXPECTED entry
     `{"type": "transfer-record", "issuer": issuer_id, "record_sha256":
@@ -494,6 +503,37 @@ class ChainAuditResult:
     warnings: tuple[str, ...]
 
 
+def _admit_caller_rail(view: object, ceiling: int) -> list[Any]:
+    """Admit one caller-supplied array rail PER ELEMENT (§18.4), never raising.
+
+    Both rails this module's audit surface takes are the same untrusted arrays
+    `verify()` takes, so they are admitted the same way and at the same moment:
+    once, at entry, through the one shared boundary in `canon`. An element that
+    cannot be represented lands as `None` and is set aside ALONE -- no element's
+    admissibility decides another's -- and from there on only the reconstruction
+    is read.
+
+    §18.4 leaves the declared CONTAINER shape to the rail, and both of these
+    rails are arrays: a value that is not one carries no claim and no record, so
+    the audit degrades to "nothing here". It does not raise. `audit_chain` is a
+    public surface, and a caller's malformed view must produce a verdict rather
+    than a bare `TypeError` out of the audit.
+
+    Over-ceiling is not "one bad element": it truncates evaluation, and a
+    truncated view cannot be told apart from a view with nothing in it. Both
+    rails fail CLOSED in the same direction, which is what makes the silence
+    safe here: with no claim a link has no transfer record and is invalid, and
+    with no record the predecessor has no backed extinguishment and the link is
+    invalid too. Neither silence can make a link VALID.
+    """
+    if not isinstance(view, list):
+        return []
+    admitted = canon.materialize_array(view, ceiling)
+    if admitted is None or len(admitted) > ceiling:
+        return []
+    return admitted
+
+
 def audit_chain(
     payloads: list[dict[str, Any]],
     transfer_view: list[dict[str, Any]],
@@ -508,6 +548,26 @@ def audit_chain(
     error text) against `transfer_view` (`{"record", "evidence"}` claims, the
     same untrusted shape `verify()`'s `transfer_view` takes) and
     `revocation_view` (ordinary revocation records).
+
+    Both views are ADMITTED ONCE, at entry, before anything reads them, and
+    from there on ONLY the reconstruction is read (§18.4; see
+    `_admit_caller_rail`). This surface is a SECOND public entry point for the
+    rails `verify()` already admits, and the same two properties depend on the
+    admission being the first thing that happens here:
+
+    * the bytes a signature is verified over and the values consumed afterwards
+      must come from ONE reconstruction. Reading the live view again after
+      `verify_record_signature` is what lets a caller authorize `OLD -> NEW_A`
+      and be judged to have authorized `OLD -> NEW_B`, with the issuer's and the
+      original holder's genuine signatures -- a chain of title nobody consented
+      to, reported valid. A reconstructed record has plain members, so the
+      successor id a signature covers is the successor id the link is matched
+      against.
+    * the double-assignment pass below re-walks the claims and correlates them
+      with the selected record by `is`. That assumes both passes see the SAME
+      objects; a `list` subclass whose iteration yields fresh objects each time
+      would desynchronize them. Reconstructed elements have stable identity,
+      which closes it by construction rather than by a defensive read.
 
     `manifests.verify_key_manifest(key_manifest)` is hoisted once: if the
     manifest is not self-consistent, NOTHING it would sign can be trusted,
@@ -551,6 +611,11 @@ def audit_chain(
     """
     link_count = max(len(payloads) - 1, 0)
 
+    admitted_transfer_view = _admit_caller_rail(transfer_view, MAX_TRANSFER_CLAIMS)
+    admitted_revocation_view = _admit_caller_rail(
+        revocation_view, revocation.MAX_REVOCATION_RECORDS
+    )
+
     if not manifests.verify_key_manifest(key_manifest):
         manifest_invalid_errors = tuple(
             _ERR_ISSUER_SIGNATURE_INVALID.format(i=i) for i in range(1, link_count + 1)
@@ -579,7 +644,7 @@ def audit_chain(
         link_ok = True
 
         selected_claim: dict[str, Any] | None = None
-        for claim in transfer_view:
+        for claim in admitted_transfer_view:
             if not isinstance(claim, dict):
                 continue
             candidate_record = claim.get("record")
@@ -629,7 +694,7 @@ def audit_chain(
 
             if sig_ok and auth_ok and leaf_index is not None and floor_ok:
                 established_leaf_indices = [leaf_index]
-                for claim in transfer_view:
+                for claim in admitted_transfer_view:
                     if not isinstance(claim, dict):
                         continue
                     candidate = claim.get("record")
@@ -669,7 +734,7 @@ def audit_chain(
                 link_ok = False
 
         backed = False
-        for rev_record in revocation_view:
+        for rev_record in admitted_revocation_view:
             if (
                 isinstance(rev_record, dict)
                 and rev_record.get("receipt_id") == prev_receipt_id

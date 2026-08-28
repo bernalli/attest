@@ -9,7 +9,7 @@ its cross-language interop risk. Normative for attest v0.1 payloads.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 _INT_MAX = 2**53  # exclusive
 MAX_DEPTH = 256  # matches the TS cap; bounds parse/reject-surrogate recursion.
@@ -270,3 +270,184 @@ def loads_strict(data: bytes) -> object:
         raise CanonError(f"invalid JSON: {exc}") from exc
     _reject_surrogates(parsed)
     return parsed
+
+
+# --- v0.2 §18.4: the admission boundary, shared by every rail ---------------
+#
+# These primitives live HERE, in the leaf module, because more than one public
+# entry point admits the same caller-supplied rails: `verify()` and
+# `transfer.audit_chain()` both take `transfer_view`/`revocation_view`, and
+# `transfer.py` cannot import `verify.py` (that is the import cycle
+# `verify -> transfer`). A second spelling of a boundary is a boundary that
+# will diverge, so the boundary has exactly one spelling and both callers
+# import it. §18.4 states the rule; this module is where the rule is executed.
+
+# The canonical-byte ceiling a single admitted unit may occupy (v0.1 §11.3).
+MAX_ADMISSION_BYTES = 10_000_000
+# Node budget for the own-data copy. It can never change an admissible/
+# inadmissible answer: every node costs at least one byte of canonical form, so
+# a structure over this many nodes cannot fit under the byte ceiling either. It
+# only makes the refusal REACHABLE, before an unbounded container has been
+# walked to the end.
+MAX_ADMISSION_NODES = MAX_ADMISSION_BYTES
+
+# How many of the enclosing VIEW's containers a value sits inside: a member of
+# a view object is one deep, an element of a view object's array is two.
+VIEW_MEMBER_NESTING = 1
+VIEW_ARRAY_ELEMENT_NESTING = 2
+
+VIEW_MEMBER_ABSENT: Any = object()
+VIEW_MEMBER_COLLAPSED: Any = object()
+
+
+def own_data_copy(value: object, budget: list[int]) -> object:
+    """Copy a caller-supplied value's OWN data into exact plain types.
+
+    `dumps` walks a mapping with `for k in obj`, reads its members with
+    `obj[k]` and walks a sequence with `enumerate(obj)` -- all shadowable --
+    and its byte ceiling is compared against a serialization it has ALREADY
+    produced. A subclass whose iteration never ends therefore hangs the caller
+    before any ceiling can fire, which is the one way §18.4's "reconstruction
+    is bounded and fails closed" can still be broken from a WELL-TYPED view.
+    (Strings and the two scalars are no longer shadowable there: `_serialize`
+    takes their own data itself. CONTAINERS still are, and that is why this
+    copy remains the guarantee rather than a belt.) The copy runs FIRST,
+    through the base classes' own unshadowable accessors, and refuses on a node
+    budget rather than after the work is already done.
+
+    A subtype is never refused for BEING a subtype (§18.4): its own data is
+    copied out into the exact plain type and the instance does not survive.
+    `int.__int__`/`str.__str__` are the own-data spellings for the two scalars
+    whose serialization hook a subclass can override -- `_serialize` uses the
+    same two spellings itself, so for the scalars this copy is a belt, and for
+    the containers around them it is the guarantee.
+
+    Keys that COLLAPSE refuse the unit rather than reduce it. A `str` subclass
+    with an overridden `__hash__`/`__eq__` coexists in a caller dict beside the
+    plain string it shadows, and copying both keys out to their own data leaves
+    ONE member. `dumps` refuses that shape too, through a different guard: the
+    second key's own-data name already collides with one already emitted, so
+    `DuplicateKeyError` fires mid-pass, before the mapping's own `dict.__len__`
+    is ever compared. `loads_strict` refuses the duplicate byte form RFC 8785
+    forbids -- three refusals of the same shape, deliberately. Letting
+    insertion order pick the surviving value is a choice the attacker makes;
+    non-admission is the direction this boundary already fails in.
+    """
+    budget[0] -= 1
+    if budget[0] < 0:
+        raise ValueError("value exceeds the admission node budget")
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return int.__int__(value)
+    if isinstance(value, str):
+        return str.__str__(value)
+    if isinstance(value, list):
+        return [
+            own_data_copy(list.__getitem__(value, index), budget)
+            for index in range(list.__len__(value))
+        ]
+    if isinstance(value, dict):
+        copied: dict[Any, Any] = {}
+        for key, item in dict.items(value):
+            copied[own_data_copy(key, budget)] = own_data_copy(item, budget)
+        if len(copied) != dict.__len__(value):
+            raise ValueError("keys collapse under own-data copy")
+        return copied
+    return value
+
+
+def admit_value(value: object, nesting: int = 0) -> tuple[bool, object]:
+    """Admit a caller-supplied value by the shared reconstruction boundary.
+
+    `nesting` is how many of the enclosing VIEW's containers this value sits
+    inside. v0.1 §11.3's depth ceiling is measured over the canonicalized view
+    AS A WHOLE (§18.4), so a document in a view-object's array is admitted to
+    254 levels, not 256. Admitting an element at its OWN top level and only
+    discovering the excess when the whole view is re-canonicalized discards the
+    element's SIBLINGS too, where §20.3 requires the one inadmissible document
+    to be set aside on its own -- and it is what makes a 255-deep element
+    behave differently from a float in the very same position.
+
+    The returned value is the reconstruction and nothing else: the bytes a
+    signature is verified over and the values consumed afterwards must come
+    from ONE reconstruction, never from a second read of the live object.
+    """
+    probe: object = value
+    for _ in range(nesting):
+        probe = [probe]
+    try:
+        serialized = dumps(own_data_copy(probe, [MAX_ADMISSION_NODES]))
+        if len(serialized) > MAX_ADMISSION_BYTES:
+            return False, None
+        materialized = loads_strict(serialized.encode("utf-8"))
+    except Exception:
+        return False, None
+    for _ in range(nesting):
+        materialized = cast("list[Any]", materialized)[0]
+    return True, materialized
+
+
+def materialize_value(value: object, nesting: int = 0) -> object | None:
+    admitted, materialized = admit_value(value, nesting)
+    return materialized if admitted else None
+
+
+def own_view_member(view: dict[str, Any], member: str, budget: list[int] | None = None) -> object:
+    """Find a rail-defined member by its OWN key data, never by dict lookup.
+
+    A `dict` lookup compares the probe against STORED keys, so a `str` subclass
+    key with a matching hash and a hostile `__eq__` can either raise -- refusing
+    a view the rail defines -- or answer True for a key that is not the member,
+    steering the read. Comparing `str.__str__` of each own key against the
+    member name removes both: the comparison sees stored data only. Two keys
+    that collapse onto one member name make that member inadmissible rather
+    than letting insertion order pick a winner.
+    """
+    found: object = VIEW_MEMBER_ABSENT
+    for key, item in dict.items(view):
+        if budget is not None:
+            # A unit that is ALREADY inadmissible must not be able to buy
+            # unbounded work with the diagnostic read that follows it.
+            budget[0] -= 1
+            if budget[0] < 0:
+                return VIEW_MEMBER_COLLAPSED
+        if isinstance(key, str) and str.__str__(key) == member:
+            if found is not VIEW_MEMBER_ABSENT:
+                return VIEW_MEMBER_COLLAPSED
+            found = item
+    return found
+
+
+def materialize_array(value: object, ceiling: int) -> list[Any] | None:
+    """Admit an array-valued member PER ELEMENT (§18.4).
+
+    The member itself is inadmissible only for a property of the MEMBER: its
+    own array data cannot be read, it is not an array, or its element count
+    exceeds the member's ceiling. An element that is not admissible is set
+    aside alone and no element's admissibility decides another's.
+
+    The element count and the elements come from `list.__len__`/
+    `list.__getitem__`, never from `for item in value`: `__iter__` is
+    shadowable, and a subclass whose iteration never ends would hang the caller
+    before any ceiling can fire.
+    """
+    if not isinstance(value, list):
+        return None
+    try:
+        count = list.__len__(value)
+        if count > ceiling:
+            # A count-ceiling excess is NOT "one bad member": §18.4 makes it
+            # truncate evaluation fail-closed, and the predicate that does so
+            # judges COUNT alone. Dropping the member here would leave the view
+            # with the member ABSENT, which reads as "within every ceiling" and
+            # would FORGIVE the excess. Report the excess instead, with
+            # placeholders and no per-element work, so the ceiling check still
+            # fires before any signature is verified.
+            return [None] * (ceiling + 1)
+        return [
+            materialize_value(list.__getitem__(value, index), VIEW_ARRAY_ELEMENT_NESTING)
+            for index in range(count)
+        ]
+    except Exception:
+        return None
