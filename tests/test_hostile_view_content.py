@@ -896,3 +896,45 @@ def test_authority_view_reconstruction_always_canonicalizes() -> None:
     assert reconstructed is not None
     assert reconstructed["authorizations"][2] is not None
     canon.dumps(reconstructed)
+
+
+class _HostileViewKey(str):
+    __hash__ = str.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        raise _BOOM
+
+
+def test_hostile_view_key_cannot_refuse_a_valid_authority_member() -> None:
+    """A stored key whose equality raises must not refuse a member the rail defines.
+
+    A `dict` lookup compares the probe against STORED keys, so a hostile
+    `__eq__` on one key could otherwise refuse the whole view — the silent
+    downgrade this boundary exists to deny, reached through the LOOKUP rather
+    than through the value.
+    """
+    result = verify.verify(
+        _receipt_for(AUTHORITY_PAYLOAD),
+        TRUST_STORE,
+        authority_view={
+            "authorizations": [AUTHORIZATION],
+            _HostileViewKey("current_authorization_version"): 1,
+        },
+    )
+
+    assert result.publisher_authority == "authorized"
+    assert result.ok is True
+    assert result.trust == "verified"
+
+
+def test_malformed_grant_array_member_is_absent_not_whole_view_refusal() -> None:
+    """One inadmissible member leaves the others admitted, per §18.4's admission unit."""
+    result = verify.verify(
+        _receipt_for(GRANT_PAYLOAD),
+        TRUST_STORE,
+        grant_view={"grant": GRANT, "declarations": "not-an-array"},
+    )
+
+    assert result.grant == "dormant"
+    assert result.grant_trust == "verified"
+    assert result.ok is True

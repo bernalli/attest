@@ -515,3 +515,35 @@ def test_iso_helper_stays_utc_z_for_anchor_assertions() -> None:
         "%Y-%m-%dT%H:%M:%SZ"
     )
     assert rendered == "2023-11-14T22:13:20Z"
+
+
+def test_inadmissible_compromise_claim_does_not_discard_authenticated_cutoff() -> None:
+    """One junk claim must not suppress an authenticated cutoff.
+
+    The compromise view carries the only evidence v0.1 §6.2 lets invalidate a
+    receipt, so discarding the whole view over one inadmissible claim moves the
+    verdict toward VALID — the opposite of the failure direction every other
+    admission path takes.
+    """
+    envelope = _receipt()
+    trusted = _active_manifest()
+    claim_manifest = _compromise_manifest()
+    hk = _hybrid_log_keys()
+    receipt_evidence, receipt_header = _anchored_evidence(
+        _receipt_entry(envelope), hk, 1_700_003_600
+    )
+    claim_evidence, claim_header = _anchored_evidence(
+        _manifest_entry(claim_manifest), hk, 1_700_003_600
+    )
+
+    result = verify.verify(
+        _verify_bytes(envelope),
+        _trust_store(trusted),
+        transparency=receipt_evidence,
+        log_keys=[_log_key(hk)],
+        anchor_policy=_policy(receipt_header, claim_header),
+        compromise_view=[_claim(claim_manifest, claim_evidence), {"padding": 1.5}],
+    )
+
+    assert result.signature == "invalid"
+    assert result.ok is False

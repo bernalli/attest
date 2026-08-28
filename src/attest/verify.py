@@ -777,7 +777,7 @@ def _own_data_copy(value: object, budget: list[int]) -> object:
     return value
 
 
-def _materialize_evidence_value(value: object, nesting: int = 0) -> object | None:
+def _admit_evidence_value(value: object, nesting: int = 0) -> tuple[bool, object]:
     """Admit caller evidence by the shared simple-value reconstruction boundary.
 
     `nesting` is how many of the enclosing VIEW's containers this value sits
@@ -795,17 +795,55 @@ def _materialize_evidence_value(value: object, nesting: int = 0) -> object | Non
     try:
         serialized = canon.dumps(_own_data_copy(probe, [_MAX_EVIDENCE_NODES]))
         if len(serialized) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
-            return None
+            return False, None
         materialized: object = json.loads(serialized)
     except Exception:
-        return None
+        return False, None
     for _ in range(nesting):
         materialized = cast("list[Any]", materialized)[0]
-    return materialized
+    return True, materialized
+
+
+def _materialize_evidence_value(value: object, nesting: int = 0) -> object | None:
+    admitted, materialized = _admit_evidence_value(value, nesting)
+    return materialized if admitted else None
 
 
 _VIEW_MEMBER_NESTING = 1
 _VIEW_ARRAY_ELEMENT_NESTING = 2
+_VIEW_MEMBER_ABSENT = object()
+_VIEW_MEMBER_COLLAPSED = object()
+
+
+def _own_view_member(view: dict[str, Any], member: str) -> object:
+    """Find a rail-defined member by its OWN key data, never by dict lookup.
+
+    A `dict` lookup compares the probe against STORED keys, so a `str` subclass
+    key with a matching hash and a hostile `__eq__` can either raise — refusing
+    a view the rail defines — or answer True for a key that is not the member,
+    steering the read. Comparing `str.__str__` of each own key against the
+    member name removes both: the comparison sees stored data only. Two keys
+    that collapse onto one member name make that member inadmissible rather
+    than letting insertion order pick a winner.
+    """
+    found: object = _VIEW_MEMBER_ABSENT
+    for key, item in dict.items(view):
+        if isinstance(key, str) and str.__str__(key) == member:
+            if found is not _VIEW_MEMBER_ABSENT:
+                return _VIEW_MEMBER_COLLAPSED
+            found = item
+    return found
+
+
+def _admit_single_view_member(
+    view: dict[str, Any], reconstructed: dict[str, Any], member: str
+) -> None:
+    supplied = _own_view_member(view, member)
+    if supplied is _VIEW_MEMBER_ABSENT or supplied is _VIEW_MEMBER_COLLAPSED:
+        return
+    admitted, materialized = _admit_evidence_value(supplied, _VIEW_MEMBER_NESTING)
+    if admitted:
+        reconstructed[member] = materialized
 
 
 def _materialize_evidence_array(value: object, ceiling: int) -> list[Any] | None:
@@ -826,7 +864,14 @@ def _materialize_evidence_array(value: object, ceiling: int) -> list[Any] | None
     try:
         count = list.__len__(value)
         if count > ceiling:
-            return None
+            # A count-ceiling excess is NOT "one bad member": §18.4 makes it
+            # truncate evaluation fail-closed toward `not_checked`, and the
+            # predicate that does so judges COUNT alone. Dropping the member
+            # here would leave the view with the member ABSENT, which reads as
+            # "within every ceiling" and would FORGIVE the excess. Report the
+            # excess instead, with placeholders and no per-element work, so the
+            # ceiling check still fires before any signature is verified.
+            return [None] * (ceiling + 1)
         return [
             _materialize_evidence_value(list.__getitem__(value, index), _VIEW_ARRAY_ELEMENT_NESTING)
             for index in range(count)
@@ -855,30 +900,22 @@ def _materialize_grant_view(grant_view: dict[str, Any]) -> dict[str, Any] | None
     """
     try:
         reconstructed: dict[str, Any] = {}
-        later_grants = dict.get(grant_view, "later_grants")
-        if later_grants is not None:
+        later_grants = _own_view_member(grant_view, "later_grants")
+        if later_grants is not _VIEW_MEMBER_ABSENT and later_grants is not _VIEW_MEMBER_COLLAPSED:
             materialized_later = _materialize_evidence_array(
                 later_grants, grant_module._MAX_GRANT_LATER_VERSIONS
             )
-            if materialized_later is None:
-                return None
-            reconstructed["later_grants"] = materialized_later
-        declarations = dict.get(grant_view, "declarations")
-        if declarations is not None:
+            if materialized_later is not None:
+                reconstructed["later_grants"] = materialized_later
+        declarations = _own_view_member(grant_view, "declarations")
+        if declarations is not _VIEW_MEMBER_ABSENT and declarations is not _VIEW_MEMBER_COLLAPSED:
             materialized_declarations = _materialize_evidence_array(
                 declarations, grant_module._MAX_GRANT_DECLARATIONS
             )
-            if materialized_declarations is None:
-                return None
-            reconstructed["declarations"] = materialized_declarations
-        if dict.__contains__(grant_view, "grant"):
-            reconstructed["grant"] = _materialize_evidence_value(
-                dict.get(grant_view, "grant"), _VIEW_MEMBER_NESTING
-            )
-        if dict.__contains__(grant_view, "anchor"):
-            reconstructed["anchor"] = _materialize_evidence_value(
-                dict.get(grant_view, "anchor"), _VIEW_MEMBER_NESTING
-            )
+            if materialized_declarations is not None:
+                reconstructed["declarations"] = materialized_declarations
+        _admit_single_view_member(grant_view, reconstructed, "grant")
+        _admit_single_view_member(grant_view, reconstructed, "anchor")
     except Exception:
         return None
     return reconstructed
@@ -893,18 +930,17 @@ def _materialize_authority_view(authority_view: dict[str, Any]) -> dict[str, Any
     """
     try:
         reconstructed: dict[str, Any] = {}
-        authorizations = dict.get(authority_view, "authorizations")
-        if authorizations is not None:
+        authorizations = _own_view_member(authority_view, "authorizations")
+        if (
+            authorizations is not _VIEW_MEMBER_ABSENT
+            and authorizations is not _VIEW_MEMBER_COLLAPSED
+        ):
             materialized_authorizations = _materialize_evidence_array(
                 authorizations, authority_module.MAX_AUTHORITY_DOCUMENTS
             )
-            if materialized_authorizations is None:
-                return None
-            reconstructed["authorizations"] = materialized_authorizations
-        if dict.__contains__(authority_view, "current_authorization_version"):
-            reconstructed["current_authorization_version"] = _materialize_evidence_value(
-                dict.get(authority_view, "current_authorization_version"), _VIEW_MEMBER_NESTING
-            )
+            if materialized_authorizations is not None:
+                reconstructed["authorizations"] = materialized_authorizations
+        _admit_single_view_member(authority_view, reconstructed, "current_authorization_version")
     except Exception:
         return None
     return reconstructed
@@ -915,10 +951,19 @@ def _materialize_compromise_view(
 ) -> list[Any] | None:
     if compromise_view is None:
         return None
-    materialized = _materialize_evidence_value(compromise_view)
-    if not isinstance(materialized, list) or len(materialized) > _MAX_COMPROMISE_CLAIMS:
+    try:
+        count = list.__len__(compromise_view)
+        if count > _MAX_COMPROMISE_CLAIMS:
+            return None
+        return [
+            _materialize_evidence_value(
+                list.__getitem__(compromise_view, index),
+                _VIEW_MEMBER_NESTING,
+            )
+            for index in range(count)
+        ]
+    except Exception:
         return None
-    return materialized
 
 
 def _held_issuer_manifests(
