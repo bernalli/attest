@@ -611,11 +611,6 @@ def audit_chain(
     """
     link_count = max(len(payloads) - 1, 0)
 
-    admitted_transfer_view = _admit_caller_rail(transfer_view, MAX_TRANSFER_CLAIMS)
-    admitted_revocation_view = _admit_caller_rail(
-        revocation_view, revocation.MAX_REVOCATION_RECORDS
-    )
-
     if not manifests.verify_key_manifest(key_manifest):
         manifest_invalid_errors = tuple(
             _ERR_ISSUER_SIGNATURE_INVALID.format(i=i) for i in range(1, link_count + 1)
@@ -626,6 +621,17 @@ def audit_chain(
             errors=manifest_invalid_errors,
             warnings=(),
         )
+
+    # AFTER the manifest's own self-verify, never before: that check is cheap
+    # and refuses everything the manifest would sign, while admitting the rails
+    # canonicalizes and re-parses up to 64 claims and 10000 records. Admitting
+    # first would let anyone who can supply a broken manifest buy the whole
+    # admission and have it thrown away. Nothing between the two reads a view,
+    # so the order is free.
+    admitted_transfer_view = _admit_caller_rail(transfer_view, MAX_TRANSFER_CLAIMS)
+    admitted_revocation_view = _admit_caller_rail(
+        revocation_view, revocation.MAX_REVOCATION_RECORDS
+    )
 
     manifest_issuer = key_manifest.get("issuer")
     issuer_id_for_log = manifest_issuer if isinstance(manifest_issuer, str) else ""
