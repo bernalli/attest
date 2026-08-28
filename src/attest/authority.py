@@ -424,8 +424,8 @@ def verify_authorization(document: dict[str, Any], key_manifest: dict[str, Any])
     try:
         if not _valid_authorization_shape(document):
             return False
-        return manifests.verify_key_manifest(key_manifest) and grant._verify_signed_document(
-            document, key_manifest, "issued_at"
+        return manifests.verify_key_manifest(key_manifest) and verify_authorization_signature(
+            document, key_manifest
         )
     except (AttributeError, KeyError, TypeError, ValueError, canon.CanonError):
         return False
