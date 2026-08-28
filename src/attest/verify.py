@@ -40,6 +40,9 @@ from attest import (
     transfer,
     validate,
 )
+from attest import (
+    authority as authority_module,
+)
 from attest import grant as grant_module
 from attest import transparency as transparency_module
 
@@ -204,6 +207,18 @@ _WARN_GRANT_ACTIVATED_BY_SUCCESSOR = "grant_activated_by_successor"
 _WARN_GRANT_PLEDGE_TYPE_UNKNOWN = "grant_pledge_type_unknown"
 _WARN_GRANT_LEGAL_TEXT_CHANGED = "grant_legal_text_changed"
 
+_AUTHORITY_NOT_CHECKED = "not_checked"
+_AUTHORITY_NO_CLAIM = "no_publisher_claim"
+_AUTHORITY_SELF = "self"
+_AUTHORITY_AUTHORIZED = "authorized"
+_AUTHORITY_UNAUTHORIZED = "unauthorized"
+_AUTHORITY_UNATTESTED = "unattested"
+_AUTHORITY_TRUST_SIGNER_MISMATCH = "signer_mismatch"
+
+_WARN_PUBLISHER_NOT_AUTHORIZING_ISSUER = "publisher_not_authorizing_issuer"
+_WARN_AUTHORIZATION_SIGNER_NOT_PUBLISHER = "authorization_signer_not_publisher"
+_WARN_AUTHORIZATION_INVALID_IGNORED = "authorization_invalid_ignored"
+
 _PLEDGE_MEMBERS = ("pledge", "grant_uri", "grant_sha256")
 _HEX_LOWER = frozenset("0123456789abcdef")
 
@@ -315,6 +330,14 @@ class VerificationResult:
     grant_trust: str = _GRANT_TRUST_NOT_CHECKED
     # "not_checked" | "verified" | "unauthenticated_tofu" | "unverified_rotation"
     # | "signer_mismatch"
+    # v0.2 section 20.5, informational only. Declared after Stage 4 for the
+    # same additive-construction reason as `grant`/`grant_trust`.
+    publisher_authority: str = _AUTHORITY_NOT_CHECKED
+    # "not_checked" | "no_publisher_claim" | "self" | "authorized"
+    # | "unauthorized" | "unattested"
+    publisher_authority_trust: str = _AUTHORITY_NOT_CHECKED
+    # "not_checked" | "verified" | "unauthenticated_tofu" | "unverified_rotation"
+    # | "signer_mismatch"
 
     @property
     def ok(self) -> bool:
@@ -400,17 +423,6 @@ def _content_warnings(payload: dict[str, Any]) -> list[str]:
         # always written this as `typeof eol !== 'string' || !KNOWN_EOL.has(eol)`.
         if not isinstance(eol, str) or eol not in _KNOWN_EOL_VALUES:
             found.append(f"unknown survivability.end_of_life value: {eol!r}")
-
-    # V-L.8: `work.publisher_id` differing from `issuer.id` is a rights-holder
-    # claim this v0.1-only check cannot attest — neither field is trusted to
-    # be a dict/string, since the payload is untrusted wire data (§18.5's own
-    # crash history: a `status: {}` once escaped as a raw TypeError).
-    issuer_block = payload.get("issuer")
-    issuer_id = issuer_block.get("id") if isinstance(issuer_block, dict) else None
-    work_block = payload.get("work")
-    publisher_id = work_block.get("publisher_id") if isinstance(work_block, dict) else None
-    if isinstance(publisher_id, str) and isinstance(issuer_id, str) and publisher_id != issuer_id:
-        found.append(_WARN_PUBLISHER_CLAIM_UNATTESTED)
 
     return found
 
@@ -2015,6 +2027,238 @@ def _honor_declarations(
     return honored
 
 
+# --- Stage 5: publisher authority evaluation (v0.2 section 20.4) ------------
+
+
+@dataclass(frozen=True)
+class AuthorityVerdict:
+    """Section 20.5's authority components plus warnings produced by section
+    20.4's ordered evaluation."""
+
+    publisher_authority: str
+    publisher_authority_trust: str
+    warnings: tuple[str, ...] = ()
+
+
+def _own_member(document: object, member: str) -> object:
+    return dict.get(document, member) if isinstance(document, dict) else None
+
+
+def _authorization_hash_or_none(candidate: object, warnings: list[str]) -> str | None:
+    try:
+        return authority_module.authorization_hash(cast(dict[str, Any], candidate))
+    except Exception:
+        _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
+        return None
+
+
+def _admitted_authorizations(
+    authorizations: list[Any],
+    trust_store: TrustStore,
+    publisher_id: str,
+    authority_trust: str,
+    warnings: list[str],
+) -> tuple[dict[str, dict[str, Any]], str]:
+    admitted: dict[str, dict[str, Any]] = {}
+    seen_hashes: set[str] = set()
+    for candidate in authorizations:
+        document_hash = _authorization_hash_or_none(candidate, warnings)
+        if document_hash is None or document_hash in seen_hashes:
+            continue
+        seen_hashes.add(document_hash)
+
+        if not isinstance(candidate, dict):
+            _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
+            continue
+        document = candidate
+        signer = grant_module.signer_domain(document)
+        manifest = trust_store.manifests.get(signer) if isinstance(signer, str) else None
+        if not isinstance(manifest, dict) or not authority_module.verify_authorization(
+            document, manifest
+        ):
+            _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
+            continue
+        if manifest.get("issuer") != signer or document.get("publisher") != publisher_id:
+            _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
+            continue
+        if signer != publisher_id:
+            _append_warning_once(warnings, _WARN_AUTHORIZATION_SIGNER_NOT_PUBLISHER)
+            authority_trust = _AUTHORITY_TRUST_SIGNER_MISMATCH
+            continue
+        admitted[document_hash] = document
+    return admitted, authority_trust
+
+
+def _entries_by_issuer(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    entries = cast(list[dict[str, Any]], document["authorized_issuers"])
+    return {entry["issuer_id"]: entry for entry in entries}
+
+
+def _window_shortens(previous_valid_to: str | None, valid_to: str | None) -> bool:
+    if valid_to is None:
+        return False
+    if previous_valid_to is None:
+        return True
+    return transfer._parse_date(valid_to) < transfer._parse_date(previous_valid_to)
+
+
+def _restriction_outside_bounds(
+    predecessor_issued_at: str, successor_issued_at: str, valid_to: str
+) -> bool:
+    endpoint = transfer._parse_date(valid_to)
+    return endpoint < transfer._parse_date(
+        predecessor_issued_at
+    ) or endpoint > transfer._parse_date(successor_issued_at)
+
+
+def _breaks_successor_discipline(predecessor: dict[str, Any], successor: dict[str, Any]) -> bool:
+    try:
+        successor_entries = _entries_by_issuer(successor)
+        successor_issued_at = cast(str, successor["issued_at"])
+        predecessor_issued_at = cast(str, predecessor["issued_at"])
+        for predecessor_entry in cast(list[dict[str, Any]], predecessor["authorized_issuers"]):
+            issuer_id = predecessor_entry["issuer_id"]
+            successor_entry = successor_entries.get(issuer_id)
+            if successor_entry is None:
+                return True
+            if successor_entry["valid_from"] != predecessor_entry["valid_from"]:
+                return True
+
+            predecessor_valid_to = cast(str | None, predecessor_entry["valid_to"])
+            valid_to = cast(str | None, successor_entry["valid_to"])
+            if authority_module.window_spent_at(predecessor_valid_to, successor_issued_at):
+                if not authority_module.same_instant(predecessor_valid_to, valid_to):
+                    return True
+                continue
+
+            if (
+                _window_shortens(predecessor_valid_to, valid_to)
+                and valid_to is not None
+                and _restriction_outside_bounds(
+                    predecessor_issued_at, successor_issued_at, valid_to
+                )
+            ):
+                return True
+    except Exception:
+        return True
+    return False
+
+
+def _effective_authorization(
+    admitted: dict[str, dict[str, Any]], authority_trust: str
+) -> tuple[dict[str, Any] | None, str]:
+    by_version: dict[int, int] = {}
+    for document in admitted.values():
+        version = int(document["authorization_version"])
+        by_version[version] = by_version.get(version, 0) + 1
+
+    equivocating = {version for version, count in by_version.items() if count > 1}
+    if equivocating:
+        authority_trust = _TRUST_UNVERIFIED_ROTATION
+
+    survivors = {
+        document_hash: document
+        for document_hash, document in admitted.items()
+        if int(document["authorization_version"]) not in equivocating
+    }
+    excluded: set[str] = set()
+    for predecessor_hash, predecessor in survivors.items():
+        predecessor_version = int(predecessor["authorization_version"])
+        for successor_hash, successor in survivors.items():
+            if predecessor_hash == successor_hash:
+                continue
+            if predecessor_version >= int(successor["authorization_version"]):
+                continue
+            if _breaks_successor_discipline(predecessor, successor):
+                excluded.add(successor_hash)
+
+    if excluded:
+        authority_trust = _TRUST_UNVERIFIED_ROTATION
+
+    effective_candidates = [
+        document for document_hash, document in survivors.items() if document_hash not in excluded
+    ]
+    if not effective_candidates:
+        return None, authority_trust
+    return (
+        max(effective_candidates, key=lambda document: int(document["authorization_version"])),
+        authority_trust,
+    )
+
+
+def evaluate_publisher_authority(
+    payload: dict[str, Any],
+    trust_store: TrustStore,
+    authority_view: dict[str, Any] | None,
+) -> AuthorityVerdict:
+    """Section 20.4's deterministic, short-circuiting evaluation order."""
+    if authority_view is not None and not isinstance(authority_view, dict):
+        raise TypeError("authority_view must be an evidence object or None")
+
+    warnings: list[str] = []
+    if authority_view is None:
+        return AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
+
+    # --- Step 1.
+    work = _own_member(payload, "work")
+    publisher_id = _own_member(work, "publisher_id")
+    if not isinstance(publisher_id, str):
+        return AuthorityVerdict(_AUTHORITY_NO_CLAIM, _AUTHORITY_NOT_CHECKED)
+
+    # --- Step 2.
+    issuer = _own_member(payload, "issuer")
+    issuer_id = _own_member(issuer, "id")
+    if not isinstance(issuer_id, str):
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+
+    # --- Step 3.
+    if publisher_id == issuer_id:
+        return AuthorityVerdict(_AUTHORITY_SELF, _AUTHORITY_NOT_CHECKED)
+
+    # --- Step 4.
+    authorizations = _own_member(authority_view, "authorizations")
+    if not isinstance(authorizations, list):
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+    if not authority_module.within_structural_ceiling(authorizations):
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+    if len(authorizations) == 0:
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+
+    # --- Step 5. The ladder is keyed to the RECEIPT's publisher claim, never
+    # to any domain named by a supplied document's kid; the document is still
+    # attacker-supplied bytes at this point.
+    authority_trust = _grant_trust_ladder(
+        trust_store, publisher_id, trust_store.manifests.get(publisher_id)
+    )
+
+    # --- Step 6.
+    admitted, authority_trust = _admitted_authorizations(
+        authorizations, trust_store, publisher_id, authority_trust, warnings
+    )
+
+    # --- Step 7.
+    effective, authority_trust = _effective_authorization(admitted, authority_trust)
+    if effective is None:
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, authority_trust, tuple(warnings))
+
+    # --- Step 8 is the `effective` selection above.
+
+    # --- Step 9.
+    entry = authority_module.entry_for_issuer(effective, issuer_id)
+    if entry is not None and authority_module.entry_authorizes_receipt(entry, payload):
+        return AuthorityVerdict(_AUTHORITY_AUTHORIZED, authority_trust, tuple(warnings))
+
+    # --- Step 10.
+    assertion = _own_member(authority_view, "current_authorization_version")
+    if (
+        authority_module.is_authorization_version(assertion)
+        and assertion == effective["authorization_version"]
+    ):
+        warnings.append(_WARN_PUBLISHER_NOT_AUTHORIZING_ISSUER)
+        return AuthorityVerdict(_AUTHORITY_UNAUTHORIZED, authority_trust, tuple(warnings))
+    return AuthorityVerdict(_AUTHORITY_UNATTESTED, authority_trust, tuple(warnings))
+
+
 def verify(
     envelope_bytes: bytes,
     trust_store: TrustStore,
@@ -2030,6 +2274,7 @@ def verify(
     compromise_view: list[dict[str, Any]] | None = None,
     witness_policy: object = None,
     grant_view: dict[str, Any] | None = None,
+    authority_view: dict[str, Any] | None = None,
 ) -> VerificationResult:
     """§6 steps 0-7. `max_revocation_records` bounds the untrusted revocation
     view: a larger view is not evaluated (revocation `"unknown"`). It fails
@@ -2085,6 +2330,12 @@ def verify(
     that never supplies it gets `not_checked`/`not_checked` and a byte-for-byte
     unchanged result, exactly like every Stage 2/3 addition before it.
 
+    `authority_view` is v0.2 section 20's caller-supplied evidence channel for
+    publisher authorization. It is informational only: `publisher_authority`
+    and `publisher_authority_trust` never affect receipt validity or issuer
+    trust. A caller that never supplies it gets `not_checked`/`not_checked`;
+    the existing publisher-claim warning is then stratified from that verdict.
+
     `compromise_view` is v0.1 rev 8 / v0.2 §19's fourth sanctioned exception
     to the Stage 2 informational rule: a caller-supplied list of key-manifest
     compromise declarations. Authenticated declarations only ever strengthen
@@ -2114,6 +2365,8 @@ def verify(
     # inside a well-shaped view never raises — only the wrong container does.
     if grant_view is not None and not isinstance(grant_view, dict):
         raise TypeError("grant_view must be an evidence object or None")
+    if authority_view is not None and not isinstance(authority_view, dict):
+        raise TypeError("authority_view must be an evidence object or None")
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -2633,11 +2886,24 @@ def verify(
         grant_verdict = evaluate_grant(
             payload, trust_store, grant_view, anchor_policy=anchor_policy
         )
+        authority_verdict = evaluate_publisher_authority(payload, trust_store, authority_view)
     else:
         revocation_result = _REVOCATION_UNKNOWN
         binding_result = _BINDING_NOT_CHECKED
         grant_verdict = GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED)
+        authority_verdict = AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
 
+    warnings.extend(authority_verdict.warnings)
+
+    work_block = payload.get("work")
+    publisher_id = work_block.get("publisher_id") if isinstance(work_block, dict) else None
+    if (
+        isinstance(publisher_id, str)
+        and isinstance(issuer_id, str)
+        and publisher_id != issuer_id
+        and authority_verdict.publisher_authority in (_AUTHORITY_NOT_CHECKED, _AUTHORITY_UNATTESTED)
+    ):
+        warnings.append(_WARN_PUBLISHER_CLAIM_UNATTESTED)
     warnings.extend(grant_verdict.warnings)
 
     return VerificationResult(
@@ -2653,4 +2919,6 @@ def verify(
         errors=tuple(errors),
         grant=grant_verdict.grant,
         grant_trust=grant_verdict.grant_trust,
+        publisher_authority=authority_verdict.publisher_authority,
+        publisher_authority_trust=authority_verdict.publisher_authority_trust,
     )

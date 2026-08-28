@@ -21,6 +21,7 @@ import pytest
 
 from attest import (
     anchor,
+    authority,
     canon,
     commitment,
     issue,
@@ -411,6 +412,102 @@ def test_empty_string_publisher_claim_warns_like_any_string_claim() -> None:
     assert result.signature == "valid"
     assert result.schema == "invalid"
     assert "publisher_claim_unattested" in result.warnings
+
+
+def _publisher_authority_material() -> tuple[pq.HybridSigningKeys, dict[str, Any]]:
+    kid = "pub.example/keys/authority#1"
+    hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
+    entry = manifests.key_entry(kid, hk.ed.pub, "2026-01-01T00:00:00Z", pub_ml_dsa_65=hk.mldsa.pub)
+    manifest = manifests.build_key_manifest(
+        "pub.example", 1, "2026-01-01T00:00:00Z", [entry], hk, kid
+    )
+    return hk, manifest
+
+
+def _authority_entry() -> dict[str, Any]:
+    return {
+        "issuer_id": ISSUER,
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_to": None,
+        "permissions": [authority.PERMISSION_ISSUE],
+        "scope": None,
+    }
+
+
+def _authority_document(
+    signing_kp: pq.HybridSigningKeys,
+    *,
+    authorized_issuers: list[dict[str, Any]],
+    version: int = 1,
+) -> dict[str, Any]:
+    return authority.build_authorization(
+        version,
+        "pub.example",
+        authorized_issuers,
+        "2026-02-01T00:00:00Z",
+        signing_kp,
+        "pub.example/keys/authority#1",
+    )
+
+
+def _verify_with_authority_view(
+    authority_view: dict[str, Any] | None, publisher_manifest: dict[str, Any]
+) -> verify.VerificationResult:
+    payload = make_payload(work={"publisher_id": "pub.example"})
+    envelope = issue.issue(payload, KP, KID)
+    trust_store = verify.TrustStore(
+        manifests={ISSUER: _key_manifest(), "pub.example": publisher_manifest},
+        provenance={ISSUER: "tls", "pub.example": "tls"},
+    )
+    return verify.verify(_to_bytes(envelope), trust_store, authority_view=authority_view)
+
+
+def test_authorized_authority_view_suppresses_publisher_claim_warning() -> None:
+    publisher_keys, publisher_manifest = _publisher_authority_material()
+    document = _authority_document(publisher_keys, authorized_issuers=[_authority_entry()])
+    result = _verify_with_authority_view({"authorizations": [document]}, publisher_manifest)
+
+    assert result.publisher_authority == "authorized"
+    assert result.publisher_authority_trust == "verified"
+    assert "publisher_claim_unattested" not in result.warnings
+    assert "publisher_not_authorizing_issuer" not in result.warnings
+    assert result.ok is True
+    assert result.trust == "verified"
+
+
+def test_unauthorized_authority_view_replaces_publisher_claim_warning() -> None:
+    publisher_keys, publisher_manifest = _publisher_authority_material()
+    document = _authority_document(publisher_keys, authorized_issuers=[])
+    result = _verify_with_authority_view(
+        {"authorizations": [document], "current_authorization_version": 1},
+        publisher_manifest,
+    )
+
+    assert result.publisher_authority == "unauthorized"
+    assert result.publisher_authority_trust == "verified"
+    assert "publisher_not_authorizing_issuer" in result.warnings
+    assert "publisher_claim_unattested" not in result.warnings
+    assert result.ok is True
+    assert result.trust == "verified"
+
+
+def test_unattested_authority_view_preserves_publisher_claim_warning() -> None:
+    _, publisher_manifest = _publisher_authority_material()
+    result = _verify_with_authority_view({}, publisher_manifest)
+
+    assert result.publisher_authority == "unattested"
+    assert result.publisher_authority_trust == "not_checked"
+    assert "publisher_claim_unattested" in result.warnings
+
+
+def test_verify_without_authority_view_keeps_vl8_warning_and_default_components() -> None:
+    payload = make_payload(work={"publisher_id": "pub.example"})
+    envelope = issue.issue(payload, KP, KID)
+    result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
+
+    assert result.publisher_authority == "not_checked"
+    assert result.publisher_authority_trust == "not_checked"
+    assert result.warnings == ("publisher_claim_unattested",)
 
 
 # --- step 6: revocation-by-class (design §3.1/§6) --------------------------------
