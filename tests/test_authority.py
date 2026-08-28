@@ -667,6 +667,25 @@ def test_a_missing_scope_member_never_authorizes() -> None:
     assert not authority.entry_authorizes_receipt(entry, make_payload())
 
 
+def test_a_non_string_permission_never_authorizes() -> None:
+    """Bare membership is blind to the type of what surrounds the value it
+    finds: `["issue", {}]` contains `issue` and is still not a `permissions`
+    array. An entry arrives on the caller's evidence rail, so every member it
+    carries is held to §20.2's shape before any of it is believed."""
+    entry = _entry(permissions=[authority.PERMISSION_ISSUE, {}])
+
+    assert not authority.entry_authorizes_receipt(entry, make_payload())
+
+
+def test_an_entry_with_an_unknown_member_never_authorizes() -> None:
+    """The entry shape is CLOSED (§20.2): an entry that would be refused inside
+    a document is refused here too, rather than authorizing on the strength of
+    the members that happen to be well-formed."""
+    entry = {**_entry(), "note": "trust me"}
+
+    assert not authority.entry_authorizes_receipt(entry, make_payload())
+
+
 @pytest.mark.parametrize(
     "entry",
     [
@@ -959,6 +978,45 @@ def test_a_back_dated_new_closure_is_refused() -> None:
             PUB_KID,
             previous=previous,
         )
+
+
+def test_a_post_dated_new_closure_is_refused() -> None:
+    """§20.2 bounds a closure from ABOVE as well: `valid_to` no later than the
+    closing document's own `issued_at` — 'a closure may not be post-dated into
+    the future'. A publisher announcing a closure it has not yet lived through
+    keeps the freedom to move it again while presenting it as settled."""
+    kp, _ = _ed_manifest(PUBLISHER, PUB_KID)
+    previous = _previous()
+
+    with pytest.raises(ValueError):
+        authority.build_authorization(
+            2,
+            PUBLISHER,
+            [_entry(valid_to="2026-09-01T00:00:01Z")],  # one second past issued_at
+            LATER_ISSUED_AT,
+            kp,
+            PUB_KID,
+            previous=previous,
+        )
+
+
+def test_a_closure_exactly_at_this_documents_issued_at_is_signed() -> None:
+    """The upper bound is INCLUSIVE: closing at the closing document's own
+    `issued_at` is the latest conforming closure."""
+    kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
+    previous = _previous()
+
+    document = authority.build_authorization(
+        2,
+        PUBLISHER,
+        [_entry(valid_to=LATER_ISSUED_AT)],
+        LATER_ISSUED_AT,
+        kp,
+        PUB_KID,
+        previous=previous,
+    )
+
+    assert authority.verify_authorization(document, key_manifest)
 
 
 def test_a_closure_shortened_below_the_predecessors_issued_at_is_refused() -> None:

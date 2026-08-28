@@ -178,6 +178,7 @@ def _valid_authorization_shape(document: object) -> bool:
 def _reject_non_successor(
     authorization_version: int,
     authorized_issuers: list[Any],
+    issued_at: str,
     previous: object,
 ) -> None:
     """Raise `ValueError` unless the document about to be signed is a
@@ -239,13 +240,23 @@ def _reject_non_successor(
                 "every later version — de-authorization CLOSES the window, it never deletes"
             )
         for entry in successors:
-            _reject_non_successor_entry(previous_entry, entry, cast(str, previous_issued_at))
+            _reject_non_successor_entry(
+                previous_entry, entry, cast(str, previous_issued_at), issued_at
+            )
 
 
 def _reject_non_successor_entry(
-    previous_entry: dict[str, Any], entry: dict[str, Any], previous_issued_at: str
+    previous_entry: dict[str, Any],
+    entry: dict[str, Any],
+    previous_issued_at: str,
+    issued_at: str,
 ) -> None:
-    """The per-entry half of §20.2's successor discipline."""
+    """The per-entry half of §20.2's successor discipline.
+
+    `issued_at` is the CLOSING document's own timestamp, and it bounds a newly
+    introduced closure from above exactly as `previous_issued_at` bounds it
+    from below.
+    """
     issuer_id = previous_entry.get("issuer_id")
     if entry.get("valid_from") != previous_entry.get("valid_from"):
         raise ValueError(
@@ -268,19 +279,34 @@ def _reject_non_successor_entry(
         return
     if valid_to is None:
         return
-    # A closure newly introduced on an entry the predecessor still showed open:
-    # it MUST NOT be back-dated before that predecessor's own `issued_at`, or
-    # it would uncover receipts already issued inside the window.
+    # A closure newly introduced on an entry the predecessor still showed open
+    # is bounded on BOTH sides (§20.2, verbatim): "setting a `valid_to` no
+    # later than the closing document's own `issued_at` (a closure may not be
+    # post-dated into the future) and no earlier than the `issued_at` of the
+    # latest version that showed the window open". Back-dating would uncover
+    # receipts already issued inside the window; post-dating would announce an
+    # authorization the publisher has not yet lived through, and would let a
+    # later version keep moving it while pretending the closure is settled.
     if not transfer._valid_utc_timestamp(valid_to):
         raise ValueError(
             f"valid_to of entry {issuer_id!r} must be an ISO-8601 UTC timestamp to be shown "
             "conforming against the predecessor"
         )
-    if transfer._parse_date(valid_to) < transfer._parse_date(previous_issued_at):
+    if not transfer._valid_utc_timestamp(issued_at):
+        raise ValueError(
+            "issued_at must be an ISO-8601 UTC timestamp to bound a newly introduced closure"
+        )
+    closure = transfer._parse_date(valid_to)
+    if closure < transfer._parse_date(previous_issued_at):
         raise ValueError(
             f"the closure of entry {issuer_id!r} is back-dated before the predecessor's "
             f"issued_at {previous_issued_at}: a closure may not uncover receipts already "
             "issued inside the window"
+        )
+    if closure > transfer._parse_date(issued_at):
+        raise ValueError(
+            f"the closure of entry {issuer_id!r} is post-dated after this document's own "
+            f"issued_at {issued_at}: a closure may not be post-dated into the future"
         )
 
 
@@ -309,13 +335,16 @@ def build_authorization(
     document) is supplied, §20.2's entry-preservation and successor discipline
     is enforced BEFORE any signature is computed, and a violation raises
     `ValueError`: a deleted entry, a moved `valid_from`, a closed window moved
-    in either direction, or a closure back-dated before the predecessor's own
-    `issued_at`. A version not above the predecessor's is refused for the same
-    reason. `previous=None` leaves behaviour byte-identical to a builder
+    in either direction, or a newly introduced closure outside the two bounds
+    §20.2 sets on it — no earlier than the predecessor's own `issued_at`
+    (back-dating uncovers receipts already issued inside the window) and no
+    later than this document's own `issued_at` (a closure may not be
+    post-dated into the future). A version not above the predecessor's is
+    refused for the same reason. `previous=None` leaves behaviour byte-identical to a builder
     without this argument.
     """
     if previous is not None:
-        _reject_non_successor(authorization_version, authorized_issuers, previous)
+        _reject_non_successor(authorization_version, authorized_issuers, issued_at, previous)
     body: dict[str, Any] = {
         "authorization_version": authorization_version,
         "publisher": publisher,
@@ -472,21 +501,26 @@ def entry_authorizes_receipt(entry: object, payload: object) -> bool:
     authorized forever, exactly as receipts signed while a key was active
     remain valid after that key is retired.
 
-    An ABSENT `scope` member is not `null`: a malformed entry must never be
-    read as "the entire catalogue". Fails closed on every malformed input and
-    never raises — this runs over a document supplied on the caller's evidence
-    rail.
+    The entry is held to §20.2's own closed shape FIRST, through the one
+    predicate that states it (`_valid_entry_shape`), rather than to a second,
+    weaker spelling inline. §20.4 step 9 only ever reaches this with an entry
+    of an ADMITTED document, so for every real evaluation the check is free;
+    what it buys is that a malformed entry cannot answer `True` on a
+    technicality. `permissions: ["issue", {}]` is the shape of that
+    technicality — bare membership is blind to the type of what surrounds the
+    value it finds — and an ABSENT `scope` member is another: absent is not
+    `null`, and must never be read as "the entire catalogue". Fails closed on
+    every malformed input and never raises: this runs over a document supplied
+    on the caller's evidence rail.
     """
     try:
-        if not isinstance(entry, dict) or not isinstance(payload, dict):
+        if not _valid_entry_shape(entry) or not isinstance(payload, dict):
             return False
+        entry = cast(dict[str, Any], entry)
         issued_at = payload.get("issued_at")
         if not isinstance(issued_at, str) or not _within_entry_window(issued_at, entry):
             return False
-        permissions = entry.get("permissions")
-        if not isinstance(permissions, list) or PERMISSION_ISSUE not in permissions:
-            return False
-        if "scope" not in entry:
+        if PERMISSION_ISSUE not in entry["permissions"]:
             return False
         scope = entry["scope"]
         if scope is None:
