@@ -118,6 +118,15 @@ def same_instant(left: str | None, right: str | None) -> bool:
     Two `null` endpoints compare equal; a `null` endpoint and a timestamp do
     not. Non-null endpoints are parsed with the wire timestamp grammar before
     comparison so carry checks and ordering checks use one instant spelling.
+
+    PRECONDITION, and the ONE thing an importer must read: a non-null endpoint
+    that is not a well-formed wire timestamp RAISES (`transfer._parse_date`).
+    This predicate is therefore NOT the never-raise surface of §20.3 — the
+    builder wants it loud, and §20.4 step 7 may call it only on documents
+    ALREADY ADMITTED, whose `valid_to` members `_valid_authorization_shape`
+    has proven parseable. Reaching it from anything less than an admitted
+    document breaks "hostile CONTENT inside a well-shaped view never raises":
+    validate first, or wrap at the call site.
     """
     if left is None or right is None:
         return left is None and right is None
@@ -130,6 +139,11 @@ def window_spent_at(valid_to: str | None, instant: str) -> bool:
     The window is spent when `valid_to` is non-null and strictly earlier than
     `instant`; otherwise it is live. Non-null timestamps are parsed before the
     order comparison.
+
+    PRECONDITION: as `same_instant` — a non-null `valid_to` or an `instant`
+    that is not a well-formed wire timestamp RAISES, and §20.4 step 7 may
+    call this only on ADMITTED documents, never on caller-supplied content
+    that has not passed `_valid_authorization_shape`.
     """
     if valid_to is None:
         return False
@@ -285,6 +299,14 @@ def _reject_non_successor_entry(
     `previous_issued_at` bounds it from below.
     """
     issuer_id = previous_entry.get("issuer_id")
+    for side, source in (("previous", previous_entry), ("successor", entry)):
+        missing = sorted({"valid_from", "valid_to"} - set(source))
+        if missing:
+            raise ValueError(
+                f"the {side} entry {issuer_id!r} does not carry {' and '.join(missing)}: an entry "
+                "that cannot be compared cannot be shown conforming, and an ABSENT member is "
+                "never read as an open-ended window"
+            )
     if entry.get("valid_from") != previous_entry.get("valid_from"):
         raise ValueError(
             f"valid_from of entry {issuer_id!r} changed: within an entry shared across "
@@ -310,7 +332,8 @@ def _reject_non_successor_entry(
     if previous_window_end is not None:
         if not transfer._valid_utc_timestamp(issued_at):
             raise ValueError(
-                "issued_at must be an ISO-8601 UTC timestamp to bound a newly introduced closure"
+                "issued_at must be an ISO-8601 UTC timestamp to classify the predecessor's "
+                "window as spent or live"
             )
         if window_spent_at(previous_window_end, issued_at):
             raise ValueError(

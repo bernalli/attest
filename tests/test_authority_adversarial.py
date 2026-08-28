@@ -969,3 +969,175 @@ def test_build_authorization_allows_live_open_ended_window_closure_at_previous_i
     )
 
     assert successor["authorized_issuers"][0]["valid_to"] == AUTH_ISSUED_AT
+
+
+# --- not-well-formed successor discipline (§20.2 builder contract) ----------
+
+
+@pytest.mark.parametrize("bad", [True, False, 0, 1, 1735689600, [], {}, "", "2026-01-15T00:00:00"])
+def test_build_authorization_rejects_wrong_typed_successor_valid_to(bad: Any) -> None:
+    """A `valid_to` that is not a wire timestamp is refused BEFORE any order
+    comparison — no type reaches `_parse_date` unvalidated, and `bool`/`int`
+    never stand in for an instant."""
+    kp, _ = _ed_manifest()
+    previous = _authorization(kp, authorized_issuers=[_entry(ISSUER_A)], issued_at=AUTH_ISSUED_AT)
+
+    with pytest.raises(ValueError) as excinfo:
+        _authorization(
+            kp,
+            authorization_version=2,
+            authorized_issuers=[dict(_entry(ISSUER_A), valid_to=bad)],
+            issued_at=SUCCESSOR_ISSUED_AT,
+            previous=previous,
+        )
+
+    assert str(excinfo.value) == (
+        "valid_to of entry 'alpha.example' must be an ISO-8601 UTC timestamp to be shown "
+        "conforming against the predecessor"
+    )
+
+
+@pytest.mark.parametrize("bad", [True, 0, [], {}, "", "2026-01-15T00:00:00"])
+def test_build_authorization_rejects_wrong_typed_previous_valid_to(bad: Any) -> None:
+    kp, _ = _ed_manifest()
+    previous = _authorization(
+        kp, authorized_issuers=[dict(_entry(ISSUER_A), valid_to=bad)], issued_at=AUTH_ISSUED_AT
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        _authorization(
+            kp,
+            authorization_version=2,
+            authorized_issuers=[_entry(ISSUER_A, valid_to="2026-01-15T00:00:00Z")],
+            issued_at=SUCCESSOR_ISSUED_AT,
+            previous=previous,
+        )
+
+    assert str(excinfo.value) == (
+        "previous.valid_to of entry 'alpha.example' must be an ISO-8601 UTC timestamp "
+        "to be shown conforming against the successor"
+    )
+
+
+@pytest.mark.parametrize("member", ["valid_from", "valid_to"])
+@pytest.mark.parametrize("side", ["previous", "successor"])
+def test_build_authorization_refuses_an_entry_that_omits_a_window_member(
+    side: str, member: str
+) -> None:
+    """An ABSENT member is never read as `null`: a predecessor entry that omits
+    `valid_to` would otherwise be classified open-ended — the MOST permissive
+    reading — of a window that may in fact be spent, and the check that exists
+    to catch the honest publisher's accident would sign it."""
+    kp, _ = _ed_manifest()
+    maimed = {k: v for k, v in _entry(ISSUER_A).items() if k != member}
+    previous = _authorization(
+        kp,
+        authorized_issuers=[maimed if side == "previous" else _entry(ISSUER_A)],
+        issued_at=AUTH_ISSUED_AT,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        _authorization(
+            kp,
+            authorization_version=2,
+            authorized_issuers=[maimed if side == "successor" else _entry(ISSUER_A)],
+            issued_at=SUCCESSOR_ISSUED_AT,
+            previous=previous,
+        )
+
+    assert str(excinfo.value) == (
+        f"the {side} entry 'alpha.example' does not carry {member}: an entry that cannot be "
+        "compared cannot be shown conforming, and an ABSENT member is never read as an "
+        "open-ended window"
+    )
+
+
+def test_build_authorization_names_the_comparison_a_malformed_issued_at_breaks() -> None:
+    """The two guards on `issued_at` bound DIFFERENT comparisons — one
+    classifies the predecessor's window spent or live, one bounds a closure —
+    and each says which, so a refusal is not ambiguous between them."""
+    kp, _ = _ed_manifest()
+    spent = _authorization(
+        kp, authorized_issuers=[_entry(ISSUER_A, valid_to="2026-01-15T00:00:00Z")]
+    )
+    open_ended = _authorization(kp, authorized_issuers=[_entry(ISSUER_A, valid_to=None)])
+
+    with pytest.raises(ValueError) as classification:
+        _authorization(
+            kp,
+            authorization_version=2,
+            authorized_issuers=[_entry(ISSUER_A, valid_to=None)],
+            issued_at="NOT-A-TIMESTAMP",
+            previous=spent,
+        )
+    with pytest.raises(ValueError) as closure_bound:
+        _authorization(
+            kp,
+            authorization_version=2,
+            authorized_issuers=[_entry(ISSUER_A, valid_to="2026-02-15T00:00:00Z")],
+            issued_at="NOT-A-TIMESTAMP",
+            previous=open_ended,
+        )
+
+    assert str(classification.value) == (
+        "issued_at must be an ISO-8601 UTC timestamp to classify the predecessor's "
+        "window as spent or live"
+    )
+    assert str(closure_bound.value) == (
+        "issued_at must be an ISO-8601 UTC timestamp to bound a newly introduced closure"
+    )
+
+
+@pytest.mark.parametrize("swapped", [False, True])
+@pytest.mark.parametrize(
+    "successor_valid_to",
+    ["2026-01-15T00:00:00Z", "2026-02-15T00:00:00Z", "2020-01-01T00:00:00Z", None],
+)
+def test_a_duplicate_issuer_id_in_the_predecessor_is_judged_in_either_order(
+    successor_valid_to: str | None, swapped: bool
+) -> None:
+    """§20.2: "the order of this array can never decide an outcome". A
+    predecessor carrying the same `issuer_id` twice — one window spent, one
+    live — must hold the successor to BOTH, whichever way round they are
+    presented."""
+    kp, _ = _ed_manifest()
+    pair = [
+        _entry(ISSUER_A, valid_to="2026-01-15T00:00:00Z"),
+        _entry(ISSUER_A, valid_to=None),
+    ]
+    previous = _authorization(
+        kp, authorized_issuers=list(reversed(pair)) if swapped else pair, issued_at=AUTH_ISSUED_AT
+    )
+
+    with pytest.raises(ValueError):
+        _authorization(
+            kp,
+            authorization_version=2,
+            authorized_issuers=[_entry(ISSUER_A, valid_to=successor_valid_to)],
+            issued_at=SUCCESSOR_ISSUED_AT,
+            previous=previous,
+        )
+
+
+@pytest.mark.parametrize("swapped", [False, True])
+def test_a_duplicate_issuer_id_in_the_successor_is_judged_in_either_order(swapped: bool) -> None:
+    """Every entry carrying the `issuer_id` is checked, not merely the first:
+    hiding a back-dated closure behind a conforming twin must not depend on
+    which of the two the publisher lists first."""
+    kp, _ = _ed_manifest()
+    previous = _authorization(
+        kp, authorized_issuers=[_entry(ISSUER_A, valid_to=None)], issued_at=AUTH_ISSUED_AT
+    )
+    pair = [
+        _entry(ISSUER_A, valid_to="2026-02-15T00:00:00Z"),
+        _entry(ISSUER_A, valid_to="2020-01-01T00:00:00Z"),
+    ]
+
+    with pytest.raises(ValueError):
+        _authorization(
+            kp,
+            authorization_version=2,
+            authorized_issuers=list(reversed(pair)) if swapped else pair,
+            issued_at=SUCCESSOR_ISSUED_AT,
+            previous=previous,
+        )
