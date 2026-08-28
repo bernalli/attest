@@ -571,6 +571,14 @@ def test_entry_for_issuer_never_raises_on_garbage(document: Any) -> None:
     assert authority.entry_for_issuer(document, ISSUER) is None
 
 
+def test_entry_for_issuer_fails_closed_on_hostile_get() -> None:
+    class HostileGet(dict[str, Any]):
+        def get(self, key: object, default: object = None) -> object:
+            raise RuntimeError("hostile get")
+
+    assert authority.entry_for_issuer(HostileGet(), ISSUER) is None
+
+
 @pytest.mark.parametrize("issuer_id", [None, 42, True, ["store.example.com"]])
 def test_entry_for_issuer_never_raises_on_a_garbage_issuer_id(issuer_id: Any) -> None:
     document = _unsigned_authorization()
@@ -786,6 +794,14 @@ def test_the_ceiling_counts_and_never_inspects_an_element() -> None:
 
     assert authority.within_structural_ceiling([Hostile()] * 64)
     assert not authority.within_structural_ceiling([Hostile()] * 65)
+
+
+def test_the_ceiling_fails_closed_on_hostile_len() -> None:
+    class HostileLen(list[Any]):
+        def __len__(self) -> int:
+            raise RuntimeError("hostile len")
+
+    assert not authority.within_structural_ceiling(HostileLen())
 
 
 # --- the shared version predicate (§20.2 shape AND §20.3 view member) --------

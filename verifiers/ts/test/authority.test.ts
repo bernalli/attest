@@ -464,6 +464,64 @@ describe('publisher authorization shape', () => {
     expect(verifyAuthorization(withOwnProto, keyManifest)).toBe(false)
   })
 
+  it('rejects sparse arrays and non-index own properties in authority shape arrays', () => {
+    const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
+
+    const sparseIssuers = buildAuthorization(PUB_ED, { authorized_issuers: [] })
+    const issuerHoles = [] as unknown[]
+    issuerHoles.length = 1
+    sparseIssuers['authorized_issuers'] = issuerHoles
+
+    const extraIssuers = buildAuthorization(PUB_ED)
+    Object.defineProperty(extraIssuers['authorized_issuers'] as unknown[], 'extra', {
+      value: 'not-json',
+      enumerable: true,
+    })
+
+    const sparsePermissions = buildAuthorization(PUB_ED, {
+      authorized_issuers: [entry({ permissions: [] })],
+    })
+    const permissionHoles = [] as unknown[]
+    permissionHoles.length = 1
+    ;((sparsePermissions['authorized_issuers'] as JsonObject[])[0]! as Record<string, unknown>)['permissions'] =
+      permissionHoles
+
+    const extraPermissions = buildAuthorization(PUB_ED)
+    Object.defineProperty(((extraPermissions['authorized_issuers'] as JsonObject[])[0]!['permissions'] as unknown[]), 'extra', {
+      value: 'not-json',
+      enumerable: true,
+    })
+
+    const sparseArtifacts = buildAuthorization(PUB_ED, {
+      authorized_issuers: [entry({ scope: scope(RECEIPT_SERIES, []) })],
+    })
+    const artifactHoles = [] as unknown[]
+    artifactHoles.length = 1
+    ;(
+      ((sparseArtifacts['authorized_issuers'] as JsonObject[])[0]!['scope'] as Record<string, unknown>)
+    )['artifacts'] = artifactHoles
+
+    const extraArtifacts = buildAuthorization(PUB_ED, {
+      authorized_issuers: [entry({ scope: scope(RECEIPT_SERIES, [RECEIPT_ART]) })],
+    })
+    Object.defineProperty(
+      (((extraArtifacts['authorized_issuers'] as JsonObject[])[0]!['scope'] as JsonObject)['artifacts'] as unknown[]),
+      'extra',
+      { value: 'not-json', enumerable: true },
+    )
+
+    for (const document of [
+      sparseIssuers,
+      extraIssuers,
+      sparsePermissions,
+      extraPermissions,
+      sparseArtifacts,
+      extraArtifacts,
+    ]) {
+      expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    }
+  })
+
   it('accepts permissions sorted by code point and rejects UTF-16 code-unit order', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
     const astral = '\u{10000}'
@@ -530,6 +588,20 @@ describe('entryForIssuer (v0.2 section 20.4 step 9)', () => {
     expect(entryForIssuer(null, ISSUER)).toBeNull()
     expect(entryForIssuer({ authorized_issuers: null }, ISSUER)).toBeNull()
     expect(entryForIssuer(unsignedAuthorization(), 42)).toBeNull()
+  })
+
+  it('fails closed on hostile document getters', () => {
+    const hostile = new Proxy(Object.create(null), {
+      get() {
+        throw new Error('hostile get')
+      },
+    }) as Record<string, unknown>
+    let result: Record<string, unknown> | null | undefined
+
+    expect(() => {
+      result = entryForIssuer(hostile, ISSUER)
+    }).not.toThrow()
+    expect(result).toBeNull()
   })
 })
 
@@ -635,6 +707,21 @@ describe('withinStructuralCeiling (v0.2 section 20.3)', () => {
 
     expect(withinStructuralCeiling(new Array(MAX_AUTHORITY_DOCUMENTS).fill(hostile()))).toBe(true)
     expect(withinStructuralCeiling(new Array(MAX_AUTHORITY_DOCUMENTS + 1).fill(hostile()))).toBe(false)
+  })
+
+  it('fails closed when array length itself is hostile', () => {
+    const hostileArray = new Proxy([], {
+      get(target, prop, receiver) {
+        if (prop === 'length') throw new Error('hostile length')
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    let result: boolean | undefined
+
+    expect(() => {
+      result = withinStructuralCeiling(hostileArray)
+    }).not.toThrow()
+    expect(result).toBe(false)
   })
 })
 

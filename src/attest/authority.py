@@ -447,13 +447,13 @@ def entry_for_issuer(document: object, issuer_id: object) -> dict[str, Any] | No
     """
     if not isinstance(document, dict) or not isinstance(issuer_id, str):
         return None
-    entries = document.get("authorized_issuers")
+    entries = dict.get(document, "authorized_issuers")
     if not isinstance(entries, list):
         return None
     matches = [
         entry
         for entry in entries
-        if isinstance(entry, dict) and entry.get("issuer_id") == issuer_id
+        if isinstance(entry, dict) and dict.get(entry, "issuer_id") == issuer_id
     ]
     return matches[0] if len(matches) == 1 else None
 
@@ -553,4 +553,8 @@ def within_structural_ceiling(authorizations: list[Any] | None) -> bool:
     not a ceiling at all. Absent evidence (`None`) is within the ceiling;
     anything that is not an array fails closed.
     """
-    return grant._within_ceiling(authorizations, MAX_AUTHORITY_DOCUMENTS)
+    if authorizations is None:
+        return True
+    if type(authorizations) is not list:
+        return False
+    return len(authorizations) <= MAX_AUTHORITY_DOCUMENTS

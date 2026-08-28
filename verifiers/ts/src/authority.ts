@@ -53,6 +53,35 @@ export function isAuthorizationVersion(value: unknown): boolean {
   return false
 }
 
+// Kept local to §20 authority shapes: sparse/non-index arrays are a JavaScript
+// representation hazard here, while widening grant.ts would change §18 grant
+// and declaration validation outside this task's boundary.
+function isDenseAuthorityArray(value: unknown): value is unknown[] {
+  if (!Array.isArray(value)) return false
+  try {
+    const length = value.length
+    const keys = Reflect.ownKeys(value)
+    if (keys.length !== length + 1) return false
+    for (let i = 0; i < length; i++) {
+      if (!Object.prototype.hasOwnProperty.call(value, i)) return false
+    }
+    return keys.every((key) => {
+      if (key === 'length') return true
+      if (typeof key !== 'string') return false
+      const index = Number(key)
+      return Number.isInteger(index) && index >= 0 && index < length && String(index) === key
+    })
+  } catch {
+    return false
+  }
+}
+
+function authorityScopeOrNull(scope: unknown): Record<string, unknown> | null {
+  const validScope = scopeOrNull(scope)
+  if (validScope === null) return null
+  return isDenseAuthorityArray(validScope['artifacts']) ? validScope : null
+}
+
 function validEntryShape(entry: unknown): entry is Record<string, unknown> {
   if (!isPlainObject(entry) || !hasExactMembers(entry, ENTRY_MEMBERS)) return false
   const validTo = entry['valid_to']
@@ -62,21 +91,27 @@ function validEntryShape(entry: unknown): entry is Record<string, unknown> {
     isDnsName(entry['issuer_id']) &&
     validStage3UtcTimestamp(entry['valid_from']) &&
     (validTo === null || validStage3UtcTimestamp(validTo)) &&
-    Array.isArray(permissions) &&
+    isDenseAuthorityArray(permissions) &&
     permissions.length > 0 &&
     sortedUnique(permissions, isNonEmptyString) &&
-    (scope === null || scopeOrNull(scope) !== null)
+    (scope === null || authorityScopeOrNull(scope) !== null)
   )
 }
 
 function validAuthorizationShape(document: unknown): document is Record<string, unknown> {
   if (!isPlainObject(document) || !hasExactMembers(document, AUTHORIZATION_MEMBERS)) return false
-  if (!isAuthorizationVersion(document['authorization_version'])) return false
+  const version = document['authorization_version']
+  // The value predicate remains shared with §20.3's hand-written view member.
+  // Signed wire documents have the stricter strict-JCS representation boundary:
+  // a JSON integer reaches this port as bigint, never as number.
+  if (typeof version !== 'bigint' || !isAuthorizationVersion(version)) return false
   if (!isDnsName(document['publisher'])) return false
 
   const entries = document['authorized_issuers']
-  if (!Array.isArray(entries) || entries.length > MAX_AUTHORIZED_ISSUERS) return false
-  if (!entries.every((entry) => validEntryShape(entry))) return false
+  if (!isDenseAuthorityArray(entries) || entries.length > MAX_AUTHORIZED_ISSUERS) return false
+  for (const entry of entries) {
+    if (!validEntryShape(entry)) return false
+  }
   const issuerIds = entries.map((entry) => (entry as Record<string, unknown>)['issuer_id'])
   if (!sortedUnique(issuerIds, isDnsName)) return false
 
@@ -116,11 +151,15 @@ export function verifyAuthorization(document: unknown, keyManifest: JsonObject):
 /** Return the unique entry for `issuerId`, or null. If duplicates are present
  * in a malformed document, return null rather than letting array order decide. */
 export function entryForIssuer(document: unknown, issuerId: unknown): Record<string, unknown> | null {
-  if (!isPlainObject(document) || typeof issuerId !== 'string') return null
-  const entries = document['authorized_issuers']
-  if (!Array.isArray(entries)) return null
-  const matches = entries.filter((entry) => isPlainObject(entry) && entry['issuer_id'] === issuerId)
-  return matches.length === 1 ? (matches[0] as Record<string, unknown>) : null
+  try {
+    if (!isPlainObject(document) || typeof issuerId !== 'string') return null
+    const entries = document['authorized_issuers']
+    if (!Array.isArray(entries)) return null
+    const matches = entries.filter((entry) => isPlainObject(entry) && entry['issuer_id'] === issuerId)
+    return matches.length === 1 ? (matches[0] as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
 }
 
 function withinEntryWindow(issuedAt: string, entry: Record<string, unknown>): boolean {
@@ -157,5 +196,9 @@ export function entryAuthorizesReceipt(entry: unknown, payload: unknown): boolea
 /** Count-only ceiling for caller-supplied authority documents. It never
  * indexes, hashes, compares, or otherwise inspects an element. */
 export function withinStructuralCeiling(authorizations: unknown): boolean {
-  return withinCeiling(authorizations, MAX_AUTHORITY_DOCUMENTS)
+  try {
+    return withinCeiling(authorizations, MAX_AUTHORITY_DOCUMENTS)
+  } catch {
+    return false
+  }
 }
