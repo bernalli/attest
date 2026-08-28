@@ -714,18 +714,102 @@ def _append_warning_once(warnings: list[str], warning: str) -> None:
         warnings.append(warning)
 
 
-def _materialize_compromise_view(
-    compromise_view: list[dict[str, Any]] | None,
-) -> list[Any] | None:
-    if compromise_view is None:
-        return None
+def _materialize_evidence_value(value: object) -> object | None:
+    """Admit caller evidence by the shared simple-value reconstruction boundary."""
     try:
-        serialized = canon.dumps(compromise_view)
+        serialized = canon.dumps(value)
         if len(serialized) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
             return None
         materialized: object = json.loads(serialized)
     except Exception:
         return None
+    return materialized
+
+
+_GRANT_VIEW_MEMBERS = frozenset({"grant", "later_grants", "declarations", "anchor"})
+_AUTHORITY_VIEW_MEMBERS = frozenset({"authorizations", "current_authorization_version"})
+
+
+def _materialize_evidence_array(value: object, ceiling: int) -> list[Any] | None:
+    if value is None or not isinstance(value, list):
+        return None
+    materialized: list[Any] = []
+    try:
+        for item in value:
+            if len(materialized) >= ceiling:
+                return None
+            materialized.append(_materialize_evidence_value(item))
+    except Exception:
+        return None
+    return materialized
+
+
+def _materialize_grant_view(grant_view: dict[str, Any]) -> dict[str, Any] | None:
+    materialized = _materialize_evidence_value(grant_view)
+    if isinstance(materialized, dict):
+        return materialized
+    if type(grant_view) is not dict:
+        return None
+    try:
+        if not set(dict.keys(grant_view)) <= _GRANT_VIEW_MEMBERS:
+            return None
+        reconstructed: dict[str, Any] = {}
+        later_grants = dict.get(grant_view, "later_grants")
+        if later_grants is not None:
+            materialized_later = _materialize_evidence_array(
+                later_grants, grant_module._MAX_GRANT_LATER_VERSIONS
+            )
+            if materialized_later is None:
+                return None
+            reconstructed["later_grants"] = materialized_later
+        declarations = dict.get(grant_view, "declarations")
+        if declarations is not None:
+            materialized_declarations = _materialize_evidence_array(
+                declarations, grant_module._MAX_GRANT_DECLARATIONS
+            )
+            if materialized_declarations is None:
+                return None
+            reconstructed["declarations"] = materialized_declarations
+        if "grant" in grant_view:
+            reconstructed["grant"] = _materialize_evidence_value(dict.get(grant_view, "grant"))
+        if "anchor" in grant_view:
+            reconstructed["anchor"] = _materialize_evidence_value(dict.get(grant_view, "anchor"))
+    except Exception:
+        return None
+    return reconstructed if _materialize_evidence_value(reconstructed) is not None else None
+
+
+def _materialize_authority_view(authority_view: dict[str, Any]) -> dict[str, Any] | None:
+    materialized = _materialize_evidence_value(authority_view)
+    if isinstance(materialized, dict):
+        return materialized
+    if type(authority_view) is not dict:
+        return None
+    try:
+        if not set(dict.keys(authority_view)) <= _AUTHORITY_VIEW_MEMBERS:
+            return None
+        reconstructed: dict[str, Any] = {}
+        authorizations = dict.get(authority_view, "authorizations")
+        if authorizations is not None:
+            materialized_authorizations = _materialize_evidence_array(
+                authorizations, authority_module.MAX_AUTHORITY_DOCUMENTS
+            )
+            reconstructed["authorizations"] = materialized_authorizations
+        if "current_authorization_version" in authority_view:
+            reconstructed["current_authorization_version"] = _materialize_evidence_value(
+                dict.get(authority_view, "current_authorization_version")
+            )
+    except Exception:
+        return None
+    return reconstructed if _materialize_evidence_value(reconstructed) is not None else None
+
+
+def _materialize_compromise_view(
+    compromise_view: list[dict[str, Any]] | None,
+) -> list[Any] | None:
+    if compromise_view is None:
+        return None
+    materialized = _materialize_evidence_value(compromise_view)
     if not isinstance(materialized, list) or len(materialized) > _MAX_COMPROMISE_CLAIMS:
         return None
     return materialized
@@ -1760,6 +1844,7 @@ def evaluate_grant(
     warnings: list[str] = []
     if grant_view is None:
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED)
+    materialized_grant_view = _materialize_grant_view(grant_view)
 
     # --- Step 1: the pledge itself, from the signed payload alone.
     pledge = _pledge_or_none(payload)
@@ -1788,11 +1873,13 @@ def evaluate_grant(
 
     # --- Step 4: the structural ceilings, then the evidence itself. The
     # ceilings run BEFORE any signature is verified, or they are not ceilings.
-    later_grants = cast("list[Any] | None", _own_member(grant_view, "later_grants"))
-    declarations = cast("list[Any] | None", _own_member(grant_view, "declarations"))
+    if not isinstance(materialized_grant_view, dict):
+        return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED, tuple(warnings))
+    later_grants = cast("list[Any] | None", _own_member(materialized_grant_view, "later_grants"))
+    declarations = cast("list[Any] | None", _own_member(materialized_grant_view, "declarations"))
     if not grant_module.within_structural_ceilings(later_grants, declarations):
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED, tuple(warnings))
-    floor = _own_member(grant_view, "grant")
+    floor = _own_member(materialized_grant_view, "grant")
     if not isinstance(floor, dict):
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED, tuple(warnings))
 
@@ -1878,7 +1965,7 @@ def evaluate_grant(
     fixed_date = dict.get(activation, "fixed_date") if isinstance(activation, dict) else None
     if isinstance(modes, list) and grant_module.MODE_FIXED_DATE in modes and fixed_date is not None:
         if isinstance(fixed_date, str) and _fixed_date_reached(
-            _own_member(grant_view, "anchor"), effective, fixed_date, anchor_policy
+            _own_member(materialized_grant_view, "anchor"), effective, fixed_date, anchor_policy
         ):
             return GrantVerdict(_GRANT_ACTIVATED, grant_trust, tuple(warnings))
         warnings.append(_WARN_GRANT_UNANCHORED)
@@ -2240,6 +2327,7 @@ def evaluate_publisher_authority(
     warnings: list[str] = []
     if authority_view is None:
         return AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
+    materialized_authority_view = _materialize_authority_view(authority_view)
 
     # --- Step 1.
     work = _own_member(payload, "work")
@@ -2258,7 +2346,9 @@ def evaluate_publisher_authority(
         return AuthorityVerdict(_AUTHORITY_SELF, _AUTHORITY_NOT_CHECKED)
 
     # --- Step 4.
-    authorizations = _own_member(authority_view, "authorizations")
+    if not isinstance(materialized_authority_view, dict):
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+    authorizations = _own_member(materialized_authority_view, "authorizations")
     if not isinstance(authorizations, list):
         return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
     if not authority_module.within_structural_ceiling(authorizations):
@@ -2291,7 +2381,7 @@ def evaluate_publisher_authority(
         return AuthorityVerdict(_AUTHORITY_AUTHORIZED, authority_trust, tuple(warnings))
 
     # --- Step 10.
-    assertion = _own_member(authority_view, "current_authorization_version")
+    assertion = _own_member(materialized_authority_view, "current_authorization_version")
     if authority_module.is_authorization_version(assertion) and assertion == dict.get(
         effective, "authorization_version"
     ):
