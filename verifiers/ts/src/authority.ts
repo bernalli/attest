@@ -91,9 +91,14 @@ function validEntryShape(entry: unknown): entry is Record<string, unknown> {
     isDnsName(entry['issuer_id']) &&
     validStage3UtcTimestamp(entry['valid_from']) &&
     (validTo === null || validStage3UtcTimestamp(validTo)) &&
-    isDenseAuthorityArray(permissions) &&
+    Array.isArray(permissions) &&
     permissions.length > 0 &&
     sortedUnique(permissions, isNonEmptyString) &&
+    // Density LAST among the array predicates: `permissions` carries no count
+    // ceiling, and `isDenseAuthorityArray` allocates one string per index, so
+    // a scan that walks the supplied length may never precede the cheap
+    // per-item rejection that already refuses hostile arrays in O(1).
+    isDenseAuthorityArray(permissions) &&
     (scope === null || authorityScopeOrNull(scope) !== null)
   )
 }
@@ -108,7 +113,12 @@ function validAuthorizationShape(document: unknown): document is Record<string, 
   if (!isDnsName(document['publisher'])) return false
 
   const entries = document['authorized_issuers']
-  if (!isDenseAuthorityArray(entries) || entries.length > MAX_AUTHORIZED_ISSUERS) return false
+  // COUNT first, SHAPE second. §20.2 refuses an oversized document "on its
+  // count first" and §20.3 makes the ceiling precede every cost that scales
+  // with the supplied length; `isDenseAuthorityArray` is O(n) in time AND
+  // allocation, so running it first would make the ceiling decorative.
+  if (!Array.isArray(entries) || entries.length > MAX_AUTHORIZED_ISSUERS) return false
+  if (!isDenseAuthorityArray(entries)) return false
   for (const entry of entries) {
     if (!validEntryShape(entry)) return false
   }
@@ -153,9 +163,14 @@ export function verifyAuthorization(document: unknown, keyManifest: JsonObject):
 export function entryForIssuer(document: unknown, issuerId: unknown): Record<string, unknown> | null {
   try {
     if (!isPlainObject(document) || typeof issuerId !== 'string') return null
-    const entries = document['authorized_issuers']
+    // OWN members only, mirroring authority.py's `dict.get(document, k)`: an
+    // inherited `authorized_issuers` is not evidence the caller supplied, and
+    // reading one is a place the two implementations answer differently.
+    const own = (o: object, k: string): unknown =>
+      Object.prototype.hasOwnProperty.call(o, k) ? (o as Record<string, unknown>)[k] : undefined
+    const entries = own(document, 'authorized_issuers')
     if (!Array.isArray(entries)) return null
-    const matches = entries.filter((entry) => isPlainObject(entry) && entry['issuer_id'] === issuerId)
+    const matches = entries.filter((entry) => isPlainObject(entry) && own(entry, 'issuer_id') === issuerId)
     return matches.length === 1 ? (matches[0] as Record<string, unknown>) : null
   } catch {
     return null

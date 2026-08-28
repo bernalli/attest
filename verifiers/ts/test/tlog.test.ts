@@ -332,6 +332,30 @@ describe('encodeEntry', () => {
     expect(new TextDecoder().decode(encoded)).toBe(expectedJson)
   })
 
+  // Mirrors the six negatives tests/test_tlog.py already has for this entry
+  // type: a closed schema is only as good as the cases that prove it closed.
+  it('rejects a publisher-authorization entry missing a member', () => {
+    const entry = validPublisherAuthorizationEntry()
+    delete entry.record_sha256
+    expect(() => encodeEntry(entry)).toThrow(TlogError)
+  })
+
+  it('rejects a publisher-authorization entry with an extra member', () => {
+    expect(() => encodeEntry({ ...validPublisherAuthorizationEntry(), extra: 1 })).toThrow(TlogError)
+  })
+
+  it('rejects a publisher-authorization entry whose digest is not 64 lowercase hex', () => {
+    for (const record_sha256 of ['f'.repeat(63), 'F'.repeat(64), 1, null]) {
+      expect(() => encodeEntry({ ...validPublisherAuthorizationEntry(), record_sha256 })).toThrow(TlogError)
+    }
+  })
+
+  it('rejects a publisher-authorization entry whose issuer is not a lowercase DNS name', () => {
+    for (const issuer of ['Pub.Example', '', null, 42]) {
+      expect(() => encodeEntry({ ...validPublisherAuthorizationEntry(), issuer })).toThrow(TlogError)
+    }
+  })
+
   it('rejects a cessation-declaration entry missing a member', () => {
     const entry = validCessationDeclarationEntry()
     delete entry.record_sha256

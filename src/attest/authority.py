@@ -405,7 +405,12 @@ def verify_authorization_signature(document: dict[str, Any], key_manifest: dict[
         if not _valid_authorization_shape(document):
             return False
         return grant._verify_signed_document(document, key_manifest, "issued_at")
-    except (AttributeError, KeyError, TypeError, ValueError, canon.CanonError):
+    # Broader than this package's usual narrow tuple, deliberately: §20.3 makes
+    # "hostile CONTENT inside a well-shaped view never raises" normative, and a
+    # caller-constructed member can raise ANY exception type. The TypeScript
+    # twin's bare `catch` already means this; a narrower clause here is a place
+    # the two implementations disagree.
+    except Exception:
         return False
 
 
@@ -427,7 +432,7 @@ def verify_authorization(document: dict[str, Any], key_manifest: dict[str, Any])
         return manifests.verify_key_manifest(key_manifest) and verify_authorization_signature(
             document, key_manifest
         )
-    except (AttributeError, KeyError, TypeError, ValueError, canon.CanonError):
+    except Exception:  # see verify_authorization_signature
         return False
 
 
@@ -445,17 +450,23 @@ def entry_for_issuer(document: object, issuer_id: object) -> dict[str, Any] | No
     decide an outcome", and returning the first match is precisely how order
     would decide one. Fails closed on every malformed input, never raises.
     """
-    if not isinstance(document, dict) or not isinstance(issuer_id, str):
+    try:
+        if not isinstance(document, dict) or not isinstance(issuer_id, str):
+            return None
+        # `dict.get` reads OWN items only, so an overridden `get` cannot lie;
+        # the enclosing `try` is what keeps the never-raise promise against the
+        # triggers an own-item read does not cover (`__eq__`, `__getitem__`).
+        entries = dict.get(document, "authorized_issuers")
+        if not isinstance(entries, list):
+            return None
+        matches = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and dict.get(entry, "issuer_id") == issuer_id
+        ]
+        return matches[0] if len(matches) == 1 else None
+    except Exception:
         return None
-    entries = dict.get(document, "authorized_issuers")
-    if not isinstance(entries, list):
-        return None
-    matches = [
-        entry
-        for entry in entries
-        if isinstance(entry, dict) and dict.get(entry, "issuer_id") == issuer_id
-    ]
-    return matches[0] if len(matches) == 1 else None
 
 
 def _within_entry_window(issued_at: str, entry: dict[str, Any]) -> bool:
@@ -531,7 +542,7 @@ def entry_authorizes_receipt(entry: object, payload: object) -> bool:
         if scope is None:
             return True
         return grant.grant_covers_receipt({"scope": scope}, payload)
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except Exception:  # see verify_authorization_signature
         return False
 
 
@@ -553,8 +564,12 @@ def within_structural_ceiling(authorizations: list[Any] | None) -> bool:
     not a ceiling at all. Absent evidence (`None`) is within the ceiling;
     anything that is not an array fails closed.
     """
-    if authorizations is None:
-        return True
-    if type(authorizations) is not list:
+    # DELEGATED, never restated: `grant._within_ceiling` is the one spelling of
+    # a count ceiling in this package, and the TypeScript twin delegates to
+    # `withinCeiling` for the same reason. The `try` — not a narrower
+    # `isinstance` — is what keeps the never-raise promise against a hostile
+    # `__len__`, which is how the two implementations stay identical here.
+    try:
+        return grant._within_ceiling(authorizations, MAX_AUTHORITY_DOCUMENTS)
+    except Exception:
         return False
-    return len(authorizations) <= MAX_AUTHORITY_DOCUMENTS

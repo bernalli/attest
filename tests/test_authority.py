@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from attest import authority, canon, keys, manifests, pq
+from attest import authority, canon, grant, keys, manifests, pq
 from tests.helpers import make_payload
 
 PUBLISHER = "pub.example"
@@ -571,14 +571,6 @@ def test_entry_for_issuer_never_raises_on_garbage(document: Any) -> None:
     assert authority.entry_for_issuer(document, ISSUER) is None
 
 
-def test_entry_for_issuer_fails_closed_on_hostile_get() -> None:
-    class HostileGet(dict[str, Any]):
-        def get(self, key: object, default: object = None) -> object:
-            raise RuntimeError("hostile get")
-
-    assert authority.entry_for_issuer(HostileGet(), ISSUER) is None
-
-
 @pytest.mark.parametrize("issuer_id", [None, 42, True, ["store.example.com"]])
 def test_entry_for_issuer_never_raises_on_a_garbage_issuer_id(issuer_id: Any) -> None:
     document = _unsigned_authorization()
@@ -794,14 +786,6 @@ def test_the_ceiling_counts_and_never_inspects_an_element() -> None:
 
     assert authority.within_structural_ceiling([Hostile()] * 64)
     assert not authority.within_structural_ceiling([Hostile()] * 65)
-
-
-def test_the_ceiling_fails_closed_on_hostile_len() -> None:
-    class HostileLen(list[Any]):
-        def __len__(self) -> int:
-            raise RuntimeError("hostile len")
-
-    assert not authority.within_structural_ceiling(HostileLen())
 
 
 # --- the shared version predicate (§20.2 shape AND §20.3 view member) --------
@@ -1134,3 +1118,106 @@ def test_the_builder_does_not_validate_what_it_signs_without_a_predecessor() -> 
 
     assert document["publisher"] == "NOT-A-DOMAIN"
     assert not authority.verify_authorization(document, key_manifest)
+
+
+# --- the never-raise promise, by PROPERTY rather than by example -------------
+
+
+class _HostileGet(dict[str, Any]):
+    def get(self, key: object, default: object = None) -> object:
+        raise RuntimeError("hostile get")
+
+
+class _HostileGetItem(dict[str, Any]):
+    def __getitem__(self, key: str) -> Any:
+        raise RuntimeError("hostile getitem")
+
+
+class _HostileIter(dict[str, Any]):
+    def __iter__(self) -> Any:
+        raise RuntimeError("hostile iter")
+
+
+class _HostileLen(list[Any]):
+    def __len__(self) -> int:
+        raise RuntimeError("hostile len")
+
+
+class _HostileEq(str):
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("hostile eq")
+
+    def __hash__(self) -> int:
+        return 0
+
+
+_HOSTILE_DICTS = [_HostileGet, _HostileGetItem, _HostileIter]
+
+
+@pytest.mark.parametrize("hostile", _HOSTILE_DICTS)
+def test_authentication_never_raises_on_hostile_document_or_manifest(hostile: Any) -> None:
+    """§20.3 is normative: a wrongly-TYPED view raises, hostile CONTENT inside a
+    well-shaped view never does. A member built by the caller can raise ANY
+    exception type, so the promise cannot hang on an enumerated tuple — and the
+    TypeScript twin's bare `catch` already means exactly this.
+
+    The property under test is NOT-RAISING, and only that. Whether a hostile
+    wrapper around a VALID document ends up `True` or `False` depends on which
+    dunder the wrapper poisons and whether the code path reads own items
+    (`dict.get`, which defeats an overridden `get`) or iterates
+    (canonicalization, which does not) — measured: an overridden `get` is
+    defeated and the document still verifies, while a poisoned `__iter__` or
+    `__getitem__` breaks canonicalization and fails closed. Asserting falsy
+    here would pin an accident of the trigger, not the promise.
+    """
+    kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
+    document = _authorization(kp)
+
+    with_hostile_entry = dict(document)
+    with_hostile_entry["authorized_issuers"] = [hostile(_entry())]
+
+    for call in (
+        lambda: authority.verify_authorization(hostile(document), key_manifest),
+        lambda: authority.verify_authorization_signature(hostile(document), key_manifest),
+        lambda: authority.verify_authorization(document, hostile(key_manifest)),
+        lambda: authority.verify_authorization_signature(document, hostile(key_manifest)),
+        lambda: authority.verify_authorization(with_hostile_entry, key_manifest),
+    ):
+        assert call() in (True, False)
+
+
+@pytest.mark.parametrize("hostile", _HOSTILE_DICTS)
+def test_membership_never_raises_on_hostile_entry_or_payload(hostile: Any) -> None:
+    """Same promise, same reasoning as the authentication twin above: these
+    calls must RETURN rather than raise, whatever they return."""
+    entry = authority.entry_for_issuer(hostile(_unsigned_authorization()), ISSUER)
+    assert entry is None or isinstance(entry, dict)
+
+    for call in (
+        lambda: authority.entry_authorizes_receipt(hostile(_entry()), make_payload()),
+        lambda: authority.entry_authorizes_receipt(_entry(), hostile(make_payload())),
+        lambda: authority.entry_authorizes_receipt(_entry(), {"issuer": hostile({})}),
+    ):
+        assert call() in (True, False)
+
+
+def test_entry_for_issuer_never_raises_on_a_hostile_comparison() -> None:
+    """`dict.get` reads own items and defeats an overridden `get`; it does
+    nothing against an `issuer_id` whose `__eq__` raises."""
+    document = {"authorized_issuers": [_entry(issuer_id=_HostileEq(ISSUER))]}
+
+    assert authority.entry_for_issuer(document, ISSUER) is None
+
+
+def test_the_ceiling_never_raises_on_a_hostile_length() -> None:
+    assert not authority.within_structural_ceiling(_HostileLen())
+
+
+def test_the_ceiling_agrees_with_the_predicate_it_delegates_to() -> None:
+    """A second spelling of a count ceiling is a place two implementations
+    drift: a `list` SUBCLASS must be judged identically by both."""
+
+    class SubList(list[Any]):
+        pass
+
+    assert authority.within_structural_ceiling(SubList()) is grant._within_ceiling(SubList(), 64)

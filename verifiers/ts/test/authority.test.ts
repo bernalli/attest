@@ -446,6 +446,47 @@ describe('publisher authorization shape', () => {
     expect(manifestRead).toBe(false)
   })
 
+  it('refuses an oversized document on its count before walking the array', () => {
+    // §20.2 refuses on the count FIRST and §20.3 makes the ceiling precede
+    // every cost that scales with the supplied length. A shape scan that walks
+    // the array before the count check turns the ceiling into an amplifier:
+    // measured 348ms to reject a document both the parser and the ceiling
+    // would refuse in O(1).
+    let walked = false
+    const oversized = new Array(MAX_AUTHORIZED_ISSUERS + 1).fill(null)
+    const watched = new Proxy(oversized, {
+      ownKeys(target) {
+        walked = true
+        return Reflect.ownKeys(target)
+      },
+    })
+    const document = {
+      authorization_version: 1n,
+      publisher: PUBLISHER,
+      authorized_issuers: watched,
+      issued_at: AUTH_ISSUED_AT,
+      signature: {},
+    }
+
+    expect(verifyAuthorizationSignature(document, {} as JsonObject)).toBe(false)
+    expect(walked).toBe(false)
+  })
+
+  it('refuses a hostile permissions array on its items before walking it', () => {
+    // `permissions` carries no count ceiling at all, so this ordering is the
+    // only thing bounding the work.
+    let walked = false
+    const permissions = new Proxy([42], {
+      ownKeys(target) {
+        walked = true
+        return Reflect.ownKeys(target)
+      },
+    })
+
+    expect(entryAuthorizesReceipt(entry({ permissions }), basePayload())).toBe(false)
+    expect(walked).toBe(false)
+  })
+
   it('ignores inherited keys but rejects an own __proto__ key from strict JSON', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
     const inherited = buildAuthorization(PUB_ED)
