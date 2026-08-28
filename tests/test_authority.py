@@ -472,6 +472,24 @@ def test_the_four_thousand_ninety_six_entry_ceiling_is_enforced_on_shape() -> No
     assert not authority.verify_authorization(over_the_ceiling, key_manifest)
 
 
+def test_verify_authorization_rejects_oversized_document_before_manifest_crypto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(_key_manifest: object) -> bool:
+        raise AssertionError("key manifest verification ran before authorization shape")
+
+    monkeypatch.setattr(manifests, "verify_key_manifest", fail_if_called)
+    document = {
+        "authorization_version": 1,
+        "publisher": PUBLISHER,
+        "authorized_issuers": [None] * (authority.MAX_AUTHORIZED_ISSUERS + 1),
+        "issued_at": AUTH_ISSUED_AT,
+        "signature": {},
+    }
+
+    assert authority.verify_authorization(document, {"keys": []}) is False
+
+
 @pytest.mark.parametrize(
     "document",
     [None, 42, "authorization", [], {}, {"signature": None}, {"authorization_version": 1}],
@@ -565,6 +583,10 @@ def test_entry_for_issuer_never_raises_on_a_garbage_issuer_id(issuer_id: Any) ->
 
 def test_an_open_ended_entry_with_issue_authorizes_the_receipt() -> None:
     assert authority.entry_authorizes_receipt(_entry(), make_payload())
+
+
+def test_an_entry_for_a_different_issuer_never_authorizes_the_receipt() -> None:
+    assert not authority.entry_authorizes_receipt(_entry(issuer_id=OTHER_ISSUER), make_payload())
 
 
 def test_an_entry_whose_window_opens_after_the_receipt_does_not_authorize() -> None:

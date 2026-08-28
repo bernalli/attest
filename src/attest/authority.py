@@ -422,8 +422,10 @@ def verify_authorization(document: dict[str, Any], key_manifest: dict[str, Any])
     cannot verify. Fails closed on every malformed input, never raises.
     """
     try:
-        return manifests.verify_key_manifest(key_manifest) and verify_authorization_signature(
-            document, key_manifest
+        if not _valid_authorization_shape(document):
+            return False
+        return manifests.verify_key_manifest(key_manifest) and grant._verify_signed_document(
+            document, key_manifest, "issued_at"
         )
     except (AttributeError, KeyError, TypeError, ValueError, canon.CanonError):
         return False
@@ -517,6 +519,9 @@ def entry_authorizes_receipt(entry: object, payload: object) -> bool:
         if not _valid_entry_shape(entry) or not isinstance(payload, dict):
             return False
         entry = cast(dict[str, Any], entry)
+        issuer = payload.get("issuer")
+        if not isinstance(issuer, dict) or issuer.get("id") != entry["issuer_id"]:
+            return False
         issued_at = payload.get("issued_at")
         if not isinstance(issued_at, str) or not _within_entry_window(issued_at, entry):
             return False
