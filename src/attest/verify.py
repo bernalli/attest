@@ -714,17 +714,87 @@ def _append_warning_once(warnings: list[str], warning: str) -> None:
         warnings.append(warning)
 
 
-def _materialize_evidence_value(value: object) -> object | None:
-    """Admit caller evidence by the shared simple-value reconstruction boundary."""
+_MAX_EVIDENCE_NODES = _MAX_TRANSPARENCY_EVIDENCE_LEN
+
+
+def _own_data_copy(value: object, budget: list[int]) -> object:
+    """Copy a caller-supplied value's OWN data into exact plain types.
+
+    `canon.dumps` walks a mapping with `for k in obj`, a sequence with
+    `enumerate(obj)` and a string with `for ch in s` -- all three shadowable --
+    and its byte ceiling is compared against a serialization it has ALREADY
+    produced. A subclass whose iteration never ends therefore hangs the
+    verifier before any ceiling can fire, which is the one way 18.4's
+    "reconstruction is bounded and fails closed" can still be broken from a
+    WELL-TYPED view. The copy runs FIRST, through the base classes' own
+    unshadowable accessors, and refuses on a node budget rather than after the
+    work is already done.
+
+    A subtype is never refused for BEING a subtype (18.4): its own data is
+    copied out into the exact plain type and the instance does not survive.
+    `int.__int__`/`str.__str__` are the own-data spellings for the two scalars
+    whose serialization hook a subclass can override -- `str(obj)` is appended
+    to the canonical form VERBATIM, so an `int` subclass with an overridden
+    `__str__` could otherwise place a float, a NaN, an out-of-range integer or
+    a whole injected object inside the very reconstruction 20.4 step 6 calls
+    "canonicalizable by construction".
+
+    The budget can never change an admissible/inadmissible answer: every node
+    costs at least one byte of canonical form, so a structure over
+    `_MAX_EVIDENCE_NODES` nodes cannot fit under the byte ceiling either. It
+    only makes the refusal REACHABLE.
+    """
+    budget[0] -= 1
+    if budget[0] < 0:
+        raise ValueError("evidence exceeds the admission node budget")
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return int.__int__(value)
+    if isinstance(value, str):
+        return str.__str__(value)
+    if isinstance(value, list):
+        return [
+            _own_data_copy(list.__getitem__(value, index), budget)
+            for index in range(list.__len__(value))
+        ]
+    if isinstance(value, dict):
+        return {
+            _own_data_copy(key, budget): _own_data_copy(item, budget)
+            for key, item in dict.items(value)
+        }
+    return value
+
+
+def _materialize_evidence_value(value: object, nesting: int = 0) -> object | None:
+    """Admit caller evidence by the shared simple-value reconstruction boundary.
+
+    `nesting` is how many of the enclosing VIEW's containers this value sits
+    inside. v0.1 11.3's depth ceiling is measured over the canonicalized view
+    AS A WHOLE (18.4), so a document in a view-object's array is admitted to
+    254 levels, not 256. Admitting an element at its OWN top level and only
+    discovering the excess when the whole view is re-canonicalized discards the
+    element's SIBLINGS too, where 20.3 requires the one inadmissible document
+    to be set aside on its own -- and it is what makes a 255-deep element
+    behave differently from a float in the very same position.
+    """
+    probe: object = value
+    for _ in range(nesting):
+        probe = [probe]
     try:
-        serialized = canon.dumps(value)
+        serialized = canon.dumps(_own_data_copy(probe, [_MAX_EVIDENCE_NODES]))
         if len(serialized) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
             return None
         materialized: object = json.loads(serialized)
     except Exception:
         return None
+    for _ in range(nesting):
+        materialized = cast("list[Any]", materialized)[0]
     return materialized
 
+
+_VIEW_MEMBER_NESTING = 1
+_VIEW_ARRAY_ELEMENT_NESTING = 2
 
 _GRANT_VIEW_MEMBERS = frozenset({"grant", "later_grants", "declarations", "anchor"})
 _AUTHORITY_VIEW_MEMBERS = frozenset({"authorizations", "current_authorization_version"})
@@ -738,7 +808,7 @@ def _materialize_evidence_array(value: object, ceiling: int) -> list[Any] | None
         for item in value:
             if len(materialized) >= ceiling:
                 return None
-            materialized.append(_materialize_evidence_value(item))
+            materialized.append(_materialize_evidence_value(item, _VIEW_ARRAY_ELEMENT_NESTING))
     except Exception:
         return None
     return materialized
@@ -771,9 +841,13 @@ def _materialize_grant_view(grant_view: dict[str, Any]) -> dict[str, Any] | None
                 return None
             reconstructed["declarations"] = materialized_declarations
         if "grant" in grant_view:
-            reconstructed["grant"] = _materialize_evidence_value(dict.get(grant_view, "grant"))
+            reconstructed["grant"] = _materialize_evidence_value(
+                dict.get(grant_view, "grant"), _VIEW_MEMBER_NESTING
+            )
         if "anchor" in grant_view:
-            reconstructed["anchor"] = _materialize_evidence_value(dict.get(grant_view, "anchor"))
+            reconstructed["anchor"] = _materialize_evidence_value(
+                dict.get(grant_view, "anchor"), _VIEW_MEMBER_NESTING
+            )
     except Exception:
         return None
     return reconstructed if _materialize_evidence_value(reconstructed) is not None else None
@@ -794,10 +868,12 @@ def _materialize_authority_view(authority_view: dict[str, Any]) -> dict[str, Any
             materialized_authorizations = _materialize_evidence_array(
                 authorizations, authority_module.MAX_AUTHORITY_DOCUMENTS
             )
+            if materialized_authorizations is None:
+                return None
             reconstructed["authorizations"] = materialized_authorizations
         if "current_authorization_version" in authority_view:
             reconstructed["current_authorization_version"] = _materialize_evidence_value(
-                dict.get(authority_view, "current_authorization_version")
+                dict.get(authority_view, "current_authorization_version"), _VIEW_MEMBER_NESTING
             )
     except Exception:
         return None

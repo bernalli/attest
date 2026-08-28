@@ -433,26 +433,31 @@ def test_verify_preserves_authority_list_subclass_data_when_len_raises() -> None
     assert result.trust == "verified"
 
 
-def test_verify_degrades_authority_list_subclass_when_iteration_raises() -> None:
+def test_verify_preserves_authority_list_subclass_data_when_iteration_raises() -> None:
+    # 18.4: a subtype carrying ordinary data "survives as its plain base type,
+    # with any behaviour it defined discarded -- the identity of the object is
+    # lost, never the data". An overridden `__iter__` is behaviour; the list's
+    # own storage reads without raising through `list.__getitem__`, so refusal
+    # here would be refusing a value FOR BEING A SUBTYPE, which 18.4 forbids.
     result = verify.verify(
         _receipt_for(AUTHORITY_PAYLOAD),
         TRUST_STORE,
         authority_view={"authorizations": _IterRaisesList([AUTHORIZATION])},
     )
 
-    assert result.publisher_authority != "authorized"
+    assert result.publisher_authority == "authorized"
     assert result.ok is True
     assert result.trust == "verified"
 
 
-def test_verify_degrades_authority_view_subclass_when_iteration_raises() -> None:
+def test_verify_preserves_authority_view_subclass_data_when_iteration_raises() -> None:
     result = verify.verify(
         _receipt_for(AUTHORITY_PAYLOAD),
         TRUST_STORE,
         authority_view=_IterRaisesView({"authorizations": [AUTHORIZATION]}),
     )
 
-    assert result.publisher_authority != "authorized"
+    assert result.publisher_authority == "authorized"
     assert result.ok is True
     assert result.trust == "verified"
 
@@ -571,26 +576,26 @@ def test_verify_preserves_grant_list_subclass_data_when_len_raises() -> None:
     assert result.trust == "verified"
 
 
-def test_verify_degrades_grant_list_subclass_when_iteration_raises() -> None:
+def test_verify_preserves_grant_list_subclass_data_when_iteration_raises() -> None:
     result = verify.verify(
         _receipt_for(GRANT_PAYLOAD),
         TRUST_STORE,
         grant_view={"grant": GRANT, "declarations": _IterRaisesList([DECLARATION])},
     )
 
-    assert result.grant != "activated"
+    assert result.grant == "activated"
     assert result.ok is True
     assert result.trust == "verified"
 
 
-def test_verify_degrades_grant_view_subclass_when_iteration_raises() -> None:
+def test_verify_preserves_grant_view_subclass_data_when_iteration_raises() -> None:
     result = verify.verify(
         _receipt_for(GRANT_PAYLOAD),
         TRUST_STORE,
         grant_view=_IterRaisesView({"grant": GRANT, "declarations": [DECLARATION]}),
     )
 
-    assert result.grant != "activated"
+    assert result.grant == "activated"
     assert result.ok is True
     assert result.trust == "verified"
 
