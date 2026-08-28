@@ -743,6 +743,15 @@ def _own_data_copy(value: object, budget: list[int]) -> object:
     costs at least one byte of canonical form, so a structure over
     `_MAX_EVIDENCE_NODES` nodes cannot fit under the byte ceiling either. It
     only makes the refusal REACHABLE.
+
+    Keys that COLLAPSE refuse the unit rather than reduce it. A `str` subclass
+    with an overridden `__hash__`/`__eq__` coexists in a caller dict beside the
+    plain string it shadows, and copying both keys out to their own data leaves
+    ONE member: `canon.dumps` of the live object emits duplicate keys, which
+    RFC 8785 forbids and `canon.loads_strict` refuses, while a plain re-parse
+    keeps whichever the caller's insertion order put last. Letting insertion
+    order pick the surviving value is a choice the attacker makes; non-admission
+    is the direction this boundary already fails in.
     """
     budget[0] -= 1
     if budget[0] < 0:
@@ -759,10 +768,12 @@ def _own_data_copy(value: object, budget: list[int]) -> object:
             for index in range(list.__len__(value))
         ]
     if isinstance(value, dict):
-        return {
-            _own_data_copy(key, budget): _own_data_copy(item, budget)
-            for key, item in dict.items(value)
-        }
+        copied: dict[Any, Any] = {}
+        for key, item in dict.items(value):
+            copied[_own_data_copy(key, budget)] = _own_data_copy(item, budget)
+        if len(copied) != dict.__len__(value):
+            raise ValueError("evidence keys collapse under own-data copy")
+        return copied
     return value
 
 
@@ -796,33 +807,53 @@ def _materialize_evidence_value(value: object, nesting: int = 0) -> object | Non
 _VIEW_MEMBER_NESTING = 1
 _VIEW_ARRAY_ELEMENT_NESTING = 2
 
-_GRANT_VIEW_MEMBERS = frozenset({"grant", "later_grants", "declarations", "anchor"})
-_AUTHORITY_VIEW_MEMBERS = frozenset({"authorizations", "current_authorization_version"})
-
 
 def _materialize_evidence_array(value: object, ceiling: int) -> list[Any] | None:
-    if value is None or not isinstance(value, list):
+    """Admit an array-valued member PER ELEMENT (§18.4).
+
+    The member itself is inadmissible only for a property of the MEMBER: its
+    own array data cannot be read, it is not an array, or its element count
+    exceeds the member's ceiling. An element that is not admissible is set
+    aside alone and no element's admissibility decides another's.
+
+    The element count and the elements come from `list.__len__`/
+    `list.__getitem__`, never from `for item in value`: `__iter__` is
+    shadowable, and a subclass whose iteration never ends would hang the
+    verifier before any ceiling can fire.
+    """
+    if not isinstance(value, list):
         return None
-    materialized: list[Any] = []
     try:
-        for item in value:
-            if len(materialized) >= ceiling:
-                return None
-            materialized.append(_materialize_evidence_value(item, _VIEW_ARRAY_ELEMENT_NESTING))
+        count = list.__len__(value)
+        if count > ceiling:
+            return None
+        return [
+            _materialize_evidence_value(list.__getitem__(value, index), _VIEW_ARRAY_ELEMENT_NESTING)
+            for index in range(count)
+        ]
     except Exception:
         return None
-    return materialized
 
 
 def _materialize_grant_view(grant_view: dict[str, Any]) -> dict[str, Any] | None:
-    materialized = _materialize_evidence_value(grant_view)
-    if isinstance(materialized, dict):
-        return materialized
-    if type(grant_view) is not dict:
-        return None
+    """Admit `grant_view` MEMBER BY MEMBER, over the members §18.4 enumerates.
+
+    The view is never reconstructed as one indivisible value: a single
+    unencodable value would then discard the publisher's whole signed evidence
+    where §18.4 requires it to be set aside on its own, and anyone able to
+    append one member — a relay, a mirror, an aggregating cache — would buy
+    `not_checked` for a few hundred bytes of nesting.
+
+    The members are the ones the RAIL defines, never the ones the value
+    supplies: `grant` and `anchor` are admitted as single values (one that is
+    not admissible is ABSENT), `later_grants` and `declarations` per element. A
+    member the rail does not define is not admitted at all — never
+    reconstructed, never read, and never a reason to refuse the view or any
+    other member. Every read of the caller's object goes through an
+    unshadowable `dict` accessor, so a subclass is not refused for BEING a
+    subclass either.
+    """
     try:
-        if not set(dict.keys(grant_view)) <= _GRANT_VIEW_MEMBERS:
-            return None
         reconstructed: dict[str, Any] = {}
         later_grants = dict.get(grant_view, "later_grants")
         if later_grants is not None:
@@ -840,28 +871,27 @@ def _materialize_grant_view(grant_view: dict[str, Any]) -> dict[str, Any] | None
             if materialized_declarations is None:
                 return None
             reconstructed["declarations"] = materialized_declarations
-        if "grant" in grant_view:
+        if dict.__contains__(grant_view, "grant"):
             reconstructed["grant"] = _materialize_evidence_value(
                 dict.get(grant_view, "grant"), _VIEW_MEMBER_NESTING
             )
-        if "anchor" in grant_view:
+        if dict.__contains__(grant_view, "anchor"):
             reconstructed["anchor"] = _materialize_evidence_value(
                 dict.get(grant_view, "anchor"), _VIEW_MEMBER_NESTING
             )
     except Exception:
         return None
-    return reconstructed if _materialize_evidence_value(reconstructed) is not None else None
+    return reconstructed
 
 
 def _materialize_authority_view(authority_view: dict[str, Any]) -> dict[str, Any] | None:
-    materialized = _materialize_evidence_value(authority_view)
-    if isinstance(materialized, dict):
-        return materialized
-    if type(authority_view) is not dict:
-        return None
+    """Admit `authority_view` MEMBER BY MEMBER, over the members §20.3 enumerates.
+
+    Same rule as `_materialize_grant_view`: `authorizations` is admitted per
+    element, `current_authorization_version` as a single value, and a member
+    the rail does not define is never read.
+    """
     try:
-        if not set(dict.keys(authority_view)) <= _AUTHORITY_VIEW_MEMBERS:
-            return None
         reconstructed: dict[str, Any] = {}
         authorizations = dict.get(authority_view, "authorizations")
         if authorizations is not None:
@@ -871,13 +901,13 @@ def _materialize_authority_view(authority_view: dict[str, Any]) -> dict[str, Any
             if materialized_authorizations is None:
                 return None
             reconstructed["authorizations"] = materialized_authorizations
-        if "current_authorization_version" in authority_view:
+        if dict.__contains__(authority_view, "current_authorization_version"):
             reconstructed["current_authorization_version"] = _materialize_evidence_value(
                 dict.get(authority_view, "current_authorization_version"), _VIEW_MEMBER_NESTING
             )
     except Exception:
         return None
-    return reconstructed if _materialize_evidence_value(reconstructed) is not None else None
+    return reconstructed
 
 
 def _materialize_compromise_view(

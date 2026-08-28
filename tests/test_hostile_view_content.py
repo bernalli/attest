@@ -24,6 +24,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import threading
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -463,19 +465,22 @@ def test_verify_preserves_authority_view_subclass_data_when_iteration_raises() -
 
 
 @pytest.mark.parametrize("bad_member_factory", _PROFILE_MEMBER_FACTORIES)
-def test_verify_degrades_authority_view_values_outside_the_profile(
+def test_verify_sets_aside_authority_documents_outside_the_profile(
     bad_member_factory: Any,
 ) -> None:
+    # The probe sits in `authorizations`, a member the RAIL defines, because a
+    # member the rail does not define is never read at all and would test
+    # nothing. The assertion is BILATERAL on purpose: a one-sided `!=
+    # "authorized"` cannot tell a value set aside on its own from a view thrown
+    # away whole, and telling those apart is the whole point of the boundary.
     result = verify.verify(
         _receipt_for(AUTHORITY_PAYLOAD),
         TRUST_STORE,
-        authority_view={
-            "authorizations": [AUTHORIZATION],
-            "profile_boundary_probe": bad_member_factory(),
-        },
+        authority_view={"authorizations": [AUTHORIZATION, bad_member_factory()]},
     )
 
-    assert result.publisher_authority != "authorized"
+    assert result.publisher_authority == "authorized"
+    assert "authorization_invalid_ignored" in result.warnings
     assert result.ok is True
     assert result.trust == "verified"
 
@@ -601,20 +606,23 @@ def test_verify_preserves_grant_view_subclass_data_when_iteration_raises() -> No
 
 
 @pytest.mark.parametrize("bad_member_factory", _PROFILE_MEMBER_FACTORIES)
-def test_verify_degrades_grant_view_values_outside_the_profile(
+def test_verify_sets_aside_declarations_outside_the_profile(
     bad_member_factory: Any,
 ) -> None:
+    # Same shape as its authority sibling: the probe goes in `declarations`, a
+    # member the rail DEFINES, and the genuine declaration beside it still
+    # activates the grant while the inadmissible one is reported set aside.
     result = verify.verify(
         _receipt_for(GRANT_PAYLOAD),
         TRUST_STORE,
         grant_view={
             "grant": GRANT,
-            "declarations": [DECLARATION],
-            "profile_boundary_probe": bad_member_factory(),
+            "declarations": [DECLARATION, bad_member_factory()],
         },
     )
 
-    assert result.grant != "activated"
+    assert result.grant == "activated"
+    assert "grant_declaration_ignored" in result.warnings
     assert result.ok is True
     assert result.trust == "verified"
 
@@ -722,3 +730,169 @@ def test_grant_primitives_return_on_uncomparable_member_value(member: str) -> No
     grant.is_non_narrowing(GRANT, document)
     grant.prose_differs(GRANT, document)
     grant.grant_covers_receipt(document, GRANT_PAYLOAD)
+
+
+# --- the admission boundary's own properties ---------------------------------
+
+
+class _Endless(list):  # type: ignore[type-arg]
+    """A container that declares itself empty and iterates forever.
+
+    An unbounded or lazy container is the one hostile shape a byte ceiling
+    cannot stop on its own: the ceiling is compared against a serialization the
+    verifier has ALREADY produced. Admission therefore reads own array data
+    through `list.__len__`/`list.__getitem__` and never through iteration.
+    """
+
+    def __len__(self) -> int:
+        return 0
+
+    def __iter__(self) -> Any:
+        while True:
+            yield AUTHORIZATION
+
+
+class _ShadowKey(str):
+    """A key that COEXISTS with the plain string whose own data it carries.
+
+    Its own data is the shadowed spelling, so copying both keys out collapses
+    two members into one and the caller's insertion order decides which value
+    survives. That choice belongs to nobody, least of all the attacker: the
+    admission unit is refused instead.
+    """
+
+    def __hash__(self) -> int:
+        return object.__hash__(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __ne__(self, other: object) -> bool:
+        return self is not other
+
+
+_WALL_CLOCK_BUDGET_SECONDS = 20.0
+
+
+def _returns_within_budget(call: Callable[[], object]) -> bool:
+    """Whether `call` RETURNS inside the wall-clock budget.
+
+    An `assert result is not None` does not detect a loop that never ends, it
+    hangs beside the verifier. Running the call on a daemon thread and waiting
+    on its completion event turns the hang into a failing assertion.
+    """
+    finished = threading.Event()
+
+    def run() -> None:
+        call()
+        finished.set()
+
+    threading.Thread(target=run, daemon=True).start()
+    return finished.wait(_WALL_CLOCK_BUDGET_SECONDS)
+
+
+def test_authority_evaluator_returns_within_a_wall_clock_budget_on_an_endless_container() -> None:
+    assert _returns_within_budget(
+        lambda: verify.evaluate_publisher_authority(
+            AUTHORITY_PAYLOAD, TRUST_STORE, {"authorizations": _Endless()}
+        )
+    )
+
+
+def test_grant_evaluator_returns_within_a_wall_clock_budget_on_an_endless_container() -> None:
+    assert _returns_within_budget(
+        lambda: verify.evaluate_grant(
+            GRANT_PAYLOAD,
+            TRUST_STORE,
+            {"grant": GRANT, "later_grants": _Endless(), "declarations": _Endless()},
+        )
+    )
+
+
+def test_verify_ignores_an_unrecognised_authority_member_beside_a_valid_document() -> None:
+    result = verify.verify(
+        _receipt_for(AUTHORITY_PAYLOAD),
+        TRUST_STORE,
+        authority_view={
+            "authorizations": [AUTHORIZATION],
+            "profile_boundary_probe": _over_depth_member(),
+            "hostile_probe": _IterRaisesList([AUTHORIZATION]),
+            "endless_probe": _Endless(),
+        },
+    )
+
+    assert result.publisher_authority == "authorized"
+    assert result.ok is True
+    assert result.trust == "verified"
+
+
+def test_verify_ignores_an_unrecognised_grant_member_beside_a_valid_document() -> None:
+    result = verify.verify(
+        _receipt_for(GRANT_PAYLOAD),
+        TRUST_STORE,
+        grant_view={
+            "grant": GRANT,
+            "declarations": [DECLARATION],
+            "profile_boundary_probe": _over_depth_member(),
+            "hostile_probe": _IterRaisesList([DECLARATION]),
+            "endless_probe": _Endless(),
+        },
+    )
+
+    assert result.grant == "activated"
+    assert "grant_declaration_ignored" not in result.warnings
+    assert result.ok is True
+    assert result.trust == "verified"
+
+
+def test_collapsing_keys_refuse_the_admission_unit_instead_of_reducing_it() -> None:
+    collapsing = dict(AUTHORIZATION)
+    collapsing[_ShadowKey("publisher")] = "attacker.example"
+
+    assert (
+        verify._materialize_evidence_value(collapsing, verify._VIEW_ARRAY_ELEMENT_NESTING) is None
+    )
+
+    result = verify.verify(
+        _receipt_for(AUTHORITY_PAYLOAD),
+        TRUST_STORE,
+        authority_view={"authorizations": [AUTHORIZATION, collapsing]},
+    )
+
+    assert result.publisher_authority == "authorized"
+    assert "authorization_invalid_ignored" in result.warnings
+    assert result.ok is True
+
+
+def test_grant_view_reconstruction_always_canonicalizes() -> None:
+    # An element admitted in its member's frame sits at MOST at the profile's
+    # ceiling once it is back in the view, which is what makes canonicalizing
+    # the reconstruction an invariant rather than a hope.
+    deepest_admitted_element = _nested_list(canon.MAX_DEPTH - 3)
+    reconstructed = verify._materialize_grant_view(
+        {
+            "grant": _over_depth_member(),
+            "anchor": _float_member(),
+            "later_grants": [GRANT, _unsafe_integer_member(), deepest_admitted_element],
+            "declarations": [DECLARATION, _over_byte_member()],
+            "profile_boundary_probe": _float_member(),
+        }
+    )
+
+    assert reconstructed is not None
+    assert reconstructed["later_grants"][2] is not None
+    canon.dumps(reconstructed)
+
+
+def test_authority_view_reconstruction_always_canonicalizes() -> None:
+    reconstructed = verify._materialize_authority_view(
+        {
+            "authorizations": [AUTHORIZATION, _float_member(), _nested_list(canon.MAX_DEPTH - 3)],
+            "current_authorization_version": _unsafe_integer_member(),
+            "profile_boundary_probe": _over_byte_member(),
+        }
+    )
+
+    assert reconstructed is not None
+    assert reconstructed["authorizations"][2] is not None
+    canon.dumps(reconstructed)
