@@ -83,6 +83,27 @@ def _serialize(obj: Any, out: list[str], depth: int = 1) -> None:
     elif isinstance(obj, dict):
         if depth > MAX_DEPTH:
             raise CanonError("maximum nesting depth exceeded")
+        # Member NAMES and the member COUNT come from the mapping's OWN data
+        # (`str.__str__`, `dict.__len__`): two keys that collapse onto one
+        # canonical member name, or an iteration that disagrees with the
+        # mapping's own key count, refuse the value instead of emitting the
+        # duplicate form RFC 8785 forbids -- the form `loads_strict` then
+        # rejects, i.e. the profile's serializer producing what the profile's
+        # parser refuses.
+        #
+        # SCOPE OF THE OWN-DATA GUARANTEE -- deliberately partial, and the
+        # reason the evidence boundary still copies BEFORE canonicalizing:
+        # member VALUES are read with `obj[k]` and array elements with
+        # `for item in obj`, both shadowable. A `dict`/`list` subclass whose
+        # `__iter__`/`__getitem__` disagree with its own data still steers the
+        # emitted structure whenever it keeps the key COUNT intact, so `dumps`
+        # alone does NOT guarantee that the emitted members are the caller
+        # value's own members. There is no own-data spelling for a container in
+        # TypeScript (a `Proxy` intercepts `Reflect` too), so the rail-neutral
+        # defence against that vector is reconstruction at the admission
+        # boundary (`verify._own_data_copy`), not a Python-only read here.
+        # Anything that canonicalizes a value it did not build itself MUST copy
+        # the value's own data first.
         entries: list[tuple[bytes, str, Any]] = []
         source_key_count = dict.__len__(obj)
         emitted_keys: set[str] = set()
@@ -96,7 +117,13 @@ def _serialize(obj: Any, out: list[str], depth: int = 1) -> None:
             emitted_keys.add(serialized_key)
             entries.append((key.encode("utf-16-be", "surrogatepass"), serialized_key, k))
         if len(emitted_keys) != source_key_count:
-            raise DuplicateKeyError("duplicate object key")
+            # NOT a duplicate: the mapping iterated a different number of
+            # members than it stores. `DuplicateKeyError` here would name a
+            # cause that did not happen, in the one error a caller reads when a
+            # hostile mapping is refused.
+            raise CanonError(
+                f"object iterates {len(emitted_keys)} members but stores {source_key_count}"
+            )
         out.append("{")
         for i, (_, serialized_key, k) in enumerate(sorted(entries, key=lambda item: item[0])):
             if i:

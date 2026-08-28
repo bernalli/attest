@@ -720,24 +720,24 @@ _MAX_EVIDENCE_NODES = _MAX_TRANSPARENCY_EVIDENCE_LEN
 def _own_data_copy(value: object, budget: list[int]) -> object:
     """Copy a caller-supplied value's OWN data into exact plain types.
 
-    `canon.dumps` walks a mapping with `for k in obj`, a sequence with
-    `enumerate(obj)` and a string with `for ch in s` -- all three shadowable --
+    `canon.dumps` walks a mapping with `for k in obj`, reads its members with
+    `obj[k]` and walks a sequence with `enumerate(obj)` -- all shadowable --
     and its byte ceiling is compared against a serialization it has ALREADY
     produced. A subclass whose iteration never ends therefore hangs the
     verifier before any ceiling can fire, which is the one way 18.4's
     "reconstruction is bounded and fails closed" can still be broken from a
-    WELL-TYPED view. The copy runs FIRST, through the base classes' own
-    unshadowable accessors, and refuses on a node budget rather than after the
-    work is already done.
+    WELL-TYPED view. (Strings and the two scalars are no longer shadowable
+    there: `_serialize` takes their own data itself. CONTAINERS still are, and
+    that is why this copy remains the guarantee rather than a belt.) The copy
+    runs FIRST, through the base classes' own unshadowable accessors, and
+    refuses on a node budget rather than after the work is already done.
 
     A subtype is never refused for BEING a subtype (18.4): its own data is
     copied out into the exact plain type and the instance does not survive.
     `int.__int__`/`str.__str__` are the own-data spellings for the two scalars
-    whose serialization hook a subclass can override -- `str(obj)` is appended
-    to the canonical form VERBATIM, so an `int` subclass with an overridden
-    `__str__` could otherwise place a float, a NaN, an out-of-range integer or
-    a whole injected object inside the very reconstruction 20.4 step 6 calls
-    "canonicalizable by construction".
+    whose serialization hook a subclass can override -- `_serialize` now uses
+    the same two spellings itself, so for the scalars this copy is a belt, and
+    for the containers around them it is the guarantee.
 
     The budget can never change an admissible/inadmissible answer: every node
     costs at least one byte of canonical form, so a structure over
@@ -747,11 +747,12 @@ def _own_data_copy(value: object, budget: list[int]) -> object:
     Keys that COLLAPSE refuse the unit rather than reduce it. A `str` subclass
     with an overridden `__hash__`/`__eq__` coexists in a caller dict beside the
     plain string it shadows, and copying both keys out to their own data leaves
-    ONE member: `canon.dumps` of the live object emits duplicate keys, which
-    RFC 8785 forbids and `canon.loads_strict` refuses, while a plain re-parse
-    keeps whichever the caller's insertion order put last. Letting insertion
-    order pick the surviving value is a choice the attacker makes; non-admission
-    is the direction this boundary already fails in.
+    ONE member. `canon.dumps` refuses that shape too (it counts the canonical
+    member names it emits against `dict.__len__`), and `canon.loads_strict`
+    refuses the duplicate byte form RFC 8785 forbids -- three refusals of the
+    same shape, deliberately. Letting insertion order pick the surviving value
+    is a choice the attacker makes; non-admission is the direction this
+    boundary already fails in.
     """
     budget[0] -= 1
     if budget[0] < 0:

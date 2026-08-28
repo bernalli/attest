@@ -122,6 +122,55 @@ def test_dumps_reports_malformed_string_subclass_data_as_canon_error() -> None:
         canon.dumps({"text": _IterRaisesString("\ud800")})
 
 
+def test_dumps_refuses_a_mapping_that_iterates_fewer_members_than_it_stores() -> None:
+    class _UnderIterating(dict[str, Any]):
+        def __iter__(self) -> Any:
+            return iter(["a"])
+
+    with pytest.raises(canon.CanonError):
+        canon.dumps(_UnderIterating({"a": 1, "b": 2}))
+
+
+def test_dumps_refuses_a_mapping_that_iterates_more_members_than_it_stores() -> None:
+    class _OverIterating(dict[str, Any]):
+        def __iter__(self) -> Any:
+            return iter(["a", "b"])
+
+    with pytest.raises(canon.CanonError):
+        canon.dumps(_OverIterating({"a": 1}))
+
+
+def test_dumps_serializes_string_subclasses_from_their_own_string_data() -> None:
+    class _AlteringStr(str):
+        def __iter__(self) -> Any:
+            return iter("altered")
+
+        def __str__(self) -> str:
+            return "altered"
+
+    assert canon.dumps({"k": _AlteringStr("plain")}) == '{"k":"plain"}'
+    assert canon.dumps({_AlteringStr("plain"): 1}) == '{"plain":1}'
+
+
+def test_dumps_rejects_an_out_of_range_integer_subclass_by_its_own_value() -> None:
+    class _InRangeLookingInt(int):
+        def __str__(self) -> str:
+            return "0"
+
+    with pytest.raises(canon.CanonError, match="out of I-JSON safe range"):
+        canon.dumps({"n": _InRangeLookingInt(2**53)})
+
+
+def test_dumps_rejects_a_lone_surrogate_in_an_object_key() -> None:
+    with pytest.raises(canon.CanonError, match="lone surrogate"):
+        canon.dumps({"\ud800": 1})
+
+
+def test_dumps_rejects_a_non_string_key_nested_under_an_array() -> None:
+    with pytest.raises(canon.CanonError, match="non-string object key"):
+        canon.dumps({"outer": [{1: "a"}]})
+
+
 def test_loads_strict_rejects_floats_and_bad_utf8() -> None:
     with pytest.raises(canon.CanonError):
         canon.loads_strict(b'{"a":1.5}')
