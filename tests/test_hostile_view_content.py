@@ -862,6 +862,96 @@ def test_collapsing_keys_refuse_the_admission_unit_instead_of_reducing_it() -> N
     assert result.publisher_authority == "authorized"
     assert "authorization_invalid_ignored" in result.warnings
     assert result.ok is True
+    assert result.trust == "verified"
+
+
+def test_collapsing_authority_member_key_refuses_only_that_member() -> None:
+    result = verify.verify(
+        _receipt_for(AUTHORITY_PAYLOAD),
+        TRUST_STORE,
+        authority_view={
+            "authorizations": [AUTHORIZATION],
+            _ShadowKey("current_authorization_version"): 2,
+            "current_authorization_version": 1,
+        },
+    )
+
+    assert result.publisher_authority == "authorized"
+    assert result.ok is True
+    assert result.trust == "verified"
+
+
+def test_collapsing_nested_authority_key_refuses_only_that_document() -> None:
+    collapsing = copy.deepcopy(AUTHORIZATION)
+    collapsing["authorized_issuers"][0][_ShadowKey("issuer_id")] = "attacker.example"
+
+    result = verify.verify(
+        _receipt_for(AUTHORITY_PAYLOAD),
+        TRUST_STORE,
+        authority_view={"authorizations": [AUTHORIZATION, collapsing]},
+    )
+
+    assert result.publisher_authority == "authorized"
+    assert "authorization_invalid_ignored" in result.warnings
+    assert result.ok is True
+    assert result.trust == "verified"
+
+
+def test_collapsing_grant_document_key_refuses_only_that_declaration() -> None:
+    collapsing = dict(DECLARATION)
+    collapsing[_ShadowKey("publisher")] = "attacker.example"
+
+    result = verify.verify(
+        _receipt_for(GRANT_PAYLOAD),
+        TRUST_STORE,
+        grant_view={"grant": GRANT, "declarations": [DECLARATION, collapsing]},
+    )
+
+    assert result.grant == "activated"
+    assert "grant_declaration_ignored" in result.warnings
+    assert result.ok is True
+    assert result.trust == "verified"
+
+
+def _authorization_with_extra_member() -> dict[str, Any]:
+    document = dict(AUTHORIZATION)
+    document["unexpected"] = None
+    return document
+
+
+def _authorization_missing_member() -> dict[str, Any]:
+    document = dict(AUTHORIZATION)
+    del document["issued_at"]
+    return document
+
+
+def _authorization_with_wrong_type() -> dict[str, Any]:
+    document = dict(AUTHORIZATION)
+    document["authorization_version"] = "1"
+    return document
+
+
+@pytest.mark.parametrize(
+    "bad_document_factory",
+    [
+        pytest.param(_authorization_with_extra_member, id="extra-member"),
+        pytest.param(_authorization_missing_member, id="missing-member"),
+        pytest.param(_authorization_with_wrong_type, id="wrong-type"),
+    ],
+)
+def test_malformed_authority_documents_are_set_aside_per_element(
+    bad_document_factory: Callable[[], dict[str, Any]],
+) -> None:
+    result = verify.verify(
+        _receipt_for(AUTHORITY_PAYLOAD),
+        TRUST_STORE,
+        authority_view={"authorizations": [AUTHORIZATION, bad_document_factory()]},
+    )
+
+    assert result.publisher_authority == "authorized"
+    assert "authorization_invalid_ignored" in result.warnings
+    assert result.ok is True
+    assert result.trust == "verified"
 
 
 def test_grant_view_reconstruction_always_canonicalizes() -> None:

@@ -63,13 +63,14 @@ def _serialize(obj: Any, out: list[str], depth: int = 1) -> None:
     elif isinstance(obj, bool):  # MUST precede int (bool subclasses int)
         out.append("true" if obj else "false")
     elif isinstance(obj, int):
-        if not -_INT_MAX < obj < _INT_MAX:
-            raise CanonError(f"integer out of I-JSON safe range: {obj}")
-        out.append(str(obj))
+        value = int.__int__(obj)
+        if not -_INT_MAX < value < _INT_MAX:
+            raise CanonError(f"integer out of I-JSON safe range: {value}")
+        out.append(str(value))
     elif isinstance(obj, float):
         raise CanonError("floats are not allowed in the attest-JCS profile")
     elif isinstance(obj, str):
-        out.append(_serialize_string(obj))
+        out.append(_serialize_string(str.__str__(obj)))
     elif isinstance(obj, list):
         if depth > MAX_DEPTH:
             raise CanonError("maximum nesting depth exceeded")
@@ -82,14 +83,25 @@ def _serialize(obj: Any, out: list[str], depth: int = 1) -> None:
     elif isinstance(obj, dict):
         if depth > MAX_DEPTH:
             raise CanonError("maximum nesting depth exceeded")
+        entries: list[tuple[bytes, str, Any]] = []
+        source_key_count = dict.__len__(obj)
+        emitted_keys: set[str] = set()
         for k in obj:
             if not isinstance(k, str):
                 raise CanonError(f"non-string object key: {k!r}")
+            key = str.__str__(k)
+            serialized_key = _serialize_string(key)
+            if serialized_key in emitted_keys:
+                raise DuplicateKeyError(f"duplicate object key: {key!r}")
+            emitted_keys.add(serialized_key)
+            entries.append((key.encode("utf-16-be", "surrogatepass"), serialized_key, k))
+        if len(emitted_keys) != source_key_count:
+            raise DuplicateKeyError("duplicate object key")
         out.append("{")
-        for i, k in enumerate(sorted(obj, key=lambda k: k.encode("utf-16-be", "surrogatepass"))):
+        for i, (_, serialized_key, k) in enumerate(sorted(entries, key=lambda item: item[0])):
             if i:
                 out.append(",")
-            out.append(_serialize_string(k))
+            out.append(serialized_key)
             out.append(":")
             _serialize(obj[k], out, depth + 1)
         out.append("}")

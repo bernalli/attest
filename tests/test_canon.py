@@ -10,6 +10,35 @@ from attest import canon
 # RFC 8785-style expectations (integer-only attest profile)
 
 
+_HOSTILE_READ = RuntimeError("hostile scalar read")
+
+
+class _CollidingString(str):
+    def __hash__(self) -> int:
+        return object.__hash__(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __ne__(self, other: object) -> bool:
+        return self is not other
+
+
+class _EncodeRaises(str):
+    def encode(self, *args: Any, **kwargs: Any) -> bytes:
+        raise _HOSTILE_READ
+
+
+class _InjectingInt(int):
+    def __str__(self) -> str:
+        return '0,"injected":1'
+
+
+class _IterRaisesString(str):
+    def __iter__(self) -> Any:
+        raise _HOSTILE_READ
+
+
 def test_sorts_keys_by_utf16_code_units() -> None:
     # From RFC 8785 §3.2.3 ordering semantics: literal "\r" (0x0D) sorts before
     # "1" (0x31), "10" before "2", "é" (0xE9) after ASCII, emoji (surrogates) last.
@@ -53,6 +82,44 @@ def test_rejects_floats_and_nonjson() -> None:
 def test_loads_strict_rejects_duplicates() -> None:
     with pytest.raises(canon.DuplicateKeyError):
         canon.loads_strict(b'{"a":1,"a":2}')
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({_CollidingString("dup"): "a", "dup": "b"}, id="top-level"),
+        pytest.param({"outer": {_CollidingString("dup"): "a", "dup": "b"}}, id="nested-dict"),
+        pytest.param(
+            {"outer": [{"inner": {_CollidingString("dup"): "a", "dup": "b"}}]},
+            id="inside-array",
+        ),
+    ],
+)
+def test_dumps_rejects_keys_that_collapse_to_one_canonical_member(payload: object) -> None:
+    with pytest.raises(canon.CanonError, match="duplicate object key"):
+        canon.dumps(payload)
+
+
+def test_dumps_rejects_member_substitution_by_collapsing_key() -> None:
+    payload = {"publisher": "genuine.example", _CollidingString("publisher"): "attacker.example"}
+
+    with pytest.raises(canon.CanonError, match="duplicate object key"):
+        canon.dumps(payload)
+
+
+def test_dumps_orders_keys_by_their_own_string_data() -> None:
+    payload = {_EncodeRaises("b"): 1, "a": 2}
+
+    assert canon.dumps(payload) == '{"a":2,"b":1}'
+
+
+def test_dumps_serializes_int_subclasses_from_their_own_integer_data() -> None:
+    assert canon.dumps({"safe": _InjectingInt(0)}) == '{"safe":0}'
+
+
+def test_dumps_reports_malformed_string_subclass_data_as_canon_error() -> None:
+    with pytest.raises(canon.CanonError, match="lone surrogate"):
+        canon.dumps({"text": _IterRaisesString("\ud800")})
 
 
 def test_loads_strict_rejects_floats_and_bad_utf8() -> None:

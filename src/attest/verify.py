@@ -796,7 +796,7 @@ def _admit_evidence_value(value: object, nesting: int = 0) -> tuple[bool, object
         serialized = canon.dumps(_own_data_copy(probe, [_MAX_EVIDENCE_NODES]))
         if len(serialized) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
             return False, None
-        materialized: object = json.loads(serialized)
+        materialized = canon.loads_strict(serialized.encode("utf-8"))
     except Exception:
         return False, None
     for _ in range(nesting):
