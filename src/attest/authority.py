@@ -109,6 +109,33 @@ def is_authorization_version(value: object) -> bool:
     )
 
 
+# --- shared successor-discipline predicates (§20.2) --------------------------
+
+
+def same_instant(left: str | None, right: str | None) -> bool:
+    """Whether two optional window endpoints denote the same instant (§20.2).
+
+    Two `null` endpoints compare equal; a `null` endpoint and a timestamp do
+    not. Non-null endpoints are parsed with the wire timestamp grammar before
+    comparison so carry checks and ordering checks use one instant spelling.
+    """
+    if left is None or right is None:
+        return left is None and right is None
+    return transfer._parse_date(left) == transfer._parse_date(right)
+
+
+def window_spent_at(valid_to: str | None, instant: str) -> bool:
+    """Classify an entry window relative to `instant` under §20.2.
+
+    The window is spent when `valid_to` is non-null and strictly earlier than
+    `instant`; otherwise it is live. Non-null timestamps are parsed before the
+    order comparison.
+    """
+    if valid_to is None:
+        return False
+    return transfer._parse_date(valid_to) < transfer._parse_date(instant)
+
+
 # --- shape (§20.2) ------------------------------------------------------------
 
 
@@ -253,9 +280,9 @@ def _reject_non_successor_entry(
 ) -> None:
     """The per-entry half of §20.2's successor discipline.
 
-    `issued_at` is the CLOSING document's own timestamp, and it bounds a newly
-    introduced closure from above exactly as `previous_issued_at` bounds it
-    from below.
+    `issued_at` is the successor document's own timestamp; for live-window
+    restrictions it bounds the closure from above exactly as
+    `previous_issued_at` bounds it from below.
     """
     issuer_id = previous_entry.get("issuer_id")
     if entry.get("valid_from") != previous_entry.get("valid_from"):
@@ -265,38 +292,45 @@ def _reject_non_successor_entry(
         )
     previous_valid_to = previous_entry.get("valid_to")
     valid_to = entry.get("valid_to")
-    if previous_valid_to is not None:
-        # A window already closed is a historical fact: carrying it forward
-        # unchanged conforms, moving it in EITHER direction does not — earlier
-        # uncovers receipts already issued inside it, later re-covers a window
-        # the publisher had closed, and reopening it unmakes the closure
-        # outright.
-        if valid_to != previous_valid_to:
-            raise ValueError(
-                f"the closed window of entry {issuer_id!r} moved: a closed window is a "
-                "historical fact and MUST NOT move in either direction"
-            )
-        return
-    if valid_to is None:
-        return
-    # A closure newly introduced on an entry the predecessor still showed open
-    # is bounded on BOTH sides (§20.2, verbatim): "setting a `valid_to` no
-    # later than the closing document's own `issued_at` (a closure may not be
-    # post-dated into the future) and no earlier than the `issued_at` of the
-    # latest version that showed the window open". Back-dating would uncover
-    # receipts already issued inside the window; post-dating would announce an
-    # authorization the publisher has not yet lived through, and would let a
-    # later version keep moving it while pretending the closure is settled.
-    if not transfer._valid_utc_timestamp(valid_to):
+    if previous_valid_to is not None and not transfer._valid_utc_timestamp(previous_valid_to):
+        raise ValueError(
+            f"previous.valid_to of entry {issuer_id!r} must be an ISO-8601 UTC timestamp "
+            "to be shown conforming against the successor"
+        )
+    if valid_to is not None and not transfer._valid_utc_timestamp(valid_to):
         raise ValueError(
             f"valid_to of entry {issuer_id!r} must be an ISO-8601 UTC timestamp to be shown "
             "conforming against the predecessor"
         )
+    previous_window_end = cast(str | None, previous_valid_to)
+    window_end = cast(str | None, valid_to)
+    if same_instant(previous_window_end, window_end):
+        return
+
+    if previous_window_end is not None:
+        if not transfer._valid_utc_timestamp(issued_at):
+            raise ValueError(
+                "issued_at must be an ISO-8601 UTC timestamp to bound a newly introduced closure"
+            )
+        if window_spent_at(previous_window_end, issued_at):
+            raise ValueError(
+                f"the spent window of entry {issuer_id!r} moved: a window no longer covering "
+                "this document's issued_at is a historical fact and MUST NOT move in either "
+                "direction"
+            )
+    if window_end is None:
+        return
+    if previous_window_end is not None and not (
+        transfer._parse_date(window_end) < transfer._parse_date(previous_window_end)
+    ):
+        return
+    # A live-window restriction is bounded on BOTH sides: the predecessor's
+    # `issued_at` below and this successor document's `issued_at` above.
     if not transfer._valid_utc_timestamp(issued_at):
         raise ValueError(
             "issued_at must be an ISO-8601 UTC timestamp to bound a newly introduced closure"
         )
-    closure = transfer._parse_date(valid_to)
+    closure = transfer._parse_date(window_end)
     if closure < transfer._parse_date(previous_issued_at):
         raise ValueError(
             f"the closure of entry {issuer_id!r} is back-dated before the predecessor's "
@@ -334,8 +368,8 @@ def build_authorization(
     authenticates — with ONE exception. When `previous` (the predecessor
     document) is supplied, §20.2's entry-preservation and successor discipline
     is enforced BEFORE any signature is computed, and a violation raises
-    `ValueError`: a deleted entry, a moved `valid_from`, a closed window moved
-    in either direction, or a newly introduced closure outside the two bounds
+    `ValueError`: a deleted entry, a moved `valid_from`, a spent window moved
+    in either direction, or a live-window restriction outside the two bounds
     §20.2 sets on it — no earlier than the predecessor's own `issued_at`
     (back-dating uncovers receipts already issued inside the window) and no
     later than this document's own `issued_at` (a closure may not be

@@ -814,14 +814,14 @@ def test_build_authorization_rejects_valid_from_mutation_for_existing_entry() ->
         )
 
 
-def test_build_authorization_allows_identical_already_closed_window() -> None:
+def test_build_authorization_allows_identical_spent_window() -> None:
     kp, _ = _ed_manifest()
-    closed = _entry(ISSUER_A, valid_to="2026-01-15T00:00:00Z")
-    previous = _authorization(kp, authorized_issuers=[closed], issued_at=AUTH_ISSUED_AT)
+    spent = _entry(ISSUER_A, valid_to="2026-01-15T00:00:00Z")
+    previous = _authorization(kp, authorized_issuers=[spent], issued_at=AUTH_ISSUED_AT)
     successor = _authorization(
         kp,
         authorization_version=2,
-        authorized_issuers=[copy.deepcopy(closed)],
+        authorized_issuers=[copy.deepcopy(spent)],
         issued_at=SUCCESSOR_ISSUED_AT,
         previous=previous,
     )
@@ -829,11 +829,34 @@ def test_build_authorization_allows_identical_already_closed_window() -> None:
     assert successor["authorized_issuers"][0]["valid_to"] == "2026-01-15T00:00:00Z"
 
 
+def test_build_authorization_rejects_malformed_previous_valid_to() -> None:
+    kp, _ = _ed_manifest()
+    previous = _authorization(
+        kp,
+        authorized_issuers=[_entry(ISSUER_A, valid_to="not-a-timestamp")],
+        issued_at=AUTH_ISSUED_AT,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        _authorization(
+            kp,
+            authorization_version=2,
+            authorized_issuers=[_entry(ISSUER_A, valid_to="not-a-timestamp")],
+            issued_at=SUCCESSOR_ISSUED_AT,
+            previous=previous,
+        )
+
+    assert str(excinfo.value) == (
+        "previous.valid_to of entry 'alpha.example' must be an ISO-8601 UTC timestamp "
+        "to be shown conforming against the successor"
+    )
+
+
 @pytest.mark.parametrize(
     "moved_valid_to",
     ["2026-01-14T23:59:59Z", "2026-01-15T00:00:01Z", None],
 )
-def test_build_authorization_rejects_moving_already_closed_window(
+def test_build_authorization_rejects_moving_spent_window(
     moved_valid_to: str | None,
 ) -> None:
     kp, _ = _ed_manifest()
@@ -853,7 +876,7 @@ def test_build_authorization_rejects_moving_already_closed_window(
         )
 
 
-def test_build_authorization_rejects_retrodated_new_closure_for_open_entry() -> None:
+def test_build_authorization_rejects_retrodated_new_closure_for_open_ended_entry() -> None:
     kp, _ = _ed_manifest()
     previous = _authorization(kp, authorized_issuers=[_entry(ISSUER_A, valid_to=None)])
 
@@ -871,7 +894,7 @@ def test_build_authorization_rejects_retrodated_new_closure_for_open_entry() -> 
     "valid_to",
     ["2026-02-01T00:00:00Z", "2026-02-15T00:00:00Z"],
 )
-def test_build_authorization_allows_prospective_closure_for_open_entry(
+def test_build_authorization_allows_prospective_closure_for_open_ended_entry(
     valid_to: str,
 ) -> None:
     kp, _ = _ed_manifest()
@@ -901,7 +924,7 @@ def test_build_authorization_rejects_postdated_new_closure_after_successor_issue
         )
 
 
-def test_build_authorization_rejects_shortened_closure_before_previous_issued_at() -> None:
+def test_build_authorization_rejects_live_term_window_shortened_before_previous_issued_at() -> None:
     kp, _ = _ed_manifest()
     previous = _authorization(
         kp,
@@ -919,17 +942,17 @@ def test_build_authorization_rejects_shortened_closure_before_previous_issued_at
         )
 
 
-def test_build_authorization_allows_closure_of_open_entry_exactly_at_previous_issued_at() -> None:
-    """A predecessor's OPEN entry (`valid_to: null`) may be closed by its
-    successor at exactly the predecessor's own `issued_at` — the earliest
-    legal bound §20.2 sets on a newly introduced closure ("no earlier than
-    the `issued_at` of the latest version that showed the window open").
-    This is distinct from moving an ALREADY-closed window (which §20.2
-    forbids in either direction, see
-    `test_build_authorization_rejects_shortened_closure_before_previous_issued_at`
-    and `test_build_authorization_rejects_moving_already_closed_window`): here
-    the predecessor's window was still open, so the successor is introducing
-    the closure, not moving one.
+def test_build_authorization_allows_live_open_ended_window_closure_at_previous_issued_at() -> None:
+    """A predecessor's open-ended entry (`valid_to: null`) is live and may be
+    closed by its successor at exactly the predecessor's own `issued_at` — the
+    earliest legal bound §20.2 sets on a newly introduced closure ("no earlier
+    than the `issued_at` of the latest version that showed the window live").
+    This is distinct from moving a spent window (which §20.2 forbids in either
+    direction, see
+    `test_build_authorization_rejects_live_term_window_shortened_before_previous_issued_at`
+    and `test_build_authorization_rejects_moving_spent_window`): here the
+    predecessor's window was open-ended and therefore live, so the successor is
+    introducing the closure, not moving one.
     """
     kp, _ = _ed_manifest()
     previous = _authorization(

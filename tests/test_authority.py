@@ -859,7 +859,7 @@ def test_a_successor_may_add_a_new_entry() -> None:
 
 def test_a_successor_may_close_a_window_at_or_after_the_predecessors_issued_at() -> None:
     """§20.2: a closure is set no earlier than the `issued_at` of the latest
-    version that showed the window open — closing it exactly there is the
+    version that showed the window live — closing it exactly there is the
     tightest conforming closure."""
     kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
     previous = _previous()
@@ -939,12 +939,13 @@ def test_changing_valid_from_on_a_shared_entry_is_refused() -> None:
             )
 
 
-def test_an_already_closed_window_carried_forward_unchanged_is_signed() -> None:
-    """§20.2: 'carrying forward an already-closed window unchanged is
-    conforming' — a closed window is a historical fact and it stays listed."""
+def test_a_spent_window_carried_forward_unchanged_is_signed() -> None:
+    """§20.2: carrying a spent window forward unchanged is conforming: a
+    window no longer covering the successor's `issued_at` is a historical fact
+    that stays listed."""
     kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
-    closed = _entry(valid_to="2026-05-01T00:00:00Z")
-    previous = _previous(authorized_issuers=[closed])
+    spent = _entry(valid_to="2026-05-01T00:00:00Z")
+    previous = _previous(authorized_issuers=[spent])
 
     document = authority.build_authorization(
         2,
@@ -959,15 +960,149 @@ def test_an_already_closed_window_carried_forward_unchanged_is_signed() -> None:
     assert authority.verify_authorization(document, key_manifest)
 
 
+def test_a_live_term_window_may_be_shortened_inside_successor_bounds() -> None:
+    kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
+    previous = _previous(authorized_issuers=[_entry(valid_to="2026-12-01T00:00:00Z")])
+
+    document = authority.build_authorization(
+        2,
+        PUBLISHER,
+        [_entry(valid_to="2026-06-01T00:00:00Z")],
+        LATER_ISSUED_AT,
+        kp,
+        PUB_KID,
+        previous=previous,
+    )
+
+    assert authority.verify_authorization(document, key_manifest)
+
+
+@pytest.mark.parametrize("renewed_to", ["2026-12-15T00:00:00Z", None])
+def test_a_live_term_window_may_be_extended(renewed_to: str | None) -> None:
+    kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
+    previous = _previous(authorized_issuers=[_entry(valid_to="2026-12-01T00:00:00Z")])
+
+    document = authority.build_authorization(
+        2,
+        PUBLISHER,
+        [_entry(valid_to=renewed_to)],
+        LATER_ISSUED_AT,
+        kp,
+        PUB_KID,
+        previous=previous,
+    )
+
+    assert authority.verify_authorization(document, key_manifest)
+
+
+def test_a_live_term_window_post_dated_shortening_is_refused_with_its_literal() -> None:
+    kp, _ = _ed_manifest(PUBLISHER, PUB_KID)
+    previous = _previous(authorized_issuers=[_entry(valid_to="2026-12-01T00:00:00Z")])
+
+    with pytest.raises(ValueError) as excinfo:
+        authority.build_authorization(
+            2,
+            PUBLISHER,
+            [_entry(valid_to="2026-09-01T00:00:01Z")],
+            LATER_ISSUED_AT,
+            kp,
+            PUB_KID,
+            previous=previous,
+        )
+
+    assert str(excinfo.value) == (
+        "the closure of entry 'store.example.com' is post-dated after this document's own "
+        "issued_at 2026-09-01T00:00:00Z: a closure may not be post-dated into the future"
+    )
+
+
+@pytest.mark.parametrize(
+    "moved_to",
+    [
+        "2026-04-01T00:00:00Z",
+        "2026-06-01T00:00:00Z",
+        None,
+    ],
+)
+def test_a_spent_window_moved_in_any_direction_is_refused_with_its_literal(
+    moved_to: str | None,
+) -> None:
+    kp, _ = _ed_manifest(PUBLISHER, PUB_KID)
+    previous = _previous(authorized_issuers=[_entry(valid_to="2026-05-01T00:00:00Z")])
+
+    with pytest.raises(ValueError) as excinfo:
+        authority.build_authorization(
+            2,
+            PUBLISHER,
+            [_entry(valid_to=moved_to)],
+            LATER_ISSUED_AT,
+            kp,
+            PUB_KID,
+            previous=previous,
+        )
+
+    assert str(excinfo.value) == (
+        "the spent window of entry 'store.example.com' moved: a window no longer covering "
+        "this document's issued_at is a historical fact and MUST NOT move in either direction"
+    )
+
+
+@pytest.mark.parametrize("closed_at", [AUTH_ISSUED_AT, LATER_ISSUED_AT])
+def test_a_live_term_window_may_be_shortened_exactly_at_either_bound(
+    closed_at: str,
+) -> None:
+    kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
+    previous = _previous(authorized_issuers=[_entry(valid_to="2026-12-01T00:00:00Z")])
+
+    document = authority.build_authorization(
+        2,
+        PUBLISHER,
+        [_entry(valid_to=closed_at)],
+        LATER_ISSUED_AT,
+        kp,
+        PUB_KID,
+        previous=previous,
+    )
+
+    assert authority.verify_authorization(document, key_manifest)
+
+
+@pytest.mark.parametrize(
+    "successor_valid_to",
+    [
+        "2026-06-01T00:00:00Z",
+        "2026-10-01T00:00:00Z",
+        None,
+    ],
+)
+def test_a_predecessor_valid_to_equal_to_successor_issued_at_is_live(
+    successor_valid_to: str | None,
+) -> None:
+    kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
+    previous = _previous(authorized_issuers=[_entry(valid_to=LATER_ISSUED_AT)])
+
+    document = authority.build_authorization(
+        2,
+        PUBLISHER,
+        [_entry(valid_to=successor_valid_to)],
+        LATER_ISSUED_AT,
+        kp,
+        PUB_KID,
+        previous=previous,
+    )
+
+    assert authority.verify_authorization(document, key_manifest)
+
+
 @pytest.mark.parametrize(
     "moved_to",
     [
         "2026-04-01T00:00:00Z",  # earlier: uncovers receipts already issued inside it
-        "2026-06-01T00:00:00Z",  # later: re-covers a window the publisher had closed
-        None,  # reopened: the closure unmade altogether
+        "2026-06-01T00:00:00Z",  # later: re-covers a span already spent
+        None,  # open-ended again: the historical endpoint is unmade
     ],
 )
-def test_a_closed_window_moved_in_any_direction_is_refused(moved_to: Any) -> None:
+def test_a_spent_window_moved_in_any_direction_is_refused(moved_to: Any) -> None:
     kp, _ = _ed_manifest(PUBLISHER, PUB_KID)
     previous = _previous(authorized_issuers=[_entry(valid_to="2026-05-01T00:00:00Z")])
 
@@ -985,10 +1120,10 @@ def test_a_closed_window_moved_in_any_direction_is_refused(moved_to: Any) -> Non
 
 def test_a_back_dated_new_closure_is_refused() -> None:
     """§20.2: a closure is set no earlier than the `issued_at` of the latest
-    version that showed the window open — a back-dated closure would uncover
+    version that showed the window live — a back-dated closure would uncover
     receipts already issued inside it."""
     kp, _ = _ed_manifest(PUBLISHER, PUB_KID)
-    previous = _previous()  # entry open, document issued_at 2026-02-01
+    previous = _previous()  # open-ended entry, document issued_at 2026-02-01
 
     with pytest.raises(ValueError):
         authority.build_authorization(
@@ -1041,10 +1176,10 @@ def test_a_closure_exactly_at_this_documents_issued_at_is_signed() -> None:
     assert authority.verify_authorization(document, key_manifest)
 
 
-def test_a_closure_shortened_below_the_predecessors_issued_at_is_refused() -> None:
-    """The predecessor's entry was still open at that document's own
-    `issued_at` (its window ran past it); shortening the closure to a moment
-    before it is the same back-dating, one step removed."""
+def test_a_live_term_window_shortened_below_the_predecessors_issued_at_is_refused() -> None:
+    """The predecessor's term window is still live relative to the successor's
+    `issued_at`; shortening it below the predecessor's `issued_at` is a
+    back-dated closure."""
     kp, _ = _ed_manifest(PUBLISHER, PUB_KID)
     previous = _previous(authorized_issuers=[_entry(valid_to="2026-12-01T00:00:00Z")])
 
