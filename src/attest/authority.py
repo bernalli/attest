@@ -163,14 +163,14 @@ def _valid_entry_shape(entry: object) -> bool:
     is non-empty, sorted and duplicate-free — the wire order pinned so two
     canonicalizations of one document stay byte-identical.
     """
-    if not isinstance(entry, dict) or set(entry) != _ENTRY_MEMBERS:
+    if not isinstance(entry, dict) or set(dict.keys(entry)) != _ENTRY_MEMBERS:
         return False
-    valid_to = entry["valid_to"]
-    permissions = entry["permissions"]
-    scope = entry["scope"]
+    valid_to = dict.get(entry, "valid_to")
+    permissions = dict.get(entry, "permissions")
+    scope = dict.get(entry, "scope")
     return (
-        grant._is_dns_name(entry["issuer_id"])
-        and transfer._valid_utc_timestamp(entry["valid_from"])
+        grant._is_dns_name(dict.get(entry, "issuer_id"))
+        and transfer._valid_utc_timestamp(dict.get(entry, "valid_from"))
         and (valid_to is None or transfer._valid_utc_timestamp(valid_to))
         and isinstance(permissions, list)
         and bool(permissions)
@@ -195,21 +195,23 @@ def _valid_authorization_shape(document: object) -> bool:
     UTF-16 implementation must sort by code point explicitly (the divergence
     attest-v0.2.md documents for §18.2's own sorted arrays).
     """
-    if not isinstance(document, dict) or set(document) != _AUTHORIZATION_MEMBERS:
+    if not isinstance(document, dict) or set(dict.keys(document)) != _AUTHORIZATION_MEMBERS:
         return False
-    if not is_authorization_version(document["authorization_version"]):
+    if not is_authorization_version(dict.get(document, "authorization_version")):
         return False
-    if not grant._is_dns_name(document["publisher"]):
+    if not grant._is_dns_name(dict.get(document, "publisher")):
         return False
-    entries = document["authorized_issuers"]
+    entries = dict.get(document, "authorized_issuers")
     if not isinstance(entries, list) or len(entries) > MAX_AUTHORIZED_ISSUERS:
         return False
     if not all(_valid_entry_shape(entry) for entry in entries):
         return False
-    if not grant._sorted_unique([entry["issuer_id"] for entry in entries], grant._is_dns_name):
+    if not grant._sorted_unique(
+        [dict.get(entry, "issuer_id") for entry in entries], grant._is_dns_name
+    ):
         return False
-    return transfer._valid_utc_timestamp(document["issued_at"]) and isinstance(
-        document["signature"], dict
+    return transfer._valid_utc_timestamp(dict.get(document, "issued_at")) and isinstance(
+        dict.get(document, "signature"), dict
     )
 
 
@@ -538,12 +540,12 @@ def _within_entry_window(issued_at: str, entry: dict[str, Any]) -> bool:
     """
     try:
         issued = transfer._parse_date(issued_at)
-        valid_from = transfer._parse_date(entry["valid_from"])
+        valid_from = transfer._parse_date(cast(str, dict.get(entry, "valid_from")))
     except (KeyError, TypeError, ValueError):
         return False
     if issued < valid_from:
         return False
-    valid_to = entry.get("valid_to")
+    valid_to = dict.get(entry, "valid_to")
     if valid_to is None:
         return True
     try:
@@ -588,14 +590,14 @@ def entry_authorizes_receipt(entry: object, payload: object) -> bool:
             return False
         entry = cast(dict[str, Any], entry)
         issuer = payload.get("issuer")
-        if not isinstance(issuer, dict) or issuer.get("id") != entry["issuer_id"]:
+        if not isinstance(issuer, dict) or issuer.get("id") != dict.get(entry, "issuer_id"):
             return False
         issued_at = payload.get("issued_at")
         if not isinstance(issued_at, str) or not _within_entry_window(issued_at, entry):
             return False
-        if PERMISSION_ISSUE not in entry["permissions"]:
+        if PERMISSION_ISSUE not in cast(list[Any], dict.get(entry, "permissions")):
             return False
-        scope = entry["scope"]
+        scope = dict.get(entry, "scope")
         if scope is None:
             return True
         return grant.grant_covers_receipt({"scope": scope}, payload)

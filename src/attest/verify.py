@@ -1788,11 +1788,11 @@ def evaluate_grant(
 
     # --- Step 4: the structural ceilings, then the evidence itself. The
     # ceilings run BEFORE any signature is verified, or they are not ceilings.
-    later_grants = grant_view.get("later_grants")
-    declarations = grant_view.get("declarations")
+    later_grants = cast("list[Any] | None", _own_member(grant_view, "later_grants"))
+    declarations = cast("list[Any] | None", _own_member(grant_view, "declarations"))
     if not grant_module.within_structural_ceilings(later_grants, declarations):
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED, tuple(warnings))
-    floor = grant_view.get("grant")
+    floor = _own_member(grant_view, "grant")
     if not isinstance(floor, dict):
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED, tuple(warnings))
 
@@ -1842,12 +1842,12 @@ def evaluate_grant(
                 _GRANT_INVALID_IGNORED, _GRANT_TRUST_SIGNER_MISMATCH, tuple(warnings)
             )
         return GrantVerdict(_GRANT_INVALID_IGNORED, grant_trust, tuple(warnings))
-    if floor.get("publisher") != publisher_id:
+    if not _member_equals(floor, "publisher", publisher_id):
         return GrantVerdict(_GRANT_INVALID_IGNORED, grant_trust, tuple(warnings))
 
     # --- Step 6: the receipt binding. One canonical form, never a second one.
-    floor_hash = grant_module.grant_hash(floor)
-    if floor_hash != pledge["grant_sha256"]:
+    floor_hash = _grant_hash_or_none(floor)
+    if floor_hash is None or floor_hash != pledge["grant_sha256"]:
         warnings.append(_WARN_GRANT_COMMITMENT_MISMATCH)
         return GrantVerdict(_GRANT_INVALID_IGNORED, grant_trust, tuple(warnings))
 
@@ -1873,12 +1873,12 @@ def evaluate_grant(
     # already open, so `grant_unanchored` is not emitted there — that is what
     # keeps the warning set from depending on which spare evidence a caller
     # happened to attach.
-    activation = effective.get("activation")
-    modes = activation.get("modes") if isinstance(activation, dict) else None
-    fixed_date = activation.get("fixed_date") if isinstance(activation, dict) else None
+    activation = dict.get(effective, "activation")
+    modes = dict.get(activation, "modes") if isinstance(activation, dict) else None
+    fixed_date = dict.get(activation, "fixed_date") if isinstance(activation, dict) else None
     if isinstance(modes, list) and grant_module.MODE_FIXED_DATE in modes and fixed_date is not None:
         if isinstance(fixed_date, str) and _fixed_date_reached(
-            grant_view.get("anchor"), effective, fixed_date, anchor_policy
+            _own_member(grant_view, "anchor"), effective, fixed_date, anchor_policy
         ):
             return GrantVerdict(_GRANT_ACTIVATED, grant_trust, tuple(warnings))
         warnings.append(_WARN_GRANT_UNANCHORED)
@@ -1929,9 +1929,12 @@ def _resolve_effective_grant(
     for later in later_grants if isinstance(later_grants, list) else []:
         if not isinstance(later, dict) or not grant_module.verify_grant(later, manifest):
             continue
-        if later.get("publisher") != floor.get("publisher"):
+        if not _member_equals(later, "publisher", _own_member(floor, "publisher")):
             continue
-        candidates.setdefault(grant_module.grant_hash(later), later)
+        later_hash = _grant_hash_or_none(later)
+        if later_hash is None:
+            continue
+        candidates.setdefault(later_hash, later)
 
     by_version: dict[int, int] = {}
     for document in candidates.values():
@@ -2044,11 +2047,45 @@ def _own_member(document: object, member: str) -> object:
     return dict.get(document, member) if isinstance(document, dict) else None
 
 
+def _member_equals(document: object, member: str, expected: object) -> bool:
+    """`_own_member` plus the comparison, fail-closed.
+
+    An own-item read defeats an overridden `get`, but it hands back whatever
+    the member holds — and a `str` subclass that refuses to be compared
+    canonicalizes, signs and authenticates exactly like the string it shadows,
+    so it survives to the binding checks that run AFTER authentication. This
+    is the `__eq__` trigger `authority.entry_for_issuer` names as the reason
+    an own-item read still needs an enclosing guard. A value that will not
+    compare is not equal to anything: every binding this decides fails closed.
+    """
+    try:
+        return isinstance(document, dict) and bool(dict.get(document, member) == expected)
+    except Exception:
+        return False
+
+
 def _authorization_hash_or_none(candidate: object, warnings: list[str]) -> str | None:
     try:
         return authority_module.authorization_hash(cast(dict[str, Any], candidate))
     except Exception:
         _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
+        return None
+
+
+def _grant_hash_or_none(candidate: object) -> str | None:
+    """`grant_hash` behind the same fail-closed boundary
+    `_authorization_hash_or_none` puts around `authorization_hash`.
+
+    Canonicalization walks a mapping with `__iter__` and `__getitem__`, both of
+    which caller-supplied content can override, so hashing a document that
+    arrived on an evidence rail is one of the few places §18.4's never-raise
+    promise can still be broken after every member read has been made an
+    own-item read. The builder-side helpers stay loud on purpose; the boundary
+    belongs at the verifier's call site, exactly as §20.4's does.
+    """
+    try:
+        return grant_module.grant_hash(cast(dict[str, Any], candidate))
+    except Exception:
         return None
 
 
@@ -2078,7 +2115,9 @@ def _admitted_authorizations(
         ):
             _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
             continue
-        if manifest.get("issuer") != signer or document.get("publisher") != publisher_id:
+        if not _member_equals(manifest, "issuer", signer) or not _member_equals(
+            document, "publisher", publisher_id
+        ):
             _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
             continue
         if signer != publisher_id:
@@ -2149,7 +2188,7 @@ def _effective_authorization(
 ) -> tuple[dict[str, Any] | None, str]:
     by_version: dict[int, int] = {}
     for document in admitted.values():
-        version = int(document["authorization_version"])
+        version = int(cast(int, dict.get(document, "authorization_version")))
         by_version[version] = by_version.get(version, 0) + 1
 
     equivocating = {version for version, count in by_version.items() if count > 1}
@@ -2159,15 +2198,15 @@ def _effective_authorization(
     survivors = {
         document_hash: document
         for document_hash, document in admitted.items()
-        if int(document["authorization_version"]) not in equivocating
+        if int(cast(int, dict.get(document, "authorization_version"))) not in equivocating
     }
     excluded: set[str] = set()
     for predecessor_hash, predecessor in survivors.items():
-        predecessor_version = int(predecessor["authorization_version"])
+        predecessor_version = int(cast(int, dict.get(predecessor, "authorization_version")))
         for successor_hash, successor in survivors.items():
             if predecessor_hash == successor_hash:
                 continue
-            if predecessor_version >= int(successor["authorization_version"]):
+            if predecessor_version >= int(cast(int, dict.get(successor, "authorization_version"))):
                 continue
             if _breaks_successor_discipline(predecessor, successor):
                 excluded.add(successor_hash)
@@ -2181,7 +2220,10 @@ def _effective_authorization(
     if not effective_candidates:
         return None, authority_trust
     return (
-        max(effective_candidates, key=lambda document: int(document["authorization_version"])),
+        max(
+            effective_candidates,
+            key=lambda document: int(cast(int, dict.get(document, "authorization_version"))),
+        ),
         authority_trust,
     )
 
@@ -2250,9 +2292,8 @@ def evaluate_publisher_authority(
 
     # --- Step 10.
     assertion = _own_member(authority_view, "current_authorization_version")
-    if (
-        authority_module.is_authorization_version(assertion)
-        and assertion == effective["authorization_version"]
+    if authority_module.is_authorization_version(assertion) and assertion == dict.get(
+        effective, "authorization_version"
     ):
         warnings.append(_WARN_PUBLISHER_NOT_AUTHORIZING_ISSUER)
         return AuthorityVerdict(_AUTHORITY_UNAUTHORIZED, authority_trust, tuple(warnings))

@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from attest import canon, keys, manifests, pq, tlog, transfer
 
@@ -154,12 +154,12 @@ def _scope_or_none(scope: object) -> dict[str, Any] | None:
     every caller index it afterwards without a second, weaker check standing
     in for the first one.
     """
-    if not isinstance(scope, dict) or set(scope) != _SCOPE_MEMBERS:
+    if not isinstance(scope, dict) or set(dict.keys(scope)) != _SCOPE_MEMBERS:
         return None
-    series = scope["artifact_series"]
+    series = dict.get(scope, "artifact_series")
     if series is not None and not _is_non_empty_str(series):
         return None
-    artifacts = scope["artifacts"]
+    artifacts = dict.get(scope, "artifacts")
     if not _sorted_unique(artifacts, _is_hex64):
         return None
     if series is None and not artifacts:
@@ -177,18 +177,18 @@ def _activation_or_none(activation: object) -> dict[str, Any] | None:
     nothing to activation, exactly as the reserved `heartbeat-absence` does,
     and rejecting the document over it would make a later registration
     retroactively invalidate grants that predate it."""
-    if not isinstance(activation, dict) or set(activation) != _ACTIVATION_MEMBERS:
+    if not isinstance(activation, dict) or set(dict.keys(activation)) != _ACTIVATION_MEMBERS:
         return None
-    modes = activation["modes"]
+    modes = dict.get(activation, "modes")
     if not modes or not _sorted_unique(modes, _is_non_empty_str):
         return None
-    fixed_date = activation["fixed_date"]
+    fixed_date = dict.get(activation, "fixed_date")
     if fixed_date is not None:
         if not transfer._valid_utc_timestamp(fixed_date):
             return None
         if MODE_FIXED_DATE not in modes:
             return None
-    if not _sorted_unique(activation["successor_ids"], _is_dns_name):
+    if not _sorted_unique(dict.get(activation, "successor_ids"), _is_dns_name):
         return None
     return activation
 
@@ -199,45 +199,45 @@ def _valid_grant_shape(document: object) -> bool:
     `activation.modes` values are (see `_activation_or_none`), but the array
     MUST contain `deliver-to-holder`: a grant that does not deliver to the
     holder is not a sunset grant."""
-    if not isinstance(document, dict) or set(document) != _GRANT_MEMBERS:
+    if not isinstance(document, dict) or set(dict.keys(document)) != _GRANT_MEMBERS:
         return False
-    version = document["grant_version"]
+    version = dict.get(document, "grant_version")
     if (
         not isinstance(version, int)
         or isinstance(version, bool)
         or not 1 <= version <= _MAX_JCS_INTEGER
     ):
         return False
-    permissions = document["permissions"]
+    permissions = dict.get(document, "permissions")
     return (
-        _is_dns_name(document["publisher"])
-        and _scope_or_none(document["scope"]) is not None
+        _is_dns_name(dict.get(document, "publisher"))
+        and _scope_or_none(dict.get(document, "scope")) is not None
         and _sorted_unique(permissions, _is_non_empty_str)
-        and PERMISSION_DELIVER_TO_HOLDER in permissions
-        and _activation_or_none(document["activation"]) is not None
-        and isinstance(document["unprotected_build"], bool)
+        and PERMISSION_DELIVER_TO_HOLDER in cast(list[Any], permissions)
+        and _activation_or_none(dict.get(document, "activation")) is not None
+        and isinstance(dict.get(document, "unprotected_build"), bool)
         # §18.2 types this "string, non-empty", and the emptiness is the
         # load-bearing half rather than tidiness: the prose is the only thing
         # that says what the permission MEANS as an undertaking, so a grant
         # pointing at nowhere would authenticate a promise with no content and
         # could go on to reach `activated`.
-        and _is_non_empty_str(document["legal_text_uri"])
-        and _is_hex64(document["legal_text_sha256"])
-        and _is_non_empty_str(document["jurisdiction"])
-        and transfer._valid_utc_timestamp(document["issued_at"])
-        and isinstance(document["signature"], dict)
+        and _is_non_empty_str(dict.get(document, "legal_text_uri"))
+        and _is_hex64(dict.get(document, "legal_text_sha256"))
+        and _is_non_empty_str(dict.get(document, "jurisdiction"))
+        and transfer._valid_utc_timestamp(dict.get(document, "issued_at"))
+        and isinstance(dict.get(document, "signature"), dict)
     )
 
 
 def _valid_declaration_shape(declaration: object) -> bool:
     """The closed four-member shape of §18.4."""
-    if not isinstance(declaration, dict) or set(declaration) != _DECLARATION_MEMBERS:
+    if not isinstance(declaration, dict) or set(dict.keys(declaration)) != _DECLARATION_MEMBERS:
         return False
     return (
-        _is_dns_name(declaration["publisher"])
-        and _scope_or_none(declaration["scope"]) is not None
-        and transfer._valid_utc_timestamp(declaration["declared_at"])
-        and isinstance(declaration["signature"], dict)
+        _is_dns_name(dict.get(declaration, "publisher"))
+        and _scope_or_none(dict.get(declaration, "scope")) is not None
+        and transfer._valid_utc_timestamp(dict.get(declaration, "declared_at"))
+        and isinstance(dict.get(declaration, "signature"), dict)
     )
 
 
@@ -352,17 +352,17 @@ def _verify_signed_document(
     `[valid_from, valid_to]` window must cover the document's OWN signed time
     (never the verifier's clock), and the signature must verify over
     `JCS(document)` with `signature` removed, under the §13 AND-rule."""
-    sig_block = document["signature"]
-    entry = manifests.find_key(key_manifest, sig_block.get("kid", ""))
-    if entry is None or entry.get("status") != _ACTIVE:
+    sig_block = cast(dict[str, Any], dict.get(document, "signature"))
+    entry = manifests.find_key(key_manifest, dict.get(sig_block, "kid", ""))
+    if entry is None or dict.get(entry, "status") != _ACTIVE:
         return False
-    signed_at = transfer._parse_date(document[timestamp_member])
-    if signed_at < transfer._parse_date(entry["valid_from"]):
+    signed_at = transfer._parse_date(cast(str, dict.get(document, timestamp_member)))
+    if signed_at < transfer._parse_date(cast(str, dict.get(entry, "valid_from"))):
         return False
-    valid_to = entry.get("valid_to")
+    valid_to = dict.get(entry, "valid_to")
     if valid_to is not None and signed_at > transfer._parse_date(valid_to):
         return False
-    body = {key: value for key, value in document.items() if key != "signature"}
+    body = {key: value for key, value in dict.items(document) if key != "signature"}
     return manifests.verify_signature_block(canon.canonical_bytes(body), sig_block, entry)
 
 
@@ -393,7 +393,7 @@ def verify_grant_signature(document: dict[str, Any], key_manifest: dict[str, Any
         if not _valid_grant_shape(document):
             return False
         return _verify_signed_document(document, key_manifest, "issued_at")
-    except (AttributeError, KeyError, TypeError, ValueError, canon.CanonError):
+    except Exception:  # see the never-raise note on `signer_domain`
         return False
 
 
@@ -412,7 +412,7 @@ def verify_grant(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool
         return manifests.verify_key_manifest(key_manifest) and verify_grant_signature(
             document, key_manifest
         )
-    except (AttributeError, KeyError, TypeError, ValueError, canon.CanonError):
+    except Exception:  # see the never-raise note on `signer_domain`
         return False
 
 
@@ -429,7 +429,7 @@ def verify_declaration_signature(declaration: dict[str, Any], key_manifest: dict
         if not _valid_declaration_shape(declaration):
             return False
         return _verify_signed_document(declaration, key_manifest, "declared_at")
-    except (AttributeError, KeyError, TypeError, ValueError, canon.CanonError):
+    except Exception:  # see the never-raise note on `signer_domain`
         return False
 
 
@@ -440,7 +440,7 @@ def verify_declaration(declaration: dict[str, Any], key_manifest: dict[str, Any]
         return manifests.verify_key_manifest(key_manifest) and verify_declaration_signature(
             declaration, key_manifest
         )
-    except (AttributeError, KeyError, TypeError, ValueError, canon.CanonError):
+    except Exception:  # see the never-raise note on `signer_domain`
         return False
 
 
@@ -458,16 +458,27 @@ def signer_domain(document: object) -> str | None:
     distinguishable, which is what lets a caller report `signer_mismatch`
     separately from a plain authentication failure.
     """
-    if not isinstance(document, dict):
+    # Own-item reads (`dict.get(d, k)`), never `d.get(k)`: this resolves a
+    # signer from a document supplied on a caller's evidence rail BEFORE
+    # anything has authenticated it, so an overridden `get` must not be able
+    # to lie about the signer nor to raise out of a resolution both §18.4 and
+    # §20.4 perform on untrusted bytes. The enclosing guard covers the
+    # triggers an own-item read does not reach (`__getitem__`, `__iter__`,
+    # `__eq__`) — the two-part form `authority.entry_for_issuer` documents,
+    # and the form every never-raise surface in this module now uses.
+    try:
+        if not isinstance(document, dict):
+            return None
+        sig_block = dict.get(document, "signature")
+        if not isinstance(sig_block, dict):
+            return None
+        kid = dict.get(sig_block, "kid")
+        if not isinstance(kid, str):
+            return None
+        domain = kid.split("/", 1)[0]
+        return domain if _is_dns_name(domain) else None
+    except Exception:
         return None
-    sig_block = document.get("signature")
-    if not isinstance(sig_block, dict):
-        return None
-    kid = sig_block.get("kid")
-    if not isinstance(kid, str):
-        return None
-    domain = kid.split("/", 1)[0]
-    return domain if _is_dns_name(domain) else None
 
 
 def declaration_signer_role(declaration: object, document: object) -> str | None:
@@ -488,15 +499,17 @@ def declaration_signer_role(declaration: object, document: object) -> str | None
         domain = signer_domain(declaration)
         if domain is None or not isinstance(document, dict):
             return None
-        publisher = document.get("publisher")
+        publisher = dict.get(document, "publisher")
         if _is_dns_name(publisher) and domain == publisher:
             return SIGNER_ROLE_PUBLISHER
-        activation = document.get("activation")
-        successor_ids = activation.get("successor_ids") if isinstance(activation, dict) else None
+        activation = dict.get(document, "activation")
+        successor_ids = (
+            dict.get(activation, "successor_ids") if isinstance(activation, dict) else None
+        )
         if isinstance(successor_ids, list) and any(domain == entry for entry in successor_ids):
             return SIGNER_ROLE_SUCCESSOR
         return None
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except Exception:  # see the never-raise note on `signer_domain`
         return None
 
 
@@ -523,17 +536,17 @@ def declaration_covers_grant(declaration: object, document: object) -> bool:
     try:
         if not isinstance(declaration, dict) or not isinstance(document, dict):
             return False
-        declaration_scope = _scope_or_none(declaration.get("scope"))
-        grant_scope = _scope_or_none(document.get("scope"))
+        declaration_scope = _scope_or_none(dict.get(declaration, "scope"))
+        grant_scope = _scope_or_none(dict.get(document, "scope"))
         if declaration_scope is None or grant_scope is None:
             return False
-        publisher = declaration.get("publisher")
-        if not _is_dns_name(publisher) or publisher != document.get("publisher"):
+        publisher = dict.get(declaration, "publisher")
+        if not _is_dns_name(publisher) or publisher != dict.get(document, "publisher"):
             return False
         if declaration_scope["artifact_series"] != grant_scope["artifact_series"]:
             return False
         return set(grant_scope["artifacts"]) <= set(declaration_scope["artifacts"])
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except Exception:  # see the never-raise note on `signer_domain`
         return False
 
 
@@ -569,7 +582,7 @@ def grant_covers_receipt(document: object, payload: object) -> bool:
     try:
         if not isinstance(document, dict) or not isinstance(payload, dict):
             return False
-        scope = _scope_or_none(document.get("scope"))
+        scope = _scope_or_none(dict.get(document, "scope"))
         if scope is None:
             return False
         work = payload.get("work")
@@ -591,7 +604,7 @@ def grant_covers_receipt(document: object, payload: object) -> bool:
             if not _is_hex64(digest) or digest not in granted:
                 return False
         return True
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except Exception:  # see the never-raise note on `signer_domain`
         return False
 
 
@@ -664,18 +677,24 @@ def is_non_narrowing(floor: object, later: object) -> bool:
     try:
         if not isinstance(floor, dict) or not isinstance(later, dict):
             return False
-        floor_publisher, later_publisher = floor.get("publisher"), later.get("publisher")
+        floor_publisher, later_publisher = (
+            dict.get(floor, "publisher"),
+            dict.get(later, "publisher"),
+        )
         if not _is_dns_name(floor_publisher) or floor_publisher != later_publisher:
             return False
-        floor_scope = _scope_or_none(floor.get("scope"))
-        later_scope = _scope_or_none(later.get("scope"))
+        floor_scope = _scope_or_none(dict.get(floor, "scope"))
+        later_scope = _scope_or_none(dict.get(later, "scope"))
         if floor_scope is None or later_scope is None:
             return False
-        floor_activation = _activation_or_none(floor.get("activation"))
-        later_activation = _activation_or_none(later.get("activation"))
+        floor_activation = _activation_or_none(dict.get(floor, "activation"))
+        later_activation = _activation_or_none(dict.get(later, "activation"))
         if floor_activation is None or later_activation is None:
             return False
-        floor_permissions, later_permissions = floor.get("permissions"), later.get("permissions")
+        floor_permissions, later_permissions = (
+            dict.get(floor, "permissions"),
+            dict.get(later, "permissions"),
+        )
         if not isinstance(floor_permissions, list) or not isinstance(later_permissions, list):
             return False
         if not _sorted_unique(floor_permissions, _is_non_empty_str) or not _sorted_unique(
@@ -685,8 +704,8 @@ def is_non_narrowing(floor: object, later: object) -> bool:
         if not set(floor_permissions) <= set(later_permissions):
             return False
 
-        floor_unprotected = floor.get("unprotected_build")
-        later_unprotected = later.get("unprotected_build")
+        floor_unprotected = dict.get(floor, "unprotected_build")
+        later_unprotected = dict.get(later, "unprotected_build")
         if not isinstance(floor_unprotected, bool) or not isinstance(later_unprotected, bool):
             return False
         if floor_unprotected and not later_unprotected:
@@ -701,7 +720,7 @@ def is_non_narrowing(floor: object, later: object) -> bool:
             )
             and set(floor_activation["successor_ids"]) <= set(later_activation["successor_ids"])
         )
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except Exception:  # see the never-raise note on `signer_domain`
         return False
 
 
@@ -726,7 +745,7 @@ def prose_differs(floor: object, later: object) -> bool:
     if not isinstance(floor, dict) or not isinstance(later, dict):
         return False
     return any(
-        floor.get(member) != later.get(member)
+        dict.get(floor, member) != dict.get(later, member)
         for member in ("legal_text_uri", "legal_text_sha256", "jurisdiction")
     )
 
@@ -840,5 +859,5 @@ def verify_redemption(
     try:
         message = redemption_message(receipt_id, audience, nonce)
         return keys.verify_strict(message, sig, keys.b64u_decode(holder_pubkey_b64u))
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except Exception:  # see the never-raise note on `signer_domain`
         return False
