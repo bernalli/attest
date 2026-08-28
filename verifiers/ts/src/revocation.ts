@@ -1,6 +1,10 @@
 import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
-import { JsonObject, JsonValue, canonicalBytes, dumps, loadsStrict, CanonError } from './canon.js'
+import {
+  JsonObject, JsonValue, canonicalBytes, dumps, loadsStrict, CanonError,
+  materializeArray, materializeValue, ownArrayLength, ownViewMember,
+  MAX_ADMISSION_NODES, VIEW_ARRAY_ELEMENT_NESTING, VIEW_MEMBER_ABSENT, VIEW_MEMBER_COLLAPSED,
+} from './canon.js'
 import { verifyKeyManifest, findKey, verifySignatureBlock } from './manifests.js'
 import { parseStrictUtc, parseIsoLenient, validStage3UtcTimestamp } from './dates.js'
 import { LogKey, encodeEntry, TlogError } from './tlog.js'
@@ -10,6 +14,7 @@ import {
   verifyRecordSignature as verifyTransferRecordSignature,
   verifyAuthorization as verifyTransferAuthorization,
   recordLoggedStanding as transferRecordLoggedStanding,
+  MAX_TRANSFER_CLAIMS,
 } from './transfer.js'
 import {
   revocationFailedVerify, outsideRefundWindow, revocationViewOversize, revocationViewOversizeRevocable,
@@ -173,12 +178,6 @@ function revocationDeadlineSatisfied(
 // `_REVOCATION_TRANSFERRED`.
 const REVOCATION_TRANSFERRED = 'transferred'
 
-// Same literal VALUE as MAX_REVOCATION_EVIDENCE_LEN above (verify.py's
-// `_MAX_TRANSPARENCY_EVIDENCE_LEN`) — bounds the WHOLE untrusted
-// `transferView` claim list (records + evidence together) before it is ever
-// materialized, mirroring `_resolve_transfer_backing`'s own bound.
-const MAX_TRANSFER_VIEW_LEN = 10_000_000
-
 /** v0.2 §17.2-§17.4 (Stage 3): the winning, BACKED transfer record for
  * `payload`'s own `receipt_id` among `transferView`'s untrusted claims
  * (`{record: <transfer record>, evidence: <§10.2 evidence bundle>}`), or
@@ -218,12 +217,23 @@ function resolveTransferBacking(
   issuerId: string | null, logKeys: LogKey[] | null, anchorPolicy: AnchorPolicy | null,
   warnings: string[],
 ): JsonObject | null {
-  let materialized: JsonValue
+  // Admitted PER CLAIM, not as one indivisible view: a claim that cannot be
+  // represented is set aside ALONE, and a genuine claim with full backing still
+  // reaches its verdict beside it. Admitting the view as a whole would let one
+  // malformed sibling delete a real transfer -- a FALSE VALID, since the receipt
+  // would read as never transferred. Python parity:
+  // verify._resolve_transfer_backing.
+  //
+  // Admitting per claim gives up the aggregate byte cap the whole-view
+  // materialization relied on, so the COUNT ceiling replaces it. Over the
+  // ceiling is not "one bad claim": it truncates evaluation, and a truncated
+  // transfer view cannot be told apart from a view with no transfer in it, so
+  // it fails closed by resolving no backing at all.
+  let materialized: (JsonValue | null)[]
   try {
-    const serialized = dumps(transferView)
-    if (codePointLength(serialized) > MAX_TRANSFER_VIEW_LEN) return null
-    materialized = loadsStrict(new TextEncoder().encode(serialized))
-    if (!Array.isArray(materialized)) return null
+    const admitted = materializeArray(transferView, MAX_TRANSFER_CLAIMS)
+    if (admitted === null || admitted.length > MAX_TRANSFER_CLAIMS) return null
+    materialized = admitted
   } catch {
     // Adversarial-boundary confinement (never rethrow), mirroring
     // revocationDeadlineSatisfied: a hostile transferView list/object's own
@@ -294,7 +304,15 @@ export function classifyRevocation(
   logKeys: LogKey[] | null = null, anchorPolicy: AnchorPolicy | null = null,
   revocationEvidence: JsonValue | null = null, transferView: JsonValue[] | null = null,
 ): string {
-  if (!view || view.length === 0) return 'unknown'
+  if (!view) return 'unknown'
+
+  // The element COUNT comes from the array's own length data, never from
+  // iterating: a lazy or unbounded container would otherwise run forever before
+  // any ceiling could fire, and no catch is ever reached by a value that does
+  // not return.
+  const suppliedCount = ownArrayLength(view)
+  if (suppliedCount === null) return 'unknown'
+  if (suppliedCount === 0) return 'unknown'
 
   const license = asObject(payload['license'])
   const revocability = license ? license['revocability'] : undefined
@@ -304,25 +322,77 @@ export function classifyRevocation(
   // evaluate cannot rule out a revocation, and "unknown"+ok would let an
   // append-only feed-poisoning attacker suppress a genuine revocation by
   // padding past the cap. Irrevocable ("none") receipts: non-fatal warning.
-  if (view.length > maxRecords) {
+  if (suppliedCount > maxRecords) {
     if (revocability === 'policy' || revocability === 'refund_window') {
-      errors.push(revocationViewOversizeRevocable(view.length, maxRecords))
+      errors.push(revocationViewOversizeRevocable(suppliedCount, maxRecords))
     } else {
-      warnings.push(revocationViewOversize(view.length, maxRecords))
+      warnings.push(revocationViewOversize(suppliedCount, maxRecords))
     }
     return 'unknown'
   }
 
+  // §18.4: the caller's view is ADMITTED ONCE, per record, before anything
+  // reads it -- and from here on ONLY the reconstruction is read. Two
+  // properties depend on that being the first thing this function does, and
+  // both are the reason the Python twin does it too:
+  //
+  //   * the three passes below correlate authentication with matching BY INDEX,
+  //     which assumes every pass sees the SAME objects. A Proxy whose `get`
+  //     trap answers with fresh objects satisfies every shape check and
+  //     desynchronizes them, so a genuinely signed, matching record can be
+  //     reported not_revoked. Reconstructed records are plain and stable, which
+  //     closes it by construction rather than by a defensive read.
+  //   * the bytes a signature is verified over and the values consumed
+  //     afterwards must come from ONE reconstruction. Reading the live object a
+  //     second time is what lets a caller authenticate one value and be judged
+  //     on another, with the issuer's genuine signature.
+  //
+  // A record that cannot be represented lands as `null` and is set aside ALONE;
+  // its admissibility decides no sibling's.
+  const admittedView: (JsonValue | null)[] = materializeArray(view, maxRecords) ?? []
+
+  const receiptIdForDiagnostics = payload['receipt_id']
+  // A record that was NOT ADMITTED still has to be VISIBLE if it claims to be
+  // about this receipt: §12.2 makes an unauthenticated matching record an
+  // ignore WITH A WARNING, which is what stops a forged record from silently
+  // disappearing, and an inadmissible record is less than unauthenticated. The
+  // claim is read the only way the boundary allows -- the diagnostic member
+  // alone, through the same own-data primitives, never the value that made the
+  // record inadmissible -- and it decides NOTHING but the warning. It carries
+  // its own budget so a record already set aside cannot buy unbounded work.
+  const diagnosticBudget = { left: MAX_ADMISSION_NODES }
+  for (let i = 0; i < admittedView.length; i++) {
+    if (admittedView[i] !== null) continue
+    let original: PropertyDescriptor | undefined
+    try {
+      original = Object.getOwnPropertyDescriptor(view, String(i))
+    } catch {
+      // Same rule as the diagnostic read below: a record already set aside must
+      // not be able to throw out of the pass that only decides its warning.
+      continue
+    }
+    if (original === undefined || !('value' in original)) continue
+    const candidate: unknown = original.value
+    if (candidate === null || typeof candidate !== 'object') continue
+    const claimed = ownViewMember(candidate as object, 'receipt_id', diagnosticBudget)
+    if (claimed === VIEW_MEMBER_ABSENT || claimed === VIEW_MEMBER_COLLAPSED) continue
+    if (typeof claimed !== 'string') continue
+    const admittedClaim = materializeValue(claimed, VIEW_ARRAY_ELEMENT_NESTING)
+    if (admittedClaim === receiptIdForDiagnostics) {
+      warnings.push(revocationFailedVerify(receiptIdForDiagnostics))
+    }
+  }
+
   // One manifest self-verify per classification, not per record (improvement #17).
   const manifestOk = verifyKeyManifest(issuerManifest)
-  const auth: boolean[] = view.map((r) => { const o = asObject(r); return manifestOk && o !== null && verifyRecordSignature(o, issuerManifest) })
+  const auth: boolean[] = admittedView.map((r) => { const o = asObject(r); return manifestOk && o !== null && verifyRecordSignature(o, issuerManifest) })
 
   // freshness anchor T = max revoked_at over AUTHENTICATED STATEMENT-STATUS
   // records (status revoked/transferred, v0.1 §12.3 2026-08-26 amendment) of
   // ANY receipt_id. §12 already rules any other status is not a revocation
   // statement, so it must not speak for the feed's freshness either.
   let anchorMs = -Infinity, anchorRaw: string | null = null
-  view.forEach((r, i) => {
+  admittedView.forEach((r, i) => {
     if (!auth[i]) return
     const o = asObject(r)!
     const status = o['status']
@@ -339,7 +409,7 @@ export function classifyRevocation(
   // §17.3) is collected separately — it is not a "revoked"-status
   // statement, so it plays no part in the "revoked"-status dispatch below.
   const transferredMatches: JsonObject[] = []
-  view.forEach((r, i) => {
+  admittedView.forEach((r, i) => {
     const o = asObject(r)
     if (!o || o['receipt_id'] !== receiptId) return
     if (!auth[i]) { warnings.push(revocationFailedVerify(receiptId)); return }

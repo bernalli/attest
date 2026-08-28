@@ -28,9 +28,12 @@
 import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
 import type { JsonObject, JsonValue } from './canon.js'
-import { canonicalBytes, dumps, CanonError } from './canon.js'
+import { canonicalBytes, dumps, CanonError, MAX_ADMISSION_BYTES, materializeArray } from './canon.js'
 import { verifyKeyManifest, findKey, verifySignatureBlock } from './manifests.js'
-import { verifyRecordSignature as verifyRevocationRecordSignature } from './revocation.js'
+import {
+  verifyRecordSignature as verifyRevocationRecordSignature,
+  MAX_REVOCATION_RECORDS,
+} from './revocation.js'
 import { parseStrictUtc, parseIsoLenient, validStage3UtcTimestamp } from './dates.js'
 import { b64uDecode, b64uEncode } from './b64u.js'
 import { verifyStrict } from './ed25519.js'
@@ -67,11 +70,19 @@ const TRANSFER_RECORD_MEMBERS = new Set([
 // is a malformed shape, checked before any cryptographic work.
 const HOLDER_AUTH_SIG_B64U_LEN = 86
 
-// Same literal VALUE as verify.ts's MAX_TRANSPARENCY_EVIDENCE_LEN_ (mirrors
-// verify.py's _MAX_TRANSFER_EVIDENCE_LEN docstring: this module cannot
-// import verify.ts without an import cycle). Bounds the untrusted evidence
-// bundle's canonicalized size before it is ever parsed.
-const MAX_TRANSFER_EVIDENCE_LEN = 10_000_000
+// Bounds the untrusted evidence bundle's canonicalized size before it is ever
+// parsed. Bound to the leaf module's own ceiling rather than restated: this
+// module cannot import verify.ts without an import cycle, and a size ceiling
+// written in three places is a ceiling that will drift. Python parity:
+// transfer.py's _MAX_TRANSFER_EVIDENCE_LEN.
+const MAX_TRANSFER_EVIDENCE_LEN = MAX_ADMISSION_BYTES
+
+// A transfer view is a list of claims, and admitting it PER CLAIM needs a count
+// bound of its own -- the whole-view byte cap it used to rely on is gone with
+// the whole-view materialization. Exported because the module that ADMITS the
+// rail (revocation.ts) is not the module that owns it, and the two must not be
+// able to drift apart on the number. Python parity: transfer.MAX_TRANSFER_CLAIMS.
+export const MAX_TRANSFER_CLAIMS = 64
 
 // Same literal VALUE as transparency.ts renders dynamically for
 // "anchored_before:<T>" standing (never a fixed enum member there).
@@ -425,6 +436,24 @@ function asObject(v: JsonValue | undefined): JsonObject | null {
  * A link is "valid" iff every applicable check above passed; `valid` is
  * true iff every link is.
  */
+/**
+ * Admit one caller-supplied array rail PER ELEMENT (§18.4), never raising.
+ *
+ * §18.4 leaves the declared CONTAINER shape to the rail, and both rails this
+ * audit surface takes are arrays: a value that is not one carries no claim and
+ * no record, so the audit degrades to "nothing here" rather than answering a
+ * malformed view with an exception. Over the ceiling is not "one bad element":
+ * it truncates evaluation, and a truncated view cannot be told apart from an
+ * empty one, so both rails fail CLOSED in the same direction -- with no claim a
+ * link has no transfer record, with no record the predecessor has no backed
+ * extinguishment. Neither silence can make a link VALID.
+ */
+function admitCallerRail(view: unknown, ceiling: number): (JsonValue | null)[] {
+  const admitted = materializeArray(view, ceiling)
+  if (admitted === null || admitted.length > ceiling) return []
+  return admitted
+}
+
 export function auditChain(
   payloads: JsonObject[],
   transferView: JsonValue[],
@@ -444,6 +473,21 @@ export function auditChain(
     }
   }
 
+  // §18.4: this is a SECOND public entry point for the same two caller rails
+  // verify() admits, so it admits them the same way and at the same moment --
+  // once, per unit, before anything reads them -- and from here on ONLY the
+  // reconstruction is read. Without it the successor id a signature COVERS and
+  // the successor id a link is MATCHED against could differ, and a chain of
+  // title nobody consented to would be reported valid. Python parity:
+  // transfer._admit_caller_rail.
+  //
+  // AFTER the manifest self-verify, never before: that check is cheap and
+  // refuses everything the manifest would sign, while admitting the rails
+  // canonicalizes and re-parses up to 64 claims and 10000 records. Nothing
+  // between the two reads a view, so the order is free.
+  const admittedTransferView = admitCallerRail(transferView, MAX_TRANSFER_CLAIMS)
+  const admittedRevocationView = admitCallerRail(revocationView, MAX_REVOCATION_RECORDS)
+
   const manifestIssuer = keyManifest['issuer']
   const issuerIdForLog = typeof manifestIssuer === 'string' ? manifestIssuer : ''
 
@@ -461,7 +505,7 @@ export function auditChain(
     let linkOk = true
 
     let selectedClaim: JsonObject | null = null
-    for (const claim of transferView) {
+    for (const claim of admittedTransferView) {
       const c = asObject(claim)
       if (!c) continue
       const candidateRecord = asObject(c['record'])
@@ -511,7 +555,7 @@ export function auditChain(
 
       if (sigOk && authOk && leafIndex !== null && floorOk) {
         const establishedLeafIndices = [leafIndex]
-        for (const claim of transferView) {
+        for (const claim of admittedTransferView) {
           const c = asObject(claim)
           if (!c) continue
           const candidate = asObject(c['record'])
@@ -537,7 +581,7 @@ export function auditChain(
     }
 
     let backed = false
-    for (const revRecord of revocationView) {
+    for (const revRecord of admittedRevocationView) {
       const r = asObject(revRecord)
       if (
         r &&

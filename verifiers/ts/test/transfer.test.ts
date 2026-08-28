@@ -641,3 +641,138 @@ describe('auditChain', () => {
     expect(res.errors).toEqual(['chain link 1: issuer signature invalid', 'chain link 2: issuer signature invalid'])
   })
 })
+
+// --- auditChain: §18.4 admission of the caller's rails -----------------------
+//
+// auditChain is a SECOND public entry point for the two untrusted rails
+// verify() admits, so the same boundary applies. Every case pins a PROPERTY and
+// asserts the call RETURNS a ChainAuditResult. Python parity:
+// tests/test_transfer.py's own admission block.
+
+describe('auditChain admission boundary', () => {
+  function backedLink(): {
+    hk: HybridTestKeys
+    p0: JsonObject
+    p1: JsonObject
+    view: JsonValue[]
+    revView: JsonValue[]
+  } {
+    const hk = generateHybridLogKeys()
+    const p0 = chainPayload(OLD_ID, holderPub)
+    const p1 = chainPayload(NEW_ID, newHolderPub)
+    const record = chainTransferRecord(OLD_ID, NEW_ID, newHolderPub, holderSeed)
+    const bundle = chainLogBundle([record], hk)[0]!
+    return {
+      hk, p0, p1,
+      view: [parse({ record, evidence: bundle })],
+      revView: [chainTransferredRevocation(OLD_ID)],
+    }
+  }
+
+  const audit = (
+    payloads: JsonObject[], view: unknown, revView: unknown, hk: HybridTestKeys,
+  ) => auditChain(
+    payloads, view as JsonValue[], revView as JsonValue[],
+    keyManifest(), [transferLogKey(hk)], noHorizonPolicy(),
+  )
+
+  it.each([
+    ['null', null],
+    ['a mapping', { record: null }],
+    ['a string', 'not-an-array'],
+    ['a number', 7],
+  ])('returns a verdict for a transfer view that is not an array (%s)', (_name, notAnArray) => {
+    // §18.4 leaves the declared container shape to the rail: this rail is an
+    // array, so anything else carries no claim. The audit degrades and RETURNS
+    // -- a public surface must not answer a malformed view with an exception.
+    const { p0, p1, revView, hk } = backedLink()
+
+    const res = audit([p0, p1], notAnArray, revView, hk)
+
+    expect(res.valid).toBe(false)
+    expect(res.linkStatus).toEqual(['invalid'])
+    expect(res.errors).toContain('chain link 1: no transfer record')
+  })
+
+  it.each([
+    ['null', null],
+    ['a mapping', { receipt_id: OLD_ID }],
+    ['a string', 'not-an-array'],
+  ])('returns a verdict for a revocation view that is not an array (%s)', (_name, notAnArray) => {
+    // The same rule on the other rail, failing in the same direction: with no
+    // record the predecessor has no backed extinguishment. Silence on either
+    // rail can never make a link VALID.
+    const { p0, p1, view, hk } = backedLink()
+
+    const res = audit([p0, p1], view, notAnArray, hk)
+
+    expect(res.valid).toBe(false)
+    expect(res.linkStatus).toEqual(['invalid'])
+    expect(res.errors).toContain(
+      'chain link 1: previous receipt lacks a backed transferred-class revocation',
+    )
+  })
+
+  it('never invokes a caller getter on a claim, and sets that claim aside', () => {
+    // A getter is code, not own data. The boundary reconstructs from data
+    // property descriptors, so the getter is never invoked -- ZERO reads, not
+    // one -- and the claim it defines carries nothing. Bilateral: the same
+    // claim supplied as DATA is still honoured, so this refuses code-as-
+    // evidence and not the rail.
+    const { p0, p1, view, revView, hk } = backedLink()
+    let reads = 0
+    const plain = view[0] as JsonObject
+    const getterClaim = {
+      get record() { reads += 1; return plain['record'] },
+      get evidence() { reads += 1; return plain['evidence'] },
+    }
+
+    const setAside = audit([p0, p1], [getterClaim], revView, hk)
+    const honoured = audit([p0, p1], view, revView, hk)
+
+    expect(reads).toBe(0)
+    expect(setAside.valid).toBe(false)
+    expect(setAside.errors).toContain('chain link 1: no transfer record')
+    expect(honoured.valid).toBe(true)
+    expect(honoured.linkStatus).toEqual(['valid'])
+  })
+
+  it('sets an unrepresentable claim aside alone and keeps its genuine sibling', () => {
+    // Bilateral, per claim, with a CONTROL so the test proves what it claims.
+    // The decoy names the same link and would therefore be selected first and
+    // fail its signature, making the link invalid -- the control run shows
+    // exactly that. The only difference in the second run is one value the
+    // profile cannot represent, so the link staying valid can only mean the
+    // claim was refused by ADMISSION and not skipped for some ordinary reason
+    // of shape or selection.
+    const { p0, p1, view, revView, hk } = backedLink()
+    const decoy = { record: { receipt_id: OLD_ID, new_receipt_id: NEW_ID } }
+    const unrepresentable = { ...decoy, annotation: 1.5 }
+
+    const control = audit([p0, p1], [decoy, ...view], revView, hk)
+    const res = audit([p0, p1], [unrepresentable, ...view], revView, hk)
+
+    expect(control.valid).toBe(false)
+    expect(control.errors).toContain('chain link 1: issuer signature invalid')
+    expect(res.valid).toBe(true)
+    expect(res.linkStatus).toEqual(['valid'])
+  })
+
+  it('returns within a wall-clock bound for a rail claiming an enormous length', () => {
+    // The count comes from the array's own length data and the ceiling is
+    // judged on it alone, so an enormous claimed length costs no per-element
+    // work. Asserted on WALL TIME, because "it returned something" is not the
+    // property at risk.
+    const { p0, p1, revView, hk } = backedLink()
+    const enormous: unknown[] = []
+    Object.defineProperty(enormous, 'length', { value: 1e9, writable: true })
+
+    const started = Date.now()
+    const res = audit([p0, p1], enormous, revView, hk)
+    const elapsed = Date.now() - started
+
+    expect(elapsed).toBeLessThan(2000)
+    expect(res.valid).toBe(false)
+    expect(res.errors).toContain('chain link 1: no transfer record')
+  })
+})

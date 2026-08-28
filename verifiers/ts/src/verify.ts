@@ -812,18 +812,25 @@ export function verify(
   if (grantView !== null && (typeof grantView !== 'object' || Array.isArray(grantView)))
     throw new TypeError('grant_view must be an evidence object or None')
 
-  // Fail loud if the trust store / revocation view was JSON.parse'd (JS numbers) rather
-  // than loadsStrict-parsed (bigint). Prevents a silent revocation fail-open. Does NOT
-  // walk envelopeBytes (parsed internally) or disclosure (holds raw Uint8Array fields).
+  // Fail loud if the TRUST STORE was JSON.parse'd (JS numbers) rather than
+  // loadsStrict-parsed (bigint). The trust store is the verifier's own
+  // configuration, so a wrong parse there is a programming error and the loud
+  // failure is the right one. Does NOT walk envelopeBytes (parsed internally)
+  // or disclosure (holds raw Uint8Array fields).
   assertCanonParsed(trustStore.manifests, 'trustStore.manifests')
   if (trustStore.chains != null) assertCanonParsed(trustStore.chains, 'trustStore.chains')
-  // Skip the deep JSON-number guard on an oversized view: it would be an O(N)
-  // walk of attacker-controlled data (and would throw TypeError on a JSON.parse-d
-  // oversized view instead of failing closed). classifyRevocation handles the
-  // oversized case from length alone — matching Python, which never inspects
-  // view elements before the len() cap.
-  if (revocationView !== null && revocationView.length <= maxRevocationRecords)
-    assertCanonParsed(revocationView, 'revocation_view')
+  // The revocation view is NOT checked here any more, and its absence is the
+  // point. This guard existed to stop a JSON.parse'd view from failing open in
+  // silence, and it did it by THROWING out of a public surface for a property
+  // of ONE record -- so one JS number in one record took the whole call down,
+  // genuine sibling revocations included, which is the shape §18.4 forbids. The
+  // admission boundary in classifyRevocation now serves the same purpose better
+  // and per record: a unit carrying a JS number is not representable in the
+  // profile, so it is set aside ALONE and, if it claims to be about this
+  // receipt, it still surfaces as the §12.2 ignored-record warning. The caller
+  // is told, the genuine records survive, and nothing escapes. This also
+  // removes the O(N) pre-walk of attacker data the guard had to skip above the
+  // record ceiling to stay affordable.
 
   const errors: string[] = []
   const warnings: string[] = []
