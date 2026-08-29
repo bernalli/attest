@@ -138,15 +138,15 @@ An entry's verdict describes only what `attest-v0.1.md` and `attest-v0.2.md` cur
 
 - **Actor / precondition:** `issuer` on the delegated-issuer path signs a receipt that names a publisher which never authorized it.
 - **Impact:** A named publisher of record appears to stand behind a license grant it never made.
-- **Verdict:** Out of scope — v0.1 §5.4, v0.1 §4.1.  `work.publisher` is a signed but unattested string: v0.1 defines no publisher authorization or counter-signature semantics, and the multi-entry `signatures` array reserved for a future publisher counter-signature is explicitly rejected today (exactly one entry for v0.1; exactly two ordered hybrid legs for v0.2, v0.2 §2.2).
-- **Residual risk:** A `verifier` cannot distinguish an authorized delegated issuer from an unauthorized one from the receipt alone; the only binding attestation in the document is the signing issuer's own.
+- **Verdict:** Mitigated — v0.2 §20, v0.1 §11.2 (2026-08-26 amendment).  The machine-readable half of the claim, `work.publisher_id`, is now floored by the payload-deterministic warning `publisher_claim_unattested` on EVERY verifier, and resolvable — for a caller supplying `authority_view` — to `authorized`/`unauthorized` against a publisher-signed authorization manifest (§20.2). The free-text `work.publisher` remains a signed but unattested string, out of scope exactly as before.
+- **Residual risk:** Resolution requires the publisher to PARTICIPATE: without a manifest the verdict is `unattested` (§20.6 item 1), and `unattested` does not distinguish a publisher that never joined from one that declines to authorize this seller. The free-text `work.publisher` and `issuer.display_name` stay unattested, and a verifier that is handed no `authority_view` sees exactly the pre-§20 behavior.
 
 #### TM-07 — Backdated `issued_at`
 
 - **Actor / precondition:** `issuer` controls the signing key at signing time, including both hybrid legs where applicable.
 - **Impact:** A receipt that claims to predate its real creation — manufacturing priority, landing inside a favourable window, or placing a forgery before a compromise marking.
 - **Verdict:** Mitigated — v0.1 §11, v0.1 §7.3, v0.2 §11.1, v0.2 §12.  `issued_at` MUST fall inside the signed key entry's `[valid_from, valid_to]` window in the resolving manifest, so backdating cannot reach behind that key's own signed `valid_from`, and the per-period signing-key discipline narrows that window; for a logged and anchored receipt, `anchored_before:<T>` bounds the time by which the signature demonstrably already existed.
-- **Residual risk:** v0.1 §7.3 states the limit plainly: because `issued_at` lives inside the signed payload and is controlled by whoever holds the key, a backdated forgery is undetectable without an external trusted timestamp — and `anchored_before:<T>` is an upper bound on existence, never a lower bound (v0.2 §11.1). Neither document defines a result component asserting that an artifact was *not* in the log before some time, so an `issued_at` earlier than reality but still inside the key window remains undetectable, and an issuer that also controls its manifest controls `valid_from`.
+- **Residual risk:** v0.1 §7.3 states the limit plainly: because `issued_at` lives inside the signed payload and is controlled by whoever holds the key, a backdated forgery is undetectable without an external trusted timestamp — and `anchored_before:<T>` is an upper bound on existence, never a lower bound (v0.2 §11.1). Neither document defines a result component asserting that an artifact was *not* in the log before some time, so an `issued_at` earlier than reality but still inside the key window remains undetectable, and an issuer that also controls its manifest controls `valid_from`. The §20 authority windows inherit this limit: entry `[valid_from, valid_to]` is evaluated against the receipt's own `issued_at`, so a de-authorized issuer can back-date new receipts into its former window; short windows bound it, and an anchored existence proof (§11) is the stated upgrade path (v0.2 §20.2).
 
 #### TM-08 — Bogus `supersedes` lineage read as implicit revocation
 
@@ -644,6 +644,20 @@ An entry's verdict describes only what `attest-v0.1.md` and `attest-v0.2.md` cur
 - **Verdict:** Mitigated — v0.1 §7.3 (rev 8, absorbing `compromised` status), v0.2 §19.3, v0.2 §19.6 items 5 and 6, for any verifier that holds the evidence. A verifier that holds the issuer's chain, an authenticated compromise declaration, or retained status resolves the `kid` as `compromised` regardless of the latest manifest, and a successor that re-lists or omits the marked `kid` breaks rotation continuity with `trust: "unverified_rotation"`.
 - **Residual risk:** Evidence-bound. A verifier that holds only the issuer's latest key manifest, with no chain, no authenticated declaration, and no retained status, cannot know that an earlier version declared the key `compromised`; the marking is irreversible for verifiers that have seen it, not globally irreversible. For cutoff calculation, a no-chain verifier also cannot safely use a declaration whose signer is now `compromised`; that declaration can still establish the floor, but anchored receipts survive under v0.2 §19.1's no-cutoff branch. If the latest trusted manifest omits the declaring signer and the verifier holds no older manifest that lists it, the declaration cannot be authenticated at all. Chain-holding verifiers are stronger: they judge the signer at the declaration version and treat keyset omission as discontinuous.
 
+#### TM-76 — Lost or re-registered publisher domain inherits sale authority
+
+- **Actor / precondition:** Whoever re-registers a publisher's DNS domain after it lapses, or otherwise comes to control it, and publishes a fresh key manifest and authorization manifests under it.
+- **Impact:** The re-registrant can authorize fraudulent issuers to sell the original publisher's catalogue, or publish manifests that report legitimate historical retailers as `unauthorized` — defaming sellers whose receipts were genuine when issued.
+- **Verdict:** Out of scope — v0.2 §20.6 item 3, v0.1 §7.3.  DNS is the protocol's identity anchor by design; a re-registrant's fresh key manifest breaks rotation continuity and yields `unverified_rotation` for any verifier holding history, and a TOFU verifier is blind here exactly as it is for issuer identity.
+- **Residual risk:** Sale authority outlives the shops that exercise it, so this residual weighs more here than it does for issuers: a receipt is meant to survive its seller by decades, and the publisher domain that can pronounce on it may change hands in that time. A verifier holding no history of the publisher's manifests cannot tell a succession from a seizure.
+
+#### TM-77 — Defaming a legitimate reseller with junk or stale authority evidence
+
+- **Actor / precondition:** Anyone who can feed a verifier's `authority_view` — a relay, a mirror, an aggregating cache, or the caller's own tooling.
+- **Impact:** Making a verifier report `unauthorized` for a reseller the publisher did in fact authorize.
+- **Verdict:** Mitigated — v0.2 §20.3, §20.4.  `unauthorized` is reachable only from an AUTHENTICATED publisher-signed document whose `authorization_version` equals the caller's own `current_authorization_version` assertion (step 10); every malformed, unauthenticated, or equivocating input — and every GENUINE document the assertion does not make current, including any document when no assertion is supplied — degrades to `unattested`, and a document that fails authentication cannot move `publisher_authority_trust` either.
+- **Residual risk:** Concealing a newer version no longer buys the denial (at most a stale `authorized`, §20.6 item 6); what remains is the assertion itself — a caller that asserts a superseded version as current computes a superseded denial, but that is its own explicit act on its own rail, not a default an attacker can manufacture through the view. And a publisher that violates §20.2's entry preservation against a caller holding no older version produces a non-conforming denial that caller cannot detect — though the violation is signed by the publisher, provable by anyone holding both versions, and excluded wherever the evidence is present (§20.4 step 7).
+
 ## 5. Traceability
 
 Every numbered section of the two normative specifications maps to at least one catalog entry. Rows cover `attest-v0.1.md` §2–§15 and `attest-v0.2.md` §2–§17, excluding each document's §1 (status and conformance language) and v0.2 §5 (a worked example of §2–§4, carrying no mechanism of its own). Sections whose own text defines no attack surface map to the entry that scopes them, or to the out-of-scope register in §7; no cell is empty.
@@ -652,6 +666,7 @@ Every numbered section of the two normative specifications maps to at least one 
 | --- | --- |
 | v0.1 §2 — Scope and out-of-scope boundaries | TM-05, TM-13, TM-43, TM-44, TM-59; §7 register |
 | v0.1 §3 — Terminology and actors | TM-02, TM-05, TM-06; §2 actor table |
+| v0.2 §20 — publisher authority | TM-05, TM-06, TM-07, TM-11, TM-76, TM-77 |
 | v0.1 §4 — Envelope structure (`signatures`, `delivery`) | TM-09, TM-12, TM-13, TM-20, TM-22 |
 | v0.1 §5 — Payload field registry | TM-08, TM-17, TM-18, TM-21, TM-40 |
 | v0.1 §6 — Legal-weight field semantics | TM-05, TM-40, TM-41; §7 register |

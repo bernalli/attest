@@ -162,8 +162,18 @@ The vocabulary stays OPEN: v0.1 §5.6 classifies an unrecognized `end_of_life` v
 
 The vocabulary is open and versioned: an unrecognized `license.preservation_pledge.pledge` value is valid-with-warning, following §6.7's discipline, never a schema error.
 
+### 6.11 Authorization permissions
+
+| Name | State | Introduced | Reference |
+| --- | --- | --- | --- |
+| `issue` | active | v0.2 (§20, 2026-08-26) | v0.2 §20.2, §20.4 step 9 — the permission a receipt's issuer must hold |
+| `delegate` | reserved | v0.2 (§20, 2026-08-26) | v0.2 §20.6 item 2 — registered so the sub-licensing gap stays visible; promoting it requires the delegation-chain machinery this revision deliberately excludes |
+
+The vocabulary follows §18.2's directional rule: unregistered values are carried, never fatal.
+
 ## Revision log
 
+- **2026-08-29 (rev 7)**: §6.11 added — authorization permissions (`issue` `active`, `delegate` `reserved`), the vocabulary v0.2 §20.2's `authorized_issuers` entries draw on; unregistered values are carried, never fatal, following §18.2's directional rule. — vectors: 43-publisher-authority
 - **2026-08-26 (rev 7)**: §2's closed list of sanctioned instances gains a seventh, an eighth and a ninth, all running in the tightening direction and all from the V-L review of v0.1 rev 10 — the duplicate-`kid` key-manifest rejection (attest-v0.1.md §7.1), the statement-status restriction on the revocation freshness anchor (attest-v0.1.md §12.3), and the duplicate-member-name bundle-import rejection (attest-v0.1.md §14.1). The third carries no conformance vector because the corpus has no bundle surface, the same posture as the `artifacts[]` ceiling of v0.1 rev 3; the first two do. The issuance-side guards of the same revision — refusing to sign a manifest with a duplicated `kid`, and refusing a rotation that would leave zero active keys — change no verification classification and are therefore not §2 instances at all. — vectors: 44-manifest-duplicate-kid, 45-revocation-anchor-status
 
 - **2026-08-26 (rev 6)**: §2's chapeau gains a third admitted form of security-strengthening amendment — verifier behavior that re-resolves evidence already in the verifier's possession more severely in response to a newly-recognized hazard, where the prior resolution was unsound in that it let the party a rule constrains erase that rule's effect at will; without it the sixth instance below would be unsanctioned, since the monotone status floor neither bounds resources nor demands newly-available evidence. §2's closed list of sanctioned instances gains a fifth — the anchored-cutoff compromise rescue (v0.2 rev 9, attest-v0.2.md §19), which runs in the loosening direction — and a separate sixth, the monotone `compromised` status floor (v0.1 rev 8, attest-v0.1.md §7.3), which runs in the tightening direction and is sanctioned as a newly-recognized hazard rather than by pretending the rejected input was already non-conforming. §2's non-normative note is scoped to verifiers holding neither an issuer manifest-version chain nor authenticated compromise-declaration evidence. §6.6 registers six warning literals — `compromise_rescue_applied`, `compromise_cutoff_unanchored`, `compromise_rescue_requires_anchored_receipt`, `compromise_rescue_receipt_after_cutoff`, `compromise_cutoff_claim_ignored` — active, introduced by v0.2 rev 9, reference v0.2 §19 — and `compromise_marking_retracted`, active, introduced by v0.1 rev 8, reference v0.1 §7.3. — vectors: 41-compromise-cutoff
