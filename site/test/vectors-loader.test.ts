@@ -43,6 +43,7 @@ const result = (over: Partial<VerificationResult> = {}): VerificationResult => (
   binding: 'not_checked', trust: 'verified',
   transparency: 'not_checked', corroboration: 'none', manifest_freshness: 'not_checked',
   grant: 'not_checked', grant_trust: 'not_checked',
+  publisher_authority: 'not_checked', publisher_authority_trust: 'not_checked',
   warnings: [], errors: [],
   ...over,
 })

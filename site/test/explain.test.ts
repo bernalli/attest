@@ -18,6 +18,12 @@ const KNOWN: Record<Component, string[]> = {
   grant_trust: [
     'not_checked', 'verified', 'unauthenticated_tofu', 'unverified_rotation', 'signer_mismatch',
   ],
+  publisher_authority: [
+    'not_checked', 'no_publisher_claim', 'self', 'authorized', 'unauthorized', 'unattested',
+  ],
+  publisher_authority_trust: [
+    'not_checked', 'verified', 'unauthenticated_tofu', 'unverified_rotation', 'signer_mismatch',
+  ],
   transparency: [
     'not_checked', 'logged', 'equivocation_detected', 'anchored_before:2026-08-26T00:00:00Z',
   ],
@@ -30,15 +36,16 @@ const result = (over: Partial<VerificationResult> = {}): VerificationResult => (
   binding: 'not_checked', trust: 'verified',
   transparency: 'not_checked', corroboration: 'none', manifest_freshness: 'not_checked',
   grant: 'not_checked', grant_trust: 'not_checked',
+  publisher_authority: 'not_checked', publisher_authority_trust: 'not_checked',
   warnings: [], errors: [],
   ...over,
 })
 
-describe('the ten components', () => {
+describe('the twelve components', () => {
   it('are exactly the components of the three question groups, in order', () => {
     expect(COMPONENTS).toEqual(GROUPS.flatMap((g) => g.components))
-    expect(new Set(COMPONENTS).size).toBe(10)
-    expect(GROUPS.map((g) => g.components.length)).toEqual([4, 3, 3])
+    expect(new Set(COMPONENTS).size).toBe(12)
+    expect(GROUPS.map((g) => g.components.length)).toEqual([6, 3, 3])
   })
 
   it('covers every allowed value of the result contract with real copy', () => {
@@ -223,15 +230,18 @@ describe('compromise-cutoff copy', () => {
 })
 
 // Every wire token the verifier can emit either lands on a row or is on this
-// list with a reason. Read out of the verifier's own source rather than copied
+// list with a reason. `publisher_claim_unattested` LEFT this list when §20
+// landed: it was a bare v0.1 §11.2 content warning that moved no component,
+// and §20.1 now ties it to `publisher_authority` — emitted exactly when that
+// component resolves `not_checked` or `unattested`, and REPLACED by
+// `publisher_not_authorizing_issuer` when it resolves `unauthorized`.
+// Read out of the verifier's own source rather than copied
 // here, so a token added upstream fails this test instead of falling silently
 // into the flat list — where the whole point of attribution is lost.
 const NO_ROW: Record<string, string> = {
   'license.drm is drm-bound (design vector 18)':
     'content warning, independent of the crypto pipeline; moves no component (v0.1 §11.2)',
   'unknown payload field': 'same content pass; forward-compatibility signal, never a schema verdict',
-  publisher_claim_unattested:
-    'content warning, independent of the crypto pipeline; moves no component (v0.1 §11.2)',
   mixed_keyset_active_ed_only_sibling:
     '§13.1: no result field classifies hybrid strength, "because none exists"',
   grant_commitment_divergence:
