@@ -68,6 +68,28 @@ def test_int_boundaries() -> None:
         canon.dumps(-(2**53))
 
 
+@pytest.mark.parametrize(
+    "unit",
+    [
+        pytest.param("aaa", id="scalar"),
+        pytest.param(["a"], id="array"),
+        pytest.param({"v": ""}, id="object"),
+    ],
+)
+def test_admission_ceiling_is_measured_on_unit_not_depth_probe(
+    monkeypatch: pytest.MonkeyPatch, unit: object
+) -> None:
+    ceiling = len(canon.dumps(unit))
+    monkeypatch.setattr(canon, "MAX_ADMISSION_BYTES", ceiling)
+    monkeypatch.setattr(canon, "MAX_ADMISSION_NODES", 32)
+
+    assert canon.admit_value(unit, 0) == (True, unit)
+    for nesting in (canon.VIEW_MEMBER_NESTING, canon.VIEW_ARRAY_ELEMENT_NESTING):
+        admitted, materialized = canon.admit_value(unit, nesting)
+        assert admitted, f"nesting={nesting}"
+        assert materialized == unit
+
+
 def test_rejects_floats_and_nonjson() -> None:
     with pytest.raises(canon.CanonError):
         canon.dumps(1.5)

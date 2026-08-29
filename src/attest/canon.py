@@ -378,7 +378,9 @@ def admit_value(value: object, nesting: int = 0) -> tuple[bool, object]:
         probe = [probe]
     try:
         serialized = dumps(own_data_copy(probe, [MAX_ADMISSION_NODES]))
-        if len(serialized) > MAX_ADMISSION_BYTES:
+        # The ceiling is measured on the unit, not on the probe: each wrapper
+        # only places the unit at its real view depth and adds one "[" and "]".
+        if len(serialized) - 2 * nesting > MAX_ADMISSION_BYTES:
             return False, None
         materialized = loads_strict(serialized.encode("utf-8"))
     except Exception:

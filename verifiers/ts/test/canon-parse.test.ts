@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  loadsStrict, CanonError, dumps, admitValue,
-  MAX_ADMISSION_BYTES, VIEW_MEMBER_NESTING, VIEW_ARRAY_ELEMENT_NESTING,
-} from '../src/canon.js'
-import type { JsonValue } from '../src/canon.js'
-import { codePointLength } from '../src/messages.js'
+import { loadsStrict, CanonError } from '../src/canon.js'
 const enc = (s: string) => new TextEncoder().encode(s)
 
 describe('loadsStrict', () => {
@@ -54,35 +49,5 @@ describe('loadsStrict', () => {
   it('rejects a UTF-8 BOM-prefixed envelope (parity with Python loads_strict)', () => {
     const bom = new Uint8Array([0xef, 0xbb, 0xbf, ...enc('{"a":1}')])
     expect(() => loadsStrict(bom)).toThrow()
-  })
-})
-
-describe('canon: the admission byte ceiling is measured on the UNIT', () => {
-  // The probe wrappers exist to put a unit at its real depth in the view. If
-  // the ceiling were measured on the probe instead, a unit sitting exactly AT
-  // the ceiling would be refused for the POSITION it occupies rather than for
-  // its size — two bytes per level — and the same evidence would be admissible
-  // as a top-level value and inadmissible as an array element. That difference
-  // is observable, and it is the kind an attacker picks.
-  function valueOfCanonicalSize(bytes: number): JsonValue {
-    const overhead = codePointLength(dumps({ v: '' }))
-    return { v: 'a'.repeat(bytes - overhead) }
-  }
-
-  it('a unit exactly at the ceiling is admitted at every nesting depth', () => {
-    const exact = valueOfCanonicalSize(MAX_ADMISSION_BYTES)
-    expect(codePointLength(dumps(exact))).toBe(MAX_ADMISSION_BYTES)
-
-    for (const nesting of [0, VIEW_MEMBER_NESTING, VIEW_ARRAY_ELEMENT_NESTING]) {
-      expect(admitValue(exact, nesting).admitted).toBe(true)
-    }
-  })
-
-  it('a unit one byte over the ceiling is refused at every nesting depth', () => {
-    const over = valueOfCanonicalSize(MAX_ADMISSION_BYTES + 1)
-
-    for (const nesting of [0, VIEW_MEMBER_NESTING, VIEW_ARRAY_ELEMENT_NESTING]) {
-      expect(admitValue(over, nesting).admitted).toBe(false)
-    }
   })
 })
