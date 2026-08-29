@@ -322,6 +322,150 @@ describe('verify(): anchored compromise cutoff (§19)', () => {
   })
 })
 
+// §18.4: the compromise rail is admitted PER CLAIM. These pin the property the
+// blind bench measures but that does not ship in the branch: an inadmissible
+// claim is set aside ALONE, and the genuine claim beside it still reaches its
+// verdict. Every case asserts BOTH halves — the bad one is ignored AND the good
+// one still bites — because asserting only the ignore would pass just as well
+// against an implementation that threw the whole view away.
+describe('verify(): compromise view admission is per claim (§18.4)', () => {
+  function genuineDeclaration(): JsonObject {
+    return manifestV2Compromised()
+  }
+
+  function resurrectingStore(): TrustStore {
+    return trustStore(manifestV3Resurrected())
+  }
+
+  it('a genuine compromise claim alone establishes the floor', () => {
+    const result = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
+      logKeys: [LOG_KEY],
+      anchorPolicy: noHorizonPolicy(),
+      compromiseView: [compromiseClaim(genuineDeclaration(), null)],
+    })
+
+    expect(result.signature).toBe('invalid')
+    expect(result.errors).toContain(`key ${KID} is compromised`)
+  })
+
+  it('a claim whose member is a getter is set aside alone and the genuine sibling still bites', () => {
+    const hostile: Record<string, unknown> = { evidence: null }
+    Object.defineProperty(hostile, 'manifest', {
+      enumerable: true,
+      get() { throw new Error('the boundary must never run this') },
+    })
+
+    const result = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
+      logKeys: [LOG_KEY],
+      anchorPolicy: noHorizonPolicy(),
+      compromiseView: [hostile as JsonObject, compromiseClaim(genuineDeclaration(), null)],
+    })
+
+    expect(result.signature).toBe('invalid')
+    expect(result.errors).toContain(`key ${KID} is compromised`)
+    expect(result.warnings).toContain(COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+  })
+
+  it('a claim declaring an unbounded array returns within a wall-clock bound and spares its sibling', () => {
+    // `length` is own DATA, so nothing here is a getter the boundary could
+    // refuse cheaply: the node budget is what has to stop the walk. A
+    // reconstruction without one would count to a billion before any byte
+    // ceiling could fire, which is why the assertion is on elapsed TIME and not
+    // merely on the call returning something.
+    const unbounded: unknown[] = []
+    Object.defineProperty(unbounded, 'length', { value: 1_000_000_000, writable: true })
+    const started = Date.now()
+
+    const result = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
+      logKeys: [LOG_KEY],
+      anchorPolicy: noHorizonPolicy(),
+      compromiseView: [
+        { manifest: unbounded, evidence: null } as unknown as JsonObject,
+        compromiseClaim(genuineDeclaration(), null),
+      ],
+    })
+
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(result.signature).toBe('invalid')
+    expect(result.errors).toContain(`key ${KID} is compromised`)
+    expect(result.warnings).toContain(COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+  })
+
+  it('a manifest_version outside the profile is set aside by the boundary, sibling intact', () => {
+    // 2**53 is one past what the canonical serializer admits, so the claim
+    // never reaches a consumer at all: the boundary sets it aside whole, and
+    // that is WHY no range guard is needed downstream -- the narrowing that
+    // happens there is exact for everything that survives this. The genuine
+    // sibling still establishes the floor, which is the half that would go
+    // missing if the view were admitted as one lump.
+    const overflowing = {
+      ...signManifestPlain(
+        manifestBody(2, [keyEntry(KID, signingPub, 'compromised'), keyEntry(DECLARER_KID, declarerPub, 'active')]),
+        DECLARER_KID,
+        declarerSeed,
+      ),
+      manifest_version: 2n ** 53n,
+    }
+
+    const result = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
+      logKeys: [LOG_KEY],
+      anchorPolicy: noHorizonPolicy(),
+      compromiseView: [compromiseClaim(overflowing, null), compromiseClaim(genuineDeclaration(), null)],
+    })
+
+    expect(result.signature).toBe('invalid')
+    expect(result.errors).toContain(`key ${KID} is compromised`)
+    expect(result.warnings).toContain(COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+  })
+
+  it('a hand-written claim using JS numbers reaches the same verdict as a strict-parsed one', () => {
+    // §19.2's channel is assembled from a manifest the caller already holds, so
+    // it is routinely written by hand -- and JSON has no bigint literal. The
+    // same evidence must not decide differently for having been typed out
+    // rather than parsed, which is also the only way this rail can agree with
+    // the Python core, where an integer is simply an integer.
+    const declaration = genuineDeclaration()
+    const handWritten = JSON.parse(
+      JSON.stringify(declaration, (_k, v) => (typeof v === 'bigint' ? Number(v) : v)),
+    ) as Record<string, unknown>
+
+    const options = { logKeys: [LOG_KEY], anchorPolicy: noHorizonPolicy() }
+    const parsed = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
+      ...options,
+      compromiseView: [compromiseClaim(declaration, null)],
+    })
+    const live = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
+      ...options,
+      compromiseView: [compromiseClaim(handWritten, null)],
+    })
+
+    expect(typeof handWritten['manifest_version']).toBe('number')
+    expect(live.signature).toBe('invalid')
+    expect({ signature: live.signature, warnings: live.warnings, errors: live.errors }).toEqual({
+      signature: parsed.signature,
+      warnings: parsed.warnings,
+      errors: parsed.errors,
+    })
+  })
+
+  it('a claim carrying a bigint manifest_version authenticates, as the profile spells integers', () => {
+    // The mirror of the case above, and the one that would go silently dead if
+    // a consumer downstream tested `typeof === 'number'`: after the boundary
+    // EVERY integer is a bigint, so this is the ordinary path, not an edge.
+    const declaration = genuineDeclaration()
+
+    const result = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
+      logKeys: [LOG_KEY],
+      anchorPolicy: noHorizonPolicy(),
+      compromiseView: [compromiseClaim(declaration, null)],
+    })
+
+    expect(typeof declaration['manifest_version']).toBe('bigint')
+    expect(result.signature).toBe('invalid')
+    expect(result.warnings).not.toContain(COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+  })
+})
+
 describe('key-manifest continuity compromise floor', () => {
   it('rejects uncompromise and omission by reading every current entry for the kid', () => {
     const v1 = manifestV1()

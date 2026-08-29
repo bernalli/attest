@@ -251,6 +251,9 @@ function validTransferRecordEntry(): Record<string, unknown> {
 function validCessationDeclarationEntry(): Record<string, unknown> {
   return { type: 'cessation-declaration', issuer: 'pub.example', record_sha256: 'e'.repeat(64) }
 }
+function validPublisherAuthorizationEntry(): Record<string, unknown> {
+  return { type: 'publisher-authorization', issuer: 'pub.example', record_sha256: 'f'.repeat(64) }
+}
 
 describe('encodeEntry', () => {
   it('accepts a valid key-manifest entry and round-trips through canonicalBytes', () => {
@@ -319,6 +322,38 @@ describe('encodeEntry', () => {
     expect(encoded).toBeInstanceOf(Uint8Array)
     const expectedJson = '{"issuer":"pub.example","record_sha256":"' + 'e'.repeat(64) + '","type":"cessation-declaration"}'
     expect(new TextDecoder().decode(encoded)).toBe(expectedJson)
+  })
+
+  it('accepts a valid publisher-authorization entry (v0.2 §8/§20.2)', () => {
+    const entry = validPublisherAuthorizationEntry()
+    const encoded = encodeEntry(entry)
+    expect(encoded).toBeInstanceOf(Uint8Array)
+    const expectedJson = '{"issuer":"pub.example","record_sha256":"' + 'f'.repeat(64) + '","type":"publisher-authorization"}'
+    expect(new TextDecoder().decode(encoded)).toBe(expectedJson)
+  })
+
+  // Mirrors the six negatives tests/test_tlog.py already has for this entry
+  // type: a closed schema is only as good as the cases that prove it closed.
+  it('rejects a publisher-authorization entry missing a member', () => {
+    const entry = validPublisherAuthorizationEntry()
+    delete entry.record_sha256
+    expect(() => encodeEntry(entry)).toThrow(TlogError)
+  })
+
+  it('rejects a publisher-authorization entry with an extra member', () => {
+    expect(() => encodeEntry({ ...validPublisherAuthorizationEntry(), extra: 1 })).toThrow(TlogError)
+  })
+
+  it('rejects a publisher-authorization entry whose digest is not 64 lowercase hex', () => {
+    for (const record_sha256 of ['f'.repeat(63), 'F'.repeat(64), 1, null]) {
+      expect(() => encodeEntry({ ...validPublisherAuthorizationEntry(), record_sha256 })).toThrow(TlogError)
+    }
+  })
+
+  it('rejects a publisher-authorization entry whose issuer is not a lowercase DNS name', () => {
+    for (const issuer of ['Pub.Example', '', null, 42]) {
+      expect(() => encodeEntry({ ...validPublisherAuthorizationEntry(), issuer })).toThrow(TlogError)
+    }
   })
 
   it('rejects a cessation-declaration entry missing a member', () => {

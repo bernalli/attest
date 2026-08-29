@@ -166,6 +166,15 @@ export function grantView(dir: string): JsonValue | null {
   const p = join(dir, 'grant-view.json')
   return existsSync(p) ? loadJsonValueStrict(p) : null
 }
+// group 43 (publisher-authority conformance corpus, v0.2 §20) only: the
+// §20.3 evidence OBJECT `{authorizations[, current_authorization_version]}`,
+// fed to verify() as `authorityView`. Strict-parsed for the same reason as
+// grantView(): authorization documents are re-canonicalized for hashes and
+// signature checks, so JSON integers must enter as bigint.
+export function authorityView(dir: string): JsonValue | null {
+  const p = join(dir, 'authority-view.json')
+  return existsSync(p) ? loadJsonValueStrict(p) : null
+}
 // group 38 (redemption, v0.2 §18.7) only: a leaf containing `redemption.json`
 // is a FOURTH surface, routed to `verifyRedemption` — never verify(), never
 // auditChain, never the quorum evaluator. The question these leaves ask

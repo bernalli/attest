@@ -57,6 +57,36 @@ export {
 } from './transfer.js'
 export type { ChainAuditResult } from './transfer.js'
 
+// v0.2 section 20 publisher authorization primitives. `transfer.ts` already
+// exports `verifyAuthorization` for holder transfer authorization; keep that
+// public name unchanged and alias this document's verifier explicitly.
+export {
+  PERMISSION_ISSUE,
+  PERMISSION_DELEGATE,
+  MAX_AUTHORIZED_ISSUERS,
+  MAX_AUTHORITY_DOCUMENTS,
+  isAuthorizationVersion,
+  authorizationHash,
+  verifyAuthorization as verifyPublisherAuthorization,
+  verifyAuthorizationSignature as verifyPublisherAuthorizationSignature,
+  entryForIssuer,
+  entryAuthorizesReceipt,
+  withinStructuralCeiling,
+  // §20.2 window predicates and §20.4's evaluation. The verdict components
+  // are informational: they never touch `ok`.
+  sameInstant,
+  windowSpentAt,
+  evaluateAuthority,
+  AUTHORITY_NOT_CHECKED,
+  AUTHORITY_NO_CLAIM,
+  AUTHORITY_SELF,
+  AUTHORITY_AUTHORIZED,
+  AUTHORITY_UNAUTHORIZED,
+  AUTHORITY_UNATTESTED,
+  AUTHORITY_TRUST_SIGNER_MISMATCH,
+} from './authority.js'
+export type { AuthorityVerdict } from './authority.js'
+
 // v0.2 Stage 4 (§18, the preservation pledge): sunset grant and cessation
 // declaration PRIMITIVES (design §9: verification-side only — no build/sign).
 // Grant EVALUATION (§18.4's ordered steps and the `grant`/`grant_trust`

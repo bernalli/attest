@@ -1,4 +1,4 @@
-import { duplicateKey, notUtf8, invalidJson, intOutOfRange, ERR } from './messages.js'
+import { duplicateKey, notUtf8, invalidJson, intOutOfRange, codePointLength, ERR } from './messages.js'
 
 export class CanonError extends Error {}
 
@@ -227,3 +227,297 @@ function serialize(v: JsonValue, depth = 1): string {
 
 export function dumps(v: JsonValue): string { return serialize(v) }
 export function canonicalBytes(v: JsonValue): Uint8Array { return new TextEncoder().encode(dumps(v)) }
+
+// ---- v0.2 §18.4: the admission boundary, shared by every rail ----
+//
+// These primitives live HERE, in the leaf module, because more than one rail
+// admits caller-supplied evidence and every one of them must admit it the SAME
+// WAY. A second spelling of a boundary is a boundary that will diverge, so the
+// boundary has exactly one spelling and every rail imports it. §18.4 states the
+// rule; this module is where the rule is executed.
+//
+// WHY RECONSTRUCTION IS MANDATORY HERE AND NOT MERELY PRUDENT. In Python a
+// container's own data can be read through the base class (`dict.items`,
+// `list.__getitem__`), so a hostile subclass can be stepped around. In
+// JavaScript there is NO such spelling: a Proxy intercepts `Reflect` and
+// `Object.*` alike, so nothing this module does can guarantee that the value it
+// reads is the value the caller "really" holds. What it CAN guarantee, and what
+// §18.4 actually requires, is that the read happens ONCE, is bounded, sees only
+// DATA properties, and that everything downstream reads the reconstruction and
+// never the live object again.
+//
+// Stated as the limit rather than left to be discovered: a Proxy whose
+// `getOwnPropertyDescriptor` trap answers with a DATA descriptor is admitted,
+// and deliberately so. Its value is copied like any other own data, and if what
+// it hands over is a genuinely signed document it earns exactly the verdict
+// that document earns — the same one the caller would get by passing it
+// plainly, which anyone holding it can already do. A proxy is not evidence of
+// hostility. What WOULD be is a value that verifies as one thing and is
+// consumed as another, and that is what the single read closes, here, for
+// every rail. That is what closes the verify/consume split:
+// the bytes a signature is checked over and the values consumed afterwards come
+// from one reconstruction, whatever the caller's object did during it.
+
+// The canonical-byte ceiling a single admitted unit may occupy (v0.1 §11.3).
+// One definition for the whole package: the transparency evidence bound, the
+// transfer-view bound and the transfer-evidence bound are the same number, and
+// a number restated three times is a number that will drift.
+export const MAX_ADMISSION_BYTES = 10_000_000
+
+// Node budget for the own-data copy. It can never change an admissible/
+// inadmissible answer: every node costs at least one byte of canonical form, so
+// a structure over this many nodes cannot fit under the byte ceiling either. It
+// only makes the refusal REACHABLE, before an unbounded container has been
+// walked to the end.
+export const MAX_ADMISSION_NODES = MAX_ADMISSION_BYTES
+
+// How many of the enclosing VIEW's containers a value sits inside: a member of
+// a view object is one deep, an element of a view object's array is two. The
+// depth ceiling is measured over the canonicalized view AS A WHOLE (§18.4), so
+// a document admitted at its own top level would be allowed 256 levels where
+// the view only allows it 254.
+export const VIEW_MEMBER_NESTING = 1
+export const VIEW_ARRAY_ELEMENT_NESTING = 2
+
+/**
+ * What a rail may say about how its own view is written.
+ *
+ * The boundary is one rule; this is the one place a rail's own DECLARED shape
+ * changes what "representable" means for it, and it is deliberately narrow.
+ */
+export interface AdmissionOptions {
+  /**
+   * Read a safe-integer JS `number` as the integer it denotes.
+   *
+   * Off by default: what reaches a rail off the wire has been strict-parsed and
+   * carries `bigint`, so a `number` there means the caller parsed with
+   * `JSON.parse` and the unit is not in the profile. A rail whose view is
+   * routinely HAND-WRITTEN in JavaScript turns it on, because JSON has no
+   * bigint literal and the same evidence must not decide differently for having
+   * been typed out rather than parsed.
+   */
+  acceptSafeIntegerNumbers?: boolean
+}
+
+export const VIEW_MEMBER_ABSENT = Symbol('view member absent')
+export const VIEW_MEMBER_COLLAPSED = Symbol('view member collapsed')
+
+/**
+ * The array's own `length` DATA, or null if it has none that makes sense.
+ *
+ * `value.length` goes through a `get` trap and `for (const x of value)` through
+ * the iterator, both of which a caller controls; an unbounded one never returns
+ * and no ceiling downstream ever gets to fire. The own descriptor is read once
+ * and the elements are then taken by index.
+ */
+export function ownArrayLength(value: unknown): number | null {
+  if (!Array.isArray(value)) return null
+  // The descriptor read is itself caller code on a Proxy: a throwing trap must
+  // fail CLOSED here, not escape into a caller that only expects a number.
+  let descriptor: PropertyDescriptor | undefined
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, 'length')
+  } catch {
+    return null
+  }
+  if (descriptor === undefined || !('value' in descriptor)) return null
+  const length: unknown = descriptor.value
+  if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0) return null
+  return length
+}
+
+/**
+ * Copy a caller-supplied value's OWN DATA into plain types.
+ *
+ * Only DATA properties are copied: a member defined as a getter is not own
+ * data, it is code, and running it is exactly what this boundary exists to
+ * avoid. `Object.getOwnPropertyDescriptor` is what tells the two apart;
+ * inherited members are never own data and are not copied either.
+ *
+ * Integers arrive as `bigint` — the profile's only numeric type — and a JS
+ * `number` is refused rather than coerced. Coercing would silently admit a
+ * float, and the whole point of the integer-only profile is that a float is not
+ * representable.
+ *
+ * The budget refuses on a node count rather than after the work is already
+ * done: a lazy or unbounded container would otherwise run to the end (that is,
+ * never) before any byte ceiling could fire.
+ */
+export function ownDataCopy(
+  value: unknown,
+  budget: { left: number },
+  options: AdmissionOptions = {},
+): JsonValue {
+  budget.left -= 1
+  if (budget.left < 0) throw new CanonError('value exceeds the admission node budget')
+  if (value === null) return null
+  const t = typeof value
+  if (t === 'boolean' || t === 'string' || t === 'bigint') return value as JsonValue
+  if (t === 'number') {
+    // A JS number is not the profile's integer, and by default a unit carrying
+    // one is not representable and is set aside. But a rail whose view is
+    // routinely written BY HAND in JavaScript has no way to spell a bigint
+    // literal in JSON, and refusing it there would make the same evidence
+    // decide differently depending on how the caller happened to parse it —
+    // which is the divergence this boundary exists to remove, not one it may
+    // introduce. Such a rail says so, and then a SAFE INTEGER is read as the
+    // integer it denotes. Anything else stays refused: a float, a NaN and a
+    // magnitude past exact representation are values the profile cannot
+    // express, whoever supplies them.
+    if (!options.acceptSafeIntegerNumbers) throw new CanonError(ERR.TYPE_NOT_JSON)
+    if (!Number.isSafeInteger(value as number)) throw new CanonError(ERR.TYPE_NOT_JSON)
+    return BigInt(value as number)
+  }
+  if (Array.isArray(value)) {
+    const out: JsonValue[] = []
+    // `length` is read once, from the own descriptor, and the elements by
+    // index: a lazy iterator never gets to run, and an element defined as a
+    // getter is not data and is not admitted.
+    const length = ownArrayLength(value)
+    if (length === null) throw new CanonError(ERR.TYPE_NOT_JSON)
+    for (let i = 0; i < length; i++) {
+      const element = Object.getOwnPropertyDescriptor(value, String(i))
+      if (element === undefined || !('value' in element)) throw new CanonError(ERR.TYPE_NOT_JSON)
+      out.push(ownDataCopy(element.value, budget, options))
+    }
+    return out
+  }
+  if (t === 'object') {
+    const out: JsonObject = Object.create(null) as JsonObject
+    for (const key of Object.getOwnPropertyNames(value as object)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value as object, key)
+      if (descriptor === undefined || !('value' in descriptor)) continue
+      if (!descriptor.enumerable) continue
+      out[key] = ownDataCopy(descriptor.value, budget, options)
+    }
+    return out
+  }
+  throw new CanonError(ERR.TYPE_NOT_JSON)
+}
+
+/**
+ * Admit a caller-supplied value by the shared reconstruction boundary.
+ *
+ * `nesting` is how many of the enclosing VIEW's containers this value sits
+ * inside, so the depth ceiling is measured where §18.4 measures it. Admitting
+ * an element at its OWN top level and only discovering the excess when the
+ * whole view is re-canonicalized would discard the element's SIBLINGS too,
+ * where §18.4 requires the one inadmissible unit to be set aside on its own.
+ *
+ * The returned value is the reconstruction and nothing else.
+ */
+export function admitValue(
+  value: unknown,
+  nesting = 0,
+  options: AdmissionOptions = {},
+): { admitted: boolean; value: JsonValue } {
+  let probe: unknown = value
+  for (let i = 0; i < nesting; i++) probe = [probe]
+  try {
+    const serialized = dumps(ownDataCopy(probe, { left: MAX_ADMISSION_NODES }, options))
+    // The ceiling is measured on the UNIT, not on the probe. The probe exists
+    // to put the unit at its real depth in the view, and each wrapper adds
+    // exactly the two bytes `[` and `]` — so a unit sitting exactly AT the
+    // ceiling would otherwise read as two bytes over per level of nesting and
+    // be refused for the position it occupies rather than for its size.
+    const measured = codePointLength(serialized) - 2 * nesting
+    if (measured > MAX_ADMISSION_BYTES) return { admitted: false, value: null }
+    let materialized = loadsStrict(new TextEncoder().encode(serialized))
+    for (let i = 0; i < nesting; i++) materialized = (materialized as JsonValue[])[0]!
+    return { admitted: true, value: materialized }
+  } catch {
+    // Every throw from the walk lands here, a hostile trap's included: §18.4's
+    // reconstruction fails CLOSED, it never propagates out of the boundary.
+    return { admitted: false, value: null }
+  }
+}
+
+export function materializeValue(
+  value: unknown,
+  nesting = 0,
+  options: AdmissionOptions = {},
+): JsonValue | null {
+  const admission = admitValue(value, nesting, options)
+  return admission.admitted ? admission.value : null
+}
+
+/**
+ * Find a rail-defined member by its OWN key data, never by a plain lookup.
+ *
+ * A plain `view[member]` read goes through the object's `get` trap, so a Proxy
+ * can answer with something that is not the member at all. Comparing the OWN
+ * property names against the member name removes the steering: the comparison
+ * sees stored names only. Two names that collapse onto one member make that
+ * member inadmissible rather than letting insertion order pick a winner.
+ */
+export function ownViewMember(
+  view: object,
+  member: string,
+  budget?: { left: number },
+): unknown | typeof VIEW_MEMBER_ABSENT | typeof VIEW_MEMBER_COLLAPSED {
+  // `getOwnPropertyNames` and `getOwnPropertyDescriptor` are trap surfaces: on a
+  // Proxy they run the caller's code. This function is used on units that have
+  // ALREADY been refused, purely to decide a diagnostic, so a throw here must
+  // fail closed rather than escape a boundary the unit was already set aside by.
+  try {
+    let found: unknown = VIEW_MEMBER_ABSENT
+    for (const key of Object.getOwnPropertyNames(view)) {
+      if (budget !== undefined) {
+        // A unit that is ALREADY inadmissible must not be able to buy unbounded
+        // work with the diagnostic read that follows it.
+        budget.left -= 1
+        if (budget.left < 0) return VIEW_MEMBER_COLLAPSED
+      }
+      if (key !== member) continue
+      const descriptor = Object.getOwnPropertyDescriptor(view, key)
+      // Non-enumerable members are absent from the canonical form, so the main
+      // boundary never admits them; the diagnostic read must agree, or it would
+      // speak for a member the boundary itself does not see.
+      if (descriptor === undefined || !('value' in descriptor) || !descriptor.enumerable) continue
+      if (found !== VIEW_MEMBER_ABSENT) return VIEW_MEMBER_COLLAPSED
+      found = descriptor.value
+    }
+    return found
+  } catch {
+    return VIEW_MEMBER_COLLAPSED
+  }
+}
+
+/**
+ * Admit an array-valued rail or member PER ELEMENT (§18.4).
+ *
+ * The member itself is inadmissible only for a property of the MEMBER: its own
+ * array data cannot be read, it is not an array, or its element count exceeds
+ * the member's ceiling. An element that is not admissible is set aside alone
+ * and no element's admissibility decides another's.
+ */
+export function materializeArray(
+  value: unknown,
+  ceiling: number,
+  options: AdmissionOptions = {},
+): (JsonValue | null)[] | null {
+  if (!Array.isArray(value)) return null
+  try {
+    const count = ownArrayLength(value)
+    if (count === null) return null
+    if (count > ceiling) {
+      // A count-ceiling excess is NOT "one bad element": §18.4 makes it
+      // truncate evaluation fail-closed, and the predicate that does so judges
+      // COUNT alone. Dropping the member here would leave the view with the
+      // member ABSENT, which reads as "within every ceiling" and would FORGIVE
+      // the excess. Report the excess instead, with placeholders and no
+      // per-element work, so the ceiling check still fires before any signature
+      // is verified.
+      return new Array<JsonValue | null>(ceiling + 1).fill(null)
+    }
+    const out: (JsonValue | null)[] = []
+    for (let i = 0; i < count; i++) {
+      const element = Object.getOwnPropertyDescriptor(value, String(i))
+      const supplied = element !== undefined && 'value' in element ? element.value : undefined
+      out.push(materializeValue(supplied, VIEW_ARRAY_ELEMENT_NESTING, options))
+    }
+    return out
+  } catch {
+    return null
+  }
+}

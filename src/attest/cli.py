@@ -41,10 +41,11 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from attest import (
     anchor,
+    authority,
     bundle,
     canon,
     grant,
@@ -1425,6 +1426,153 @@ def _grant_signing_kp(args: argparse.Namespace) -> keys.SigningKeyPair | pq.Hybr
     return pq.HybridSigningKeys(ed=ed_signing_kp, mldsa=_load_mldsa_kp(args.mldsa_seed))
 
 
+def _authority_scope_from_args(args: argparse.Namespace) -> dict[str, Any] | None:
+    artifacts = sorted(set(args.artifact or []))
+    for value in artifacts:
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise CliUsageError(f"--artifact must be 64 lowercase hex characters: {value!r}")
+    if args.series is None and not artifacts:
+        return None
+    return {"artifact_series": args.series, "artifacts": artifacts}
+
+
+def _validate_authorized_issuers(entries: list[Any]) -> list[dict[str, Any]]:
+    if len(entries) > authority.MAX_AUTHORIZED_ISSUERS:
+        raise CliUsageError(
+            "authorized_issuers exceeds the publisher authorization entry ceiling "
+            f"({len(entries)} > {authority.MAX_AUTHORIZED_ISSUERS})"
+        )
+
+    validated: list[dict[str, Any]] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise CliUsageError(f"authorized_issuers[{index}] must be an object")
+        if not authority._valid_entry_shape(entry):
+            raise CliUsageError(f"authorized_issuers[{index}] is not a valid authorization entry")
+        validated.append(cast(dict[str, Any], entry))
+
+    issuer_ids = [dict.get(entry, "issuer_id") for entry in validated]
+    if not grant._sorted_unique(issuer_ids, grant._is_dns_name):
+        raise CliUsageError("authorized_issuers must be sorted by issuer_id with no duplicates")
+    return validated
+
+
+def _authority_entries_from_args(args: argparse.Namespace) -> list[dict[str, Any]]:
+    if args.issuer is not None and args.issuers_file is not None:
+        raise CliUsageError("--issuer and --issuers-file are mutually exclusive")
+
+    if args.issuers_file is not None:
+        if (
+            args.valid_from is not None
+            or args.valid_to is not None
+            or args.permission is not None
+            or args.series is not None
+            or args.artifact is not None
+        ):
+            raise CliUsageError(
+                "--valid-from, --valid-to, --permission, --series, and --artifact "
+                "cannot be used with --issuers-file"
+            )
+        entries = _read_json(
+            args.issuers_file,
+            max_bytes=_MAX_STAGE2_INPUT_BYTES["json"],
+            input_name="--issuers-file",
+        )
+        if not isinstance(entries, list):
+            raise CliUsageError(
+                f"--issuers-file {args.issuers_file} must contain a JSON array of "
+                "authorized issuer entries"
+            )
+        return _validate_authorized_issuers(entries)
+
+    if not args.issuer:
+        raise CliUsageError("one of --issuer or --issuers-file is required")
+    if args.valid_from is None:
+        raise CliUsageError("--valid-from is required with --issuer")
+
+    permissions = sorted(set(args.permission or [authority.PERMISSION_ISSUE]))
+    entries = [
+        {
+            "issuer_id": issuer_id,
+            "valid_from": args.valid_from,
+            "valid_to": args.valid_to,
+            "permissions": permissions,
+            "scope": _authority_scope_from_args(args),
+        }
+        for issuer_id in sorted(set(args.issuer))
+    ]
+    return _validate_authorized_issuers(entries)
+
+
+def _cmd_authority_issue(args: argparse.Namespace) -> int:
+    for flag, path in (("--seed", args.seed), ("--mldsa-seed", args.mldsa_seed)):
+        if path is not None and _same_file_target(path, args.out):
+            raise CliUsageError(f"{flag} and --out must be different paths")
+    if args.previous is not None and _same_file_target(args.previous, args.out):
+        raise CliUsageError("--previous and --out must be different paths")
+
+    previous = (
+        _read_json(
+            args.previous,
+            max_bytes=_MAX_STAGE2_INPUT_BYTES["json"],
+            input_name="--previous",
+        )
+        if args.previous is not None
+        else None
+    )
+    # The successor check is driven by the FLAG, never by the parsed value: a
+    # `--previous` file whose content is the JSON literal `null` parses to
+    # None, and handing that to the builder as `previous=None` would SKIP the
+    # check the caller asked for while the declaration below — also keyed to
+    # the flag — stays silent. D18 admits three outcomes for `--previous`:
+    # checked, refused, or declared undone. Never faked (constraints C-44).
+    if args.previous is not None and not isinstance(previous, dict):
+        raise CliUsageError(
+            f"--previous file {args.previous} must contain a JSON object; a predecessor "
+            "that cannot be read as a document cannot show this one conforming"
+        )
+    # C-43: the verb that EMITS validates the form before signing, and the
+    # entries are not the whole document — `publisher`, `issued_at` and the
+    # version bound are typed by §20.2 too, and the builder deliberately does
+    # not read them. A signature over a document no verifier could admit is
+    # worse than a refusal: it surfaces later, somewhere else, with no way
+    # back to the flag that caused it.
+    if not authority.is_authorization_version(args.authorization_version):
+        raise CliUsageError(
+            "--authorization-version must be an integer in "
+            f"[1, {grant._MAX_JCS_INTEGER}]: {args.authorization_version}"
+        )
+    if not grant._is_dns_name(args.publisher):
+        raise CliUsageError(f"--publisher must be a lowercase DNS domain: {args.publisher!r}")
+    if not transfer._valid_utc_timestamp(args.issued_at):
+        raise CliUsageError(
+            "--issued-at must be an ISO-8601 UTC timestamp of the form "
+            f"YYYY-MM-DDTHH:MM:SSZ: {args.issued_at!r}"
+        )
+    try:
+        document = authority.build_authorization(
+            authorization_version=args.authorization_version,
+            publisher=args.publisher,
+            authorized_issuers=_authority_entries_from_args(args),
+            issued_at=args.issued_at,
+            signing_kp=_grant_signing_kp(args),
+            kid=args.kid,
+            previous=previous,
+        )
+    except ValueError as exc:
+        raise CliUsageError(str(exc)) from exc
+
+    if args.previous is None:
+        print(
+            "warning: --previous not provided; publisher authorization successor "
+            "discipline was not checked",
+            file=sys.stderr,
+        )
+    _write_json_file(args.out, document)
+    _print_json({"out": str(args.out), "record_sha256": authority.authorization_hash(document)})
+    return EXIT_OK
+
+
 def _cmd_grant_issue(args: argparse.Namespace) -> int:
     for flag, path in (("--seed", args.seed), ("--mldsa-seed", args.mldsa_seed)):
         if path is not None and _same_file_target(path, args.out):
@@ -2038,6 +2186,8 @@ def _result_to_dict(result: verify.VerificationResult) -> dict[str, Any]:
         "manifest_freshness": result.manifest_freshness,
         "grant": result.grant,
         "grant_trust": result.grant_trust,
+        "publisher_authority": result.publisher_authority,
+        "publisher_authority_trust": result.publisher_authority_trust,
         "warnings": list(result.warnings),
         "errors": list(result.errors),
     }
@@ -2230,6 +2380,26 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             f"--grant-view file {args.grant_view} must contain a JSON object; "
             'wrap a lone grant document as {"grant": <document>}'
         )
+    authority_view = (
+        _read_json(
+            args.authority_view,
+            max_bytes=_MAX_STAGE2_INPUT_BYTES["json"],
+            input_name="--authority-view",
+        )
+        if args.authority_view is not None
+        else None
+    )
+    # The guard is on the FLAG, not on the parsed value: a file whose content is
+    # `null` parses to None, and testing the parsed value would read a channel
+    # the caller DID supply as a channel they never supplied — opting them out
+    # of section 20.4 in silence. `--revocations`, `--transparency` and
+    # `--grant-view` still test the parsed value (see constraints C-44); their
+    # rails are published, so they change with their own round, not this one.
+    if args.authority_view is not None and not isinstance(authority_view, dict):
+        raise CliUsageError(
+            f"--authority-view file {args.authority_view} must contain a JSON object; "
+            'wrap a lone publisher authorization document as {"authorizations": [<document>]}'
+        )
 
     result = verify.verify(
         envelope_bytes,
@@ -2241,6 +2411,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         anchor_policy=anchor_policy,
         witness_policy=witness_policy,
         grant_view=grant_view,
+        authority_view=authority_view,
     )
     _print_json(_result_to_dict(result))
     return EXIT_OK if result.ok else EXIT_VERIFICATION_FAILED
@@ -2822,6 +2993,59 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--response", required=True, type=Path, help="JSON from `grant respond`")
     p.set_defaults(func=_cmd_grant_verify)
 
+    p_authority = sub.add_parser(
+        "authority", help="Publisher authorization manifest operations (v0.2 §20)"
+    )
+    authority_sub = p_authority.add_subparsers(dest="authority_command", required=True)
+
+    p = authority_sub.add_parser("issue", help="Sign a publisher authorization manifest")
+    p.add_argument(
+        "--authorization-version",
+        required=True,
+        type=_manifest_version_arg,
+        help="monotonic per publisher authorization manifest version",
+    )
+    p.add_argument("--publisher", required=True, help="publisher's lowercase DNS domain")
+    p.add_argument(
+        "--issuer",
+        action="append",
+        default=None,
+        help="authorized issuer id (repeatable); uses the shared entry flags below",
+    )
+    p.add_argument(
+        "--issuers-file",
+        type=Path,
+        default=None,
+        help="JSON array already shaped as authorized_issuers",
+    )
+    p.add_argument("--valid-from", default=None, help="entry valid_from; required with --issuer")
+    p.add_argument("--valid-to", default=None, help="entry valid_to, or omit for null")
+    p.add_argument(
+        "--permission",
+        action="append",
+        default=None,
+        help=f"repeatable; defaults to {authority.PERMISSION_ISSUE}",
+    )
+    p.add_argument("--series", default=None, help="scope artifact_series, or omit for all series")
+    p.add_argument("--artifact", action="append", default=None, help="scope artifact SHA-256")
+    p.add_argument("--issued-at", required=True, help="ISO-8601 UTC signed time")
+    p.add_argument(
+        "--previous",
+        type=Path,
+        default=None,
+        help="predecessor publisher authorization manifest for successor-discipline checking",
+    )
+    p.add_argument("--seed", required=True, type=Path, help="publisher signing key seed")
+    p.add_argument("--kid", required=True)
+    p.add_argument(
+        "--mldsa-seed",
+        type=Path,
+        default=None,
+        help="ML-DSA-65 key file (from `keygen --hybrid`); makes the signature hybrid",
+    )
+    p.add_argument("--out", required=True, type=Path, help="output signed authorization JSON path")
+    p.set_defaults(func=_cmd_authority_issue)
+
     p_log = sub.add_parser(
         "log", help="Transparency-log operator/holder commands (offline-signer split)"
     )
@@ -2952,6 +3176,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="JSON Stage 4 evidence object {grant[,later_grants][,declarations][,anchor]}; "
         "supplying it at all opts into §18.4's grant evaluation",
+    )
+    p.add_argument(
+        "--authority-view",
+        type=Path,
+        default=None,
+        help="JSON publisher authority evidence object "
+        "{authorizations[,current_authorization_version]}; supplying it opts into §20.4",
     )
     p.set_defaults(func=_cmd_verify)
 

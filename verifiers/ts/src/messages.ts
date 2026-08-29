@@ -101,6 +101,10 @@ export const WARN = {
   ARTIFACT_MANIFEST_UNVERSIONED: 'artifact_manifest_unversioned',
   ARTIFACT_MANIFEST_UNAUTHENTICATED: 'artifact_manifest_unauthenticated',
   ARTIFACT_MANIFEST_ISSUER_MISMATCH: 'artifact_manifest_issuer_mismatch',
+  // V-L.8 (design vector "publisher authority") — the wire warning string,
+  // exact and cross-language (Python parity: verify.py's
+  // `_WARN_PUBLISHER_CLAIM_UNATTESTED`).
+  PUBLISHER_CLAIM_UNATTESTED: 'publisher_claim_unattested',
 } as const
 
 export const unsupportedAttestVersion = (v: unknown) => `unsupported attest_version: ${pyRepr(v)}`
@@ -258,6 +262,14 @@ export const VERIFY_TRANSPARENCY_WARN = {
 } as const
 
 // v0.1 rev 8 / v0.2 §19 anchored compromise cutoff.
+// v0.2 §20: the publisher-authority rail. Three literals, byte-identical to the
+// Python core's, because a verdict a caller reads must read the same in both.
+export const AUTHORITY_WARN = {
+  PUBLISHER_NOT_AUTHORIZING_ISSUER: 'publisher_not_authorizing_issuer',
+  SIGNER_NOT_PUBLISHER: 'authorization_signer_not_publisher',
+  INVALID_IGNORED: 'authorization_invalid_ignored',
+} as const
+
 export const COMPROMISE_WARN = {
   RESCUE_APPLIED: 'compromise_rescue_applied',
   CUTOFF_UNANCHORED: 'compromise_cutoff_unanchored',

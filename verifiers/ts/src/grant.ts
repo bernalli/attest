@@ -49,7 +49,10 @@
 import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
 import type { JsonObject, JsonValue } from './canon.js'
-import { canonicalBytes, dumps } from './canon.js'
+import {
+  canonicalBytes, dumps, materializeArray, materializeValue, ownViewMember,
+  VIEW_MEMBER_ABSENT, VIEW_MEMBER_NESTING,
+} from './canon.js'
 import type { TrustStore } from './manifests.js'
 import { findKey, verifySignatureBlock, verifyKeyManifest, chainContinuous } from './manifests.js'
 import { parseStrictUtc, validStage3UtcTimestamp } from './dates.js'
@@ -61,7 +64,7 @@ import { verifySeededAnchor, passesHorizon } from './anchor.js'
 import { GRANT_WARN } from './messages.js'
 
 const ACTIVE = 'active'
-const MAX_JCS_INTEGER = 2n ** 53n - 1n
+export const MAX_JCS_INTEGER = 2n ** 53n - 1n
 
 // The eleven members of a sunset grant (§18.2) and the four of a cessation
 // declaration (§18.4). Both documents are CLOSED — the log-entry discipline
@@ -121,13 +124,13 @@ export const MAX_GRANT_DECLARATIONS = 64
 
 // --- shared shape predicates -------------------------------------------------
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
 
 /** The lowercase-DNS shape of `issuer.id`, reused verbatim for `publisher`,
  * `work.publisher_id` and every `successor_ids` entry (§18.1). */
-function isDnsName(value: unknown): value is string {
+export function isDnsName(value: unknown): value is string {
   return typeof value === 'string' && ISSUER_RE.test(value)
 }
 
@@ -135,7 +138,7 @@ function isHex64(value: unknown): value is string {
   return typeof value === 'string' && HEX64_RE.test(value)
 }
 
-function isNonEmptyString(value: unknown): value is string {
+export function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
 }
 
@@ -147,7 +150,7 @@ function isNonEmptyString(value: unknown): value is string {
  * `activation.modes` accept any non-empty string, so an attacker can reach
  * that disagreement with a hand-built grant; without this helper the two cores
  * would accept and reject different documents on identical bytes. */
-function codePointLess(a: string, b: string): boolean {
+export function codePointLess(a: string, b: string): boolean {
   const left = [...a]
   const right = [...b]
   const shared = Math.min(left.length, right.length)
@@ -165,7 +168,7 @@ function codePointLess(a: string, b: string): boolean {
  * `activation.successor_ids`. Set containment later compares these as sets;
  * pinning the wire order here is what keeps two canonicalizations of the same
  * grant byte-identical. Mirrors grant.py's `_sorted_unique`. */
-function sortedUnique(values: unknown, itemOk: (item: unknown) => boolean): values is string[] {
+export function sortedUnique(values: unknown, itemOk: (item: unknown) => boolean): values is string[] {
   if (!Array.isArray(values)) return false
   if (!values.every((item) => itemOk(item))) return false
   for (let i = 0; i + 1 < values.length; i++) {
@@ -176,7 +179,7 @@ function sortedUnique(values: unknown, itemOk: (item: unknown) => boolean): valu
 
 /** Whether `o`'s own key set is EXACTLY `expected` — the closed-document
  * discipline of §8, spelled once for all four member sets here. */
-function hasExactMembers(o: Record<string, unknown>, expected: ReadonlySet<string>): boolean {
+export function hasExactMembers(o: Record<string, unknown>, expected: ReadonlySet<string>): boolean {
   const keys = Object.keys(o)
   return keys.length === expected.size && keys.every((k) => expected.has(k))
 }
@@ -188,7 +191,7 @@ function hasExactMembers(o: Record<string, unknown>, expected: ReadonlySet<strin
  * Returning the validated object rather than a bare boolean is what lets every
  * caller index it afterwards without a second, weaker check standing in for
  * the first one. */
-function scopeOrNull(scope: unknown): Record<string, unknown> | null {
+export function scopeOrNull(scope: unknown): Record<string, unknown> | null {
   if (!isPlainObject(scope) || !hasExactMembers(scope, SCOPE_MEMBERS)) return null
   const series = scope['artifact_series']
   if (series !== null && !isNonEmptyString(series)) return null
@@ -302,7 +305,7 @@ export function declarationHash(declaration: JsonObject): string {
  * `[valid_from, valid_to]` window must cover the document's OWN signed time
  * (never the verifier's clock), and the signature must verify over
  * `JCS(document)` with `signature` removed, under the §13 AND-rule. */
-function verifySignedDocument(
+export function verifySignedDocument(
   document: Record<string, unknown>,
   keyManifest: JsonObject,
   timestampMember: string,
@@ -666,7 +669,7 @@ export function proseDiffers(floor: unknown, later: unknown): boolean {
 
 // --- structural ceilings (§18.4) ---------------------------------------------
 
-function withinCeiling(supplied: unknown, ceiling: number): boolean {
+export function withinCeiling(supplied: unknown, ceiling: number): boolean {
   if (supplied === null || supplied === undefined) return true
   if (!Array.isArray(supplied)) return false
   return supplied.length <= ceiling
@@ -852,7 +855,7 @@ function pledgeOrNull(payload: unknown): Record<string, unknown> | null {
  * proves nothing about it, and two structurally identical manifests are the
  * same document (the same comparison verify.ts already makes for the issuer's
  * own chain). */
-function grantTrustLadder(trustStore: TrustStore, domain: string, manifest: unknown): string {
+export function grantTrustLadder(trustStore: TrustStore, domain: string, manifest: unknown): string {
   const level = trustStore.provenance[domain] === PROVENANCE_TLS ? GRANT_TRUST_VERIFIED : GRANT_TRUST_TOFU
   const chain = trustStore.chains?.[domain]
   if (chain && chain.length > 0) {
@@ -1099,15 +1102,68 @@ function honorDeclarations(
  * `activated`. Hostile evidence never throws; only malformed TRUSTED config
  * (an `AnchorPolicy`) does, and a `grantView` that is not an evidence object
  * at all, which is a caller-contract violation. */
+/**
+ * A member that is PRESENT on the rail but cannot be reconstructed.
+ *
+ * It must not collapse onto `undefined`: `withinCeiling` reads an absent member
+ * as "no excess" and a present non-array as a refusal, so handing it `undefined`
+ * for a member the caller did supply would turn a fail-closed answer into a
+ * permissive one. A non-array sentinel keeps the existing direction exactly.
+ */
+const INADMISSIBLE_MEMBER = Object.freeze({ inadmissible: true })
+
+/** The rail's own members, reconstructed. */
+interface AdmittedGrantView {
+  grant: unknown
+  later_grants: unknown
+  declarations: unknown
+  anchor: unknown
+}
+
+/**
+ * Admit the grant rail's members by reconstruction, before ANY of them is read
+ * (§18.4).
+ *
+ * The members are the ones the RAIL enumerates; a member it does not define is
+ * never read and can neither refuse the view nor another member. Each array
+ * member is admitted PER ELEMENT under its own count ceiling, so one
+ * inadmissible declaration is set aside alone instead of taking the genuine
+ * ones with it.
+ *
+ * This runs at the boundary rather than inside `verify()` because `evaluateGrant`
+ * is exported: a caller reaching it directly must meet the same boundary as one
+ * arriving through `verify()`, or the rail has two spellings and they will
+ * diverge.
+ */
+function admitGrantView(grantView: object): AdmittedGrantView {
+  const member = (name: string, admit: (value: unknown) => unknown): unknown => {
+    const supplied = ownViewMember(grantView, name)
+    if (supplied === VIEW_MEMBER_ABSENT) return undefined
+    const admitted = admit(supplied)
+    return admitted === null ? INADMISSIBLE_MEMBER : admitted
+  }
+  return {
+    grant: member('grant', (v) => materializeValue(v, VIEW_MEMBER_NESTING)),
+    later_grants: member('later_grants', (v) => materializeArray(v, MAX_GRANT_LATER_VERSIONS)),
+    declarations: member('declarations', (v) => materializeArray(v, MAX_GRANT_DECLARATIONS)),
+    anchor: member('anchor', (v) => materializeValue(v, VIEW_MEMBER_NESTING)),
+  }
+}
+
 export function evaluateGrant(
   payload: unknown,
   trustStore: TrustStore,
-  grantView: unknown,
+  suppliedGrantView: unknown,
   anchorPolicy: AnchorPolicy | null = null,
 ): GrantVerdict {
-  if (grantView != null && !isPlainObject(grantView)) {
+  if (suppliedGrantView != null && !isPlainObject(suppliedGrantView)) {
     throw new TypeError('grant_view must be an evidence object or None')
   }
+  // Every read below is of the RECONSTRUCTION. The caller's object is touched
+  // once, here, and never again: that is what keeps the bytes a signature is
+  // checked over and the values consumed afterwards the same values, whatever
+  // the caller's getters and traps do while they are being read.
+  const grantView = suppliedGrantView == null ? null : admitGrantView(suppliedGrantView)
 
   const warnings: string[] = []
   if (grantView == null) {

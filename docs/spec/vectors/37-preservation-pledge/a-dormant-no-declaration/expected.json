@@ -8,5 +8,7 @@
   "schema": "valid",
   "signature": "valid",
   "trust": "verified",
-  "warnings": []
+  "warnings": [
+    "publisher_claim_unattested"
+  ]
 }

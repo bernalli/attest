@@ -1,4 +1,4 @@
-// The conformance merge gate (41 vector groups / 179 leaves): this suite discovers every leaf under
+// The conformance merge gate (45 vector groups / 212 leaves): this suite discovers every leaf under
 // `docs/spec/vectors/` and asserts the produced VerificationResult matches
 // its `expected.json`, using the exact same match rules as the Python
 // reference's `tests/test_vectors.py`. Passing this suite in full IS the
@@ -9,7 +9,7 @@
 // parametrization rather than being run twice:
 //
 //  - the default: verify(), for every leaf that ships none of the three files
-//    below (150 leaves). Three of its optional leaf files are:
+//    below (184 leaves). Four of its optional leaf files are:
 //      * `compromise-view.json` (group 41, v0.2 §19): key-manifest
 //        compromise declarations, fed as `compromiseView`.
 //      * `grant-view.json` (group 37, v0.2 §18.4): the evidence OBJECT
@@ -20,6 +20,9 @@
 //        `expected.json` carries the two new members `grant` and
 //        `grant_trust`, asserted with the same conditional-exact discipline
 //        `transparency`/`corroboration`/`manifest_freshness` already use.
+//      * `authority-view.json` (group 43, v0.2 §20): publisher authorization
+//        documents, fed as `authorityView`; group 43 alone carries
+//        `publisher_authority` and `publisher_authority_trust`.
 //      * group 37's `anchor-policy.json` (leaves g/h/i/o), reused verbatim
 //        from group 28's shape — the fixed-date proof is verified under §11.
 //  - `chain.json` (group 36, §17.5): auditChain, 4 leaves.
@@ -93,6 +96,7 @@ describe('attest conformance vectors', () => {
       compromiseView: V.compromiseView(dir),
       witnessPolicy: V.witnessPolicy(dir),
       grantView: V.grantView(dir),
+      authorityView: V.authorityView(dir),
     })
 
     // always-exact
@@ -107,6 +111,8 @@ describe('attest conformance vectors', () => {
     if ('manifest_freshness' in exp) expect(r.manifest_freshness).toBe(exp.manifest_freshness)
     if ('grant' in exp) expect(r.grant).toBe(exp.grant)
     if ('grant_trust' in exp) expect(r.grant_trust).toBe(exp.grant_trust)
+    if ('publisher_authority' in exp) expect(r.publisher_authority).toBe(exp.publisher_authority)
+    if ('publisher_authority_trust' in exp) expect(r.publisher_authority_trust).toBe(exp.publisher_authority_trust)
     if ('ok' in exp) expect(isOk(r)).toBe(exp.ok)
     // exact-list
     if ('errors' in exp) expect([...r.errors]).toEqual(exp.errors)

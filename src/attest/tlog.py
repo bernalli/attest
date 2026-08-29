@@ -51,11 +51,13 @@ _TYPE_RECEIPT = "receipt"
 _TYPE_REVOCATION_RECORD = "revocation-record"
 _TYPE_TRANSFER_RECORD = "transfer-record"
 _TYPE_CESSATION_DECLARATION = "cessation-declaration"
+_TYPE_PUBLISHER_AUTHORIZATION = "publisher-authorization"
 _KEY_MANIFEST_FIELDS = frozenset({"type", "issuer", "manifest_version", "manifest_sha256"})
 _RECEIPT_FIELDS = frozenset({"type", "issuer", "core_sha256"})
 _REVOCATION_RECORD_FIELDS = frozenset({"type", "issuer", "record_sha256"})
 _TRANSFER_RECORD_FIELDS = frozenset({"type", "issuer", "record_sha256"})
 _CESSATION_DECLARATION_FIELDS = frozenset({"type", "issuer", "record_sha256"})
+_PUBLISHER_AUTHORIZATION_FIELDS = frozenset({"type", "issuer", "record_sha256"})
 
 # Same lowercase-DNS shape as the receipt schema's `issuer.id` pattern
 # (src/attest/schema/attest-receipt.schema.json) — kept in sync by hand,
@@ -362,7 +364,7 @@ def encode_entry(entry: dict[str, Any]) -> bytes:
     """Validate `entry` against a CLOSED schema and return its canonical
     (attest-JCS) bytes — the exact bytes that get leaf-hashed into the log.
 
-    Exactly five entry types, exactly these members each (extras rejected):
+    Exactly six entry types, exactly these members each (extras rejected):
 
     - `key-manifest`: `{"type", "issuer", "manifest_version", "manifest_sha256"}`,
       where `manifest_sha256 = SHA-256(JCS(manifest))` (lowercase hex).
@@ -400,6 +402,19 @@ def encode_entry(entry: dict[str, Any]) -> bytes:
       discoverability and for a date opposable to third parties, but a
       declaration that authenticates activates a grant whether or not it was
       ever logged.
+    - `publisher-authorization` (v0.2 §8/§20.2): `{"type", "issuer",
+      "record_sha256"}`, where `record_sha256 = attest.authority.authorization_hash(
+      document)` — `SHA-256(JCS(document))` over the ENTIRE signed publisher
+      authorization manifest (including its own `signature` member), the same
+      canonical form `authority.py` already builds and verifies the document's
+      signature over. `issuer` here is the PUBLISHER's domain and remains the
+      same NON-authenticated browsing hint as the other entry types' — the
+      document's own signature (verified against the publisher's key manifest,
+      v0.2 §18.1/§20.2) is what binds it, never this entry. Like
+      `cessation-declaration` and unlike `transfer-record`, this entry type is
+      NOT load-bearing: §20.2 RECOMMENDS logging, and an authenticated
+      authorization binds whether or not it was ever logged — currency
+      disputes are resolved by `authorization_version`, not by the log.
 
     Raises `TlogError` on an unknown `type`, a missing/extra member, or a
     member with the wrong value shape.
@@ -428,6 +443,10 @@ def encode_entry(entry: dict[str, Any]) -> bytes:
         _require_hex64(entry, "record_sha256")
     elif entry_type == _TYPE_CESSATION_DECLARATION:
         _require_fields(entry, _CESSATION_DECLARATION_FIELDS)
+        _require_issuer(entry)
+        _require_hex64(entry, "record_sha256")
+    elif entry_type == _TYPE_PUBLISHER_AUTHORIZATION:
+        _require_fields(entry, _PUBLISHER_AUTHORIZATION_FIELDS)
         _require_issuer(entry)
         _require_hex64(entry, "record_sha256")
     else:

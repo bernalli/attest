@@ -35,11 +35,13 @@ const TYPE_RECEIPT = 'receipt'
 const TYPE_REVOCATION_RECORD = 'revocation-record'
 const TYPE_TRANSFER_RECORD = 'transfer-record'
 const TYPE_CESSATION_DECLARATION = 'cessation-declaration'
+const TYPE_PUBLISHER_AUTHORIZATION = 'publisher-authorization'
 const KEY_MANIFEST_FIELDS = new Set(['type', 'issuer', 'manifest_version', 'manifest_sha256'])
 const RECEIPT_FIELDS = new Set(['type', 'issuer', 'core_sha256'])
 const REVOCATION_RECORD_FIELDS = new Set(['type', 'issuer', 'record_sha256'])
 const TRANSFER_RECORD_FIELDS = new Set(['type', 'issuer', 'record_sha256'])
 const CESSATION_DECLARATION_FIELDS = new Set(['type', 'issuer', 'record_sha256'])
+const PUBLISHER_AUTHORIZATION_FIELDS = new Set(['type', 'issuer', 'record_sha256'])
 // Mirrors tlog.py's `_MAX_ENTRY_SCALAR_LEN`: both cores bound free-text
 // entry scalars before regex matching, diagnostic rendering, or JCS work.
 const MAX_ENTRY_SCALAR_LEN = 500_000
@@ -253,7 +255,7 @@ function requireManifestVersion(entry: Record<string, unknown>): void {
 /** Validate `entry` against a CLOSED schema and return its canonical
  * (attest-JCS) bytes — the exact bytes that get leaf-hashed into the log.
  *
- * Five entry types, exactly these members each (extras rejected):
+ * Six entry types, exactly these members each (extras rejected):
  * - `key-manifest`: `{type, issuer, manifest_version, manifest_sha256}`.
  * - `receipt`: `{type, issuer, core_sha256}`.
  * - `revocation-record` (v0.2 §8, G5): `{type, issuer, record_sha256}`,
@@ -275,6 +277,18 @@ function requireManifestVersion(entry: Record<string, unknown>): void {
  *   RECOMMENDS logging a declaration for discoverability and for a date
  *   opposable to third parties, but an authenticated declaration activates
  *   a grant whether or not it was ever logged.
+ * - `publisher-authorization` (v0.2 §8/§20.2): `{type, issuer,
+ *   record_sha256}`, where `record_sha256 = authorizationHash(document)`
+ *   (authority.ts) — `SHA-256(JCS(document))` over the entire signed
+ *   publisher authorization manifest, its own `signature` member included.
+ *   `issuer` is the publisher's domain and remains the same
+ *   NON-authenticated browsing hint as the other entry types': the document's
+ *   own signature, verified against the publisher's key manifest (§20.2), is
+ *   what binds it, never this entry. Like `cessation-declaration` and unlike
+ *   `transfer-record`, this entry type is NOT load-bearing — §20.2
+ *   RECOMMENDS logging for discoverability and for a date opposable to third
+ *   parties, but an authenticated authorization binds whether or not it was
+ *   ever logged.
  *
  * `entry` is untrusted evidence (the "materialized", plain-JS-number
  * convention this port uses — see `transparency.ts`): `manifest_version`
@@ -309,6 +323,10 @@ export function encodeEntry(entry: unknown): Uint8Array {
     requireHex64(entry, 'record_sha256')
   } else if (entryType === TYPE_CESSATION_DECLARATION) {
     requireFields(entry, CESSATION_DECLARATION_FIELDS)
+    requireIssuer(entry)
+    requireHex64(entry, 'record_sha256')
+  } else if (entryType === TYPE_PUBLISHER_AUTHORIZATION) {
+    requireFields(entry, PUBLISHER_AUTHORIZATION_FIELDS)
     requireIssuer(entry)
     requireHex64(entry, 'record_sha256')
   } else {

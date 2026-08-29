@@ -11,6 +11,7 @@ const result = (over: Partial<VerificationResult> = {}): VerificationResult => (
   binding: 'not_checked', trust: 'unauthenticated_tofu',
   transparency: 'not_checked', corroboration: 'none', manifest_freshness: 'not_checked',
   grant: 'not_checked', grant_trust: 'not_checked',
+  publisher_authority: 'not_checked', publisher_authority_trust: 'not_checked',
   warnings: [], errors: [],
   ...over,
 })
@@ -19,7 +20,7 @@ const texts = (el: HTMLElement, selector: string): string[] =>
   [...el.querySelectorAll(selector)].map((n) => n.textContent ?? '')
 
 describe('renderResult', () => {
-  it('renders all ten components, grouped under the three questions', () => {
+  it('renders all twelve components, grouped under the three questions', () => {
     const el = renderResult('R1', run())
     expect(texts(el, '.group-question')).toEqual([
       'Is it authentic?',
@@ -29,6 +30,7 @@ describe('renderResult', () => {
     expect(texts(el, '.component-name')).toEqual([
       'Signature', 'Schema', 'Buyer binding', 'Key trust',
       'Revocation', 'Preservation pledge', 'Pledge signer',
+      'Publisher authority', 'Publisher authority signer',
       'Transparency log', 'Corroboration', 'Key manifest freshness',
     ])
   })
@@ -39,17 +41,19 @@ describe('renderResult', () => {
   it('gives every string-valued field of the result a row of its own', () => {
     const r = result()
     const fields = Object.values(r).filter((v) => typeof v === 'string').length
-    expect(fields).toBe(10)
+    expect(fields).toBe(12)
     expect(renderResult('R1', { ok: true, result: r }).querySelectorAll('.component')).toHaveLength(fields)
   })
 
   it('keeps each row’s tone and prints the raw value beside the name', () => {
     const el = renderResult('R1', run({ transparency: 'logged', corroboration: 'logged' }))
     const rows = [...el.querySelectorAll('.component')]
+    // Indices follow GROUPS order: 3 is Key trust, 9 is Transparency log,
+    // 5 is Preservation pledge — the two §20 rows sit at 7 and 8.
     expect(rows[3].textContent).toContain('unauthenticated_tofu')
     expect(rows[3].classList.contains('tone-warn')).toBe(true)
-    expect(rows[7].textContent).toContain('logged')
-    expect(rows[7].classList.contains('tone-good')).toBe(true)
+    expect(rows[9].textContent).toContain('logged')
+    expect(rows[9].classList.contains('tone-good')).toBe(true)
     // A pledge nobody offered evidence for is neutral, never a failure.
     expect(rows[5].classList.contains('tone-neutral')).toBe(true)
   })

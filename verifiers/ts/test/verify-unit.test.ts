@@ -39,9 +39,30 @@ describe('verify unit', () => {
     expect(() => verify(enc('{}'), store as any)).toThrow(TypeError)
     expect(() => verify(enc('{}'), store as any)).toThrow(/loadsStrict|bigint/)
   })
-  it('throws TypeError on a JSON.parse-d (number-typed) revocation view', () => {
-    const view = [{ receipt_id: 'X', status: 'revoked', manifest_version: 2 }]
-    expect(() => verify(enc('{}'), emptyStore, view as any)).toThrow(TypeError)
+  // The revocation view no longer throws for a JS number, and the property this
+  // test protects is stronger than the one it used to pin. A JSON.parse'd record
+  // carries values the integer-only profile cannot represent, so the ADMISSION
+  // BOUNDARY sets that record aside on its own (§18.4) instead of taking the
+  // whole call down for a property of one record. The caller still learns —
+  // §12.2's ignored-record warning fires when the inadmissible record claims to
+  // be about this receipt — and a genuine sibling revocation still reaches its
+  // verdict, which the throwing guard made impossible.
+  it('sets a JSON.parse-d (number-typed) revocation record aside and still honours its sibling', () => {
+    // Bilateral, and this is the point: the record carrying a JS number is not
+    // representable in the integer-only profile, so it is set aside ALONE and
+    // still surfaces as §12.2's ignored-record warning because it claims to be
+    // about this receipt — while the genuine, signed sibling beside it still
+    // revokes. The guard this replaced threw for the bad record and took the
+    // good one down with it.
+    const bad = { receipt_id: T_OLD_ID, status: 'revoked', revoked_at: T_AT, manifest_version: 2 }
+    const body = { receipt_id: T_OLD_ID, status: 'revoked', revoked_at: T_AT }
+    const sig = ed25519.sign(canonicalBytes(parse(body)), tIssuerSeed)
+    const good = parse({ ...body, signature: { kid: T_KID, sig: b64uEncode(sig) } })
+
+    const result = verify(tEnvelopeBytes('policy'), tTrustStore(), [bad as unknown as JsonValue, good])
+
+    expect(result.revocation).toBe('revoked')
+    expect(result.warnings).toContain(`revocation record for '${T_OLD_ID}' failed verification, ignored`)
   })
   it('does not throw the guard for a loadsStrict-parsed (bigint) trust store', () => {
     const store = { manifests: { 'ex.com': { issuer: 'ex.com', manifest_version: 3n } }, provenance: {} }
@@ -259,7 +280,20 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     expect(isOk(result)).toBe(true)
   })
 
-  it('uses the materialized transferView after serialization', () => {
+  // The property here is that the caller's live claim is not read a second time
+  // after the boundary. It used to be pinned by letting the getter run ONCE and
+  // capturing what it returned; the admission boundary makes it stronger, and
+  // this test now pins the stronger form: a member defined as a GETTER is not
+  // own data at all (§18.4 reconstructs from data property descriptors), so the
+  // getter is never invoked — zero reads, not one — and the claim it defines is
+  // set aside on its own. Running a caller's code inside the boundary is what
+  // the boundary exists to avoid; "read it exactly once" still runs it.
+  //
+  // The claim is set aside rather than honoured, so the receipt reads as never
+  // transferred: RESTRICTIVE, and the same evidence-withholding residue that is
+  // already declared (§20.6 item 6) — whoever carries the evidence can always
+  // omit it, so supplying it as code buys no power that omitting it did not.
+  it('never invokes a caller getter on the transfer view, and sets that claim aside', () => {
     const hk = generateHybridLogKeys()
     const record = tTransferRecord()
     const bundle = tLogBundle([record], hk)[0]
@@ -272,16 +306,20 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
       revocability: 'policy',
     }
 
-    const expected = verifyWith({ ...options, transferView: [plainClaim] })
+    const honoured = verifyWith({ ...options, transferView: [plainClaim] })
     const statefulClaim = {
-      get record() {
-        if (++reads === 1) return plainClaim['record']
-        throw new Error('second record read must not escape the verification boundary')
-      },
-      get evidence() { return plainClaim['evidence'] },
+      get record() { reads += 1; return plainClaim['record'] },
+      get evidence() { reads += 1; return plainClaim['evidence'] },
     }
     const actual = verifyWith({ ...options, transferView: [statefulClaim] as unknown as JsonValue[] })
-    expect(actual).toEqual(expected)
+
+    expect(reads).toBe(0)
+    expect(actual.revocation).toBe('invalid_revocation_ignored')
+    expect(actual.warnings).toContain('transferred_revocation_unbacked')
+    expect(isOk(actual)).toBe(true)
+    // Bilateral: the same claim supplied as DATA is still honoured, so this is
+    // a refusal of code-as-evidence and not of the rail.
+    expect(honoured.revocation).toBe('transferred')
   })
 
   it('treats a forged holder authorization as unbacked', () => {
@@ -606,5 +644,83 @@ describe('verify(): witness policy on the trusted rail (§11.4)', () => {
       expect(result.corroboration).toBe(baseline.corroboration)
       expect([...result.warnings]).toEqual([...baseline.warnings])
     }
+  })
+})
+
+// --------------------------------------------------------------------------
+// V-L.8 (design vector "publisher authority"): work.publisher_id differing
+// from issuer.id is an unattested rights-holder claim under v0.1 alone.
+// Mirrors tests/test_verify.py's Python-side trio (Python reference).
+// --------------------------------------------------------------------------
+describe('verify(): V-L.8 publisher_claim_unattested (design vector "publisher authority")', () => {
+  function pPayload(publisherId?: unknown): Record<string, unknown> {
+    const work: Record<string, unknown> = { title: 'T', publisher: 'P', identifiers: { issuer_sku: 'X' }, artifact_series: 'series-x' }
+    if (publisherId !== undefined) work['publisher_id'] = publisherId
+    return {
+      attest_version: '0.1', issued_at: '2026-01-02T00:00:00Z', receipt_id: T_OLD_ID, supersedes: null,
+      issuer: { id: T_ISSUER, display_name: 'Example Store' },
+      work,
+      license: {
+        grant: 'perpetual', revocability: 'none', transferable: false, drm: 'drm-free',
+        terms_uri: 'https://x/t', legal_text_sha256: 'a'.repeat(64),
+      },
+      buyer: { commitment: 'A'.repeat(43), identifier_type: 'email', pubkey: b64uEncode(tHolderPub) },
+      survivability: { end_of_life: 'none', eol_commitment_sha256: null, eol_commitment_uri: null, redownload_right: true },
+    }
+  }
+
+  function pEnvelopeBytesFromPayload(body: Record<string, unknown>): Uint8Array {
+    const payload = parse(body)
+    const sig = ed25519.sign(canonicalBytes(payload), tIssuerSeed)
+    const envelope = { payload, signatures: [{ kid: T_KID, alg: 'Ed25519', sig: b64uEncode(sig) }] }
+    // `parse` round-trips numbers through loadsStrict, which returns them as
+    // BigInt (canon.ts's parseNumber) -- JSON.stringify can't serialize BigInt
+    // natively, so put it back on the wire as a JSON number (same idiom as
+    // evaluate-grant.test.ts:663).
+    return enc(JSON.stringify(envelope, (_k, v) => (typeof v === 'bigint' ? Number(v) : v)))
+  }
+
+  function pEnvelopeBytes(publisherId?: unknown): Uint8Array {
+    return pEnvelopeBytesFromPayload(pPayload(publisherId))
+  }
+
+  it('warns when work.publisher_id differs from issuer.id', () => {
+    const result = verify(pEnvelopeBytes('pub.example'), tTrustStore())
+    expect(isOk(result)).toBe(true)
+    expect(result.warnings).toContain('publisher_claim_unattested')
+  })
+
+  it('is silent when work.publisher_id equals issuer.id', () => {
+    const result = verify(pEnvelopeBytes(T_ISSUER), tTrustStore())
+    expect(isOk(result)).toBe(true)
+    expect(result.warnings).not.toContain('publisher_claim_unattested')
+  })
+
+  it('is silent when work.publisher_id is absent', () => {
+    const result = verify(pEnvelopeBytes(), tTrustStore())
+    expect(isOk(result)).toBe(true)
+    expect(result.warnings).not.toContain('publisher_claim_unattested')
+  })
+
+  it.each([
+    ['publisher_id object', pPayload({})],
+    ['publisher_id array', pPayload([])],
+    ['publisher_id null', pPayload(null)],
+    ['publisher_id non-string', pPayload(7)],
+    ['work array', { ...pPayload(), work: [] }],
+    ['work null', { ...pPayload(), work: null }],
+    ['work string', { ...pPayload(), work: 'not-an-object' }],
+  ])('does not throw or warn on hostile %s', (_label, body) => {
+    const result = verify(pEnvelopeBytesFromPayload(body), tTrustStore())
+    expect(result.signature).toBe('valid')
+    expect(result.schema).toBe('invalid')
+    expect(result.warnings).not.toContain('publisher_claim_unattested')
+  })
+
+  it('warns for an empty string publisher_id because it is still a string claim', () => {
+    const result = verify(pEnvelopeBytes(''), tTrustStore())
+    expect(result.signature).toBe('valid')
+    expect(result.schema).toBe('invalid')
+    expect(result.warnings).toContain('publisher_claim_unattested')
   })
 })

@@ -40,6 +40,9 @@ from attest import (
     transfer,
     validate,
 )
+from attest import (
+    authority as authority_module,
+)
 from attest import grant as grant_module
 from attest import transparency as transparency_module
 
@@ -84,13 +87,10 @@ _REVOCATION_REVOKED = "revoked"
 _REVOCATION_INVALID_IGNORED = "invalid_revocation_ignored"
 _REVOCATION_NOT_REVOKED_PREFIX = "not_revoked_as_of:"
 
-# Preflight bound on the untrusted revocation view (review improvement #17):
-# a legitimate view for one verify() call is an issuer's records for one
-# receipt — realistically single digits; 10k is far above any legitimate
-# case and keeps hostile worst-case work bounded. Injectable per call via
-# `verify(..., max_revocation_records=...)`. Mirrored by the TS verifier's
-# MAX_REVOCATION_RECORDS.
-_MAX_REVOCATION_RECORDS = 10_000
+# Preflight bound on the untrusted revocation view (review improvement #17),
+# defined by the module that owns the rail and injectable per call via
+# `verify(..., max_revocation_records=...)`.
+_MAX_REVOCATION_RECORDS = revocation.MAX_REVOCATION_RECORDS
 
 _REVOCABILITY_NONE = "none"
 _REVOCABILITY_REFUND_WINDOW = "refund_window"
@@ -111,6 +111,12 @@ _REVOCATION_TRANSFERRED = "transferred"
 # status "is not a revocation statement" (§12) — and a non-statement must not
 # inflate the feed's reported freshness either (V-L.5).
 _ANCHOR_STATUSES = frozenset({_RECORD_STATUS_REVOKED, _REVOCATION_TRANSFERRED})
+
+# V-L.8 (design vector "publisher authority"): `work.publisher_id` is an
+# unattested claim under v0.1 alone — no manifest resolution or grant
+# evaluation backs it — so a receipt asserting a rights holder distinct from
+# its own issuer gets a warning, never an exception (TS parity: messages.ts).
+_WARN_PUBLISHER_CLAIM_UNATTESTED = "publisher_claim_unattested"
 
 # Fixed literals (v0.2 §17.2-§17.4, verbatim; TS parity: messages.ts).
 _WARN_TRANSFERRED_REVOCATION_UNBACKED = "transferred_revocation_unbacked"
@@ -153,6 +159,10 @@ _WARN_COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF = "compromise_rescue_receipt_after_
 _WARN_COMPROMISE_CUTOFF_CLAIM_IGNORED = "compromise_cutoff_claim_ignored"
 _WARN_COMPROMISE_MARKING_RETRACTED = "compromise_marking_retracted"
 _MAX_COMPROMISE_CLAIMS = 64
+# Same ceiling shape as the compromise rail, defined by the module that owns
+# the rail: `transfer.audit_chain()` admits the same view against the same
+# number, and a ceiling restated in two places is a ceiling that will drift.
+_MAX_TRANSFER_CLAIMS = transfer.MAX_TRANSFER_CLAIMS
 
 # G6 mixed-keyset prohibition (v0.2 §2.3/§13 amendment) — the wire warning
 # string, exact and cross-language (TS parity: messages.ts).
@@ -198,6 +208,18 @@ _WARN_GRANT_ACTIVATED_BY_SUCCESSOR = "grant_activated_by_successor"
 _WARN_GRANT_PLEDGE_TYPE_UNKNOWN = "grant_pledge_type_unknown"
 _WARN_GRANT_LEGAL_TEXT_CHANGED = "grant_legal_text_changed"
 
+_AUTHORITY_NOT_CHECKED = "not_checked"
+_AUTHORITY_NO_CLAIM = "no_publisher_claim"
+_AUTHORITY_SELF = "self"
+_AUTHORITY_AUTHORIZED = "authorized"
+_AUTHORITY_UNAUTHORIZED = "unauthorized"
+_AUTHORITY_UNATTESTED = "unattested"
+_AUTHORITY_TRUST_SIGNER_MISMATCH = "signer_mismatch"
+
+_WARN_PUBLISHER_NOT_AUTHORIZING_ISSUER = "publisher_not_authorizing_issuer"
+_WARN_AUTHORIZATION_SIGNER_NOT_PUBLISHER = "authorization_signer_not_publisher"
+_WARN_AUTHORIZATION_INVALID_IGNORED = "authorization_invalid_ignored"
+
 _PLEDGE_MEMBERS = ("pledge", "grant_uri", "grant_sha256")
 _HEX_LOWER = frozenset("0123456789abcdef")
 
@@ -210,7 +232,7 @@ _HEX_LOWER = frozenset("0123456789abcdef")
 # _MAX_OPS_PER_PROOF, _MAX_OP_HEX_LEN) ~ 8.5MB, plus inclusion/consistency
 # proofs (~8KB) — ~10MB total. The cap still bounds hostile materialization
 # before the JSON decoder performs a second full traversal.
-_MAX_TRANSPARENCY_EVIDENCE_LEN = 10_000_000
+_MAX_TRANSPARENCY_EVIDENCE_LEN = canon.MAX_ADMISSION_BYTES
 
 
 @dataclass(frozen=True)
@@ -307,6 +329,14 @@ class VerificationResult:
     grant: str = _GRANT_NOT_CHECKED
     # "not_checked" | "none" | "dormant" | "activated" | "invalid_grant_ignored"
     grant_trust: str = _GRANT_TRUST_NOT_CHECKED
+    # "not_checked" | "verified" | "unauthenticated_tofu" | "unverified_rotation"
+    # | "signer_mismatch"
+    # v0.2 section 20.5, informational only. Declared after Stage 4 for the
+    # same additive-construction reason as `grant`/`grant_trust`.
+    publisher_authority: str = _AUTHORITY_NOT_CHECKED
+    # "not_checked" | "no_publisher_claim" | "self" | "authorized"
+    # | "unauthorized" | "unattested"
+    publisher_authority_trust: str = _AUTHORITY_NOT_CHECKED
     # "not_checked" | "verified" | "unauthenticated_tofu" | "unverified_rotation"
     # | "signer_mismatch"
 
@@ -615,7 +645,15 @@ def _evaluate_transparency_claim(
         # parse once so every following phase sees one ordinary JSON object,
         # never a stateful mapping/value supplied by the caller. The size cap
         # prevents decoding an arbitrarily large serialized evidence bundle.
-        serialized_evidence = canon.dumps(transparency_evidence)
+        # The copy of the value's OWN data runs FIRST and refuses on a node
+        # budget: the byte cap below is compared against a serialization that
+        # has ALREADY been produced, so a caller value whose iteration never
+        # ends would hang here before any cap could fire -- and a hang reaches
+        # no `except` clause, which is why the enclosing one is not a defence
+        # against it.
+        serialized_evidence = canon.dumps(
+            _own_data_copy(transparency_evidence, [_MAX_EVIDENCE_NODES])
+        )
         if len(serialized_evidence) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
             raise ValueError("transparency evidence exceeds materialization limit")
         materialized_evidence = json.loads(serialized_evidence)
@@ -685,21 +723,120 @@ def _append_warning_once(warnings: list[str], warning: str) -> None:
         warnings.append(warning)
 
 
+# §18.4's admission boundary has exactly ONE spelling, in `canon` — the leaf
+# module both public entry points that admit caller rails can import
+# (`verify()` here, `transfer.audit_chain()` there, which cannot import this
+# module without closing the cycle `verify -> transfer`). These names are the
+# vocabulary the rest of this module reads; they bind to that one boundary
+# rather than restating it, because a boundary with two spellings is a boundary
+# that will diverge.
+_MAX_EVIDENCE_NODES = canon.MAX_ADMISSION_NODES
+_own_data_copy = canon.own_data_copy
+_admit_evidence_value = canon.admit_value
+_materialize_evidence_value = canon.materialize_value
+_own_view_member = canon.own_view_member
+_materialize_evidence_array = canon.materialize_array
+_VIEW_MEMBER_NESTING = canon.VIEW_MEMBER_NESTING
+_VIEW_ARRAY_ELEMENT_NESTING = canon.VIEW_ARRAY_ELEMENT_NESTING
+_VIEW_MEMBER_ABSENT = canon.VIEW_MEMBER_ABSENT
+_VIEW_MEMBER_COLLAPSED = canon.VIEW_MEMBER_COLLAPSED
+
+
+def _admit_single_view_member(
+    view: dict[str, Any], reconstructed: dict[str, Any], member: str
+) -> None:
+    supplied = _own_view_member(view, member)
+    if supplied is _VIEW_MEMBER_ABSENT or supplied is _VIEW_MEMBER_COLLAPSED:
+        return
+    admitted, materialized = _admit_evidence_value(supplied, _VIEW_MEMBER_NESTING)
+    if admitted:
+        reconstructed[member] = materialized
+
+
+def _materialize_grant_view(grant_view: dict[str, Any]) -> dict[str, Any] | None:
+    """Admit `grant_view` MEMBER BY MEMBER, over the members §18.4 enumerates.
+
+    The view is never reconstructed as one indivisible value: a single
+    unencodable value would then discard the publisher's whole signed evidence
+    where §18.4 requires it to be set aside on its own, and anyone able to
+    append one member — a relay, a mirror, an aggregating cache — would buy
+    `not_checked` for a few hundred bytes of nesting.
+
+    The members are the ones the RAIL defines, never the ones the value
+    supplies: `grant` and `anchor` are admitted as single values (one that is
+    not admissible is ABSENT), `later_grants` and `declarations` per element. A
+    member the rail does not define is not admitted at all — never
+    reconstructed, never read, and never a reason to refuse the view or any
+    other member. Every read of the caller's object goes through an
+    unshadowable `dict` accessor, so a subclass is not refused for BEING a
+    subclass either.
+    """
+    try:
+        reconstructed: dict[str, Any] = {}
+        later_grants = _own_view_member(grant_view, "later_grants")
+        if later_grants is not _VIEW_MEMBER_ABSENT and later_grants is not _VIEW_MEMBER_COLLAPSED:
+            materialized_later = _materialize_evidence_array(
+                later_grants, grant_module._MAX_GRANT_LATER_VERSIONS
+            )
+            if materialized_later is not None:
+                reconstructed["later_grants"] = materialized_later
+        declarations = _own_view_member(grant_view, "declarations")
+        if declarations is not _VIEW_MEMBER_ABSENT and declarations is not _VIEW_MEMBER_COLLAPSED:
+            materialized_declarations = _materialize_evidence_array(
+                declarations, grant_module._MAX_GRANT_DECLARATIONS
+            )
+            if materialized_declarations is not None:
+                reconstructed["declarations"] = materialized_declarations
+        _admit_single_view_member(grant_view, reconstructed, "grant")
+        _admit_single_view_member(grant_view, reconstructed, "anchor")
+    except Exception:
+        return None
+    return reconstructed
+
+
+def _materialize_authority_view(authority_view: dict[str, Any]) -> dict[str, Any] | None:
+    """Admit `authority_view` MEMBER BY MEMBER, over the members §20.3 enumerates.
+
+    Same rule as `_materialize_grant_view`: `authorizations` is admitted per
+    element, `current_authorization_version` as a single value, and a member
+    the rail does not define is never read.
+    """
+    try:
+        reconstructed: dict[str, Any] = {}
+        authorizations = _own_view_member(authority_view, "authorizations")
+        if (
+            authorizations is not _VIEW_MEMBER_ABSENT
+            and authorizations is not _VIEW_MEMBER_COLLAPSED
+        ):
+            materialized_authorizations = _materialize_evidence_array(
+                authorizations, authority_module.MAX_AUTHORITY_DOCUMENTS
+            )
+            if materialized_authorizations is not None:
+                reconstructed["authorizations"] = materialized_authorizations
+        _admit_single_view_member(authority_view, reconstructed, "current_authorization_version")
+    except Exception:
+        return None
+    return reconstructed
+
+
 def _materialize_compromise_view(
     compromise_view: list[dict[str, Any]] | None,
 ) -> list[Any] | None:
     if compromise_view is None:
         return None
     try:
-        serialized = canon.dumps(compromise_view)
-        if len(serialized) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
+        count = list.__len__(compromise_view)
+        if count > _MAX_COMPROMISE_CLAIMS:
             return None
-        materialized: object = json.loads(serialized)
+        return [
+            _materialize_evidence_value(
+                list.__getitem__(compromise_view, index),
+                _VIEW_MEMBER_NESTING,
+            )
+            for index in range(count)
+        ]
     except Exception:
         return None
-    if not isinstance(materialized, list) or len(materialized) > _MAX_COMPROMISE_CLAIMS:
-        return None
-    return materialized
 
 
 def _held_issuer_manifests(
@@ -1118,7 +1255,11 @@ def _revocation_deadline_satisfied(
         # `_evaluate_transparency_claim`: canonicalize and parse once so
         # every following phase sees one ordinary JSON object, never a
         # stateful mapping/value supplied by the caller.
-        serialized_evidence = canon.dumps(revocation_evidence)
+        # Own-data copy first, for the same reason as the transparency sink:
+        # the byte cap cannot fire on a serialization that never returns.
+        serialized_evidence = canon.dumps(
+            _own_data_copy(revocation_evidence, [_MAX_EVIDENCE_NODES])
+        )
         if len(serialized_evidence) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
             return False
         materialized_evidence = json.loads(serialized_evidence)
@@ -1212,18 +1353,28 @@ def _resolve_transfer_backing(
     assignment (§17.4) — `_WARN_TRANSFER_DOUBLE_ASSIGNMENT` — and the
     EARLIEST log index (first-logged) wins.
     """
+    # Admitted PER CLAIM, not as one indivisible view: a claim that cannot be
+    # represented is set aside ALONE, and a genuine claim with full backing
+    # still reaches its verdict beside it. Admitting the view as a whole would
+    # let one malformed sibling delete a real transfer -- a FALSE VALID, since
+    # the receipt would read as never transferred.
     try:
-        serialized = canon.dumps(transfer_view)
-        if len(serialized) > _MAX_TRANSPARENCY_EVIDENCE_LEN:
+        if not isinstance(transfer_view, list):
             return None
-        materialized = json.loads(serialized)
+        materialized_claims = _materialize_evidence_array(transfer_view, _MAX_TRANSFER_CLAIMS)
     # Adversarial-boundary confinement (never BaseException), mirroring
     # `_revocation_deadline_satisfied`: a hostile `transfer_view` list/dict's
     # `__eq__`/`__getitem__` must not escape as a bare exception.
     except Exception:
         return None
-    if not isinstance(materialized, list):
+    if materialized_claims is None:
         return None
+    if len(materialized_claims) > _MAX_TRANSFER_CLAIMS:
+        # The count ceiling is not "one bad claim": it truncates evaluation,
+        # and a truncated transfer view cannot be told apart from a view with
+        # no transfer in it. Fail closed by declining to resolve any backing.
+        return None
+    materialized = materialized_claims
 
     receipt_id = payload.get("receipt_id")
     manifest_ok = manifests.verify_key_manifest(issuer_manifest)
@@ -1371,14 +1522,45 @@ def _classify_revocation(
     `transfer_view` was never supplied at all — in which case the resolver is
     never reached, and this function appends the unbacked warning directly.
     """
-    if not revocation_view:  # None or empty: no data, no freshness anchor either way
+    if revocation_view is None:  # no data, no freshness anchor either way
         return _REVOCATION_UNKNOWN
+
+    # 18.4: the caller's view is ADMITTED ONCE, per record, before anything
+    # reads it -- and from here on ONLY the reconstruction is read. Two
+    # properties depend on that being the first thing this function does:
+    #
+    #   * the two passes below correlate authentication with matching by
+    #     `id()`, which assumes both passes see the SAME objects. A `list`
+    #     subclass whose `__iter__` returns FRESH objects on the second pass
+    #     satisfies `isinstance(..., list)` and desynchronizes them, so a
+    #     genuinely signed, matching record can be reported `not_revoked`.
+    #     Plain reconstructed records have stable identity, which closes it by
+    #     construction rather than by a defensive read.
+    #   * the bytes a signature is verified over and the values consumed
+    #     afterwards must come from ONE reconstruction. Reading the live
+    #     object a second time is what lets a caller authenticate one value
+    #     and be judged on another, with the issuer's genuine signature.
+    #
+    # The element count comes from `list.__len__` and never from iteration:
+    # an unbounded `__iter__` would hang the verifier before any ceiling could
+    # fire, and no `except` clause is ever reached by a value that does not
+    # return. A view that is not a list keeps the caller-contract behaviour it
+    # has always had -- 18.4 leaves the declared container shape to the rail.
+    supplied: int
+    admitted_view: Any
+    if isinstance(revocation_view, list):
+        supplied = list.__len__(revocation_view)
+        if supplied == 0:
+            return _REVOCATION_UNKNOWN
+    else:
+        if not revocation_view:
+            return _REVOCATION_UNKNOWN
+        supplied = len(revocation_view)
 
     license_block = payload.get("license")
     revocability = license_block.get("revocability") if isinstance(license_block, dict) else None
 
-    if len(revocation_view) > max_records:
-        supplied = len(revocation_view)
+    if supplied > max_records:
         if revocability in (_REVOCABILITY_POLICY, _REVOCABILITY_REFUND_WINDOW):
             # Revocable receipt + an untrusted view too large to evaluate: fail
             # closed. "unknown" here would keep ok=true, letting an append-only
@@ -1397,6 +1579,15 @@ def _classify_revocation(
             )
         return _REVOCATION_UNKNOWN
 
+    if isinstance(revocation_view, list):
+        # Per RECORD: an inadmissible record is set aside ALONE (it lands as
+        # `None` and no pass treats it as a record), and its admissibility
+        # decides no sibling's. The ceiling is already known to hold here, so
+        # this never walks more than `max_records` elements.
+        admitted_view = _materialize_evidence_array(revocation_view, max_records) or []
+    else:
+        admitted_view = revocation_view
+
     receipt_id = payload.get("receipt_id")
 
     # Authenticated records (any receipt_id) drive the freshness anchor; only
@@ -1408,7 +1599,7 @@ def _classify_revocation(
     authenticated_ids: set[int] = set()
     authenticated: list[dict[str, Any]] = []
     if manifest_ok:
-        for record in revocation_view:
+        for record in admitted_view:
             if isinstance(record, dict) and revocation.verify_record_signature(
                 record, issuer_manifest
             ):
@@ -1421,9 +1612,37 @@ def _classify_revocation(
     # A matching, authenticated `status == "transferred"` record (Stage 3,
     # §17.3) is collected separately — it is not a "revoked"-status statement,
     # so it plays no part in the "revoked"-status dispatch below.
+    # A record that was NOT ADMITTED still has to be VISIBLE if it claims to be
+    # about this receipt: 12.2 makes an unauthenticated matching record an
+    # ignore WITH A WARNING, which is what stops a forged record from silently
+    # disappearing, and an inadmissible record is less than unauthenticated.
+    # The claim is read the only way the boundary allows -- the diagnostic
+    # member alone, through the same own-data primitives, never the value that
+    # made the record inadmissible -- and it decides NOTHING but the warning.
+    if isinstance(revocation_view, list):
+        diagnostic_budget = [_MAX_EVIDENCE_NODES]
+        for index, admitted_record in enumerate(admitted_view):
+            if admitted_record is not None:
+                continue
+            original = list.__getitem__(revocation_view, index)
+            if not isinstance(original, dict):
+                continue
+            claimed = _own_view_member(original, "receipt_id", diagnostic_budget)
+            if claimed is _VIEW_MEMBER_ABSENT or claimed is _VIEW_MEMBER_COLLAPSED:
+                continue
+            if not isinstance(claimed, str):
+                continue
+            claimed_admitted, claimed_id = _admit_evidence_value(
+                claimed, _VIEW_ARRAY_ELEMENT_NESTING
+            )
+            if claimed_admitted and claimed_id == receipt_id:
+                warnings.append(
+                    f"revocation record for {receipt_id!r} failed verification, ignored"
+                )
+
     valid: list[dict[str, Any]] = []
     transferred_matches: list[dict[str, Any]] = []
-    for record in revocation_view:
+    for record in admitted_view:
         if not isinstance(record, dict) or record.get("receipt_id") != receipt_id:
             continue
         if id(record) not in authenticated_ids:
@@ -1731,6 +1950,7 @@ def evaluate_grant(
     warnings: list[str] = []
     if grant_view is None:
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED)
+    materialized_grant_view = _materialize_grant_view(grant_view)
 
     # --- Step 1: the pledge itself, from the signed payload alone.
     pledge = _pledge_or_none(payload)
@@ -1759,11 +1979,13 @@ def evaluate_grant(
 
     # --- Step 4: the structural ceilings, then the evidence itself. The
     # ceilings run BEFORE any signature is verified, or they are not ceilings.
-    later_grants = grant_view.get("later_grants")
-    declarations = grant_view.get("declarations")
+    if not isinstance(materialized_grant_view, dict):
+        return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED, tuple(warnings))
+    later_grants = cast("list[Any] | None", _own_member(materialized_grant_view, "later_grants"))
+    declarations = cast("list[Any] | None", _own_member(materialized_grant_view, "declarations"))
     if not grant_module.within_structural_ceilings(later_grants, declarations):
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED, tuple(warnings))
-    floor = grant_view.get("grant")
+    floor = _own_member(materialized_grant_view, "grant")
     if not isinstance(floor, dict):
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED, tuple(warnings))
 
@@ -1813,12 +2035,12 @@ def evaluate_grant(
                 _GRANT_INVALID_IGNORED, _GRANT_TRUST_SIGNER_MISMATCH, tuple(warnings)
             )
         return GrantVerdict(_GRANT_INVALID_IGNORED, grant_trust, tuple(warnings))
-    if floor.get("publisher") != publisher_id:
+    if not _member_equals(floor, "publisher", publisher_id):
         return GrantVerdict(_GRANT_INVALID_IGNORED, grant_trust, tuple(warnings))
 
     # --- Step 6: the receipt binding. One canonical form, never a second one.
-    floor_hash = grant_module.grant_hash(floor)
-    if floor_hash != pledge["grant_sha256"]:
+    floor_hash = _grant_hash_or_none(floor)
+    if floor_hash is None or floor_hash != pledge["grant_sha256"]:
         warnings.append(_WARN_GRANT_COMMITMENT_MISMATCH)
         return GrantVerdict(_GRANT_INVALID_IGNORED, grant_trust, tuple(warnings))
 
@@ -1844,12 +2066,12 @@ def evaluate_grant(
     # already open, so `grant_unanchored` is not emitted there — that is what
     # keeps the warning set from depending on which spare evidence a caller
     # happened to attach.
-    activation = effective.get("activation")
-    modes = activation.get("modes") if isinstance(activation, dict) else None
-    fixed_date = activation.get("fixed_date") if isinstance(activation, dict) else None
+    activation = dict.get(effective, "activation")
+    modes = dict.get(activation, "modes") if isinstance(activation, dict) else None
+    fixed_date = dict.get(activation, "fixed_date") if isinstance(activation, dict) else None
     if isinstance(modes, list) and grant_module.MODE_FIXED_DATE in modes and fixed_date is not None:
         if isinstance(fixed_date, str) and _fixed_date_reached(
-            grant_view.get("anchor"), effective, fixed_date, anchor_policy
+            _own_member(materialized_grant_view, "anchor"), effective, fixed_date, anchor_policy
         ):
             return GrantVerdict(_GRANT_ACTIVATED, grant_trust, tuple(warnings))
         warnings.append(_WARN_GRANT_UNANCHORED)
@@ -1900,9 +2122,12 @@ def _resolve_effective_grant(
     for later in later_grants if isinstance(later_grants, list) else []:
         if not isinstance(later, dict) or not grant_module.verify_grant(later, manifest):
             continue
-        if later.get("publisher") != floor.get("publisher"):
+        if not _member_equals(later, "publisher", _own_member(floor, "publisher")):
             continue
-        candidates.setdefault(grant_module.grant_hash(later), later)
+        later_hash = _grant_hash_or_none(later)
+        if later_hash is None:
+            continue
+        candidates.setdefault(later_hash, later)
 
     by_version: dict[int, int] = {}
     for document in candidates.values():
@@ -1998,6 +2223,279 @@ def _honor_declarations(
     return honored
 
 
+# --- Stage 5: publisher authority evaluation (v0.2 section 20.4) ------------
+
+
+@dataclass(frozen=True)
+class AuthorityVerdict:
+    """Section 20.5's authority components plus warnings produced by section
+    20.4's ordered evaluation."""
+
+    publisher_authority: str
+    publisher_authority_trust: str
+    warnings: tuple[str, ...] = ()
+
+
+def _own_member(document: object, member: str) -> object:
+    return dict.get(document, member) if isinstance(document, dict) else None
+
+
+def _member_equals(document: object, member: str, expected: object) -> bool:
+    """`_own_member` plus the comparison, fail-closed.
+
+    An own-item read defeats an overridden `get`, but it hands back whatever
+    the member holds — and a `str` subclass that refuses to be compared
+    canonicalizes, signs and authenticates exactly like the string it shadows,
+    so it survives to the binding checks that run AFTER authentication. This
+    is the `__eq__` trigger `authority.entry_for_issuer` names as the reason
+    an own-item read still needs an enclosing guard. A value that will not
+    compare is not equal to anything: every binding this decides fails closed.
+    """
+    try:
+        return isinstance(document, dict) and bool(dict.get(document, member) == expected)
+    except Exception:
+        return False
+
+
+def _authorization_hash_or_none(candidate: object, warnings: list[str]) -> str | None:
+    try:
+        return authority_module.authorization_hash(cast(dict[str, Any], candidate))
+    except Exception:
+        _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
+        return None
+
+
+def _grant_hash_or_none(candidate: object) -> str | None:
+    """`grant_hash` behind the same fail-closed boundary
+    `_authorization_hash_or_none` puts around `authorization_hash`.
+
+    Canonicalization walks a mapping with `__iter__` and `__getitem__`, both of
+    which caller-supplied content can override, so hashing a document that
+    arrived on an evidence rail is one of the few places §18.4's never-raise
+    promise can still be broken after every member read has been made an
+    own-item read. The builder-side helpers stay loud on purpose; the boundary
+    belongs at the verifier's call site, exactly as §20.4's does.
+    """
+    try:
+        return grant_module.grant_hash(cast(dict[str, Any], candidate))
+    except Exception:
+        return None
+
+
+def _admitted_authorizations(
+    authorizations: list[Any],
+    trust_store: TrustStore,
+    publisher_id: str,
+    authority_trust: str,
+    warnings: list[str],
+) -> tuple[dict[str, dict[str, Any]], str]:
+    admitted: dict[str, dict[str, Any]] = {}
+    seen_hashes: set[str] = set()
+    for candidate in authorizations:
+        document_hash = _authorization_hash_or_none(candidate, warnings)
+        if document_hash is None or document_hash in seen_hashes:
+            continue
+        seen_hashes.add(document_hash)
+
+        if not isinstance(candidate, dict):
+            _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
+            continue
+        document = candidate
+        signer = grant_module.signer_domain(document)
+        manifest = trust_store.manifests.get(signer) if isinstance(signer, str) else None
+        if not isinstance(manifest, dict) or not authority_module.verify_authorization(
+            document, manifest
+        ):
+            _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
+            continue
+        if not _member_equals(manifest, "issuer", signer) or not _member_equals(
+            document, "publisher", publisher_id
+        ):
+            _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
+            continue
+        if signer != publisher_id:
+            _append_warning_once(warnings, _WARN_AUTHORIZATION_SIGNER_NOT_PUBLISHER)
+            authority_trust = _AUTHORITY_TRUST_SIGNER_MISMATCH
+            continue
+        admitted[document_hash] = document
+    return admitted, authority_trust
+
+
+def _entries_by_issuer(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    entries = cast(list[dict[str, Any]], document["authorized_issuers"])
+    return {entry["issuer_id"]: entry for entry in entries}
+
+
+def _window_shortens(previous_valid_to: str | None, valid_to: str | None) -> bool:
+    if valid_to is None:
+        return False
+    if previous_valid_to is None:
+        return True
+    return transfer._parse_date(valid_to) < transfer._parse_date(previous_valid_to)
+
+
+def _restriction_outside_bounds(
+    predecessor_issued_at: str, successor_issued_at: str, valid_to: str
+) -> bool:
+    endpoint = transfer._parse_date(valid_to)
+    return endpoint < transfer._parse_date(
+        predecessor_issued_at
+    ) or endpoint > transfer._parse_date(successor_issued_at)
+
+
+def _breaks_successor_discipline(predecessor: dict[str, Any], successor: dict[str, Any]) -> bool:
+    try:
+        successor_entries = _entries_by_issuer(successor)
+        successor_issued_at = cast(str, successor["issued_at"])
+        predecessor_issued_at = cast(str, predecessor["issued_at"])
+        for predecessor_entry in cast(list[dict[str, Any]], predecessor["authorized_issuers"]):
+            issuer_id = predecessor_entry["issuer_id"]
+            successor_entry = successor_entries.get(issuer_id)
+            if successor_entry is None:
+                return True
+            if successor_entry["valid_from"] != predecessor_entry["valid_from"]:
+                return True
+
+            predecessor_valid_to = cast(str | None, predecessor_entry["valid_to"])
+            valid_to = cast(str | None, successor_entry["valid_to"])
+            if authority_module.window_spent_at(predecessor_valid_to, successor_issued_at):
+                if not authority_module.same_instant(predecessor_valid_to, valid_to):
+                    return True
+                continue
+
+            if (
+                _window_shortens(predecessor_valid_to, valid_to)
+                and valid_to is not None
+                and _restriction_outside_bounds(
+                    predecessor_issued_at, successor_issued_at, valid_to
+                )
+            ):
+                return True
+    except Exception:
+        return True
+    return False
+
+
+def _effective_authorization(
+    admitted: dict[str, dict[str, Any]], authority_trust: str
+) -> tuple[dict[str, Any] | None, str]:
+    by_version: dict[int, int] = {}
+    for document in admitted.values():
+        version = int(cast(int, dict.get(document, "authorization_version")))
+        by_version[version] = by_version.get(version, 0) + 1
+
+    equivocating = {version for version, count in by_version.items() if count > 1}
+    if equivocating:
+        authority_trust = _TRUST_UNVERIFIED_ROTATION
+
+    survivors = {
+        document_hash: document
+        for document_hash, document in admitted.items()
+        if int(cast(int, dict.get(document, "authorization_version"))) not in equivocating
+    }
+    excluded: set[str] = set()
+    for predecessor_hash, predecessor in survivors.items():
+        predecessor_version = int(cast(int, dict.get(predecessor, "authorization_version")))
+        for successor_hash, successor in survivors.items():
+            if predecessor_hash == successor_hash:
+                continue
+            if predecessor_version >= int(cast(int, dict.get(successor, "authorization_version"))):
+                continue
+            if _breaks_successor_discipline(predecessor, successor):
+                excluded.add(successor_hash)
+
+    if excluded:
+        authority_trust = _TRUST_UNVERIFIED_ROTATION
+
+    effective_candidates = [
+        document for document_hash, document in survivors.items() if document_hash not in excluded
+    ]
+    if not effective_candidates:
+        return None, authority_trust
+    return (
+        max(
+            effective_candidates,
+            key=lambda document: int(cast(int, dict.get(document, "authorization_version"))),
+        ),
+        authority_trust,
+    )
+
+
+def evaluate_publisher_authority(
+    payload: dict[str, Any],
+    trust_store: TrustStore,
+    authority_view: dict[str, Any] | None,
+) -> AuthorityVerdict:
+    """Section 20.4's deterministic, short-circuiting evaluation order."""
+    if authority_view is not None and not isinstance(authority_view, dict):
+        raise TypeError("authority_view must be an evidence object or None")
+
+    warnings: list[str] = []
+    if authority_view is None:
+        return AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
+    materialized_authority_view = _materialize_authority_view(authority_view)
+
+    # --- Step 1.
+    work = _own_member(payload, "work")
+    publisher_id = _own_member(work, "publisher_id")
+    if not isinstance(publisher_id, str):
+        return AuthorityVerdict(_AUTHORITY_NO_CLAIM, _AUTHORITY_NOT_CHECKED)
+
+    # --- Step 2.
+    issuer = _own_member(payload, "issuer")
+    issuer_id = _own_member(issuer, "id")
+    if not isinstance(issuer_id, str):
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+
+    # --- Step 3.
+    if publisher_id == issuer_id:
+        return AuthorityVerdict(_AUTHORITY_SELF, _AUTHORITY_NOT_CHECKED)
+
+    # --- Step 4.
+    if not isinstance(materialized_authority_view, dict):
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+    authorizations = _own_member(materialized_authority_view, "authorizations")
+    if not isinstance(authorizations, list):
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+    if not authority_module.within_structural_ceiling(authorizations):
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+    if len(authorizations) == 0:
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, _AUTHORITY_NOT_CHECKED)
+
+    # --- Step 5. The ladder is keyed to the RECEIPT's publisher claim, never
+    # to any domain named by a supplied document's kid; the document is still
+    # attacker-supplied bytes at this point.
+    authority_trust = _grant_trust_ladder(
+        trust_store, publisher_id, trust_store.manifests.get(publisher_id)
+    )
+
+    # --- Step 6.
+    admitted, authority_trust = _admitted_authorizations(
+        authorizations, trust_store, publisher_id, authority_trust, warnings
+    )
+
+    # --- Step 7.
+    effective, authority_trust = _effective_authorization(admitted, authority_trust)
+    if effective is None:
+        return AuthorityVerdict(_AUTHORITY_UNATTESTED, authority_trust, tuple(warnings))
+
+    # --- Step 8 is the `effective` selection above.
+
+    # --- Step 9.
+    entry = authority_module.entry_for_issuer(effective, issuer_id)
+    if entry is not None and authority_module.entry_authorizes_receipt(entry, payload):
+        return AuthorityVerdict(_AUTHORITY_AUTHORIZED, authority_trust, tuple(warnings))
+
+    # --- Step 10.
+    assertion = _own_member(materialized_authority_view, "current_authorization_version")
+    if authority_module.is_authorization_version(assertion) and assertion == dict.get(
+        effective, "authorization_version"
+    ):
+        warnings.append(_WARN_PUBLISHER_NOT_AUTHORIZING_ISSUER)
+        return AuthorityVerdict(_AUTHORITY_UNAUTHORIZED, authority_trust, tuple(warnings))
+    return AuthorityVerdict(_AUTHORITY_UNATTESTED, authority_trust, tuple(warnings))
+
+
 def verify(
     envelope_bytes: bytes,
     trust_store: TrustStore,
@@ -2013,6 +2511,7 @@ def verify(
     compromise_view: list[dict[str, Any]] | None = None,
     witness_policy: object = None,
     grant_view: dict[str, Any] | None = None,
+    authority_view: dict[str, Any] | None = None,
 ) -> VerificationResult:
     """§6 steps 0-7. `max_revocation_records` bounds the untrusted revocation
     view: a larger view is not evaluated (revocation `"unknown"`). It fails
@@ -2068,6 +2567,12 @@ def verify(
     that never supplies it gets `not_checked`/`not_checked` and a byte-for-byte
     unchanged result, exactly like every Stage 2/3 addition before it.
 
+    `authority_view` is v0.2 section 20's caller-supplied evidence channel for
+    publisher authorization. It is informational only: `publisher_authority`
+    and `publisher_authority_trust` never affect receipt validity or issuer
+    trust. A caller that never supplies it gets `not_checked`/`not_checked`;
+    the existing publisher-claim warning is then stratified from that verdict.
+
     `compromise_view` is v0.1 rev 8 / v0.2 §19's fourth sanctioned exception
     to the Stage 2 informational rule: a caller-supplied list of key-manifest
     compromise declarations. Authenticated declarations only ever strengthen
@@ -2097,6 +2602,8 @@ def verify(
     # inside a well-shaped view never raises — only the wrong container does.
     if grant_view is not None and not isinstance(grant_view, dict):
         raise TypeError("grant_view must be an evidence object or None")
+    if authority_view is not None and not isinstance(authority_view, dict):
+        raise TypeError("authority_view must be an evidence object or None")
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -2616,11 +3123,24 @@ def verify(
         grant_verdict = evaluate_grant(
             payload, trust_store, grant_view, anchor_policy=anchor_policy
         )
+        authority_verdict = evaluate_publisher_authority(payload, trust_store, authority_view)
     else:
         revocation_result = _REVOCATION_UNKNOWN
         binding_result = _BINDING_NOT_CHECKED
         grant_verdict = GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED)
+        authority_verdict = AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
 
+    warnings.extend(authority_verdict.warnings)
+
+    work_block = payload.get("work")
+    publisher_id = work_block.get("publisher_id") if isinstance(work_block, dict) else None
+    if (
+        isinstance(publisher_id, str)
+        and isinstance(issuer_id, str)
+        and publisher_id != issuer_id
+        and authority_verdict.publisher_authority in (_AUTHORITY_NOT_CHECKED, _AUTHORITY_UNATTESTED)
+    ):
+        warnings.append(_WARN_PUBLISHER_CLAIM_UNATTESTED)
     warnings.extend(grant_verdict.warnings)
 
     return VerificationResult(
@@ -2636,4 +3156,6 @@ def verify(
         errors=tuple(errors),
         grant=grant_verdict.grant,
         grant_trust=grant_verdict.grant_trust,
+        publisher_authority=authority_verdict.publisher_authority,
+        publisher_authority_trust=authority_verdict.publisher_authority_trust,
     )

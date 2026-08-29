@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import multiprocessing as mp
+import queue
 from collections.abc import Callable
 from typing import Any
 
@@ -694,4 +696,240 @@ def test_audit_chain_self_inconsistent_manifest_marks_every_link_invalid() -> No
     assert res.errors == (
         "chain link 1: issuer signature invalid",
         "chain link 2: issuer signature invalid",
+    )
+
+
+# --- audit_chain: §18.4 admission of the caller's rails ----------------------
+#
+# `audit_chain` is a SECOND public entry point for the two untrusted rails
+# `verify()` already admits (`transfer_view`, `revocation_view`). Every case
+# below pins a PROPERTY the boundary owes, never the mechanism that delivers it,
+# and every case asserts that the call RETURNS a verdict.
+
+_AUDIT_WALL_TIMEOUT_SECONDS = 3.0
+IMPOSTOR_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+
+
+class _AlwaysEqualId(str):
+    """A successor id whose OWN data names one receipt and whose comparison
+    answers True against any other. The issuer signs the own data; a link is
+    selected on the comparison — so the two can be made to disagree."""
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __ne__(self, other: object) -> bool:
+        return False
+
+    def __hash__(self) -> int:
+        return str.__hash__(self)
+
+
+class _ExplodingGetClaim(dict[str, Any]):
+    """A claim whose LIVE member reads raise. Its own data is genuine, so
+    §18.4's rule that a subtype is never refused for BEING a subtype means the
+    claim must still be honoured — through its own data, never through `get`."""
+
+    def get(self, key: str, default: Any = None) -> Any:
+        raise RuntimeError(f"unexpected live get for {key}")
+
+
+class _NonTerminatingTransferView(list[Any]):
+    def __iter__(self) -> Any:
+        while True:
+            yield {"record": None, "evidence": None}
+
+
+def _audit_fixture() -> tuple[
+    pq.HybridSigningKeys,
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    """One genuine, fully backed link ID0 -> ID1: the payloads, the claim view
+    and the revocation view, all built from the real constructors."""
+    hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
+    p0 = _chain_payload(ID0, HOLDER_KP)
+    p1 = _chain_payload(ID1, NEW_HOLDER_KP)
+    record = _chain_transfer_record(ID0, ID1, NEW_HOLDER_KP, HOLDER_KP, AT)
+    bundle = _chain_log_bundle([record], hk)[0]
+    view = [{"record": record, "evidence": bundle}]
+    rev_view = [_chain_transferred_revocation(ID0, AT)]
+    return hk, p0, p1, record, view, rev_view
+
+
+def _audit(
+    payloads: list[Any],
+    transfer_view: Any,
+    revocation_view: Any,
+    hk: pq.HybridSigningKeys,
+) -> transfer.ChainAuditResult:
+    return transfer.audit_chain(
+        payloads,
+        transfer_view,
+        revocation_view,
+        _key_manifest(),
+        [_transfer_log_key(hk)],
+        _no_horizon_policy(),
+    )
+
+
+def test_audit_chain_refuses_a_link_the_signed_record_does_not_name() -> None:
+    """Chain-of-title integrity: the successor a signature COVERS and the
+    successor a link is MATCHED against must be the same value.
+
+    The record is genuine — signed by the issuer, authorized by the original
+    holder, logged — and its own `new_receipt_id` data is ID1. Only its
+    comparison lies. A link from ID0 to an unrelated receipt must not be
+    reported valid on the strength of that comparison: nobody authorized it.
+    Bilateral, in the same fixture: the link the record DOES name still
+    validates, so this is a refusal of the forgery and not of the rail."""
+    hk, p0, p1, _record, _view, rev_view = _audit_fixture()
+    forged = _chain_transfer_record(ID0, _AlwaysEqualId(ID1), NEW_HOLDER_KP, HOLDER_KP, AT)
+    forged_bundle = _chain_log_bundle([forged], hk)[0]
+    forged_view = [{"record": forged, "evidence": forged_bundle}]
+    impostor = _chain_payload(IMPOSTOR_ID, NEW_HOLDER_KP)
+
+    forged_result = _audit([p0, impostor], forged_view, rev_view, hk)
+    genuine_result = _audit([p0, p1], forged_view, rev_view, hk)
+
+    assert forged_result.valid is False
+    assert forged_result.link_status == ("invalid",)
+    assert "chain link 1: no transfer record" in forged_result.errors
+    assert genuine_result.valid is True
+    assert genuine_result.link_status == ("valid",)
+    assert genuine_result.errors == ()
+
+
+@pytest.mark.parametrize(
+    "not_an_array",
+    [None, {"record": None}, "not-an-array", 7, (1, 2)],
+    ids=["none", "mapping", "string", "integer", "tuple"],
+)
+def test_audit_chain_returns_a_verdict_for_a_transfer_view_that_is_not_an_array(
+    not_an_array: Any,
+) -> None:
+    """§18.4 leaves the declared container shape to the rail: this rail is an
+    array, so anything else carries no claim. The audit degrades to "no
+    transfer record" and RETURNS — a public surface must not answer a
+    malformed view with a bare exception."""
+    hk, p0, p1, _record, _view, rev_view = _audit_fixture()
+
+    result = _audit([p0, p1], not_an_array, rev_view, hk)
+
+    assert isinstance(result, transfer.ChainAuditResult)
+    assert result.valid is False
+    assert result.link_status == ("invalid",)
+    assert "chain link 1: no transfer record" in result.errors
+
+
+@pytest.mark.parametrize(
+    "not_an_array",
+    [None, {"receipt_id": ID0}, "not-an-array", 7, (1, 2)],
+    ids=["none", "mapping", "string", "integer", "tuple"],
+)
+def test_audit_chain_returns_a_verdict_for_a_revocation_view_that_is_not_an_array(
+    not_an_array: Any,
+) -> None:
+    """Same rule on the other rail, and it fails in the same direction: with
+    no record the predecessor has no backed extinguishment, so the link is
+    invalid. Silence on either rail can never make a link VALID."""
+    hk, p0, p1, _record, view, _rev_view = _audit_fixture()
+
+    result = _audit([p0, p1], view, not_an_array, hk)
+
+    assert isinstance(result, transfer.ChainAuditResult)
+    assert result.valid is False
+    assert result.link_status == ("invalid",)
+    assert (
+        "chain link 1: previous receipt lacks a backed transferred-class revocation"
+        in result.errors
+    )
+
+
+def test_audit_chain_honours_a_claim_whose_own_data_is_genuine_behind_a_hostile_accessor() -> None:
+    """§18.4: a subtype is never refused for BEING a subtype. The claim's live
+    `get` raises, its own data is a genuine backed transfer, and the link it
+    carries must still be honoured — read through the claim's own data, never
+    through the accessor it supplies."""
+    hk, p0, p1, record, _view, rev_view = _audit_fixture()
+    bundle = _chain_log_bundle([record], hk)[0]
+    hostile_accessor_view = [_ExplodingGetClaim({"record": record, "evidence": bundle})]
+
+    result = _audit([p0, p1], hostile_accessor_view, rev_view, hk)
+
+    assert result.valid is True
+    assert result.link_status == ("valid",)
+    assert result.errors == ()
+
+
+def test_audit_chain_sets_aside_an_unrepresentable_claim_and_keeps_its_sibling() -> None:
+    """Bilateral, per claim: a claim carrying a value the profile cannot
+    represent is set aside ALONE — it cannot back the link it names — and the
+    genuine claim beside it still reaches its own verdict. Admitting the view
+    as one indivisible value would fail both links; reading the view as-is
+    would let the unrepresentable claim back link 1."""
+    hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
+    p0 = _chain_payload(ID0, HOLDER_KP)
+    p1 = _chain_payload(ID1, NEW_HOLDER_KP)
+    p2 = _chain_payload(ID2, SECOND_NEW_HOLDER_KP)
+    record1 = _chain_transfer_record(ID0, ID1, NEW_HOLDER_KP, HOLDER_KP, AT)
+    record2 = _chain_transfer_record(ID1, ID2, SECOND_NEW_HOLDER_KP, NEW_HOLDER_KP, AT2)
+    bundle1, bundle2 = _chain_log_bundle([record1, record2], hk)
+    view = [
+        {"record": record1, "evidence": bundle1, "annotation": 1.5},
+        {"record": record2, "evidence": bundle2},
+    ]
+    rev_view = [
+        _chain_transferred_revocation(ID0, AT),
+        _chain_transferred_revocation(ID1, AT2),
+    ]
+
+    result = _audit([p0, p1, p2], view, rev_view, hk)
+
+    assert result.link_status == ("invalid", "valid")
+    assert result.valid is False
+    assert "chain link 1: no transfer record" in result.errors
+    assert "chain link 2: no transfer record" not in result.errors
+
+
+def _nonterminating_audit_child(result_queue: Any) -> None:
+    try:
+        hk, p0, p1, _record, _view, rev_view = _audit_fixture()
+        result = _audit([p0, p1], _NonTerminatingTransferView(), rev_view, hk)
+    except BaseException as exc:  # child reports the failure instead of hanging pytest
+        result_queue.put(("raised", type(exc).__name__, str(exc)))
+    else:
+        result_queue.put(("returned", result.valid, result.link_status, result.errors))
+
+
+def test_audit_chain_has_a_wall_time_bound_on_a_non_terminating_transfer_view() -> None:
+    """A `list` subclass whose iteration never ends must not hang the audit:
+    the element count comes from the list's own data, so no ceiling has to
+    wait for an iteration that never returns. Asserted on WALL TIME, because
+    "it returned something" is not the property at risk here."""
+    start_method = "fork" if "fork" in mp.get_all_start_methods() else "spawn"
+    ctx = mp.get_context(start_method)
+    result_queue: Any = ctx.Queue()
+    process = ctx.Process(target=_nonterminating_audit_child, args=(result_queue,))
+
+    process.start()
+    process.join(_AUDIT_WALL_TIMEOUT_SECONDS)
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        pytest.fail(f"audit_chain did not return within {_AUDIT_WALL_TIMEOUT_SECONDS:.1f}s")
+
+    try:
+        outcome = result_queue.get_nowait()
+    except queue.Empty as exc:
+        raise AssertionError("audit process exited without reporting a result") from exc
+
+    assert outcome == (
+        "returned",
+        False,
+        ("invalid",),
+        ("chain link 1: no transfer record",),
     )

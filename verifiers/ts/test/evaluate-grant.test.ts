@@ -1095,7 +1095,11 @@ describe('verify() integration — Stage 4 takes NO exception (D6)', () => {
     expect(result.grant).toBe('not_checked')
     expect(result.grant_trust).toBe('not_checked')
     expect(isOk(result)).toBe(true)
-    expect(result.warnings).toEqual([])
+    // v0.1 §11.2 (2026-08-26 amendment): `work.publisher_id` differs from
+    // `issuer.id` on this fixture, and that warning is independent of Stage 4
+    // entirely — it is the ONE component this "byte-identical" assertion no
+    // longer holds for.
+    expect(result.warnings).toEqual(['publisher_claim_unattested'])
   })
 
   it('reports an activated grant without touching ok', () => {
@@ -1174,5 +1178,187 @@ describe('verify() integration — Stage 4 takes NO exception (D6)', () => {
     const result = verify(envelopeBytes(payload), verifyStore())
 
     expect(result.warnings.some((w) => w.includes('end_of_life'))).toBe(true)
+  })
+})
+
+// §18.4: the grant rail is admitted by RECONSTRUCTION, member by member, before
+// any of it is read. These pin the properties the blind bench measures but that
+// do not ship in the branch. Each case asserts BOTH halves — the hostile shape
+// buys nothing AND a genuine sibling still reaches its verdict — because
+// asserting only the refusal would pass just as well against an implementation
+// that threw the whole view away, which is the failure this boundary replaced.
+describe('evaluateGrant — the admission boundary is per member (§18.4)', () => {
+  it('a declarations getter is not own data and cannot activate the grant', () => {
+    const floor = makeGrant()
+    const view: Record<string, unknown> = { grant: floor }
+    Object.defineProperty(view, 'declarations', {
+      enumerable: true,
+      get() { return [makeDeclaration()] },
+    })
+
+    const verdict = evaluate(null, view)
+
+    expect(verdict.grant).toBe('dormant')
+  })
+
+  it('a declarations member on the prototype chain is not own data', () => {
+    const floor = makeGrant()
+    const view = Object.create({ declarations: [makeDeclaration()] }) as Record<string, unknown>
+    view['grant'] = floor
+
+    const verdict = evaluate(null, view)
+
+    expect(verdict.grant).toBe('dormant')
+  })
+
+  it('a proxy answering with an accessor descriptor supplies no own data', () => {
+    const floor = makeGrant()
+    const declarations = [makeDeclaration()]
+    const view = new Proxy({ grant: floor } as Record<string, unknown>, {
+      get(target, key, receiver) {
+        if (key === 'declarations') return declarations
+        return Reflect.get(target, key, receiver)
+      },
+      has(target, key) { return key === 'declarations' || Reflect.has(target, key) },
+      ownKeys(target) { return [...Reflect.ownKeys(target), 'declarations'] },
+      getOwnPropertyDescriptor(target, key) {
+        if (key === 'declarations') return { configurable: true, enumerable: true, get: () => declarations }
+        return Reflect.getOwnPropertyDescriptor(target, key)
+      },
+    })
+
+    const verdict = evaluate(null, view)
+
+    expect(verdict.grant).toBe('dormant')
+  })
+
+  it('a proxy answering with a DATA descriptor is admitted, and buys nothing it did not already have', () => {
+    // The honest limit, stated here rather than left for someone to discover.
+    // In JavaScript a Proxy intercepts `Reflect` and `Object.*` alike, so no
+    // spelling can tell a synthesized data descriptor from a stored one — and
+    // this boundary never claimed to. What it claims is narrower and is what
+    // this case pins: the value is read ONCE, into a reconstruction, and every
+    // later step reads that reconstruction, so the bytes a signature is checked
+    // over are the bytes a decision consumes.
+    //
+    // The consequence is that a proxy handing over a GENUINE grant gets the
+    // verdict a genuine grant earns — identical to passing the document plainly,
+    // which anyone holding it can already do. A proxy is not evidence of
+    // hostility; divergence between verified and consumed would be, and that is
+    // what is closed.
+    const floor = makeGrant()
+    const declarations = [makeDeclaration()]
+    const proxied = new Proxy({} as Record<string, unknown>, {
+      get(_target, key) {
+        if (key === 'grant') return floor
+        if (key === 'declarations') return declarations
+        return undefined
+      },
+      has() { return true },
+      ownKeys() { return ['grant', 'declarations'] },
+      getOwnPropertyDescriptor(_target, key) {
+        const value = key === 'grant' ? floor : key === 'declarations' ? declarations : undefined
+        return { configurable: true, enumerable: true, value }
+      },
+    })
+
+    const throughProxy = evaluate(null, proxied)
+    const plainly = evaluate(null, viewOf(floor, { declarations }))
+
+    expect(throughProxy).toEqual(plainly)
+    expect(throughProxy.grant).toBe('activated')
+  })
+
+  it('a member that throws when read is absent data, not an exception out of the surface', () => {
+    const floor = makeGrant()
+    const view: Record<string, unknown> = { grant: floor }
+    Object.defineProperty(view, 'declarations', {
+      enumerable: true,
+      get() { throw new Error('the boundary must never run this') },
+    })
+
+    // The assertion is that the call RETURNS with a verdict: a public surface
+    // that throws for a property of ONE member takes the genuine members down
+    // with it, which is the shape §18.4 forbids.
+    const verdict = evaluate(null, view)
+
+    expect(verdict.grant).toBe('dormant')
+  })
+
+  it('an inadmissible declaration is set aside alone and the genuine one is still honored', () => {
+    const floor = makeGrant()
+    const hostile: Record<string, unknown> = {}
+    Object.defineProperty(hostile, 'declared_at', {
+      enumerable: true,
+      get() { throw new Error('the boundary must never run this') },
+    })
+
+    const verdict = evaluate(null, viewOf(floor, { declarations: [hostile, makeDeclaration()] }))
+
+    expect(verdict.grant).toBe('activated')
+  })
+
+  it('a hostile later_grants element is set aside alone and the genuine one still governs', () => {
+    const floor = makeGrant()
+    const later = makeGrant(PUB_KEYS, PUB_KID, { grant_version: 2 })
+    const hostile: Record<string, unknown> = {}
+    Object.defineProperty(hostile, 'grant_version', {
+      enumerable: true,
+      get() { throw new Error('the boundary must never run this') },
+    })
+
+    const withHostile = evaluate(null, viewOf(floor, { later_grants: [hostile, later], declarations: [makeDeclaration()] }))
+    const withoutIt = evaluate(null, viewOf(floor, { later_grants: [later], declarations: [makeDeclaration()] }))
+
+    // Bilateral: the bad element buys nothing AND the genuine later version
+    // still reaches the verdict it would have reached on its own.
+    expect(withHostile).toEqual(withoutIt)
+    expect(withHostile.grant).toBe('activated')
+  })
+
+  it('a hostile grant member is absent evidence, and the call still returns a verdict', () => {
+    const view: Record<string, unknown> = { declarations: [makeDeclaration()] }
+    Object.defineProperty(view, 'grant', {
+      enumerable: true,
+      get() { throw new Error('the boundary must never run this') },
+    })
+
+    const verdict = evaluate(payloadFor(makeGrant()), view)
+
+    expect(verdict.grant).toBe('not_checked')
+  })
+
+  it('a hostile anchor member cannot activate a fixed-date grant, and spares the rest', () => {
+    const floor = makeGrant(PUB_KEYS, PUB_KID, {
+      activation: activation(['fixed-date'], FIXED_DATE_REACHED, []),
+    })
+    const view: Record<string, unknown> = { grant: floor }
+    Object.defineProperty(view, 'anchor', {
+      enumerable: true,
+      get() { throw new Error('the boundary must never run this') },
+    })
+
+    const verdict = evaluate(payloadFor(floor), view)
+
+    expect(verdict.grant).toBe('dormant')
+    expect(verdict.warnings).toContain('grant_unanchored')
+  })
+
+  it('a declarations array one past its ceiling truncates evaluation, never activating', () => {
+    const floor = makeGrant()
+    const tooMany = Array.from({ length: 65 }, () => makeDeclaration())
+
+    const verdict = evaluate(null, viewOf(floor, { declarations: tooMany }))
+
+    expect(verdict.grant).toBe('not_checked')
+  })
+
+  it('a declarations array exactly at its ceiling is still evaluated', () => {
+    const floor = makeGrant()
+    const atCeiling = Array.from({ length: 64 }, () => makeDeclaration())
+
+    const verdict = evaluate(null, viewOf(floor, { declarations: atCeiling }))
+
+    expect(verdict.grant).toBe('activated')
   })
 })

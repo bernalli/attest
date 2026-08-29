@@ -1,0 +1,12 @@
+{
+  "binding": "not_checked",
+  "errors": [],
+  "ok": true,
+  "publisher_authority": "authorized",
+  "publisher_authority_trust": "unauthenticated_tofu",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "trust": "verified",
+  "warnings": []
+}

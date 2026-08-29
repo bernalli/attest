@@ -1186,9 +1186,17 @@ def test_verify_raises_transparency_error_on_log_keys_with_disagreeing_origins()
 
 
 def test_verify_confines_hostile_transparency_evidence_materialization() -> None:
-    # JCS materialization is verify()'s sole untrusted-evidence touch. A
-    # hostile direct accessor must degrade rather than crash the integration;
-    # this does not exercise transparency.py's independent confinement.
+    # JCS materialization is verify()'s sole untrusted-evidence touch, and it
+    # now copies the value's OWN data before canonicalizing.
+    #
+    # Expectation updated when that copy landed: this case used to pin
+    # DEGRADATION (`not_checked` plus an unresolvable-claim warning), because
+    # the hostile `get` raised on the way in. It is the MECHANISM that changed,
+    # not the promise: 18.4 refuses no value for BEING a subtype, so the
+    # genuine evidence underneath a hostile accessor is copied out and
+    # EVALUATED, and the accessor is never called at all. The property this
+    # pins is that the hostile spelling decides nothing -- it can neither crash
+    # the integration nor suppress evidence that is genuinely there.
     envelope = _receipt_envelope()
     core_hash = tlog.receipt_core_hash(envelope)
     entry = {"type": "receipt", "issuer": _RECEIPT_ISSUER, "core_sha256": core_hash}
@@ -1202,9 +1210,8 @@ def test_verify_confines_hostile_transparency_evidence_materialization() -> None
         log_keys=[log_key],
         anchor_policy=_no_horizon_policy(),
     )
-    assert result.transparency == transparency.TRANSPARENCY_NOT_CHECKED
-    assert result.corroboration == transparency.CORROBORATION_NONE
-    assert result.warnings == ("transparency_claim_unresolvable",)
+    assert result.transparency == "logged"
+    assert result.warnings == ()
     assert result.signature == "valid"
     assert result.ok is True
 
@@ -1248,14 +1255,19 @@ def test_verify_materializes_changing_tree_size_once_before_evaluation() -> None
         log_keys=[log_key],
         anchor_policy=_no_horizon_policy(),
     )
-    # The one materialized value (777) reaches the evaluator too, so it
-    # rejects the mismatch instead of reporting freshness for a different
-    # later value (1).
-    assert changing_evidence.tree_size_reads == 1
-    assert result.transparency == transparency.TRANSPARENCY_NOT_CHECKED
-    assert result.corroboration == transparency.CORROBORATION_NONE
-    assert result.manifest_freshness == "not_checked"
-    assert result.warnings == ("tree_size_mismatch",)
+    # Expectation updated when the own-data copy landed. This used to pin that
+    # the changing value was read exactly ONCE, so a mismatch was reported
+    # instead of freshness for a later value: the time-of-check/time-of-use gap
+    # was made harmless by narrowing it to a single read. The copy removes the
+    # gap entirely -- the hostile accessor is never consulted (ZERO reads), the
+    # value's own data is what reaches the evaluator, and there is no longer a
+    # mismatch to report because there is no longer a second value. Fewer
+    # reads is the stronger property, not a weaker one: a defence that has to
+    # read a hostile value exactly once still depends on counting reads.
+    assert changing_evidence.tree_size_reads == 0
+    assert result.transparency == "logged"
+    assert result.manifest_freshness == "verified_as_of:1"
+    assert result.warnings == ()
     assert result.signature == "valid"
     assert result.ok is True
 

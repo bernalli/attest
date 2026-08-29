@@ -69,6 +69,7 @@ from dilithium_py.ml_dsa import (
 
 from attest import (
     anchor,
+    authority,
     canon,
     commitment,
     grant,
@@ -880,6 +881,7 @@ def write_vector(
     transfer_view: list[dict[str, Any]] | None = None,
     witness_policy: dict[str, Any] | None = None,
     grant_view: dict[str, Any] | None = None,
+    authority_view: dict[str, Any] | None = None,
     compromise_view: list[dict[str, Any]] | None = None,
 ) -> None:
     """`transparency`/`log_keys`/`anchor_policy` (group 28 only, design doc
@@ -925,7 +927,15 @@ def write_vector(
     and `transfer_view`, never the receipt presenter's — and every claim in it
     self-authenticates against the verifier's OWN trust store, pinned log keys
     and pinned headers (§19.3), which is why carrying it over an untrusted
-    transport is safe. Absent for every leaf outside group 41."""
+    transport is safe. Absent for every leaf outside group 41.
+
+    `authority_view` (group 43 only, v0.2 §20) is the UNTRUSTED publisher-
+    authorization evidence object `{"authorizations", "current_authorization_version"}`,
+    written to `authority-view.json` and fed to `verify()` as `authority_view=`.
+    It rides the same caller-supplied evidence rail as `grant_view`, and its
+    presence is likewise the capability gate. Absent for every leaf outside
+    group 43, so `publisher_authority`/`publisher_authority_trust` stay at
+    their `not_checked` defaults there."""
     vector_dir = VECTORS_DIR / name
     if payload is not None:
         _write_json(vector_dir / "payload.json", payload)
@@ -957,6 +967,8 @@ def write_vector(
         _write_json(vector_dir / "witness-policy.json", witness_policy)
     if grant_view is not None:
         _write_json(vector_dir / "grant-view.json", grant_view)
+    if authority_view is not None:
+        _write_json(vector_dir / "authority-view.json", authority_view)
     if compromise_view is not None:
         _write_json(vector_dir / "compromise-view.json", compromise_view)
 
@@ -5063,7 +5075,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", []),
+        expected=_pledge_expected("dormant", "verified", ["publisher_claim_unattested"]),
         grant_view={"grant": floor},
     )
 
@@ -5076,7 +5088,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("activated", "verified", []),
+        expected=_pledge_expected("activated", "verified", ["publisher_claim_unattested"]),
         grant_view={"grant": floor, "declarations": [declaration]},
     )
 
@@ -5104,7 +5116,11 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_c, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=_pledge_trust("tls", PLEDGE_SUCCESSOR_ID),
-        expected=_pledge_expected("activated", "verified", ["grant_activated_by_successor"]),
+        expected=_pledge_expected(
+            "activated",
+            "verified",
+            ["publisher_claim_unattested", "grant_activated_by_successor"],
+        ),
         grant_view={"grant": floor_c, "declarations": [declaration_c]},
     )
 
@@ -5119,7 +5135,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_declaration_ignored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_declaration_ignored"]
+        ),
         grant_view={"grant": floor, "declarations": [declaration_forged]},
     )
 
@@ -5149,7 +5167,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_e, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_declaration_ignored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_declaration_ignored"]
+        ),
         grant_view={"grant": floor_e, "declarations": [declaration_e]},
     )
 
@@ -5169,7 +5189,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=_pledge_trust("tls", PLEDGE_MARKETPLACE_ID),
-        expected=_pledge_expected("dormant", "verified", ["grant_declaration_ignored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_declaration_ignored"]
+        ),
         grant_view={"grant": floor, "declarations": [declaration_f]},
     )
 
@@ -5195,7 +5217,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope_g,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("activated", "verified", []),
+        expected=_pledge_expected("activated", "verified", ["publisher_claim_unattested"]),
         anchor_policy=policy_g,
         grant_view={"grant": floor_g, "anchor": {"proofs": [proof_g]}},
     )
@@ -5208,7 +5230,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope_g,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_unanchored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_unanchored"]
+        ),
         anchor_policy=policy_g,
         grant_view={"grant": floor_g},
     )
@@ -5225,7 +5249,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope_g,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_unanchored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_unanchored"]
+        ),
         anchor_policy=policy_i,
         grant_view={"grant": floor_g, "anchor": {"proofs": [proof_i]}},
     )
@@ -5252,7 +5278,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("not_checked", "not_checked", []),
+        expected=_pledge_expected("not_checked", "not_checked", ["publisher_claim_unattested"]),
         grant_view={},
     )
 
@@ -5274,7 +5300,9 @@ def gen_37_preservation_pledge() -> None:
         envelope_raw=None,
         trust=_pledge_trust("tls", PLEDGE_MARKETPLACE_ID),
         expected=_pledge_expected(
-            "invalid_grant_ignored", "signer_mismatch", ["grant_signer_not_publisher"]
+            "invalid_grant_ignored",
+            "signer_mismatch",
+            ["publisher_claim_unattested", "grant_signer_not_publisher"],
         ),
         grant_view={"grant": floor_l},
     )
@@ -5293,7 +5321,9 @@ def gen_37_preservation_pledge() -> None:
         envelope_raw=None,
         trust=trust,
         expected=_pledge_expected(
-            "invalid_grant_ignored", "verified", ["grant_commitment_mismatch"]
+            "invalid_grant_ignored",
+            "verified",
+            ["publisher_claim_unattested", "grant_commitment_mismatch"],
         ),
         grant_view={"grant": floor},
     )
@@ -5317,7 +5347,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_n, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_narrowing_ignored"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_narrowing_ignored"]
+        ),
         grant_view={"grant": floor_n, "later_grants": [later_n]},
     )
 
@@ -5347,7 +5379,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_o, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("activated", "verified", []),
+        expected=_pledge_expected("activated", "verified", ["publisher_claim_unattested"]),
         anchor_policy=policy_o,
         grant_view={
             "grant": floor_o,
@@ -5367,7 +5399,7 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "unverified_rotation", []),
+        expected=_pledge_expected("dormant", "unverified_rotation", ["publisher_claim_unattested"]),
         grant_view={"grant": floor, "later_grants": [twin_p]},
     )
 
@@ -5381,7 +5413,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=envelope,
         envelope_raw=None,
         trust=_pledge_trust("bundle"),
-        expected=_pledge_expected("dormant", "unauthenticated_tofu", []),
+        expected=_pledge_expected(
+            "dormant", "unauthenticated_tofu", ["publisher_claim_unattested"]
+        ),
         grant_view={"grant": floor},
     )
 
@@ -5419,7 +5453,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_r, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("dormant", "verified", ["grant_scope_uncovered"]),
+        expected=_pledge_expected(
+            "dormant", "verified", ["publisher_claim_unattested", "grant_scope_uncovered"]
+        ),
         grant_view={"grant": floor_r, "declarations": [declaration_r]},
     )
 
@@ -5476,7 +5512,7 @@ def gen_37_preservation_pledge() -> None:
         expected=_pledge_expected(
             "not_checked",
             "not_checked",
-            [],
+            ["publisher_claim_unattested"],
             schema="invalid",
             ok=False,
             errors_contains=["pubkey"],
@@ -5525,7 +5561,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_v, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("invalid_grant_ignored", "verified", []),
+        expected=_pledge_expected(
+            "invalid_grant_ignored", "verified", ["publisher_claim_unattested"]
+        ),
         grant_view={"grant": floor_v},
     )
 
@@ -5554,7 +5592,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_w, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=trust,
-        expected=_pledge_expected("invalid_grant_ignored", "verified", []),
+        expected=_pledge_expected(
+            "invalid_grant_ignored", "verified", ["publisher_claim_unattested"]
+        ),
         grant_view={"grant": floor_w, "declarations": [declaration_w]},
     )
 
@@ -5595,7 +5635,9 @@ def gen_37_preservation_pledge() -> None:
         envelope=_hybrid_envelope(payload_x, ISSUER_KP, ISSUER_KID),
         envelope_raw=None,
         trust=_pledge_trust("bundle", PLEDGE_MARKETPLACE_ID),
-        expected=_pledge_expected("invalid_grant_ignored", "unauthenticated_tofu", []),
+        expected=_pledge_expected(
+            "invalid_grant_ignored", "unauthenticated_tofu", ["publisher_claim_unattested"]
+        ),
         grant_view={"grant": floor_x},
     )
 
@@ -7426,6 +7468,530 @@ def gen_41_compromise_cutoff() -> None:
     )
 
 
+# --- vector 42: publisher-claim (V-L.8, v0.1 §11.2 2026-08-26 amendment) ------
+
+
+def gen_42_publisher_claim() -> None:
+    """v0.1 §11.2 (2026-08-26): `work.publisher_id` present and differing from
+    `issuer.id` is warned `publisher_claim_unattested`, payload-deterministically
+    and independent of `attest_version` and of trust-store contents.
+
+    Leaf (a) is signed against a trust store that has never heard of the
+    claimed publisher domain at all — the point being that the warning cannot
+    be switched off by what the verifier happens to trust. (b) and (c) are the
+    silent cases: self-publishing needs no claim to attest, and no claim means
+    nothing to warn about.
+    """
+    trust = _issuer_only_trust()
+
+    payload_a = issue.build_payload(**_base_payload_kwargs(publisher_id=PLEDGE_PUBLISHER_ID))
+    _assert_schema_valid(payload_a)
+    write_vector(
+        "42-publisher-claim/a-claim-differs-warn",
+        payload=payload_a,
+        envelope=issue.issue(payload_a, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": ["publisher_claim_unattested"],
+        },
+    )
+
+    payload_b = issue.build_payload(**_base_payload_kwargs(publisher_id=ISSUER_ID))
+    _assert_schema_valid(payload_b)
+    write_vector(
+        "42-publisher-claim/b-self-publisher-silent",
+        payload=payload_b,
+        envelope=issue.issue(payload_b, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": [],
+        },
+    )
+
+    payload_c = issue.build_payload(**_base_payload_kwargs())
+    _assert_schema_valid(payload_c)
+    write_vector(
+        "42-publisher-claim/c-no-claim-silent",
+        payload=payload_c,
+        envelope=issue.issue(payload_c, ISSUER_KP, ISSUER_KID),
+        envelope_raw=None,
+        trust=trust,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": [],
+        },
+    )
+
+
+# --- vector 43: publisher-authority (§20, v0.2 2026-08-26) -------------------
+
+
+def gen_43_publisher_authority() -> None:
+    """v0.2 §20: publisher authorization is an informational, caller-supplied
+    evidence rail. It can attest or deny a publisher claim, but it never
+    changes the receipt's own `ok` result."""
+    authz_issued_v1 = "2025-06-01T00:00:00Z"
+    authz_issued_v2 = "2025-08-01T00:00:00Z"
+    closed_before_receipt = "2025-06-15T00:00:00Z"
+    receipt_inside_closed_window = "2025-06-10T00:00:00Z"
+    backdated_closure = "2025-05-15T00:00:00Z"
+    postdated_closure = "2025-08-15T00:00:00Z"
+    live_term_end = "2025-12-31T00:00:00Z"
+    extension_v2_issued_at = "2025-06-10T00:00:00Z"
+    extension_original_end = "2025-06-20T00:00:00Z"
+
+    publisher_manifest = _stage4_manifest(
+        PLEDGE_PUBLISHER_ID,
+        PLEDGE_PUBLISHER_KID,
+        PLEDGE_PUBLISHER_KP,
+        PLEDGE_PUBLISHER_MLDSA_PK,
+        PLEDGE_PUBLISHER_MLDSA_SK,
+    )
+    marketplace_manifest = _stage4_manifest(
+        PLEDGE_MARKETPLACE_ID,
+        PLEDGE_MARKETPLACE_KID,
+        PLEDGE_MARKETPLACE_KP,
+        PLEDGE_MARKETPLACE_MLDSA_PK,
+        PLEDGE_MARKETPLACE_MLDSA_SK,
+    )
+    publisher_signing = pq.HybridSigningKeys(
+        PLEDGE_PUBLISHER_KP,
+        pq.MLDSAKeyPair(PLEDGE_PUBLISHER_MLDSA_SK, PLEDGE_PUBLISHER_MLDSA_PK),
+    )
+
+    def payload_with_publisher(
+        publisher_id: str | None = PLEDGE_PUBLISHER_ID, **overrides: Any
+    ) -> dict[str, Any]:
+        kwargs = _base_payload_kwargs(attest_version="0.2")
+        if publisher_id is not None:
+            kwargs["publisher_id"] = publisher_id
+        kwargs.update(overrides)
+        payload = issue.build_payload(**kwargs)
+        _assert_schema_valid(payload)
+        return payload
+
+    payload = payload_with_publisher()
+    envelope = _hybrid_envelope(payload, ISSUER_KP, ISSUER_KID)
+
+    def entry(
+        *,
+        issuer_id: str = ISSUER_ID,
+        valid_from: str = authz_issued_v1,
+        valid_to: str | None = None,
+        permissions: list[str] | None = None,
+        scope: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "issuer_id": issuer_id,
+            "valid_from": valid_from,
+            "valid_to": valid_to,
+            "permissions": [authority.PERMISSION_ISSUE] if permissions is None else permissions,
+            "scope": scope,
+        }
+
+    def authorization(
+        version: int,
+        entries: list[dict[str, Any]],
+        issued_at: str = authz_issued_v1,
+        previous: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        built = authority.build_authorization(
+            version,
+            PLEDGE_PUBLISHER_ID,
+            entries,
+            issued_at,
+            publisher_signing,
+            PLEDGE_PUBLISHER_KID,
+            previous,
+        )
+        body = dict(built)
+        del body["signature"]
+        return _stage4_sign(
+            body, PLEDGE_PUBLISHER_KID, PLEDGE_PUBLISHER_KP, PLEDGE_PUBLISHER_MLDSA_SK
+        )
+
+    def signed_authorization_body(
+        body: dict[str, Any],
+        kid: str = PLEDGE_PUBLISHER_KID,
+        ed_kp: keys.SigningKeyPair = PLEDGE_PUBLISHER_KP,
+        mldsa_sk: bytes = PLEDGE_PUBLISHER_MLDSA_SK,
+    ) -> dict[str, Any]:
+        return _stage4_sign(body, kid, ed_kp, mldsa_sk)
+
+    def view(
+        authorizations: list[dict[str, Any]],
+        *,
+        current_authorization_version: int | None = None,
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = {"authorizations": authorizations}
+        if current_authorization_version is not None:
+            data["current_authorization_version"] = current_authorization_version
+        return data
+
+    def expected(
+        publisher_authority: str, publisher_authority_trust: str, warnings: list[str]
+    ) -> dict[str, Any]:
+        return {
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "publisher_authority": publisher_authority,
+            "publisher_authority_trust": publisher_authority_trust,
+            "ok": True,
+            "errors": [],
+            "warnings": warnings,
+        }
+
+    def write_authority_vector(
+        leaf: str,
+        *,
+        authority_view: dict[str, Any] | None = None,
+        write_authority_view: bool = True,
+        payload_data: dict[str, Any] = payload,
+        envelope_data: dict[str, Any] = envelope,
+        trust: dict[str, Any] | None = None,
+        publisher_authority: str,
+        publisher_authority_trust: str,
+        warnings: list[str],
+    ) -> None:
+        kwargs: dict[str, Any] = {}
+        if write_authority_view:
+            kwargs["authority_view"] = {} if authority_view is None else authority_view
+        write_vector(
+            f"43-publisher-authority/{leaf}",
+            payload=payload_data,
+            envelope=envelope_data,
+            envelope_raw=None,
+            trust=_pledge_trust() if trust is None else trust,
+            expected=expected(publisher_authority, publisher_authority_trust, warnings),
+            **kwargs,
+        )
+
+    open_authz = authorization(1, [entry()])
+    open_entry = authority.entry_for_issuer(open_authz, ISSUER_ID)
+    assert authority.verify_authorization(open_authz, publisher_manifest) is True
+    assert authority.entry_authorizes_receipt(open_entry, payload) is True
+
+    empty_authz = authorization(1, [])
+    expired_authz = authorization(1, [entry(valid_to=closed_before_receipt)])
+    historical_authz = authorization(1, [entry(valid_to="2025-07-15T00:00:00Z")])
+    scoped_authz = authorization(
+        1,
+        [
+            entry(
+                scope={
+                    "artifact_series": GRANT_OTHER_SERIES,
+                    "artifacts": [GRANT_OTHER_ARTIFACT_SHA256],
+                }
+            )
+        ],
+    )
+    delegate_only_authz = authorization(1, [entry(permissions=[authority.PERMISSION_DELEGATE])])
+
+    rollback_v1 = open_authz
+    rollback_v2 = authorization(
+        2,
+        [entry(valid_to=closed_before_receipt)],
+        issued_at=authz_issued_v2,
+        previous=rollback_v1,
+    )
+
+    write_authority_vector(
+        "a-authorized",
+        authority_view=view([open_authz]),
+        publisher_authority="authorized",
+        publisher_authority_trust="verified",
+        warnings=[],
+    )
+    write_authority_vector(
+        "b-unauthorized-empty-list",
+        authority_view=view([empty_authz], current_authorization_version=1),
+        publisher_authority="unauthorized",
+        publisher_authority_trust="verified",
+        warnings=["publisher_not_authorizing_issuer"],
+    )
+    write_authority_vector(
+        "c-no-view-not-checked",
+        write_authority_view=False,
+        publisher_authority="not_checked",
+        publisher_authority_trust="not_checked",
+        warnings=["publisher_claim_unattested"],
+    )
+    write_authority_vector(
+        "d-empty-view-unattested",
+        authority_view={},
+        publisher_authority="unattested",
+        publisher_authority_trust="not_checked",
+        warnings=["publisher_claim_unattested"],
+    )
+
+    forged_authz = signed_authorization_body(
+        {
+            "authorization_version": 1,
+            "publisher": PLEDGE_PUBLISHER_ID,
+            "authorized_issuers": [entry()],
+            "issued_at": authz_issued_v1,
+        },
+        PLEDGE_SUCCESSOR_KID,
+        PLEDGE_SUCCESSOR_KP,
+        PLEDGE_SUCCESSOR_MLDSA_SK,
+    )
+    assert authority.verify_authorization(forged_authz, publisher_manifest) is False
+    write_authority_vector(
+        "e-forged-ignored",
+        authority_view=view([forged_authz]),
+        publisher_authority="unattested",
+        publisher_authority_trust="verified",
+        warnings=["authorization_invalid_ignored", "publisher_claim_unattested"],
+    )
+
+    signer_mismatch_authz = signed_authorization_body(
+        {
+            "authorization_version": 1,
+            "publisher": PLEDGE_PUBLISHER_ID,
+            "authorized_issuers": [entry()],
+            "issued_at": authz_issued_v1,
+        },
+        PLEDGE_MARKETPLACE_KID,
+        PLEDGE_MARKETPLACE_KP,
+        PLEDGE_MARKETPLACE_MLDSA_SK,
+    )
+    assert authority.verify_authorization(signer_mismatch_authz, marketplace_manifest) is True
+    write_authority_vector(
+        "f-signer-mismatch",
+        authority_view=view([signer_mismatch_authz]),
+        trust=_pledge_trust("tls", PLEDGE_MARKETPLACE_ID),
+        publisher_authority="unattested",
+        publisher_authority_trust="signer_mismatch",
+        warnings=["authorization_signer_not_publisher", "publisher_claim_unattested"],
+    )
+
+    write_authority_vector(
+        "g-window-expired-unauthorized",
+        authority_view=view([expired_authz], current_authorization_version=1),
+        publisher_authority="unauthorized",
+        publisher_authority_trust="verified",
+        warnings=["publisher_not_authorizing_issuer"],
+    )
+    write_authority_vector(
+        "h-prospective-not-retroactive",
+        authority_view=view([historical_authz]),
+        publisher_authority="authorized",
+        publisher_authority_trust="verified",
+        warnings=[],
+    )
+
+    equivocation_empty = empty_authz
+    equivocation_open = open_authz
+    assert authority.authorization_hash(equivocation_empty) != authority.authorization_hash(
+        equivocation_open
+    )
+    write_authority_vector(
+        "i-equivocation",
+        authority_view=view([equivocation_empty, equivocation_open]),
+        publisher_authority="unattested",
+        publisher_authority_trust="unverified_rotation",
+        warnings=["publisher_claim_unattested"],
+    )
+
+    write_authority_vector(
+        "j-rollback-max-wins",
+        authority_view=view([rollback_v1, rollback_v2], current_authorization_version=2),
+        publisher_authority="unauthorized",
+        publisher_authority_trust="verified",
+        warnings=["publisher_not_authorizing_issuer"],
+    )
+    write_authority_vector(
+        "k-scope-uncovered",
+        authority_view=view([scoped_authz], current_authorization_version=1),
+        publisher_authority="unauthorized",
+        publisher_authority_trust="verified",
+        warnings=["publisher_not_authorizing_issuer"],
+    )
+    write_authority_vector(
+        "l-permission-missing",
+        authority_view=view([delegate_only_authz], current_authorization_version=1),
+        publisher_authority="unauthorized",
+        publisher_authority_trust="verified",
+        warnings=["publisher_not_authorizing_issuer"],
+    )
+
+    payload_self = payload_with_publisher(ISSUER_ID)
+    write_authority_vector(
+        "m-self-publisher",
+        authority_view=view([open_authz]),
+        payload_data=payload_self,
+        envelope_data=_hybrid_envelope(payload_self, ISSUER_KP, ISSUER_KID),
+        publisher_authority="self",
+        publisher_authority_trust="not_checked",
+        warnings=[],
+    )
+
+    payload_no_claim = payload_with_publisher(None)
+    write_authority_vector(
+        "n-no-claim",
+        authority_view=view([open_authz]),
+        payload_data=payload_no_claim,
+        envelope_data=_hybrid_envelope(payload_no_claim, ISSUER_KP, ISSUER_KID),
+        publisher_authority="no_publisher_claim",
+        publisher_authority_trust="not_checked",
+        warnings=[],
+    )
+
+    write_authority_vector(
+        "o-tofu-authorized",
+        authority_view=view([open_authz]),
+        trust=_pledge_trust("bundle"),
+        publisher_authority="authorized",
+        publisher_authority_trust="unauthenticated_tofu",
+        warnings=[],
+    )
+    write_authority_vector(
+        "p-view-ceiling",
+        authority_view=view([open_authz] * (authority.MAX_AUTHORITY_DOCUMENTS + 1)),
+        publisher_authority="unattested",
+        publisher_authority_trust="not_checked",
+        warnings=["publisher_claim_unattested"],
+    )
+
+    classical_only_authz = authority.build_authorization(
+        1,
+        PLEDGE_PUBLISHER_ID,
+        [entry()],
+        authz_issued_v1,
+        PLEDGE_PUBLISHER_KP,
+        PLEDGE_PUBLISHER_KID,
+    )
+    assert authority.verify_authorization(classical_only_authz, publisher_manifest) is False
+    write_authority_vector(
+        "q-classical-only-rejected",
+        authority_view=view([classical_only_authz]),
+        publisher_authority="unattested",
+        publisher_authority_trust="verified",
+        warnings=["authorization_invalid_ignored", "publisher_claim_unattested"],
+    )
+    write_authority_vector(
+        "r-denial-without-currency",
+        authority_view=view([empty_authz]),
+        publisher_authority="unattested",
+        publisher_authority_trust="verified",
+        warnings=["publisher_claim_unattested"],
+    )
+    write_authority_vector(
+        "s-stale-behind-assertion",
+        authority_view=view([empty_authz], current_authorization_version=2),
+        publisher_authority="unattested",
+        publisher_authority_trust="verified",
+        warnings=["publisher_claim_unattested"],
+    )
+
+    payload_t = payload_with_publisher(issued_at=receipt_inside_closed_window)
+    write_authority_vector(
+        "t-deauth-window-closed-past-receipt",
+        authority_view=view([rollback_v1, rollback_v2], current_authorization_version=2),
+        payload_data=payload_t,
+        envelope_data=_hybrid_envelope(payload_t, ISSUER_KP, ISSUER_KID),
+        publisher_authority="authorized",
+        publisher_authority_trust="verified",
+        warnings=[],
+    )
+
+    removal_v2 = signed_authorization_body(
+        {
+            "authorization_version": 2,
+            "publisher": PLEDGE_PUBLISHER_ID,
+            "authorized_issuers": [],
+            "issued_at": authz_issued_v2,
+        }
+    )
+    backdated_v2 = signed_authorization_body(
+        {
+            "authorization_version": 2,
+            "publisher": PLEDGE_PUBLISHER_ID,
+            "authorized_issuers": [entry(valid_to=backdated_closure)],
+            "issued_at": authz_issued_v2,
+        }
+    )
+    postdated_v2 = signed_authorization_body(
+        {
+            "authorization_version": 2,
+            "publisher": PLEDGE_PUBLISHER_ID,
+            "authorized_issuers": [entry(valid_to=postdated_closure)],
+            "issued_at": authz_issued_v2,
+        }
+    )
+    for leaf, successor in (
+        ("u-entry-removal-nonconforming", removal_v2),
+        ("v-backdated-closure-nonconforming", backdated_v2),
+        ("w-postdated-closure-nonconforming", postdated_v2),
+    ):
+        write_authority_vector(
+            leaf,
+            authority_view=view([open_authz, successor], current_authorization_version=2),
+            publisher_authority="authorized",
+            publisher_authority_trust="unverified_rotation",
+            warnings=[],
+        )
+
+    live_term_v1 = authorization(1, [entry(valid_to=live_term_end)])
+    live_term_v2 = authorization(
+        2,
+        [entry(valid_to=closed_before_receipt)],
+        issued_at=authz_issued_v2,
+        previous=live_term_v1,
+    )
+    write_authority_vector(
+        "x-early-revocation-live-term-window",
+        authority_view=view([live_term_v1, live_term_v2], current_authorization_version=2),
+        publisher_authority="unauthorized",
+        publisher_authority_trust="verified",
+        warnings=["publisher_not_authorizing_issuer"],
+    )
+
+    extension_v1 = authorization(
+        1,
+        [entry(valid_to=extension_original_end)],
+        issued_at=authz_issued_v1,
+    )
+    extension_v2 = authorization(
+        2,
+        [entry(valid_to=live_term_end)],
+        issued_at=extension_v2_issued_at,
+        previous=extension_v1,
+    )
+    write_authority_vector(
+        "y-extension-live-window-conforming",
+        authority_view=view([extension_v1, extension_v2]),
+        publisher_authority="authorized",
+        publisher_authority_trust="verified",
+        warnings=[],
+    )
+
+
 # --- vector 44: manifest-duplicate-kid (V-L.3, v0.1 §7.1 2026-08-26) ----------
 
 
@@ -7597,6 +8163,8 @@ def main() -> None:
     gen_39_witness_corroboration()
     gen_40_witness_quorum()
     gen_41_compromise_cutoff()
+    gen_42_publisher_claim()
+    gen_43_publisher_authority()
     gen_44_manifest_duplicate_kid()
     gen_45_revocation_anchor_status()
     leaf_count = sum(1 for _ in VECTORS_DIR.rglob("expected.json"))

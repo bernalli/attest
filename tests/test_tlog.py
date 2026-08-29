@@ -16,7 +16,7 @@ from typing import Any, cast
 
 import pytest
 
-from attest import canon, grant, keys, pq, tlog
+from attest import authority, canon, grant, keys, pq, tlog
 
 LEAVES = [bytes([i]) for i in range(7)]  # b"\x00", b"\x01", ... b"\x06"
 
@@ -417,6 +417,89 @@ def test_cessation_declaration_entry_commits_to_the_whole_signed_declaration() -
 
     assert tlog.encode_entry(entry)
     assert entry["record_sha256"] == hashlib.sha256(canon.canonical_bytes(declaration)).hexdigest()
+
+
+def _valid_publisher_authorization_entry() -> dict[str, object]:
+    return {
+        "type": "publisher-authorization",
+        "issuer": "pub.example",
+        "record_sha256": "f" * 64,
+    }
+
+
+def test_encode_entry_accepts_valid_publisher_authorization_entry() -> None:
+    entry = _valid_publisher_authorization_entry()
+    encoded = tlog.encode_entry(entry)
+    assert isinstance(encoded, bytes)
+    assert encoded == canon.dumps(entry).encode("utf-8")
+
+
+def test_encode_entry_rejects_publisher_authorization_missing_member() -> None:
+    entry = _valid_publisher_authorization_entry()
+    del entry["record_sha256"]
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_encode_entry_rejects_publisher_authorization_extra_member() -> None:
+    entry = _valid_publisher_authorization_entry()
+    entry["authorization_version"] = 1
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_encode_entry_rejects_publisher_authorization_short_hex() -> None:
+    entry = _valid_publisher_authorization_entry()
+    entry["record_sha256"] = "f" * 63
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_encode_entry_rejects_publisher_authorization_uppercase_hex() -> None:
+    entry = _valid_publisher_authorization_entry()
+    entry["record_sha256"] = "F" * 64
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_encode_entry_rejects_publisher_authorization_bad_issuer() -> None:
+    entry = _valid_publisher_authorization_entry()
+    entry["issuer"] = "NOT-A-VALID-DNS-NAME"
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(entry)
+
+
+def test_publisher_authorization_entry_commits_to_the_whole_signed_document() -> None:
+    """v0.2 §8/§20.2: `record_sha256` is `SHA-256(JCS(document))` over the
+    ENTIRE signed publisher authorization manifest, its own `signature` member
+    included — the same canonical form `authority.py` builds and verifies the
+    signature over, never a second one invented for the log."""
+    kp = keys.generate()
+    document = authority.build_authorization(
+        1,
+        "pub.example",
+        [
+            {
+                "issuer_id": "store.example.com",
+                "valid_from": "2026-01-01T00:00:00Z",
+                "valid_to": None,
+                "permissions": ["issue"],
+                "scope": None,
+            }
+        ],
+        "2026-02-01T00:00:00Z",
+        kp,
+        "pub.example/keys/authority#1",
+    )
+
+    entry = {
+        "type": "publisher-authorization",
+        "issuer": "pub.example",
+        "record_sha256": authority.authorization_hash(document),
+    }
+
+    assert tlog.encode_entry(entry)
+    assert entry["record_sha256"] == hashlib.sha256(canon.canonical_bytes(document)).hexdigest()
 
 
 def test_encode_entry_accepts_an_at_bound_scalar() -> None:

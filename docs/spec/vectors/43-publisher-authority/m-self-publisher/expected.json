@@ -1,0 +1,12 @@
+{
+  "binding": "not_checked",
+  "errors": [],
+  "ok": true,
+  "publisher_authority": "self",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "trust": "verified",
+  "warnings": []
+}
