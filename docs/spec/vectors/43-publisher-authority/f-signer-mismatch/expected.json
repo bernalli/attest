@@ -1,0 +1,15 @@
+{
+  "binding": "not_checked",
+  "errors": [],
+  "ok": true,
+  "publisher_authority": "unattested",
+  "publisher_authority_trust": "signer_mismatch",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "trust": "verified",
+  "warnings": [
+    "authorization_signer_not_publisher",
+    "publisher_claim_unattested"
+  ]
+}

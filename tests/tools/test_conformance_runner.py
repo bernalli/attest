@@ -410,6 +410,8 @@ def test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismat
         "manifest_freshness": "fresh",
         "grant": "dormant",
         "grant_trust": "verified",
+        "publisher_authority": "authorized",
+        "publisher_authority_trust": "verified",
         "ok": True,
     }
     expected = dict(base)

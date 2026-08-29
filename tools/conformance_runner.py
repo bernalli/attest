@@ -9,7 +9,8 @@ stdout, and the runner diffs it against the leaf's ``expected.json`` with the
 exact matching rules the in-repo Python/TS conformance harnesses already use.
 See ``docs/conformance.md`` for the public process this implements and
 ``docs/spec/vectors/README.md`` for the corpus contract (leaf directories,
-the ``chain.json`` routing, the v0.1/v0.2 subsets) this module replays.
+side-channel files such as ``authority-view.json``, the ``chain.json``
+routing, the v0.1/v0.2 subsets) this module replays.
 
 Third parties run this file with a bare ``python3`` — stdlib only
 (argparse, json, hashlib, shlex, subprocess, dataclasses, pathlib,
@@ -75,6 +76,8 @@ _VERIFY_CONDITIONAL_EXACT = (
     "manifest_freshness",
     "grant",
     "grant_trust",
+    "publisher_authority",
+    "publisher_authority_trust",
     "ok",
 )
 _REDEMPTION_EXACT = ("verified",)

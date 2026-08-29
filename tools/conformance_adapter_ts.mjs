@@ -19,8 +19,9 @@
 // of verifiers/ts/test/helpers/vectors.ts byte-for-byte, including the
 // strict-parse (bigint) routing for manifests.json, revocation.json,
 // transparency.json, revocation-evidence.json, transfer-view.json,
-// compromise-view.json, grant-view.json and chain.json — and the exact verify(...)/auditChain(...)
-// call shapes of verifiers/ts/test/conformance.test.ts. Those two files
+// compromise-view.json, grant-view.json, authority-view.json and chain.json
+// — and the exact verify(...)/auditChain(...) call shapes of
+// verifiers/ts/test/conformance.test.ts. Those two files
 // remain the source of truth for this adapter's behavior; this file is NOT
 // generated from them and must be kept in sync by hand.
 
@@ -172,6 +173,14 @@ function grantView(dir) {
   return existsSync(p) ? loadJsonValueStrict(p) : null
 }
 
+// group 43 (publisher-authority conformance corpus, v0.2 §20) only: the
+// §20.3 evidence object, strict-parsed because authorization documents are
+// re-canonicalized for hashes and signature checks.
+function authorityView(dir) {
+  const p = join(dir, 'authority-view.json')
+  return existsSync(p) ? loadJsonValueStrict(p) : null
+}
+
 // group 38 (redemption, v0.2 §18.7) only: the audience-bound holder proof. A
 // leaf carrying this file is the FOURTH surface — no receipt, no trust store,
 // no grant document, only whether this proof is good for THIS custodian.
@@ -234,6 +243,8 @@ function verifyResultToJson(r) {
     // neither ever affects `ok`, which is why isOk(r) below is unchanged.
     grant: r.grant,
     grant_trust: r.grant_trust,
+    publisher_authority: r.publisher_authority,
+    publisher_authority_trust: r.publisher_authority_trust,
     ok: isOk(r),
     errors: [...r.errors],
     warnings: [...r.warnings],
@@ -314,6 +325,7 @@ function runLeaf(dir) {
     compromiseView: compromiseView(dir),
     witnessPolicy: witnessPolicy(dir),
     grantView: grantView(dir),
+    authorityView: authorityView(dir),
   })
   return verifyResultToJson(result)
 }

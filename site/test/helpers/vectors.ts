@@ -188,6 +188,14 @@ export function grantView(dir: string): JsonObject | null {
   return existsSync(p) ? loadJsonStrict(p) : null
 }
 
+// Group 43 (v0.2 §20): the untrusted publisher-authorization evidence
+// object, whose PRESENCE is the capability gate. Strict parsing preserves
+// integer representation for re-canonicalized authorization documents.
+export function authorityView(dir: string): JsonObject | null {
+  const p = join(dir, 'authority-view.json')
+  return existsSync(p) ? loadJsonStrict(p) : null
+}
+
 export interface RedemptionInput {
   receipt_id: string
   audience: string

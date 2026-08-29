@@ -35,7 +35,7 @@ import, before any leaf is checked.)
   with that leaf's absolute path in every argv token, splits the template with
   `shlex.split`, and invokes it as a fixed argv list (`shell=False` — never a
   shell string).
-- `--subset` selects `v0.1` (61 leaves) or `v0.2` (all leaves, currently 187) —
+- `--subset` selects `v0.1` (61 leaves) or `v0.2` (all leaves, currently 212) —
   see §4.
 - `--report FILE` additionally writes the machine-readable JSON report (§6)
   to `FILE`.
@@ -47,7 +47,7 @@ The runner prints one `FAIL <leaf-id>` block (with its mismatches) per
 non-passing leaf, then exactly one summary line:
 
 ```
-CONFORMANT (v0.2): 187/187 leaves pass — corpus revision <hex12>
+CONFORMANT (v0.2): 212/212 leaves pass — corpus revision <hex12>
 NOT CONFORMANT (v0.1): 58/61 leaves pass — 3 failing
 ```
 
@@ -66,7 +66,7 @@ It receives the leaf's absolute directory path as an argument (wherever
    (`envelope.json`/`envelope.raw.json`, `manifests.json`, `disclosure.json`,
    `revocation.json`, `transparency.json`, `log-keys.json`,
    `anchor-policy.json`, `revocation-evidence.json`, `transfer-view.json`,
-   `witness-policy.json`, `grant-view.json`, `chain.json`,
+   `witness-policy.json`, `grant-view.json`, `authority-view.json`, `chain.json`,
    `witness-quorum.json`, `redemption.json`) — not duplicated here.
 2. Route the leaf **by file presence**, which is the whole routing rule: a
    directory containing `chain.json` goes to your chain-of-title audit
@@ -90,6 +90,7 @@ The four output shapes (verbatim member names):
     "revocation": "...", "binding": "...", "transparency": "...",
     "corroboration": "...", "manifest_freshness": "...",
     "grant": "...", "grant_trust": "...",
+    "publisher_authority": "...", "publisher_authority_trust": "...",
     "ok": true, "errors": [], "warnings": []
   }
   ```
@@ -119,7 +120,7 @@ either as a worked example of the contract above.
 
 ## 4. Subsets
 
-- **v0.2** — every leaf in the corpus (currently 187). Measures conformance
+- **v0.2** — every leaf in the corpus (currently 212). Measures conformance
   against `docs/spec/attest-v0.2.md`.
 - **v0.1** — the 61-leaf subset: every leaf whose top-level group directory's
   leading integer is ≤ 25, plus groups `29-limits`,
@@ -132,7 +133,7 @@ either as a worked example of the contract above.
   negative control for a v0.2-only schema conditional, living inside an
   otherwise-v0.2-only group — see `docs/spec/vectors/README.md` for the full
   membership rationale. A v0.1-only implementation (one that never accepts v0.2's hybrid
-  profile) is measured against this subset, not against all 187.
+  profile) is measured against this subset, not against all 212.
 
 ## 5. The claim process
 
@@ -194,10 +195,10 @@ anyone. They are re-measured and replaced whenever the corpus changes.
 
 | Implementation | Subset | Leaves passed | Corpus revision | Date | Command |
 | --- | --- | --- | --- | --- | --- |
-| attest (Python reference) 0.8.1 | v0.2 | 158/158 | `a74f7f3c255cf4ec1568bd78159c82c0e889874d0bf17cf91f3bba82bf284eb5` | 2026-08-26 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
-| attest (Python reference) 0.8.1 | v0.1 | 52/52 | `a74f7f3c255cf4ec1568bd78159c82c0e889874d0bf17cf91f3bba82bf284eb5` | 2026-08-26 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
-| attest-verifier (TypeScript) 0.8.1 | v0.2 | 158/158 | `a74f7f3c255cf4ec1568bd78159c82c0e889874d0bf17cf91f3bba82bf284eb5` | 2026-08-26 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
-| attest-verifier (TypeScript) 0.8.1 | v0.1 | 52/52 | `a74f7f3c255cf4ec1568bd78159c82c0e889874d0bf17cf91f3bba82bf284eb5` | 2026-08-26 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
+| attest (Python reference) 0.8.1 | v0.2 | 212/212 | `89c9dd3539e2b1ab9aa04fc379894bdf974f33589b44e9887154cec62d6ea634` | 2026-08-29 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
+| attest (Python reference) 0.8.1 | v0.1 | 61/61 | `89c9dd3539e2b1ab9aa04fc379894bdf974f33589b44e9887154cec62d6ea634` | 2026-08-29 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
+| attest-verifier (TypeScript) 0.8.1 | v0.2 | 212/212 | `89c9dd3539e2b1ab9aa04fc379894bdf974f33589b44e9887154cec62d6ea634` | 2026-08-29 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
+| attest-verifier (TypeScript) 0.8.1 | v0.1 | 61/61 | `89c9dd3539e2b1ab9aa04fc379894bdf974f33589b44e9887154cec62d6ea634` | 2026-08-29 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
 
 A third-party implementation adds a row here (or in its own repo/README,
 linking back to this process) the same way: run §2's command, record the

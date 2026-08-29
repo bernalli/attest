@@ -51,6 +51,7 @@ describe('conformance corpus through the site adapter', () => {
       compromiseView: V.compromiseView(dir),
       witnessPolicy: V.witnessPolicy(dir),
       grantView: V.grantView(dir),
+      authorityView: V.authorityView(dir),
     })
     const r = run.result
     expect(r.signature).toBe(exp.signature)
@@ -63,6 +64,8 @@ describe('conformance corpus through the site adapter', () => {
     if ('manifest_freshness' in exp) expect(r.manifest_freshness).toBe(exp.manifest_freshness)
     if ('grant' in exp) expect(r.grant).toBe(exp.grant)
     if ('grant_trust' in exp) expect(r.grant_trust).toBe(exp.grant_trust)
+    if ('publisher_authority' in exp) expect(r.publisher_authority).toBe(exp.publisher_authority)
+    if ('publisher_authority_trust' in exp) expect(r.publisher_authority_trust).toBe(exp.publisher_authority_trust)
     if ('ok' in exp) expect(run.ok).toBe(exp.ok)
     if ('errors' in exp) expect([...r.errors]).toEqual(exp.errors)
     if ('warnings' in exp) expect([...r.warnings]).toEqual(exp.warnings)
@@ -186,6 +189,7 @@ describe('the §19 copy each group-41 leaf produces through the site adapter', (
       compromiseView: V.compromiseView(dir),
       witnessPolicy: V.witnessPolicy(dir),
       grantView: V.grantView(dir),
+      authorityView: V.authorityView(dir),
     })
     const leaf = id.slice('41-compromise-cutoff/'.length)
     const text = explain('signature', run.result.signature, run.result).text

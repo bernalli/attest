@@ -101,6 +101,12 @@ Vector-directory conventions (a "vector case" is any directory containing
     list. Group 37's `expected.json` carries `grant` and `grant_trust`, the
     only group where either appears, and carries none of Stage 2's three
     (same discipline as groups 33 and 35).
+  - optional `authority-view.json` (group 43 only, v0.2 §20): the untrusted
+    evidence object `{"authorizations", "current_authorization_version"}`,
+    fed to `verify()` as `authority_view=`. Its PRESENCE is the publisher-
+    authority capability gate. Group 43's `expected.json` carries
+    `publisher_authority` and `publisher_authority_trust`, the only group
+    where either appears, and carries none of Stage 2's three.
   - optional `compromise-view.json` (group 41 only, v0.1 rev 8 §7.3 / v0.2
     rev 9 §19): a JSON ARRAY of untrusted compromise-declaration claims
     `[{"manifest": <a v0.1 §7.1 key manifest>, "evidence": <a §10.2 evidence
@@ -306,6 +312,13 @@ def _grant_view(vector_dir: Path) -> dict[str, Any] | None:
     return _load_json(path)  # type: ignore[no-any-return]
 
 
+def _authority_view(vector_dir: Path) -> dict[str, Any] | None:
+    path = vector_dir / "authority-view.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
 @pytest.mark.parametrize("vector_dir", _VECTOR_DIRS, ids=_VECTOR_IDS)
 def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
     expected = _load_json(vector_dir / "expected.json")
@@ -335,6 +348,7 @@ def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
         transfer_view=_transfer_view(vector_dir),
         witness_policy=_witness_policy(vector_dir),
         grant_view=_grant_view(vector_dir),
+        authority_view=_authority_view(vector_dir),
         **compromise_kwargs,
     )
 
@@ -355,6 +369,10 @@ def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
         assert result.grant == expected["grant"]
     if "grant_trust" in expected:
         assert result.grant_trust == expected["grant_trust"]
+    if "publisher_authority" in expected:
+        assert result.publisher_authority == expected["publisher_authority"]
+    if "publisher_authority_trust" in expected:
+        assert result.publisher_authority_trust == expected["publisher_authority_trust"]
     if "ok" in expected:
         assert result.ok == expected["ok"]
     if "errors" in expected:

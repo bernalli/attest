@@ -15,10 +15,10 @@ export interface VerifyRun {
 // The single verify() call site in site/. Everything the page verifies —
 // bundles, bare envelopes, the sample — funnels through here, so the
 // conformance suite in test/conformance.test.ts pins the page's actual path.
-// `options` (transparency/logKeys/anchorPolicy/transferView/compromiseView/grantView) is
-// additive: the page itself never passes it today (defaults to `{}`, zero
-// behavior change), only the group-28/35/37/41 conformance leaves in
-// test/conformance.test.ts do.
+// `options` (transparency/logKeys/anchorPolicy/transferView/compromiseView/
+// grantView/authorityView) is additive: the page itself never passes it today
+// (defaults to `{}`, zero behavior change), only the group-28/35/37/41/43
+// conformance leaves in test/conformance.test.ts do.
 export function runVerify(
   envelopeBytes: Uint8Array,
   trustStore: TrustStore,

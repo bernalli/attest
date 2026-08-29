@@ -16,8 +16,9 @@ The loader functions below duplicate (never import) the ~60 lines of vector-
 loading logic in `tests/test_vectors.py`, which remains the source of truth
 for their semantics (envelope-bytes XOR rule, `TrustStore` construction,
 `disclosure`/`revocation_view`/`transparency`/`log_keys`/`anchor_policy`/
-`revocation_evidence`/`transfer_view`/`compromise_view`/`witness_policy` loaders, the group-36
-`chain.json` routing to `transfer.audit_chain`, and the group-40
+`revocation_evidence`/`transfer_view`/`compromise_view`/`witness_policy`/
+`grant_view`/`authority_view` loaders, the group-36 `chain.json` routing to
+`transfer.audit_chain`, and the group-40
 `witness-quorum.json` routing to
 `witness.evaluate_activation_witness_quorum`). Deliberately NOT imported from `tests/`:
 this adapter must work standalone, exactly like a real implementation's own
@@ -163,6 +164,16 @@ def _grant_view(leaf: Path) -> dict[str, Any] | None:
     return _load_json(path)  # type: ignore[no-any-return]
 
 
+def _authority_view(leaf: Path) -> dict[str, Any] | None:
+    """Group 43 only (v0.2 §20.3): the publisher-authorization evidence
+    object, and the capability gate at once. A leaf shipping no
+    `authority-view.json` hands `verify()` `None`, which evaluates nothing."""
+    path = leaf / "authority-view.json"
+    if not path.exists():
+        return None
+    return _load_json(path)  # type: ignore[no-any-return]
+
+
 def _redemption_input(leaf: Path) -> dict[str, Any] | None:
     """Group 38 only (v0.2 §18.7): the audience-bound holder proof. A leaf
     carrying this file is the FOURTH surface — no receipt, no trust store, no
@@ -193,6 +204,8 @@ def _verify_result_to_json(result: verify.VerificationResult) -> dict[str, Any]:
         "manifest_freshness": result.manifest_freshness,
         "grant": result.grant,
         "grant_trust": result.grant_trust,
+        "publisher_authority": result.publisher_authority,
+        "publisher_authority_trust": result.publisher_authority_trust,
         "ok": result.ok,
         "errors": list(result.errors),
         "warnings": list(result.warnings),
@@ -301,6 +314,7 @@ def _run_leaf(leaf: Path) -> dict[str, Any]:
         transfer_view=_transfer_view(leaf),
         witness_policy=_witness_policy(leaf),
         grant_view=_grant_view(leaf),
+        authority_view=_authority_view(leaf),
         **compromise_kwargs,
     )
     return _verify_result_to_json(verify_result)
