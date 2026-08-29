@@ -415,7 +415,13 @@ export function admitValue(
   for (let i = 0; i < nesting; i++) probe = [probe]
   try {
     const serialized = dumps(ownDataCopy(probe, { left: MAX_ADMISSION_NODES }, options))
-    if (codePointLength(serialized) > MAX_ADMISSION_BYTES) return { admitted: false, value: null }
+    // The ceiling is measured on the UNIT, not on the probe. The probe exists
+    // to put the unit at its real depth in the view, and each wrapper adds
+    // exactly the two bytes `[` and `]` — so a unit sitting exactly AT the
+    // ceiling would otherwise read as two bytes over per level of nesting and
+    // be refused for the position it occupies rather than for its size.
+    const measured = codePointLength(serialized) - 2 * nesting
+    if (measured > MAX_ADMISSION_BYTES) return { admitted: false, value: null }
     let materialized = loadsStrict(new TextEncoder().encode(serialized))
     for (let i = 0; i < nesting; i++) materialized = (materialized as JsonValue[])[0]!
     return { admitted: true, value: materialized }

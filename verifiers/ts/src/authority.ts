@@ -296,19 +296,30 @@ function admitAuthorityView(authorityView: object): Record<string, unknown> {
   const reconstructed: Record<string, unknown> = {}
   const authorizations = ownViewMember(authorityView, 'authorizations')
   if (authorizations !== VIEW_MEMBER_ABSENT) {
-    const admitted = materializeArray(authorizations, MAX_AUTHORITY_DOCUMENTS)
+    // Both members take a safe-integer `number` as the integer it denotes, and
+    // §18.4 names both when it says they "normalize to one canonical integer
+    // value before equality, so `current_authorization_version` and a signed
+    // `authorization_version` compare by numeric value".
+    //
+    // It has to be the BOUNDARY that normalizes, not the consumer. The
+    // canonical form of `5` and of `5n` is the same byte, so a document a
+    // caller wrote out by hand authenticates identically to one it parsed —
+    // refusing it would discard a document the publisher genuinely signed for
+    // no reason except how the caller reached it, and would answer differently
+    // from the Python core, where an integer is simply an integer. Normalizing
+    // here means every consumer downstream still sees the profile's `bigint`,
+    // including the shape check that requires one.
+    const admitted = materializeArray(authorizations, MAX_AUTHORITY_DOCUMENTS, {
+      acceptSafeIntegerNumbers: true,
+    })
     if (admitted !== null) reconstructed['authorizations'] = admitted
   }
   const assertion = ownViewMember(authorityView, 'current_authorization_version')
   if (assertion !== VIEW_MEMBER_ABSENT) {
-    // This member, and ONLY this member, takes a safe-integer `number` as the
-    // integer it denotes. It is the caller's own assertion about what it
-    // believes is current -- written by hand, in a language whose JSON has no
-    // bigint literal -- while `authorizations` carries SIGNED WIRE DOCUMENTS
-    // whose shape check requires `bigint` precisely because a number there
-    // could never have come off the wire. §18.4 states the rule this
-    // implements: "safe-integer number and bigint inputs normalize to one
-    // canonical integer value before equality".
+    // Same normalization as `authorizations` above, and for the same reason:
+    // this is the caller's own assertion, written by hand in a language whose
+    // JSON has no bigint literal, and it is compared against a version that
+    // came off the wire. `5n === 5` is false.
     const admitted = materializeValue(assertion, VIEW_MEMBER_NESTING, {
       acceptSafeIntegerNumbers: true,
     })
