@@ -1,6 +1,8 @@
 import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
-import { JsonObject, JsonValue, canonicalBytes, dumps, CanonError, loadsStrict } from './canon.js'
+import {
+  JsonObject, JsonValue, canonicalBytes, dumps, CanonError, loadsStrict, materializeArray,
+} from './canon.js'
 import {
   TrustStore, findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
   duplicateKids,
@@ -47,6 +49,10 @@ const CLAIM_TYPE_KEY_MANIFEST = 'key-manifest'
 const ANCHORED_BEFORE_PREFIX = 'anchored_before:'
 const MAX_COMPROMISE_CLAIMS = 64
 const MAX_JCS_INTEGER = 2n ** 53n
+// The largest magnitude that survives `bigint` -> `number` without rounding.
+// Narrowing above it would hand a consumer a version that is not the version
+// the signature covers, so the claim is set aside instead.
+const MAX_SAFE_MANIFEST_VERSION = BigInt(Number.MAX_SAFE_INTEGER)
 
 // This outer cap must COVER everything the downstream evaluators' own inner
 // caps accept, or evaluator-valid evidence gets falsely rejected here.
@@ -461,11 +467,20 @@ function evaluateTransparencyClaim(
   }
 }
 
+// A claim that survived the §18.4 admission boundary, in the ONE reconstruction
+// every consumer reads. `manifest` is the canonical form the boundary produced
+// (integers are `bigint`, the profile's only numeric type) and is what gets
+// hashed and signature-checked. `manifestVersion` is that same integer narrowed
+// to a JS `number` at the boundary, because the log-entry encoder speaks the
+// materialized dialect (`tlog.encodeEntry` refuses anything but `number`) — one
+// conversion, done once, rather than a `typeof` test at each consumer that
+// would silently never match. `evidence` stays canonical here and is
+// materialized where it is consumed, the way `fixedDateReached` and
+// `recordLoggedStanding` already do it on their own rails.
 interface CompromiseClaim {
   manifest: JsonObject
-  materializedManifest: Record<string, unknown>
   manifestVersion: number
-  evidence: unknown
+  evidence: JsonValue | null
   signerKid: string
   vouchingSigners: JsonObject[]
 }
@@ -490,30 +505,36 @@ function normalizeCompromiseValue(value: unknown): unknown {
   throw new Error('value is not JSON materializable')
 }
 
-function materializeCompromiseView(compromiseView: JsonValue[] | null): unknown[] | null {
+function materializeCompromiseView(compromiseView: JsonValue[] | null): (JsonValue | null)[] | null {
   if (compromiseView === null) return null
-  try {
-    const normalized = normalizeCompromiseValue(compromiseView)
-    const serialized = JSON.stringify(normalized)
-    if (typeof serialized !== 'string' || codePointLength(serialized) > MAX_TRANSPARENCY_EVIDENCE_LEN) {
-      return null
-    }
-    const materialized: unknown = JSON.parse(serialized)
-    if (!Array.isArray(materialized) || materialized.length > MAX_COMPROMISE_CLAIMS) return null
-    return materialized
-  } catch {
-    return null
-  }
+  const admitted = materializeArray(compromiseView, MAX_COMPROMISE_CLAIMS)
+  if (admitted === null || admitted.length > MAX_COMPROMISE_CLAIMS) return null
+  return admitted
 }
 
-function strictObjectFromMaterialized(value: Record<string, unknown>): JsonObject | null {
+// Distinguishes "this value has no materialized form" from a legitimate `null`
+// value, which is a perfectly good piece of evidence to hand onward.
+const UNMATERIALIZABLE = Symbol('evidence has no materialized form')
+
+/**
+ * Re-express an ADMITTED value in the materialized dialect.
+ *
+ * The admission boundary produces the canonical profile (integers as `bigint`);
+ * the transparency and anchor evaluators were written against `JSON.parse`
+ * output and test `typeof x === 'number'` throughout. Handing them the
+ * canonical form would make every one of those guards fail — silently, and in
+ * the permissive direction, since a rescue that never fires cannot be seen.
+ *
+ * The input here is the reconstruction, never the caller's object, so this
+ * cannot reintroduce the verify/consume split: both dialects come from the same
+ * admitted value.
+ */
+function materializedForTransparency(value: JsonValue | null): unknown | typeof UNMATERIALIZABLE {
+  if (value === null) return null
   try {
-    const serialized = JSON.stringify(value)
-    if (typeof serialized !== 'string') return null
-    const parsed = loadsStrict(new TextEncoder().encode(serialized))
-    return obj(parsed)
+    return JSON.parse(dumps(value))
   } catch {
-    return null
+    return UNMATERIALIZABLE
   }
 }
 
@@ -582,7 +603,7 @@ function vouchingSigners(claimManifest: JsonObject, heldManifests: JsonObject[])
 }
 
 function authenticatedCompromiseClaims(
-  compromiseClaims: unknown[] | null,
+  compromiseClaims: (JsonValue | null)[] | null,
   trustedManifest: JsonObject,
   trustedEntry: JsonObject,
   chain: JsonObject[] | undefined,
@@ -596,26 +617,36 @@ function authenticatedCompromiseClaims(
   const trustedForKid = entriesForKid(trustedManifest, kid)
   const trustedEntriesForKid = trustedForKid.length > 0 ? trustedForKid : [trustedEntry]
   const authenticated: CompromiseClaim[] = []
-  for (const claim of compromiseClaims) {
-    if (!isPlainRecord(claim)) {
+  for (const element of compromiseClaims) {
+    // A claim the boundary set aside arrives as `null` and is one ignored
+    // claim, never a reason to drop the view: its siblings still get their
+    // verdict. This is where §18.4's per-unit granularity becomes observable.
+    const claim = obj(element ?? undefined)
+    if (claim === null) {
       appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
       continue
     }
-    const materializedManifest = claim['manifest']
-    if (!isPlainRecord(materializedManifest) || materializedManifest['issuer'] !== issuerId) {
+    const claimManifest = obj(claim['manifest'])
+    if (claimManifest === null || claimManifest['issuer'] !== issuerId) {
       appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
       continue
     }
-    const manifestVersion = materializedManifest['manifest_version']
-    if (typeof manifestVersion !== 'number' || !Number.isInteger(manifestVersion)) {
+    // The admission boundary yields `bigint` for every integer, so a
+    // `typeof === 'number'` test here would silently never match and would
+    // discard every claim, genuine ones included — the same trap the comment
+    // above markingProvenanceIsARetraction records. The version is read in the
+    // profile's representation and narrowed ONCE, for the one consumer that
+    // needs the materialized dialect.
+    const manifestVersionBig = manifestVersionAsBigInt(claimManifest['manifest_version'])
+    if (
+      manifestVersionBig === null
+      || manifestVersionBig > MAX_SAFE_MANIFEST_VERSION
+      || manifestVersionBig < -MAX_SAFE_MANIFEST_VERSION
+    ) {
       appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
       continue
     }
-    const claimManifest = strictObjectFromMaterialized(materializedManifest)
-    if (claimManifest === null) {
-      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
-      continue
-    }
+    const manifestVersion = Number(manifestVersionBig)
     const declaresCompromise = entriesForKid(claimManifest, kid).some(
       // v0.1 §7.3 (rev 8): the claimed compromised entry may match ANY trusted
       // entry for the kid, not only the one findKey happened to return first.
@@ -635,9 +666,8 @@ function authenticatedCompromiseClaims(
     }
     authenticated.push({
       manifest: claimManifest,
-      materializedManifest,
       manifestVersion,
-      evidence: claim['evidence'] ?? null,
+      evidence: (claim['evidence'] ?? null) as JsonValue | null,
       signerKid,
       vouchingSigners: signers,
     })
@@ -700,7 +730,7 @@ function resolveCompromiseCutoff(
     }
     const expectedEntry = validatedTransparencyEntry({
       type: CLAIM_TYPE_KEY_MANIFEST,
-      issuer: claim.materializedManifest['issuer'],
+      issuer: claim.manifest['issuer'],
       manifest_version: claim.manifestVersion,
       manifest_sha256: manifestSha256,
     })
@@ -708,7 +738,18 @@ function resolveCompromiseCutoff(
       appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
       continue
     }
-    const result = evaluateTransparency(claim.evidence, {
+    // The evidence crossed the admission boundary, so its integers are
+    // `bigint`; the transparency evaluator speaks the materialized dialect and
+    // its `typeof x !== 'number'` guards would refuse every field in silence,
+    // switching off the §19 rescue without an error anywhere. Re-materialize
+    // the ADMITTED value — never the caller's object a second time — exactly
+    // as fixedDateReached and recordLoggedStanding do on their rails.
+    const materializedEvidence = materializedForTransparency(claim.evidence)
+    if (materializedEvidence === UNMATERIALIZABLE) {
+      appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+      continue
+    }
+    const result = evaluateTransparency(materializedEvidence, {
       logKeys,
       expectedOrigin: origin,
       policy: anchorPolicy,
