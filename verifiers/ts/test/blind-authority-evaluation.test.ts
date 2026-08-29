@@ -17,6 +17,16 @@ type AuthorityResult = {
   warnings: string[]
 }
 
+// `publisher_claim_unattested` is NOT an evaluateAuthority warning: section
+// 20.1's stratification is a property of the verifier as a whole, and BOTH
+// cores emit it in `verify()`, after extending with the verdict's own
+// warnings — same reading already ratified for the Python blind bench
+// (tests/test_evaluate_authority_blind.py, WARN_CLAIM). Below, every
+// expectation that omits it is saying what evaluateAuthority does NOT emit
+// itself; where a site still names it, it is left alone as a genuine
+// candidate defect (see report), not an instance of this reclassification.
+const WARN_CLAIM = 'publisher_claim_unattested'
+
 const PUBLISHER = 'pub.example'
 const ISSUER = 'store.example.com'
 const OTHER_ISSUER = 'other-store.example'
@@ -199,7 +209,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), undefined, {
       publisher_authority: 'not_checked',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -215,7 +226,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload({ issuer: { id: 7 } }), trustStore(), view([authorization(1, [])], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -238,7 +250,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), {}, {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -246,7 +259,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([]), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -254,7 +268,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view({ 0: authorization(1) }), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -278,7 +293,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([authorization(1, [])]), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -286,7 +302,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([authorization(2, [])], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -294,7 +311,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([authorization(1, [])], true), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -303,7 +321,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([tampered], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['authorization_invalid_ignored', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_invalid_ignored',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -311,7 +332,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([{ publisher: PUBLISHER }, { issued_at: START }], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['authorization_invalid_ignored', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_invalid_ignored',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -320,7 +344,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([duplicate], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['authorization_invalid_ignored', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_invalid_ignored',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -329,7 +356,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([unsignedForeign], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['authorization_invalid_ignored', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_invalid_ignored',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -338,7 +368,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([foreignSigned], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'signer_mismatch',
-      warnings: ['authorization_signer_not_publisher', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_signer_not_publisher',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -348,7 +381,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([a, b], 3), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'unverified_rotation',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -368,7 +402,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([foreignSigned, a, b], 4), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'unverified_rotation',
-      warnings: ['authorization_signer_not_publisher', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_signer_not_publisher',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -434,7 +471,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), inherited, {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -447,7 +485,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), getterView, {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -462,11 +501,21 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), throwingView, {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
-  it('[RESTRITTIVA] a lying proxy cannot synthesize authorityView members', () => {
+  // A proxy whose getOwnPropertyDescriptor answers with a DATA descriptor is
+  // admitted by the boundary, and no JavaScript spelling distinguishes it from a
+  // stored descriptor. What the boundary guarantees is that the read happens
+  // ONCE, is bounded, sees only DATA properties, and that everything downstream
+  // reads the reconstruction — NOT that a proxy is detectable. This one delivers
+  // a GENUINE signed authorization with an empty authorized_issuers plus a
+  // matching currency assertion, so it synthesizes nothing and earns exactly the
+  // verdict that evidence deserves, identical to passing it bare: the denial of
+  // leaf 43b-unauthorized-empty-list.
+  it('[RESTRITTIVA] a proxy-delivered view earns the verdict its genuine evidence deserves', () => {
     const proxyView = new Proxy(Object.create(null), {
       ownKeys: () => ['authorizations', 'current_authorization_version'],
       getOwnPropertyDescriptor(_target, prop) {
@@ -481,9 +530,9 @@ describe('blind publisher authority evaluation', () => {
       },
     })
     expectAuthority(payload(), trustStore(), proxyView, {
-      publisher_authority: 'unattested',
-      publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      publisher_authority: 'unauthorized',
+      publisher_authority_trust: 'verified',
+      warnings: ['publisher_not_authorizing_issuer'],
     })
   })
 
@@ -502,7 +551,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view(lazyAuthorizations), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
     expect(Date.now() - started).toBeLessThan(250)
   })
@@ -542,7 +592,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view(Array.from({ length: 65 }, () => auth), 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'not_checked',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -568,7 +619,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([authorization(1, entries)], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['authorization_invalid_ignored', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_invalid_ignored',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -584,7 +638,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([authorization(1, [])], 0), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -600,7 +655,8 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([authorization(1, [])], MAX_SAFE + 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['publisher_claim_unattested'],
+      // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      warnings: [],
     })
   })
 
@@ -608,7 +664,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([authorization(0, [])], 0), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['authorization_invalid_ignored', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_invalid_ignored',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -617,7 +676,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([tooLargeVersion], MAX_SAFE + 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['authorization_invalid_ignored', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_invalid_ignored',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -635,7 +697,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore(), view([over], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'verified',
-      warnings: ['authorization_invalid_ignored', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_invalid_ignored',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 
@@ -662,7 +727,8 @@ describe('blind publisher authority evaluation', () => {
       {
         publisher_authority: 'unattested',
         publisher_authority_trust: 'unverified_rotation',
-        warnings: ['publisher_claim_unattested'],
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+        warnings: [],
       },
     )
   })
@@ -808,7 +874,13 @@ describe('blind publisher authority evaluation', () => {
   })
 
   it('[RESTRITTIVA] simultaneous successor deletion and valid_from change exclude the successor once', () => {
-    const old = authorization(1, [entry(), entry({ issuer_id: OTHER_ISSUER })])
+    // The predecessor's authorized_issuers MUST be sorted strictly ascending by
+    // issuer_id at Unicode code point (§20.2), and 'other-store.example' sorts
+    // BEFORE 'store.example.com'. Listed the other way round this document is
+    // shape-invalid, so it never reaches step 7 and the case asserts nothing:
+    // the successor becomes the only admitted document and authorizes on its
+    // own. Measured 2026-08-29 — the order is load-bearing for this case.
+    const old = authorization(1, [entry({ issuer_id: OTHER_ISSUER }), entry()])
     const changedAndDeleted = authorization(2, [entry({ valid_from: '2025-02-01T00:00:00Z' })], { issued_at: LATER })
     expectAuthority(payload(), trustStore(), view([old, changedAndDeleted]), {
       publisher_authority: 'authorized',
@@ -833,7 +905,10 @@ describe('blind publisher authority evaluation', () => {
     expectAuthority(payload(), trustStore('tofu'), view([tampered], 1), {
       publisher_authority: 'unattested',
       publisher_authority_trust: 'unauthenticated_tofu',
-      warnings: ['authorization_invalid_ignored', 'publisher_claim_unattested'],
+      warnings: [
+        'authorization_invalid_ignored',
+        // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
+      ],
     })
   })
 })

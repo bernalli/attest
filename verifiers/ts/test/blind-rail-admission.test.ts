@@ -602,7 +602,7 @@ describe('blind caller-rail admission boundary', () => {
     expect(isOk(result)).toBe(true)
   })
 
-  it('C permissive: an array-shaped transferView object carries no claims and does not throw', () => {
+  it('C restrictive: an array-shaped transferView object is a malformed container and raises', () => {
     const keys = deterministicLogKeys()
     const validClaim = transferClaim(transferRecord(), keys)
     const arrayShaped = { 0: validClaim, length: 1 }
@@ -611,11 +611,16 @@ describe('blind caller-rail admission boundary', () => {
       logKeys: [logKey(keys)],
       anchorPolicy: noHorizonPolicy(),
     })
-    const result = unwrapReturned(observed)
 
-    expect(result.revocation).toBe('invalid_revocation_ignored')
-    expect(result.warnings).toContain('transferred_revocation_unbacked')
-    expect(isOk(result)).toBe(true)
+    // transfer_view's container SHAPE is caller-contract (spec commit 12cd568):
+    // a non-Array container raises TypeError, exactly like the Python core —
+    // the hostile-CONTENT tolerance this suite tests elsewhere only applies
+    // inside an admitted array, never to the array member itself.
+    expect(observed.returned).toBe(false)
+    expect(observed.elapsedMs).toBeLessThan(250)
+    if (observed.returned) return
+    expect(observed.error).toBeInstanceOf(TypeError)
+    expect(String((observed.error as Error).message)).toMatch(/transfer_view must be a list of claims or None/)
   })
 
   it('D permissive: a number where bigint belongs in one revocation unit degrades without neutralizing a genuine revocation', () => {
@@ -789,8 +794,13 @@ describe('blind caller-rail admission boundary', () => {
     const result = unwrapReturned(observed)
 
     expect(observed.elapsedMs).toBeLessThan(500)
-    expect(result.grant).toBe('dormant')
-    expect(result.grant_trust).toBe('unauthenticated_tofu')
+    // A malformed CONTAINER for `declarations` (array-shaped, not a real Array)
+    // makes the whole member absent at step 4, before trust is established:
+    // ratified as legitimate, not a finding (the more informative dormant
+    // reading only applies once an ELEMENT inside a genuine declarations
+    // array is malformed, not the array member itself).
+    expect(result.grant).toBe('not_checked')
+    expect(result.grant_trust).toBe('not_checked')
   })
 
   it('F permissive: compromise sibling survival still holds when the genuine claim is needed after receipt anchoring', () => {

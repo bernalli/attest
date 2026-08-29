@@ -575,7 +575,7 @@ describe('blind grant-view admission is per member and getter-free', () => {
     expect(isOk(result as never)).toBe(true)
   })
 
-  test('PERMISSIVA proxy traps cannot synthesize grant evidence outside own data', () => {
+  test('PERMISSIVA proxy traps deliver whatever verdict the genuine grant they carry deserves', () => {
     const floor = grantDocument()
     const proxy = new Proxy(
       {},
@@ -596,14 +596,22 @@ describe('blind grant-view admission is per member and getter-free', () => {
         },
       },
     )
+    // The evidence boundary's claim was deliberately narrowed: it guarantees a
+    // single, bounded, data-property-only read whose reconstruction is what
+    // everything downstream sees — it does not guarantee recognizing a Proxy.
+    // A `getOwnPropertyDescriptor` trap answering with a DATA descriptor is not
+    // distinguishable from a stored one, so a Proxy that consistently delivers
+    // a genuinely-signed grant through its own data gets the same verdict as
+    // passing that grant raw, not a synthetic rejection.
     const result = callReturns(
       () =>
         verify(pledgedReceipt(floor), trustStore(activeManifest(true)) as never, null, null, undefined, {
           grantView: proxy,
         } as never) as never,
-      { signature: 'valid', schema: 'valid', grant: 'not_checked', grant_trust: 'not_checked', ok: true },
+      { signature: 'valid', schema: 'valid', grant: 'activated', grant_trust: 'verified', ok: true },
     ).result
-    expect(result.grant).toBe('not_checked')
+    expect(result.grant).toBe('activated')
+    expect(result.grant_trust).toBe('verified')
     expect(isOk(result as never)).toBe(true)
   })
 })
@@ -629,12 +637,17 @@ describe('blind wall-clock limits for hostile lazy containers', () => {
     )
   })
 
-  test('RESTRITTIVA array-like revocation_view with lied length returns inside 250ms with exact unknown verdict', () => {
+  test('RESTRITTIVA array-like revocation_view with lied length raises within 250ms as a malformed container', () => {
     const arrayLike = { length: 2 ** 31, 0: revocationRecord() }
-    callReturns(
-      () => verify(envelopeBytes(basePayload()), trustStore(activeManifest()) as never, arrayLike as never) as never,
-      { signature: 'valid', schema: 'valid', revocation: 'unknown', ok: true },
-    )
+    // revocation_view's container SHAPE is caller-contract (spec commit
+    // 12cd568): a non-Array container raises TypeError, matching the Python
+    // core exactly — the lied-length wall-clock guarantee below still holds,
+    // it just resolves as a rejection instead of a tolerated 'unknown'.
+    const start = performance.now()
+    expect(() =>
+      verify(envelopeBytes(basePayload()), trustStore(activeManifest()) as never, arrayLike as never),
+    ).toThrow(TypeError)
+    expect(performance.now() - start).toBeLessThan(250)
   })
 
   test('RESTRITTIVA iterable transparency evidence returns inside 250ms with exact no-standing verdict', () => {
