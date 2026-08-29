@@ -2360,7 +2360,13 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         if args.authority_view is not None
         else None
     )
-    if authority_view is not None and not isinstance(authority_view, dict):
+    # The guard is on the FLAG, not on the parsed value: a file whose content is
+    # `null` parses to None, and testing the parsed value would read a channel
+    # the caller DID supply as a channel they never supplied — opting them out
+    # of section 20.4 in silence. `--revocations`, `--transparency` and
+    # `--grant-view` still test the parsed value (see constraints C-44); their
+    # rails are published, so they change with their own round, not this one.
+    if args.authority_view is not None and not isinstance(authority_view, dict):
         raise CliUsageError(
             f"--authority-view file {args.authority_view} must contain a JSON object; "
             'wrap a lone publisher authorization document as {"authorizations": [<document>]}'
