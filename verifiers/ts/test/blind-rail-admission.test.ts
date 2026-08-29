@@ -794,13 +794,39 @@ describe('blind caller-rail admission boundary', () => {
     const result = unwrapReturned(observed)
 
     expect(observed.elapsedMs).toBeLessThan(500)
-    // A malformed CONTAINER for `declarations` (array-shaped, not a real Array)
-    // makes the whole member absent at step 4, before trust is established:
-    // ratified as legitimate, not a finding (the more informative dormant
-    // reading only applies once an ELEMENT inside a genuine declarations
-    // array is malformed, not the array member itself).
+    // The wall-clock bound is the property this case pins: an array-SHAPED
+    // member with a lazy accessor is not traversed. What the two verdicts
+    // below record is a CONFORMANCE GAP, not a ratified reading — see the
+    // strict expected-failure immediately after, and C-40.
     expect(result.grant).toBe('not_checked')
     expect(result.grant_trust).toBe('not_checked')
+  })
+
+  // §18.4, "The unit of admission is the MEMBER": a member is inadmissible only
+  // for a property of the MEMBER, and it is "never a reason to refuse the view
+  // or any other member" — a malformed `declarations` must not erase the
+  // sibling `grant` member nor the trust its genuine evidence already bought.
+  // MEASURED 2026-08-29, and the two cores DISAGREE: Python drops a member
+  // that does not reconstruct to an array, so the sibling grant survives and
+  // the verdict is dormant/verified — conforming. TypeScript keeps it, the
+  // ceiling guard refuses, and the genuine grant is erased. A restrictive
+  // parity divergence on a rail already published, and precisely the
+  // defame-by-junk primitive §18.4 exists to deny. C-40; the fix belongs to
+  // the grant rail's own round, not to a test commit. Marked failing on purpose:
+  // when the cores are fixed this test starts failing and forces its own
+  // removal, exactly as a strict xfail does on the Python side. C-40.
+  it.fails('F restrictive: a malformed declarations member must not erase the sibling grant', () => {
+    const floor = makeGrant()
+    const declarations = {
+      length: 1,
+      get 0() {
+        return makeDeclaration()
+      },
+    }
+    const result = unwrapReturned(verifyGrantReceipt(viewOf(floor, { declarations }), floor))
+
+    expect(result.grant).toBe('dormant')
+    expect(result.grant_trust).toBe('unauthenticated_tofu')
   })
 
   it('F permissive: compromise sibling survival still holds when the genuine claim is needed after receipt anchoring', () => {

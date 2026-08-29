@@ -351,6 +351,25 @@ describe('blind publisher authority evaluation', () => {
     })
   })
 
+  it('[RESTRITTIVA] closed authorization and issuer-entry shapes reject unknown members', () => {
+    const topLevelExtra = authorization(1, [entry()], { unexpected: true })
+    const entryExtra = authorization(2, [entry({ unexpected: true })])
+    expectAuthority(payload(), trustStore(), view([topLevelExtra, entryExtra], 2), {
+      publisher_authority: 'unattested',
+      publisher_authority_trust: 'verified',
+      warnings: ['authorization_invalid_ignored'],
+    })
+  })
+
+  it('[RESTRITTIVA] unsorted authorized_issuers are shape-invalid before membership', () => {
+    const unsorted = authorization(1, [entry(), entry({ issuer_id: OTHER_ISSUER })])
+    expectAuthority(payload(), trustStore(), view([unsorted], 1), {
+      publisher_authority: 'unattested',
+      publisher_authority_trust: 'verified',
+      warnings: ['authorization_invalid_ignored'],
+    })
+  })
+
   it('[RESTRITTIVA] unauthenticated foreign kid cannot buy signer_mismatch trust', () => {
     const unsignedForeign = { ...authorization(1), signature: { kid: THIRD_KID, sig: 'bad' } }
     expectAuthority(payload(), trustStore(), view([unsignedForeign], 1), {
