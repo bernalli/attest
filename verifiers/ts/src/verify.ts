@@ -15,6 +15,8 @@ import { validatePayload, SCHEMA_TOP_LEVEL_KEYS, validateEnvelopeSize } from './
 import { classifyRevocation, MAX_REVOCATION_RECORDS } from './revocation.js'
 import { evaluateGrant, GRANT_NOT_CHECKED, GRANT_TRUST_NOT_CHECKED } from './grant.js'
 import type { GrantVerdict } from './grant.js'
+import { evaluateAuthority, AUTHORITY_NOT_CHECKED, AUTHORITY_UNATTESTED } from './authority.js'
+import type { AuthorityVerdict } from './authority.js'
 import { computeCommitment, verifyChallenge } from './commitment.js'
 import { b64uEncode } from './b64u.js'
 import { TlogError, LogKey, receiptCoreHash, encodeEntry } from './tlog.js'
@@ -84,6 +86,12 @@ export interface VerificationResult {
   // Spelled snake_case for the same reason `manifest_freshness` is: these are
   // the wire-contract component names §18.5 pins.
   grant: string; grant_trust: string
+  // v0.2 §20. `publisher_authority`: "not_checked" | "no_publisher_claim" |
+  // "self" | "authorized" | "unauthorized" | "unattested".
+  // `publisher_authority_trust`: the §18.5 ladder read for the PUBLISHER's
+  // domain, plus "signer_mismatch" when the rail carried a document someone
+  // else signed for this publisher.
+  publisher_authority: string; publisher_authority_trust: string
 }
 export interface Disclosure {
   identifier?: string | null; identifier_type?: string | null
@@ -132,6 +140,10 @@ export interface VerifyTransparencyOptions {
   // `unknown` rather than a shaped interface because it is UNTRUSTED evidence:
   // every member is validated inside the evaluation, never by the type system.
   grantView?: unknown
+  // v0.2 §20's caller-supplied channel: an object with `authorizations` and
+  // `current_authorization_version`. Informational like the grant rail: it
+  // never touches `ok`.
+  authorityView?: unknown
   // v0.1 rev 8 / v0.2 §19's evidence channel: untrusted key-manifest
   // compromise declarations. Authenticated declarations only ever strengthen
   // one status, `compromised`; the anchored-cutoff rescue is evaluated later
@@ -188,16 +200,13 @@ function contentWarnings(payload: JsonObject): string[] {
   if (license && license['drm'] === 'drm-bound') w.push(WARN.DRM_BOUND)
   const surv = obj(payload['survivability'])
   if (surv) { const eol = surv['end_of_life']; if (typeof eol !== 'string' || !KNOWN_EOL.has(eol)) w.push(unknownEol(eol)) }
-  // V-L.8: `work.publisher_id` differing from `issuer.id` is a rights-holder
-  // claim this v0.1-only check cannot attest — neither field is trusted to
-  // be a string, since the payload is untrusted wire data. `obj()` rejects
-  // arrays and `null` (both pass a naive `typeof x === 'object'` check).
-  const issuerBlock = obj(payload['issuer'])
-  const issuerId = issuerBlock ? issuerBlock['id'] : undefined
-  const workBlock = obj(payload['work'])
-  const publisherId = workBlock ? workBlock['publisher_id'] : undefined
-  if (typeof publisherId === 'string' && typeof issuerId === 'string' && publisherId !== issuerId)
-    w.push(WARN.PUBLISHER_CLAIM_UNATTESTED)
+  // V-L.8's `publisher_claim_unattested` used to be pushed HERE. It is now
+  // decided in verify(), after the §20 rail has spoken: the warning says the
+  // claim is unattested, and once an authorization attests it the warning
+  // would be saying something false. It is emitted only for `not_checked` and
+  // `unattested` — the two verdicts that leave the claim exactly as unattested
+  // as it was before §20 existed. Python parity: verify.py's gate on
+  // `_WARN_PUBLISHER_CLAIM_UNATTESTED`.
   return w
 }
 
@@ -842,6 +851,7 @@ export function verify(
   const transferView = options.transferView ?? null
   const witnessPolicy = options.witnessPolicy ?? null
   const grantView = options.grantView ?? null
+  const authorityView = options.authorityView ?? null
   const compromiseView = options.compromiseView ?? null
 
   if (revocationView !== null && !Array.isArray(revocationView))
@@ -860,6 +870,8 @@ export function verify(
   // well-shaped view never throws — only the wrong container does. Raised here
   // as well as inside evaluateGrant so it fires before any parsing work, the
   // same position its two siblings above occupy.
+  if (authorityView !== null && (typeof authorityView !== 'object' || Array.isArray(authorityView)))
+    throw new TypeError('authority_view must be an evidence object or None')
   if (grantView !== null && (typeof grantView !== 'object' || Array.isArray(grantView)))
     throw new TypeError('grant_view must be an evidence object or None')
 
@@ -901,6 +913,7 @@ export function verify(
       transparency: transparencyState, corroboration: corroborationState, manifest_freshness: manifestFreshnessState,
       warnings: [...warnings], errors: [...errors],
       grant: GRANT_NOT_CHECKED, grant_trust: GRANT_TRUST_NOT_CHECKED,
+      publisher_authority: AUTHORITY_NOT_CHECKED, publisher_authority_trust: AUTHORITY_NOT_CHECKED,
     }
   }
 
@@ -1267,6 +1280,11 @@ export function verify(
   let revocation = 'unknown'
   let binding: Binding = 'not_checked'
   let grantVerdict: GrantVerdict = { grant: GRANT_NOT_CHECKED, grant_trust: GRANT_TRUST_NOT_CHECKED, warnings: [] }
+  let authorityVerdict: AuthorityVerdict = {
+    publisher_authority: AUTHORITY_NOT_CHECKED,
+    publisher_authority_trust: AUTHORITY_NOT_CHECKED,
+    warnings: [],
+  }
   if (schema === 'valid') {
     revocation = classifyRevocation(
       payload, revocationView, manifest, warnings, errors, maxRevocationRecords,
@@ -1280,8 +1298,26 @@ export function verify(
     // against a payload that failed that conditional would be reasoning about
     // a receipt the verifier has already rejected.
     grantVerdict = evaluateGrant(payload, trustStore, grantView, anchorPolicy)
+    authorityVerdict = evaluateAuthority(payload, trustStore, authorityView)
   }
 
+  // The order here is load-bearing and mirrors the Python core exactly: the
+  // rail's own warnings, then the V-L.8 claim warning it gates, then the grant
+  // rail's.
+  warnings.push(...authorityVerdict.warnings)
+  const authorityWork = obj(payload['work'])
+  const claimedPublisherId = authorityWork ? authorityWork['publisher_id'] : undefined
+  const claimIssuerBlock = obj(payload['issuer'])
+  const claimIssuerId = claimIssuerBlock ? claimIssuerBlock['id'] : undefined
+  if (
+    typeof claimedPublisherId === 'string'
+    && typeof claimIssuerId === 'string'
+    && claimedPublisherId !== claimIssuerId
+    && (authorityVerdict.publisher_authority === AUTHORITY_NOT_CHECKED
+      || authorityVerdict.publisher_authority === AUTHORITY_UNATTESTED)
+  ) {
+    warnings.push(WARN.PUBLISHER_CLAIM_UNATTESTED)
+  }
   warnings.push(...grantVerdict.warnings)
 
   return {
@@ -1289,5 +1325,7 @@ export function verify(
     transparency: transparencyState, corroboration: corroborationState, manifest_freshness: manifestFreshnessState,
     warnings: [...warnings], errors: [...errors],
     grant: grantVerdict.grant, grant_trust: grantVerdict.grant_trust,
+    publisher_authority: authorityVerdict.publisher_authority,
+    publisher_authority_trust: authorityVerdict.publisher_authority_trust,
   }
 }

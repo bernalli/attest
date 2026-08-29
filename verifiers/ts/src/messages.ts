@@ -262,6 +262,14 @@ export const VERIFY_TRANSPARENCY_WARN = {
 } as const
 
 // v0.1 rev 8 / v0.2 §19 anchored compromise cutoff.
+// v0.2 §20: the publisher-authority rail. Three literals, byte-identical to the
+// Python core's, because a verdict a caller reads must read the same in both.
+export const AUTHORITY_WARN = {
+  PUBLISHER_NOT_AUTHORIZING_ISSUER: 'publisher_not_authorizing_issuer',
+  SIGNER_NOT_PUBLISHER: 'authorization_signer_not_publisher',
+  INVALID_IGNORED: 'authorization_invalid_ignored',
+} as const
+
 export const COMPROMISE_WARN = {
   RESCUE_APPLIED: 'compromise_rescue_applied',
   CUTOFF_UNANCHORED: 'compromise_cutoff_unanchored',

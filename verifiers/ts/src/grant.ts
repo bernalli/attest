@@ -855,7 +855,7 @@ function pledgeOrNull(payload: unknown): Record<string, unknown> | null {
  * proves nothing about it, and two structurally identical manifests are the
  * same document (the same comparison verify.ts already makes for the issuer's
  * own chain). */
-function grantTrustLadder(trustStore: TrustStore, domain: string, manifest: unknown): string {
+export function grantTrustLadder(trustStore: TrustStore, domain: string, manifest: unknown): string {
   const level = trustStore.provenance[domain] === PROVENANCE_TLS ? GRANT_TRUST_VERIFIED : GRANT_TRUST_TOFU
   const chain = trustStore.chains?.[domain]
   if (chain && chain.length > 0) {

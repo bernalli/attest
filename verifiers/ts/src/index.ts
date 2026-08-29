@@ -72,7 +72,20 @@ export {
   entryForIssuer,
   entryAuthorizesReceipt,
   withinStructuralCeiling,
+  // §20.2 window predicates and §20.4's evaluation. The verdict components
+  // are informational: they never touch `ok`.
+  sameInstant,
+  windowSpentAt,
+  evaluateAuthority,
+  AUTHORITY_NOT_CHECKED,
+  AUTHORITY_NO_CLAIM,
+  AUTHORITY_SELF,
+  AUTHORITY_AUTHORIZED,
+  AUTHORITY_UNAUTHORIZED,
+  AUTHORITY_UNATTESTED,
+  AUTHORITY_TRUST_SIGNER_MISMATCH,
 } from './authority.js'
+export type { AuthorityVerdict } from './authority.js'
 
 // v0.2 Stage 4 (§18, the preservation pledge): sunset grant and cessation
 // declaration PRIMITIVES (design §9: verification-side only — no build/sign).
