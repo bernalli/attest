@@ -8,8 +8,8 @@ export interface Explanation {
 }
 export type Component =
   | 'signature' | 'schema' | 'binding' | 'trust'
-  | 'publisher_authority' | 'publisher_authority_trust'
   | 'revocation' | 'grant' | 'grant_trust'
+  | 'publisher_authority' | 'publisher_authority_trust'
   | 'transparency' | 'corroboration' | 'manifest_freshness'
 
 // Compile-time proof that this file covers the WHOLE result contract: every
@@ -30,21 +30,21 @@ export interface ComponentGroup {
   components: Component[]
 }
 
-// Ten rows read as a wall; three questions read as an answer. The grouping is
+// Twelve rows read as a wall; three questions read as an answer. The grouping is
 // the one hierarchy the spec itself supports: what is true OF the receipt,
-// what is true NOW, and what is true FOR OTHERS. `grant` sits under "does it
+// what needs side evidence, and what is true FOR OTHERS. `grant` sits under "does it
 // still hold" because that is where a person looks for it, not under a fourth
 // question about pledges that nobody asks in those words.
 export const GROUPS: ComponentGroup[] = [
   {
     question: 'Is it authentic?',
-    note: 'What the file proves on its own, offline, with no network and no help from us: who signed these exact terms, and whose receipt it is. The last two rows ask a further question a buyer of an unfamiliar store actually asks — was this seller entitled to sell it — and they are the only rows here that need a document beyond the receipt: the publisher’s own signed authorization, which this page is not handed.',
-    components: ['signature', 'schema', 'binding', 'trust', 'publisher_authority', 'publisher_authority_trust'],
+    note: 'What the file proves on its own, offline, with no network and no help from us: who signed these exact terms, and whose receipt it is.',
+    components: ['signature', 'schema', 'binding', 'trust'],
   },
   {
     question: 'Does it still hold?',
-    note: 'What may have happened since it was signed — a refund, a transfer, a promise coming due. This page consults no live feed; it reports only what the file and its own evidence can settle.',
-    components: ['revocation', 'grant', 'grant_trust'],
+    note: 'What cannot be settled from the receipt alone: a refund, a transfer, a promise coming due, or publisher authorization for a seller. This page consults no live feed and is not handed grant or authorization documents; it reports only what the file and its supplied evidence can settle.',
+    components: ['revocation', 'grant', 'grant_trust', 'publisher_authority', 'publisher_authority_trust'],
   },
   {
     question: 'Has anyone else seen it?',
@@ -178,59 +178,59 @@ const CATALOG: Record<Component, Record<string, Explanation>> = {
   },
   publisher_authority: {
     not_checked: {
-      label: 'Seller authorized by publisher',
+      label: 'Publisher authority',
       tone: 'neutral',
-      text: 'This page does not evaluate publisher authorization — it hands the verifier no authorization document, so there is nothing to judge (spec §20.3). That is not the same as “this seller was not authorized”: a denial can only ever come from the publisher’s OWN signed manifest, and silence here means silence, not refusal. The CLI does that evaluation; this page does not.',
+      text: 'This page does not evaluate publisher authorization — it hands the verifier no authorization document, so there is nothing to judge (spec §20.3). That is not the same as “this seller was not authorized”: a denial requires an authenticated publisher manifest that the caller’s own current-version assertion names as current, and silence here means silence, not refusal. The CLI can do that evaluation when its caller supplies that evidence; this page does not.',
     },
     no_publisher_claim: {
-      label: 'Seller authorized by publisher',
+      label: 'Publisher authority',
       tone: 'neutral',
       text: 'This receipt names no publisher separate from the seller, so there is no delegation to check (spec §20.4). Nothing is missing — most receipts are sold by whoever made the thing.',
     },
     self: {
-      label: 'Seller authorized by publisher',
+      label: 'Publisher authority',
       tone: 'good',
       text: 'The seller and the publisher are the same party: whoever made this work sold it to you directly, so no third party had to authorize the sale (spec §20.4).',
     },
     authorized: {
-      label: 'Seller authorized by publisher',
+      label: 'Publisher authority',
       tone: 'good',
-      text: 'The publisher’s own signed authorization manifest lists this seller, and the receipt was issued inside the window that entry grants, with the permission and scope it covers (spec §20.2, §20.4). A later document that closes the window does not undo this: the question is always asked at the moment the receipt was issued, never against today (spec §20.2).',
+      text: 'The publisher’s own signed authorization manifest lists this seller, and the receipt was issued inside the window that entry grants, with the permission and scope it covers (spec §20.2, §20.4). The question is asked at the receipt’s own issue time, never against today; later conforming documents cannot take away coverage for receipts issued no later than the admitted version that showed the window covering them, while fresher evidence can still matter inside the bounded unpublished interval (spec §20.2, §20.4).',
     },
     unauthorized: {
-      label: 'Seller authorized by publisher',
+      label: 'Publisher authority',
       tone: 'bad',
       text: 'The publisher’s own signed manifest does NOT authorize this seller for this receipt — the seller is absent from it, or outside the window, permission or scope it grants (spec §20.4). This is the one negative answer the protocol allows itself, and it is deliberately expensive: it requires an authenticated document that the caller’s own currency assertion names as the current one. It says the sale was not authorized; it does not say the receipt is forged, and the rows above stand on their own.',
     },
     unattested: {
-      label: 'Seller authorized by publisher',
+      label: 'Publisher authority',
       tone: 'warn',
-      text: 'Nothing settled the question: the evidence was absent, malformed, unauthenticated, stale, or two documents contradicted each other (spec §20.4). The protocol resolves every one of those to doubt and never to denial, so that anyone able to feed junk into this channel can buy exactly the doubt that already existed — and never a false accusation against a legitimate seller (spec §20.4, TM-77).',
+      text: 'Sold by a seller whose publisher claim is NOT attested. Nothing settled the question: the evidence was absent, malformed, unauthenticated, stale, or two documents contradicted each other (spec §20.4). The protocol resolves every one of those to doubt and never to denial, so that anyone able to feed junk into this channel can buy exactly the doubt that already existed — and never a false accusation against a legitimate seller (spec §20.4, TM-77).',
     },
   },
   publisher_authority_trust: {
     not_checked: {
-      label: 'Authorization signer',
+      label: 'Publisher authority signer',
       tone: 'neutral',
       text: 'No authorization document was offered to this page, so there is no signer to place (spec §20.3).',
     },
     verified: {
-      label: 'Authorization signer',
+      label: 'Publisher authority signer',
       tone: 'good',
       text: 'The publisher’s key material was fetched over TLS from the publisher’s own domain — the strongest provenance attest defines, applied here to whoever signed the authorization (spec §20.4, §7.4). Like the pledge signer row, this reports where the keys came from and keeps its best available value even when the document beside it was rejected.',
     },
     unauthenticated_tofu: {
-      label: 'Authorization signer',
+      label: 'Publisher authority signer',
       tone: 'warn',
       text: 'The publisher’s keys travelled with the authorization document instead of coming from the publisher’s own website — the math checks out, but nothing confirms who published those keys. Trust-on-first-use, reported as such (spec §20.4, §7.4).',
     },
     unverified_rotation: {
-      label: 'Authorization signer',
+      label: 'Publisher authority signer',
       tone: 'warn',
-      text: 'The publisher’s own documents disagree: two authenticated manifests claim the same version, or a later one broke the rule that an entry once published is closed rather than deleted and its settled windows never move (spec §20.2, §20.4 step 7). The publisher signed both, so the inconsistency is proven rather than alleged — and the verdict beside it falls back to what the documents still agree on.',
+      text: 'The publisher’s own authorization documents disagree: two authenticated documents claim the same version, or a later one broke the rule that an entry once published stays listed and settled windows do not move (spec §20.2, §20.4 step 7). The publisher signed the conflicting evidence, so the inconsistency is proven rather than alleged; the authorization verdict is then computed only from admitted documents that remain, and if none remain it falls back to unattested.',
     },
     signer_mismatch: {
-      label: 'Authorization signer',
+      label: 'Publisher authority signer',
       tone: 'warn',
       text: 'The authorization document authenticates, but the key that signed it does not belong to the publisher this receipt names (spec §20.4 step 6). A genuine signature from the wrong party settles nothing about this publisher’s intentions.',
     },
@@ -310,8 +310,8 @@ const FALLBACK: Record<Component, string> = {
   schema: 'Schema',
   binding: 'Buyer binding',
   trust: 'Key trust',
-  publisher_authority: 'Seller authorized by publisher',
-  publisher_authority_trust: 'Authorization signer',
+  publisher_authority: 'Publisher authority',
+  publisher_authority_trust: 'Publisher authority signer',
   revocation: 'Revocation',
   grant: 'Preservation pledge',
   grant_trust: 'Pledge signer',

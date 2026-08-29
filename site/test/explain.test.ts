@@ -45,7 +45,7 @@ describe('the twelve components', () => {
   it('are exactly the components of the three question groups, in order', () => {
     expect(COMPONENTS).toEqual(GROUPS.flatMap((g) => g.components))
     expect(new Set(COMPONENTS).size).toBe(12)
-    expect(GROUPS.map((g) => g.components.length)).toEqual([6, 3, 3])
+    expect(GROUPS.map((g) => g.components.length)).toEqual([4, 5, 3])
   })
 
   it('covers every allowed value of the result contract with real copy', () => {

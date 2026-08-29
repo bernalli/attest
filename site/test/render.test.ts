@@ -29,8 +29,8 @@ describe('renderResult', () => {
     ])
     expect(texts(el, '.component-name')).toEqual([
       'Signature', 'Schema', 'Buyer binding', 'Key trust',
-      'Seller authorized by publisher', 'Authorization signer',
       'Revocation', 'Preservation pledge', 'Pledge signer',
+      'Publisher authority', 'Publisher authority signer',
       'Transparency log', 'Corroboration', 'Key manifest freshness',
     ])
   })
@@ -49,13 +49,13 @@ describe('renderResult', () => {
     const el = renderResult('R1', run({ transparency: 'logged', corroboration: 'logged' }))
     const rows = [...el.querySelectorAll('.component')]
     // Indices follow GROUPS order: 3 is Key trust, 9 is Transparency log,
-    // 7 is Preservation pledge — the two §20 rows sit at 4 and 5.
+    // 5 is Preservation pledge — the two §20 rows sit at 7 and 8.
     expect(rows[3].textContent).toContain('unauthenticated_tofu')
     expect(rows[3].classList.contains('tone-warn')).toBe(true)
     expect(rows[9].textContent).toContain('logged')
     expect(rows[9].classList.contains('tone-good')).toBe(true)
     // A pledge nobody offered evidence for is neutral, never a failure.
-    expect(rows[7].classList.contains('tone-neutral')).toBe(true)
+    expect(rows[5].classList.contains('tone-neutral')).toBe(true)
   })
 
   it('explains a parametric value with its own argument', () => {
