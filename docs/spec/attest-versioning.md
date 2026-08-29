@@ -166,8 +166,8 @@ The vocabulary is open and versioned: an unrecognized `license.preservation_pled
 
 | Name | State | Introduced | Reference |
 | --- | --- | --- | --- |
-| `issue` | active | v0.2 (§20, 2026-08-26) | v0.2 §20.2, §20.4 step 9 — the permission a receipt's issuer must hold |
-| `delegate` | reserved | v0.2 (§20, 2026-08-26) | v0.2 §20.6 item 2 — registered so the sub-licensing gap stays visible; promoting it requires the delegation-chain machinery this revision deliberately excludes |
+| `issue` | active | v0.2 (§20, rev 10) | v0.2 §20.2, §20.4 step 9 — the permission a receipt's issuer must hold |
+| `delegate` | reserved | v0.2 (§20, rev 10) | v0.2 §20.6 item 2 — registered so the sub-licensing gap stays visible; promoting it requires the delegation-chain machinery this revision deliberately excludes |
 
 The vocabulary follows §18.2's directional rule: unregistered values are carried, never fatal.
 
