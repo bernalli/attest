@@ -477,3 +477,206 @@ def test_authority_issue_rejects_bad_flag_built_entries(
 
     assert cli.main(argv) == 2
     assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (None, "must contain a JSON object"),
+        ([], "must contain a JSON object"),
+        ("a string", "must contain a JSON object"),
+        (42, "must contain a JSON object"),
+        (True, "must contain a JSON object"),
+    ],
+    ids=["null", "array", "string", "number", "bool"],
+)
+def test_a_previous_file_that_is_not_an_object_is_refused_never_silently_skipped(
+    tmp_path: Path, capsys: CapSys, content: Any, message: str
+) -> None:
+    """D18 admits three outcomes for `--previous`: the check ran, the check
+    refused, or the check was DECLARED undone. A file whose content is the
+    JSON literal `null` parses to None and would take the builder's
+    `previous=None` path — skipping the check the caller asked for while the
+    stderr declaration, keyed to the flag, stays silent. Every non-object
+    predecessor is refused, and the successor here DELETES an entry, so a
+    check that actually ran would refuse it too: whichever way this passes,
+    it never passes by emitting."""
+    world = _world(tmp_path, capsys)
+    previous = tmp_path / "authority-v1.json"
+    assert cli.main(_authority_issue_argv(world["pub_seed"], previous)) == 0
+    capsys.readouterr()
+    bad_previous = _write_json(tmp_path / "bad-previous.json", content)
+    issuers_file = _write_json(tmp_path / "empty-issuers.json", [])
+    out = tmp_path / "successor.json"
+
+    rc = cli.main(
+        [
+            "authority",
+            "issue",
+            "--authorization-version",
+            "2",
+            "--publisher",
+            PUBLISHER,
+            "--issued-at",
+            LATER_ISSUED_AT,
+            "--issuers-file",
+            str(issuers_file),
+            "--previous",
+            str(bad_previous),
+            "--seed",
+            str(world["pub_seed"]),
+            "--kid",
+            PUB_KID,
+            "--out",
+            str(out),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert not out.exists()
+    assert message in captured.err
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--publisher", "Pub.Example"], "--publisher must be a lowercase DNS domain"),
+        (["--publisher", ""], "--publisher must be a lowercase DNS domain"),
+        (["--issued-at", "2026-02-01"], "--issued-at must be an ISO-8601 UTC timestamp"),
+        (["--issued-at", "2026-02-01T00:00:00+00:00"], "--issued-at must be an ISO-8601 UTC"),
+        (
+            ["--authorization-version", str(2**53)],
+            "--authorization-version must be an integer in",
+        ),
+    ],
+    ids=[
+        "publisher-not-lowercase",
+        "publisher-empty",
+        "issued_at-date-only",
+        "issued_at-offset-not-Z",
+        "authorization_version-above-the-JCS-range",
+    ],
+)
+def test_authority_issue_refuses_a_document_level_member_no_verifier_could_admit(
+    tmp_path: Path, capsys: CapSys, extra: list[str], message: str
+) -> None:
+    """C-43: the verb that EMITS validates the shape before it signs, over
+    the whole of section 20.2 and not only over the entries. A signed
+    document whose `publisher`, `issued_at` or `authorization_version` is
+    outside the shape can never authenticate anywhere, yet it costs the
+    operator a real signature and a `record_sha256` they may already have
+    published in a section 8 log entry."""
+    world = _world(tmp_path, capsys)
+    out = tmp_path / "authority.json"
+
+    rc = cli.main(_authority_issue_argv(world["pub_seed"], out, *extra))
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert not out.exists()
+    assert message in captured.err
+
+
+def test_authority_issue_refuses_an_issuers_file_over_the_entry_ceiling(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The 4096-entry count ceiling of section 20.2, refused on its COUNT
+    before any per-entry work."""
+    world = _world(tmp_path, capsys)
+    entries = [
+        _entry(issuer_id=f"i{index:06d}.example")
+        for index in range(authority.MAX_AUTHORIZED_ISSUERS + 1)
+    ]
+    issuers_file = _write_json(tmp_path / "too-many.json", entries)
+    out = tmp_path / "authority.json"
+
+    rc = cli.main(
+        [
+            "authority",
+            "issue",
+            "--authorization-version",
+            "1",
+            "--publisher",
+            PUBLISHER,
+            "--issued-at",
+            AUTH_ISSUED_AT,
+            "--issuers-file",
+            str(issuers_file),
+            "--seed",
+            str(world["pub_seed"]),
+            "--kid",
+            PUB_KID,
+            "--out",
+            str(out),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert not out.exists()
+    assert "exceeds the publisher authorization entry ceiling" in captured.err
+
+
+@pytest.mark.parametrize(
+    ("flag", "text"),
+    [
+        ("--issuers-file", '[{"issuer_id": "store.example.com",'),
+        ("--previous", '{"authorization_version": 1,'),
+    ],
+    ids=["issuers-file-truncated", "previous-truncated"],
+)
+def test_a_truncated_json_input_is_a_usage_error_and_writes_nothing(
+    tmp_path: Path, capsys: CapSys, flag: str, text: str
+) -> None:
+    world = _world(tmp_path, capsys)
+    truncated = tmp_path / "truncated.json"
+    truncated.write_text(text, encoding="utf-8")
+    out = tmp_path / "authority.json"
+    argv = _authority_issue_argv(world["pub_seed"], out, flag, str(truncated))
+    if flag == "--issuers-file":
+        argv = [token for token in argv if token not in {"--issuer", ISSUER, "--valid-from"}]
+        argv = [token for token in argv if token != VALID_FROM]
+
+    rc = cli.main(argv)
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert not out.exists()
+    assert "invalid JSON in" in captured.err
+
+
+def test_an_entry_carrying_an_unknown_member_is_refused_never_signed(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """Section 20.2's entry shape is CLOSED (the log-entry discipline of
+    section 8): a sixth member is a rejection, not a warning — and the
+    emitting verb must not be the one place that lets one through."""
+    world = _world(tmp_path, capsys)
+    issuers_file = _write_json(tmp_path / "issuers.json", [{**_entry(), "note": "hello"}])
+    out = tmp_path / "authority.json"
+
+    rc = cli.main(
+        [
+            "authority",
+            "issue",
+            "--authorization-version",
+            "1",
+            "--publisher",
+            PUBLISHER,
+            "--issued-at",
+            AUTH_ISSUED_AT,
+            "--issuers-file",
+            str(issuers_file),
+            "--seed",
+            str(world["pub_seed"]),
+            "--kid",
+            PUB_KID,
+            "--out",
+            str(out),
+        ]
+    )
+
+    assert rc == 2
+    assert not out.exists()
+    assert "authorized_issuers[0] is not a valid authorization entry" in capsys.readouterr().err

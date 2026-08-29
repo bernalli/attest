@@ -1520,6 +1520,35 @@ def _cmd_authority_issue(args: argparse.Namespace) -> int:
         if args.previous is not None
         else None
     )
+    # The successor check is driven by the FLAG, never by the parsed value: a
+    # `--previous` file whose content is the JSON literal `null` parses to
+    # None, and handing that to the builder as `previous=None` would SKIP the
+    # check the caller asked for while the declaration below — also keyed to
+    # the flag — stays silent. D18 admits three outcomes for `--previous`:
+    # checked, refused, or declared undone. Never faked (constraints C-44).
+    if args.previous is not None and not isinstance(previous, dict):
+        raise CliUsageError(
+            f"--previous file {args.previous} must contain a JSON object; a predecessor "
+            "that cannot be read as a document cannot show this one conforming"
+        )
+    # C-43: the verb that EMITS validates the form before signing, and the
+    # entries are not the whole document — `publisher`, `issued_at` and the
+    # version bound are typed by §20.2 too, and the builder deliberately does
+    # not read them. A signature over a document no verifier could admit is
+    # worse than a refusal: it surfaces later, somewhere else, with no way
+    # back to the flag that caused it.
+    if not authority.is_authorization_version(args.authorization_version):
+        raise CliUsageError(
+            "--authorization-version must be an integer in "
+            f"[1, {grant._MAX_JCS_INTEGER}]: {args.authorization_version}"
+        )
+    if not grant._is_dns_name(args.publisher):
+        raise CliUsageError(f"--publisher must be a lowercase DNS domain: {args.publisher!r}")
+    if not transfer._valid_utc_timestamp(args.issued_at):
+        raise CliUsageError(
+            "--issued-at must be an ISO-8601 UTC timestamp of the form "
+            f"YYYY-MM-DDTHH:MM:SSZ: {args.issued_at!r}"
+        )
     try:
         document = authority.build_authorization(
             authorization_version=args.authorization_version,
