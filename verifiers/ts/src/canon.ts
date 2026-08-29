@@ -244,7 +244,17 @@ export function canonicalBytes(v: JsonValue): Uint8Array { return new TextEncode
 // reads is the value the caller "really" holds. What it CAN guarantee, and what
 // §18.4 actually requires, is that the read happens ONCE, is bounded, sees only
 // DATA properties, and that everything downstream reads the reconstruction and
-// never the live object again. That is what closes the verify/consume split:
+// never the live object again.
+//
+// Stated as the limit rather than left to be discovered: a Proxy whose
+// `getOwnPropertyDescriptor` trap answers with a DATA descriptor is admitted,
+// and deliberately so. Its value is copied like any other own data, and if what
+// it hands over is a genuinely signed document it earns exactly the verdict
+// that document earns — the same one the caller would get by passing it
+// plainly, which anyone holding it can already do. A proxy is not evidence of
+// hostility. What WOULD be is a value that verifies as one thing and is
+// consumed as another, and that is what the single read closes, here, for
+// every rail. That is what closes the verify/consume split:
 // the bytes a signature is checked over and the values consumed afterwards come
 // from one reconstruction, whatever the caller's object did during it.
 
