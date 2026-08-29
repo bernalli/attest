@@ -49,7 +49,10 @@
 import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
 import type { JsonObject, JsonValue } from './canon.js'
-import { canonicalBytes, dumps } from './canon.js'
+import {
+  canonicalBytes, dumps, materializeArray, materializeValue, ownViewMember,
+  VIEW_MEMBER_ABSENT, VIEW_MEMBER_NESTING,
+} from './canon.js'
 import type { TrustStore } from './manifests.js'
 import { findKey, verifySignatureBlock, verifyKeyManifest, chainContinuous } from './manifests.js'
 import { parseStrictUtc, validStage3UtcTimestamp } from './dates.js'
@@ -1099,15 +1102,68 @@ function honorDeclarations(
  * `activated`. Hostile evidence never throws; only malformed TRUSTED config
  * (an `AnchorPolicy`) does, and a `grantView` that is not an evidence object
  * at all, which is a caller-contract violation. */
+/**
+ * A member that is PRESENT on the rail but cannot be reconstructed.
+ *
+ * It must not collapse onto `undefined`: `withinCeiling` reads an absent member
+ * as "no excess" and a present non-array as a refusal, so handing it `undefined`
+ * for a member the caller did supply would turn a fail-closed answer into a
+ * permissive one. A non-array sentinel keeps the existing direction exactly.
+ */
+const INADMISSIBLE_MEMBER = Object.freeze({ inadmissible: true })
+
+/** The rail's own members, reconstructed. */
+interface AdmittedGrantView {
+  grant: unknown
+  later_grants: unknown
+  declarations: unknown
+  anchor: unknown
+}
+
+/**
+ * Admit the grant rail's members by reconstruction, before ANY of them is read
+ * (§18.4).
+ *
+ * The members are the ones the RAIL enumerates; a member it does not define is
+ * never read and can neither refuse the view nor another member. Each array
+ * member is admitted PER ELEMENT under its own count ceiling, so one
+ * inadmissible declaration is set aside alone instead of taking the genuine
+ * ones with it.
+ *
+ * This runs at the boundary rather than inside `verify()` because `evaluateGrant`
+ * is exported: a caller reaching it directly must meet the same boundary as one
+ * arriving through `verify()`, or the rail has two spellings and they will
+ * diverge.
+ */
+function admitGrantView(grantView: object): AdmittedGrantView {
+  const member = (name: string, admit: (value: unknown) => unknown): unknown => {
+    const supplied = ownViewMember(grantView, name)
+    if (supplied === VIEW_MEMBER_ABSENT) return undefined
+    const admitted = admit(supplied)
+    return admitted === null ? INADMISSIBLE_MEMBER : admitted
+  }
+  return {
+    grant: member('grant', (v) => materializeValue(v, VIEW_MEMBER_NESTING)),
+    later_grants: member('later_grants', (v) => materializeArray(v, MAX_GRANT_LATER_VERSIONS)),
+    declarations: member('declarations', (v) => materializeArray(v, MAX_GRANT_DECLARATIONS)),
+    anchor: member('anchor', (v) => materializeValue(v, VIEW_MEMBER_NESTING)),
+  }
+}
+
 export function evaluateGrant(
   payload: unknown,
   trustStore: TrustStore,
-  grantView: unknown,
+  suppliedGrantView: unknown,
   anchorPolicy: AnchorPolicy | null = null,
 ): GrantVerdict {
-  if (grantView != null && !isPlainObject(grantView)) {
+  if (suppliedGrantView != null && !isPlainObject(suppliedGrantView)) {
     throw new TypeError('grant_view must be an evidence object or None')
   }
+  // Every read below is of the RECONSTRUCTION. The caller's object is touched
+  // once, here, and never again: that is what keeps the bytes a signature is
+  // checked over and the values consumed afterwards the same values, whatever
+  // the caller's getters and traps do while they are being read.
+  const grantView = suppliedGrantView == null ? null : admitGrantView(suppliedGrantView)
 
   const warnings: string[] = []
   if (grantView == null) {

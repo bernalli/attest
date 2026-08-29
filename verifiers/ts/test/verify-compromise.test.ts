@@ -391,10 +391,13 @@ describe('verify(): compromise view admission is per claim (§18.4)', () => {
     expect(result.warnings).toContain(COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
   })
 
-  it('a manifest_version past the safely representable range is ignored, never narrowed', () => {
-    // 2^53 does not survive `bigint` -> `number`, so narrowing it would hand
-    // the log-entry encoder a version the signature does not cover. The claim
-    // is set aside instead, and its genuine sibling still establishes the floor.
+  it('a manifest_version outside the profile is set aside by the boundary, sibling intact', () => {
+    // 2**53 is one past what the canonical serializer admits, so the claim
+    // never reaches a consumer at all: the boundary sets it aside whole, and
+    // that is WHY no range guard is needed downstream -- the narrowing that
+    // happens there is exact for everything that survives this. The genuine
+    // sibling still establishes the floor, which is the half that would go
+    // missing if the view were admitted as one lump.
     const overflowing = {
       ...signManifestPlain(
         manifestBody(2, [keyEntry(KID, signingPub, 'compromised'), keyEntry(DECLARER_KID, declarerPub, 'active')]),
@@ -407,12 +410,42 @@ describe('verify(): compromise view admission is per claim (§18.4)', () => {
     const result = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
       logKeys: [LOG_KEY],
       anchorPolicy: noHorizonPolicy(),
-      compromiseView: [overflowing as unknown as JsonObject, compromiseClaim(genuineDeclaration(), null)],
+      compromiseView: [compromiseClaim(overflowing, null), compromiseClaim(genuineDeclaration(), null)],
     })
 
     expect(result.signature).toBe('invalid')
     expect(result.errors).toContain(`key ${KID} is compromised`)
     expect(result.warnings).toContain(COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
+  })
+
+  it('a hand-written claim using JS numbers reaches the same verdict as a strict-parsed one', () => {
+    // §19.2's channel is assembled from a manifest the caller already holds, so
+    // it is routinely written by hand -- and JSON has no bigint literal. The
+    // same evidence must not decide differently for having been typed out
+    // rather than parsed, which is also the only way this rail can agree with
+    // the Python core, where an integer is simply an integer.
+    const declaration = genuineDeclaration()
+    const handWritten = JSON.parse(
+      JSON.stringify(declaration, (_k, v) => (typeof v === 'bigint' ? Number(v) : v)),
+    ) as Record<string, unknown>
+
+    const options = { logKeys: [LOG_KEY], anchorPolicy: noHorizonPolicy() }
+    const parsed = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
+      ...options,
+      compromiseView: [compromiseClaim(declaration, null)],
+    })
+    const live = verify(envelopeBytes(), resurrectingStore(), null, null, undefined, {
+      ...options,
+      compromiseView: [compromiseClaim(handWritten, null)],
+    })
+
+    expect(typeof handWritten['manifest_version']).toBe('number')
+    expect(live.signature).toBe('invalid')
+    expect({ signature: live.signature, warnings: live.warnings, errors: live.errors }).toEqual({
+      signature: parsed.signature,
+      warnings: parsed.warnings,
+      errors: parsed.errors,
+    })
   })
 
   it('a claim carrying a bigint manifest_version authenticates, as the profile spells integers', () => {

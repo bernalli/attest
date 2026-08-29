@@ -1180,3 +1180,102 @@ describe('verify() integration — Stage 4 takes NO exception (D6)', () => {
     expect(result.warnings.some((w) => w.includes('end_of_life'))).toBe(true)
   })
 })
+
+// §18.4: the grant rail is admitted by RECONSTRUCTION, member by member, before
+// any of it is read. These pin the properties the blind bench measures but that
+// do not ship in the branch. Each case asserts BOTH halves — the hostile shape
+// buys nothing AND a genuine sibling still reaches its verdict — because
+// asserting only the refusal would pass just as well against an implementation
+// that threw the whole view away, which is the failure this boundary replaced.
+describe('evaluateGrant — the admission boundary is per member (§18.4)', () => {
+  it('a declarations getter is not own data and cannot activate the grant', () => {
+    const floor = makeGrant()
+    const view: Record<string, unknown> = { grant: floor }
+    Object.defineProperty(view, 'declarations', {
+      enumerable: true,
+      get() { return [makeDeclaration()] },
+    })
+
+    const verdict = evaluate(null, view)
+
+    expect(verdict.grant).toBe('dormant')
+  })
+
+  it('a declarations member on the prototype chain is not own data', () => {
+    const floor = makeGrant()
+    const view = Object.create({ declarations: [makeDeclaration()] }) as Record<string, unknown>
+    view['grant'] = floor
+
+    const verdict = evaluate(null, view)
+
+    expect(verdict.grant).toBe('dormant')
+  })
+
+  it('a proxy whose traps lie about its members synthesizes no declaration evidence', () => {
+    const floor = makeGrant()
+    const declarations = [makeDeclaration()]
+    const view = new Proxy({ grant: floor } as Record<string, unknown>, {
+      get(target, key, receiver) {
+        if (key === 'declarations') return declarations
+        return Reflect.get(target, key, receiver)
+      },
+      has(target, key) { return key === 'declarations' || Reflect.has(target, key) },
+      ownKeys(target) { return [...Reflect.ownKeys(target), 'declarations'] },
+      getOwnPropertyDescriptor(target, key) {
+        if (key === 'declarations') return { configurable: true, enumerable: true, get: () => declarations }
+        return Reflect.getOwnPropertyDescriptor(target, key)
+      },
+    })
+
+    const verdict = evaluate(null, view)
+
+    expect(verdict.grant).toBe('dormant')
+  })
+
+  it('a member that throws when read is absent data, not an exception out of the surface', () => {
+    const floor = makeGrant()
+    const view: Record<string, unknown> = { grant: floor }
+    Object.defineProperty(view, 'declarations', {
+      enumerable: true,
+      get() { throw new Error('the boundary must never run this') },
+    })
+
+    // The assertion is that the call RETURNS with a verdict: a public surface
+    // that throws for a property of ONE member takes the genuine members down
+    // with it, which is the shape §18.4 forbids.
+    const verdict = evaluate(null, view)
+
+    expect(verdict.grant).toBe('dormant')
+  })
+
+  it('an inadmissible declaration is set aside alone and the genuine one is still honored', () => {
+    const floor = makeGrant()
+    const hostile: Record<string, unknown> = {}
+    Object.defineProperty(hostile, 'declared_at', {
+      enumerable: true,
+      get() { throw new Error('the boundary must never run this') },
+    })
+
+    const verdict = evaluate(null, viewOf(floor, { declarations: [hostile, makeDeclaration()] }))
+
+    expect(verdict.grant).toBe('activated')
+  })
+
+  it('a declarations array one past its ceiling truncates evaluation, never activating', () => {
+    const floor = makeGrant()
+    const tooMany = Array.from({ length: 65 }, () => makeDeclaration())
+
+    const verdict = evaluate(null, viewOf(floor, { declarations: tooMany }))
+
+    expect(verdict.grant).toBe('not_checked')
+  })
+
+  it('a declarations array exactly at its ceiling is still evaluated', () => {
+    const floor = makeGrant()
+    const atCeiling = Array.from({ length: 64 }, () => makeDeclaration())
+
+    const verdict = evaluate(null, viewOf(floor, { declarations: atCeiling }))
+
+    expect(verdict.grant).toBe('activated')
+  })
+})

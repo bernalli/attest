@@ -49,10 +49,6 @@ const CLAIM_TYPE_KEY_MANIFEST = 'key-manifest'
 const ANCHORED_BEFORE_PREFIX = 'anchored_before:'
 const MAX_COMPROMISE_CLAIMS = 64
 const MAX_JCS_INTEGER = 2n ** 53n
-// The largest magnitude that survives `bigint` -> `number` without rounding.
-// Narrowing above it would hand a consumer a version that is not the version
-// the signature covers, so the claim is set aside instead.
-const MAX_SAFE_MANIFEST_VERSION = BigInt(Number.MAX_SAFE_INTEGER)
 
 // This outer cap must COVER everything the downstream evaluators' own inner
 // caps accept, or evaluator-valid evidence gets falsely rejected here.
@@ -507,7 +503,19 @@ function normalizeCompromiseValue(value: unknown): unknown {
 
 function materializeCompromiseView(compromiseView: JsonValue[] | null): (JsonValue | null)[] | null {
   if (compromiseView === null) return null
-  const admitted = materializeArray(compromiseView, MAX_COMPROMISE_CLAIMS)
+  // This rail accepts a safe-integer `number` as the integer it denotes. It is
+  // the one rail whose view a caller routinely writes BY HAND (§19.2's channel
+  // is assembled from a manifest the caller already holds), JSON has no bigint
+  // literal, and the previous pipeline normalized both representations to one.
+  // Refusing the hand-written form here would make the SAME evidence decide
+  // differently for having been typed out rather than parsed — and it would
+  // decide differently from the Python core, where an integer is an integer and
+  // the question does not arise. Its siblings keep the default: what reaches
+  // them off the wire is strict-parsed, so a `number` there is a caller's
+  // parsing mistake and the unit is set aside.
+  const admitted = materializeArray(compromiseView, MAX_COMPROMISE_CLAIMS, {
+    acceptSafeIntegerNumbers: true,
+  })
   if (admitted === null || admitted.length > MAX_COMPROMISE_CLAIMS) return null
   return admitted
 }
@@ -638,14 +646,16 @@ function authenticatedCompromiseClaims(
     // profile's representation and narrowed ONCE, for the one consumer that
     // needs the materialized dialect.
     const manifestVersionBig = manifestVersionAsBigInt(claimManifest['manifest_version'])
-    if (
-      manifestVersionBig === null
-      || manifestVersionBig > MAX_SAFE_MANIFEST_VERSION
-      || manifestVersionBig < -MAX_SAFE_MANIFEST_VERSION
-    ) {
+    if (manifestVersionBig === null) {
       appendWarningOnce(warnings, COMPROMISE_WARN.CUTOFF_CLAIM_IGNORED)
       continue
     }
+    // Narrowing is exact by construction, so there is no range guard here and
+    // adding one would be unreachable code pretending to be a defence: the
+    // admission boundary canonicalizes every unit, and the serializer refuses
+    // any integer outside (-2**53, 2**53), so what survives it always fits a
+    // JS number without rounding. The claim carrying an out-of-range version
+    // is set aside by the boundary itself, alone.
     const manifestVersion = Number(manifestVersionBig)
     const declaresCompromise = entriesForKid(claimManifest, kid).some(
       // v0.1 §7.3 (rev 8): the claimed compromised entry may match ANY trusted

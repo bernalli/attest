@@ -269,6 +269,26 @@ export const MAX_ADMISSION_NODES = MAX_ADMISSION_BYTES
 export const VIEW_MEMBER_NESTING = 1
 export const VIEW_ARRAY_ELEMENT_NESTING = 2
 
+/**
+ * What a rail may say about how its own view is written.
+ *
+ * The boundary is one rule; this is the one place a rail's own DECLARED shape
+ * changes what "representable" means for it, and it is deliberately narrow.
+ */
+export interface AdmissionOptions {
+  /**
+   * Read a safe-integer JS `number` as the integer it denotes.
+   *
+   * Off by default: what reaches a rail off the wire has been strict-parsed and
+   * carries `bigint`, so a `number` there means the caller parsed with
+   * `JSON.parse` and the unit is not in the profile. A rail whose view is
+   * routinely HAND-WRITTEN in JavaScript turns it on, because JSON has no
+   * bigint literal and the same evidence must not decide differently for having
+   * been typed out rather than parsed.
+   */
+  acceptSafeIntegerNumbers?: boolean
+}
+
 export const VIEW_MEMBER_ABSENT = Symbol('view member absent')
 export const VIEW_MEMBER_COLLAPSED = Symbol('view member collapsed')
 
@@ -313,13 +333,31 @@ export function ownArrayLength(value: unknown): number | null {
  * done: a lazy or unbounded container would otherwise run to the end (that is,
  * never) before any byte ceiling could fire.
  */
-export function ownDataCopy(value: unknown, budget: { left: number }): JsonValue {
+export function ownDataCopy(
+  value: unknown,
+  budget: { left: number },
+  options: AdmissionOptions = {},
+): JsonValue {
   budget.left -= 1
   if (budget.left < 0) throw new CanonError('value exceeds the admission node budget')
   if (value === null) return null
   const t = typeof value
   if (t === 'boolean' || t === 'string' || t === 'bigint') return value as JsonValue
-  if (t === 'number') throw new CanonError(ERR.TYPE_NOT_JSON)
+  if (t === 'number') {
+    // A JS number is not the profile's integer, and by default a unit carrying
+    // one is not representable and is set aside. But a rail whose view is
+    // routinely written BY HAND in JavaScript has no way to spell a bigint
+    // literal in JSON, and refusing it there would make the same evidence
+    // decide differently depending on how the caller happened to parse it —
+    // which is the divergence this boundary exists to remove, not one it may
+    // introduce. Such a rail says so, and then a SAFE INTEGER is read as the
+    // integer it denotes. Anything else stays refused: a float, a NaN and a
+    // magnitude past exact representation are values the profile cannot
+    // express, whoever supplies them.
+    if (!options.acceptSafeIntegerNumbers) throw new CanonError(ERR.TYPE_NOT_JSON)
+    if (!Number.isSafeInteger(value as number)) throw new CanonError(ERR.TYPE_NOT_JSON)
+    return BigInt(value as number)
+  }
   if (Array.isArray(value)) {
     const out: JsonValue[] = []
     // `length` is read once, from the own descriptor, and the elements by
@@ -330,7 +368,7 @@ export function ownDataCopy(value: unknown, budget: { left: number }): JsonValue
     for (let i = 0; i < length; i++) {
       const element = Object.getOwnPropertyDescriptor(value, String(i))
       if (element === undefined || !('value' in element)) throw new CanonError(ERR.TYPE_NOT_JSON)
-      out.push(ownDataCopy(element.value, budget))
+      out.push(ownDataCopy(element.value, budget, options))
     }
     return out
   }
@@ -340,7 +378,7 @@ export function ownDataCopy(value: unknown, budget: { left: number }): JsonValue
       const descriptor = Object.getOwnPropertyDescriptor(value as object, key)
       if (descriptor === undefined || !('value' in descriptor)) continue
       if (!descriptor.enumerable) continue
-      out[key] = ownDataCopy(descriptor.value, budget)
+      out[key] = ownDataCopy(descriptor.value, budget, options)
     }
     return out
   }
@@ -358,11 +396,15 @@ export function ownDataCopy(value: unknown, budget: { left: number }): JsonValue
  *
  * The returned value is the reconstruction and nothing else.
  */
-export function admitValue(value: unknown, nesting = 0): { admitted: boolean; value: JsonValue } {
+export function admitValue(
+  value: unknown,
+  nesting = 0,
+  options: AdmissionOptions = {},
+): { admitted: boolean; value: JsonValue } {
   let probe: unknown = value
   for (let i = 0; i < nesting; i++) probe = [probe]
   try {
-    const serialized = dumps(ownDataCopy(probe, { left: MAX_ADMISSION_NODES }))
+    const serialized = dumps(ownDataCopy(probe, { left: MAX_ADMISSION_NODES }, options))
     if (codePointLength(serialized) > MAX_ADMISSION_BYTES) return { admitted: false, value: null }
     let materialized = loadsStrict(new TextEncoder().encode(serialized))
     for (let i = 0; i < nesting; i++) materialized = (materialized as JsonValue[])[0]!
@@ -374,8 +416,12 @@ export function admitValue(value: unknown, nesting = 0): { admitted: boolean; va
   }
 }
 
-export function materializeValue(value: unknown, nesting = 0): JsonValue | null {
-  const admission = admitValue(value, nesting)
+export function materializeValue(
+  value: unknown,
+  nesting = 0,
+  options: AdmissionOptions = {},
+): JsonValue | null {
+  const admission = admitValue(value, nesting, options)
   return admission.admitted ? admission.value : null
 }
 
@@ -429,7 +475,11 @@ export function ownViewMember(
  * the member's ceiling. An element that is not admissible is set aside alone
  * and no element's admissibility decides another's.
  */
-export function materializeArray(value: unknown, ceiling: number): (JsonValue | null)[] | null {
+export function materializeArray(
+  value: unknown,
+  ceiling: number,
+  options: AdmissionOptions = {},
+): (JsonValue | null)[] | null {
   if (!Array.isArray(value)) return null
   try {
     const count = ownArrayLength(value)
@@ -448,7 +498,7 @@ export function materializeArray(value: unknown, ceiling: number): (JsonValue | 
     for (let i = 0; i < count; i++) {
       const element = Object.getOwnPropertyDescriptor(value, String(i))
       const supplied = element !== undefined && 'value' in element ? element.value : undefined
-      out.push(materializeValue(supplied, VIEW_ARRAY_ELEMENT_NESTING))
+      out.push(materializeValue(supplied, VIEW_ARRAY_ELEMENT_NESTING, options))
     }
     return out
   } catch {
