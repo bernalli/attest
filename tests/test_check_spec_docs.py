@@ -2533,3 +2533,128 @@ def test_lockstep_refuses_a_duplicate_key_in_the_toml_manifest(
         '{"name": "y", "version": "1.2.3"}',
     )
     assert errors and "cannot read a version to compare" in errors[0]
+
+
+# --- coined terms on positioning surfaces -------------------------------------
+
+
+def _coined_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, str]
+) -> list[str]:
+    defining = (
+        "## 3. Eternal verifiability\n\nNo amendment may render unverifiable an "
+        "artifact that was conforming when issued. Deprecation degrades the "
+        "result classification, never the ability to verify the bytes.\n"
+    )
+    contents = {"docs/spec/attest-versioning.md": defining, **files}
+    for name, content in contents.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    return check_spec_docs.check_coined_terms()
+
+
+def test_a_bare_coined_term_on_a_positioning_surface_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _coined_case(
+        tmp_path, monkeypatch, {"README.md": "We offer the eternal-verifiability guarantee.\n"}
+    )
+    assert errors and "README.md:1" in errors[0]
+
+
+def test_a_glossed_coined_term_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    body = (
+        "We offer the eternal-verifiability guarantee (deprecation degrades the "
+        "result classification, never the ability to verify the bytes).\n"
+    )
+    assert _coined_case(tmp_path, monkeypatch, {"README.md": body}) == []
+
+
+def test_the_gloss_must_share_the_paragraph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A gloss two paragraphs away does not disambiguate the sentence a
+    # reader actually lands on.
+    body = (
+        "We offer the eternal-verifiability guarantee.\n\n"
+        "Elsewhere: never the ability to verify the bytes.\n"
+    )
+    assert _coined_case(tmp_path, monkeypatch, {"README.md": body}) != []
+
+
+def test_case_variants_of_the_term_are_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _coined_case(
+        tmp_path, monkeypatch, {"README.md": "Eternal Verifiability, guaranteed.\n"}
+    )
+    assert errors != []
+
+
+def test_the_term_outside_positioning_surfaces_is_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {
+        "CONTRIBUTING.md": "eternal verifiability is discussed in the spec.\n",
+        "README.md": "no coined terms here.\n",
+    }
+    assert _coined_case(tmp_path, monkeypatch, files) == []
+
+
+def test_a_missing_positioning_surface_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Surfaces may legitimately disappear (a renamed FAQ); the defining
+    # document may not — without it the registry is stale.
+    assert _coined_case(tmp_path, monkeypatch, {}) == []
+
+
+def test_a_defining_document_that_lost_the_term_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {"docs/spec/attest-versioning.md": "## 3. Something else entirely\n"}
+    errors = _coined_case(tmp_path, monkeypatch, files)
+    assert errors and "attest-versioning" in errors[0]
+
+
+def test_a_missing_defining_document_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Distinct from the case above and just as fail-closed: a registry that
+    # points at a document nobody ships defends nothing, and a check that
+    # skipped it would go green having verified no definition exists.
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    errors = check_spec_docs.check_coined_terms()
+    assert errors and "attest-versioning" in errors[0]
+
+
+def test_the_line_reported_is_the_paragraph_that_names_the_term(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A report pointing at the top of the file sends the reader hunting; the
+    # offset has to survive the paragraph split and the normalization.
+    body = "filler\n\nmore filler\n\nthe eternal-verifiability guarantee, unglossed.\n"
+    errors = _coined_case(tmp_path, monkeypatch, {"README.md": body})
+    assert errors and "README.md:5" in errors[0]
+
+
+def test_a_positioning_surface_that_is_not_utf8_is_reported_not_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same reflex as the drift scan: a surface the check cannot read is a
+    # surface it is not defending, and silence would look identical to clean.
+    _coined_case(tmp_path, monkeypatch, {"README.md": "clean\n"})
+    (tmp_path / "README.md").write_bytes(b"\xff\xfe eternal verifiability")
+    errors = check_spec_docs.check_coined_terms()
+    assert errors and "UTF-8" in errors[0]
+
+
+def test_every_coined_term_is_case_insensitive_by_construction() -> None:
+    # The sixteen claim shapes lost a year of coverage to a missing flag
+    # applied entry by entry; the coined-term registry compiles in one place
+    # so the same defect cannot come back through a new door.
+    for pattern in check_spec_docs._COMPILED_COINED_TERMS.values():
+        assert pattern.term.flags & re.IGNORECASE
+        assert pattern.gloss.flags & re.IGNORECASE

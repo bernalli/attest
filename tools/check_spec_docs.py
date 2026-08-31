@@ -1925,6 +1925,148 @@ def check_package_version_lockstep() -> list[str]:
     return []
 
 
+class _CoinedTerm(NamedTuple):
+    """A term this project invented, and where a reader can learn what it means."""
+
+    name: str
+    pattern: str  # regex SOURCE matching the term, never precompiled here
+    defined_in: str  # repo-relative path of the defining document
+    gloss_pattern: str  # must co-occur in the same paragraph on a positioning surface
+    positioning_surfaces: tuple[str, ...]
+
+
+class _CompiledCoinedTerm(NamedTuple):
+    term: re.Pattern[str]
+    gloss: re.Pattern[str]
+
+
+_COINED_TERMS: tuple[_CoinedTerm, ...] = (
+    # "Eternal verifiability" promises that the BYTES stay checkable, not that
+    # the receipt stays valid: on an outsider-facing surface the bare term
+    # reads as the second claim, which the project does not make. Functional
+    # surfaces (SECURITY.md, CONTRIBUTING.md, the PR template, release notes)
+    # are free to use it scoped by their own context; positioning surfaces
+    # must gloss it in place. A link to the defining document is not a gloss:
+    # it does not disambiguate the sentence the reader has landed on.
+    _CoinedTerm(
+        name="eternal-verifiability",
+        pattern=r"\beternal[- ]verifiab\w*",
+        defined_in="docs/spec/attest-versioning.md",
+        gloss_pattern=r"never the ability to verify",
+        positioning_surfaces=(
+            "README.md",
+            "docs/faq.md",
+            "site/index.html",
+            "verifiers/ts/README.md",
+            "pyproject.toml",
+            "verifiers/ts/package.json",
+            "ietf/draft-bernalli-open-purchase-receipts.xml",
+        ),
+    ),
+)
+
+
+def _compile_coined_terms(terms: tuple[_CoinedTerm, ...]) -> dict[str, _CompiledCoinedTerm]:
+    """THE one compile point for coined terms, and the registry's validator.
+
+    Same construction as the claim shapes, for the same reason: a flag
+    applied here cannot be forgotten by an entry, and a malformed entry names
+    itself at import instead of surfacing as an obscure failure mid-scan. A
+    term listing no positioning surface would defend nothing while looking
+    like a defence, so the registry refuses it.
+    """
+    errors: list[str] = []
+    compiled: dict[str, _CompiledCoinedTerm] = {}
+    for term in terms:
+        if term.name in compiled:
+            errors.append(f"{term.name}: duplicate coined-term name")
+        if not term.positioning_surfaces:
+            errors.append(f"{term.name}: has no positioning surfaces")
+        try:
+            patterns = _CompiledCoinedTerm(
+                re.compile(term.pattern, re.IGNORECASE),
+                re.compile(term.gloss_pattern, re.IGNORECASE),
+            )
+        except re.error as exc:
+            errors.append(f"{term.name}: regex does not compile: {exc}")
+            continue
+        compiled[term.name] = patterns
+    if errors:
+        raise ValueError("coined-term registry is not well formed: " + "; ".join(errors))
+    return compiled
+
+
+_COMPILED_COINED_TERMS = _compile_coined_terms(_COINED_TERMS)
+
+
+def _paragraphs_with_offsets(text: str) -> list[tuple[int, str]]:
+    """Blank-line-separated blocks, each with its offset in `text`."""
+    blocks: list[tuple[int, str]] = []
+    offset = 0
+    for block in text.split("\n\n"):
+        blocks.append((offset, block))
+        offset += len(block) + 2
+    return blocks
+
+
+def check_coined_terms() -> list[str]:
+    """Coined terms on positioning surfaces must carry their gloss.
+
+    For each registered term: the defining document must still contain it (a
+    registry pointing at prose that moved on is itself drift, so that fails
+    closed), and on every positioning surface each PARAGRAPH naming the term
+    must also match the gloss pattern. Paragraphs are blocks split on blank
+    lines; matching runs on whitespace-normalized text, so a gloss wrapped
+    across lines still counts. A missing surface is skipped -- surfaces may
+    legitimately disappear -- but an unreadable one is reported, because a
+    surface the check cannot read is a surface it is not defending.
+    """
+    errors: list[str] = []
+    for term in _COINED_TERMS:
+        compiled = _COMPILED_COINED_TERMS[term.name]
+        try:
+            defining = (_REPO_ROOT / term.defined_in).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            errors.append(
+                f"{term.defined_in}: not valid UTF-8 -- cannot confirm it still "
+                f"defines coined term '{term.name}'"
+            )
+            continue
+        except OSError:
+            errors.append(
+                f"{term.defined_in}: the document defining coined term "
+                f"'{term.name}' is missing -- the registry names a definition nothing ships"
+            )
+            continue
+        folded_defining, _offsets = _normalized_with_offsets(defining, None)
+        if not compiled.term.search(folded_defining):
+            errors.append(
+                f"{term.defined_in}: no longer states coined term '{term.name}' -- "
+                f"the registry points at prose that moved on"
+            )
+            continue
+        for surface in term.positioning_surfaces:
+            path = _REPO_ROOT / surface
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                errors.append(f"{surface}: not valid UTF-8 -- cannot be checked for coined terms")
+                continue
+            for block_offset, block in _paragraphs_with_offsets(text):
+                folded, offsets = _normalized_with_offsets(block, None)
+                match = compiled.term.search(folded)
+                if match is None or compiled.gloss.search(folded):
+                    continue
+                line = text.count("\n", 0, block_offset + offsets[match.start()]) + 1
+                errors.append(
+                    f"{surface}:{line}: coined term '{term.name}' appears on a "
+                    f"positioning surface without its gloss (define-by: {term.defined_in})"
+                )
+    return errors
+
+
 def collect_errors(
     threat_model: str,
     privacy: str,
@@ -2005,6 +2147,7 @@ def main() -> int:
     errors += check_internet_draft_snapshot()
     errors += check_conformance_doc()
     errors += check_corpus_counts()
+    errors += check_coined_terms()
     errors += check_package_version_lockstep()
     for error in errors:
         print(f"ERROR {error}")
