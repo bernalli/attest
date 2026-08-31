@@ -169,7 +169,8 @@ measured by the shared conformance corpus, now 212 leaves across 45 groups: 61
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
-deadlines), Stage 3 issuer-mediated transfer, and publisher authorization. (A v0.1-only verifier is
+deadlines), Stage 3 issuer-mediated transfer, Stage 4 preservation pledge, the
+time-boxed compromise rescue, and publisher authorization. (A v0.1-only verifier is
 required to reject v0.2 envelopes, so it is measured against the 61-leaf
 subset.) There are also two end-to-end demos: one deletes a store's entire
 infrastructure mid-lifecycle and proves the receipt still verifies, and one
