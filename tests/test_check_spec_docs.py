@@ -2277,6 +2277,32 @@ def test_a_wrapped_quota_in_a_ts_comment_is_caught(
     assert errors and "9" in errors[0]
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "// The conformance merge gate (2 vector groups/9 leaves):\n",
+        "//  - the default: verify(), for leaves with no special marker files (9 leaves).\n",
+        "//  - `chain.json` (group 36, §17.5): auditChain with 9 leaves.\n",
+        "//  - `witness-quorum.json` (group 40, §11.4): "
+        "evaluateActivationWitnessQuorum with 9 leaves.\n",
+        "//  - `redemption.json` (group 38, §18.7): verifyRedemption with 9 leaves.\n",
+    ],
+)
+def test_surface_quota_claims_survive_reasonable_comment_rewrites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    # A quota anchored to the punctuation joining its words is a quota that
+    # silently leaves the vocabulary the day somebody rephrases the sentence
+    # around it. Each of these is the live comment, reworded innocuously.
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"test/conformance.test.ts": body},
+        untracked={},
+    )
+    assert errors and "9" in errors[0]
+
+
 def test_the_gate_and_its_bench_do_not_scan_themselves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2360,25 +2386,24 @@ def test_the_four_surfaces_partition_the_corpus(
     )
 
 
-def test_a_leaf_shipping_two_surface_markers_is_counted_once(
+def test_a_leaf_shipping_two_surface_markers_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Nothing in the tree GUARANTEES the partition the comments describe, so
-    # pin what a violation does: the leaf lands in the first surface of the
-    # registered order and nowhere else. The partition therefore holds, and
-    # the surface that lost the leaf goes red against its stated quota --
-    # loud, which is the only failure direction a drift gate may have.
+    # Nothing in the tree GUARANTEES the partition the comments describe.
+    # Assigning such a leaf to the first registered surface keeps the four
+    # quotas adding up, so once somebody reconciles the stated quotas with
+    # those counts the guard would bless a "partitioned" claim that is false
+    # -- permanently, and without a word. It is refused instead.
     vectors = tmp_path / "docs" / "spec" / "vectors"
     both = vectors / "36-chain" / "a"
     both.mkdir(parents=True)
     for name in ("expected.json", "chain.json", "redemption.json"):
         (both / name).write_text("{}", encoding="utf-8")
     monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
-    quantities = check_spec_docs._measured_quantities()
-    assert quantities["chain_surface"] == 1
-    assert quantities["redemption_surface"] == 0
-    assert quantities["verify_surface"] == 0
-    assert quantities["corpus_total"] == 1
+    errors = check_spec_docs.check_corpus_counts()
+    assert errors == [
+        "36-chain/a: leaf ships multiple surface marker files: chain.json, redemption.json"
+    ]
 
 
 def test_a_quantity_the_registry_names_but_nothing_measures_is_reported(
@@ -2478,3 +2503,33 @@ def test_lockstep_reports_a_missing_manifest_rather_than_raising(
     monkeypatch.setattr(check_spec_docs, "_TS_PACKAGE_PATH", tmp_path / "absent.json")
     errors = check_spec_docs.check_package_version_lockstep()
     assert len(errors) == 2
+
+
+def test_lockstep_refuses_duplicate_json_version_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # json.loads keeps the LAST duplicate, so a manifest naming `version`
+    # twice would be read as one of the two and could be called in lockstep
+    # while being malformed. (tomllib refuses a duplicate outright, so the
+    # TOML side needs nothing.)
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = "1.2.3"\n',
+        '{"name": "y", "version": "1.2.3", "version": "1.2.4"}',
+    )
+    assert errors and "duplicate JSON object member 'version'" in errors[0]
+
+
+def test_lockstep_refuses_a_duplicate_key_in_the_toml_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The symmetric case, pinned rather than assumed: it is tomllib doing the
+    # refusing, and a parser swap must not quietly take that away.
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = "1.2.3"\nversion = "1.2.4"\n',
+        '{"name": "y", "version": "1.2.3"}',
+    )
+    assert errors and "cannot read a version to compare" in errors[0]

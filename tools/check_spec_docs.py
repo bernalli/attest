@@ -1446,29 +1446,40 @@ _CLAIM_SHAPES: tuple[_ClaimShape, ...] = (
     # ever checked by a reader remembering to update them; each shape below is
     # anchored to the MARKER FILE that defines the surface, so the sentence
     # cannot drift away from what the tree ships.
+    #
+    # Anchored to the marker file and the entry point, NOT to the punctuation
+    # that happens to join them today. The first version of these five pinned
+    # the exact spacing and the exact comma of the live comment, so rewriting
+    # "auditChain, 4 leaves" as "auditChain with 4 leaves" would have dropped
+    # the quota out of the vocabulary -- the figure still in the file, and no
+    # longer defended by anything, with nothing said about it.
     _ClaimShape(
         "groups-slash-leaves",
-        r"\b(\d+) vector groups / (\d+) leaves\b",
+        r"\b(\d+)\s+vector groups\s*/\s*(\d+)\s+leaves\b",
         ((1, "group_count"), (2, "corpus_total")),
     ),
     _ClaimShape(
         "verify-surface-quota",
-        r"ships none of the three files below \((\d+) leaves\)",
+        r"\bverify\(\)[^.!?;]*(?:ships\s+(?:none|no)|with\s+no|no\s+special)"
+        r"[^.!?;]*\((\d+)\s+leaves\)",
         ((1, "verify_surface"),),
     ),
     _ClaimShape(
         "chain-surface-quota",
-        r"`chain\.json` \(group 36[^)]*\): auditChain, (\d+) leaves",
+        r"`chain\.json`\s*\([^)]*\):\s*(?:auditChain|audit_chain)\b[^.!?;]*\b(\d+)\s+leaves\b",
         ((1, "chain_surface"),),
     ),
     _ClaimShape(
         "quorum-surface-quota",
-        r"`witness-quorum\.json` \(group 40[^)]*\): evaluateActivationWitnessQuorum, (\d+) leaves",
+        r"`witness-quorum\.json`\s*\([^)]*\):\s*"
+        r"(?:evaluateActivationWitnessQuorum|evaluate_activation_witness_quorum)\b"
+        r"[^.!?;]*\b(\d+)\s+leaves\b",
         ((1, "quorum_surface"),),
     ),
     _ClaimShape(
         "redemption-surface-quota",
-        r"`redemption\.json` \(group 38[^)]*\): verifyRedemption, (\d+) leaves",
+        r"`redemption\.json`\s*\([^)]*\):\s*(?:verifyRedemption|verify_redemption)\b"
+        r"[^.!?;]*\b(\d+)\s+leaves\b",
         ((1, "redemption_surface"),),
     ),
     # A bare total states no shape of its own, so it is never taken on trust:
@@ -1658,11 +1669,13 @@ _CORPUS_CLAIM_EXEMPTIONS: dict[str, tuple[str, ...]] = {}
 
 # Which file a leaf ships decides which surface it belongs to, and the four
 # surfaces are stated as a PARTITION of the corpus: the special three are
-# excluded from the verify() parametrization rather than run twice. Ordered,
-# because nothing in the tree enforces the partition -- a leaf shipping two
-# markers lands in the first surface listed here and in no other, so the
-# quotas still add up to the corpus and the surface that lost the leaf goes
-# red against its stated quota. Loud, never silent.
+# excluded from the verify() parametrization rather than run twice. Nothing
+# in the tree enforces that, so a leaf shipping two markers is REPORTED, not
+# quietly assigned. Assigning it to the first surface listed here was the
+# first version, on the reasoning that the surface losing the leaf would go
+# red against its stated quota: true only until somebody reconciles the
+# quotas with the wrong counts, after which the guard blesses a partition
+# claim that is false, forever and without a word.
 _SURFACE_MARKER_FILES: tuple[tuple[str, str], ...] = (
     ("chain.json", "chain_surface"),
     ("witness-quorum.json", "quorum_surface"),
@@ -1671,18 +1684,31 @@ _SURFACE_MARKER_FILES: tuple[tuple[str, str], ...] = (
 _DEFAULT_SURFACE_KEY = "verify_surface"
 
 
-def _measured_quantities() -> dict[str, int]:
-    """Every live figure a registered claim shape can be checked against."""
-    total, groups, subset, surfaces = _measured_corpus()
+class _CorpusMeasurement(NamedTuple):
+    """The corpus as counted, plus what made the count untrustworthy."""
+
+    total: int
+    groups: int
+    subset: int
+    surfaces: dict[str, int]
+    partition_errors: list[str]
+
+
+def _quantities_from_corpus(measured: _CorpusMeasurement) -> dict[str, int]:
     return {
-        "corpus_total": total,
-        "group_count": groups,
-        "v01_subset": subset,
-        **surfaces,
+        "corpus_total": measured.total,
+        "group_count": measured.groups,
+        "v01_subset": measured.subset,
+        **measured.surfaces,
     }
 
 
-def _measured_corpus() -> tuple[int, int, int, dict[str, int]]:
+def _measured_quantities() -> dict[str, int]:
+    """Every live figure a registered claim shape can be checked against."""
+    return _quantities_from_corpus(_measured_corpus())
+
+
+def _measured_corpus() -> _CorpusMeasurement:
     """Count the corpus on disk: (leaves, groups, v0.1 subset size, surfaces).
 
     Reuses `conformance_runner`'s own discovery and subset rule rather than
@@ -1707,13 +1733,16 @@ def _measured_corpus() -> tuple[int, int, int, dict[str, int]]:
     surfaces = dict.fromkeys((key for _, key in _SURFACE_MARKER_FILES), 0) | {
         _DEFAULT_SURFACE_KEY: 0
     }
+    partition_errors: list[str] = []
     for leaf in leaves:
-        key = next(
-            (key for marker, key in _SURFACE_MARKER_FILES if (leaf / marker).is_file()),
-            _DEFAULT_SURFACE_KEY,
-        )
+        hits = [(marker, key) for marker, key in _SURFACE_MARKER_FILES if (leaf / marker).is_file()]
+        if len(hits) > 1:
+            rel = leaf.relative_to(vectors_root).as_posix()
+            markers = ", ".join(marker for marker, _key in hits)
+            partition_errors.append(f"{rel}: leaf ships multiple surface marker files: {markers}")
+        key = hits[0][1] if hits else _DEFAULT_SURFACE_KEY
         surfaces[key] += 1
-    return len(leaves), len(groups), len(subset), surfaces
+    return _CorpusMeasurement(len(leaves), len(groups), len(subset), surfaces, partition_errors)
 
 
 def check_corpus_counts() -> list[str]:
@@ -1738,15 +1767,20 @@ def check_corpus_counts() -> list[str]:
 
     Called directly from `main()`, like the other single-document guards.
     """
-    quantities = _measured_quantities()
+    corpus = _measured_corpus()
+    quantities = _quantities_from_corpus(corpus)
+    # A corpus that breaks the surface partition is reported before anything
+    # is compared against it: the quotas below are only meaningful while every
+    # leaf belongs to exactly one surface.
+    errors: list[str] = list(corpus.partition_errors)
     # A shape may only check a quantity the registry knows how to report, and
     # the registry validator pins that at import. Nothing pinned the other
     # half: a quantity that stops being MEASURED turns the lookup below into a
     # KeyError somewhere in the middle of a scan. Name it here instead.
     unmeasured = sorted(set(_CLAIM_MESSAGES) - set(quantities))
     if unmeasured:
-        return [f"claim registry names quantities nothing measures: {', '.join(unmeasured)}"]
-    errors: list[str] = []
+        errors.append(f"claim registry names quantities nothing measures: {', '.join(unmeasured)}")
+        return errors
     paths, refused = _scan_files()
     errors.extend(refused)
     for path in paths:
@@ -1842,6 +1876,26 @@ def _declared_version(
     return document, None
 
 
+def _json_loads_no_duplicate_keys(text: str) -> object:
+    """`json.loads`, refusing an object that names the same member twice.
+
+    Python keeps the LAST of a duplicated key, so a manifest declaring
+    `version` twice would be read as whichever copy came last and could be
+    reported "in lockstep" while being malformed. `tomllib` already refuses
+    a duplicate outright, so only the JSON side needs this.
+    """
+
+    def object_pairs_hook(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        out: dict[str, object] = {}
+        for key, value in pairs:
+            if key in out:
+                raise ValueError(f"duplicate JSON object member {key!r}")
+            out[key] = value
+        return out
+
+    return json.loads(text, object_pairs_hook=object_pairs_hook)
+
+
 def check_package_version_lockstep() -> list[str]:
     """Report the two published packages declaring different versions.
 
@@ -1854,7 +1908,10 @@ def check_package_version_lockstep() -> list[str]:
         _PYPROJECT_PATH, "pyproject.toml", tomllib.loads, ("project", "version")
     )
     ts_version, ts_error = _declared_version(
-        _TS_PACKAGE_PATH, "verifiers/ts/package.json", json.loads, ("version",)
+        _TS_PACKAGE_PATH,
+        "verifiers/ts/package.json",
+        _json_loads_no_duplicate_keys,
+        ("version",),
     )
     unreadable = [error for error in (python_error, ts_error) if error is not None]
     if unreadable:
