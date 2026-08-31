@@ -25,7 +25,7 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   than loosening it: one proof may now carry 65536 hex characters of
   attacker-chosen bytes where it could previously carry twice that. What does
   grow is the operation count per bundle and the peak single concatenation.
-  All three bounds are implementation-local (threat model §7.4), not
+  All three bounds are implementation-local (threat model §6.3), not
   conformance surface, and hold the same values in `attest-verifier`.
 
 - **Four validation guards that were simply missing, on both sides of the
@@ -199,13 +199,20 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `pinned-headers.json` the verifier needs to check them — a proof nobody can
   verify is not half a delivery, it is none. It touches no network, in either
   direction: the block header is supplied by the operator, which is where the
-  verifier's own trust store expects it to come from. Paths anchored in chains
-  other than Bitcoin, and the pre-2016 paths that open with `ripemd160`, are
-  refused by name rather than dropped in silence.
+  verifier's own trust store expects it to come from. A path attested on a
+  chain other than Bitcoin is named in the report with its reason rather than
+  dropped in silence. A pre-2016 `.ots` carrying `ripemd160` is refused
+  differently, and the difference matters: the parser refuses the whole file
+  by op name before any path is examined, so such a file converts nothing —
+  including a modern Bitcoin path sitting beside the legacy one.
 
-  Every run writes a conversion report, and the report names the block height
-  of each Bitcoin path it could not convert. That is not bookkeeping: the
-  transparency verdict `anchored_before` is the MINIMUM over verified proofs,
+  Every run that reaches conversion writes a conversion report — including the
+  run that converts nothing — and the report names the block height of each
+  Bitcoin path it could not convert. A run that fails before conversion (an
+  unparseable `.ots`, a digest that is not `SHA256(signed_note_bytes)`,
+  malformed `--block-headers`) exits with a usage error and writes none. The
+  report is not bookkeeping: the transparency verdict `anchored_before` is the
+  MINIMUM over verified proofs,
   so a dropped path can cost the strongest claim in the file — the oldest one.
   For the same reason the report also names any `proof-*.json` already in the
   output directory that the run did not write, since a leftover carries exactly
