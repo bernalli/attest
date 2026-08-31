@@ -3366,8 +3366,10 @@ def build_parser() -> argparse.ArgumentParser:
             "Convert an already-upgraded detached OpenTimestamps proof into the JSON proof "
             "shape accepted by `attest log anchor`, and emit matching pinned header entries. "
             "This command performs no network I/O: obtain block headers from your own node. "
-            "Pending timestamps need `ots upgrade` first, and legacy ripemd160 paths are "
-            "reported as skipped rather than converted."
+            "Pending timestamps need `ots upgrade` first. A legacy ripemd160 path is not "
+            "skipped: it is refused by op name while the file is read, before any path is "
+            "examined, so a .ots carrying one converts nothing at all -- including a modern "
+            "Bitcoin path sitting beside it."
         ),
     )
     p.add_argument("--ots", required=True, type=Path, help="detached .ots proof file")
