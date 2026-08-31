@@ -1373,6 +1373,7 @@ class _ClaimShape(NamedTuple):
     name: str  # stable id, used in tests and messages
     pattern: str  # regex SOURCE, never precompiled here
     checks: tuple[tuple[int, str], ...]  # (capture group, quantity key)
+    when_unmarked: str = "current"  # "current" | "ambiguous"
 
 
 _CLAIM_SHAPES: tuple[_ClaimShape, ...] = (
@@ -1416,7 +1417,30 @@ _CLAIM_SHAPES: tuple[_ClaimShape, ...] = (
         ((1, "corpus_total"), (2, "group_count")),
     ),
     _ClaimShape("subset-of-them", r"\bgroups: (\d+) of them the v0\.1\b", ((1, "v01_subset"),)),
+    # A bare total states no shape of its own, so it is never taken on trust:
+    # the sentence around it decides. See the marker sets below.
+    _ClaimShape(
+        "bare-total", r"\b(\d+) total\b", ((1, "corpus_total"),), when_unmarked="ambiguous"
+    ),
 )
+
+# What promotes a bare total to a claim about NOW, and what marks it as somebody's
+# record of a past state. Present tense wins: the spec's own current sentence
+# reads "bring the full corpus ... implementations MUST meet to 212 total", so a
+# classifier keyed on historical verbs would have dropped the one number worth
+# defending. `bring` counts as historical only in relation with a `to`, never on
+# its own -- "to bring clarity, the corpus is 213 total" is a present claim.
+_CURRENT_MARKERS = re.compile(
+    r"\bMUST meet\b|\bcurrently\b|\bcurrent\b|\bnow\b|\btoday\b|\bas of\b", re.IGNORECASE
+)
+_HISTORICAL_MARKERS = re.compile(
+    r"\bstood at\b|\bbrought\b|\bbrings?\b[^.]{0,60}?\bto\b|\bbefore this document\b"
+    r"|\bfor \d+ total\b",
+    re.IGNORECASE,
+)
+_MARKER_WINDOW_BEFORE = 120
+_MARKER_WINDOW_AFTER = 60
+_WHEN_UNMARKED_VALUES = frozenset({"current", "ambiguous"})
 
 # One message per quantity, so a shape checking two of them reports each in the
 # wording the reader already knows. These strings are pinned by the bench.
@@ -1463,6 +1487,11 @@ def _compile_claim_shapes(
 
         if not shape.checks:
             errors.append(f"{shape.name}: has no checks")
+        if shape.when_unmarked not in _WHEN_UNMARKED_VALUES:
+            errors.append(
+                f"{shape.name}: unknown when_unmarked {shape.when_unmarked!r} "
+                f"(expected one of {sorted(_WHEN_UNMARKED_VALUES)})"
+            )
         for group, key in shape.checks:
             if group < 1 or group > regex.groups:
                 errors.append(f"{shape.name}: capture group {group} is outside 1..{regex.groups}")
@@ -1594,6 +1623,25 @@ def check_corpus_counts() -> list[str]:
         for shape, regex in _COMPILED_SHAPES:
             for match in regex.finditer(folded):
                 line = line_of(match.start())
+                if shape.when_unmarked == "ambiguous":
+                    window = folded[
+                        max(0, match.start() - _MARKER_WINDOW_BEFORE) : match.end()
+                        + _MARKER_WINDOW_AFTER
+                    ]
+                    if _CURRENT_MARKERS.search(window):
+                        pass  # a present-tense claim: fall through and compare it
+                    elif _HISTORICAL_MARKERS.search(window):
+                        continue  # an explicitly dated figure: true when written
+                    else:
+                        # Defaulting this to history would be the silent failure
+                        # the whole check exists to prevent: an unmarked present
+                        # claim would go unchecked forever, and nothing would say so.
+                        errors.append(
+                            f"{rel}:{line}: ambiguous bare total {match.group(1)!r} -- "
+                            f"mark the sentence present-tense (it is then checked "
+                            f"against the live count) or dated (it is then left alone)"
+                        )
+                        continue
                 for group, key in shape.checks:
                     claim_id = (*match.span(group), key)
                     if claim_id in reported_claims:

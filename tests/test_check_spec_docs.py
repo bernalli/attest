@@ -2005,6 +2005,83 @@ def test_overlapping_claim_shapes_do_not_duplicate_the_same_captured_count(
     assert errors == ["doc.md:1: claims 130 corpus leaves, but the corpus holds 3"]
 
 
+def test_a_bare_total_with_a_current_marker_is_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = "the corpus every implementation MUST meet comes to 9 total."
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert errors and "9" in errors[0]
+
+
+def test_a_bare_total_with_a_historical_marker_is_silent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An explicitly dated figure is somebody's true history. Flagging it
+    # would force rewriting the record at every corpus growth, and a gate
+    # that does that gets switched off.
+    assert _corpus_case(tmp_path, monkeypatch, "group 33 brought it to 9 total.") == []
+
+
+def test_a_bare_total_with_no_marker_at_all_is_an_ambiguity_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The failure this gate exists to prevent is the SILENT one. Defaulting
+    # an unmarked total to history would let "The corpus is 9 total." go
+    # unchecked forever; the reader of the error only has to say which
+    # tense they meant.
+    errors = _corpus_case(tmp_path, monkeypatch, "The corpus is 9 total.")
+    assert errors and "ambiguous" in errors[0].lower()
+
+
+def test_the_verb_bring_alone_does_not_make_a_total_historical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # "bring" is a historical marker only in the shape "bring ... TO N total",
+    # which is how the spec's own chain reads. Matching the bare verb would
+    # let an ordinary sentence that happens to contain it slip back into the
+    # silent-history bucket -- the very hole the tri-state closes.
+    errors = _corpus_case(tmp_path, monkeypatch, "To bring clarity, the corpus is 9 total.")
+    assert errors and "ambiguous" in errors[0].lower()
+
+
+def test_a_current_marker_beats_a_historical_verb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The one current claim in the spec's own chain READS historical too
+    # ("bring the full corpus ... MUST meet to N total"): history-marker
+    # classification would silently drop the only number worth defending.
+    body = "later groups bring the full corpus implementations MUST meet to 9 total."
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert errors and "9" in errors[0]
+
+
+def test_the_spec_chain_shape_classifies_as_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A faithful miniature of docs/spec/attest-v0.2.md §16's chain: every
+    # dated figure stays silent, the MUST-meet figure is compared (and
+    # matches the fixture's live total of 3).
+    body = (
+        "the corpus stood at 78 total before this document's rev 5. "
+        "Group 33's leaves brought the full corpus to 82 total. "
+        "Groups 35 and 36 bring the corpus to 97 total. "
+        "The last group brings the full corpus this document and its "
+        "implementations MUST meet to 3 total."
+    )
+    assert _corpus_case(tmp_path, monkeypatch, body) == []
+
+
+def test_the_spec_chain_current_figure_is_defended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = (
+        "The last group brings the full corpus this document and its "
+        "implementations MUST meet to 130 total."
+    )
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert errors and "130" in errors[0]
+
+
 def test_case_variant_claims_are_caught(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     body = "All 130 Conformance Vector Leaves pass on every runner."
     assert _corpus_case(tmp_path, monkeypatch, body) != []
