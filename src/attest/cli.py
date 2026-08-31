@@ -1525,13 +1525,13 @@ def _cmd_authority_issue(args: argparse.Namespace) -> int:
     # None, and handing that to the builder as `previous=None` would SKIP the
     # check the caller asked for while the declaration below — also keyed to
     # the flag — stays silent. D18 admits three outcomes for `--previous`:
-    # checked, refused, or declared undone. Never faked (constraints C-44).
+    # checked, refused, or declared undone. Never faked.
     if args.previous is not None and not isinstance(previous, dict):
         raise CliUsageError(
             f"--previous file {args.previous} must contain a JSON object; a predecessor "
             "that cannot be read as a document cannot show this one conforming"
         )
-    # C-43: the verb that EMITS validates the form before signing, and the
+    # The verb that EMITS validates the form before signing, and the
     # entries are not the whole document — `publisher`, `issued_at` and the
     # version bound are typed by §20.2 too, and the builder deliberately does
     # not read them. A signature over a document no verifier could admit is
@@ -2393,7 +2393,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     # `null` parses to None, and testing the parsed value would read a channel
     # the caller DID supply as a channel they never supplied — opting them out
     # of section 20.4 in silence. `--revocations`, `--transparency` and
-    # `--grant-view` still test the parsed value (see constraints C-44); their
+    # `--grant-view` still test the parsed value; their
     # rails are published, so they change with their own round, not this one.
     if args.authority_view is not None and not isinstance(authority_view, dict):
         raise CliUsageError(

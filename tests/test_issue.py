@@ -188,7 +188,7 @@ def test_issue_counts_the_manifest_snapshot_towards_the_ceiling() -> None:
     ],
 )
 def test_whatever_issue_emits_is_parsable(levels: int) -> None:
-    # The property C-5 denied, walked across the exact boundary: for every
+    # The asymmetry this closes, walked across the exact boundary: for every
     # payload `issue.issue` accepts, the emitted envelope parses.
     payload = make_payload()
     payload["_depth_probe"] = _chain(levels)
