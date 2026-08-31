@@ -947,6 +947,26 @@ def test_itch_claim_form_is_rendered_by_the_shared_page_renderer(
     assert kwargs["extra_css"]
 
 
+def test_itch_claim_form_csp_restricts_posts_to_its_own_origin(
+    itch_deps: BridgeDeps,
+) -> None:
+    """The CSP RESTRICTS form submissions to this origin: 'self' names no
+    origin, so it cannot carry a path and every path here is an allowed
+    target. Without form-action the POST would work anyway. What pins the
+    form is the markup, so the same test asserts it: if method, action or a
+    field name breaks while the header stays intact, this must go red."""
+    app = make_app(itch_deps)
+    _, headers, body = call_app(app, "GET", "/itch/claim")
+
+    assert headers["Content-Security-Policy"] == (
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+        "form-action 'self'; frame-ancestors 'none'"
+    )
+    assert b'<form method="post" action="/itch/claim">' in body
+    assert b'name="email"' in body
+    assert b'name="game_id"' in body
+
+
 def test_itch_claim_form_reaches_outside_itself_for_nothing(itch_deps: BridgeDeps) -> None:
     app = make_app(itch_deps)
     _, _, body = call_app(app, "GET", "/itch/claim")

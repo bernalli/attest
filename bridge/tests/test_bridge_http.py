@@ -62,6 +62,13 @@ def call_app(
     captured: dict[str, Any] = {}
 
     def start_response(status: str, response_headers: list[tuple[str, str]]) -> None:
+        # Checked BEFORE the dict: collapsing headers would hide a second
+        # Content-Security-Policy behind the expected one, and a browser
+        # applies every policy it receives, combining them restrictively.
+        # (Third time today that folding duplicates into a dict hides one.)
+        for singleton in ("content-security-policy", "content-length"):
+            values = [value for name, value in response_headers if name.lower() == singleton]
+            assert len(values) <= 1, f"duplicate {singleton} response headers: {values!r}"
         captured["status"] = status
         captured["headers"] = dict(response_headers)
 
@@ -946,6 +953,39 @@ def test_download_landing_names_both_halves_and_marks_the_private_one(
     # already in the address bar, and page source gets copied around.
     assert issued.download_token not in page
     assert _salt_b64u(issued) not in page
+
+
+def test_pair_landing_is_a_complete_offline_document_with_a_pinned_csp(
+    deps: BridgeDeps, issued: StoredReceipt
+) -> None:
+    """The static twin (tools/gen_buyer_pages.py) always ships a CSP; this page
+    is the same source's other delivery, and D8 says two deliveries never
+    tested against each other drift. Exact equality on purpose: a LOOSENED
+    policy has to fail, not only a missing one."""
+    app = make_app(deps)
+    status, headers, body = call_app(app, "GET", _token_url(issued))
+
+    assert status.startswith("200")
+    assert headers["Content-Security-Policy"] == (
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    )
+    assert b'<meta charset="utf-8">' in body
+    assert b"<title>Your receipt</title>" in body
+    # The core suite proves self-containment around a FAKE body; this is the
+    # real one, carrying the pair's filenames.
+    assert_offline_self_contained(body)
+
+
+def test_the_two_bridge_csps_differ_only_on_form_action() -> None:
+    """One page hosts a form, the other must not; every other word the two
+    policies say has to stay identical, or the next edit loosens one of them
+    in silence."""
+    landing = http_mod._CSP_LANDING.replace("form-action 'none'", "")
+    form = http_mod._CSP_CLAIM_FORM.replace("form-action 'self'", "")
+    assert landing == form
+    assert "form-action 'none'" in http_mod._CSP_LANDING
+    assert "form-action 'self'" in http_mod._CSP_CLAIM_FORM
 
 
 def test_download_part_receipt_is_a_salt_free_bundle(

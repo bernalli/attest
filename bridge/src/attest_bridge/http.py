@@ -87,6 +87,32 @@ _PART_SHAREABLE = "receipt"
 _PART_PRIVATE = "private"
 _ITCH_PRODUCT_PREFIX = "itch_"
 
+# What these served pages may reach: nothing. Both policies deliberately
+# DIVERGE from the static explainer's (tools/gen_buyer_pages.py): no img-src,
+# because bridge pages carry no icons, and the policy travels as a RESPONSE
+# HEADER rather than a <meta> twin — the bridge has a server to speak through,
+# a header applies before parsing and can pin frame-ancestors (which a meta
+# CSP ignores by spec), and one channel means no second copy to drift from.
+# Do not "align" them with the static page: the difference is the decision.
+#
+# A deploy must hand these headers to the client UNCHANGED and must not inject
+# a second policy. Multiple CSPs combine restrictively, so one added downstream
+# without style-src 'unsafe-inline' would strip both pages of their styling —
+# and no in-process test can see that happen.
+_CSP_LANDING = (
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'"
+)
+# Same policy but for form submissions: 'self' RESTRICTS them to this origin.
+# It does not enable the POST — without form-action the POST would work anyway.
+# Nor does it pin the path: a CSP source expression can carry a path only when
+# it names an origin, and 'self' names none, so every path on this origin is
+# an allowed target. action="/itch/claim" and its tests are what pin the path.
+_CSP_CLAIM_FORM = (
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+    "form-action 'self'; frame-ancestors 'none'"
+)
+
 # Presentation only the claim form needs. It rides `render_page`'s extra_css
 # hook instead of CORE_CSS: core bytes are paid inside every exported receipt
 # (a HELD cost), while this page is SERVED — a form selector in the core would
@@ -511,6 +537,7 @@ def _render_pair_landing(
     ).encode()
     headers = [
         ("Content-Type", "text/html; charset=utf-8"),
+        ("Content-Security-Policy", _CSP_LANDING),
         ("Cache-Control", "no-store"),
         ("Content-Length", str(len(body))),
     ]
@@ -687,7 +714,11 @@ def _handle_itch_claim_form(deps: BridgeDeps, start_response: Any) -> Iterable[b
         extra_css=_CLAIM_FORM_CSS,
     )
     body = page.encode()
-    headers = [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(body)))]
+    headers = [
+        ("Content-Type", "text/html; charset=utf-8"),
+        ("Content-Security-Policy", _CSP_CLAIM_FORM),
+        ("Content-Length", str(len(body))),
+    ]
     start_response("200 OK", headers)
     return [body]
 
