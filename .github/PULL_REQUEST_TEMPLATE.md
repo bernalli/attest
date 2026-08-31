@@ -11,7 +11,7 @@ saying, because it usually means the spec needs the change too.
 ## Checks
 
 - [ ] Both suites are green: `uv run --frozen pytest -q` and `npm test --prefix verifiers/ts`
-- [ ] All 97 conformance vector leaves still pass, in both implementations
+- [ ] Every conformance vector leaf still passes, in both implementations, with none skipped
 - [ ] `ruff check`, `ruff format --check` and `mypy --strict src` are clean
 - [ ] If any spec document changed: `python tools/check_spec_docs.py` passes and the revision log
       and section counts were updated

@@ -13,8 +13,13 @@ profile stops being supported only if it is broken, never because it is old.
 
 | Version | Supported | Status |
 |---------|-----------|--------|
-| 0.2     | ✅ reports accepted | **Unreleased.** Specified and implemented on `main`, not yet in any published package — the latest release is `v0.1.2`. Hybrid Ed25519 + ML-DSA-65 profile and Stage 2 transparency/anchoring evidence |
-| 0.1     | ✅        | Released (`v0.1.2` on PyPI and npm). v0.1 receipts remain valid and verifiable indefinitely |
+| 0.2     | ✅        | Published on PyPI and npm. Hybrid Ed25519 + ML-DSA-65 profile, Stage 2 transparency and anchoring evidence, Stage 3 issuer-mediated transfer, Stage 4 preservation pledge, time-boxed key compromise, publisher authority |
+| 0.1     | ✅        | Published on PyPI and npm. v0.1 receipts remain valid and verifiable indefinitely |
+
+This table names signature profiles, not package releases: the current package
+version is whatever `attest-receipts` and `attest-verifier` show on their
+registries. Please report against a commit or a package version you can name,
+rather than against a number written here.
 
 Report anything affecting either profile, including the post-quantum half of the
 hybrid profile.
