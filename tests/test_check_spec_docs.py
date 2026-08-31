@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1689,8 +1691,20 @@ def _write(directory: Path, name: str, content: str) -> Path:
 # fails here rather than in the next release.
 
 
-def _corpus_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> list[str]:
-    """Run check_corpus_counts over a repository holding one document."""
+def _corpus_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    body: str,
+    *,
+    links: list[tuple[str, Path]] | None = None,
+    raw: list[tuple[str, bytes]] | None = None,
+) -> list[str]:
+    """Run check_corpus_counts over a repository holding one document.
+
+    `links` places symlinks (name -> target) and `raw` places byte-exact
+    files: the two shapes a text-scanning gate must refuse to follow and
+    refuse to skip silently.
+    """
     vectors = tmp_path / "docs" / "spec" / "vectors"
     # Three leaves in two groups, and a v0.1 subset of one: small, and nothing
     # like the real numbers, so a pattern that happens to hardcode 158 or 52
@@ -1699,8 +1713,482 @@ def _corpus_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> 
         (vectors / group / leaf).mkdir(parents=True, exist_ok=True)
         (vectors / group / leaf / "expected.json").write_text("{}", encoding="utf-8")
     (tmp_path / "doc.md").write_text(body, encoding="utf-8")
+    for name, target in links or []:
+        (tmp_path / name).symlink_to(target)
+    for name, blob in raw or []:
+        (tmp_path / name).write_bytes(blob)
     monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
     return check_spec_docs.check_corpus_counts()
+
+
+def _git(repo: Path, *args: str) -> None:
+    git = shutil.which("git")
+    assert git is not None, "git is required to build the tracked-perimeter fixtures"
+    subprocess.run(  # noqa: S603 -- fixed argv list, no shell
+        [git, "-C", str(repo), *args], check=True, capture_output=True
+    )
+
+
+def _tracked_corpus_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked: dict[str, str],
+    untracked: dict[str, str],
+) -> list[str]:
+    """Like _corpus_case, but inside a real git repository: `tracked`
+    files are added to the index, `untracked` ones only sit on disk."""
+    vectors = tmp_path / "docs" / "spec" / "vectors"
+    for group, leaf in (("01-a", "a"), ("01-a", "b"), ("26-b", "a")):
+        (vectors / group / leaf).mkdir(parents=True, exist_ok=True)
+        (vectors / group / leaf / "expected.json").write_text("{}", encoding="utf-8")
+    _git(tmp_path, "init", "--quiet")
+    for name, content in {**tracked, **untracked}.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    for name in tracked:
+        _git(tmp_path, "add", name)
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    return check_spec_docs.check_corpus_counts()
+
+
+def test_untracked_files_are_outside_the_perimeter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A draft that will never ship must not be able to redden the gate:
+    # that asymmetry (red at home, green in CI) is how a gate gets ignored.
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"doc.md": "nothing numeric here"},
+        untracked={"draft.md": "The 130-leaf conformance corpus is the gate."},
+    )
+    assert errors == []
+
+
+def test_tracked_files_are_scanned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"doc.md": "The 130-leaf conformance corpus is the gate."},
+        untracked={},
+    )
+    assert errors != []
+
+
+def test_a_tracked_file_missing_from_disk_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `git ls-files` lists the index, not the disk: a locally deleted file
+    # must be skipped, never crash the gate. The first call only builds the
+    # repository fixture; the assertion runs after the deletion.
+    _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"doc.md": "nothing numeric here", "gone.md": "The 130-leaf corpus."},
+        untracked={},
+    )
+    (tmp_path / "gone.md").unlink()
+    errors = check_spec_docs.check_corpus_counts()
+    assert errors == []
+
+
+def test_perimeter_falls_back_outside_a_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No .git anywhere above tmp_path: the scan must degrade to the rglob
+    # walk (this is also what keeps every _corpus_case fixture working).
+    errors = _corpus_case(tmp_path, monkeypatch, "The 130-leaf conformance corpus is the gate.")
+    assert errors != []
+
+
+def test_a_symlink_in_the_perimeter_is_refused_not_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # is_file() resolves the target, so following a link would let text
+    # from outside the repository pose as a project surface -- and a
+    # dangling one would disappear without a word.
+    outside = tmp_path.parent / "outside.md"
+    outside.write_text("The 130-leaf conformance corpus is elsewhere.", encoding="utf-8")
+    errors = _corpus_case(tmp_path, monkeypatch, "clean body.", links=[("link.md", outside)])
+    assert any("symlink" in e for e in errors)
+
+
+def test_a_file_that_is_not_utf8_is_reported_not_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Silently skipping an unreadable file leaves a surface the gate
+    # believes it is defending and is not.
+    errors = _corpus_case(
+        tmp_path, monkeypatch, "clean body.", raw=[("odd.md", b"\xff\xfe not utf-8")]
+    )
+    assert any("UTF-8" in e for e in errors)
+
+
+def test_perimeter_falls_back_when_root_is_inside_an_unrelated_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `git -C X ls-files` succeeds from anywhere inside a checkout and lists
+    # only what is under X. A tree nested in a foreign repository would get an
+    # empty perimeter and the gate would exit clean having scanned nothing --
+    # the silent failure this whole task exists to prevent.
+    outer = tmp_path / "outer"
+    fixture = outer / "fixture"
+    fixture.mkdir(parents=True)
+    _git(outer, "init", "--quiet")
+
+    errors = _corpus_case(fixture, monkeypatch, "The 130-leaf conformance corpus is the gate.")
+    assert errors != []
+
+
+def test_a_dangling_symlink_in_the_perimeter_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _corpus_case(
+        tmp_path,
+        monkeypatch,
+        "clean body.",
+        links=[("dangling.md", tmp_path / "missing.md")],
+    )
+    assert any("dangling.md: symlink" in e for e in errors)
+
+
+def test_a_directory_symlink_in_the_perimeter_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path.parent / "outside-dir"
+    target.mkdir(exist_ok=True)
+    errors = _corpus_case(tmp_path, monkeypatch, "clean body.", links=[("linked.md", target)])
+    assert any("linked.md: symlink" in e for e in errors)
+
+
+def test_a_symlink_outside_the_scan_suffixes_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Suffix filtering runs before the symlink refusal, so a link the gate
+    # would never read must not add noise to the report.
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("The 130-leaf conformance corpus is elsewhere.", encoding="utf-8")
+    errors = _corpus_case(tmp_path, monkeypatch, "clean body.", links=[("link.txt", outside)])
+    assert errors == []
+
+
+def test_a_claim_wrapped_with_indentation_is_still_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Markdown wraps with a hanging indent: newline plus four spaces. The
+    # length-preserving fold turned this into "51-leaf    subset", which no
+    # pattern matches; whitespace runs must collapse to one space.
+    body = "measured against the 51-leaf\n    subset of the corpus"
+    assert _corpus_case(tmp_path, monkeypatch, body) != []
+
+
+def test_line_numbers_survive_normalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = "intro\n\nmore prose\n\nmeasured against the 51-leaf\n    subset of it\n"
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert any("doc.md:5:" in error for error in errors), errors
+
+
+def test_normalization_strips_line_comment_markers_and_maps_offsets() -> None:
+    text = "// gate (45 vector groups /\n//    212 leaves) discovers\n"
+    norm, offsets = check_spec_docs._normalized_with_offsets(text, "//")
+    assert "gate (45 vector groups / 212 leaves) discovers" in norm
+    idx = norm.index("212")
+    assert text[offsets[idx]] == "2"
+    assert text.count("\n", 0, offsets[idx]) + 1 == 2  # "212" sits on line 2
+
+
+def test_normalization_without_a_prefix_keeps_comment_markers() -> None:
+    norm, _offsets = check_spec_docs._normalized_with_offsets("a\n// b\n", None)
+    assert norm == "a // b"
+
+
+def test_normalization_offset_map_invariants_for_degenerate_sequences() -> None:
+    # Properties, not examples: the offset map is the part that can go wrong
+    # in silence, and a collapsed space pointing at the character AFTER the
+    # whitespace it came from reports the wrong line without failing anything.
+    whitespace_runs = (" ", "\t", "\n", "\r\n", "\u00a0", "\u2028", "\u2029", " \n\t\u00a0")
+    fragments = ("", "a", "//", " //", "tail")
+    cases: list[tuple[str, str | None]] = [
+        ("", None),
+        ("   \t\n  ", None),
+        ("//\nnext", "//"),
+        ("//", "//"),
+        ("a //\nb", "//"),
+        ("a\n  b", None),
+        ("\n\n  a", None),
+    ]
+    cases.extend(
+        (f"{left}{whitespace}{right}", None)
+        for left in fragments
+        for whitespace in whitespace_runs
+        for right in fragments
+    )
+
+    for text, prefix in cases:
+        norm, offsets = check_spec_docs._normalized_with_offsets(text, prefix)
+        assert len(norm) == len(offsets)
+        assert all(0 <= offset < len(text) for offset in offsets)
+        assert not norm.startswith(" ")
+        assert not norm.endswith(" ")
+        assert "  " not in norm
+        for char, offset in zip(norm, offsets, strict=True):
+            if char == " ":
+                assert text[offset].isspace()
+            else:
+                assert text[offset] == char
+
+
+def test_line_numbers_use_unicode_line_boundaries_seen_by_normalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = "intro\u2028measured against the 51-leaf subset of it"
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert any("doc.md:2:" in error for error in errors), errors
+
+
+def test_every_claim_shape_is_case_insensitive_by_construction() -> None:
+    # The defect class this kills: 16 patterns compiled one by one, zero
+    # with IGNORECASE. One compile point, flag applied there, no entry can
+    # forget it.
+    assert check_spec_docs._COMPILED_SHAPES
+    for shape, regex in check_spec_docs._COMPILED_SHAPES:
+        assert regex.flags & re.IGNORECASE, shape.name
+
+
+@pytest.mark.parametrize(
+    ("shapes", "expected"),
+    [
+        (
+            (
+                check_spec_docs._ClaimShape(
+                    "dup", r"\b(\d+) leaf vectors\b", ((1, "corpus_total"),)
+                ),
+                check_spec_docs._ClaimShape("dup", r"\b(\d+) leaves\b", ((1, "corpus_total"),)),
+            ),
+            "duplicate claim-shape name",
+        ),
+        (
+            (
+                check_spec_docs._ClaimShape(
+                    "bad-group", r"\b(\d+) leaf vectors\b", ((2, "corpus_total"),)
+                ),
+            ),
+            "capture group 2 is outside 1..1",
+        ),
+        (
+            (check_spec_docs._ClaimShape("bad-key", r"\b(\d+) leaf vectors\b", ((1, "missing"),)),),
+            "unknown measured quantity 'missing'",
+        ),
+        (
+            (check_spec_docs._ClaimShape("bad-regex", r"(", ((1, "corpus_total"),)),),
+            "regex does not compile",
+        ),
+        (
+            (
+                check_spec_docs._ClaimShape(
+                    "two-checks-ambiguous",
+                    r"\b(\d+) of (\d+)\b",
+                    ((1, "corpus_total"), (2, "group_count")),
+                    when_unmarked="ambiguous",
+                ),
+            ),
+            "ambiguous when_unmarked requires exactly one checked capture",
+        ),
+    ],
+)
+def test_claim_shape_registry_rejects_not_well_formed_entries(
+    shapes: tuple[check_spec_docs._ClaimShape, ...], expected: str
+) -> None:
+    # Making the vocabulary data makes a malformed entry possible. The registry
+    # names the bad entry at import instead of surfacing as an IndexError or a
+    # KeyError halfway through scanning some unrelated file.
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        check_spec_docs._compile_claim_shapes(shapes)
+
+
+def test_overlapping_claim_shapes_do_not_duplicate_the_same_captured_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _corpus_case(tmp_path, monkeypatch, "130 leaf vectors across 2 groups")
+    assert errors == ["doc.md:1: claims 130 corpus leaves, but the corpus holds 3"]
+
+
+def test_a_bare_total_with_a_current_marker_is_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = "the corpus every implementation MUST meet comes to 9 total."
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert errors and "9" in errors[0]
+
+
+def test_a_bare_total_with_a_historical_marker_is_silent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An explicitly dated figure is somebody's true history. Flagging it
+    # would force rewriting the record at every corpus growth, and a gate
+    # that does that gets switched off.
+    assert _corpus_case(tmp_path, monkeypatch, "group 33 brought it to 9 total.") == []
+
+
+def test_a_bare_total_with_no_marker_at_all_is_an_ambiguity_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The failure this gate exists to prevent is the SILENT one. Defaulting
+    # an unmarked total to history would let "The corpus is 9 total." go
+    # unchecked forever; the reader of the error only has to say which
+    # tense they meant.
+    errors = _corpus_case(tmp_path, monkeypatch, "The corpus is 9 total.")
+    assert errors and "ambiguous" in errors[0].lower()
+
+
+def test_the_verb_bring_alone_does_not_make_a_total_historical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # "bring" is a historical marker only in the shape "bring ... TO N total",
+    # which is how the spec's own chain reads. Matching the bare verb would
+    # let an ordinary sentence that happens to contain it slip back into the
+    # silent-history bucket -- the very hole the tri-state closes.
+    errors = _corpus_case(tmp_path, monkeypatch, "To bring clarity, the corpus is 9 total.")
+    assert errors and "ambiguous" in errors[0].lower()
+
+
+def test_an_ambiguous_shape_classifies_from_the_capture_it_declares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The ambiguous branch used to read group 1 whatever the shape declared, so
+    # a shape whose single check reads a later capture would have been
+    # classified -- and reported -- from the wrong number.
+    shape = check_spec_docs._ClaimShape(
+        "second-capture",
+        r"\bgroup (\d+) holds (\d+) total\b",
+        ((2, "corpus_total"),),
+        when_unmarked="ambiguous",
+    )
+    monkeypatch.setattr(
+        check_spec_docs, "_COMPILED_SHAPES", check_spec_docs._compile_claim_shapes((shape,))
+    )
+    errors = _corpus_case(tmp_path, monkeypatch, "group 7 holds 9 total")
+    assert errors and "ambiguous bare total '9'" in errors[0], errors
+
+
+def test_bare_total_markers_do_not_cross_sentence_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fixed character window does not know where a sentence ends, so a marker
+    # in the neighbouring sentence classified the total next to it.
+    errors = _corpus_case(
+        tmp_path,
+        monkeypatch,
+        "Every implementation MUST meet the corpus. The corpus is 9 total.",
+    )
+    assert errors and "ambiguous bare total '9'" in errors[0]
+
+    errors = _corpus_case(
+        tmp_path, monkeypatch, "Group 33 brought it to 3 total. The corpus is 9 total."
+    )
+    assert errors == [
+        "doc.md:1: ambiguous bare total '9' -- mark the sentence present-tense "
+        "(it is then checked against the live count) or dated (it is then left alone)"
+    ]
+
+
+@pytest.mark.parametrize("separator", [":", ";", "?", "!"])
+def test_bring_to_history_marker_must_bind_the_total(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, separator: str
+) -> None:
+    # "bring ... to" reaching any word at all was enough to date a present
+    # claim: the marker has to reach the number it qualifies.
+    errors = _corpus_case(
+        tmp_path, monkeypatch, f"Bring clarity to reviewers{separator} the corpus is 9 total."
+    )
+    assert errors and "ambiguous bare total '9'" in errors[0]
+
+
+def test_bare_total_marker_context_handles_document_edges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _corpus_case(tmp_path, monkeypatch, "Now 9 total.") != []
+    errors = _corpus_case(tmp_path, monkeypatch, "The corpus is 9 total")
+    assert errors and "ambiguous bare total '9'" in errors[0]
+
+
+def test_a_current_marker_beats_a_historical_verb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The one current claim in the spec's own chain READS historical too
+    # ("bring the full corpus ... MUST meet to N total"): history-marker
+    # classification would silently drop the only number worth defending.
+    body = "later groups bring the full corpus implementations MUST meet to 9 total."
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert errors and "9" in errors[0]
+
+
+def test_the_spec_chain_shape_classifies_as_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A faithful miniature of docs/spec/attest-v0.2.md §16's chain: every
+    # dated figure stays silent, the MUST-meet figure is compared (and
+    # matches the fixture's live total of 3).
+    body = (
+        "the corpus stood at 78 total before this document's rev 5. "
+        "Group 33's leaves brought the full corpus to 82 total. "
+        "Groups 35 and 36 bring the corpus to 97 total. "
+        "The last group brings the full corpus this document and its "
+        "implementations MUST meet to 3 total."
+    )
+    assert _corpus_case(tmp_path, monkeypatch, body) == []
+
+
+def test_the_spec_chain_current_figure_is_defended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = (
+        "The last group brings the full corpus this document and its "
+        "implementations MUST meet to 130 total."
+    )
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert errors and "130" in errors[0]
+
+
+def test_case_variant_claims_are_caught(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    body = "All 130 Conformance Vector Leaves pass on every runner."
+    assert _corpus_case(tmp_path, monkeypatch, body) != []
+
+
+def test_leaves_across_groups_variant_is_defended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # README.md's live shape ("now 212 leaves across 45 groups") matched
+    # nothing: the registered form demanded "leaf vectors across".
+    assert _corpus_case(tmp_path, monkeypatch, "now 130 leaves across 2 groups") != []
+    assert _corpus_case(tmp_path, monkeypatch, "now 3 leaves across 9 groups") != []
+
+
+def test_subset_of_them_variant_is_defended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = "3 leaves across 2 groups: 9 of them the v0.1 corpus"
+    assert _corpus_case(tmp_path, monkeypatch, body) != []
+    good = "3 leaves across 2 groups: 2 of them the v0.1 corpus"
+    assert _corpus_case(tmp_path, monkeypatch, good) == []
+
+
+def test_the_dead_ts_readme_exemption_is_gone() -> None:
+    # The exempt phrase left the file it excused (grep finds zero
+    # occurrences), and no pattern ever matched it anyway. The mechanism
+    # stays (path- and phrase-exact); the registry is empty.
+    assert check_spec_docs._CORPUS_CLAIM_EXEMPTIONS == {}
+
+
+def test_an_oversized_numeric_claim_is_reported_not_allowed_to_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    huge = "9" * 5000
+    errors = _corpus_case(tmp_path, monkeypatch, f"The {huge}-leaf conformance corpus is the gate.")
+    assert any("too many digits" in e for e in errors)
 
 
 @pytest.mark.parametrize(
@@ -1757,3 +2245,544 @@ def test_corpus_exemptions_are_path_and_phrase_exact(
     errors = _corpus_case(tmp_path, monkeypatch, body)
     assert len(errors) == 1
     assert "130" in errors[0]
+
+
+# --- the wider perimeter: code comments, generated files, manifests -----------
+
+
+def test_a_stale_claim_in_a_python_comment_is_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"tests/test_x.py": "# checked over 130 leaves across 2 groups\n"},
+        untracked={},
+    )
+    assert errors and "130" in errors[0]
+
+
+def test_a_wrapped_quota_in_a_ts_comment_is_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The live shape: the quota wraps onto a continuation comment line, so
+    # the marker `//` sits INSIDE the phrase until normalization strips it.
+    body = (
+        "//  - `witness-quorum.json` (group 40, §11.4): evaluateActivationWitnessQuorum,\n"
+        "//    9 leaves.\n"
+    )
+    errors = _tracked_corpus_case(
+        tmp_path, monkeypatch, tracked={"test/conformance.test.ts": body}, untracked={}
+    )
+    assert errors and "9" in errors[0]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "// The conformance merge gate (2 vector groups/9 leaves):\n",
+        "//  - the default: verify(), for leaves with no special marker files (9 leaves).\n",
+        "//  - `chain.json` (group 36, §17.5): auditChain with 9 leaves.\n",
+        "//  - `witness-quorum.json` (group 40, §11.4): "
+        "evaluateActivationWitnessQuorum with 9 leaves.\n",
+        "//  - `redemption.json` (group 38, §18.7): verifyRedemption with 9 leaves.\n",
+    ],
+)
+def test_surface_quota_claims_survive_reasonable_comment_rewrites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    # A quota anchored to the punctuation joining its words is a quota that
+    # silently leaves the vocabulary the day somebody rephrases the sentence
+    # around it. Each of these is the live comment, reworded innocuously.
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"test/conformance.test.ts": body},
+        untracked={},
+    )
+    assert errors and "9" in errors[0]
+
+
+def test_the_gate_and_its_bench_do_not_scan_themselves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Both files carry claim-shaped strings ON PURPOSE (pattern docstrings,
+    # bench fixtures); scanning them reports the fixtures as drift.
+    # The suffix is forced on so the test is red for the RIGHT reason: without
+    # it, it would pass before this task merely because .py is not scanned yet.
+    monkeypatch.setattr(check_spec_docs, "_SCAN_SUFFIXES", (".md", ".py"))
+    stale = "# reproduce all 130 of them\n"
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={
+            "tools/check_spec_docs.py": stale,
+            "tests/test_check_spec_docs.py": stale,
+        },
+        untracked={},
+    )
+    assert errors == []
+
+
+def test_a_generated_tracked_file_is_excluded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same reason as above: force the suffix so the exclusion is what is
+    # under test, not the absence of .html from the perimeter.
+    monkeypatch.setattr(check_spec_docs, "_SCAN_SUFFIXES", (".md", ".html"))
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"site/public/what-is-this.html": "<p>the 130-leaf corpus</p>"},
+        untracked={},
+    )
+    assert errors == []
+
+
+def _surface_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    # One leaf per special surface plus two plain ones: chain=1, quorum=1,
+    # redemption=1, verify=2, total=5.
+    vectors = tmp_path / "docs" / "spec" / "vectors"
+    layout = {
+        ("36-chain", "a"): "chain.json",
+        ("40-quorum", "a"): "witness-quorum.json",
+        ("38-redemption", "a"): "redemption.json",
+        ("01-plain", "a"): None,
+        ("01-plain", "b"): None,
+    }
+    for (group, leaf), marker in layout.items():
+        directory = vectors / group / leaf
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "expected.json").write_text("{}", encoding="utf-8")
+        if marker is not None:
+            (directory / marker).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    return check_spec_docs._measured_quantities()
+
+
+def test_surface_quotas_are_measured_from_marker_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    quantities = _surface_case(tmp_path, monkeypatch)
+    assert quantities["chain_surface"] == 1
+    assert quantities["quorum_surface"] == 1
+    assert quantities["redemption_surface"] == 1
+    assert quantities["verify_surface"] == 2
+
+
+def test_the_four_surfaces_partition_the_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The quotas are only meaningful as a partition: every leaf belongs to
+    # exactly one surface, so the four must add up to the corpus. A shape
+    # that double-counted would still look plausible read one figure at a time.
+    quantities = _surface_case(tmp_path, monkeypatch)
+    assert (
+        quantities["verify_surface"]
+        + quantities["chain_surface"]
+        + quantities["quorum_surface"]
+        + quantities["redemption_surface"]
+        == quantities["corpus_total"]
+    )
+
+
+def test_a_leaf_shipping_two_surface_markers_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Nothing in the tree GUARANTEES the partition the comments describe.
+    # Assigning such a leaf to the first registered surface keeps the four
+    # quotas adding up, so once somebody reconciles the stated quotas with
+    # those counts the guard would bless a "partitioned" claim that is false
+    # -- permanently, and without a word. It is refused instead.
+    vectors = tmp_path / "docs" / "spec" / "vectors"
+    both = vectors / "36-chain" / "a"
+    both.mkdir(parents=True)
+    for name in ("expected.json", "chain.json", "redemption.json"):
+        (both / name).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    errors = check_spec_docs.check_corpus_counts()
+    assert errors == [
+        "36-chain/a: leaf ships multiple surface marker files: chain.json, redemption.json"
+    ]
+
+
+def test_a_quantity_the_registry_names_but_nothing_measures_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The registry validator pins that a shape only checks a quantity the
+    # messages know. Nothing pinned the other half: a quantity that stops
+    # being MEASURED used to surface as a KeyError partway through a scan.
+    monkeypatch.setitem(check_spec_docs._CLAIM_MESSAGES, "phantom", lambda *_: "phantom")
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"doc.md": "The 130-leaf conformance corpus is the gate."},
+        untracked={},
+    )
+    assert errors == ["claim registry names quantities nothing measures: phantom"]
+
+
+def _lockstep_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pyproject: str,
+    package_json: str,
+) -> list[str]:
+    py = _write(tmp_path, "pyproject.toml", pyproject)
+    ts = _write(tmp_path, "package.json", package_json)
+    monkeypatch.setattr(check_spec_docs, "_PYPROJECT_PATH", py)
+    monkeypatch.setattr(check_spec_docs, "_TS_PACKAGE_PATH", ts)
+    return check_spec_docs.check_package_version_lockstep()
+
+
+def test_matching_package_versions_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ok = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = "1.2.3"\n',
+        '{"name": "y", "version": "1.2.3"}',
+    )
+    assert ok == []
+
+
+def test_diverging_package_versions_are_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = "1.2.3"\n',
+        '{"name": "y", "version": "1.2.4"}',
+    )
+    assert errors and "1.2.3" in errors[0] and "1.2.4" in errors[0]
+
+
+def test_lockstep_fails_closed_on_missing_or_broken_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No version key, and outright unparsable files: errors, never raises.
+    assert _lockstep_case(tmp_path, monkeypatch, '[project]\nname = "x"\n', '{"name": "y"}') != []
+    assert _lockstep_case(tmp_path, monkeypatch, "not toml ][", "not json {") != []
+
+
+def test_lockstep_refuses_a_version_that_is_not_a_string(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A JSON number and a TOML array both survive parsing and then compare
+    # unequal to anything: without a type check the report would read as a
+    # version mismatch and send the reader to bump the wrong file.
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = ["1.2.3"]\n',
+        '{"name": "y", "version": 3}',
+    )
+    assert len(errors) == 2
+    assert all("not a string" in error for error in errors)
+
+
+def test_lockstep_refuses_two_empty_versions_rather_than_calling_them_equal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Blank compares equal to blank, so the one shape of disagreement this
+    # check cannot see is two packages that agree on declaring nothing.
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = ""\n',
+        '{"name": "y", "version": "   "}',
+    )
+    assert len(errors) == 2
+    assert all("version is empty" in error for error in errors)
+
+
+def test_lockstep_reports_a_missing_manifest_rather_than_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(check_spec_docs, "_PYPROJECT_PATH", tmp_path / "absent.toml")
+    monkeypatch.setattr(check_spec_docs, "_TS_PACKAGE_PATH", tmp_path / "absent.json")
+    errors = check_spec_docs.check_package_version_lockstep()
+    assert len(errors) == 2
+
+
+def test_lockstep_refuses_duplicate_json_version_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # json.loads keeps the LAST duplicate, so a manifest naming `version`
+    # twice would be read as one of the two and could be called in lockstep
+    # while being malformed. (tomllib refuses a duplicate outright, so the
+    # TOML side needs nothing.)
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = "1.2.3"\n',
+        '{"name": "y", "version": "1.2.3", "version": "1.2.4"}',
+    )
+    assert errors and "duplicate JSON object member 'version'" in errors[0]
+
+
+def test_lockstep_refuses_a_duplicate_key_in_the_toml_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The symmetric case, pinned rather than assumed: it is tomllib doing the
+    # refusing, and a parser swap must not quietly take that away.
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = "1.2.3"\nversion = "1.2.4"\n',
+        '{"name": "y", "version": "1.2.3"}',
+    )
+    assert errors and "cannot read a version to compare" in errors[0]
+
+
+# --- coined terms on positioning surfaces -------------------------------------
+
+
+def _coined_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, str]
+) -> list[str]:
+    defining = (
+        "## 3. Eternal verifiability\n\nNo amendment may render unverifiable an "
+        "artifact that was conforming when issued. Deprecation degrades the "
+        "result classification, never the ability to verify the bytes.\n"
+    )
+    contents = {"docs/spec/attest-versioning.md": defining, **files}
+    for name, content in contents.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    return check_spec_docs.check_coined_terms()
+
+
+def test_a_bare_coined_term_on_a_positioning_surface_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _coined_case(
+        tmp_path, monkeypatch, {"README.md": "We offer the eternal-verifiability guarantee.\n"}
+    )
+    assert errors and "README.md:1" in errors[0]
+
+
+def test_a_glossed_coined_term_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    body = (
+        "We offer the eternal-verifiability guarantee (deprecation degrades the "
+        "result classification, never the ability to verify the bytes).\n"
+    )
+    assert _coined_case(tmp_path, monkeypatch, {"README.md": body}) == []
+
+
+def test_the_gloss_must_share_the_paragraph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A gloss two paragraphs away does not disambiguate the sentence a
+    # reader actually lands on.
+    body = (
+        "We offer the eternal-verifiability guarantee.\n\n"
+        "Elsewhere: never the ability to verify the bytes.\n"
+    )
+    assert _coined_case(tmp_path, monkeypatch, {"README.md": body}) != []
+
+
+@pytest.mark.parametrize("separator", ["\r\n\r\n", "\n   \n", "\n\n\n", "\n\t\n"])
+def test_paragraph_break_variants_keep_the_gloss_scoped_to_its_own_paragraph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, separator: str
+) -> None:
+    # A blank line written with CRLF, or carrying spaces, is still a blank
+    # line to every reader and every renderer. Splitting on the literal
+    # "\n\n" alone merges the two blocks, and the gloss below then answers
+    # for the term above -- silently, which is the direction that matters.
+    body = (
+        "We offer the eternal-verifiability guarantee."
+        f"{separator}"
+        "Elsewhere: never the ability to verify the bytes.\n"
+    )
+    assert _coined_case(tmp_path, monkeypatch, {"README.md": body}) != []
+
+
+def test_coined_term_line_numbers_use_unicode_line_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Normalization already treats U+2028 as a line end, so a report that
+    # counted only "\n" would name a line the reader cannot find.
+    errors = _coined_case(
+        tmp_path, monkeypatch, {"README.md": "intro\u2028the eternal-verifiability guarantee\n"}
+    )
+    assert errors and "README.md:2" in errors[0]
+
+
+def test_a_coined_term_on_a_structured_surface_is_refused_outright(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A package manifest has no paragraph to gloss in: the whole file is one
+    # block, so "the gloss must share the paragraph" degrades to "somewhere
+    # in this file", which is exactly the silent pass this guard exists to
+    # refuse. Where no unit of reading is defined, the term is not allowed.
+    errors = _coined_case(
+        tmp_path,
+        monkeypatch,
+        {"verifiers/ts/package.json": '{"description": "eternal verifiability, guaranteed"}\n'},
+    )
+    assert errors and "verifiers/ts/package.json" in errors[0]
+    assert "cannot be glossed" in errors[0]
+
+
+def test_a_structured_surface_that_does_not_name_the_term_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {"verifiers/ts/package.json": '{"description": "an offline receipt verifier"}\n'}
+    assert _coined_case(tmp_path, monkeypatch, files) == []
+
+
+def test_a_gloss_does_not_rescue_a_structured_surface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The point of the term-free rule: writing the gloss elsewhere in the
+    # file must NOT buy the term its way in, or the rule is the file-wide
+    # one it replaced.
+    body = (
+        '{"description": "eternal verifiability, guaranteed",\n'
+        ' "longDescription": "never the ability to verify the bytes"}\n'
+    )
+    errors = _coined_case(tmp_path, monkeypatch, {"verifiers/ts/package.json": body})
+    assert errors != []
+
+
+def test_case_variants_of_the_term_are_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _coined_case(
+        tmp_path, monkeypatch, {"README.md": "Eternal Verifiability, guaranteed.\n"}
+    )
+    assert errors != []
+
+
+def test_the_term_outside_positioning_surfaces_is_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {
+        "CONTRIBUTING.md": "eternal verifiability is discussed in the spec.\n",
+        "README.md": "no coined terms here.\n",
+    }
+    assert _coined_case(tmp_path, monkeypatch, files) == []
+
+
+def test_a_missing_positioning_surface_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Surfaces may legitimately disappear (a renamed FAQ); the defining
+    # document may not — without it the registry is stale.
+    assert _coined_case(tmp_path, monkeypatch, {}) == []
+
+
+def test_a_defining_document_that_lost_the_term_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {"docs/spec/attest-versioning.md": "## 3. Something else entirely\n"}
+    errors = _coined_case(tmp_path, monkeypatch, files)
+    assert errors and "attest-versioning" in errors[0]
+
+
+def test_a_missing_defining_document_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Distinct from the case above and just as fail-closed: a registry that
+    # points at a document nobody ships defends nothing, and a check that
+    # skipped it would go green having verified no definition exists.
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    errors = check_spec_docs.check_coined_terms()
+    assert errors and "attest-versioning" in errors[0]
+
+
+def test_the_line_reported_is_the_paragraph_that_names_the_term(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A report pointing at the top of the file sends the reader hunting; the
+    # offset has to survive the paragraph split and the normalization.
+    body = "filler\n\nmore filler\n\nthe eternal-verifiability guarantee, unglossed.\n"
+    errors = _coined_case(tmp_path, monkeypatch, {"README.md": body})
+    assert errors and "README.md:5" in errors[0]
+
+
+def test_a_positioning_surface_that_is_not_utf8_is_reported_not_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same reflex as the drift scan: a surface the check cannot read is a
+    # surface it is not defending, and silence would look identical to clean.
+    _coined_case(tmp_path, monkeypatch, {"README.md": "clean\n"})
+    (tmp_path / "README.md").write_bytes(b"\xff\xfe eternal verifiability")
+    errors = check_spec_docs.check_coined_terms()
+    assert errors and "UTF-8" in errors[0]
+
+
+def test_every_coined_term_is_case_insensitive_by_construction() -> None:
+    # The sixteen claim shapes lost a year of coverage to a missing flag
+    # applied entry by entry; the coined-term registry compiles in one place
+    # so the same defect cannot come back through a new door.
+    for pattern in check_spec_docs._COMPILED_COINED_TERMS.values():
+        assert pattern.term.flags & re.IGNORECASE
+        assert pattern.gloss.flags & re.IGNORECASE
+
+
+def _term(
+    name: str,
+    pattern: object = r"x",
+    *,
+    glossable: object = ("README.md",),
+    term_free: object = (),
+    defined_in: object = "d.md",
+) -> check_spec_docs._CoinedTerm:
+    return check_spec_docs._CoinedTerm(
+        name,
+        pattern,  # type: ignore[arg-type]
+        defined_in,  # type: ignore[arg-type]
+        r"g",
+        glossable,  # type: ignore[arg-type]
+        term_free,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.parametrize(
+    ("terms", "expected"),
+    [
+        ((_term("dup"), _term("dup")), "duplicate coined-term name"),
+        ((_term("bad-regex", "("),), "regex"),
+        ((_term("no-surfaces", glossable=()),), "no surfaces"),
+        # A bytes pattern COMPILES, and only fails later against str: the
+        # registry validator exists to make that failure happen at import.
+        ((_term("bad-type", b"x"),), "pattern must be a string"),
+        ((_term("bad-surface", glossable=("README.md", "")),), "must be non-empty strings"),
+        ((_term("bad-defined-in", defined_in=""),), "defined_in"),
+        ((_term(""),), "name must be a non-empty string"),
+    ],
+)
+def test_coined_term_registry_rejects_not_well_formed_entries(
+    terms: tuple[check_spec_docs._CoinedTerm, ...], expected: str
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        check_spec_docs._compile_coined_terms(terms)
+
+
+def test_a_bytes_gloss_pattern_is_refused_at_import_too() -> None:
+    # The term pattern had its check; the gloss pattern is the same hazard by
+    # the same route, and a registry that closed one door is not closed.
+    term = check_spec_docs._CoinedTerm("g", r"x", "d.md", b"g", ("README.md",), ())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="gloss pattern must be a string"):
+        check_spec_docs._compile_coined_terms((term,))
+
+
+def test_line_number_for_an_offset_past_the_end_names_the_last_line() -> None:
+    # Unreachable from today's callers, and pinned anyway: the fallback used
+    # to be line 1, which sends a reader to the top of a file to look for
+    # something at its bottom.
+    assert check_spec_docs._line_number_for_offset("a\nb\nc", 5) == 3
+    assert check_spec_docs._line_number_for_offset("", 0) == 1
+
+
+def test_a_surface_may_not_be_listed_as_both_glossable_and_term_free() -> None:
+    # The two rules contradict each other on the same file, and a registry
+    # that let both stand would apply whichever the loop reached first.
+    with pytest.raises(ValueError, match="both glossable and term-free"):
+        check_spec_docs._compile_coined_terms(
+            (_term("both", glossable=("README.md",), term_free=("README.md",)),)
+        )

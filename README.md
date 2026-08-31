@@ -299,10 +299,12 @@ deliberately out of protocol and live in the non-normative
 
 [docs/spec/attest-versioning.md](docs/spec/attest-versioning.md) is the
 normative upgrade policy governing both specifications above: the additive
-pattern new extensions must follow, the eternal-verifiability guarantee, the
-three-state algorithm lifecycle (`active` / `deprecated` / `unsafe`), the
-amendment procedure, and the signature-suite, payload-field, revocation-class,
-log-entry-type, and transfer-type registries.
+pattern new extensions must follow, the eternal-verifiability guarantee
+(deprecation may degrade how a conforming receipt's result is classified,
+never the ability to verify its bytes — verifiable forever is not valid
+forever), the three-state algorithm lifecycle (`active` / `deprecated` /
+`unsafe`), the amendment procedure, and the signature-suite, payload-field,
+revocation-class, log-entry-type, and transfer-type registries.
 
 [docs/spec/attest-threat-model.md](docs/spec/attest-threat-model.md) is the
 maintained threat model behind the two specifications above — a living
