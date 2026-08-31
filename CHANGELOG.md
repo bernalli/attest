@@ -4,7 +4,7 @@ All notable changes to `attest-receipts` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] — 2026-08-31
 
 ### Changed
 
@@ -128,6 +128,27 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A verifier could be made to act on data nobody signed, and it took no key
+  to do it.** Two caller-supplied evidence rails were canonicalized for the
+  signature check and then read a second time from the caller's own live
+  object. A value can behave differently across those two reads, so the bytes
+  that verified and the values that decided were not necessarily the same
+  bytes: the attacker supplies no key and forges no signature, but takes a
+  document an honest third party really did sign and makes the verifier act on
+  something else. On the revocation rail this turned a receipt that must stay
+  revoked into a valid one. On the ownership-history surface,
+  `transfer.audit_chain`, it reported a genuine transfer to one holder as a
+  valid link to a different one — a change of ownership nobody ever
+  authorized. Both rails now admit the caller's array once, at entry, through
+  the single shared boundary, per element and never raising, and from that
+  point on only the reconstruction is read; the ceiling on that boundary is one
+  shared constant rather than a literal restated per module, because a ceiling
+  written twice is a ceiling that drifts. Both cases are reproduced against the
+  code that shipped them and against the code that fixes them, so the closure
+  is measured rather than inferred. **Anyone verifying receipts with 0.8.1 or
+  earlier should upgrade**, including holders who only ever call
+  `audit_chain`. (v0.1 §12, §17; C-21.)
+
 - **A promise in the README that no code kept.** The opening paragraph said a
   receipt could be kept "even printed as a QR code". There is no QR export
   anywhere in this project — not in the library, the bridge, or the site. The
@@ -148,6 +169,29 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a test so the next drift fails instead of shipping.
 
 ### Added
+
+- **A receipt can now answer a question the format never asked: was this
+  seller entitled to sell this work?** Section 20 of attest-v0.2 adds publisher
+  authorization manifests, the caller-supplied `authority_view` rail
+  (TypeScript `authorityView`, vector file `authority-view.json`), the
+  evaluation order, the warning vocabulary, and a successor discipline under
+  which a published authorization stays published. Two components join the
+  result, `publisher_authority` and `publisher_authority_trust`, in both
+  implementations and in the web verifier; `ok` and `trust` are untouched under
+  every value they can take, because entitlement to sell is a fact about the
+  seller, not a validity property of the receipt. The evidence is judged
+  conservatively in one direction only: absent, malformed, stale or ambiguous
+  evidence yields `unattested`, never `authorized`, and never `unauthorized`
+  without the caller's own proof of currency — a denial is a positive claim
+  about a publisher's intent, so without that proof it degrades rather than
+  accuses. The CLI gains `authority issue`, whose `--previous` enforces the
+  successor discipline before signing and says so on stderr when no predecessor
+  is given, and `verify --authority-view`. Vector group 43 brings the corpus to
+  212 leaves across 45 groups.
+
+- **A publisher-claim floor on v0.1.** A receipt that names a publisher it
+  cannot substantiate now warns, deliberately independent of the protocol
+  version so the check never depends on the issuer's cooperation.
 
 - **`compromise_view`, a third evidence channel on the verifier's own
   configuration rail.** Python keyword `compromise_view=`, TypeScript option
