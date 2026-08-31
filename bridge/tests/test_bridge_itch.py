@@ -33,9 +33,9 @@ from attest_bridge.ledger import Ledger
 from attest_bridge.model import NormalizedPurchase, PurchaseRejected
 from attest_bridge.signing import IssuerIdentity
 from conftest import DISPLAY_NAME, ISSUER, KID
-from test_bridge_http import call_app
+from test_bridge_http import assert_offline_self_contained, call_app
 
-from attest import keys, pq
+from attest import buyer_surface, keys, pq
 from attest import verify as verify_mod
 
 _RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
@@ -891,6 +891,38 @@ def test_itch_claim_form_escapes_a_title_containing_markup(itch_deps: BridgeDeps
 
     assert b"<script>" not in body
     assert b"&lt;script&gt;" in body
+
+
+def test_itch_claim_form_is_a_complete_html_document(itch_deps: BridgeDeps) -> None:
+    """D6: a page without a charset can render text wrongly, and without a
+    title the buyer's tab shows a URL. The head is not polish, it is meaning."""
+    app = make_app(itch_deps)
+    _, _, body = call_app(app, "GET", "/itch/claim")
+
+    assert body.startswith(b"<!doctype html>")
+    assert b'<html lang="en">' in body
+    assert b'<meta charset="utf-8">' in body
+    assert b"<title>Claim your receipt</title>" in body
+
+
+def test_itch_claim_form_carries_its_style_inline_from_the_shared_core(
+    itch_deps: BridgeDeps,
+) -> None:
+    """D8: one source. Asserting a single token would stay green against a
+    hand-pasted copy of the CSS — the silent divergence D8 exists to forbid.
+    Asserting CORE_CSS itself means a page that stops following the source
+    goes red the moment the source moves."""
+    app = make_app(itch_deps)
+    _, _, body = call_app(app, "GET", "/itch/claim")
+
+    assert b"<style>" in body
+    assert buyer_surface.CORE_CSS.encode() in body
+
+
+def test_itch_claim_form_reaches_outside_itself_for_nothing(itch_deps: BridgeDeps) -> None:
+    app = make_app(itch_deps)
+    _, _, body = call_app(app, "GET", "/itch/claim")
+    assert_offline_self_contained(body)
 
 
 def test_post_itch_claim_acknowledgement_is_identical_for_fresh_dedup_and_no_purchase(

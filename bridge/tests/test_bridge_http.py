@@ -67,6 +67,78 @@ def call_app(
     return captured["status"], captured["headers"], b"".join(chunks)
 
 
+_EXTERNAL_MARKERS = (
+    # tags that fetch by themselves; <style> is allowed, what it CONTAINS is not
+    "<link",
+    "<script",
+    "<img",
+    "<iframe",
+    "<object",
+    "<embed",
+    "<video",
+    "<audio",
+    "<source",
+    # attributes and css constructs that fetch
+    "srcset=",
+    "@font-face",
+    "@import",
+    "url(",
+    # absolute and protocol-relative urls (protocol-relative carries no scheme,
+    # so the http:// / https:// markers never see it)
+    "http://",
+    "https://",
+    '="//',
+    "='//",
+)
+
+
+def assert_offline_self_contained(page: bytes) -> None:
+    """Fail if a served bridge page reaches outside itself for anything.
+
+    Case-insensitive on purpose: a browser accepts <SCRIPT SRC=...> and
+    src="//cdn/..." just as happily as the lowercase, schemeful spellings,
+    so a guard that only knows those proves its own assumptions, not the
+    page. The core suite proves this property for `render_page` around a
+    FAKE body (tests/test_buyer_surface.py); these are the REAL bodies the
+    bridge injects, which that test never sees.
+    """
+    text = page.decode("utf-8").lower()
+    for marker in _EXTERNAL_MARKERS:
+        assert marker not in text, f"served page depends on the outside: {marker!r}"
+
+
+@pytest.mark.parametrize(
+    "poison",
+    [
+        # the polite forms
+        '<link rel="stylesheet" href="style.css">',
+        '<script src="app.js"></script>',
+        '<img src="logo.png">',
+        '<a href="http://example.com">x</a>',
+        '<a href="https://example.com">x</a>',
+        "<style>@font-face{font-family:x;src:local(x)}</style>",
+        "<style>body{background:url(x.png)}</style>",
+        # the hostile spellings a case-sensitive guard would wave through
+        '<SCRIPT SRC="app.js"></SCRIPT>',
+        '<IMG SRC="logo.png">',
+        "<STYLE>BODY{BACKGROUND:URL(X.PNG)}</STYLE>",
+        # protocol-relative: no http://, no https://, fetches all the same
+        '<a href="//cdn.example.com/x">x</a>',
+        "<a href='//cdn.example.com/x'>x</a>",
+        # fetching tags and attributes the naive marker list ignores
+        '<iframe src="frame.html"></iframe>',
+        '<object data="movie.swf"></object>',
+        '<video src="clip.mp4"></video>',
+        '<source srcset="hero.png 1x, hero-2x.png 2x">',
+        "<style>@import 'other.css';</style>",
+    ],
+)
+def test_the_self_containment_guard_actually_fires(poison: str) -> None:
+    page = f"<!doctype html><html><body>{poison}</body></html>".encode()
+    with pytest.raises(AssertionError):
+        assert_offline_self_contained(page)
+
+
 # -- fixtures -----------------------------------------------------------
 
 
