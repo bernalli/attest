@@ -2245,3 +2245,236 @@ def test_corpus_exemptions_are_path_and_phrase_exact(
     errors = _corpus_case(tmp_path, monkeypatch, body)
     assert len(errors) == 1
     assert "130" in errors[0]
+
+
+# --- the wider perimeter: code comments, generated files, manifests -----------
+
+
+def test_a_stale_claim_in_a_python_comment_is_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"tests/test_x.py": "# checked over 130 leaves across 2 groups\n"},
+        untracked={},
+    )
+    assert errors and "130" in errors[0]
+
+
+def test_a_wrapped_quota_in_a_ts_comment_is_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The live shape: the quota wraps onto a continuation comment line, so
+    # the marker `//` sits INSIDE the phrase until normalization strips it.
+    body = (
+        "//  - `witness-quorum.json` (group 40, §11.4): evaluateActivationWitnessQuorum,\n"
+        "//    9 leaves.\n"
+    )
+    errors = _tracked_corpus_case(
+        tmp_path, monkeypatch, tracked={"test/conformance.test.ts": body}, untracked={}
+    )
+    assert errors and "9" in errors[0]
+
+
+def test_the_gate_and_its_bench_do_not_scan_themselves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Both files carry claim-shaped strings ON PURPOSE (pattern docstrings,
+    # bench fixtures); scanning them reports the fixtures as drift.
+    # The suffix is forced on so the test is red for the RIGHT reason: without
+    # it, it would pass before this task merely because .py is not scanned yet.
+    monkeypatch.setattr(check_spec_docs, "_SCAN_SUFFIXES", (".md", ".py"))
+    stale = "# reproduce all 130 of them\n"
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={
+            "tools/check_spec_docs.py": stale,
+            "tests/test_check_spec_docs.py": stale,
+        },
+        untracked={},
+    )
+    assert errors == []
+
+
+def test_a_generated_tracked_file_is_excluded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same reason as above: force the suffix so the exclusion is what is
+    # under test, not the absence of .html from the perimeter.
+    monkeypatch.setattr(check_spec_docs, "_SCAN_SUFFIXES", (".md", ".html"))
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"site/public/what-is-this.html": "<p>the 130-leaf corpus</p>"},
+        untracked={},
+    )
+    assert errors == []
+
+
+def _surface_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    # One leaf per special surface plus two plain ones: chain=1, quorum=1,
+    # redemption=1, verify=2, total=5.
+    vectors = tmp_path / "docs" / "spec" / "vectors"
+    layout = {
+        ("36-chain", "a"): "chain.json",
+        ("40-quorum", "a"): "witness-quorum.json",
+        ("38-redemption", "a"): "redemption.json",
+        ("01-plain", "a"): None,
+        ("01-plain", "b"): None,
+    }
+    for (group, leaf), marker in layout.items():
+        directory = vectors / group / leaf
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "expected.json").write_text("{}", encoding="utf-8")
+        if marker is not None:
+            (directory / marker).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    return check_spec_docs._measured_quantities()
+
+
+def test_surface_quotas_are_measured_from_marker_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    quantities = _surface_case(tmp_path, monkeypatch)
+    assert quantities["chain_surface"] == 1
+    assert quantities["quorum_surface"] == 1
+    assert quantities["redemption_surface"] == 1
+    assert quantities["verify_surface"] == 2
+
+
+def test_the_four_surfaces_partition_the_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The quotas are only meaningful as a partition: every leaf belongs to
+    # exactly one surface, so the four must add up to the corpus. A shape
+    # that double-counted would still look plausible read one figure at a time.
+    quantities = _surface_case(tmp_path, monkeypatch)
+    assert (
+        quantities["verify_surface"]
+        + quantities["chain_surface"]
+        + quantities["quorum_surface"]
+        + quantities["redemption_surface"]
+        == quantities["corpus_total"]
+    )
+
+
+def test_a_leaf_shipping_two_surface_markers_is_counted_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Nothing in the tree GUARANTEES the partition the comments describe, so
+    # pin what a violation does: the leaf lands in the first surface of the
+    # registered order and nowhere else. The partition therefore holds, and
+    # the surface that lost the leaf goes red against its stated quota --
+    # loud, which is the only failure direction a drift gate may have.
+    vectors = tmp_path / "docs" / "spec" / "vectors"
+    both = vectors / "36-chain" / "a"
+    both.mkdir(parents=True)
+    for name in ("expected.json", "chain.json", "redemption.json"):
+        (both / name).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    quantities = check_spec_docs._measured_quantities()
+    assert quantities["chain_surface"] == 1
+    assert quantities["redemption_surface"] == 0
+    assert quantities["verify_surface"] == 0
+    assert quantities["corpus_total"] == 1
+
+
+def test_a_quantity_the_registry_names_but_nothing_measures_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The registry validator pins that a shape only checks a quantity the
+    # messages know. Nothing pinned the other half: a quantity that stops
+    # being MEASURED used to surface as a KeyError partway through a scan.
+    monkeypatch.setitem(check_spec_docs._CLAIM_MESSAGES, "phantom", lambda *_: "phantom")
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"doc.md": "The 130-leaf conformance corpus is the gate."},
+        untracked={},
+    )
+    assert errors == ["claim registry names quantities nothing measures: phantom"]
+
+
+def _lockstep_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pyproject: str,
+    package_json: str,
+) -> list[str]:
+    py = _write(tmp_path, "pyproject.toml", pyproject)
+    ts = _write(tmp_path, "package.json", package_json)
+    monkeypatch.setattr(check_spec_docs, "_PYPROJECT_PATH", py)
+    monkeypatch.setattr(check_spec_docs, "_TS_PACKAGE_PATH", ts)
+    return check_spec_docs.check_package_version_lockstep()
+
+
+def test_matching_package_versions_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ok = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = "1.2.3"\n',
+        '{"name": "y", "version": "1.2.3"}',
+    )
+    assert ok == []
+
+
+def test_diverging_package_versions_are_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = "1.2.3"\n',
+        '{"name": "y", "version": "1.2.4"}',
+    )
+    assert errors and "1.2.3" in errors[0] and "1.2.4" in errors[0]
+
+
+def test_lockstep_fails_closed_on_missing_or_broken_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No version key, and outright unparsable files: errors, never raises.
+    assert _lockstep_case(tmp_path, monkeypatch, '[project]\nname = "x"\n', '{"name": "y"}') != []
+    assert _lockstep_case(tmp_path, monkeypatch, "not toml ][", "not json {") != []
+
+
+def test_lockstep_refuses_a_version_that_is_not_a_string(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A JSON number and a TOML array both survive parsing and then compare
+    # unequal to anything: without a type check the report would read as a
+    # version mismatch and send the reader to bump the wrong file.
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = ["1.2.3"]\n',
+        '{"name": "y", "version": 3}',
+    )
+    assert len(errors) == 2
+    assert all("not a string" in error for error in errors)
+
+
+def test_lockstep_refuses_two_empty_versions_rather_than_calling_them_equal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Blank compares equal to blank, so the one shape of disagreement this
+    # check cannot see is two packages that agree on declaring nothing.
+    errors = _lockstep_case(
+        tmp_path,
+        monkeypatch,
+        '[project]\nname = "x"\nversion = ""\n',
+        '{"name": "y", "version": "   "}',
+    )
+    assert len(errors) == 2
+    assert all("version is empty" in error for error in errors)
+
+
+def test_lockstep_reports_a_missing_manifest_rather_than_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(check_spec_docs, "_PYPROJECT_PATH", tmp_path / "absent.toml")
+    monkeypatch.setattr(check_spec_docs, "_TS_PACKAGE_PATH", tmp_path / "absent.json")
+    errors = check_spec_docs.check_package_version_lockstep()
+    assert len(errors) == 2
