@@ -9,8 +9,10 @@ from __future__ import annotations
 import io
 import json
 import logging
+import re
 import threading
 import zipfile
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -67,44 +69,122 @@ def call_app(
     return captured["status"], captured["headers"], b"".join(chunks)
 
 
-_EXTERNAL_MARKERS = (
-    # tags that fetch by themselves; <style> is allowed, what it CONTAINS is not
-    "<link",
-    "<script",
-    "<img",
-    "<iframe",
-    "<object",
-    "<embed",
-    "<video",
-    "<audio",
-    "<source",
-    # attributes and css constructs that fetch
-    "srcset=",
-    "@font-face",
-    "@import",
-    "url(",
-    # absolute and protocol-relative urls (protocol-relative carries no scheme,
-    # so the http:// / https:// markers never see it)
-    "http://",
-    "https://",
-    '="//',
-    "='//",
+# Resource-bearing tags: each fetches on its own the moment a browser meets it.
+_FETCHING_TAGS = frozenset(
+    {
+        "link",
+        "script",
+        "img",
+        "iframe",
+        "object",
+        "embed",
+        "video",
+        "audio",
+        "source",
+        "track",
+        "frame",
+        "applet",
+        "image",
+        "feimage",
+        "use",
+    }
 )
+# Attributes that carry a URL. `data` is <object>'s, `background` is the legacy
+# body/table one, `poster` is <video>'s, `srcset` takes a whole candidate list.
+_URL_ATTRS = frozenset({"src", "href", "srcset", "data", "poster", "background", "codebase"})
+_CSS_FETCHES = ("@import", "@font-face", "url(", "image-set(")
+_CSS_ESCAPE_RE = re.compile(r"\\([0-9a-fA-F]{1,6}\s?|.)")
+
+
+def _decode_css_escapes(text: str) -> str:
+    """CSS lets any identifier character be written as a hex escape, so
+    `u\\72 l(...)` and `@\\69 mport` fetch exactly like `url(` and `@import`.
+    A guard that matches the spelled-out forms only reads the CSS the author
+    happened to write, not the CSS the parser will see."""
+
+    def repl(match: re.Match[str]) -> str:
+        token = match.group(1)
+        hexish = token.strip()
+        if re.fullmatch(r"[0-9a-fA-F]{1,6}", hexish):
+            try:
+                return chr(int(hexish, 16))
+            except ValueError:
+                return "\ufffd"
+        return token
+
+    return _CSS_ESCAPE_RE.sub(repl, text)
+
+
+def _is_remote(value: str) -> bool:
+    """A URL that leaves the document. Protocol-relative (`//host/x`) carries no
+    scheme, so a check for http:// and https:// alone never sees it; whitespace
+    and control characters inside a scheme are stripped by browsers before the
+    fetch, so they are stripped here too."""
+    compact = re.sub(r"[\s\x00-\x1f]+", "", value).lower()
+    return compact.startswith(("http://", "https://", "//")) or "://" in compact
+
+
+class _OutsideReferenceFinder(HTMLParser):
+    """Walks the page the way a browser does.
+
+    Why a parser and not a marker scan: the same bytes mean different things in
+    different places. `&lt;script src=...&gt;` inside TEXT is prose a buyer
+    reads — a merchant's game title, escaped exactly as it should be — while
+    `href="&#47;&#47;cdn/x"` inside an ATTRIBUTE is a real fetch, because the
+    browser decodes entities there. Unescaping the whole document flattens that
+    difference and makes a correctly-escaped hostile title look like an
+    external dependency: a guard that cries wolf on safe pages gets muted.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.offences: list[str] = []
+        self._in_style = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {name.lower(): (value or "") for name, value in attrs}
+        if tag == "style":
+            self._in_style = True
+        if tag in _FETCHING_TAGS:
+            self.offences.append(f"fetching tag <{tag}>")
+        if tag == "input" and attr_map.get("type", "").lower() == "image":
+            self.offences.append("<input type=image> fetches its button")
+        if tag == "meta" and attr_map.get("http-equiv", "").lower() == "refresh":
+            self.offences.append("<meta http-equiv=refresh> navigates on its own")
+        for name, value in attr_map.items():
+            if name == "background" or (name in _URL_ATTRS and _is_remote(value)):
+                self.offences.append(f"{name}={value!r}")
+            if name == "style":
+                self._check_css(value)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "style":
+            self._in_style = False
+
+    def handle_data(self, data: str) -> None:
+        # Only stylesheet bodies are code here. Everything else is text a
+        # person reads, and text never fetches.
+        if self._in_style:
+            self._check_css(data)
+
+    def _check_css(self, css: str) -> None:
+        decoded = _decode_css_escapes(css).lower()
+        for construct in _CSS_FETCHES:
+            if construct in decoded:
+                self.offences.append(f"css {construct}")
 
 
 def assert_offline_self_contained(page: bytes) -> None:
     """Fail if a served bridge page reaches outside itself for anything.
 
-    Case-insensitive on purpose: a browser accepts <SCRIPT SRC=...> and
-    src="//cdn/..." just as happily as the lowercase, schemeful spellings,
-    so a guard that only knows those proves its own assumptions, not the
-    page. The core suite proves this property for `render_page` around a
-    FAKE body (tests/test_buyer_surface.py); these are the REAL bodies the
-    bridge injects, which that test never sees.
+    The core suite proves this property for `render_page` around a FAKE body
+    (tests/test_buyer_surface.py); these are the REAL bodies the bridge
+    injects, which that test never sees.
     """
-    text = page.decode("utf-8").lower()
-    for marker in _EXTERNAL_MARKERS:
-        assert marker not in text, f"served page depends on the outside: {marker!r}"
+    finder = _OutsideReferenceFinder()
+    finder.feed(page.decode("utf-8"))
+    finder.close()
+    assert not finder.offences, f"served page depends on the outside: {finder.offences}"
 
 
 @pytest.mark.parametrize(
@@ -125,12 +205,31 @@ def assert_offline_self_contained(page: bytes) -> None:
         # protocol-relative: no http://, no https://, fetches all the same
         '<a href="//cdn.example.com/x">x</a>',
         "<a href='//cdn.example.com/x'>x</a>",
-        # fetching tags and attributes the naive marker list ignores
+        # unquoted and loosely spaced: a browser parses these fine
+        "<a href=//cdn.example.com/x>x</a>",
+        '<a href = "//cdn.example.com/x">x</a>',
+        # entities inside an attribute ARE decoded before the fetch
+        '<a href="&#x2f;&#47;cdn.example.com/x">x</a>',
+        '<a href="h&#116;tps://example.com/x">x</a>',
+        # a scheme broken by whitespace is still a scheme once stripped
+        '<a href="https:&#10;//example.com/x">x</a>',
+        # fetching tags and attributes a naive marker list ignores
         '<iframe src="frame.html"></iframe>',
         '<object data="movie.swf"></object>',
         '<video src="clip.mp4"></video>',
         '<source srcset="hero.png 1x, hero-2x.png 2x">',
+        '<track src="captions.vtt" kind="captions">',
+        '<svg><image href="hero.png"></image></svg>',
+        '<input type=image src="button.png" alt="go">',
+        '<body background="paper.png"></body>',
+        '<meta http-equiv="refresh" content="0;url=next.html">',
+        # css escapes: the parser sees url( and @import whatever the spelling
         "<style>@import 'other.css';</style>",
+        r"<style>@\69 mport 'other.css';</style>",
+        r"<style>body{background:u\72 l(hero.png)}</style>",
+        '<style>body{background:image-set("hero.png" 1x)}</style>',
+        # a style ATTRIBUTE is a stylesheet too
+        '<p style="background:url(hero.png)">x</p>',
     ],
 )
 def test_the_self_containment_guard_actually_fires(poison: str) -> None:

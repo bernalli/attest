@@ -919,6 +919,34 @@ def test_itch_claim_form_carries_its_style_inline_from_the_shared_core(
     assert buyer_surface.CORE_CSS.encode() in body
 
 
+def test_itch_claim_form_is_rendered_by_the_shared_page_renderer(
+    itch_deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserting CORE_CSS's bytes proves they are present, not that they came
+    from the source: a hand-pasted copy passes until the core next moves, which
+    is exactly the silent divergence D8 exists to forbid. This pins the call."""
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+    real_render_page = buyer_surface.render_page
+
+    def recording_render_page(title: str, body: str, **kwargs: Any) -> str:
+        calls.append((title, body, kwargs))
+        return real_render_page(title, body, **kwargs)
+
+    monkeypatch.setattr(buyer_surface, "render_page", recording_render_page)
+    app = make_app(itch_deps)
+
+    status, _, _ = call_app(app, "GET", "/itch/claim")
+
+    assert status.startswith("200")
+    assert len(calls) == 1
+    title, body_markup, kwargs = calls[0]
+    assert title == "Claim your receipt"
+    assert 'method="post" action="/itch/claim"' in body_markup
+    assert 'name="email"' in body_markup
+    assert 'name="game_id"' in body_markup
+    assert kwargs["extra_css"]
+
+
 def test_itch_claim_form_reaches_outside_itself_for_nothing(itch_deps: BridgeDeps) -> None:
     app = make_app(itch_deps)
     _, _, body = call_app(app, "GET", "/itch/claim")
