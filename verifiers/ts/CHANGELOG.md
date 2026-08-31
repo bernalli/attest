@@ -60,6 +60,25 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The OTS op-chain caps, raised in step with `attest-receipts`.** Real
+  OpenTimestamps attestations exceed the bounds this verifier shipped with —
+  measured on upstream example files, a genuine Bitcoin path carries 100
+  operations against a cap of 64, and a genuine operand is 3432 bytes against a
+  cap of 1024. The per-proof operation cap is now 256, the per-operand cap
+  16384 hex characters, and a per-chain operand TOTAL of 65536 hex characters
+  bounds them together so the raised inner caps stay inside the normative outer
+  admission ceiling. Values and refusal points are identical to the Python
+  implementation, which is the property that matters here: a proof either
+  language admits, the other admits.
+
+- **The harmonization guard now derives every bound it claims to harmonize.**
+  It previously hardcoded the operand size, the operation count, the proof
+  count and the outer ceiling, so it stayed green straight through a cap change
+  while its Python twin — which derives them — failed immediately. A test that
+  does not read the constants it harmonizes is not enforcing the invariant its
+  name claims. It also sits at the worst case on both binding axes now, rather
+  than filling one and asserting an upper bound on the other.
+
 - **`canonicalBytes` enforces the 256-level nesting-depth ceiling**, in parity
   with the Python implementation and with the profile's own parser: one level
   past it throws `CanonError` with the same literal the parser uses, so a

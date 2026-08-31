@@ -8,6 +8,26 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The OTS op-chain caps admitted no real OpenTimestamps attestation at all.**
+  Measured across four upstream example files: the largest Bitcoin path carries
+  100 operations against a cap of 64, and the largest single operand is 3432
+  bytes against a cap of 1024 — that operand is the Bitcoin transaction prefix
+  ahead of the commitment output, and it grows with the transaction. The only
+  material these caps had ever been sized against was this repository's own
+  synthetic four-operation chains, so a proof produced by a real calendar was
+  refused by a verifier that had never seen one. The per-proof operation cap is
+  now 256 and the per-operand cap 16384 hex characters, and a per-chain operand
+  TOTAL of 65536 hex characters joins them. The total is not a decoration: the
+  outer evidence ceiling is normative (v0.1 §11.3) and cannot be raised to meet
+  the inner caps, so without it their product would admit roughly 268MB of
+  operands against a ceiling of 10MB — evidence the evaluator accepts would be
+  refused before ever reaching it. The total also tightens the aggregate rather
+  than loosening it: one proof may now carry 65536 hex characters of
+  attacker-chosen bytes where it could previously carry twice that. What does
+  grow is the operation count per bundle and the peak single concatenation.
+  All three bounds are implementation-local (threat model §7.4), not
+  conformance surface, and hold the same values in `attest-verifier`.
+
 - **Four validation guards that were simply missing, on both sides of the
   protocol and in all three implementations.** A key manifest may no longer
   list one `kid` twice: with duplicate entries the array's ORDER decided which
@@ -169,6 +189,27 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a test so the next drift fails instead of shipping.
 
 ### Added
+
+- **`attest log ots-convert`, the missing half of anchoring.** Anchor evidence
+  has always been verifiable, but nothing in this package could produce it from
+  a real OpenTimestamps attestation: the CLI declared the conversion out of
+  scope and the demo synthesised the proof. The new subcommand reads a detached
+  `.ots` file, walks every path in it, and emits one anchor proof per Bitcoin
+  path in the exact shape `log anchor --ots-proof` consumes, together with the
+  `pinned-headers.json` the verifier needs to check them — a proof nobody can
+  verify is not half a delivery, it is none. It touches no network, in either
+  direction: the block header is supplied by the operator, which is where the
+  verifier's own trust store expects it to come from. Paths anchored in chains
+  other than Bitcoin, and the pre-2016 paths that open with `ripemd160`, are
+  refused by name rather than dropped in silence.
+
+  Every run writes a conversion report, and the report names the block height
+  of each Bitcoin path it could not convert. That is not bookkeeping: the
+  transparency verdict `anchored_before` is the MINIMUM over verified proofs,
+  so a dropped path can cost the strongest claim in the file — the oldest one.
+  For the same reason the report also names any `proof-*.json` already in the
+  output directory that the run did not write, since a leftover carries exactly
+  the name shape the next command is pointed at.
 
 - **A receipt can now answer a question the format never asked: was this
   seller entitled to sell this work?** Section 20 of attest-v0.2 adds publisher
