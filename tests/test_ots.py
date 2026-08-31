@@ -347,9 +347,9 @@ def test_parse_ots_rejects_more_than_max_leaves() -> None:
 
 
 def test_parse_ots_rejects_more_than_max_nodes() -> None:
-    data = _ots_with_tree(_many_leaves(256, ops_per_leaf=16))
+    data = _ots_with_tree(_many_leaves(256, ops_per_leaf=101))
 
-    with pytest.raises(ots.OtsError, match="ots tree has more than 4096 nodes"):
+    with pytest.raises(ots.OtsError, match="ots tree has more than 26112 nodes"):
         ots.parse_ots(data)
 
 
@@ -375,7 +375,11 @@ def test_parse_ots_rejects_total_operands_over_anchor_chain_cap() -> None:
     tree = b"".join(TAG_APPEND + _varbytes(chunk) for chunk in chunks) + _pending_attestation()
     data = _ots_with_tree(tree)
 
-    with pytest.raises(ots.OtsError, match="ots path operands exceed 65536 total hex chars"):
+    assert anchor._MAX_TOTAL_OP_HEX_LEN == 65536
+    with pytest.raises(
+        ots.OtsError,
+        match=rf"ots path operands exceed {anchor._MAX_TOTAL_OP_HEX_LEN} total hex chars",
+    ):
         ots.parse_ots(data)
 
 
@@ -420,3 +424,115 @@ def test_parse_ots_mutations_return_typed_result_or_typed_error(data: bytes) -> 
         return
 
     _assert_well_formed(parsed)
+
+
+def _shared_prefix_ots_bytes() -> bytes:
+    return _ots_with_tree(
+        b"".join(
+            [
+                TAG_APPEND,
+                _varbytes(b"PREFIX"),
+                TAG_SHA256,
+                TAG_FORK,
+                TAG_APPEND,
+                _varbytes(b"L"),
+                TAG_SHA256,
+                _bitcoin_attestation(42),
+                TAG_PREPEND,
+                _varbytes(b"R"),
+                TAG_SHA256,
+                _bitcoin_attestation(43),
+            ]
+        )
+    )
+
+
+def test_parse_ots_gives_every_forked_path_the_ops_read_before_the_fork() -> None:
+    parsed = ots.parse_ots(_shared_prefix_ots_bytes())
+
+    assert [[(op.name, op.operand) for op in path.ops] for path in parsed.paths] == [
+        [("append", b"PREFIX"), ("sha256", None), ("append", b"L"), ("sha256", None)],
+        [("append", b"PREFIX"), ("sha256", None), ("prepend", b"R"), ("sha256", None)],
+    ]
+
+
+def test_parse_ots_charges_the_operand_budget_read_before_a_fork_to_each_branch() -> None:
+    maximal = b"a" * (anchor._MAX_OP_HEX_LEN // 2)
+    budget = anchor._MAX_TOTAL_OP_HEX_LEN // anchor._MAX_OP_HEX_LEN
+    prefix = b"".join(TAG_APPEND + _varbytes(maximal) for _ in range(budget))
+    branch = TAG_APPEND + _varbytes(b"x") + _bitcoin_attestation(1)
+    data = _ots_with_tree(prefix + TAG_FORK + branch + _bitcoin_attestation(2))
+
+    with pytest.raises(ots.OtsError, match="ots path operands exceed"):
+        ots.parse_ots(data)
+
+
+def test_parse_ots_keeps_byte_identical_sibling_branches_as_distinct_paths() -> None:
+    branch = TAG_APPEND + _varbytes(b"same") + TAG_SHA256 + _bitcoin_attestation(42)
+
+    parsed = ots.parse_ots(_ots_with_tree(TAG_FORK + branch + branch))
+
+    assert len(parsed.paths) == 2
+    assert parsed.paths[0] == parsed.paths[1]
+
+
+def test_parse_ots_rejects_terminated_varint_whose_value_exceeds_64_bits() -> None:
+    data = _ots_with_tree(TAG_APPEND + (b"\xff" * 9) + b"\x7f")
+
+    with pytest.raises(ots.OtsError, match="append operand length varint exceeds 64 bits"):
+        ots.parse_ots(data)
+
+
+@pytest.mark.parametrize(
+    ("tag", "name"),
+    [
+        (b"\x02", "sha1"),
+        (b"\x03", "ripemd160"),
+        (b"\x67", "keccak256"),
+        (b"\xf2", "reverse"),
+        (b"\xf3", "hexlify"),
+    ],
+)
+def test_parse_ots_rejects_alphabet_ops_outside_the_path_profile(tag: bytes, name: str) -> None:
+    data = _ots_with_tree(tag + _pending_attestation())
+
+    with pytest.raises(ots.OtsError, match=f"unsupported ots op {name}"):
+        ots.parse_ots(data)
+
+
+@pytest.mark.parametrize(
+    ("label", "tree"),
+    [
+        ("depth at the cap", _nested_fork(64)),
+        ("leaves at the cap", _many_leaves(256)),
+        ("ops at the cap", TAG_SHA256 * anchor._MAX_OPS_PER_PROOF + _pending_attestation()),
+        (
+            "operand at the cap",
+            TAG_APPEND + _varbytes(b"a" * (anchor._MAX_OP_HEX_LEN // 2)) + _pending_attestation(),
+        ),
+    ],
+)
+def test_parse_ots_accepts_material_sitting_exactly_on_each_cap(label: str, tree: bytes) -> None:
+    _assert_well_formed(ots.parse_ots(_ots_with_tree(tree)))
+
+
+def test_parse_ots_names_the_true_offset_of_a_trailing_bitcoin_payload_byte() -> None:
+    data = _ots_with_tree(_attestation(TAG_BITCOIN, _varuint(42) + b"x"))
+    # magic, version, file-op tag, digest, attestation marker, attestation tag,
+    # one-byte payload length varint -- then the one-byte height, then the byte
+    # that must not be there.
+    payload_start = len(MAGIC) + 1 + 1 + 32 + 1 + len(TAG_BITCOIN) + 1
+
+    with pytest.raises(ots.OtsError, match=f"trailing bytes at offset {payload_start + 1}$"):
+        ots.parse_ots(data)
+
+
+def test_parse_ots_measures_a_bytes_subclass_by_its_real_length() -> None:
+    class Understating(bytes):
+        def __len__(self) -> int:
+            return 0
+
+    data = Understating(_valid_ots_bytes() + b"x" * ots._MAX_OTS_FILE_BYTES)
+
+    with pytest.raises(ots.OtsError, match="ots file exceeds"):
+        ots.parse_ots(data)

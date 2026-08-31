@@ -22,8 +22,15 @@ _MAX_OTS_FILE_BYTES: Final = 1_000_000
 # while fork depth is attacker-controlled structure that must not recurse open-ended.
 _MAX_DEPTH: Final = 64
 # Bound total tree dispatches so a wide timestamp cannot force unbounded work
-# before leaf/op caps are reached.
-_MAX_NODES: Final = 4096
+# before leaf/op caps are reached. Sized so the two caps around it stay
+# REACHABLE: `_MAX_LEAVES` paths of the longest real op-chain measured for
+# these caps (100 ops, see `anchor._MAX_OPS_PER_PROOF`) cost
+# `_MAX_LEAVES * (100 + 2)` dispatches counting each leaf's fork marker and
+# attestation. At 4096 the node cap bound before them instead, admitting only
+# 40 leaves at that length -- below the 64 proofs `anchor` accepts per
+# evidence, so real multi-calendar material was refused by the wrong cap and
+# named the wrong reason.
+_MAX_NODES: Final = 26_112
 # Conversion emits one proof per leaf; cap leaves at the same scale as the
 # downstream per-evidence proof ceiling plus explicit headroom for skipped paths.
 _MAX_LEAVES: Final = 256
@@ -111,6 +118,10 @@ class _Reader:
     def offset(self) -> int:
         return self._offset
 
+    @property
+    def at_end(self) -> bool:
+        return self._offset == len(self._data)
+
     def read_u8(self, context: str) -> int:
         if self._offset >= len(self._data):
             raise OtsError(f"truncated ots file at offset {self._offset}: expected {context}")
@@ -167,10 +178,6 @@ class _Parser:
         self._nodes = 0
         self._leaves = 0
 
-    @property
-    def offset(self) -> int:
-        return self._reader.offset
-
     def parse(self) -> OtsFile:
         magic = self._reader.read_exact(len(_MAGIC), "OpenTimestamps magic")
         if magic != _MAGIC:
@@ -185,13 +192,14 @@ class _Parser:
 
         file_op_offset = self._reader.offset
         file_hash_op = self._read_file_hash_op()
-        digest_length = _DIGEST_LENGTHS[file_hash_op]
-        file_digest = self._reader.read_exact(digest_length, f"{file_hash_op} file digest")
         if file_hash_op != "sha256":
             raise OtsError(f"unsupported file hash op {file_hash_op} at offset {file_op_offset}")
+        file_digest = self._reader.read_exact(
+            _DIGEST_LENGTHS[file_hash_op], f"{file_hash_op} file digest"
+        )
 
         paths = self._parse_tree((), 0, 0)
-        if self._reader.offset != len(self._reader._data):
+        if not self._reader.at_end:
             raise OtsError(f"trailing bytes after ots tree at offset {self._reader.offset}")
         return OtsFile(file_digest=file_digest, file_hash_op=file_hash_op, paths=paths)
 
@@ -266,8 +274,8 @@ class _Parser:
 
     def _read_attestation(self) -> OtsAttestation:
         tag = self._reader.read_exact(8, "attestation tag")
-        payload_offset = self._reader.offset
         payload = self._reader.read_varbytes("attestation payload")
+        payload_offset = self._reader.offset - len(payload)
         kind = _ATTESTATION_KINDS.get(tag, "unknown")
         if tag == _BITCOIN_ATTESTATION_TAG:
             height = _decode_bitcoin_height(payload, payload_offset)
@@ -305,6 +313,10 @@ def parse_ots(data: bytes) -> OtsFile:
 
     if not isinstance(data, bytes):
         raise OtsError("ots input must be bytes")
+    # Copy through `bytes` BEFORE any cap decision: a `bytes` subclass may
+    # override `__len__`/`__getitem__`, so every size and index below would
+    # otherwise be the subclass's answer rather than the file's.
+    data = bytes(data)
     if len(data) > _MAX_OTS_FILE_BYTES:
         raise OtsError(f"ots file exceeds {_MAX_OTS_FILE_BYTES} bytes")
     return _Parser(data).parse()
