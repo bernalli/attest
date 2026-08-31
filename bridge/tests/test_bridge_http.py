@@ -142,16 +142,24 @@ class _OutsideReferenceFinder(HTMLParser):
         self._in_style = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_map = {name.lower(): (value or "") for name, value in attrs}
+        # A list, never a dict: collapsing duplicate attributes lets a second
+        # innocent spelling hide the first hostile one, and "the last entry
+        # wins, silently" is a defect family this project already carries in
+        # its constraints register.
+        normalized_attrs = [(name.lower(), value or "") for name, value in attrs]
         if tag == "style":
             self._in_style = True
         if tag in _FETCHING_TAGS:
             self.offences.append(f"fetching tag <{tag}>")
-        if tag == "input" and attr_map.get("type", "").lower() == "image":
+        if tag == "input" and any(
+            name == "type" and value.lower() == "image" for name, value in normalized_attrs
+        ):
             self.offences.append("<input type=image> fetches its button")
-        if tag == "meta" and attr_map.get("http-equiv", "").lower() == "refresh":
+        if tag == "meta" and any(
+            name == "http-equiv" and value.lower() == "refresh" for name, value in normalized_attrs
+        ):
             self.offences.append("<meta http-equiv=refresh> navigates on its own")
-        for name, value in attr_map.items():
+        for name, value in normalized_attrs:
             if name == "background" or (name in _URL_ATTRS and _is_remote(value)):
                 self.offences.append(f"{name}={value!r}")
             if name == "style":
@@ -223,6 +231,10 @@ def assert_offline_self_contained(page: bytes) -> None:
         '<input type=image src="button.png" alt="go">',
         '<body background="paper.png"></body>',
         '<meta http-equiv="refresh" content="0;url=next.html">',
+        # duplicate attributes: a second innocent spelling must not hide the first
+        '<input type=image type=button src="button.png" alt="go">',
+        '<meta http-equiv=refresh http-equiv=x content="0;url=next.html">',
+        '<a href=//cdn.example.com/x href="/safe">x</a>',
         # css escapes: the parser sees url( and @import whatever the spelling
         "<style>@import 'other.css';</style>",
         r"<style>@\69 mport 'other.css';</style>",
