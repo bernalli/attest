@@ -46,6 +46,7 @@ import {
   proofNotObject,
   proofPrefixed,
   otsTooManyOps,
+  otsOperandTotalTooLarge,
   otsUnknownOp,
   otsOperandInvalid,
   otsOperandRequired,
@@ -59,13 +60,27 @@ const HEX64_RE = /^[0-9a-f]{64}$/
 const HEX_RE = /^[0-9a-f]*$/
 
 // Caps bounding attacker-controlled work while walking untrusted evidence.
+// The op-chain caps below are sized from MEASURED real OpenTimestamps
+// attestations (2026-08-31, four upstream example files): largest Bitcoin
+// path 100 ops, largest single operand 3432 bytes, largest per-chain operand
+// total 7388 hex chars. The pre-2026-08-31 values (64 ops, 2048 hex) turned
+// the first of those away outright. Mirrors anchor.py verbatim.
 const MAX_PROOFS_PER_EVIDENCE = 64
-const MAX_OPS_PER_PROOF = 64
+const MAX_OPS_PER_PROOF = 256
 // A legitimate full note is ~400KB worst case — cap the evidence checkpoint
 // text BEFORE it reaches tlog.parseCheckpoint, so a hostile multi-megabyte
 // string cannot force large parse-time allocations.
 const MAX_CHECKPOINT_TEXT_LEN = 500_000
-const MAX_OP_HEX_LEN = 2048 // hex chars (1024 bytes) per append/prepend operand
+const MAX_OP_HEX_LEN = 16384 // hex chars (8192 bytes) per append/prepend operand
+// The per-chain operand TOTAL, and the reason the two caps above could be
+// raised at all: verify.ts's outer evidence ceiling is normative (v0.1 §11.3)
+// and cannot be raised to meet them. Without this cap,
+// MAX_PROOFS_PER_EVIDENCE * MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN would admit
+// ~268MB of operands against a 10MB ceiling. It tightens the aggregate rather
+// than loosening it: the old regime admitted 131_072 hex chars of
+// attacker-chosen bytes per proof, twice what this allows. What does grow is
+// the op COUNT per bundle (4x) and the peak single concatenation (8x).
+const MAX_TOTAL_OP_HEX_LEN = 65536
 // The latest Unix timestamp `Date`/`datetime` can render through
 // 9999-12-31T23:59:59Z. Keep pinned and untrusted proof times inside that
 // shared bound.
@@ -87,6 +102,7 @@ const KNOWN_ANCHOR_PROFILES = new Set([ANCHOR_PROFILE_NOTE_V1, ANCHOR_PROFILE_SI
 export const MAX_PROOFS_PER_EVIDENCE_ = MAX_PROOFS_PER_EVIDENCE
 export const MAX_OPS_PER_PROOF_ = MAX_OPS_PER_PROOF
 export const MAX_OP_HEX_LEN_ = MAX_OP_HEX_LEN
+export const MAX_TOTAL_OP_HEX_LEN_ = MAX_TOTAL_OP_HEX_LEN
 export const MAX_CHECKPOINT_TEXT_LEN_ = MAX_CHECKPOINT_TEXT_LEN
 export const MAX_RENDERABLE_UNIX_TIME_ = MAX_RENDERABLE_UNIX_TIME
 
@@ -260,6 +276,7 @@ export function replayOtsOpChain(accumulatorStart: Uint8Array, ops: unknown): Ot
   }
 
   let accumulator = accumulatorStart
+  let totalOperandHex = 0
   for (const op of ops) {
     if (!Array.isArray(op) || op.length === 0 || typeof op[0] !== 'string') {
       return { accumulator: null, warning: ANCHOR_WARN.OTS_OP_SHAPE }
@@ -277,6 +294,13 @@ export function replayOtsOpChain(accumulatorStart: Uint8Array, ops: unknown): Ot
       if (op.length !== 2) return { accumulator: null, warning: otsOperandRequired(opcode) }
       const operand = opHex(op[1])
       if (operand === null) return { accumulator: null, warning: otsOperandInvalid(opcode) }
+      // Bound the operand TOTAL, not just each operand: it is the total that
+      // has to stay inside verify.ts's normative outer ceiling. Checked
+      // BEFORE the concatenation, so refused material is never materialized.
+      totalOperandHex += (op[1] as string).length
+      if (totalOperandHex > MAX_TOTAL_OP_HEX_LEN) {
+        return { accumulator: null, warning: otsOperandTotalTooLarge(MAX_TOTAL_OP_HEX_LEN) }
+      }
       accumulator = opcode === 'append' ? concatBytes(accumulator, operand) : concatBytes(operand, accumulator)
     }
   }

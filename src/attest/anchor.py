@@ -74,17 +74,37 @@ _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 _HEX_RE = re.compile(r"^[0-9a-f]*$")
 
 # Caps bounding attacker-controlled work while walking untrusted evidence.
-# A real corroboration bundle carries a handful of proofs and a handful of
-# ops per OTS attestation; these are generous headroom over that, not tuned
-# limits — see tlog.py's `_MAX_NOTE_SIGNATURES` for the same rationale.
+# The op-chain caps below are sized from MEASURED real OpenTimestamps
+# attestations, not from a guess about what "a handful" means: over four
+# upstream example files (2026-08-31) the largest Bitcoin path carries 100
+# ops, the largest single operand is 3432 bytes (a Bitcoin transaction prefix
+# ahead of the commitment output), and the largest per-chain operand total is
+# 7388 hex chars. The pre-2026-08-31 values (64 ops, 2048 hex) turned the
+# first of those away outright, so no real attestation could be attached at
+# all — the synthetic four-op chains in this repo's own tests were the only
+# material these caps had ever seen.
 _MAX_PROOFS_PER_EVIDENCE = 64
-_MAX_OPS_PER_PROOF = 64
+_MAX_OPS_PER_PROOF = 256
 # A legitimate full note is ~400KB worst case (64 signature lines, ML-DSA-65
 # blobs ~4.4KB base64 each) — cap the evidence checkpoint text BEFORE it
 # reaches `tlog.parse_checkpoint`, so a hostile multi-megabyte string cannot
 # force large parse-time allocations.
 _MAX_CHECKPOINT_TEXT_LEN = 500_000
-_MAX_OP_HEX_LEN = 2048  # hex chars (1024 bytes) per append/prepend operand
+_MAX_OP_HEX_LEN = 16384  # hex chars (8192 bytes) per append/prepend operand
+# The per-chain operand TOTAL, and the reason the two caps above could be
+# raised at all. `verify`'s outer evidence ceiling is normative
+# (`canon.MAX_ADMISSION_BYTES`, v0.1 §11.3) and so cannot be raised to meet
+# them: without this cap, `_MAX_PROOFS_PER_EVIDENCE * _MAX_OPS_PER_PROOF *
+# _MAX_OP_HEX_LEN` would admit ~268MB of operands against a 10MB ceiling, and
+# evidence this module accepts would be refused before it ever arrived. With
+# it, the worst case is 64 * 65_536 = ~4.2MB of operands plus ~1.5MB of
+# checkpoint text — inside the ceiling with room to spare.
+#
+# It also tightens the aggregate rather than loosening it: the old regime
+# admitted `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN` = 131_072 hex chars of
+# attacker-chosen bytes per proof, twice what this allows. What genuinely does
+# grow is the op COUNT per bundle (4x) and the peak single concatenation (8x).
+_MAX_TOTAL_OP_HEX_LEN = 65536
 # `datetime` can render through 9999-12-31T23:59:59Z, but no later Unix
 # timestamp. Keep pinned and untrusted proof times inside that shared bound.
 _MAX_RENDERABLE_UNIX_TIME = 253402300799
@@ -293,6 +313,7 @@ def replay_ots_op_chain(accumulator_start: bytes, ops: object) -> tuple[bytes | 
         return None, f"ots proof has more than {_MAX_OPS_PER_PROOF} ops"
 
     accumulator = accumulator_start
+    total_operand_hex = 0
     for op in ops:
         if not isinstance(op, list) or not op or not isinstance(op[0], str):
             return None, "ots op must be a non-empty list with a string opcode"
@@ -311,6 +332,17 @@ def replay_ots_op_chain(accumulator_start: bytes, ops: object) -> tuple[bytes | 
                 return (
                     None,
                     f"ots {_trunc(opcode)} operand must be bounded, even-length lowercase hex",
+                )
+            # Bound the operand TOTAL, not just each operand: the per-op cap
+            # alone lets a chain of many maximal operands grow the material
+            # without limit, and it is the total that has to stay inside
+            # `verify`'s normative outer ceiling. Checked BEFORE the
+            # concatenation, so refused material is never materialized.
+            total_operand_hex += len(op[1])
+            if total_operand_hex > _MAX_TOTAL_OP_HEX_LEN:
+                return (
+                    None,
+                    f"ots proof operands exceed {_MAX_TOTAL_OP_HEX_LEN} total hex chars",
                 )
             accumulator = accumulator + operand if opcode == "append" else operand + accumulator
     return accumulator, None

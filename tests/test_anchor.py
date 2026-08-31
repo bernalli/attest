@@ -16,7 +16,7 @@ from typing import cast
 
 import pytest
 
-from attest import anchor, tlog
+from attest import anchor, canon, tlog
 
 NOTE_BYTES = b"log.example/1\n1\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"
 HEADER_TIME = 1700000000
@@ -789,3 +789,86 @@ def test_verify_anchor_rejects_oversized_evidence_checkpoint_text() -> None:
     assert verdict.warnings == [
         f"evidence.checkpoint exceeds max length {anchor._MAX_CHECKPOINT_TEXT_LEN}"
     ]
+
+
+def test_caps_admit_a_real_ots_bitcoin_attestation() -> None:
+    """The three op-chain caps are sized from MEASURED real attestations, not guessed.
+
+    Measured 2026-08-31 over four upstream OpenTimestamps example files: the
+    largest Bitcoin path carries 100 ops (`bitcoin.pdf.ots`), the largest single
+    operand is 3432 bytes (`empty.ots`, the Bitcoin transaction prefix ahead of
+    the commitment output), and the largest per-chain operand total is 7388 hex
+    chars. The pre-2026-08-31 values (64 ops, 2048 hex) rejected the first of
+    those outright, so no real attestation could ever have been attached.
+
+    `_MAX_TOTAL_OP_HEX_LEN` is not decoration: it is what keeps the raised
+    per-op caps inside `verify`'s outer evidence ceiling, which is normative
+    (`canon.MAX_ADMISSION_BYTES`, v0.1 §11.3) and therefore cannot be raised to
+    meet them. Without it, `_MAX_PROOFS_PER_EVIDENCE * _MAX_OPS_PER_PROOF *
+    _MAX_OP_HEX_LEN` admits ~268MB of operands against a 10MB ceiling.
+    """
+    assert anchor._MAX_OPS_PER_PROOF == 256
+    assert anchor._MAX_OP_HEX_LEN == 16384
+    assert anchor._MAX_TOTAL_OP_HEX_LEN == 65536
+
+
+def test_total_operand_cap_keeps_evidence_inside_the_normative_outer_ceiling() -> None:
+    """The three caps must compose to something the outer ceiling still covers.
+
+    This is the invariant `verify.py`'s `_MAX_TRANSPARENCY_EVIDENCE_LEN` comment
+    states in prose; asserting it here makes it a test rather than an arithmetic
+    claim nobody re-derives when a cap moves.
+    """
+    operand_budget = anchor._MAX_PROOFS_PER_EVIDENCE * anchor._MAX_TOTAL_OP_HEX_LEN
+    checkpoints = 3 * anchor._MAX_CHECKPOINT_TEXT_LEN
+    assert operand_budget + checkpoints < canon.MAX_ADMISSION_BYTES
+
+
+def _chain_totalling(total_hex: int, *, chunk_hex: int = 8192) -> list[list[str]]:
+    """Build an op-chain whose append operands sum to exactly `total_hex` hex chars."""
+    ops: list[list[str]] = []
+    remaining = total_hex
+    while remaining > 0:
+        take = min(chunk_hex, remaining)
+        ops.append(["append", "ab" * (take // 2)])
+        ops.append(["sha256"])
+        remaining -= take
+    return ops
+
+
+def test_replay_accepts_operands_at_exactly_the_total_cap() -> None:
+    """The boundary is inclusive: a chain summing to exactly the cap still replays.
+
+    A real Bitcoin path's operands totalled 7388 hex chars at the largest
+    measured, so the cap is not a limit real material sits against — but the
+    boundary still has to be pinned, or an off-by-one turns legitimate evidence
+    away.
+    """
+    ops = _chain_totalling(anchor._MAX_TOTAL_OP_HEX_LEN)
+    accumulator, warning = anchor.replay_ots_op_chain(b"\x00" * 32, ops)
+    assert warning is None
+    assert accumulator is not None
+
+
+def test_replay_rejects_operands_one_hex_pair_over_the_total_cap() -> None:
+    """One byte past the total is refused, and the message names the cap."""
+    ops = [*_chain_totalling(anchor._MAX_TOTAL_OP_HEX_LEN), ["append", "ab"]]
+    accumulator, warning = anchor.replay_ots_op_chain(b"\x00" * 32, ops)
+    assert accumulator is None
+    assert warning == (
+        f"ots proof operands exceed {anchor._MAX_TOTAL_OP_HEX_LEN} total hex chars"
+    )
+
+
+def test_total_operand_cap_counts_only_append_and_prepend_operands() -> None:
+    """`sha256` carries no operand and must not consume the budget.
+
+    Stated because a total-byte cap implemented over "every op" would silently
+    shrink the real budget, and the shrink would only show on chains long
+    enough that nobody writes them by hand.
+    """
+    ops = _chain_totalling(anchor._MAX_TOTAL_OP_HEX_LEN, chunk_hex=1024)
+    sha_ops = sum(1 for op in ops if op[0] == "sha256")
+    assert sha_ops > 1
+    _, warning = anchor.replay_ots_op_chain(b"\x00" * 32, ops)
+    assert warning is None

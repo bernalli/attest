@@ -55,10 +55,19 @@ const MAX_JCS_INTEGER = 2n ** 53n
 // This outer cap must COVER everything the downstream evaluators' own inner
 // caps accept, or evaluator-valid evidence gets falsely rejected here.
 // Worst-case legitimate bundle, derived from those inner caps: checkpoint +
-// prior_checkpoint + the anchors bundle's own checkpoint copy at ~500KB each,
-// plus anchors proofs at 64 proofs x 64 ops x ~2060 chars per max
-// append/prepend op ~ 8.5MB, plus inclusion/consistency proofs (~8KB) —
-// ~10MB total. Mirrors verify.py's `_MAX_TRANSPARENCY_EVIDENCE_LEN`.
+// prior_checkpoint + the anchors bundle's own checkpoint copy at ~500KB each
+// = ~1.5MB, plus anchors operands at 64 proofs x 65_536 total hex chars per
+// proof (MAX_PROOFS_PER_EVIDENCE, MAX_TOTAL_OP_HEX_LEN) = ~4.2MB, plus JSON
+// overhead for proofs carrying up to 256 ops (~300KB), plus
+// inclusion/consistency proofs (~8KB) — ~6MB total, ~4MB inside this ceiling.
+//
+// The operand term is bounded by the per-chain TOTAL, never by
+// MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN: that product is 268_435_456 chars and
+// would overshoot this ceiling by ~260MB. This ceiling is normative (v0.1
+// §11.3) and cannot be raised to meet the inner caps, so the total-operand
+// cap is what makes the raised per-op caps admissible at all — re-derive this
+// whenever any of the three moves. Mirrors verify.py's
+// `_MAX_TRANSPARENCY_EVIDENCE_LEN`.
 const MAX_TRANSPARENCY_EVIDENCE_LEN = 10_000_000
 export const MAX_TRANSPARENCY_EVIDENCE_LEN_ = MAX_TRANSPARENCY_EVIDENCE_LEN
 

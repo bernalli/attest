@@ -227,11 +227,20 @@ _HEX_LOWER = frozenset("0123456789abcdef")
 # caps accept, or evaluator-valid evidence gets falsely rejected here.
 # Worst-case legitimate bundle, derived from those inner caps: checkpoint +
 # prior_checkpoint + the anchors bundle's own checkpoint copy at ~500KB each
-# (tlog._MAX_NOTE_TEXT_LEN), plus anchors proofs at 64 proofs x 64 ops x
-# ~2060 chars per max append/prepend op (anchor._MAX_PROOFS_PER_EVIDENCE,
-# _MAX_OPS_PER_PROOF, _MAX_OP_HEX_LEN) ~ 8.5MB, plus inclusion/consistency
-# proofs (~8KB) — ~10MB total. The cap still bounds hostile materialization
-# before the JSON decoder performs a second full traversal.
+# (tlog._MAX_NOTE_TEXT_LEN) = ~1.5MB, plus anchors operands at 64 proofs x
+# 65_536 total hex chars per proof (anchor._MAX_PROOFS_PER_EVIDENCE,
+# _MAX_TOTAL_OP_HEX_LEN) = ~4.2MB, plus JSON overhead for proofs carrying up
+# to 256 ops (~4-5KB per proof, ~300KB), plus inclusion/consistency proofs
+# (~8KB) — ~6MB total, ~4MB inside this ceiling. The cap still bounds hostile
+# materialization before the JSON decoder performs a second full traversal.
+#
+# The operand term is bounded by the per-chain TOTAL, never by
+# `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN`: that product is 268_435_456 chars
+# and would overshoot this ceiling by ~260MB. This ceiling is normative
+# (canon.MAX_ADMISSION_BYTES, v0.1 §11.3) and cannot be raised to meet the
+# inner caps, so the total-operand cap is what makes the raised per-op caps
+# admissible at all — re-derive this arithmetic whenever any of the three
+# moves, and see tests/test_anchor.py for it as an executable assertion.
 _MAX_TRANSPARENCY_EVIDENCE_LEN = canon.MAX_ADMISSION_BYTES
 
 

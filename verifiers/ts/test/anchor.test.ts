@@ -14,6 +14,10 @@ import {
   AnchorVerdict,
   PinnedHeader,
   MAX_CHECKPOINT_TEXT_LEN_,
+  MAX_OPS_PER_PROOF_,
+  MAX_OP_HEX_LEN_,
+  MAX_TOTAL_OP_HEX_LEN_,
+  replayOtsOpChain,
   verifyAnchor,
   passesHorizon,
 } from '../src/anchor.js'
@@ -597,7 +601,7 @@ describe('hex validation discipline', () => {
 
   it('rejects an op operand over the max hex length', () => {
     const { ops, headerMerkleRoot } = workingChain()
-    const tooLong = 'ab'.repeat(2048 / 2 + 1)
+    const tooLong = 'ab'.repeat(MAX_OP_HEX_LEN_ / 2 + 1)
     const badOps = [['append', tooLong], ...ops.slice(1)]
     const proof = otsProof({ ops: badOps, headerMerkleRoot })
     const verdict = verifyAnchor(evidence([proof]), checkpoint(), policy({ merkleRoot: headerMerkleRoot }))
@@ -606,7 +610,7 @@ describe('hex validation discipline', () => {
   })
 
   it('accepts an op operand at exactly the max hex length (boundary)', () => {
-    const operandHex = 'ab'.repeat(2048 / 2)
+    const operandHex = 'ab'.repeat(MAX_OP_HEX_LEN_ / 2)
     const operand = hexToBytes(operandHex)
     let acc = sha256(NOTE_BYTES)
     acc = sha256(new Uint8Array([...acc, ...operand]))
@@ -636,11 +640,41 @@ describe('hex validation discipline', () => {
   })
 
   it('caps the ops list length', () => {
-    const oversizedOps = Array.from({ length: 65 }, () => ['sha256'])
+    const oversizedOps = Array.from({ length: MAX_OPS_PER_PROOF_ + 1 }, () => ['sha256'])
     const proof = otsProof({ ops: oversizedOps })
     const verdict = verifyAnchor(evidence([proof]), checkpoint(), policy())
     expect(verdict.anchored).toBe(false)
-    expect(verdict.warnings).toEqual(['proof[0]: ots proof has more than 64 ops'])
+    expect(verdict.warnings).toEqual([`proof[0]: ots proof has more than ${MAX_OPS_PER_PROOF_} ops`])
+  })
+
+  // Twins of tests/test_anchor.py's total-operand boundary pair. The cap that
+  // keeps the raised per-op caps inside the normative outer ceiling needs its
+  // boundary pinned on BOTH sides, or an off-by-one turns real evidence away.
+  it('accepts operands summing to exactly the total cap', () => {
+    const chunkHex = MAX_OP_HEX_LEN_
+    const chunks = MAX_TOTAL_OP_HEX_LEN_ / chunkHex
+    const ops: unknown[] = []
+    for (let i = 0; i < chunks; i++) {
+      ops.push(['append', 'ab'.repeat(chunkHex / 2)])
+      ops.push(['sha256'])
+    }
+    const { accumulator, warning } = replayOtsOpChain(new Uint8Array(32), ops)
+    expect(warning).toBe(null)
+    expect(accumulator).not.toBe(null)
+  })
+
+  it('rejects operands one hex pair over the total cap', () => {
+    const chunkHex = MAX_OP_HEX_LEN_
+    const chunks = MAX_TOTAL_OP_HEX_LEN_ / chunkHex
+    const ops: unknown[] = []
+    for (let i = 0; i < chunks; i++) {
+      ops.push(['append', 'ab'.repeat(chunkHex / 2)])
+      ops.push(['sha256'])
+    }
+    ops.push(['append', 'ab'])
+    const { accumulator, warning } = replayOtsOpChain(new Uint8Array(32), ops)
+    expect(accumulator).toBe(null)
+    expect(warning).toBe(`ots proof operands exceed ${MAX_TOTAL_OP_HEX_LEN_} total hex chars`)
   })
 })
 

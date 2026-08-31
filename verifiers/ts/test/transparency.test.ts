@@ -13,7 +13,12 @@ import { ed25519 } from '@noble/curves/ed25519'
 import { loadsStrict, canonicalBytes, JsonObject, JsonValue } from '../src/canon.js'
 import { b64uEncode } from '../src/b64u.js'
 import { LogKey, TlogError, parseCheckpoint } from '../src/tlog.js'
-import { AnchorPolicy } from '../src/anchor.js'
+import {
+  AnchorPolicy,
+  MAX_OP_HEX_LEN_,
+  MAX_TOTAL_OP_HEX_LEN_,
+  MAX_PROOFS_PER_EVIDENCE_,
+} from '../src/anchor.js'
 import {
   TransparencyError,
   TRANSPARENCY_NOT_CHECKED,
@@ -949,27 +954,35 @@ describe('verify(): Stage 2 integration', () => {
 
   it('accepts evaluator max-scale anchor evidence (harmonization boundary)', () => {
     // The outer materialization cap must COVER what the anchor evaluator's
-    // own inner caps accept: 64 OTS proofs of 64 ops with max-size operands
-    // serialize past 2MB and must still verify end-to-end.
+    // own inner caps accept. Every bound below is DERIVED from the evaluator's
+    // exported caps, never written as a literal: until 2026-08-31 this test
+    // hardcoded the operand size, the op count and the proof count, so raising
+    // the caps left it green while its Python twin — which derives them —
+    // failed instantly. A harmonization test that does not read the constants
+    // it harmonizes is not enforcing the invariant its name claims.
+    //
+    // The binding inner constraint is the per-chain operand TOTAL, not
+    // MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN: that product would overshoot the
+    // outer ceiling by ~260MB, which is why MAX_TOTAL_OP_HEX_LEN exists.
     const evidence = singleEntryEvidence(RECEIPT_ENTRY, CP_RECEIPT1)
     const noteBytes = parseCheckpoint(CP_RECEIPT1).noteBytes
     const headerTime = 1700000000
     const headerHash = '3a'.repeat(32)
-    const operandHex = 'ab'.repeat(1024)
+    const operandHex = 'ab'.repeat(MAX_OP_HEX_LEN_ / 2)
     const operand = h(operandHex)
     let acc = sha256(noteBytes)
     // JsonValue convention: every numeric field must be bigint at this
     // (pre-materialization) level, matching this verifier's other
     // JSON-serializable inputs — see singleEntryEvidence's doc comment.
     const ops: unknown[][] = []
-    for (let i = 0; i < 32; i++) {
+    for (let i = 0; i < MAX_TOTAL_OP_HEX_LEN_ / MAX_OP_HEX_LEN_; i++) {
       ops.push(['append', operandHex])
       ops.push(['sha256'])
       acc = sha256(new Uint8Array([...acc, ...operand]))
     }
     const accHex = Array.from(acc).map((b) => b.toString(16).padStart(2, '0')).join('')
     const proof = { kind: 'ots', ops, header_merkle_root: accHex, header_time: BigInt(headerTime), header_hash: headerHash }
-    evidence['anchors'] = { checkpoint: CP_RECEIPT1, proofs: Array.from({ length: 64 }, () => proof) }
+    evidence['anchors'] = { checkpoint: CP_RECEIPT1, proofs: Array.from({ length: MAX_PROOFS_PER_EVIDENCE_ }, () => proof) }
     const serializedLen = JSON.stringify(evidence, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)).length
     expect(serializedLen).toBeGreaterThan(1_000_000)
     expect(serializedLen).toBeLessThanOrEqual(10_000_000)
