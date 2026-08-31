@@ -7,8 +7,11 @@ input raises `OtsError` with a message tied to the violated wire rule.
 
 from __future__ import annotations
 
+import hmac
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 
 from attest import anchor
 
@@ -62,6 +65,7 @@ _DIGEST_LENGTHS: Final[dict[str, int]] = {
     "keccak256": 32,
 }
 _PATH_OPS: Final = frozenset({"append", "prepend", "sha256"})
+_HEX64_RE: Final = re.compile(r"^[0-9a-f]{64}$")
 
 _ATTESTATION_KINDS: Final[dict[bytes, str]] = {
     bytes.fromhex("0588960d73d71901"): "bitcoin",
@@ -74,6 +78,14 @@ _BITCOIN_ATTESTATION_TAG: Final = bytes.fromhex("0588960d73d71901")
 
 class OtsError(ValueError):
     """A detached OpenTimestamps file violates the supported wire profile."""
+
+
+class OtsConversionError(OtsError):
+    """No OpenTimestamps path could be converted into an anchor proof."""
+
+    def __init__(self, message: str, report: tuple[OtsConversionReportEntry, ...]) -> None:
+        super().__init__(message)
+        self.report = report
 
 
 @dataclass(frozen=True)
@@ -109,6 +121,46 @@ class OtsFile:
     file_digest: bytes
     file_hash_op: str
     paths: tuple[OtsPath, ...]
+
+
+@dataclass(frozen=True)
+class OperatorHeader:
+    """Bitcoin block header facts supplied by the operator's own node."""
+
+    height: int
+    header_hash: str
+    merkle_root: str
+    time: int
+
+
+@dataclass(frozen=True)
+class ConvertedOtsProof:
+    """One converted OTS path in the JSON shape accepted by `log anchor`."""
+
+    path_index: int
+    height: int
+    proof: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class OtsConversionReportEntry:
+    """Report row for one parsed OTS path, converted or skipped."""
+
+    path_index: int
+    attestation_kind: str
+    attestation_tag: str
+    height: int | None
+    converted: bool
+    reason: str | None
+
+
+@dataclass(frozen=True)
+class ConversionResult:
+    """Converted anchor proofs plus the mandatory per-path conversion report."""
+
+    proofs: tuple[ConvertedOtsProof, ...]
+    report: tuple[OtsConversionReportEntry, ...]
+    pinned_headers: dict[str, dict[str, Any]]
 
 
 class _Reader:
@@ -322,3 +374,212 @@ def parse_ots(data: bytes) -> OtsFile:
     if len(data) > _MAX_OTS_FILE_BYTES:
         raise OtsError(f"ots file exceeds {_MAX_OTS_FILE_BYTES} bytes")
     return _Parser(data).parse()
+
+
+def _copy_digest(value: object, *, label: str) -> bytes:
+    if not isinstance(value, bytes):
+        raise OtsError(f"{label} must be bytes")
+    digest = bytes(value)
+    if len(digest) != 32:
+        raise OtsError(f"{label} must be a SHA-256 digest")
+    return digest
+
+
+def _validate_operator_headers(headers: Sequence[OperatorHeader]) -> dict[int, OperatorHeader]:
+    if not isinstance(headers, Sequence) or isinstance(headers, (bytes, str)):
+        raise OtsError("operator headers must be a sequence")
+
+    by_height: dict[int, OperatorHeader] = {}
+    seen_heights: set[int] = set()
+    seen_hashes: set[str] = set()
+    for index, header in enumerate(headers):
+        if not isinstance(header, OperatorHeader):
+            raise OtsError(f"operator header {index} must be an OperatorHeader")
+        if (
+            not isinstance(header.height, int)
+            or isinstance(header.height, bool)
+            or header.height < 0
+        ):
+            raise OtsError(f"operator header {index} height must be a non-negative int")
+        if header.height in seen_heights:
+            raise OtsError(f"duplicate operator header height {header.height}")
+        seen_heights.add(header.height)
+
+        if not isinstance(header.header_hash, str) or not _HEX64_RE.fullmatch(header.header_hash):
+            raise OtsError(f"operator header {index} header_hash must be 64 lowercase hex chars")
+        if header.header_hash in seen_hashes:
+            raise OtsError(f"duplicate operator header hash {header.header_hash}")
+        seen_hashes.add(header.header_hash)
+
+        if not isinstance(header.merkle_root, str) or not _HEX64_RE.fullmatch(header.merkle_root):
+            raise OtsError(f"operator header {index} merkle_root must be 64 lowercase hex chars")
+        if (
+            not isinstance(header.time, int)
+            or isinstance(header.time, bool)
+            or not 0 < header.time <= anchor._MAX_RENDERABLE_UNIX_TIME
+        ):
+            raise OtsError(
+                "operator header "
+                f"{index} time must be a positive int no later than "
+                f"{anchor._MAX_RENDERABLE_UNIX_TIME}"
+            )
+
+        by_height[header.height] = header
+    return by_height
+
+
+def _skip_report(path_index: int, path: OtsPath, reason: str) -> OtsConversionReportEntry:
+    return OtsConversionReportEntry(
+        path_index=path_index,
+        attestation_kind=path.attestation.kind,
+        attestation_tag=path.attestation.tag.hex(),
+        height=path.attestation.height,
+        converted=False,
+        reason=reason,
+    )
+
+
+def _converted_report(path_index: int, path: OtsPath) -> OtsConversionReportEntry:
+    return OtsConversionReportEntry(
+        path_index=path_index,
+        attestation_kind=path.attestation.kind,
+        attestation_tag=path.attestation.tag.hex(),
+        height=path.attestation.height,
+        converted=True,
+        reason=None,
+    )
+
+
+def _translate_path_ops(path: OtsPath, *, height: int) -> tuple[list[list[str]] | None, str | None]:
+    converted: list[list[str]] = []
+    for op in path.ops:
+        if op.name == "sha256":
+            if op.operand is not None:
+                return None, f"sha256 op carries an operand on Bitcoin height {height}"
+            converted.append(["sha256"])
+            continue
+        if op.name in {"append", "prepend"}:
+            if not isinstance(op.operand, bytes):
+                return None, f"{op.name} op lacks a bytes operand on Bitcoin height {height}"
+            converted.append([op.name, bytes(op.operand).hex()])
+            continue
+        return None, f"unsupported ots op {op.name} on Bitcoin height {height}"
+    return converted, None
+
+
+def _non_bitcoin_skip_reason(attestation: OtsAttestation) -> str:
+    if attestation.kind == "pending":
+        return "pending attestation is not upgraded yet; run `ots upgrade` first"
+    return f"unsupported attestation kind {attestation.kind} tag {attestation.tag.hex()}"
+
+
+def _zero_survivors_message(report: tuple[OtsConversionReportEntry, ...]) -> str:
+    reasons = "; ".join(
+        f"path {entry.path_index}: {entry.reason}"
+        for entry in report
+        if not entry.converted and entry.reason is not None
+    )
+    return f"no convertible Bitcoin paths found: {reasons}"
+
+
+def convert_ots(
+    parsed: OtsFile, expected_seed: bytes, headers: Sequence[OperatorHeader]
+) -> ConversionResult:
+    """Convert parsed detached OTS paths into signed-note-v2 anchor proofs.
+
+    `expected_seed` is `SHA256(checkpoint.signed_note_bytes)` from the
+    evidence produced by `log prove`; the parsed `.ots` file digest must match
+    that seed before any path is considered. Each returned proof is already in
+    the JSON object shape accepted by `attest log anchor --ots-proof`.
+    """
+
+    if not isinstance(parsed, OtsFile):
+        raise OtsError("convert_ots requires OtsFile parsed by parse_ots")
+    expected_seed = _copy_digest(expected_seed, label="expected_seed")
+    file_digest = _copy_digest(parsed.file_digest, label="ots file digest")
+    if parsed.file_hash_op != "sha256":
+        raise OtsError(f"ots file hash op {parsed.file_hash_op} is not sha256")
+    if not hmac.compare_digest(file_digest, expected_seed):
+        raise OtsError(
+            "ots file digest "
+            f"{file_digest.hex()} does not match expected "
+            f"SHA256(signed_note_bytes) {expected_seed.hex()}"
+        )
+
+    headers_by_height = _validate_operator_headers(headers)
+    proofs: list[ConvertedOtsProof] = []
+    report: list[OtsConversionReportEntry] = []
+    pinned_headers: dict[str, dict[str, Any]] = {}
+
+    for path_index, path in enumerate(parsed.paths):
+        if path.attestation.kind != "bitcoin":
+            report.append(
+                _skip_report(path_index, path, _non_bitcoin_skip_reason(path.attestation))
+            )
+            continue
+        height = path.attestation.height
+        if not isinstance(height, int) or isinstance(height, bool):
+            report.append(
+                _skip_report(
+                    path_index,
+                    path,
+                    "bitcoin attestation has no usable block height",
+                )
+            )
+            continue
+
+        proof_ops, reason = _translate_path_ops(path, height=height)
+        if reason is not None:
+            report.append(_skip_report(path_index, path, reason))
+            continue
+        assert proof_ops is not None
+
+        header = headers_by_height.get(height)
+        if header is None:
+            report.append(
+                _skip_report(
+                    path_index, path, f"missing operator header for Bitcoin height {height}"
+                )
+            )
+            continue
+
+        accumulator, warning = anchor.replay_ots_op_chain(expected_seed, proof_ops)
+        if warning is not None:
+            report.append(_skip_report(path_index, path, f"{warning} on Bitcoin height {height}"))
+            continue
+        assert accumulator is not None
+        if not hmac.compare_digest(accumulator.hex(), header.merkle_root):
+            reason = (
+                f"operator header merkle_root does not match OTS replay at Bitcoin height {height}"
+            )
+            report.append(
+                _skip_report(
+                    path_index,
+                    path,
+                    reason,
+                )
+            )
+            continue
+
+        proof = {
+            "ops": proof_ops,
+            "header_merkle_root": header.merkle_root,
+            "header_hash": header.header_hash,
+            "header_time": header.time,
+        }
+        proofs.append(ConvertedOtsProof(path_index=path_index, height=height, proof=proof))
+        pinned_headers[header.header_hash] = {
+            "header_hash": header.header_hash,
+            "merkle_root": header.merkle_root,
+            "time": header.time,
+        }
+        report.append(_converted_report(path_index, path))
+
+    frozen_report = tuple(report)
+    if not proofs:
+        raise OtsConversionError(_zero_survivors_message(frozen_report), frozen_report)
+    return ConversionResult(
+        proofs=tuple(proofs),
+        report=frozen_report,
+        pinned_headers=pinned_headers,
+    )

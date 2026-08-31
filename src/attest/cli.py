@@ -52,6 +52,7 @@ from attest import (
     issue,
     keys,
     manifests,
+    ots,
     pq,
     revocation,
     tlog,
@@ -106,6 +107,8 @@ _MAX_STAGE2_INPUT_BYTES = {
     "json": verify._MAX_TRANSPARENCY_EVIDENCE_LEN,
     "candidate": tlog._MAX_NOTE_TEXT_LEN,
     "rfc3161": (verify._MAX_TRANSPARENCY_EVIDENCE_LEN - tlog._MAX_NOTE_TEXT_LEN - 500_000) * 3 // 4,
+    # Detached OTS samples measured for V-H.7 were small; cap before parsing.
+    "ots": 1_000_000,
 }
 
 
@@ -2176,6 +2179,132 @@ def _cmd_log_anchor(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _load_operator_headers(path: Path) -> list[ots.OperatorHeader]:
+    raw = _read_json(
+        path,
+        max_bytes=_MAX_STAGE2_INPUT_BYTES["json"],
+        input_name="--block-headers",
+    )
+    if not isinstance(raw, list):
+        raise CliUsageError("--block-headers must contain a JSON array")
+
+    headers: list[ots.OperatorHeader] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise CliUsageError(f"--block-headers[{index}] must be a JSON object")
+        height = item.get("height")
+        header_hash = item.get("header_hash")
+        merkle_root = item.get("merkle_root")
+        header_time = item.get("time")
+        if not isinstance(height, int) or isinstance(height, bool):
+            raise CliUsageError(f"--block-headers[{index}].height must be a non-negative int")
+        if not isinstance(header_hash, str):
+            raise CliUsageError(f"--block-headers[{index}].header_hash must be a string")
+        if not isinstance(merkle_root, str):
+            raise CliUsageError(f"--block-headers[{index}].merkle_root must be a string")
+        if not isinstance(header_time, int) or isinstance(header_time, bool):
+            raise CliUsageError(f"--block-headers[{index}].time must be a positive int")
+        headers.append(
+            ots.OperatorHeader(
+                height=height,
+                header_hash=header_hash,
+                merkle_root=merkle_root,
+                time=header_time,
+            )
+        )
+    return headers
+
+
+def _conversion_report_json(
+    report: tuple[ots.OtsConversionReportEntry, ...], proof_filenames: dict[int, str]
+) -> dict[str, Any]:
+    paths: list[dict[str, Any]] = []
+    converted_count = 0
+    for entry in report:
+        if entry.converted:
+            converted_count += 1
+        paths.append(
+            {
+                "path_index": entry.path_index,
+                "attestation_kind": entry.attestation_kind,
+                "attestation_tag": entry.attestation_tag,
+                "height": entry.height,
+                "converted": entry.converted,
+                "reason": entry.reason,
+                "proof_file": proof_filenames.get(entry.path_index),
+            }
+        )
+    return {
+        "converted": converted_count,
+        "skipped": len(report) - converted_count,
+        "paths": paths,
+    }
+
+
+def _write_ots_conversion_outputs(
+    out_dir: Path, result: ots.ConversionResult
+) -> tuple[Path, Path, dict[int, str]]:
+    proof_filenames: dict[int, str] = {}
+    for proof in result.proofs:
+        filename = f"proof-{proof.path_index}-{proof.height}.json"
+        proof_filenames[proof.path_index] = filename
+        _write_json_file(out_dir / filename, proof.proof)
+    pinned_path = out_dir / "pinned-headers.json"
+    _write_json_file(pinned_path, {"pinned_headers": result.pinned_headers})
+    report_path = out_dir / "conversion-report.json"
+    _write_json_file(report_path, _conversion_report_json(result.report, proof_filenames))
+    return pinned_path, report_path, proof_filenames
+
+
+def _cmd_log_ots_convert(args: argparse.Namespace) -> int:
+    evidence = _read_json(
+        args.evidence, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--evidence"
+    )
+    if not isinstance(evidence, dict):
+        raise CliUsageError(f"{args.evidence} must contain a JSON object")
+    checkpoint_text = evidence.get("checkpoint")
+    if not isinstance(checkpoint_text, str):
+        raise CliUsageError(
+            f"{args.evidence} is missing its 'checkpoint' field; run `attest log prove` first"
+        )
+    try:
+        checkpoint = tlog.parse_checkpoint(checkpoint_text)
+    except tlog.TlogError as exc:
+        raise CliUsageError(f"{args.evidence}'s checkpoint is malformed: {exc}") from exc
+
+    ots_bytes = _read_bounded_bytes(
+        args.ots,
+        max_bytes=_MAX_STAGE2_INPUT_BYTES["ots"],
+        input_name="--ots",
+    )
+    try:
+        parsed = ots.parse_ots(ots_bytes)
+    except ots.OtsError as exc:
+        raise CliUsageError(f"{args.ots}: {exc}") from exc
+
+    headers = _load_operator_headers(args.block_headers)
+    expected_seed = hashlib.sha256(checkpoint.signed_note_bytes).digest()
+    try:
+        result = ots.convert_ots(parsed, expected_seed, headers)
+    except ots.OtsConversionError as exc:
+        report_path = args.out_dir / "conversion-report.json"
+        _write_json_file(report_path, _conversion_report_json(exc.report, {}))
+        raise CliUsageError(str(exc)) from exc
+    except ots.OtsError as exc:
+        raise CliUsageError(str(exc)) from exc
+
+    pinned_path, report_path, _proof_filenames = _write_ots_conversion_outputs(args.out_dir, result)
+    _print_json(
+        {
+            "out_dir": str(args.out_dir),
+            "proofs": len(result.proofs),
+            "pinned_headers": str(pinned_path),
+            "report": str(report_path),
+        }
+    )
+    return EXIT_OK
+
+
 # --- verify -----------------------------------------------------------------------
 
 
@@ -3135,6 +3264,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--out", required=True, type=Path)
     p.set_defaults(func=_cmd_log_anchor)
+
+    p = log_sub.add_parser(
+        "ots-convert",
+        help="Convert a detached .ots timestamp into log anchor proof files",
+        description=(
+            "Convert an already-upgraded detached OpenTimestamps proof into the JSON proof "
+            "shape accepted by `attest log anchor`, and emit matching pinned header entries. "
+            "This command performs no network I/O: obtain block headers from your own node. "
+            "Pending timestamps need `ots upgrade` first, and legacy ripemd160 paths are "
+            "reported as skipped rather than converted."
+        ),
+    )
+    p.add_argument("--ots", required=True, type=Path, help="detached .ots proof file")
+    p.add_argument("--evidence", required=True, type=Path, help="evidence JSON from `log prove`")
+    p.add_argument(
+        "--block-headers",
+        required=True,
+        type=Path,
+        help="JSON array of {height, header_hash, merkle_root, time}",
+    )
+    p.add_argument("--out-dir", required=True, type=Path)
+    p.set_defaults(func=_cmd_log_ots_convert)
 
     p = sub.add_parser("verify", help="Verify a receipt envelope")
     p.add_argument("envelope", type=Path)
