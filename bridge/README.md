@@ -37,6 +37,9 @@ than a global guarantee.
   local synthetic-webhook test you can run before touching a real account.
 - [`docs/setup-itch.md`](docs/setup-itch.md) — the same, for itch.io (a
   claim-queue poller, not a webhook — itch.io exposes neither).
+- [`docs/setup-shopify.md`](docs/setup-shopify.md) — the same, for Shopify
+  order webhooks (keypair, manifest and deploy are shared with the Stripe
+  guide; this covers what differs).
 - [`docs/deploy.md`](docs/deploy.md) — the three deploy targets (Docker
   Compose, Fly.io, Render), all built from
   [`deploy/Dockerfile`](deploy/Dockerfile), plus why Cloud Run isn't a safe

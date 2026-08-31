@@ -129,7 +129,7 @@ has to confirm each one against the live itch API before anything is
 signed. A CSV row for someone who never actually bought the game simply
 never resolves (its claim keeps retrying, then exhausts).
 
-## 4. Dry run: a verified receipt on your own machine first
+## 4. Test locally: a dry run on your own machine first
 
 Unlike the Stripe and Shopify rails, itch has no webhook you can replay
 locally — so without this step your first real test would be production. Run:

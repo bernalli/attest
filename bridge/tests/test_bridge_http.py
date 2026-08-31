@@ -9,8 +9,10 @@ from __future__ import annotations
 import io
 import json
 import logging
+import re
 import threading
 import zipfile
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -60,11 +62,199 @@ def call_app(
     captured: dict[str, Any] = {}
 
     def start_response(status: str, response_headers: list[tuple[str, str]]) -> None:
+        # Checked BEFORE the dict: collapsing headers would hide a second
+        # Content-Security-Policy behind the expected one, and a browser
+        # applies every policy it receives, combining them restrictively.
+        # (Third time today that folding duplicates into a dict hides one.)
+        for singleton in ("content-security-policy", "content-length"):
+            values = [value for name, value in response_headers if name.lower() == singleton]
+            assert len(values) <= 1, f"duplicate {singleton} response headers: {values!r}"
         captured["status"] = status
         captured["headers"] = dict(response_headers)
 
     chunks = app(environ, start_response)
     return captured["status"], captured["headers"], b"".join(chunks)
+
+
+# Resource-bearing tags: each fetches on its own the moment a browser meets it.
+_FETCHING_TAGS = frozenset(
+    {
+        "link",
+        "script",
+        "img",
+        "iframe",
+        "object",
+        "embed",
+        "video",
+        "audio",
+        "source",
+        "track",
+        "frame",
+        "applet",
+        "image",
+        "feimage",
+        "use",
+    }
+)
+# Attributes that carry a URL. `data` is <object>'s, `background` is the legacy
+# body/table one, `poster` is <video>'s, `srcset` takes a whole candidate list.
+_URL_ATTRS = frozenset({"src", "href", "srcset", "data", "poster", "background", "codebase"})
+_CSS_FETCHES = ("@import", "@font-face", "url(", "image-set(")
+_CSS_ESCAPE_RE = re.compile(r"\\([0-9a-fA-F]{1,6}\s?|.)")
+
+
+def _decode_css_escapes(text: str) -> str:
+    """CSS lets any identifier character be written as a hex escape, so
+    `u\\72 l(...)` and `@\\69 mport` fetch exactly like `url(` and `@import`.
+    A guard that matches the spelled-out forms only reads the CSS the author
+    happened to write, not the CSS the parser will see."""
+
+    def repl(match: re.Match[str]) -> str:
+        token = match.group(1)
+        hexish = token.strip()
+        if re.fullmatch(r"[0-9a-fA-F]{1,6}", hexish):
+            try:
+                return chr(int(hexish, 16))
+            except ValueError:
+                return "\ufffd"
+        return token
+
+    return _CSS_ESCAPE_RE.sub(repl, text)
+
+
+def _is_remote(value: str) -> bool:
+    """A URL that leaves the document. Protocol-relative (`//host/x`) carries no
+    scheme, so a check for http:// and https:// alone never sees it; whitespace
+    and control characters inside a scheme are stripped by browsers before the
+    fetch, so they are stripped here too."""
+    compact = re.sub(r"[\s\x00-\x1f]+", "", value).lower()
+    return compact.startswith(("http://", "https://", "//")) or "://" in compact
+
+
+class _OutsideReferenceFinder(HTMLParser):
+    """Walks the page the way a browser does.
+
+    Why a parser and not a marker scan: the same bytes mean different things in
+    different places. `&lt;script src=...&gt;` inside TEXT is prose a buyer
+    reads — a merchant's game title, escaped exactly as it should be — while
+    `href="&#47;&#47;cdn/x"` inside an ATTRIBUTE is a real fetch, because the
+    browser decodes entities there. Unescaping the whole document flattens that
+    difference and makes a correctly-escaped hostile title look like an
+    external dependency: a guard that cries wolf on safe pages gets muted.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.offences: list[str] = []
+        self._in_style = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # A list, never a dict: collapsing duplicate attributes lets a second
+        # innocent spelling hide the first hostile one, and "the last entry
+        # wins, silently" is a defect family this project already carries in
+        # its constraints register.
+        normalized_attrs = [(name.lower(), value or "") for name, value in attrs]
+        if tag == "style":
+            self._in_style = True
+        if tag in _FETCHING_TAGS:
+            self.offences.append(f"fetching tag <{tag}>")
+        if tag == "input" and any(
+            name == "type" and value.lower() == "image" for name, value in normalized_attrs
+        ):
+            self.offences.append("<input type=image> fetches its button")
+        if tag == "meta" and any(
+            name == "http-equiv" and value.lower() == "refresh" for name, value in normalized_attrs
+        ):
+            self.offences.append("<meta http-equiv=refresh> navigates on its own")
+        for name, value in normalized_attrs:
+            if name == "background" or (name in _URL_ATTRS and _is_remote(value)):
+                self.offences.append(f"{name}={value!r}")
+            if name == "style":
+                self._check_css(value)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "style":
+            self._in_style = False
+
+    def handle_data(self, data: str) -> None:
+        # Only stylesheet bodies are code here. Everything else is text a
+        # person reads, and text never fetches.
+        if self._in_style:
+            self._check_css(data)
+
+    def _check_css(self, css: str) -> None:
+        decoded = _decode_css_escapes(css).lower()
+        for construct in _CSS_FETCHES:
+            if construct in decoded:
+                self.offences.append(f"css {construct}")
+
+
+def assert_offline_self_contained(page: bytes) -> None:
+    """Fail if a served bridge page reaches outside itself for anything.
+
+    The core suite proves this property for `render_page` around a FAKE body
+    (tests/test_buyer_surface.py); these are the REAL bodies the bridge
+    injects, which that test never sees.
+    """
+    finder = _OutsideReferenceFinder()
+    finder.feed(page.decode("utf-8"))
+    finder.close()
+    assert not finder.offences, f"served page depends on the outside: {finder.offences}"
+
+
+@pytest.mark.parametrize(
+    "poison",
+    [
+        # the polite forms
+        '<link rel="stylesheet" href="style.css">',
+        '<script src="app.js"></script>',
+        '<img src="logo.png">',
+        '<a href="http://example.com">x</a>',
+        '<a href="https://example.com">x</a>',
+        "<style>@font-face{font-family:x;src:local(x)}</style>",
+        "<style>body{background:url(x.png)}</style>",
+        # the hostile spellings a case-sensitive guard would wave through
+        '<SCRIPT SRC="app.js"></SCRIPT>',
+        '<IMG SRC="logo.png">',
+        "<STYLE>BODY{BACKGROUND:URL(X.PNG)}</STYLE>",
+        # protocol-relative: no http://, no https://, fetches all the same
+        '<a href="//cdn.example.com/x">x</a>',
+        "<a href='//cdn.example.com/x'>x</a>",
+        # unquoted and loosely spaced: a browser parses these fine
+        "<a href=//cdn.example.com/x>x</a>",
+        '<a href = "//cdn.example.com/x">x</a>',
+        # entities inside an attribute ARE decoded before the fetch
+        '<a href="&#x2f;&#47;cdn.example.com/x">x</a>',
+        '<a href="h&#116;tps://example.com/x">x</a>',
+        # a scheme broken by whitespace is still a scheme once stripped
+        '<a href="https:&#10;//example.com/x">x</a>',
+        # fetching tags and attributes a naive marker list ignores
+        '<iframe src="frame.html"></iframe>',
+        '<object data="movie.swf"></object>',
+        '<video src="clip.mp4"></video>',
+        '<source srcset="hero.png 1x, hero-2x.png 2x">',
+        '<track src="captions.vtt" kind="captions">',
+        '<svg><image href="hero.png"></image></svg>',
+        '<input type=image src="button.png" alt="go">',
+        '<body background="paper.png"></body>',
+        '<meta http-equiv="refresh" content="0;url=next.html">',
+        # duplicate attributes: a second innocent spelling must not hide the first
+        '<input type=image type=button src="button.png" alt="go">',
+        '<meta http-equiv=refresh http-equiv=x content="0;url=next.html">',
+        '<a href=//cdn.example.com/x href="/safe">x</a>',
+        # css escapes: the parser sees url( and @import whatever the spelling
+        "<style>@import 'other.css';</style>",
+        r"<style>@\69 mport 'other.css';</style>",
+        r"<style>body{background:u\72 l(hero.png)}</style>",
+        '<style>body{background:image-set("hero.png" 1x)}</style>',
+        # a style ATTRIBUTE is a stylesheet too
+        '<p style="background:url(hero.png)">x</p>',
+    ],
+)
+def test_the_self_containment_guard_actually_fires(poison: str) -> None:
+    page = f"<!doctype html><html><body>{poison}</body></html>".encode()
+    with pytest.raises(AssertionError):
+        assert_offline_self_contained(page)
 
 
 # -- fixtures -----------------------------------------------------------
@@ -763,6 +953,39 @@ def test_download_landing_names_both_halves_and_marks_the_private_one(
     # already in the address bar, and page source gets copied around.
     assert issued.download_token not in page
     assert _salt_b64u(issued) not in page
+
+
+def test_pair_landing_is_a_complete_offline_document_with_a_pinned_csp(
+    deps: BridgeDeps, issued: StoredReceipt
+) -> None:
+    """The static twin (tools/gen_buyer_pages.py) always ships a CSP; this page
+    is the same source's other delivery, and D8 says two deliveries never
+    tested against each other drift. Exact equality on purpose: a LOOSENED
+    policy has to fail, not only a missing one."""
+    app = make_app(deps)
+    status, headers, body = call_app(app, "GET", _token_url(issued))
+
+    assert status.startswith("200")
+    assert headers["Content-Security-Policy"] == (
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    )
+    assert b'<meta charset="utf-8">' in body
+    assert b"<title>Your receipt</title>" in body
+    # The core suite proves self-containment around a FAKE body; this is the
+    # real one, carrying the pair's filenames.
+    assert_offline_self_contained(body)
+
+
+def test_the_two_bridge_csps_differ_only_on_form_action() -> None:
+    """One page hosts a form, the other must not; every other word the two
+    policies say has to stay identical, or the next edit loosens one of them
+    in silence."""
+    landing = http_mod._CSP_LANDING.replace("form-action 'none'", "")
+    form = http_mod._CSP_CLAIM_FORM.replace("form-action 'self'", "")
+    assert landing == form
+    assert "form-action 'none'" in http_mod._CSP_LANDING
+    assert "form-action 'self'" in http_mod._CSP_CLAIM_FORM
 
 
 def test_download_part_receipt_is_a_salt_free_bundle(

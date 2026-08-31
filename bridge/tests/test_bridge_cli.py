@@ -1466,7 +1466,7 @@ def test_itch_dry_run_send_email_failure_is_rc_1_but_receipt_file_survives(
 def test_setup_itch_docs_include_local_dry_run_before_live_test() -> None:
     text = (Path(__file__).parents[1] / "docs" / "setup-itch.md").read_text(encoding="utf-8")
 
-    dry_run_heading = text.index("## 4. Dry run")
+    dry_run_heading = text.index("## 4. Test locally")
     live_heading = text.index("## 5. Test it live")
     assert dry_run_heading < live_heading
 

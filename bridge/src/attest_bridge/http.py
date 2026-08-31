@@ -86,6 +86,43 @@ _INTERNAL_ERROR_BODY = b'{"error":"internal error"}'
 _PART_SHAREABLE = "receipt"
 _PART_PRIVATE = "private"
 _ITCH_PRODUCT_PREFIX = "itch_"
+
+# What these served pages may reach: nothing. Both policies deliberately
+# DIVERGE from the static explainer's (tools/gen_buyer_pages.py): no img-src,
+# because bridge pages carry no icons, and the policy travels as a RESPONSE
+# HEADER rather than a <meta> twin — the bridge has a server to speak through,
+# a header applies before parsing and can pin frame-ancestors (which a meta
+# CSP ignores by spec), and one channel means no second copy to drift from.
+# Do not "align" them with the static page: the difference is the decision.
+#
+# A deploy must hand these headers to the client UNCHANGED and must not inject
+# a second policy. Multiple CSPs combine restrictively, so one added downstream
+# without style-src 'unsafe-inline' would strip both pages of their styling —
+# and no in-process test can see that happen.
+_CSP_LANDING = (
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'"
+)
+# Same policy but for form submissions: 'self' RESTRICTS them to this origin.
+# It does not enable the POST — without form-action the POST would work anyway.
+# Nor does it pin the path: a CSP source expression can carry a path only when
+# it names an origin, and 'self' names none, so every path on this origin is
+# an allowed target. action="/itch/claim" and its tests are what pin the path.
+_CSP_CLAIM_FORM = (
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+    "form-action 'self'; frame-ancestors 'none'"
+)
+
+# Presentation only the claim form needs. It rides `render_page`'s extra_css
+# hook instead of CORE_CSS: core bytes are paid inside every exported receipt
+# (a HELD cost), while this page is SERVED — a form selector in the core would
+# charge every buyer's disk for a page they may never load.
+_CLAIM_FORM_CSS = (
+    "label{display:block;margin:1rem 0}\n"
+    "input,select{font:inherit;padding:.4rem .6rem;max-width:100%}\n"
+    "button{font:inherit;font-weight:600;margin-top:1.25rem;padding:.55rem 1.1rem;"
+    "border:1px solid var(--accent);border-radius:8px;background:none;color:var(--accent)}\n"
+)
 _ITCH_CLAIM_ACCEPTED = {
     "status": "received",
     "detail": "If a matching itch.io purchase exists, its receipt will be emailed to the "
@@ -500,6 +537,7 @@ def _render_pair_landing(
     ).encode()
     headers = [
         ("Content-Type", "text/html; charset=utf-8"),
+        ("Content-Security-Policy", _CSP_LANDING),
         ("Cache-Control", "no-store"),
         ("Content-Length", str(len(body))),
     ]
@@ -663,15 +701,24 @@ def _handle_itch_claim_form(deps: BridgeDeps, start_response: Any) -> Iterable[b
         f'<option value="{html.escape(gid)}">{html.escape(title)}</option>'
         for gid, title in _itch_game_choices(deps)
     )
-    body = (
-        "<!doctype html><html><body>"
+    page = buyer_surface.render_page(
+        "Claim your receipt",
+        "<h1>Claim your receipt</h1>\n"
+        "<p>Enter the email address you used on itch.io and pick the game: "
+        "the receipt will be emailed to that address.</p>\n"
         '<form method="post" action="/itch/claim">'
         '<label>Email <input type="email" name="email" required></label>'
         f'<label>Game <select name="game_id">{options}</select></label>'
         '<button type="submit">Email my receipt</button>'
-        "</form></body></html>"
-    ).encode()
-    headers = [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(body)))]
+        "</form>",
+        extra_css=_CLAIM_FORM_CSS,
+    )
+    body = page.encode()
+    headers = [
+        ("Content-Type", "text/html; charset=utf-8"),
+        ("Content-Security-Policy", _CSP_CLAIM_FORM),
+        ("Content-Length", str(len(body))),
+    ]
     start_response("200 OK", headers)
     return [body]
 
