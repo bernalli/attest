@@ -131,27 +131,32 @@ def _normalized_with_offsets(text: str, comment_prefix: str | None) -> tuple[str
     """
     out: list[str] = []
     offsets: list[int] = []
-    pending_space = False
+    pending_space_offset: int | None = None
     position = 0
     for raw_line in text.splitlines(keepends=True):
         line_start = position
         position += len(raw_line)
         stripped = raw_line.lstrip()
         lead = len(raw_line) - len(stripped)
+        if lead and pending_space_offset is None:
+            pending_space_offset = line_start
         if comment_prefix is not None and stripped.startswith(comment_prefix):
             lead += len(comment_prefix)
             stripped = stripped[len(comment_prefix) :]
         for index, char in enumerate(stripped):
+            original_offset = line_start + lead + index
             if char.isspace():
-                pending_space = True
+                # Remember where the run STARTED: a collapsed space that
+                # points at the character after it reports the wrong line.
+                if pending_space_offset is None:
+                    pending_space_offset = original_offset
                 continue
-            if pending_space and out:
+            if pending_space_offset is not None and out:
                 out.append(" ")
-                offsets.append(line_start + lead + index)
-            pending_space = False
+                offsets.append(pending_space_offset)
+            pending_space_offset = None
             out.append(char)
-            offsets.append(line_start + lead + index)
-        pending_space = True
+            offsets.append(original_offset)
     return "".join(out), offsets
 
 
@@ -1485,7 +1490,16 @@ def check_corpus_counts() -> list[str]:
         folded, offsets = _normalized_with_offsets(text, _COMMENT_PREFIX_BY_SUFFIX.get(path.suffix))
 
         def line_of(index: int, _text: str = text, _offsets: list[int] = offsets) -> int:
-            return _text.count("\n", 0, _offsets[index]) + 1
+            # Count the boundaries `splitlines` counts, not just "\n":
+            # normalization already treats U+2028 and friends as line ends,
+            # and a report that disagreed would point at the wrong line.
+            original_offset = _offsets[index]
+            position = 0
+            for line_number, raw_line in enumerate(_text.splitlines(keepends=True), 1):
+                position += len(raw_line)
+                if original_offset < position:
+                    return line_number
+            return 1
 
         for pattern in _CORPUS_CLAIM_PATTERNS:
             for match in pattern.finditer(folded):

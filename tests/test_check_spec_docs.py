@@ -1905,6 +1905,50 @@ def test_normalization_without_a_prefix_keeps_comment_markers() -> None:
     assert norm == "a // b"
 
 
+def test_normalization_offset_map_invariants_for_degenerate_sequences() -> None:
+    # Properties, not examples: the offset map is the part that can go wrong
+    # in silence, and a collapsed space pointing at the character AFTER the
+    # whitespace it came from reports the wrong line without failing anything.
+    whitespace_runs = (" ", "\t", "\n", "\r\n", "\u00a0", "\u2028", "\u2029", " \n\t\u00a0")
+    fragments = ("", "a", "//", " //", "tail")
+    cases: list[tuple[str, str | None]] = [
+        ("", None),
+        ("   \t\n  ", None),
+        ("//\nnext", "//"),
+        ("//", "//"),
+        ("a //\nb", "//"),
+        ("a\n  b", None),
+        ("\n\n  a", None),
+    ]
+    cases.extend(
+        (f"{left}{whitespace}{right}", None)
+        for left in fragments
+        for whitespace in whitespace_runs
+        for right in fragments
+    )
+
+    for text, prefix in cases:
+        norm, offsets = check_spec_docs._normalized_with_offsets(text, prefix)
+        assert len(norm) == len(offsets)
+        assert all(0 <= offset < len(text) for offset in offsets)
+        assert not norm.startswith(" ")
+        assert not norm.endswith(" ")
+        assert "  " not in norm
+        for char, offset in zip(norm, offsets, strict=True):
+            if char == " ":
+                assert text[offset].isspace()
+            else:
+                assert text[offset] == char
+
+
+def test_line_numbers_use_unicode_line_boundaries_seen_by_normalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = "intro\u2028measured against the 51-leaf subset of it"
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert any("doc.md:2:" in error for error in errors), errors
+
+
 def test_an_oversized_numeric_claim_is_reported_not_allowed_to_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
