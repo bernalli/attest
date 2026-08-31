@@ -1986,6 +1986,17 @@ def test_every_claim_shape_is_case_insensitive_by_construction() -> None:
             (check_spec_docs._ClaimShape("bad-regex", r"(", ((1, "corpus_total"),)),),
             "regex does not compile",
         ),
+        (
+            (
+                check_spec_docs._ClaimShape(
+                    "two-checks-ambiguous",
+                    r"\b(\d+) of (\d+)\b",
+                    ((1, "corpus_total"), (2, "group_count")),
+                    when_unmarked="ambiguous",
+                ),
+            ),
+            "ambiguous when_unmarked requires exactly one checked capture",
+        ),
     ],
 )
 def test_claim_shape_registry_rejects_not_well_formed_entries(
@@ -2042,6 +2053,47 @@ def test_the_verb_bring_alone_does_not_make_a_total_historical(
     # silent-history bucket -- the very hole the tri-state closes.
     errors = _corpus_case(tmp_path, monkeypatch, "To bring clarity, the corpus is 9 total.")
     assert errors and "ambiguous" in errors[0].lower()
+
+
+def test_bare_total_markers_do_not_cross_sentence_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fixed character window does not know where a sentence ends, so a marker
+    # in the neighbouring sentence classified the total next to it.
+    errors = _corpus_case(
+        tmp_path,
+        monkeypatch,
+        "Every implementation MUST meet the corpus. The corpus is 9 total.",
+    )
+    assert errors and "ambiguous bare total '9'" in errors[0]
+
+    errors = _corpus_case(
+        tmp_path, monkeypatch, "Group 33 brought it to 3 total. The corpus is 9 total."
+    )
+    assert errors == [
+        "doc.md:1: ambiguous bare total '9' -- mark the sentence present-tense "
+        "(it is then checked against the live count) or dated (it is then left alone)"
+    ]
+
+
+@pytest.mark.parametrize("separator", [":", ";", "?", "!"])
+def test_bring_to_history_marker_must_bind_the_total(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, separator: str
+) -> None:
+    # "bring ... to" reaching any word at all was enough to date a present
+    # claim: the marker has to reach the number it qualifies.
+    errors = _corpus_case(
+        tmp_path, monkeypatch, f"Bring clarity to reviewers{separator} the corpus is 9 total."
+    )
+    assert errors and "ambiguous bare total '9'" in errors[0]
+
+
+def test_bare_total_marker_context_handles_document_edges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _corpus_case(tmp_path, monkeypatch, "Now 9 total.") != []
+    errors = _corpus_case(tmp_path, monkeypatch, "The corpus is 9 total")
+    assert errors and "ambiguous bare total '9'" in errors[0]
 
 
 def test_a_current_marker_beats_a_historical_verb(

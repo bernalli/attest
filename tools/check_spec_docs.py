@@ -1433,13 +1433,49 @@ _CLAIM_SHAPES: tuple[_ClaimShape, ...] = (
 _CURRENT_MARKERS = re.compile(
     r"\bMUST meet\b|\bcurrently\b|\bcurrent\b|\bnow\b|\btoday\b|\bas of\b", re.IGNORECASE
 )
-_HISTORICAL_MARKERS = re.compile(
-    r"\bstood at\b|\bbrought\b|\bbrings?\b[^.]{0,60}?\bto\b|\bbefore this document\b"
-    r"|\bfor \d+ total\b",
-    re.IGNORECASE,
-)
-_MARKER_WINDOW_BEFORE = 120
-_MARKER_WINDOW_AFTER = 60
+_SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]")
+
+
+def _sentence_around_match(text: str, start: int, end: int) -> str:
+    """The sentence a match sits in.
+
+    A fixed character window does not know where a sentence ends, so a marker
+    belonging to the neighbouring sentence classified the total next to it:
+    "Group 33 brought it to 3 total. The corpus is 213 total." had its second,
+    present-tense figure silently inherit the first one's history.
+    """
+    left = 0
+    for boundary in _SENTENCE_BOUNDARY_RE.finditer(text, 0, start):
+        left = boundary.end()
+    right_match = _SENTENCE_BOUNDARY_RE.search(text, end)
+    right = right_match.start() if right_match is not None else len(text)
+    return text[left:right]
+
+
+def _bare_total_pattern(raw: str) -> str:
+    return rf"(?:\*\*)?{re.escape(raw)}\s+total(?:\*\*)?"
+
+
+def _historical_bare_total_marker(text: str, raw: str) -> bool:
+    """Whether THIS total is the one the sentence dates.
+
+    The marker has to reach the number it qualifies. An unanchored verb was
+    enough for "Bring clarity to reviewers: the corpus is 213 total." to pass
+    for history -- a present-tense claim, skipped without a word.
+    """
+    total = _bare_total_pattern(raw)
+    return any(
+        re.search(pattern, text, re.IGNORECASE)
+        for pattern in (
+            rf"\bstood at\s+{total}",
+            rf"\bbrought\b[^.;:!?]{{0,60}}?\bto\s+{total}",
+            rf"\bbrings?\b[^.;:!?]{{0,60}}?\bto\s+{total}",
+            rf"\bfor\s+{total}",
+            rf"{total}\s+before this document\b",
+        )
+    )
+
+
 _WHEN_UNMARKED_VALUES = frozenset({"current", "ambiguous"})
 
 # One message per quantity, so a shape checking two of them reports each in the
@@ -1491,6 +1527,13 @@ def _compile_claim_shapes(
             errors.append(
                 f"{shape.name}: unknown when_unmarked {shape.when_unmarked!r} "
                 f"(expected one of {sorted(_WHEN_UNMARKED_VALUES)})"
+            )
+        # The ambiguous branch classifies the match as a whole, from the one
+        # number the sentence dates. Two checked captures have no single answer
+        # here, so the registry refuses the combination rather than guessing.
+        if shape.when_unmarked == "ambiguous" and len(shape.checks) != 1:
+            errors.append(
+                f"{shape.name}: ambiguous when_unmarked requires exactly one checked capture"
             )
         for group, key in shape.checks:
             if group < 1 or group > regex.groups:
@@ -1624,13 +1667,10 @@ def check_corpus_counts() -> list[str]:
             for match in regex.finditer(folded):
                 line = line_of(match.start())
                 if shape.when_unmarked == "ambiguous":
-                    window = folded[
-                        max(0, match.start() - _MARKER_WINDOW_BEFORE) : match.end()
-                        + _MARKER_WINDOW_AFTER
-                    ]
-                    if _CURRENT_MARKERS.search(window):
+                    context = _sentence_around_match(folded, match.start(), match.end())
+                    if _CURRENT_MARKERS.search(context):
                         pass  # a present-tense claim: fall through and compare it
-                    elif _HISTORICAL_MARKERS.search(window):
+                    elif _historical_bare_total_marker(context, match.group(1)):
                         continue  # an explicitly dated figure: true when written
                     else:
                         # Defaulting this to history would be the silent failure
