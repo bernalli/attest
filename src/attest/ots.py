@@ -24,7 +24,9 @@ _MAX_DEPTH: Final = 64
 # Bound total tree dispatches so a wide timestamp cannot force unbounded work
 # before leaf/op caps are reached. Sized so the two caps around it stay
 # REACHABLE: `_MAX_LEAVES` paths of the longest real op-chain measured for
-# these caps (100 ops, see `anchor._MAX_OPS_PER_PROOF`) cost
+# these caps -- 100 ops, the largest real Bitcoin path recorded in `anchor.py`'s
+# own cap-sizing comment, a measurement with no symbol of its own and NOT
+# `anchor._MAX_OPS_PER_PROOF`, which is the structural cap at 256 -- cost
 # `_MAX_LEAVES * (100 + 2)` dispatches counting each leaf's fork marker and
 # attestation. At 4096 the node cap bound before them instead, admitting only
 # 40 leaves at that length -- below the 64 proofs `anchor` accepts per

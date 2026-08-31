@@ -310,6 +310,20 @@ def test_parse_ots_rejects_non_sha256_file_hash_op_by_name() -> None:
         ots.parse_ots(data)
 
 
+def test_parse_ots_names_the_unsupported_file_hash_op_before_reading_its_digest() -> None:
+    """The op is refused on its own terms, not as a side effect of running out of bytes.
+
+    The test above carries a FULL sha1 digest, so it passes whichever order the
+    parser uses. Truncate that digest and the two orders diverge: reading first
+    reports a truncation and never names the op the file actually declared,
+    which is the one thing the operator needs to know.
+    """
+    data = MAGIC + b"\x01" + b"\x02" + (b"\x00" * 4)
+
+    with pytest.raises(ots.OtsError, match="unsupported file hash op sha1"):
+        ots.parse_ots(data)
+
+
 def test_parse_ots_rejects_bitcoin_attestation_payload_with_trailing_bytes() -> None:
     data = _ots_with_tree(_attestation(TAG_BITCOIN, _varuint(42) + b"x"))
 
