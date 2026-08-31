@@ -44,6 +44,7 @@ import {
   MAX_PROOFS_PER_EVIDENCE_,
   MAX_OPS_PER_PROOF_,
   MAX_OP_HEX_LEN_,
+  MAX_TOTAL_OP_HEX_LEN_,
   verifyAnchor,
   verifySeededAnchor,
   passesHorizon,
@@ -546,6 +547,24 @@ describe('verifySeededAnchor: ceilings', () => {
     const verdict = verifySeededAnchor(evidence([otsProof({ ops: oversizedOps })]), SEED, policy())
     expect(verdict.anchored).toBe(false)
     expect(verdict.warnings).toEqual([`proof[0]: ots proof has more than ${MAX_OPS_PER_PROOF_} ops`])
+  })
+
+  // Twin of tests/test_anchor_seeded.py's total-operand guard: the seeded and
+  // checkpoint entry points share replayOtsOpChain, and a cap only one door
+  // enforces is a cap someone will route around.
+  it('caps the total operand length', () => {
+    const chunkHex = MAX_OP_HEX_LEN_
+    const ops: unknown[] = []
+    for (let i = 0; i < MAX_TOTAL_OP_HEX_LEN_ / chunkHex; i++) {
+      ops.push(['append', 'ab'.repeat(chunkHex / 2)])
+      ops.push(['sha256'])
+    }
+    ops.push(['append', 'ab'])
+    const verdict = verifySeededAnchor(evidence([otsProof({ ops })]), SEED, policy())
+    expect(verdict.anchored).toBe(false)
+    expect(verdict.warnings).toEqual([
+      `proof[0]: ots proof operands exceed ${MAX_TOTAL_OP_HEX_LEN_} total hex chars`,
+    ])
   })
 
   it('accepts an ops list at exactly the cap', () => {

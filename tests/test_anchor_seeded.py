@@ -726,3 +726,25 @@ def test_seeded_anchor_caller_bug_takes_precedence_over_malformed_evidence() -> 
     # argument boundary is checked first.
     with pytest.raises(anchor.AnchorError):
         anchor.verify_seeded_anchor("not-a-dict", "not-bytes", _policy())  # type: ignore[arg-type]
+
+
+def test_seeded_anchor_caps_total_operand_length() -> None:
+    """The total-operand cap reaches the seeded entry point too.
+
+    `verify_seeded_anchor` and `verify_anchor` share `replay_ots_op_chain`, so
+    this is the same guard seen from the other door — pinned here because the
+    repo's convention is that both entry points carry their own coverage, and
+    a cap that only one door enforces is a cap someone will route around.
+    """
+    chunk_hex = anchor._MAX_OP_HEX_LEN
+    ops: list[list[str]] = []
+    for _ in range(anchor._MAX_TOTAL_OP_HEX_LEN // chunk_hex):
+        ops.append(["append", "ab" * (chunk_hex // 2)])
+        ops.append(["sha256"])
+    ops.append(["append", "ab"])
+    proof = _ots_proof(ops=ops)
+    verdict = anchor.verify_seeded_anchor(_evidence([proof]), SEED, _policy())
+    assert verdict.anchored is False
+    assert verdict.warnings == [
+        f"proof[0]: ots proof operands exceed {anchor._MAX_TOTAL_OP_HEX_LEN} total hex chars"
+    ]

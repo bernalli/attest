@@ -1329,9 +1329,13 @@ def test_verify_caps_oversized_transparency_evidence() -> None:
 
 def test_verify_accepts_evaluator_max_scale_anchor_evidence() -> None:
     # Harmonization guard (review finding): the outer materialization cap
-    # must COVER what the anchor evaluator's own inner caps accept. 64 OTS
-    # proofs of 64 ops with max-size operands serialize past 4M chars and
-    # must still verify end-to-end — never degrade to
+    # must COVER what the anchor evaluator's own inner caps accept. The
+    # binding inner constraint is the per-chain operand TOTAL, not
+    # `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN` — that product is ~268M chars and
+    # would overshoot the outer ceiling by ~260MB, which is exactly why the
+    # total cap exists (see anchor._MAX_TOTAL_OP_HEX_LEN). 64 OTS proofs each
+    # carrying operands summing to that total serialize past 4M chars and must
+    # still verify end-to-end — never degrade to
     # transparency_claim_unresolvable as a false negative.
     envelope = _receipt_envelope()
     core_hash = tlog.receipt_core_hash(envelope)
@@ -1345,10 +1349,23 @@ def test_verify_accepts_evaluator_max_scale_anchor_evidence() -> None:
     operand = bytes.fromhex(operand_hex)
     acc = hashlib.sha256(note_bytes).digest()
     ops: list[list[str]] = []
-    for _ in range(anchor._MAX_OPS_PER_PROOF // 2):
-        ops.append(["append", operand_hex])
+    # Exactly at the worst case the evaluator admits, on BOTH binding axes:
+    # maximal operands until the operand TOTAL is spent, then empty-operand
+    # ops until the op COUNT is spent too. Asserting `<=` on either axis
+    # would let the bundle sit under the worst case and still pass, which is
+    # how a harmonization test stops harmonizing. Derived from the constants
+    # so a future cap change re-derives the bundle rather than under-testing.
+    non_empty_operands, remainder = divmod(anchor._MAX_TOTAL_OP_HEX_LEN, anchor._MAX_OP_HEX_LEN)
+    assert remainder == 0
+    assert 2 * non_empty_operands <= anchor._MAX_OPS_PER_PROOF
+    for _ in range(non_empty_operands):
+        ops.append(["prepend", operand_hex])
         ops.append(["sha256"])
-        acc = hashlib.sha256(acc + operand).digest()
+        acc = hashlib.sha256(operand + acc).digest()
+    while len(ops) < anchor._MAX_OPS_PER_PROOF:
+        ops.append(["prepend", ""])
+    assert sum(len(op[1]) for op in ops if len(op) == 2) == anchor._MAX_TOTAL_OP_HEX_LEN
+    assert len(ops) == anchor._MAX_OPS_PER_PROOF
     proof = {
         "kind": "ots",
         "ops": ops,
@@ -1361,7 +1378,8 @@ def test_verify_accepts_evaluator_max_scale_anchor_evidence() -> None:
         "proofs": [proof] * anchor._MAX_PROOFS_PER_EVIDENCE,
     }
     serialized_len = len(canon.dumps(evidence))
-    assert 2_000_000 < serialized_len <= verify._MAX_TRANSPARENCY_EVIDENCE_LEN
+    assert serialized_len > anchor._MAX_PROOFS_PER_EVIDENCE * anchor._MAX_TOTAL_OP_HEX_LEN
+    assert serialized_len <= verify._MAX_TRANSPARENCY_EVIDENCE_LEN
 
     pinned = anchor.PinnedHeader(header_hash=header_hash, merkle_root=acc.hex(), time=header_time)
     policy = anchor.AnchorPolicy(pinned_headers={header_hash: pinned}, crqc_horizon=None)

@@ -13,7 +13,13 @@ import { ed25519 } from '@noble/curves/ed25519'
 import { loadsStrict, canonicalBytes, JsonObject, JsonValue } from '../src/canon.js'
 import { b64uEncode } from '../src/b64u.js'
 import { LogKey, TlogError, parseCheckpoint } from '../src/tlog.js'
-import { AnchorPolicy } from '../src/anchor.js'
+import {
+  AnchorPolicy,
+  MAX_OPS_PER_PROOF_,
+  MAX_OP_HEX_LEN_,
+  MAX_TOTAL_OP_HEX_LEN_,
+  MAX_PROOFS_PER_EVIDENCE_,
+} from '../src/anchor.js'
 import {
   TransparencyError,
   TRANSPARENCY_NOT_CHECKED,
@@ -25,7 +31,7 @@ import {
   evaluateTransparency,
   iso8601,
 } from '../src/transparency.js'
-import { verify } from '../src/verify.js'
+import { MAX_TRANSPARENCY_EVIDENCE_LEN_, verify } from '../src/verify.js'
 import type { TrustStore } from '../src/manifests.js'
 
 const enc = new TextEncoder()
@@ -949,30 +955,50 @@ describe('verify(): Stage 2 integration', () => {
 
   it('accepts evaluator max-scale anchor evidence (harmonization boundary)', () => {
     // The outer materialization cap must COVER what the anchor evaluator's
-    // own inner caps accept: 64 OTS proofs of 64 ops with max-size operands
-    // serialize past 2MB and must still verify end-to-end.
+    // own inner caps accept. Every bound below is DERIVED from the evaluator's
+    // exported caps, never written as a literal: until 2026-08-31 this test
+    // hardcoded the operand size, the op count and the proof count, so raising
+    // the caps left it green while its Python twin — which derives them —
+    // failed instantly. A harmonization test that does not read the constants
+    // it harmonizes is not enforcing the invariant its name claims.
+    //
+    // The binding inner constraint is the per-chain operand TOTAL, not
+    // MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN: that product would overshoot the
+    // outer ceiling by ~260MB, which is why MAX_TOTAL_OP_HEX_LEN exists.
+    //
+    // The bundle sits at the worst case on BOTH binding axes: maximal
+    // operands until the operand total is spent, then empty-operand ops
+    // until the op count is spent too. Asserting `<=` on either axis would
+    // let it sit under the worst case and still pass.
     const evidence = singleEntryEvidence(RECEIPT_ENTRY, CP_RECEIPT1)
     const noteBytes = parseCheckpoint(CP_RECEIPT1).noteBytes
     const headerTime = 1700000000
     const headerHash = '3a'.repeat(32)
-    const operandHex = 'ab'.repeat(1024)
+    const operandHex = 'ab'.repeat(MAX_OP_HEX_LEN_ / 2)
     const operand = h(operandHex)
     let acc = sha256(noteBytes)
     // JsonValue convention: every numeric field must be bigint at this
     // (pre-materialization) level, matching this verifier's other
     // JSON-serializable inputs — see singleEntryEvidence's doc comment.
     const ops: unknown[][] = []
-    for (let i = 0; i < 32; i++) {
-      ops.push(['append', operandHex])
+    const nonEmptyOperands = MAX_TOTAL_OP_HEX_LEN_ / MAX_OP_HEX_LEN_
+    expect(Number.isInteger(nonEmptyOperands)).toBe(true)
+    expect(2 * nonEmptyOperands).toBeLessThanOrEqual(MAX_OPS_PER_PROOF_)
+    for (let i = 0; i < nonEmptyOperands; i++) {
+      ops.push(['prepend', operandHex])
       ops.push(['sha256'])
-      acc = sha256(new Uint8Array([...acc, ...operand]))
+      acc = sha256(new Uint8Array([...operand, ...acc]))
     }
+    while (ops.length < MAX_OPS_PER_PROOF_) ops.push(['prepend', ''])
+    const totalOperandHex = ops.reduce((total, op) => total + (typeof op[1] === 'string' ? op[1].length : 0), 0)
+    expect(totalOperandHex).toBe(MAX_TOTAL_OP_HEX_LEN_)
+    expect(ops).toHaveLength(MAX_OPS_PER_PROOF_)
     const accHex = Array.from(acc).map((b) => b.toString(16).padStart(2, '0')).join('')
     const proof = { kind: 'ots', ops, header_merkle_root: accHex, header_time: BigInt(headerTime), header_hash: headerHash }
-    evidence['anchors'] = { checkpoint: CP_RECEIPT1, proofs: Array.from({ length: 64 }, () => proof) }
+    evidence['anchors'] = { checkpoint: CP_RECEIPT1, proofs: Array.from({ length: MAX_PROOFS_PER_EVIDENCE_ }, () => proof) }
     const serializedLen = JSON.stringify(evidence, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)).length
-    expect(serializedLen).toBeGreaterThan(1_000_000)
-    expect(serializedLen).toBeLessThanOrEqual(10_000_000)
+    expect(serializedLen).toBeGreaterThan(MAX_PROOFS_PER_EVIDENCE_ * MAX_TOTAL_OP_HEX_LEN_)
+    expect(serializedLen).toBeLessThanOrEqual(MAX_TRANSPARENCY_EVIDENCE_LEN_)
 
     const policy: AnchorPolicy = { pinnedHeaders: { [headerHash]: { headerHash, merkleRoot: accHex, time: headerTime } }, crqcHorizon: null }
     const result = verify(envelopeBytes(envelopeV1()), receiptTrustStore(manifestV1()), null, null, undefined as unknown as number, {

@@ -195,6 +195,7 @@ export const evidenceProofsExceeds = (max: number) => `evidence.proofs exceeds m
 export const proofNotObject = (i: number, v: unknown) => `proof[${i}]: must be an object, got ${pyTypeName(v)}`
 export const proofPrefixed = (i: number, msg: string) => `proof[${i}]: ${msg}`
 export const otsTooManyOps = (max: number) => `ots proof has more than ${max} ops`
+export const otsOperandTotalTooLarge = (max: number) => `ots proof operands exceed ${max} total hex chars`
 export const otsUnknownOp = (op: string) => `unknown ots op ${pyTruncRepr(op)}`
 export const otsOperandInvalid = (op: string) => `ots ${pyTruncRepr(op)} operand must be bounded, even-length lowercase hex`
 export const otsOperandRequired = (op: string) => `ots ${pyTruncRepr(op)} op needs exactly one hex operand`
