@@ -1418,13 +1418,65 @@ _CLAIM_SHAPES: tuple[_ClaimShape, ...] = (
     _ClaimShape("subset-of-them", r"\bgroups: (\d+) of them the v0\.1\b", ((1, "v01_subset"),)),
 )
 
-# THE one compile point. Sixteen patterns were compiled one by one and not one
-# carried IGNORECASE, which is why "All 97 conformance vector leaves" sailed
-# past a guard that would have caught "all 97". A flag applied here cannot be
-# forgotten by an entry.
-_COMPILED_SHAPES: tuple[tuple[_ClaimShape, re.Pattern[str]], ...] = tuple(
-    (shape, re.compile(shape.pattern, re.IGNORECASE)) for shape in _CLAIM_SHAPES
-)
+# One message per quantity, so a shape checking two of them reports each in the
+# wording the reader already knows. These strings are pinned by the bench.
+_CLAIM_MESSAGES: dict[str, Callable[[str, int, int, int], str]] = {
+    "corpus_total": lambda rel, line, claimed, measured: (
+        f"{rel}:{line}: claims {claimed} corpus leaves, but the corpus holds {measured}"
+    ),
+    "v01_subset": lambda rel, line, claimed, measured: (
+        f"{rel}:{line}: claims a {claimed}-leaf v0.1 subset, but the subset holds {measured}"
+    ),
+    "group_count": lambda rel, line, claimed, measured: (
+        f"{rel}:{line}: claims {claimed} vector groups, but there are {measured}"
+    ),
+}
+
+
+def _compile_claim_shapes(
+    shapes: tuple[_ClaimShape, ...],
+) -> tuple[tuple[_ClaimShape, re.Pattern[str]], ...]:
+    """THE one compile point, and the registry's own validator.
+
+    Sixteen patterns were compiled one by one and not one carried IGNORECASE,
+    which is why "All 97 conformance vector leaves" sailed past a guard that
+    would have caught "all 97". A flag applied here cannot be forgotten by an
+    entry. Making the vocabulary data also makes a malformed entry possible,
+    so the registry is checked fail-closed at import: a bad entry names itself
+    here rather than surfacing as an IndexError or a KeyError while scanning
+    some unrelated file.
+    """
+    errors: list[str] = []
+    seen_names: set[str] = set()
+    compiled: list[tuple[_ClaimShape, re.Pattern[str]]] = []
+
+    for shape in shapes:
+        if shape.name in seen_names:
+            errors.append(f"{shape.name}: duplicate claim-shape name")
+        seen_names.add(shape.name)
+
+        try:
+            regex = re.compile(shape.pattern, re.IGNORECASE)
+        except re.error as exc:
+            errors.append(f"{shape.name}: regex does not compile: {exc}")
+            continue
+
+        if not shape.checks:
+            errors.append(f"{shape.name}: has no checks")
+        for group, key in shape.checks:
+            if group < 1 or group > regex.groups:
+                errors.append(f"{shape.name}: capture group {group} is outside 1..{regex.groups}")
+            if key not in _CLAIM_MESSAGES:
+                errors.append(f"{shape.name}: unknown measured quantity {key!r}")
+
+        compiled.append((shape, regex))
+
+    if errors:
+        raise ValueError("corpus claim registry is not well formed: " + "; ".join(errors))
+    return tuple(compiled)
+
+
+_COMPILED_SHAPES = _compile_claim_shapes(_CLAIM_SHAPES)
 
 # `\d+` will happily match thousands of digits, and int() refuses to convert a
 # string past CPython's integer-string limit (4300 digits): a document with a
@@ -1462,21 +1514,6 @@ def _measured_quantities() -> dict[str, int]:
     """Every live figure a registered claim shape can be checked against."""
     total, groups, subset = _measured_corpus()
     return {"corpus_total": total, "group_count": groups, "v01_subset": subset}
-
-
-# One message per quantity, so a shape checking two of them reports each in the
-# wording the reader already knows. These strings are pinned by the bench.
-_CLAIM_MESSAGES: dict[str, Callable[[str, int, int, int], str]] = {
-    "corpus_total": lambda rel, line, claimed, measured: (
-        f"{rel}:{line}: claims {claimed} corpus leaves, but the corpus holds {measured}"
-    ),
-    "v01_subset": lambda rel, line, claimed, measured: (
-        f"{rel}:{line}: claims a {claimed}-leaf v0.1 subset, but the subset holds {measured}"
-    ),
-    "group_count": lambda rel, line, claimed, measured: (
-        f"{rel}:{line}: claims {claimed} vector groups, but there are {measured}"
-    ),
-}
 
 
 def _measured_corpus() -> tuple[int, int, int]:
@@ -1550,10 +1587,18 @@ def check_corpus_counts() -> list[str]:
                     return line_number
             return 1
 
+        # Shapes overlap by design -- "130 leaf vectors across 2 groups" is
+        # both a leaf-vectors claim and an across-groups one -- so the same
+        # captured number would otherwise be reported once per shape that saw it.
+        reported_claims: set[tuple[int, int, str]] = set()
         for shape, regex in _COMPILED_SHAPES:
             for match in regex.finditer(folded):
                 line = line_of(match.start())
                 for group, key in shape.checks:
+                    claim_id = (*match.span(group), key)
+                    if claim_id in reported_claims:
+                        continue
+                    reported_claims.add(claim_id)
                     claimed, parse_error = _parse_corpus_claim_number(match.group(group), rel, line)
                     if parse_error is not None:
                         errors.append(parse_error)

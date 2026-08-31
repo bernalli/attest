@@ -1958,6 +1958,53 @@ def test_every_claim_shape_is_case_insensitive_by_construction() -> None:
         assert regex.flags & re.IGNORECASE, shape.name
 
 
+@pytest.mark.parametrize(
+    ("shapes", "expected"),
+    [
+        (
+            (
+                check_spec_docs._ClaimShape(
+                    "dup", r"\b(\d+) leaf vectors\b", ((1, "corpus_total"),)
+                ),
+                check_spec_docs._ClaimShape("dup", r"\b(\d+) leaves\b", ((1, "corpus_total"),)),
+            ),
+            "duplicate claim-shape name",
+        ),
+        (
+            (
+                check_spec_docs._ClaimShape(
+                    "bad-group", r"\b(\d+) leaf vectors\b", ((2, "corpus_total"),)
+                ),
+            ),
+            "capture group 2 is outside 1..1",
+        ),
+        (
+            (check_spec_docs._ClaimShape("bad-key", r"\b(\d+) leaf vectors\b", ((1, "missing"),)),),
+            "unknown measured quantity 'missing'",
+        ),
+        (
+            (check_spec_docs._ClaimShape("bad-regex", r"(", ((1, "corpus_total"),)),),
+            "regex does not compile",
+        ),
+    ],
+)
+def test_claim_shape_registry_rejects_not_well_formed_entries(
+    shapes: tuple[check_spec_docs._ClaimShape, ...], expected: str
+) -> None:
+    # Making the vocabulary data makes a malformed entry possible. The registry
+    # names the bad entry at import instead of surfacing as an IndexError or a
+    # KeyError halfway through scanning some unrelated file.
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        check_spec_docs._compile_claim_shapes(shapes)
+
+
+def test_overlapping_claim_shapes_do_not_duplicate_the_same_captured_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _corpus_case(tmp_path, monkeypatch, "130 leaf vectors across 2 groups")
+    assert errors == ["doc.md:1: claims 130 corpus leaves, but the corpus holds 3"]
+
+
 def test_case_variant_claims_are_caught(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     body = "All 130 Conformance Vector Leaves pass on every runner."
     assert _corpus_case(tmp_path, monkeypatch, body) != []
