@@ -2117,9 +2117,15 @@ def _cmd_log_anchor(args: argparse.Namespace) -> int:
     v2_seed = hashlib.sha256(evidence_checkpoint.signed_note_bytes).digest()
     v2_accumulator, v2_warning = anchor.replay_ots_op_chain(v2_seed, ots_proof.get("ops"))
     proof_root = ots_proof.get("header_merkle_root")
+    # A replay warning is a structural refusal of the op-chain itself (a cap,
+    # a malformed op) and says exactly which one — it is not "this chain
+    # commits to something else". Surfacing it here keeps `log anchor`'s
+    # message as specific as the verifier's, instead of collapsing every
+    # structural refusal into the seed-mismatch text below.
+    if v2_warning is not None:
+        raise CliUsageError(f"{args.ots_proof}: {v2_warning}")
     v2_matches = (
-        v2_warning is None
-        and v2_accumulator is not None
+        v2_accumulator is not None
         and isinstance(proof_root, str)
         and v2_accumulator.hex() == proof_root
     )

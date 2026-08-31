@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from attest import cli, keys, pq, revocation, tlog, transfer, verify
+from attest import anchor, cli, keys, pq, revocation, tlog, transfer, verify
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -3121,6 +3121,62 @@ def test_log_anchor_refuses_ots_proof_with_unrelated_seed(tmp_path: Path, capsys
     assert rc == 2
     assert "does not replay to its own header_merkle_root" in captured.err
     assert "signed-note-v2 seed SHA256(signed_note_bytes)=" in captured.err
+    assert not out_path.exists()
+
+
+def test_log_anchor_reports_ots_total_operand_cap(tmp_path: Path, capsys: CapSys) -> None:
+    """A cap refusal must name the cap, not read as a commitment mismatch."""
+    minimal_evidence = _minimal_anchor_evidence()
+    log_dir = _log_init(tmp_path, origin=LOG_ORIGIN)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(minimal_evidence), encoding="utf-8")
+
+    target = anchor._MAX_TOTAL_OP_HEX_LEN + 2
+    ops: list[list[str]] = []
+    remaining = target
+    while remaining > 0:
+        take = min(1024, remaining)
+        ops.append(["append", "ab" * (take // 2)])
+        ops.append(["sha256"])
+        remaining -= take
+    assert len(ops) <= anchor._MAX_OPS_PER_PROOF
+
+    ots_proof_path = tmp_path / "ots-proof.json"
+    ots_proof_path.write_text(
+        json.dumps(
+            {
+                "ops": ops,
+                "header_merkle_root": "00" * 32,
+                "header_hash": "11" * 32,
+                "header_time": 1700000000,
+            }
+        ),
+        encoding="utf-8",
+    )
+    out_path = tmp_path / "anchored.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "anchor",
+            "--dir",
+            str(log_dir),
+            "--evidence",
+            str(evidence_path),
+            "--ots-proof",
+            str(ots_proof_path),
+            "--out",
+            str(out_path),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert (
+        f"ots proof operands exceed {anchor._MAX_TOTAL_OP_HEX_LEN} total hex chars" in captured.err
+    )
+    assert "does not replay to its own header_merkle_root" not in captured.err
     assert not out_path.exists()
 
 

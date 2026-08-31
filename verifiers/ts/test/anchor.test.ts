@@ -676,6 +676,29 @@ describe('hex validation discipline', () => {
     expect(accumulator).toBe(null)
     expect(warning).toBe(`ots proof operands exceed ${MAX_TOTAL_OP_HEX_LEN_} total hex chars`)
   })
+
+  it('rejects total overflow accumulated from many small operands', () => {
+    const chunkHex = Math.min(1024, MAX_OP_HEX_LEN_)
+    const target = MAX_TOTAL_OP_HEX_LEN_ + 2
+    const ops: unknown[] = []
+    let remaining = target
+    while (remaining > 0) {
+      const take = Math.min(chunkHex, remaining)
+      ops.push(['append', 'ab'.repeat(take / 2)])
+      ops.push(['sha256'])
+      remaining -= take
+    }
+    const operandOps = ops.filter((op) => typeof (op as unknown[])[1] === 'string') as unknown[][]
+    expect(ops.length).toBeLessThanOrEqual(MAX_OPS_PER_PROOF_)
+    expect(operandOps.length).toBeGreaterThan(MAX_TOTAL_OP_HEX_LEN_ / MAX_OP_HEX_LEN_)
+    expect(operandOps.every((op) => (op[1] as string).length <= chunkHex && chunkHex <= MAX_OP_HEX_LEN_)).toBe(true)
+    expect(operandOps.reduce((total, op) => total + (op[1] as string).length, 0)).toBe(target)
+
+    const { accumulator, warning } = replayOtsOpChain(new Uint8Array(32), ops)
+
+    expect(accumulator).toBe(null)
+    expect(warning).toBe(`ots proof operands exceed ${MAX_TOTAL_OP_HEX_LEN_} total hex chars`)
+  })
 })
 
 // --------------------------------------------------------------------------

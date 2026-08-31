@@ -855,9 +855,28 @@ def test_replay_rejects_operands_one_hex_pair_over_the_total_cap() -> None:
     ops = [*_chain_totalling(anchor._MAX_TOTAL_OP_HEX_LEN), ["append", "ab"]]
     accumulator, warning = anchor.replay_ots_op_chain(b"\x00" * 32, ops)
     assert accumulator is None
-    assert warning == (
-        f"ots proof operands exceed {anchor._MAX_TOTAL_OP_HEX_LEN} total hex chars"
-    )
+    assert warning == (f"ots proof operands exceed {anchor._MAX_TOTAL_OP_HEX_LEN} total hex chars")
+
+
+def test_replay_rejects_total_cap_overflow_from_many_small_operands() -> None:
+    """The total is an accumulator, so it must refuse a sum reached in crumbs.
+
+    The boundary pair above overflows with one maximal operand; an attacker
+    who never touches the per-op cap gets there with many small ones instead,
+    and only the running total sees it.
+    """
+    chunk_hex = 1024
+    ops = _chain_totalling(anchor._MAX_TOTAL_OP_HEX_LEN + 2, chunk_hex=chunk_hex)
+    operand_ops = [op for op in ops if len(op) == 2]
+    assert len(ops) <= anchor._MAX_OPS_PER_PROOF
+    assert len(operand_ops) > anchor._MAX_TOTAL_OP_HEX_LEN // anchor._MAX_OP_HEX_LEN
+    assert all(len(op[1]) <= chunk_hex <= anchor._MAX_OP_HEX_LEN for op in operand_ops)
+    assert sum(len(op[1]) for op in operand_ops) == anchor._MAX_TOTAL_OP_HEX_LEN + 2
+
+    accumulator, warning = anchor.replay_ots_op_chain(b"\x00" * 32, ops)
+
+    assert accumulator is None
+    assert warning == (f"ots proof operands exceed {anchor._MAX_TOTAL_OP_HEX_LEN} total hex chars")
 
 
 def test_total_operand_cap_counts_only_append_and_prepend_operands() -> None:

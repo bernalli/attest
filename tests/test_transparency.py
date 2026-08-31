@@ -1349,15 +1349,23 @@ def test_verify_accepts_evaluator_max_scale_anchor_evidence() -> None:
     operand = bytes.fromhex(operand_hex)
     acc = hashlib.sha256(note_bytes).digest()
     ops: list[list[str]] = []
-    # Exactly at the operand total the evaluator admits: maximal operands,
-    # as many as the total allows. Derived from the constants so a future
-    # cap change re-derives the bundle instead of silently under-testing it.
-    for _ in range(anchor._MAX_TOTAL_OP_HEX_LEN // anchor._MAX_OP_HEX_LEN):
-        ops.append(["append", operand_hex])
+    # Exactly at the worst case the evaluator admits, on BOTH binding axes:
+    # maximal operands until the operand TOTAL is spent, then empty-operand
+    # ops until the op COUNT is spent too. Asserting `<=` on either axis
+    # would let the bundle sit under the worst case and still pass, which is
+    # how a harmonization test stops harmonizing. Derived from the constants
+    # so a future cap change re-derives the bundle rather than under-testing.
+    non_empty_operands, remainder = divmod(anchor._MAX_TOTAL_OP_HEX_LEN, anchor._MAX_OP_HEX_LEN)
+    assert remainder == 0
+    assert 2 * non_empty_operands <= anchor._MAX_OPS_PER_PROOF
+    for _ in range(non_empty_operands):
+        ops.append(["prepend", operand_hex])
         ops.append(["sha256"])
-        acc = hashlib.sha256(acc + operand).digest()
+        acc = hashlib.sha256(operand + acc).digest()
+    while len(ops) < anchor._MAX_OPS_PER_PROOF:
+        ops.append(["prepend", ""])
     assert sum(len(op[1]) for op in ops if len(op) == 2) == anchor._MAX_TOTAL_OP_HEX_LEN
-    assert len(ops) <= anchor._MAX_OPS_PER_PROOF
+    assert len(ops) == anchor._MAX_OPS_PER_PROOF
     proof = {
         "kind": "ots",
         "ops": ops,
@@ -1370,7 +1378,8 @@ def test_verify_accepts_evaluator_max_scale_anchor_evidence() -> None:
         "proofs": [proof] * anchor._MAX_PROOFS_PER_EVIDENCE,
     }
     serialized_len = len(canon.dumps(evidence))
-    assert 2_000_000 < serialized_len <= verify._MAX_TRANSPARENCY_EVIDENCE_LEN
+    assert serialized_len > anchor._MAX_PROOFS_PER_EVIDENCE * anchor._MAX_TOTAL_OP_HEX_LEN
+    assert serialized_len <= verify._MAX_TRANSPARENCY_EVIDENCE_LEN
 
     pinned = anchor.PinnedHeader(header_hash=header_hash, merkle_root=acc.hex(), time=header_time)
     policy = anchor.AnchorPolicy(pinned_headers={header_hash: pinned}, crqc_horizon=None)
