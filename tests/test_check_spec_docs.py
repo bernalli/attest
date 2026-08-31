@@ -2584,6 +2584,70 @@ def test_the_gloss_must_share_the_paragraph(
     assert _coined_case(tmp_path, monkeypatch, {"README.md": body}) != []
 
 
+@pytest.mark.parametrize("separator", ["\r\n\r\n", "\n   \n", "\n\n\n", "\n\t\n"])
+def test_paragraph_break_variants_keep_the_gloss_scoped_to_its_own_paragraph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, separator: str
+) -> None:
+    # A blank line written with CRLF, or carrying spaces, is still a blank
+    # line to every reader and every renderer. Splitting on the literal
+    # "\n\n" alone merges the two blocks, and the gloss below then answers
+    # for the term above -- silently, which is the direction that matters.
+    body = (
+        "We offer the eternal-verifiability guarantee."
+        f"{separator}"
+        "Elsewhere: never the ability to verify the bytes.\n"
+    )
+    assert _coined_case(tmp_path, monkeypatch, {"README.md": body}) != []
+
+
+def test_coined_term_line_numbers_use_unicode_line_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Normalization already treats U+2028 as a line end, so a report that
+    # counted only "\n" would name a line the reader cannot find.
+    errors = _coined_case(
+        tmp_path, monkeypatch, {"README.md": "intro\u2028the eternal-verifiability guarantee\n"}
+    )
+    assert errors and "README.md:2" in errors[0]
+
+
+def test_a_coined_term_on_a_structured_surface_is_refused_outright(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A package manifest has no paragraph to gloss in: the whole file is one
+    # block, so "the gloss must share the paragraph" degrades to "somewhere
+    # in this file", which is exactly the silent pass this guard exists to
+    # refuse. Where no unit of reading is defined, the term is not allowed.
+    errors = _coined_case(
+        tmp_path,
+        monkeypatch,
+        {"verifiers/ts/package.json": '{"description": "eternal verifiability, guaranteed"}\n'},
+    )
+    assert errors and "verifiers/ts/package.json" in errors[0]
+    assert "cannot be glossed" in errors[0]
+
+
+def test_a_structured_surface_that_does_not_name_the_term_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {"verifiers/ts/package.json": '{"description": "an offline receipt verifier"}\n'}
+    assert _coined_case(tmp_path, monkeypatch, files) == []
+
+
+def test_a_gloss_does_not_rescue_a_structured_surface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The point of the term-free rule: writing the gloss elsewhere in the
+    # file must NOT buy the term its way in, or the rule is the file-wide
+    # one it replaced.
+    body = (
+        '{"description": "eternal verifiability, guaranteed",\n'
+        ' "longDescription": "never the ability to verify the bytes"}\n'
+    )
+    errors = _coined_case(tmp_path, monkeypatch, {"verifiers/ts/package.json": body})
+    assert errors != []
+
+
 def test_case_variants_of_the_term_are_caught(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2658,3 +2722,50 @@ def test_every_coined_term_is_case_insensitive_by_construction() -> None:
     for pattern in check_spec_docs._COMPILED_COINED_TERMS.values():
         assert pattern.term.flags & re.IGNORECASE
         assert pattern.gloss.flags & re.IGNORECASE
+
+
+def _term(
+    name: str,
+    pattern: object = r"x",
+    *,
+    glossable: object = ("README.md",),
+    term_free: object = (),
+    defined_in: object = "d.md",
+) -> check_spec_docs._CoinedTerm:
+    return check_spec_docs._CoinedTerm(
+        name,
+        pattern,  # type: ignore[arg-type]
+        defined_in,  # type: ignore[arg-type]
+        r"g",
+        glossable,  # type: ignore[arg-type]
+        term_free,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.parametrize(
+    ("terms", "expected"),
+    [
+        ((_term("dup"), _term("dup")), "duplicate coined-term name"),
+        ((_term("bad-regex", "("),), "regex"),
+        ((_term("no-surfaces", glossable=()),), "no surfaces"),
+        # A bytes pattern COMPILES, and only fails later against str: the
+        # registry validator exists to make that failure happen at import.
+        ((_term("bad-type", b"x"),), "pattern must be a string"),
+        ((_term("bad-surface", glossable=("README.md", "")),), "must be non-empty strings"),
+        ((_term("bad-defined-in", defined_in=""),), "defined_in"),
+    ],
+)
+def test_coined_term_registry_rejects_not_well_formed_entries(
+    terms: tuple[check_spec_docs._CoinedTerm, ...], expected: str
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        check_spec_docs._compile_coined_terms(terms)
+
+
+def test_a_surface_may_not_be_listed_as_both_glossable_and_term_free() -> None:
+    # The two rules contradict each other on the same file, and a registry
+    # that let both stand would apply whichever the loop reached first.
+    with pytest.raises(ValueError, match="both glossable and term-free"):
+        check_spec_docs._compile_coined_terms(
+            (_term("both", glossable=("README.md",), term_free=("README.md",)),)
+        )

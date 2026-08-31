@@ -185,6 +185,22 @@ def _normalized_with_offsets(text: str, comment_prefix: str | None) -> tuple[str
     return "".join(out), offsets
 
 
+def _line_number_for_offset(text: str, original_offset: int) -> int:
+    """The 1-based line an offset falls on.
+
+    Counts the boundaries `splitlines` counts, not just "\\n": normalization
+    already treats U+2028 and friends as line ends, and a report that
+    disagreed would name a line the reader cannot find. Shared by every check
+    that reports a position through the offset map, so the two cannot drift.
+    """
+    position = 0
+    for line_number, raw_line in enumerate(text.splitlines(keepends=True), 1):
+        position += len(raw_line)
+        if original_offset < position:
+            return line_number
+    return 1
+
+
 # The six normative sections attest-versioning.md's amendment procedure
 # requires (§5) every reader be able to find by exact heading.
 _VERSIONING_REQUIRED_HEADINGS: tuple[str, ...] = (
@@ -1796,16 +1812,7 @@ def check_corpus_counts() -> list[str]:
         folded, offsets = _normalized_with_offsets(text, _COMMENT_PREFIX_BY_SUFFIX.get(path.suffix))
 
         def line_of(index: int, _text: str = text, _offsets: list[int] = offsets) -> int:
-            # Count the boundaries `splitlines` counts, not just "\n":
-            # normalization already treats U+2028 and friends as line ends,
-            # and a report that disagreed would point at the wrong line.
-            original_offset = _offsets[index]
-            position = 0
-            for line_number, raw_line in enumerate(_text.splitlines(keepends=True), 1):
-                position += len(raw_line)
-                if original_offset < position:
-                    return line_number
-            return 1
+            return _line_number_for_offset(_text, _offsets[index])
 
         # Shapes overlap by design -- "130 leaf vectors across 2 groups" is
         # both a leaf-vectors claim and an across-groups one -- so the same
@@ -1926,13 +1933,28 @@ def check_package_version_lockstep() -> list[str]:
 
 
 class _CoinedTerm(NamedTuple):
-    """A term this project invented, and where a reader can learn what it means."""
+    """A term this project invented, and where a reader can learn what it means.
+
+    Positioning surfaces come in two kinds because the rule needs a UNIT OF
+    READING and only prose has one. On a Markdown surface the unit is the
+    paragraph, and the term may appear as long as its paragraph glosses it.
+    A structured surface -- a package manifest, HTML, the draft's XML -- has
+    no such unit: split on blank lines, `package.json` is a single block, so
+    "the gloss must share the paragraph" quietly becomes "the gloss must be
+    somewhere in this file", which a term in `description` and a gloss three
+    keys away would satisfy. Rather than pretend to a granularity the format
+    does not offer, those surfaces forbid the term outright. That fails loud
+    and needs no per-format parser; the day one of them must carry the term,
+    the fix is to teach this module that format's unit and move the surface
+    across, not to widen a rule until it stops saying anything.
+    """
 
     name: str
     pattern: str  # regex SOURCE matching the term, never precompiled here
     defined_in: str  # repo-relative path of the defining document
-    gloss_pattern: str  # must co-occur in the same paragraph on a positioning surface
-    positioning_surfaces: tuple[str, ...]
+    gloss_pattern: str  # must co-occur in the same paragraph, on prose surfaces
+    glossable_surfaces: tuple[str, ...]  # prose: paragraph is a real unit
+    term_free_surfaces: tuple[str, ...]  # structured: no unit, so no bare term either
 
 
 class _CompiledCoinedTerm(NamedTuple):
@@ -1953,11 +1975,13 @@ _COINED_TERMS: tuple[_CoinedTerm, ...] = (
         pattern=r"\beternal[- ]verifiab\w*",
         defined_in="docs/spec/attest-versioning.md",
         gloss_pattern=r"never the ability to verify",
-        positioning_surfaces=(
+        glossable_surfaces=(
             "README.md",
             "docs/faq.md",
-            "site/index.html",
             "verifiers/ts/README.md",
+        ),
+        term_free_surfaces=(
+            "site/index.html",
             "pyproject.toml",
             "verifiers/ts/package.json",
             "ietf/draft-bernalli-open-purchase-receipts.xml",
@@ -1978,10 +2002,33 @@ def _compile_coined_terms(terms: tuple[_CoinedTerm, ...]) -> dict[str, _Compiled
     errors: list[str] = []
     compiled: dict[str, _CompiledCoinedTerm] = {}
     for term in terms:
+        # The type hints on a NamedTuple bind nothing at runtime, and the
+        # shapes that slip through fail LATE: a bytes pattern compiles and
+        # only raises when searched against a str, halfway through a scan.
+        if not isinstance(term.name, str) or not term.name:
+            errors.append(f"{term.name!r}: coined-term name must be a non-empty string")
+            continue
+        if not isinstance(term.pattern, str):
+            errors.append(f"{term.name}: term pattern must be a string")
+            continue
+        if not isinstance(term.gloss_pattern, str):
+            errors.append(f"{term.name}: gloss pattern must be a string")
+            continue
+        if not isinstance(term.defined_in, str) or not term.defined_in:
+            errors.append(f"{term.name}: defined_in must be a non-empty path")
+        surfaces = (*term.glossable_surfaces, *term.term_free_surfaces)
+        if not all(isinstance(surface, str) and surface for surface in surfaces):
+            errors.append(f"{term.name}: surfaces must be non-empty strings")
+        elif overlap := sorted(set(term.glossable_surfaces) & set(term.term_free_surfaces)):
+            # Two rules that contradict each other on the same file; whichever
+            # loop reached it first would decide, which is no rule at all.
+            errors.append(
+                f"{term.name}: {', '.join(overlap)} listed as both glossable and term-free"
+            )
         if term.name in compiled:
             errors.append(f"{term.name}: duplicate coined-term name")
-        if not term.positioning_surfaces:
-            errors.append(f"{term.name}: has no positioning surfaces")
+        if not surfaces:
+            errors.append(f"{term.name}: has no surfaces")
         try:
             patterns = _CompiledCoinedTerm(
                 re.compile(term.pattern, re.IGNORECASE),
@@ -1999,13 +2046,21 @@ def _compile_coined_terms(terms: tuple[_CoinedTerm, ...]) -> dict[str, _Compiled
 _COMPILED_COINED_TERMS = _compile_coined_terms(_COINED_TERMS)
 
 
+# A blank line is a blank line to every reader and every renderer, whether it
+# is written with CRLF, carries a stray space, or repeats. Splitting on the
+# literal "\n\n" alone merged such blocks, and a gloss below then answered for
+# a term above without a word being said.
+_PARAGRAPH_BREAK_RE = re.compile(r"\r?\n[ \t]*(?:\r?\n)+")
+
+
 def _paragraphs_with_offsets(text: str) -> list[tuple[int, str]]:
     """Blank-line-separated blocks, each with its offset in `text`."""
     blocks: list[tuple[int, str]] = []
     offset = 0
-    for block in text.split("\n\n"):
-        blocks.append((offset, block))
-        offset += len(block) + 2
+    for separator in _PARAGRAPH_BREAK_RE.finditer(text):
+        blocks.append((offset, text[offset : separator.start()]))
+        offset = separator.end()
+    blocks.append((offset, text[offset:]))
     return blocks
 
 
@@ -2045,7 +2100,7 @@ def check_coined_terms() -> list[str]:
                 f"the registry points at prose that moved on"
             )
             continue
-        for surface in term.positioning_surfaces:
+        for surface in (*term.glossable_surfaces, *term.term_free_surfaces):
             path = _REPO_ROOT / surface
             if not path.is_file():
                 continue
@@ -2054,12 +2109,23 @@ def check_coined_terms() -> list[str]:
             except UnicodeDecodeError:
                 errors.append(f"{surface}: not valid UTF-8 -- cannot be checked for coined terms")
                 continue
+            if surface in term.term_free_surfaces:
+                folded, offsets = _normalized_with_offsets(text, None)
+                match = compiled.term.search(folded)
+                if match is not None:
+                    line = _line_number_for_offset(text, offsets[match.start()])
+                    errors.append(
+                        f"{surface}:{line}: coined term '{term.name}' cannot be glossed on "
+                        f"this surface -- its format has no paragraph to gloss it in, so the "
+                        f"term does not belong here (define-by: {term.defined_in})"
+                    )
+                continue
             for block_offset, block in _paragraphs_with_offsets(text):
                 folded, offsets = _normalized_with_offsets(block, None)
                 match = compiled.term.search(folded)
                 if match is None or compiled.gloss.search(folded):
                     continue
-                line = text.count("\n", 0, block_offset + offsets[match.start()]) + 1
+                line = _line_number_for_offset(text, block_offset + offsets[match.start()])
                 errors.append(
                     f"{surface}:{line}: coined term '{term.name}' appears on a "
                     f"positioning surface without its gloss (define-by: {term.defined_in})"
