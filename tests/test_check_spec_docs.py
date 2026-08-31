@@ -1873,6 +1873,38 @@ def test_a_symlink_outside_the_scan_suffixes_is_ignored(
     assert errors == []
 
 
+def test_a_claim_wrapped_with_indentation_is_still_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Markdown wraps with a hanging indent: newline plus four spaces. The
+    # length-preserving fold turned this into "51-leaf    subset", which no
+    # pattern matches; whitespace runs must collapse to one space.
+    body = "measured against the 51-leaf\n    subset of the corpus"
+    assert _corpus_case(tmp_path, monkeypatch, body) != []
+
+
+def test_line_numbers_survive_normalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = "intro\n\nmore prose\n\nmeasured against the 51-leaf\n    subset of it\n"
+    errors = _corpus_case(tmp_path, monkeypatch, body)
+    assert any("doc.md:5:" in error for error in errors), errors
+
+
+def test_normalization_strips_line_comment_markers_and_maps_offsets() -> None:
+    text = "// gate (45 vector groups /\n//    212 leaves) discovers\n"
+    norm, offsets = check_spec_docs._normalized_with_offsets(text, "//")
+    assert "gate (45 vector groups / 212 leaves) discovers" in norm
+    idx = norm.index("212")
+    assert text[offsets[idx]] == "2"
+    assert text.count("\n", 0, offsets[idx]) + 1 == 2  # "212" sits on line 2
+
+
+def test_normalization_without_a_prefix_keeps_comment_markers() -> None:
+    norm, _offsets = check_spec_docs._normalized_with_offsets("a\n// b\n", None)
+    assert norm == "a // b"
+
+
 def test_an_oversized_numeric_claim_is_reported_not_allowed_to_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

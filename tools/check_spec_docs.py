@@ -114,6 +114,47 @@ def _scan_files() -> tuple[list[Path], list[str]]:
     return selected, refused
 
 
+# Which line-comment marker to strip, per scanned suffix. Empty until the
+# perimeter reaches code files.
+_COMMENT_PREFIX_BY_SUFFIX: dict[str, str] = {}
+
+
+def _normalized_with_offsets(text: str, comment_prefix: str | None) -> tuple[str, list[int]]:
+    """Collapse whitespace runs to single spaces, optionally stripping a
+    line-comment marker at each line start, and map every normalized
+    character back to its offset in the original text.
+
+    Prose wraps and comments wrap harder: a phrase split across two `//`
+    lines is invisible to any single-line or fold-preserving search. The
+    offset map is what keeps reported line numbers honest after the text
+    has been reshaped.
+    """
+    out: list[str] = []
+    offsets: list[int] = []
+    pending_space = False
+    position = 0
+    for raw_line in text.splitlines(keepends=True):
+        line_start = position
+        position += len(raw_line)
+        stripped = raw_line.lstrip()
+        lead = len(raw_line) - len(stripped)
+        if comment_prefix is not None and stripped.startswith(comment_prefix):
+            lead += len(comment_prefix)
+            stripped = stripped[len(comment_prefix) :]
+        for index, char in enumerate(stripped):
+            if char.isspace():
+                pending_space = True
+                continue
+            if pending_space and out:
+                out.append(" ")
+                offsets.append(line_start + lead + index)
+            pending_space = False
+            out.append(char)
+            offsets.append(line_start + lead + index)
+        pending_space = True
+    return "".join(out), offsets
+
+
 # The six normative sections attest-versioning.md's amendment procedure
 # requires (§5) every reader be able to find by exact heading.
 _VERSIONING_REQUIRED_HEADINGS: tuple[str, ...] = (
@@ -1441,11 +1482,10 @@ def check_corpus_counts() -> list[str]:
             continue
         for phrase in _CORPUS_CLAIM_EXEMPTIONS.get(rel, ()):
             text = text.replace(phrase, "")
-        # Fold newlines to spaces, preserving length so offsets stay valid.
-        folded = text.replace("\n", " ")
+        folded, offsets = _normalized_with_offsets(text, _COMMENT_PREFIX_BY_SUFFIX.get(path.suffix))
 
-        def line_of(offset: int, _text: str = text) -> int:
-            return _text.count("\n", 0, offset) + 1
+        def line_of(index: int, _text: str = text, _offsets: list[int] = offsets) -> int:
+            return _text.count("\n", 0, _offsets[index]) + 1
 
         for pattern in _CORPUS_CLAIM_PATTERNS:
             for match in pattern.finditer(folded):
