@@ -194,11 +194,17 @@ def _line_number_for_offset(text: str, original_offset: int) -> int:
     that reports a position through the offset map, so the two cannot drift.
     """
     position = 0
+    last_line = 1
     for line_number, raw_line in enumerate(text.splitlines(keepends=True), 1):
         position += len(raw_line)
+        last_line = line_number
         if original_offset < position:
             return line_number
-    return 1
+    # An offset at or past the end belongs to the LAST line. No caller can
+    # produce one today -- the offset map only holds indices of characters
+    # that exist -- but the `1` this used to fall back to would send a reader
+    # to the top of the file to look for something at the bottom.
+    return last_line
 
 
 # The six normative sections attest-versioning.md's amendment procedure

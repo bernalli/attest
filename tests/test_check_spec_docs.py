@@ -2753,6 +2753,7 @@ def _term(
         ((_term("bad-type", b"x"),), "pattern must be a string"),
         ((_term("bad-surface", glossable=("README.md", "")),), "must be non-empty strings"),
         ((_term("bad-defined-in", defined_in=""),), "defined_in"),
+        ((_term(""),), "name must be a non-empty string"),
     ],
 )
 def test_coined_term_registry_rejects_not_well_formed_entries(
@@ -2760,6 +2761,22 @@ def test_coined_term_registry_rejects_not_well_formed_entries(
 ) -> None:
     with pytest.raises(ValueError, match=re.escape(expected)):
         check_spec_docs._compile_coined_terms(terms)
+
+
+def test_a_bytes_gloss_pattern_is_refused_at_import_too() -> None:
+    # The term pattern had its check; the gloss pattern is the same hazard by
+    # the same route, and a registry that closed one door is not closed.
+    term = check_spec_docs._CoinedTerm("g", r"x", "d.md", b"g", ("README.md",), ())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="gloss pattern must be a string"):
+        check_spec_docs._compile_coined_terms((term,))
+
+
+def test_line_number_for_an_offset_past_the_end_names_the_last_line() -> None:
+    # Unreachable from today's callers, and pinned anyway: the fallback used
+    # to be line 1, which sends a reader to the top of a file to look for
+    # something at its bottom.
+    assert check_spec_docs._line_number_for_offset("a\nb\nc", 5) == 3
+    assert check_spec_docs._line_number_for_offset("", 0) == 1
 
 
 def test_a_surface_may_not_be_listed_as_both_glossable_and_term_free() -> None:
