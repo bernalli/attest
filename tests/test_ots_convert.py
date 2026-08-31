@@ -1352,3 +1352,33 @@ def test_log_ots_convert_zero_survivors_report_names_the_proofs_it_left_behind(
     report = json.loads((out_dir / "conversion-report.json").read_text(encoding="utf-8"))
     assert report["converted"] == 0
     assert report["proof_files_not_written_by_this_run"] == ["proof-0-42.json"]
+
+
+def test_preexisting_proof_files_are_sorted_regardless_of_directory_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`readdir`/`scandir` order is filesystem-defined, not name order --
+    measured on tmpfs (this suite's tmp_path) with 20 names, 5/5 trials
+    non-lexicographic. The report promises a deterministic list for a
+    deterministic input set, so the sort has to be pinned independently
+    of what the real filesystem happens to return today."""
+
+    out_dir = tmp_path / "converted"
+    out_dir.mkdir()
+    unsorted_names = ["proof-19-1.json", "proof-7-99999.json", "proof-2-13.json"]
+
+    class _FakeEntry:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    def _fake_glob(self: Path, pattern: str) -> list[_FakeEntry]:
+        assert pattern == "proof-*.json"
+        return [_FakeEntry(name) for name in unsorted_names]
+
+    monkeypatch.setattr(Path, "glob", _fake_glob)
+
+    assert cli._preexisting_proof_files(out_dir, ()) == [
+        "proof-19-1.json",
+        "proof-2-13.json",
+        "proof-7-99999.json",
+    ]
