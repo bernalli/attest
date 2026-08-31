@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -1366,35 +1367,64 @@ def check_conformance_doc() -> list[str]:
 # corrected two of them and still shipped six more, in five files, because the
 # search that followed looked for the exact strings just seen rather than for
 # the class of claim. This guard looks for the class.
-_CORPUS_CLAIM_PATTERNS = (
-    re.compile(r"\b(\d+)[- ]leaf conformance corpus\b"),
-    re.compile(r"\b(\d+)[- ]leaf corpus\b"),
-    re.compile(r"\b(\d+) leaf vectors\b"),
-    re.compile(r"\ball (\d+) conformance vector leaves\b"),
-    re.compile(r"\bnot all (\d+)\b"),
-    re.compile(r"\bnot against all (\d+)\b"),
-    re.compile(r"\b(\d+)/\1 leaves pass\b"),
-    re.compile(r"\bat least (\d+) leaves\b"),
+class _ClaimShape(NamedTuple):
+    """One way prose states a measured quantity."""
+
+    name: str  # stable id, used in tests and messages
+    pattern: str  # regex SOURCE, never precompiled here
+    checks: tuple[tuple[int, str], ...]  # (capture group, quantity key)
+
+
+_CLAIM_SHAPES: tuple[_ClaimShape, ...] = (
+    _ClaimShape("leaf-corpus", r"\b(\d+)[- ]leaf conformance corpus\b", ((1, "corpus_total"),)),
+    _ClaimShape("leaf-corpus-short", r"\b(\d+)[- ]leaf corpus\b", ((1, "corpus_total"),)),
+    _ClaimShape("leaf-vectors", r"\b(\d+) leaf vectors\b", ((1, "corpus_total"),)),
+    _ClaimShape("all-leaves", r"\ball (\d+) conformance vector leaves\b", ((1, "corpus_total"),)),
+    _ClaimShape("not-all", r"\bnot all (\d+)\b", ((1, "corpus_total"),)),
+    _ClaimShape("not-against-all", r"\bnot against all (\d+)\b", ((1, "corpus_total"),)),
+    _ClaimShape("n-of-n-pass", r"\b(\d+)/\1 leaves pass\b", ((1, "corpus_total"),)),
+    _ClaimShape("at-least", r"\bat least (\d+) leaves\b", ((1, "corpus_total"),)),
     # Shapes the first version of this guard missed, each found by a review
     # reading the same documents by hand: a normative sentence telling a v0.2
     # implementation to "reproduce all 130", and a parenthetical giving the
     # subset size as "(all leaves, currently 156)". Both are corpus claims in
     # every sense that matters, and neither looked like one to a pattern list
     # written from the examples already in front of it.
-    re.compile(r"\breproduce all (\d+)\b"),
-    re.compile(r"\ball leaves, currently (\d+)\b"),
-    re.compile(r"\bevery leaf in the corpus \(currently (\d+)\)"),
+    _ClaimShape("reproduce-all", r"\breproduce all (\d+)\b", ((1, "corpus_total"),)),
+    _ClaimShape("currently-paren", r"\ball leaves, currently (\d+)\b", ((1, "corpus_total"),)),
+    _ClaimShape(
+        "every-leaf-currently",
+        r"\bevery leaf in the corpus \(currently (\d+)\)",
+        ((1, "corpus_total"),),
+    ),
+    # Claims about the v0.1 subset, a different number from the total.
+    _ClaimShape("subset-the-n-leaf", r"\bthe (\d+)[- ]leaf subset\b", ((1, "v01_subset"),)),
+    _ClaimShape("subset-v01-paren", r"\bv0\.1 subset \((\d+) leaves\b", ((1, "v01_subset"),)),
+    _ClaimShape("subset-n-leaf-v01", r"\b(\d+)[- ]leaf v0\.1 subset\b", ((1, "v01_subset"),)),
+    _ClaimShape("subset-v01-leaves", r"\bv0\.1.{0,3}\((\d+) leaves\)", ((1, "v01_subset"),)),
+    _ClaimShape(
+        "leaf-vectors-across-groups",
+        r"\b(\d+) leaf vectors across (\d+) groups\b",
+        ((1, "corpus_total"), (2, "group_count")),
+    ),
+    # Shapes measured live and previously undefended: README.md's own sentence
+    # says "leaves across", not "leaf vectors across", and carries its subset
+    # as ": 61 of them the v0.1 corpus".
+    _ClaimShape(
+        "leaves-across-groups",
+        r"\b(\d+) leaves across (\d+) groups\b",
+        ((1, "corpus_total"), (2, "group_count")),
+    ),
+    _ClaimShape("subset-of-them", r"\bgroups: (\d+) of them the v0\.1\b", ((1, "v01_subset"),)),
 )
 
-# Claims about the v0.1 subset, which is a different number from the total.
-_SUBSET_CLAIM_PATTERNS = (
-    re.compile(r"\bthe (\d+)[- ]leaf subset\b"),
-    re.compile(r"\bv0\.1 subset \((\d+) leaves\b"),
-    re.compile(r"\b(\d+)[- ]leaf v0\.1 subset\b"),
-    re.compile(r"\bv0\.1.{0,3}\((\d+) leaves\)"),
+# THE one compile point. Sixteen patterns were compiled one by one and not one
+# carried IGNORECASE, which is why "All 97 conformance vector leaves" sailed
+# past a guard that would have caught "all 97". A flag applied here cannot be
+# forgotten by an entry.
+_COMPILED_SHAPES: tuple[tuple[_ClaimShape, re.Pattern[str]], ...] = tuple(
+    (shape, re.compile(shape.pattern, re.IGNORECASE)) for shape in _CLAIM_SHAPES
 )
-
-_GROUP_CLAIM_PATTERN = re.compile(r"\b(\d+) leaf vectors across (\d+) groups\b")
 
 # `\d+` will happily match thousands of digits, and int() refuses to convert a
 # string past CPython's integer-string limit (4300 digits): a document with a
@@ -1420,13 +1450,32 @@ def _parse_corpus_claim_number(raw: str, rel: str, line: int) -> tuple[int | Non
 # guard fire — an earlier comment here claimed that, and a review measured it
 # false: the exempt phrase is a shape no pattern matches anyway. The exemption
 # is belt-and-braces against a future pattern that would.)
-_CORPUS_CLAIM_EXEMPTIONS = {
-    # The share of leaves routed to the `verify()` surface, not the corpus
-    # size. The four shares sum to the corpus, and a TypeScript guard test pins
-    # that sum (plus the redemption surface) — not each share, which move as
-    # the corpus grows. Rewriting this 130 to match the total would make the
-    # sentence false.
-    "verifiers/ts/README.md": ("**`verify()`** (130 leaves)",),
+# Empty, and deliberately kept. Its one entry excused a `verify()`-surface
+# share in verifiers/ts/README.md that the file no longer states, and that no
+# pattern matched even while it did -- an exemption guarding nothing, against
+# nothing. The mechanism stays as the valve for the next sentence that states a
+# number the corpus does not own.
+_CORPUS_CLAIM_EXEMPTIONS: dict[str, tuple[str, ...]] = {}
+
+
+def _measured_quantities() -> dict[str, int]:
+    """Every live figure a registered claim shape can be checked against."""
+    total, groups, subset = _measured_corpus()
+    return {"corpus_total": total, "group_count": groups, "v01_subset": subset}
+
+
+# One message per quantity, so a shape checking two of them reports each in the
+# wording the reader already knows. These strings are pinned by the bench.
+_CLAIM_MESSAGES: dict[str, Callable[[str, int, int, int], str]] = {
+    "corpus_total": lambda rel, line, claimed, measured: (
+        f"{rel}:{line}: claims {claimed} corpus leaves, but the corpus holds {measured}"
+    ),
+    "v01_subset": lambda rel, line, claimed, measured: (
+        f"{rel}:{line}: claims a {claimed}-leaf v0.1 subset, but the subset holds {measured}"
+    ),
+    "group_count": lambda rel, line, claimed, measured: (
+        f"{rel}:{line}: claims {claimed} vector groups, but there are {measured}"
+    ),
 }
 
 
@@ -1473,7 +1522,7 @@ def check_corpus_counts() -> list[str]:
 
     Called directly from `main()`, like the other single-document guards.
     """
-    total, groups, subset_size = _measured_corpus()
+    quantities = _measured_quantities()
     errors: list[str] = []
     paths, refused = _scan_files()
     errors.extend(refused)
@@ -1501,44 +1550,17 @@ def check_corpus_counts() -> list[str]:
                     return line_number
             return 1
 
-        for pattern in _CORPUS_CLAIM_PATTERNS:
-            for match in pattern.finditer(folded):
-                claimed, parse_error = _parse_corpus_claim_number(
-                    match.group(1), rel, line_of(match.start())
-                )
-                if parse_error is not None:
-                    errors.append(parse_error)
-                    continue
-                if claimed != total:
-                    errors.append(
-                        f"{rel}:{line_of(match.start())}: claims {claimed} corpus "
-                        f"leaves, but the corpus holds {total}"
-                    )
-        for pattern in _SUBSET_CLAIM_PATTERNS:
-            for match in pattern.finditer(folded):
-                claimed, parse_error = _parse_corpus_claim_number(
-                    match.group(1), rel, line_of(match.start())
-                )
-                if parse_error is not None:
-                    errors.append(parse_error)
-                    continue
-                if claimed != subset_size:
-                    errors.append(
-                        f"{rel}:{line_of(match.start())}: claims a {claimed}-leaf "
-                        f"v0.1 subset, but the subset holds {subset_size}"
-                    )
-        for match in _GROUP_CLAIM_PATTERN.finditer(folded):
-            claimed_groups, parse_error = _parse_corpus_claim_number(
-                match.group(2), rel, line_of(match.start())
-            )
-            if parse_error is not None:
-                errors.append(parse_error)
-                continue
-            if claimed_groups != groups:
-                errors.append(
-                    f"{rel}:{line_of(match.start())}: claims {match.group(2)} "
-                    f"vector groups, but there are {groups}"
-                )
+        for shape, regex in _COMPILED_SHAPES:
+            for match in regex.finditer(folded):
+                line = line_of(match.start())
+                for group, key in shape.checks:
+                    claimed, parse_error = _parse_corpus_claim_number(match.group(group), rel, line)
+                    if parse_error is not None:
+                        errors.append(parse_error)
+                        continue
+                    measured = quantities[key]
+                    if claimed != measured:
+                        errors.append(_CLAIM_MESSAGES[key](rel, line, claimed, measured))
     return errors
 
 

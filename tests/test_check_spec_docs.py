@@ -1949,6 +1949,45 @@ def test_line_numbers_use_unicode_line_boundaries_seen_by_normalization(
     assert any("doc.md:2:" in error for error in errors), errors
 
 
+def test_every_claim_shape_is_case_insensitive_by_construction() -> None:
+    # The defect class this kills: 16 patterns compiled one by one, zero
+    # with IGNORECASE. One compile point, flag applied there, no entry can
+    # forget it.
+    assert check_spec_docs._COMPILED_SHAPES
+    for shape, regex in check_spec_docs._COMPILED_SHAPES:
+        assert regex.flags & re.IGNORECASE, shape.name
+
+
+def test_case_variant_claims_are_caught(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    body = "All 130 Conformance Vector Leaves pass on every runner."
+    assert _corpus_case(tmp_path, monkeypatch, body) != []
+
+
+def test_leaves_across_groups_variant_is_defended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # README.md's live shape ("now 212 leaves across 45 groups") matched
+    # nothing: the registered form demanded "leaf vectors across".
+    assert _corpus_case(tmp_path, monkeypatch, "now 130 leaves across 2 groups") != []
+    assert _corpus_case(tmp_path, monkeypatch, "now 3 leaves across 9 groups") != []
+
+
+def test_subset_of_them_variant_is_defended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = "3 leaves across 2 groups: 9 of them the v0.1 corpus"
+    assert _corpus_case(tmp_path, monkeypatch, body) != []
+    good = "3 leaves across 2 groups: 2 of them the v0.1 corpus"
+    assert _corpus_case(tmp_path, monkeypatch, good) == []
+
+
+def test_the_dead_ts_readme_exemption_is_gone() -> None:
+    # The exempt phrase left the file it excused (grep finds zero
+    # occurrences), and no pattern ever matched it anyway. The mechanism
+    # stays (path- and phrase-exact); the registry is empty.
+    assert check_spec_docs._CORPUS_CLAIM_EXEMPTIONS == {}
+
+
 def test_an_oversized_numeric_claim_is_reported_not_allowed_to_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
