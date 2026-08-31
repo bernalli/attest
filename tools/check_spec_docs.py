@@ -1667,17 +1667,21 @@ def check_corpus_counts() -> list[str]:
             for match in regex.finditer(folded):
                 line = line_of(match.start())
                 if shape.when_unmarked == "ambiguous":
+                    # The number this shape declares, never a hardcoded group 1:
+                    # a shape whose single check reads group 2 would otherwise be
+                    # classified from the wrong capture.
+                    stated = match.group(shape.checks[0][0])
                     context = _sentence_around_match(folded, match.start(), match.end())
                     if _CURRENT_MARKERS.search(context):
                         pass  # a present-tense claim: fall through and compare it
-                    elif _historical_bare_total_marker(context, match.group(1)):
+                    elif _historical_bare_total_marker(context, stated):
                         continue  # an explicitly dated figure: true when written
                     else:
                         # Defaulting this to history would be the silent failure
                         # the whole check exists to prevent: an unmarked present
                         # claim would go unchecked forever, and nothing would say so.
                         errors.append(
-                            f"{rel}:{line}: ambiguous bare total {match.group(1)!r} -- "
+                            f"{rel}:{line}: ambiguous bare total {stated!r} -- "
                             f"mark the sentence present-tense (it is then checked "
                             f"against the live count) or dated (it is then left alone)"
                         )

@@ -2055,6 +2055,25 @@ def test_the_verb_bring_alone_does_not_make_a_total_historical(
     assert errors and "ambiguous" in errors[0].lower()
 
 
+def test_an_ambiguous_shape_classifies_from_the_capture_it_declares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The ambiguous branch used to read group 1 whatever the shape declared, so
+    # a shape whose single check reads a later capture would have been
+    # classified -- and reported -- from the wrong number.
+    shape = check_spec_docs._ClaimShape(
+        "second-capture",
+        r"\bgroup (\d+) holds (\d+) total\b",
+        ((2, "corpus_total"),),
+        when_unmarked="ambiguous",
+    )
+    monkeypatch.setattr(
+        check_spec_docs, "_COMPILED_SHAPES", check_spec_docs._compile_claim_shapes((shape,))
+    )
+    errors = _corpus_case(tmp_path, monkeypatch, "group 7 holds 9 total")
+    assert errors and "ambiguous bare total '9'" in errors[0], errors
+
+
 def test_bare_total_markers_do_not_cross_sentence_boundaries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
