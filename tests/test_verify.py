@@ -1530,7 +1530,7 @@ def test_envelope_nesting_depth_over_ceiling_rejected() -> None:
 
 
 def test_issued_envelopes_are_always_parsable() -> None:
-    """The property C-5 denied, at the issuance entry point: what a conforming
+    """The asymmetry this closes, at the issuance entry point: what a conforming
     issuer emits, the profile's own parser accepts. Before rev 9 a payload one
     level under the ceiling produced an envelope one level over it."""
     for levels in (canon.MAX_DEPTH - 4, canon.MAX_DEPTH - 3, canon.MAX_DEPTH - 2):

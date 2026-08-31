@@ -797,7 +797,7 @@ describe('blind caller-rail admission boundary', () => {
     // The wall-clock bound is the property this case pins: an array-SHAPED
     // member with a lazy accessor is not traversed. What the two verdicts
     // below record is a CONFORMANCE GAP, not a ratified reading — see the
-    // strict expected-failure immediately after, and C-40.
+    // strict expected-failure immediately after.
     expect(result.grant).toBe('not_checked')
     expect(result.grant_trust).toBe('not_checked')
   })
@@ -811,10 +811,10 @@ describe('blind caller-rail admission boundary', () => {
   // the verdict is dormant/verified — conforming. TypeScript keeps it, the
   // ceiling guard refuses, and the genuine grant is erased. A restrictive
   // parity divergence on a rail already published, and precisely the
-  // defame-by-junk primitive §18.4 exists to deny. C-40; the fix belongs to
+  // defame-by-junk primitive §18.4 exists to deny. The fix belongs to
   // the grant rail's own round, not to a test commit. Marked failing on purpose:
   // when the cores are fixed this test starts failing and forces its own
-  // removal, exactly as a strict xfail does on the Python side. C-40.
+  // removal, exactly as a strict xfail does on the Python side.
   it.fails('F restrictive: a malformed declarations member must not erase the sibling grant', () => {
     const floor = makeGrant()
     const declarations = {

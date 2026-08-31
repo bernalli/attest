@@ -561,7 +561,7 @@ def test_a_previous_file_that_is_not_an_object_is_refused_never_silently_skipped
 def test_authority_issue_refuses_a_document_level_member_no_verifier_could_admit(
     tmp_path: Path, capsys: CapSys, extra: list[str], message: str
 ) -> None:
-    """C-43: the verb that EMITS validates the shape before it signs, over
+    """The verb that EMITS validates the shape before it signs, over
     the whole of section 20.2 and not only over the entries. A signed
     document whose `publisher`, `issued_at` or `authorization_version` is
     outside the shape can never authenticate anywhere, yet it costs the
