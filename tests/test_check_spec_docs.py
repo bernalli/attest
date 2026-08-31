@@ -1825,6 +1825,62 @@ def test_a_file_that_is_not_utf8_is_reported_not_skipped(
     assert any("UTF-8" in e for e in errors)
 
 
+def test_perimeter_falls_back_when_root_is_inside_an_unrelated_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `git -C X ls-files` succeeds from anywhere inside a checkout and lists
+    # only what is under X. A tree nested in a foreign repository would get an
+    # empty perimeter and the gate would exit clean having scanned nothing --
+    # the silent failure this whole task exists to prevent.
+    outer = tmp_path / "outer"
+    fixture = outer / "fixture"
+    fixture.mkdir(parents=True)
+    _git(outer, "init", "--quiet")
+
+    errors = _corpus_case(fixture, monkeypatch, "The 130-leaf conformance corpus is the gate.")
+    assert errors != []
+
+
+def test_a_dangling_symlink_in_the_perimeter_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _corpus_case(
+        tmp_path,
+        monkeypatch,
+        "clean body.",
+        links=[("dangling.md", tmp_path / "missing.md")],
+    )
+    assert any("dangling.md: symlink" in e for e in errors)
+
+
+def test_a_directory_symlink_in_the_perimeter_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path.parent / "outside-dir"
+    target.mkdir(exist_ok=True)
+    errors = _corpus_case(tmp_path, monkeypatch, "clean body.", links=[("linked.md", target)])
+    assert any("linked.md: symlink" in e for e in errors)
+
+
+def test_a_symlink_outside_the_scan_suffixes_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Suffix filtering runs before the symlink refusal, so a link the gate
+    # would never read must not add noise to the report.
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("The 130-leaf conformance corpus is elsewhere.", encoding="utf-8")
+    errors = _corpus_case(tmp_path, monkeypatch, "clean body.", links=[("link.txt", outside)])
+    assert errors == []
+
+
+def test_an_oversized_numeric_claim_is_reported_not_allowed_to_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    huge = "9" * 5000
+    errors = _corpus_case(tmp_path, monkeypatch, f"The {huge}-leaf conformance corpus is the gate.")
+    assert any("too many digits" in e for e in errors)
+
+
 @pytest.mark.parametrize(
     "body",
     [

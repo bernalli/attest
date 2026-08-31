@@ -61,6 +61,20 @@ def _scan_files() -> tuple[list[Path], list[str]]:
         git = shutil.which("git")
         if git is None:
             raise OSError("git is not on PATH")
+        # `git -C X ls-files` succeeds from ANYWHERE inside a checkout and
+        # lists only what is under X: a tree nested in an unrelated repository
+        # would hand back an empty perimeter and the gate would exit clean
+        # having defended nothing. Only the repository root may use the index.
+        top = subprocess.run(  # noqa: S603 -- fixed argv list, no shell
+            [git, "-C", str(_REPO_ROOT), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            errors="surrogateescape",
+            check=True,
+            timeout=30,
+        )
+        if Path(top.stdout.rstrip("\n")).resolve() != _REPO_ROOT.resolve():
+            raise OSError(f"{_REPO_ROOT} is not the git repository root")
         proc = subprocess.run(  # noqa: S603 -- fixed argv list, no shell
             [git, "-C", str(_REPO_ROOT), "ls-files", "-z"],
             capture_output=True,
@@ -1336,6 +1350,23 @@ _SUBSET_CLAIM_PATTERNS = (
 
 _GROUP_CLAIM_PATTERN = re.compile(r"\b(\d+) leaf vectors across (\d+) groups\b")
 
+# `\d+` will happily match thousands of digits, and int() refuses to convert a
+# string past CPython's integer-string limit (4300 digits): a document with a
+# long enough run of digits would abort the whole run instead of reporting a
+# line. Same reflex as the non-UTF-8 branch -- report the file, keep scanning.
+_MAX_CORPUS_CLAIM_DIGITS = 18
+
+
+def _parse_corpus_claim_number(raw: str, rel: str, line: int) -> tuple[int | None, str | None]:
+    """Parse a claimed count, or explain why it cannot be checked."""
+    if len(raw) > _MAX_CORPUS_CLAIM_DIGITS:
+        return None, f"{rel}:{line}: corpus claim number has too many digits to check"
+    try:
+        return int(raw), None
+    except ValueError:
+        return None, f"{rel}:{line}: corpus claim number is not parseable"
+
+
 # Numbers that look like corpus claims but are not, each deliberate and each
 # checked by something else. Keyed by path AND exact phrase so the exemption
 # cannot widen: it excuses this sentence, not this file, and not this number
@@ -1418,7 +1449,12 @@ def check_corpus_counts() -> list[str]:
 
         for pattern in _CORPUS_CLAIM_PATTERNS:
             for match in pattern.finditer(folded):
-                claimed = int(match.group(1))
+                claimed, parse_error = _parse_corpus_claim_number(
+                    match.group(1), rel, line_of(match.start())
+                )
+                if parse_error is not None:
+                    errors.append(parse_error)
+                    continue
                 if claimed != total:
                     errors.append(
                         f"{rel}:{line_of(match.start())}: claims {claimed} corpus "
@@ -1426,14 +1462,25 @@ def check_corpus_counts() -> list[str]:
                     )
         for pattern in _SUBSET_CLAIM_PATTERNS:
             for match in pattern.finditer(folded):
-                claimed = int(match.group(1))
+                claimed, parse_error = _parse_corpus_claim_number(
+                    match.group(1), rel, line_of(match.start())
+                )
+                if parse_error is not None:
+                    errors.append(parse_error)
+                    continue
                 if claimed != subset_size:
                     errors.append(
                         f"{rel}:{line_of(match.start())}: claims a {claimed}-leaf "
                         f"v0.1 subset, but the subset holds {subset_size}"
                     )
         for match in _GROUP_CLAIM_PATTERN.finditer(folded):
-            if int(match.group(2)) != groups:
+            claimed_groups, parse_error = _parse_corpus_claim_number(
+                match.group(2), rel, line_of(match.start())
+            )
+            if parse_error is not None:
+                errors.append(parse_error)
+                continue
+            if claimed_groups != groups:
                 errors.append(
                     f"{rel}:{line_of(match.start())}: claims {match.group(2)} "
                     f"vector groups, but there are {groups}"
