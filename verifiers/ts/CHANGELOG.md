@@ -4,7 +4,59 @@ All notable changes to `attest-verifier` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] — 2026-08-31
+
+### Added
+
+- **`authorityView`, the publisher-authority rail of attest-v0.2 section 20.**
+  An array of publisher authorization manifests supplied by the caller, judged
+  by `evaluateAuthority` in the same evaluation order the Python
+  implementation follows, and surfaced as two new components of the result,
+  `publisher_authority` and `publisher_authority_trust`. Neither touches `ok` or
+  `trust`: whether a seller was entitled to sell is a fact about the seller,
+  not a validity property of the receipt. Absent, malformed, stale or
+  ambiguous evidence gives `unattested` — never `authorized`, and never
+  `unauthorized` unless the caller supplies its own proof of currency.
+
+- **`compromiseView`, the anchored-cutoff rescue for compromised signing keys.**
+  A Stage-2-capable verifier may now keep a receipt valid when its own
+  signed-receipt-core reached anchored standing and either no anchored cutoff is
+  established or that standing predates the cutoff; receipts without anchored
+  standing, or at or after the cutoff, still fail closed. Compromise markings
+  are absorbing across every manifest the verifier holds: once a kid has been
+  seen compromised, a later manifest cannot silently relist it as active or drop
+  it to undo that floor.
+
+- **A publisher-claim floor on v0.1 receipts**, warning when a receipt names a
+  publisher it cannot substantiate, independent of the protocol version.
+
+### Fixed
+
+- **Two evidence rails read the caller's live object a second time, after the
+  bytes had already been signed and checked.** A value can answer differently
+  on the second read, so the bytes that verified and the values that decided
+  were not necessarily the same — which lets an attacker with no key at all
+  take a document an honest third party genuinely signed and make the verifier
+  act on something else. Both rails are now admitted once, at entry, per
+  element, through the single shared boundary, and only the reconstruction is
+  read afterwards. **Upgrade from 0.8.1 or earlier.**
+
+- **Ambiguous key manifests no longer verify by array order.** `keys[]` may not
+  list one `kid` twice; the verifier rejects the manifest before resolving any
+  signing key, including when the duplicate is unrelated to the receipt's own
+  signature. Key-manifest continuity also preserves the compromised-status floor
+  instead of letting a later manifest undo it.
+
+- **`not_revoked_as_of:` now counts only authenticated revocation statements.**
+  Signed records carrying an unregistered `status` no longer inflate the
+  freshness timestamp reported for every receipt in the revocation view.
+
+- **A parity divergence in the shared canonicalization sink.** One
+  implementation measured the admission ceiling including the depth probe and
+  the other subtracted it, so the same evidence was admitted by one core and
+  refused by the other — a unit refused for the position it occupied rather
+  than for any property of its own. The property is now pinned in both
+  languages.
 
 ### Changed
 
