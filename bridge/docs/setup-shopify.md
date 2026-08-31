@@ -103,7 +103,7 @@ attest-bridge check-config --config bridge.toml
 
 The summary line `shopify: configured` confirms the section was read.
 
-## 4. Test it locally, before touching your live store
+## 4. Test locally, before touching your live store
 
 Unlike the itch rail, this one can be exercised end to end on your own machine,
 because a Shopify webhook is just a signed body. Start the bridge:
