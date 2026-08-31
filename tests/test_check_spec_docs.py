@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1689,8 +1691,20 @@ def _write(directory: Path, name: str, content: str) -> Path:
 # fails here rather than in the next release.
 
 
-def _corpus_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> list[str]:
-    """Run check_corpus_counts over a repository holding one document."""
+def _corpus_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    body: str,
+    *,
+    links: list[tuple[str, Path]] | None = None,
+    raw: list[tuple[str, bytes]] | None = None,
+) -> list[str]:
+    """Run check_corpus_counts over a repository holding one document.
+
+    `links` places symlinks (name -> target) and `raw` places byte-exact
+    files: the two shapes a text-scanning gate must refuse to follow and
+    refuse to skip silently.
+    """
     vectors = tmp_path / "docs" / "spec" / "vectors"
     # Three leaves in two groups, and a v0.1 subset of one: small, and nothing
     # like the real numbers, so a pattern that happens to hardcode 158 or 52
@@ -1699,8 +1713,116 @@ def _corpus_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> 
         (vectors / group / leaf).mkdir(parents=True, exist_ok=True)
         (vectors / group / leaf / "expected.json").write_text("{}", encoding="utf-8")
     (tmp_path / "doc.md").write_text(body, encoding="utf-8")
+    for name, target in links or []:
+        (tmp_path / name).symlink_to(target)
+    for name, blob in raw or []:
+        (tmp_path / name).write_bytes(blob)
     monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
     return check_spec_docs.check_corpus_counts()
+
+
+def _git(repo: Path, *args: str) -> None:
+    git = shutil.which("git")
+    assert git is not None, "git is required to build the tracked-perimeter fixtures"
+    subprocess.run(  # noqa: S603 -- fixed argv list, no shell
+        [git, "-C", str(repo), *args], check=True, capture_output=True
+    )
+
+
+def _tracked_corpus_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked: dict[str, str],
+    untracked: dict[str, str],
+) -> list[str]:
+    """Like _corpus_case, but inside a real git repository: `tracked`
+    files are added to the index, `untracked` ones only sit on disk."""
+    vectors = tmp_path / "docs" / "spec" / "vectors"
+    for group, leaf in (("01-a", "a"), ("01-a", "b"), ("26-b", "a")):
+        (vectors / group / leaf).mkdir(parents=True, exist_ok=True)
+        (vectors / group / leaf / "expected.json").write_text("{}", encoding="utf-8")
+    _git(tmp_path, "init", "--quiet")
+    for name, content in {**tracked, **untracked}.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    for name in tracked:
+        _git(tmp_path, "add", name)
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    return check_spec_docs.check_corpus_counts()
+
+
+def test_untracked_files_are_outside_the_perimeter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A draft that will never ship must not be able to redden the gate:
+    # that asymmetry (red at home, green in CI) is how a gate gets ignored.
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"doc.md": "nothing numeric here"},
+        untracked={"draft.md": "The 130-leaf conformance corpus is the gate."},
+    )
+    assert errors == []
+
+
+def test_tracked_files_are_scanned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    errors = _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"doc.md": "The 130-leaf conformance corpus is the gate."},
+        untracked={},
+    )
+    assert errors != []
+
+
+def test_a_tracked_file_missing_from_disk_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `git ls-files` lists the index, not the disk: a locally deleted file
+    # must be skipped, never crash the gate. The first call only builds the
+    # repository fixture; the assertion runs after the deletion.
+    _tracked_corpus_case(
+        tmp_path,
+        monkeypatch,
+        tracked={"doc.md": "nothing numeric here", "gone.md": "The 130-leaf corpus."},
+        untracked={},
+    )
+    (tmp_path / "gone.md").unlink()
+    errors = check_spec_docs.check_corpus_counts()
+    assert errors == []
+
+
+def test_perimeter_falls_back_outside_a_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No .git anywhere above tmp_path: the scan must degrade to the rglob
+    # walk (this is also what keeps every _corpus_case fixture working).
+    errors = _corpus_case(tmp_path, monkeypatch, "The 130-leaf conformance corpus is the gate.")
+    assert errors != []
+
+
+def test_a_symlink_in_the_perimeter_is_refused_not_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # is_file() resolves the target, so following a link would let text
+    # from outside the repository pose as a project surface -- and a
+    # dangling one would disappear without a word.
+    outside = tmp_path.parent / "outside.md"
+    outside.write_text("The 130-leaf conformance corpus is elsewhere.", encoding="utf-8")
+    errors = _corpus_case(tmp_path, monkeypatch, "clean body.", links=[("link.md", outside)])
+    assert any("symlink" in e for e in errors)
+
+
+def test_a_file_that_is_not_utf8_is_reported_not_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Silently skipping an unreadable file leaves a surface the gate
+    # believes it is defending and is not.
+    errors = _corpus_case(
+        tmp_path, monkeypatch, "clean body.", raw=[("odd.md", b"\xff\xfe not utf-8")]
+    )
+    assert any("UTF-8" in e for e in errors)
 
 
 @pytest.mark.parametrize(

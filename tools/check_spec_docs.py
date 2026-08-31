@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -29,6 +31,74 @@ _STANDARDS_RELATIONSHIP_PATH = _REPO_ROOT / "docs/spec/attest-standards-relation
 _INTERNET_DRAFT_DIR = _REPO_ROOT / "ietf"
 _INTERNET_DRAFT_BASENAME = "draft-bernalli-open-purchase-receipts"
 _CONFORMANCE_DOC_PATH = _REPO_ROOT / "docs/conformance.md"
+
+# The textual-drift perimeter. Tracked files only: an untracked draft cannot
+# make what ships drift, and scanning it makes the gate red at home while CI
+# (whose checkout has no drafts) stays green -- the exact asymmetry that
+# teaches people to ignore the gate.
+_SCAN_SUFFIXES: tuple[str, ...] = (".md",)
+_SCAN_MANIFEST_BASENAMES: tuple[str, ...] = ()
+_SCAN_EXCLUDED_FILES: tuple[str, ...] = ()
+
+
+def _scan_files() -> tuple[list[Path], list[str]]:
+    """Files the textual-drift checks scan, plus entries refused out loud.
+
+    `git ls-files` when the root is a checkout; a deterministic rglob fallback
+    otherwise (source tarball, test fixture tree), which is the pre-existing
+    behavior widened to the same suffix set. Entries are sorted, filtered to
+    the scanned types, and must still exist on disk.
+
+    A scanned-suffix entry that is a symlink is REFUSED rather than followed:
+    `is_file()` resolves the target, so a link could pull text from outside
+    the repository into the perimeter, or vanish silently when dangling. A
+    gitlink (submodule) is not a regular file and drops out here. An unstaged
+    rename shows up as a deleted tracked path plus an untracked new one, so
+    the new surface is unscanned locally until the rename is staged -- absent
+    in CI, whose checkout is always consistent.
+    """
+    try:
+        git = shutil.which("git")
+        if git is None:
+            raise OSError("git is not on PATH")
+        proc = subprocess.run(  # noqa: S603 -- fixed argv list, no shell
+            [git, "-C", str(_REPO_ROOT), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            errors="surrogateescape",  # a non-UTF-8 path must not crash the gate
+            check=True,
+            timeout=30,
+        )
+        names = [name for name in proc.stdout.split("\0") if name]
+    except (OSError, subprocess.SubprocessError):
+        names = [
+            path.relative_to(_REPO_ROOT).as_posix()
+            for suffix in _SCAN_SUFFIXES
+            for path in _REPO_ROOT.rglob(f"*{suffix}")
+        ] + [
+            path.relative_to(_REPO_ROOT).as_posix()
+            for base in _SCAN_MANIFEST_BASENAMES
+            for path in _REPO_ROOT.rglob(base)
+        ]
+    selected: list[Path] = []
+    refused: list[str] = []
+    for name in sorted(set(names)):
+        basename = name.rsplit("/", 1)[-1]
+        if not (name.endswith(_SCAN_SUFFIXES) or basename in _SCAN_MANIFEST_BASENAMES):
+            continue
+        if "node_modules" in name or name.startswith(".git/"):
+            continue
+        # The changelog records what the numbers WERE; that is its job.
+        if name.endswith("CHANGELOG.md") or name in _SCAN_EXCLUDED_FILES:
+            continue
+        path = _REPO_ROOT / name
+        if path.is_symlink():
+            refused.append(f"{name}: symlink in the scan perimeter -- refused, not followed")
+            continue
+        if path.is_file():
+            selected.append(path)
+    return selected, refused
+
 
 # The six normative sections attest-versioning.md's amendment procedure
 # requires (§5) every reader be able to find by exact heading.
@@ -1315,25 +1385,29 @@ def check_corpus_counts() -> list[str]:
     of them. What actually closes this class is removing the hand-written
     numbers from the documents; that is a separate piece of work.
 
-    Scans every Markdown file in the repository — not a fixed list, because the
-    numbers that went stale were in files nobody thought to list. Matching runs
-    against the text with newlines folded to spaces: prose wraps, and the first
-    version of this guard was blind to `the 52-leaf\nsubset` for exactly that
-    reason, which its own red bench caught. Line numbers are recovered from the
-    match offset so a report still points at the right line.
+    Scans the tracked files of the scanned types — not a fixed list, because
+    the numbers that went stale were in files nobody thought to list, and not
+    the whole filesystem, because an untracked draft cannot make what ships
+    drift. See `_scan_files`. Matching runs against the text with newlines
+    folded to spaces: prose wraps, and the first version of this guard was
+    blind to `the 52-leaf\nsubset` for exactly that reason, which its own red
+    bench caught. Line numbers are recovered from the match offset so a report
+    still points at the right line.
 
     Called directly from `main()`, like the other single-document guards.
     """
     total, groups, subset_size = _measured_corpus()
     errors: list[str] = []
-    for path in sorted(_REPO_ROOT.rglob("*.md")):
+    paths, refused = _scan_files()
+    errors.extend(refused)
+    for path in paths:
         rel = path.relative_to(_REPO_ROOT).as_posix()
-        if "node_modules" in rel or rel.startswith(".git/"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            # A file the gate cannot read is a file the gate is not defending.
+            errors.append(f"{rel}: not valid UTF-8 -- cannot be checked for drift")
             continue
-        # The changelog records what the numbers WERE; that is its job.
-        if rel.endswith("CHANGELOG.md"):
-            continue
-        text = path.read_text(encoding="utf-8")
         for phrase in _CORPUS_CLAIM_EXEMPTIONS.get(rel, ()):
             text = text.replace(phrase, "")
         # Fold newlines to spaces, preserving length so offsets stay valid.
