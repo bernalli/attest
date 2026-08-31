@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from attest import cli, ots, tlog
+from attest import anchor, cli, ots, tlog
 
 CapSys = pytest.CaptureFixture[str]
 
@@ -582,3 +582,773 @@ def test_log_ots_convert_keeps_same_height_paths_as_distinct_files(
     )
     report = json.loads((out_dir / "conversion-report.json").read_text(encoding="utf-8"))
     assert [entry["path_index"] for entry in report["paths"] if entry["converted"]] == [0, 1]
+
+
+# --- not-well-formed `--block-headers`: converter level -----------------------
+
+
+def _one_bitcoin_path(seed: bytes, height: int = 42) -> ots.OtsFile:
+    return _single_path_file(
+        seed,
+        ops_=(ots.OtsOp("sha256"),),
+        attestation=ots.OtsAttestation("bitcoin", TAG_BITCOIN, _varuint(height), height),
+    )
+
+
+@pytest.mark.parametrize(
+    ("header", "fragment"),
+    [
+        (ots.OperatorHeader(-1, "aa" * 32, "bb" * 32, 1), "height must be a non-negative int"),
+        (ots.OperatorHeader(True, "aa" * 32, "bb" * 32, 1), "height must be a non-negative int"),
+        (ots.OperatorHeader("42", "aa" * 32, "bb" * 32, 1), "height must be a non-negative int"),
+        (ots.OperatorHeader(42.0, "aa" * 32, "bb" * 32, 1), "height must be a non-negative int"),
+        (ots.OperatorHeader(42, None, "bb" * 32, 1), "header_hash must be 64 lowercase hex chars"),
+        (
+            ots.OperatorHeader(42, "AA" * 32, "bb" * 32, 1),
+            "header_hash must be 64 lowercase hex chars",
+        ),
+        (
+            ots.OperatorHeader(42, "aa" * 31, "bb" * 32, 1),
+            "header_hash must be 64 lowercase hex chars",
+        ),
+        (
+            ots.OperatorHeader(42, "aa" * 33, "bb" * 32, 1),
+            "header_hash must be 64 lowercase hex chars",
+        ),
+        (
+            ots.OperatorHeader(42, "zz" * 32, "bb" * 32, 1),
+            "header_hash must be 64 lowercase hex chars",
+        ),
+        (
+            ots.OperatorHeader(42, "aa" * 32 + "\n", "bb" * 32, 1),
+            "header_hash must be 64 lowercase hex chars",
+        ),
+        (ots.OperatorHeader(42, "aa" * 32, None, 1), "merkle_root must be 64 lowercase hex chars"),
+        (
+            ots.OperatorHeader(42, "aa" * 32, "BB" * 32, 1),
+            "merkle_root must be 64 lowercase hex chars",
+        ),
+        (
+            ots.OperatorHeader(42, "aa" * 32, "bb" * 31, 1),
+            "merkle_root must be 64 lowercase hex chars",
+        ),
+        (
+            ots.OperatorHeader(42, "aa" * 32, "zz" * 32, 1),
+            "merkle_root must be 64 lowercase hex chars",
+        ),
+        (ots.OperatorHeader(42, "aa" * 32, "bb" * 32, 0), "time must be a positive int"),
+        (ots.OperatorHeader(42, "aa" * 32, "bb" * 32, -1), "time must be a positive int"),
+        (ots.OperatorHeader(42, "aa" * 32, "bb" * 32, True), "time must be a positive int"),
+        (ots.OperatorHeader(42, "aa" * 32, "bb" * 32, 1.5), "time must be a positive int"),
+        (ots.OperatorHeader(42, "aa" * 32, "bb" * 32, "1"), "time must be a positive int"),
+        (
+            ots.OperatorHeader(42, "aa" * 32, "bb" * 32, anchor._MAX_RENDERABLE_UNIX_TIME + 1),
+            "time must be a positive int",
+        ),
+    ],
+)
+def test_convert_ots_rejects_malformed_operator_headers(
+    header: ots.OperatorHeader, fragment: str
+) -> None:
+    seed = b"\xa1" * 32
+
+    with pytest.raises(ots.OtsError) as excinfo:
+        ots.convert_ots(_one_bitcoin_path(seed), seed, [header])
+
+    assert fragment in str(excinfo.value)
+    assert "operator header 0" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("headers", [42, "abc", b"\x00", None, {"height": 42}, 1.5])
+def test_convert_ots_rejects_headers_that_are_not_a_sequence(headers: object) -> None:
+    seed = b"\xa2" * 32
+
+    with pytest.raises(ots.OtsError, match="operator headers must be a sequence"):
+        ots.convert_ots(_one_bitcoin_path(seed), seed, headers)
+
+
+@pytest.mark.parametrize(
+    "item",
+    [{"height": 42, "header_hash": "aa" * 32, "merkle_root": "bb" * 32, "time": 1}, 42, None],
+)
+def test_convert_ots_rejects_header_items_that_are_not_operator_headers(item: object) -> None:
+    seed = b"\xa3" * 32
+
+    with pytest.raises(ots.OtsError, match="operator header 0 must be an OperatorHeader"):
+        ots.convert_ots(_one_bitcoin_path(seed), seed, [item])
+
+
+def test_convert_ots_rejects_two_heights_sharing_one_header_hash() -> None:
+    """`pinned_headers` is a MAP keyed by `header_hash` (C-41): two heights
+    claiming one hash would collapse into a single pinned entry, and the
+    surviving proof would carry a merkle_root the pinned header contradicts."""
+
+    seed = b"\xa4" * 32
+    headers = [
+        _header(42, "11" * 32, header_hash="cc" * 32),
+        _header(43, "22" * 32, header_hash="cc" * 32),
+    ]
+
+    with pytest.raises(ots.OtsError, match="duplicate operator header hash " + "cc" * 32):
+        ots.convert_ots(_one_bitcoin_path(seed), seed, headers)
+
+
+def test_convert_ots_rejects_a_non_digest_expected_seed() -> None:
+    seed = b"\xa5" * 32
+
+    with pytest.raises(ots.OtsError, match="expected_seed must be a SHA-256 digest"):
+        ots.convert_ots(_one_bitcoin_path(seed), b"\xa5" * 31, [])
+
+
+# --- paths the parser never produces, and one it does ------------------------
+
+
+@pytest.mark.parametrize(
+    ("op", "fragment"),
+    [
+        (ots.OtsOp("sha256", b"unexpected"), "sha256 op carries an operand on Bitcoin height 42"),
+        (ots.OtsOp("append", None), "append op lacks a bytes operand on Bitcoin height 42"),
+        (ots.OtsOp("prepend", None), "prepend op lacks a bytes operand on Bitcoin height 42"),
+        (ots.OtsOp("append", "6c656674"), "append op lacks a bytes operand on Bitcoin height 42"),
+    ],
+)
+def test_convert_ots_refuses_ops_that_are_not_wire_shaped(op: ots.OtsOp, fragment: str) -> None:
+    seed = b"\xa6" * 32
+    parsed = _single_path_file(
+        seed,
+        ops_=(op,),
+        attestation=ots.OtsAttestation("bitcoin", TAG_BITCOIN, _varuint(42), 42),
+    )
+
+    with pytest.raises(ots.OtsConversionError) as excinfo:
+        ots.convert_ots(parsed, seed, [_header(42, "bb" * 32)])
+
+    assert fragment in str(excinfo.value)
+
+
+def test_convert_ots_skips_a_bitcoin_attestation_without_a_height() -> None:
+    seed = b"\xa7" * 32
+    parsed = _single_path_file(
+        seed,
+        ops_=(ots.OtsOp("sha256"),),
+        attestation=ots.OtsAttestation("bitcoin", TAG_BITCOIN, b"", None),
+    )
+
+    with pytest.raises(ots.OtsConversionError) as excinfo:
+        ots.convert_ots(parsed, seed, [_header(42, "bb" * 32)])
+
+    assert "bitcoin attestation has no usable block height" in str(excinfo.value)
+
+
+def test_convert_ots_refuses_a_leaf_that_commits_to_nothing() -> None:
+    """A real `.ots` may carry an attestation with no ops at all; the empty
+    op-chain must be refused with the height, never emitted as a proof."""
+
+    seed = hashlib.sha256(b"empty-chain-seed").digest()
+    parsed = ots.parse_ots(_ots_with_tree(_bitcoin_attestation(42), digest=seed))
+    assert parsed.paths[0].ops == ()
+
+    with pytest.raises(ots.OtsConversionError) as excinfo:
+        ots.convert_ots(parsed, seed, [_header(42, seed.hex())])
+
+    assert "empty op-chain" in str(excinfo.value)
+    assert "Bitcoin height 42" in str(excinfo.value)
+
+
+def test_convert_ots_keeps_byte_identical_paths_as_separate_proofs() -> None:
+    """C-41/C-48 at the converter boundary, independent of the CLI: `OtsPath`
+    is a frozen dataclass, so `set()`/`dict.fromkeys()` would fuse two
+    byte-identical calendar branches into one anchoring claim."""
+
+    seed = b"\xa8" * 32
+    parsed = _parsed_with_identical_bitcoin_paths(seed)
+    headers = _headers_for_parsed(seed, parsed)[:1]
+
+    result = ots.convert_ots(parsed, seed, headers)
+
+    assert [proof.path_index for proof in result.proofs] == [0, 1]
+    assert [entry.path_index for entry in result.report] == [0, 1]
+
+
+# --- not-well-formed `--block-headers`: CLI level -----------------------------
+
+
+def _convert_cli(tmp_path: Path, out_dir: Path, headers_path: Path) -> int:
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    ots_path = tmp_path / "stamp.ots"
+    ots_path.write_bytes(_ots_with_tree(_branch_append(b"left", 42), digest=seed))
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+    return cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+
+
+_GOOD_HEADER = {"height": 42, "header_hash": "aa" * 32, "merkle_root": "bb" * 32, "time": 1}
+
+
+@pytest.mark.parametrize(
+    ("document", "fragment"),
+    [
+        # Refused by the CLI's own shape check: the message names the option
+        # and the index, so a correct refusal cannot be confused with an
+        # unrelated failure (the discipline `test_cli_overwrite.py` states).
+        ([42], "--block-headers[0] must be a JSON object"),
+        (["header"], "--block-headers[0] must be a JSON object"),
+        ([None], "--block-headers[0] must be a JSON object"),
+        ([[]], "--block-headers[0] must be a JSON object"),
+        (
+            [{**_GOOD_HEADER, "height": "42"}],
+            "--block-headers[0].height must be a non-negative int",
+        ),
+        (
+            [{**_GOOD_HEADER, "height": True}],
+            "--block-headers[0].height must be a non-negative int",
+        ),
+        (
+            [{**_GOOD_HEADER, "height": 42.0}],
+            "--block-headers[0].height must be a non-negative int",
+        ),
+        (
+            [{**_GOOD_HEADER, "height": None}],
+            "--block-headers[0].height must be a non-negative int",
+        ),
+        (
+            [{k: v for k, v in _GOOD_HEADER.items() if k != "height"}],
+            "--block-headers[0].height must be a non-negative int",
+        ),
+        ([{**_GOOD_HEADER, "header_hash": 42}], "--block-headers[0].header_hash must be a string"),
+        (
+            [{k: v for k, v in _GOOD_HEADER.items() if k != "header_hash"}],
+            "--block-headers[0].header_hash must be a string",
+        ),
+        (
+            [{**_GOOD_HEADER, "merkle_root": None}],
+            "--block-headers[0].merkle_root must be a string",
+        ),
+        (
+            [{k: v for k, v in _GOOD_HEADER.items() if k != "merkle_root"}],
+            "--block-headers[0].merkle_root must be a string",
+        ),
+        ([{**_GOOD_HEADER, "time": "1"}], "--block-headers[0].time must be a positive int"),
+        ([{**_GOOD_HEADER, "time": True}], "--block-headers[0].time must be a positive int"),
+        (
+            [{k: v for k, v in _GOOD_HEADER.items() if k != "time"}],
+            "--block-headers[0].time must be a positive int",
+        ),
+        # Well-typed on the wire, refused by the converter's own validator:
+        # the message comes from the other layer, and that is the point.
+        ([{**_GOOD_HEADER, "height": -1}], "operator header 0 height must be a non-negative int"),
+        (
+            [{**_GOOD_HEADER, "header_hash": "AA" * 32}],
+            "operator header 0 header_hash must be 64 lowercase hex chars",
+        ),
+        (
+            [{**_GOOD_HEADER, "header_hash": "aa" * 31}],
+            "operator header 0 header_hash must be 64 lowercase hex chars",
+        ),
+        (
+            [{**_GOOD_HEADER, "merkle_root": "BB" * 32}],
+            "operator header 0 merkle_root must be 64 lowercase hex chars",
+        ),
+        ([{**_GOOD_HEADER, "time": 0}], "operator header 0 time must be a positive int"),
+        ([{**_GOOD_HEADER, "time": -1}], "operator header 0 time must be a positive int"),
+        ([_GOOD_HEADER, {**_GOOD_HEADER, "height": 43}], "duplicate operator header hash"),
+    ],
+)
+def test_log_ots_convert_rejects_malformed_block_headers_without_outputs(
+    tmp_path: Path, capsys: CapSys, document: object, fragment: str
+) -> None:
+    headers_path = _write_json(tmp_path / "headers.json", document)
+    out_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = _convert_cli(tmp_path, out_dir, headers_path)
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert fragment in captured.err
+    assert not out_dir.exists()
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "not json", "[", '{"height": 42'])
+def test_log_ots_convert_rejects_block_headers_that_are_not_json(
+    tmp_path: Path, capsys: CapSys, raw: str
+) -> None:
+    headers_path = tmp_path / "headers.json"
+    headers_path.write_text(raw, encoding="utf-8")
+    out_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = _convert_cli(tmp_path, out_dir, headers_path)
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "invalid JSON in" in captured.err
+    assert not out_dir.exists()
+
+
+def test_log_ots_convert_rejects_an_oversized_ots_file(tmp_path: Path, capsys: CapSys) -> None:
+    """The `.ots` ceiling is enforced before the parser sees a byte."""
+
+    evidence = _minimal_anchor_evidence()
+    ots_path = tmp_path / "stamp.ots"
+    ots_path.write_bytes(b"\x00" * (cli._MAX_STAGE2_INPUT_BYTES["ots"] + 1))
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+    headers_path = _write_json(tmp_path / "headers.json", [_GOOD_HEADER])
+    out_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert f"--ots input exceeds {ots._MAX_OTS_FILE_BYTES} bytes" in captured.err
+    assert not out_dir.exists()
+
+
+def test_log_ots_convert_rejects_a_malformed_ots_file(tmp_path: Path, capsys: CapSys) -> None:
+    evidence = _minimal_anchor_evidence()
+    ots_path = tmp_path / "stamp.ots"
+    # Long enough to reach the magic comparison instead of the truncation check.
+    ots_path.write_bytes(b"not an OpenTimestamps proof file, not at all")
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+    headers_path = _write_json(tmp_path / "headers.json", [_GOOD_HEADER])
+    out_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "invalid OpenTimestamps magic" in captured.err
+    assert not out_dir.exists()
+
+
+# --- the failure direction stays loud -----------------------------------------
+
+
+def test_log_ots_convert_zero_survivors_writes_the_report_and_fails(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """Zero survivors is an error that still leaves the operator the reasons,
+    with the block height of every skipped Bitcoin path — losing the oldest
+    anchor silently is losing the strongest `anchored_before` claim."""
+
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    ots_path = tmp_path / "stamp.ots"
+    ots_path.write_bytes(_ots_with_tree(_branch_append(b"left", 700_000), digest=seed))
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+    headers_path = _write_json(tmp_path / "headers.json", [])
+    out_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "no convertible Bitcoin paths found" in captured.err
+    assert "missing operator header for Bitcoin height 700000" in captured.err
+    report = json.loads((out_dir / "conversion-report.json").read_text(encoding="utf-8"))
+    assert report["converted"] == 0
+    assert report["skipped"] == 1
+    assert report["paths"][0]["height"] == 700000
+    assert report["paths"][0]["proof_file"] is None
+    assert not (out_dir / "pinned-headers.json").exists()
+    assert list(out_dir.glob("proof-*.json")) == []
+
+
+def test_log_ots_convert_report_counts_and_links_every_row_to_its_file(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    parsed = _parsed_with_two_bitcoin_and_pending(seed)
+    headers = _headers_for_parsed(seed, parsed)
+    ots_path = tmp_path / "stamp.ots"
+    ots_path.write_bytes(
+        _ots_with_tree(
+            b"".join(
+                [
+                    TAG_FORK,
+                    _branch_append(b"left", 42),
+                    TAG_FORK,
+                    _branch_prepend(b"right", 43),
+                    TAG_APPEND,
+                    _varbytes(b"pending"),
+                    TAG_SHA256,
+                    _pending_attestation(),
+                ]
+            ),
+            digest=seed,
+        )
+    )
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+    headers_path = _write_json(tmp_path / "headers.json", [header.__dict__ for header in headers])
+    out_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    stdout = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert stdout["proofs"] == 2
+    assert stdout["skipped"] == 1
+    assert stdout["skipped_bitcoin_heights"] == []
+    report = json.loads((out_dir / "conversion-report.json").read_text(encoding="utf-8"))
+    assert report["converted"] == 2
+    assert report["skipped"] == 1
+    assert [entry["proof_file"] for entry in report["paths"]] == [
+        "proof-0-42.json",
+        "proof-1-43.json",
+        None,
+    ]
+    for entry in report["paths"]:
+        if entry["proof_file"] is not None:
+            assert (out_dir / entry["proof_file"]).exists()
+
+
+def test_log_ots_convert_stdout_names_the_skipped_bitcoin_heights(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """A dropped Bitcoin path is a lost `anchored_before` claim: it has to
+    reach the operator's own channel, not only a file they may never open."""
+
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    ots_path = tmp_path / "stamp.ots"
+    ots_path.write_bytes(
+        _ots_with_tree(
+            TAG_FORK + _branch_append(b"left", 42) + _branch_prepend(b"right", 43),
+            digest=seed,
+        )
+    )
+    parsed = ots.parse_ots(ots_path.read_bytes())
+    headers = _headers_for_parsed(seed, parsed)[:1]
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+    headers_path = _write_json(tmp_path / "headers.json", [header.__dict__ for header in headers])
+    out_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    stdout = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert stdout["proofs"] == 1
+    assert stdout["skipped"] == 1
+    assert stdout["skipped_bitcoin_heights"] == [43]
+
+
+# --- an output must never land on one of this command's own inputs ------------
+
+
+@pytest.mark.parametrize("victim", ["conversion-report.json", "pinned-headers.json"])
+def test_log_ots_convert_refuses_to_write_over_its_own_evidence(
+    tmp_path: Path, capsys: CapSys, victim: str
+) -> None:
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    work = tmp_path / "work"
+    work.mkdir()
+    ots_path = work / "stamp.ots"
+    ots_path.write_bytes(_ots_with_tree(_branch_append(b"left", 42), digest=seed))
+    evidence_path = _write_json(work / victim, evidence)
+    parsed = ots.parse_ots(ots_path.read_bytes())
+    headers = _headers_for_parsed(seed, parsed)
+    headers_path = _write_json(work / "headers.json", [header.__dict__ for header in headers])
+    before = evidence_path.read_text(encoding="utf-8")
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(work),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert f"--out-dir would write {victim} over --evidence" in captured.err
+    assert evidence_path.read_text(encoding="utf-8") == before
+
+
+def test_log_ots_convert_refuses_to_write_a_proof_over_its_own_ots_input(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    work = tmp_path / "work"
+    work.mkdir()
+    ots_path = work / "proof-0-42.json"
+    ots_path.write_bytes(_ots_with_tree(_branch_append(b"left", 42), digest=seed))
+    evidence_path = _write_json(work / "evidence.json", evidence)
+    parsed = ots.parse_ots(ots_path.read_bytes())
+    headers = _headers_for_parsed(seed, parsed)
+    headers_path = _write_json(work / "headers.json", [header.__dict__ for header in headers])
+    before = ots_path.read_bytes()
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(work),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "--out-dir would write proof-0-42.json over --ots" in captured.err
+    assert ots_path.read_bytes() == before
+
+
+# --- the report is the inventory of the directory it sits in ------------------
+
+
+def _stale_proof(out_dir: Path, name: str) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / name
+    path.write_text('{"ops": [["sha256"]], "from": "an earlier run"}', encoding="utf-8")
+    return path
+
+
+def test_log_ots_convert_report_names_proof_files_this_run_did_not_write(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """A leftover `proof-*.json` carries the exact name shape an operator
+    feeds to `log anchor`, and nothing else in this output would mention it.
+    The one this run overwrites is NOT a leftover: it is this run's own file.
+    """
+
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    parsed = _parsed_with_two_bitcoin_and_pending(seed)
+    headers = _headers_for_parsed(seed, parsed)
+    ots_path = tmp_path / "stamp.ots"
+    ots_path.write_bytes(
+        _ots_with_tree(
+            b"".join(
+                [
+                    TAG_FORK,
+                    _branch_append(b"left", 42),
+                    TAG_FORK,
+                    _branch_prepend(b"right", 43),
+                    TAG_APPEND,
+                    _varbytes(b"pending"),
+                    TAG_SHA256,
+                    _pending_attestation(),
+                ]
+            ),
+            digest=seed,
+        )
+    )
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+    headers_path = _write_json(tmp_path / "headers.json", [header.__dict__ for header in headers])
+    out_dir = tmp_path / "converted"
+    replaced = _stale_proof(out_dir, "proof-0-42.json")
+    _stale_proof(out_dir, "proof-7-99999.json")
+    _stale_proof(out_dir, "proof-2-13.json")
+    # Neither of these is a proof file, so neither belongs in the list.
+    (out_dir / "notes.txt").write_text("operator scratch", encoding="utf-8")
+    (out_dir / "evidence-copy.json").write_text("{}", encoding="utf-8")
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    stdout = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    report = json.loads((out_dir / "conversion-report.json").read_text(encoding="utf-8"))
+    assert report["proof_files_not_written_by_this_run"] == [
+        "proof-2-13.json",
+        "proof-7-99999.json",
+    ]
+    assert stdout["preexisting_proofs"] == 2
+    assert json.loads(replaced.read_text(encoding="utf-8")) == {
+        "ops": [["append", b"left".hex()], ["sha256"]],
+        "header_merkle_root": headers[0].merkle_root,
+        "header_hash": headers[0].header_hash,
+        "header_time": headers[0].time,
+    }
+
+
+def test_log_ots_convert_report_says_so_when_it_wrote_the_whole_directory(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The field is always present: an empty list is the statement that this
+    run accounts for every proof file in the directory."""
+
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    ots_path = tmp_path / "stamp.ots"
+    ots_path.write_bytes(_ots_with_tree(_branch_append(b"left", 42), digest=seed))
+    parsed = ots.parse_ots(ots_path.read_bytes())
+    headers = _headers_for_parsed(seed, parsed)
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+    headers_path = _write_json(tmp_path / "headers.json", [header.__dict__ for header in headers])
+    out_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    stdout = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    report = json.loads((out_dir / "conversion-report.json").read_text(encoding="utf-8"))
+    assert report["proof_files_not_written_by_this_run"] == []
+    assert stdout["preexisting_proofs"] == 0
+
+
+def test_log_ots_convert_zero_survivors_report_names_the_proofs_it_left_behind(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """Zero survivors is where a leftover proof is most dangerous: the run
+    emits nothing, so every `proof-*.json` still there is someone else's."""
+
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    ots_path = tmp_path / "stamp.ots"
+    ots_path.write_bytes(_ots_with_tree(_branch_append(b"left", 700_000), digest=seed))
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+    headers_path = _write_json(tmp_path / "headers.json", [])
+    out_dir = tmp_path / "converted"
+    _stale_proof(out_dir, "proof-0-42.json")
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "no convertible Bitcoin paths found" in captured.err
+    report = json.loads((out_dir / "conversion-report.json").read_text(encoding="utf-8"))
+    assert report["converted"] == 0
+    assert report["proof_files_not_written_by_this_run"] == ["proof-0-42.json"]

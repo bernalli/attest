@@ -108,7 +108,10 @@ _MAX_STAGE2_INPUT_BYTES = {
     "candidate": tlog._MAX_NOTE_TEXT_LEN,
     "rfc3161": (verify._MAX_TRANSPARENCY_EVIDENCE_LEN - tlog._MAX_NOTE_TEXT_LEN - 500_000) * 3 // 4,
     # Detached OTS samples measured for V-H.7 were small; cap before parsing.
-    "ots": 1_000_000,
+    # Same number as the parser's own file ceiling, taken FROM it: two
+    # independent literals would drift, and the CLI cap exists to keep the
+    # parser from ever seeing more than the parser itself admits.
+    "ots": ots._MAX_OTS_FILE_BYTES,
 }
 
 
@@ -2179,6 +2182,35 @@ def _cmd_log_anchor(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# Names this command always writes into --out-dir, whatever the .ots holds.
+# The per-path proof names are derived from the conversion result, so they are
+# checked separately once that result exists.
+_OTS_CONVERT_FIXED_OUTPUTS = ("pinned-headers.json", "conversion-report.json")
+
+
+def _reject_ots_outputs_over_inputs(args: argparse.Namespace, filenames: tuple[str, ...]) -> None:
+    """Refuse before writing when an output would land on an input.
+
+    `--evidence` is not derivable from anything this command produces (it
+    comes from `log prove` against a log that has since moved on) and neither
+    is the `.ots`, so silently truncating one is unrecoverable loss. Same
+    discipline `log anchor` applies to `--out` against everything it reads.
+    """
+    inputs = (
+        ("--ots", args.ots),
+        ("--evidence", args.evidence),
+        ("--block-headers", args.block_headers),
+    )
+    for filename in filenames:
+        target = args.out_dir / filename
+        for label, path in inputs:
+            if _same_file_target(target, path):
+                raise CliUsageError(
+                    f"--out-dir would write {filename} over {label} {path}; "
+                    "choose an --out-dir that does not hold this command's inputs"
+                )
+
+
 def _load_operator_headers(path: Path) -> list[ots.OperatorHeader]:
     raw = _read_json(
         path,
@@ -2215,8 +2247,32 @@ def _load_operator_headers(path: Path) -> list[ots.OperatorHeader]:
     return headers
 
 
+def _preexisting_proof_files(out_dir: Path, written: tuple[str, ...]) -> list[str]:
+    """`proof-*.json` already in --out-dir that this run does not write.
+
+    The conversion report is the only inventory of a run, so it has to be true
+    about the directory it sits in: a proof left by an earlier conversion
+    carries exactly this name shape, `log anchor --ots-proof` is the next
+    thing an operator points at it, and nothing else in this output would
+    ever mention it. An observation, not a refusal -- every output here is
+    derivable from the inputs, so the overwrite discipline stays as it is
+    (`_add_force_flag`). A file this run overwrites is this run's own output
+    and is not listed. Sorted, because `_json_text` promises a deterministic
+    file for the same inputs and directory order is not.
+    """
+    try:
+        found = sorted(entry.name for entry in out_dir.glob("proof-*.json"))
+    except OSError:
+        # A directory that cannot be listed is not evidence of leftovers; the
+        # writes below will fail on their own and say so.
+        return []
+    return [name for name in found if name not in written]
+
+
 def _conversion_report_json(
-    report: tuple[ots.OtsConversionReportEntry, ...], proof_filenames: dict[int, str]
+    report: tuple[ots.OtsConversionReportEntry, ...],
+    proof_filenames: dict[int, str],
+    preexisting_proofs: list[str],
 ) -> dict[str, Any]:
     paths: list[dict[str, Any]] = []
     converted_count = 0
@@ -2237,26 +2293,41 @@ def _conversion_report_json(
     return {
         "converted": converted_count,
         "skipped": len(report) - converted_count,
+        # Named for what it asserts: these files were NOT produced now. An
+        # operator reading the report must not have to guess whether a proof
+        # in this directory belongs to the run the report describes.
+        "proof_files_not_written_by_this_run": preexisting_proofs,
         "paths": paths,
     }
 
 
 def _write_ots_conversion_outputs(
-    out_dir: Path, result: ots.ConversionResult
-) -> tuple[Path, Path, dict[int, str]]:
+    args: argparse.Namespace, result: ots.ConversionResult
+) -> tuple[Path, Path, dict[int, str], list[str]]:
+    out_dir: Path = args.out_dir
     proof_filenames: dict[int, str] = {}
     for proof in result.proofs:
-        filename = f"proof-{proof.path_index}-{proof.height}.json"
-        proof_filenames[proof.path_index] = filename
-        _write_json_file(out_dir / filename, proof.proof)
+        # Named by walk position AND height: two paths anchored in the same
+        # block are two claims, and naming by height alone would let the
+        # second overwrite the first (C-41).
+        proof_filenames[proof.path_index] = f"proof-{proof.path_index}-{proof.height}.json"
+    _reject_ots_outputs_over_inputs(args, tuple(proof_filenames.values()))
+    # Read the directory BEFORE the first write: afterwards this run's own
+    # files are indistinguishable from leftovers by name alone.
+    preexisting_proofs = _preexisting_proof_files(out_dir, tuple(proof_filenames.values()))
+    for proof in result.proofs:
+        _write_json_file(out_dir / proof_filenames[proof.path_index], proof.proof)
     pinned_path = out_dir / "pinned-headers.json"
     _write_json_file(pinned_path, {"pinned_headers": result.pinned_headers})
     report_path = out_dir / "conversion-report.json"
-    _write_json_file(report_path, _conversion_report_json(result.report, proof_filenames))
-    return pinned_path, report_path, proof_filenames
+    _write_json_file(
+        report_path, _conversion_report_json(result.report, proof_filenames, preexisting_proofs)
+    )
+    return pinned_path, report_path, proof_filenames, preexisting_proofs
 
 
 def _cmd_log_ots_convert(args: argparse.Namespace) -> int:
+    _reject_ots_outputs_over_inputs(args, _OTS_CONVERT_FIXED_OUTPUTS)
     evidence = _read_json(
         args.evidence, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--evidence"
     )
@@ -2288,16 +2359,39 @@ def _cmd_log_ots_convert(args: argparse.Namespace) -> int:
         result = ots.convert_ots(parsed, expected_seed, headers)
     except ots.OtsConversionError as exc:
         report_path = args.out_dir / "conversion-report.json"
-        _write_json_file(report_path, _conversion_report_json(exc.report, {}))
+        # This run emitted no proof, so every `proof-*.json` in the directory
+        # is someone else's -- the case where mistaking one for this run's
+        # output is easiest.
+        _write_json_file(
+            report_path,
+            _conversion_report_json(exc.report, {}, _preexisting_proof_files(args.out_dir, ())),
+        )
         raise CliUsageError(str(exc)) from exc
     except ots.OtsError as exc:
         raise CliUsageError(str(exc)) from exc
 
-    pinned_path, report_path, _proof_filenames = _write_ots_conversion_outputs(args.out_dir, result)
+    pinned_path, report_path, _proof_filenames, preexisting_proofs = _write_ots_conversion_outputs(
+        args, result
+    )
+    skipped = [entry for entry in result.report if not entry.converted]
     _print_json(
         {
             "out_dir": str(args.out_dir),
             "proofs": len(result.proofs),
+            # A dropped Bitcoin path is a lost anchoring claim, and
+            # `anchored_before` is the MINIMUM over verified proofs: the
+            # operator has to see it on their own channel, not only in a file
+            # they may never open.
+            "skipped": len(skipped),
+            "skipped_bitcoin_heights": [
+                entry.height
+                for entry in skipped
+                if entry.attestation_kind == "bitcoin" and entry.height is not None
+            ],
+            # Count only: the names are in the report, and an --out-dir
+            # holding dozens of old proofs must not flood a machine-readable
+            # stdout. One integer is enough to send the operator to the report.
+            "preexisting_proofs": len(preexisting_proofs),
             "pinned_headers": str(pinned_path),
             "report": str(report_path),
         }
