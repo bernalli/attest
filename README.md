@@ -169,16 +169,18 @@ measured by the shared conformance corpus, now 212 leaves across 45 groups: 61
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
-deadlines), Stage 3 issuer-mediated transfer, and publisher authorization. (A v0.1-only verifier is
+deadlines), Stage 3 issuer-mediated transfer, Stage 4 preservation pledge, the
+time-boxed compromise rescue, and publisher authorization. (A v0.1-only verifier is
 required to reject v0.2 envelopes, so it is measured against the 61-leaf
 subset.) There are also two end-to-end demos: one deletes a store's entire
 infrastructure mid-lifecycle and proves the receipt still verifies, and one
 carries that a step further — a rights holder's preservation pledge fires and
 an archive hands the file back, but only against the receipt.
 
-The published packages ship all of v0.2 — Stages 1 and 2 (hybrid signatures;
-transparency and anchoring) and Stage 3, issuer-mediated transfer, this
-document's own §17.
+The published packages ship all of v0.2: Stages 1 and 2 (hybrid signatures;
+transparency and anchoring), Stage 3 issuer-mediated transfer (§17), Stage 4
+the preservation pledge (§18), the time-boxed compromise rescue (§19) and
+publisher authority (§20).
 
 Seven pieces of work go beyond what a test suite can show. All of them are on
 `main`, and they are linked here rather than left invisible:
@@ -192,7 +194,7 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   negative controls that must falsify. Each theorem states its own scope in the
   theory file; nothing is claimed more broadly there than the prover checked, and
   a CI checker pins those statements so the claims cannot drift from the proofs.
-- **[Threat model](docs/spec/attest-threat-model.md).** 67 attacks catalogued
+- **[Threat model](docs/spec/attest-threat-model.md).** 77 attacks catalogued
   across the whole receipt lifecycle, each either mitigated or recorded as out of
   scope with a reason, a traceability matrix, and the protocol gaps the exercise
   found left tracked in the open instead of quietly fixed.
@@ -208,10 +210,13 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   submitted to the IETF Datatracker on 2026-08-06 and accepted as an individual
   submission (Informational, expires 2027-02-07) — it declares that it mirrors
   v0.1 revision 5 and v0.2 revision 6, so the specification in this repository,
-  not the draft, remains normative. The [XML source](ietf/draft-bernalli-open-purchase-receipts.xml)
-  lives here and builds clean to txt/html in CI; the next revision will go out
-  under the name it now carries, and will be submitted declaring the first as
-  the document it replaces. Being an I-D means the
+  not the draft, remains normative, and the published snapshot is several
+  amendments behind it. On the Datatracker that first submission is filed as
+  `draft-martinalli-open-purchase-receipts-00`. The
+  [XML source](ietf/draft-bernalli-open-purchase-receipts.xml) lives here under
+  the maintainer's current handle and builds clean to txt/html in CI; the next
+  revision will go out under that name, declaring the first as the document it
+  replaces. Being an I-D means the
   document exists and can be cited as work in progress, nothing more: it is not
   endorsed by the IETF and has no formal standing in the standards process.
 - **[Standards-relationship annex](docs/spec/attest-standards-relationship.md).**
