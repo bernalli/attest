@@ -1382,3 +1382,126 @@ def test_preexisting_proof_files_are_sorted_regardless_of_directory_order(
         "proof-2-13.json",
         "proof-7-99999.json",
     ]
+
+
+def test_log_ots_convert_output_feeds_log_anchor_and_verify_end_to_end(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    from tests.test_cli import (
+        _issue,
+        _keygen,
+        _keygen_hybrid,
+        _log_append,
+        _log_init,
+        _log_keys_file,
+        _log_prove,
+        _log_sign_checkpoint,
+        _manifest_init,
+        _receipt_entry,
+        _trust_dir,
+        _write_payload,
+    )
+
+    log_dir = _log_init(tmp_path)
+    log_ed_seed, log_ed_pub, log_mldsa = _keygen_hybrid(tmp_path, "log-signer")
+    issuer_seed, _issuer_pub = _keygen(tmp_path, "issuer")
+    manifest_path = _manifest_init(tmp_path, issuer_seed)
+    payload_path = _write_payload(tmp_path)
+    envelope_path = _issue(tmp_path, issuer_seed, payload_path)
+    trust_dir = _trust_dir(tmp_path, manifest_path)
+
+    _log_append(tmp_path, log_dir, _receipt_entry(envelope_path))
+    _log_sign_checkpoint(log_dir, log_ed_seed, log_mldsa)
+    evidence_path = _log_prove(tmp_path, log_dir, 0)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    checkpoint = tlog.parse_checkpoint(evidence["checkpoint"])
+    signed_note_seed = hashlib.sha256(checkpoint.signed_note_bytes).digest()
+
+    height = 765_432
+    header_time = 1_700_000_000
+    append_operand = b"vh7-end-to-end"
+    ots_path = tmp_path / "signed-note.ots"
+    ots_path.write_bytes(
+        _ots_with_tree(_branch_append(append_operand, height), digest=signed_note_seed)
+    )
+    merkle_root = _replay(
+        signed_note_seed, (ots.OtsOp("append", append_operand), ots.OtsOp("sha256"))
+    ).hex()
+    header = _header(
+        height,
+        merkle_root,
+        header_hash=hashlib.sha256(b"vh7-end-to-end-header").hexdigest(),
+        time=header_time,
+    )
+    headers_path = _write_json(tmp_path / "headers.json", [header.__dict__])
+    converted_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(converted_dir),
+        ]
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["proofs"] == 1
+
+    log_keys_path = _log_keys_file(tmp_path, log_ed_pub, log_mldsa)
+    proof_path = converted_dir / f"proof-0-{height}.json"
+    pinned_headers_path = converted_dir / "pinned-headers.json"
+    assert json.loads(pinned_headers_path.read_text(encoding="utf-8")) == {
+        "pinned_headers": {
+            header.header_hash: {
+                "header_hash": header.header_hash,
+                "merkle_root": merkle_root,
+                "time": header_time,
+            }
+        }
+    }
+
+    anchored_path = tmp_path / "anchored-evidence.json"
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "anchor",
+            "--dir",
+            str(log_dir),
+            "--evidence",
+            str(evidence_path),
+            "--ots-proof",
+            str(proof_path),
+            "--out",
+            str(anchored_path),
+        ]
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["proofs"] == 1
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "verify",
+            str(envelope_path),
+            "--trust-dir",
+            str(trust_dir),
+            "--transparency",
+            str(anchored_path),
+            "--log-keys",
+            str(log_keys_path),
+            "--anchor-policy",
+            str(pinned_headers_path),
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert result["transparency"] == "anchored_before:2023-11-14T22:13:20Z"
