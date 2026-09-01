@@ -91,8 +91,8 @@ it names the three things it does not do in [`demo/README.md`](demo/README.md).
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations. Their published
 self-certification claims are recorded in [`docs/conformance.md`](docs/conformance.md);
-the corpus now contains 215 leaves, and a release may claim the §20-expanded corpus
-only once both implementations reproduce all 215. **Try it in your browser:**
+the corpus now contains 217 leaves, and a release may claim the §20-expanded corpus
+only once both implementations reproduce all 217. **Try it in your browser:**
 <https://attest-receipts.org/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Be clear about the status: no
 store issues attest receipts in production yet, and there are no external reviews.
@@ -172,7 +172,7 @@ amount of protocol fixes that.
 
 Spec v0.1 is complete and v0.2 is specified, with two independent
 implementations — a Python reference implementation and a TypeScript verifier —
-measured by the shared conformance corpus, now 215 leaves across 46 groups: 63
+measured by the shared conformance corpus, now 217 leaves across 47 groups: 63
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
@@ -364,7 +364,7 @@ mark, which has not happened. Conformance claims follow the self-certification
 process in [docs/conformance.md](docs/conformance.md).
 
 **Contributing.** See [`CONTRIBUTING.md`](CONTRIBUTING.md). Implementation pull
-requests must pass all 215 conformance vector leaves and keep both the Python and
+requests must pass all 217 conformance vector leaves and keep both the Python and
 TypeScript suites green.
 
 **Contact.** Use GitHub Issues for technical bugs, GitHub Discussions for

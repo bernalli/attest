@@ -42,6 +42,12 @@ above, following the same fixed-input determinism discipline:
     issuer manifest with a `[valid_from, valid_to]` window covering the
     record's own `revoked_at` — every revocation.json shipped here satisfies
     that, checked with a generator-time `revocation.verify_record()` assert.
+  - optional `revocation-view.json` — the WHOLE untrusted revocation view as
+    an array (group 47), fed to the replay test as `revocation_view=<array>`
+    unchanged. Alternative spelling to `revocation.json`, for leaves that need
+    to express more than one record (padding to probe the view's record
+    ceiling included) — `revocation.json` and `revocation-view.json` are
+    mutually exclusive on a single leaf.
   - `manifests.json`'s `"chains"` member (always present, empty `{}` by
     default since Task 10) is populated for vectors 14/14b:
     `{issuer_id: [manifest_v1, manifest_v2]}`, oldest first, ending with the
@@ -988,6 +994,7 @@ def write_vector(
     disclosure: dict[str, Any] | None = None,
     manifest_pristine: dict[str, Any] | None = None,
     revocation_record: dict[str, Any] | None = None,
+    revocation_view: list[Any] | None = None,
     canonical: bytes | None = None,
     transparency: dict[str, Any] | None = None,
     log_keys: list[tlog.LogKey] | None = None,
@@ -1051,6 +1058,11 @@ def write_vector(
     presence is likewise the capability gate. Absent for every leaf outside
     group 43, so `publisher_authority`/`publisher_authority_trust` stay at
     their `not_checked` defaults there."""
+    assert revocation_record is None or revocation_view is None, (
+        "revocation_record and revocation_view are alternative spellings of the "
+        "same evidence rail — a leaf carrying both is ambiguous about which file "
+        "the replay test should read"
+    )
     vector_dir = VECTORS_DIR / name
     if payload is not None:
         _write_json(vector_dir / "payload.json", payload)
@@ -1066,6 +1078,8 @@ def write_vector(
         _write_json(vector_dir / "manifest_pristine.json", manifest_pristine)
     if revocation_record is not None:
         _write_json(vector_dir / "revocation.json", revocation_record)
+    if revocation_view is not None:
+        _write_json(vector_dir / "revocation-view.json", revocation_view)
     if canonical is not None:
         _write_bytes(vector_dir / "canonical.json", canonical)
     if transparency is not None:
@@ -6888,6 +6902,13 @@ def gen_41_compromise_cutoff() -> None:
       the v2 declaration. The floor still kills the unanchored receipt, but no
       retraction is reported: a stale pin is a verifier that is behind, not an
       issuer rewriting its history.
+    - (w) (v0.1 rev 13) (m)'s exact fixture, but the genuine declaration is
+      padded past `verify._MAX_COMPROMISE_CLAIMS` with 64 junk entries ->
+      the oversized view is never evaluated, so (m)'s claim is invisible and
+      the receipt would verify green with no warning were it not for the
+      ceiling itself: `signature: "invalid"`, `"compromise view exceeds 64
+      claims"`, no warnings (the ceiling returns before any are appended).
+      `v` is reserved for other work.
     """
     payload = issue.build_payload(**_base_payload_kwargs())  # revocability: "none"
     _assert_schema_valid(payload)
@@ -7443,6 +7464,34 @@ def gen_41_compromise_cutoff() -> None:
         log_keys=[_log_key()],
         anchor_policy=_empty_anchor_policy(),
         compromise_view=[_claim(v2, claim_m)],
+    )
+
+    # --- (w) oversized-view-does-not-certify (v0.1 rev 13) -----------------
+    # (m)'s exact fixture: same trust, same envelope, same claim evidence.
+    # The only change is the view itself — the genuine claim padded past the
+    # ceiling with junk, exactly as `47-oversized-view-transfer` pads the
+    # revocation-view rail. `v` is reserved for other work, hence `w`.
+    write_vector(
+        "41-compromise-cutoff/w-oversized-view-does-not-certify",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, v3_reactivated, "tls")),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": False,
+            "errors_contains": ["compromise view exceeds 64 claims"],
+            "warnings": [],
+        },
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
+        # 64 == verify._MAX_COMPROMISE_CLAIMS, private to that module — the
+        # padding count is spelled out here rather than imported.
+        compromise_view=[_claim(v2, claim_m)] + [None] * 64,  # type: ignore[list-item]
     )
 
     # --- (n) uncompromise-floor-spares-anchored ---------------------------
@@ -8372,6 +8421,100 @@ def gen_46_manifest_unauthenticated() -> None:
     )
 
 
+# --- vector 47: oversized-view-transfer (v0.1 rev 13, revocation-view ceiling
+# closes on the "none" class too) -------------------------------------------
+
+
+def gen_47_oversized_view_transfer() -> None:
+    """v0.1 rev 13: `_classify_revocation`'s oversized-view ceiling fails
+    CLOSED for the `"none"` (irrevocable) class exactly as it already does for
+    `policy`/`refund_window` — a genuine, backed `status: "transferred"`
+    record padded past `revocation.MAX_REVOCATION_RECORDS` with junk must not
+    verify green with no warning at all (v0.2 §17.3's consent gate applies to
+    `none` too, per `35-transfer/b-transferred-on-none-with-backing`).
+
+    Reuses `35-transfer/b-transferred-on-none-with-backing`'s exact fixture —
+    same `revocability: "none"` receipt, same backing `rev_transferred`, same
+    `transfer_view`, same `log_keys`/`anchor_policy` — with ONE change: the
+    genuine record rides `revocation_view` (the array spelling) padded with
+    `MAX_REVOCATION_RECORDS` `None` entries instead of the single-record
+    `revocation_record` spelling. The oversized view is never evaluated
+    (§18.4), so the transfer it would have honored is invisible and the
+    resolver never runs: `revocation: "unknown"`, `ok: false`, an error
+    (`"cannot rule out a transfer"`, the class-`none` branch of the same
+    ceiling message `41-compromise-cutoff/w` pins on the compromise rail), and
+    no warning — the same shape as an oversized `compromise_view`, one rail
+    over.
+    """
+    hybrid_manifest = _hybrid_manifest(ISSUER_ID, ISSUER_KID, ISSUER_KP)
+    assert manifests.verify_key_manifest(hybrid_manifest) is True
+    hybrid_trust = _trust_material((ISSUER_ID, hybrid_manifest, "tls"))
+
+    payload_b = issue.build_payload(
+        **_base_payload_kwargs(
+            attest_version="0.2",
+            transferable=True,
+            buyer_pubkey=BUYER_KP.pub,
+            revocability="none",
+        )
+    )
+    _assert_schema_valid(payload_b)
+    envelope_b = _hybrid_envelope(payload_b, ISSUER_KP, ISSUER_KID)
+
+    rev_transferred = _hybrid_sign_record(
+        {"receipt_id": RECEIPT_ID, "status": "transferred", "revoked_at": TRANSFERRED_AT}
+    )
+    assert revocation.verify_record(rev_transferred, hybrid_manifest) is True
+
+    new_holder_pub_b64u = keys.b64u(TRANSFER_NEW_HOLDER_KP.pub)
+    record_valid = _hybrid_sign_record(
+        _transfer_record_body(
+            RECEIPT_ID, NEW_RECEIPT_ID, new_holder_pub_b64u, TRANSFERRED_AT, BUYER_KP
+        )
+    )
+    assert transfer.verify_record(record_valid, hybrid_manifest) is True
+    assert transfer.verify_authorization(record_valid, keys.b64u(BUYER_KP.pub)) is True
+
+    entry_valid = {
+        "type": "transfer-record",
+        "issuer": ISSUER_ID,
+        "record_sha256": transfer.record_hash(record_valid),
+    }
+    entry_valid_bytes = tlog.encode_entry(entry_valid)
+    root_valid = tlog.build_tree([entry_valid_bytes])
+    checkpoint_valid = _sign_checkpoint_oracle(LOG_ORIGIN, 1, root_valid)
+    inclusion_valid = _hex_proof(tlog.inclusion_proof([entry_valid_bytes], 0))
+    evidence_valid = {
+        "entry": entry_valid,
+        "leaf_index": 0,
+        "tree_size": 1,
+        "inclusion_proof": inclusion_valid,
+        "checkpoint": checkpoint_valid,
+    }
+
+    write_vector(
+        "47-oversized-view-transfer/a-oversized-view-hides-transfer",
+        payload=payload_b,
+        envelope=envelope_b,
+        envelope_raw=None,
+        trust=hybrid_trust,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": False,
+            "errors_contains": ["cannot rule out a transfer"],
+            "warnings": [],
+        },
+        revocation_view=[rev_transferred] + [None] * revocation.MAX_REVOCATION_RECORDS,
+        transfer_view=[{"record": record_valid, "evidence": evidence_valid}],
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
+    )
+
+
 def main() -> None:
     _clear_leaf_dirs(VECTORS_DIR)
     VECTORS_DIR.mkdir(parents=True, exist_ok=True)
@@ -8421,6 +8564,7 @@ def main() -> None:
     gen_44_manifest_duplicate_kid()
     gen_45_revocation_anchor_status()
     gen_46_manifest_unauthenticated()
+    gen_47_oversized_view_transfer()
     leaf_count = sum(1 for _ in VECTORS_DIR.rglob("expected.json"))
     print(f"generated {leaf_count} vector cases under {VECTORS_DIR}")
 

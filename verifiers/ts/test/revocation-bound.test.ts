@@ -142,15 +142,20 @@ describe('revocation view bound (improvement #17, fail-closed)', () => {
     expect(warnings).toEqual([])
   })
 
-  it('oversized view on an irrevocable receipt warns and stays ok-eligible', () => {
+  // Until 2026-09-01 this asserted a warning and no error, on the reasoning the
+  // spec itself carried: "a revocation record can never affect ok". v0.2 §17.3
+  // ended that — the consent gate covers ALL revocability classes, and a backed
+  // `status: "transferred"` record rides this same view, so the old assertion
+  // said an oversized feed may hide a transfer from the strongest class.
+  it('oversized view on an irrevocable receipt fails closed too', () => {
     const nonePayload = parse({ receipt_id: RECEIPT_ID, issued_at: '2026-07-01T00:00:00Z', license: { revocability: 'none' } })
     const view = [1, 2, 3, 4].map((d) => record(`2026-07-0${d}T00:00:00Z`))
     const warnings: string[] = []
     const errors: string[] = []
     const result = classifyRevocation(nonePayload, view, keyManifest, warnings, errors, 3)
     expect(result).toBe('unknown')
-    expect(warnings).toContain('revocation view exceeds 3 records (4 supplied), not evaluated')
-    expect(errors).toEqual([])
+    expect(errors).toContain('revocation view exceeds 3 records (4 supplied), cannot rule out a transfer')
+    expect(warnings).toEqual([])
   })
 
   it('view exactly at cap evaluates normally (boundary is strict >)', () => {

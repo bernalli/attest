@@ -1520,13 +1520,14 @@ def _classify_revocation(
 
     An oversized view (more than `max_records` entries) is not evaluated —
     never truncated (a subset could misreport), never raised. It fails CLOSED
-    for revocable receipts: for `policy`/`refund_window` an error is recorded
-    (so `ok` is false), because an untrusted view too large to evaluate cannot
-    rule out a revocation and must not certify the receipt — otherwise an
-    append-only feed-poisoning attacker could suppress a genuine revocation by
-    padding past the cap. For `none` (irrevocable) a revocation can never
-    affect `ok`, so it is a non-fatal warning. In both cases revocation is
-    `"unknown"`.
+    for every revocability class: for `policy`/`refund_window` an untrusted
+    view too large to evaluate cannot rule out a revocation, and for `none`
+    (irrevocable) it cannot rule out a *transfer* either — v0.2 §17.3's
+    consent gate applies to ALL revocability classes, and a BACKED
+    `status: "transferred"` record rides this same view. Both are recorded
+    as an error (`ok` becomes `false`); otherwise an append-only
+    feed-poisoning attacker could suppress genuine evidence by padding past
+    the cap. In both cases revocation is `"unknown"`.
 
     v0.2 Stage 3 (§17.3, design doc §4): once the `"revoked"`-status logic
     above has run to completion WITHOUT itself yielding `_REVOCATION_REVOKED`
@@ -1592,11 +1593,20 @@ def _classify_revocation(
                 f"({supplied} supplied), cannot certify a revocable receipt"
             )
         else:
-            # Irrevocable ("none") or unknown-class (rejected at schema): a
-            # revocation can never affect ok, so an oversized view is non-fatal.
-            warnings.append(
+            # Irrevocable ("none") or unknown-class (rejected at schema). This
+            # branch used to be a non-fatal warning, on the grounds that "a
+            # revocation can never affect ok" — true when it was written, and
+            # false since v0.2 §17.3 made the consent gate apply to ALL
+            # revocability classes, `none` included: a BACKED
+            # `status: "transferred"` record caps `ok` for this class too, and
+            # those records ride this very view (see `_classify_revocation`'s
+            # docstring). Returning early on size therefore discarded them as
+            # well, so whoever could append to the view chose which transfer the
+            # verifier never saw. We cannot rule out a transfer, so we cannot
+            # certify.
+            errors.append(
                 f"revocation view exceeds {max_records} records "
-                f"({supplied} supplied), not evaluated"
+                f"({supplied} supplied), cannot rule out a transfer"
             )
         return _REVOCATION_UNKNOWN
 

@@ -137,7 +137,7 @@ export const unknownEol = (v: unknown) => `unknown survivability.end_of_life val
 export const revocationFailedVerify = (rid: unknown) => `revocation record for ${pyRepr(rid)} failed verification, ignored`
 export const outsideRefundWindow = (rid: unknown) => `revocation record for ${pyRepr(rid)} outside refund window, ignored`
 export const revocationViewOversize = (n: number, max: number) =>
-  `revocation view exceeds ${max} records (${n} supplied), not evaluated`
+  `revocation view exceeds ${max} records (${n} supplied), cannot rule out a transfer`
 export const revocationViewOversizeRevocable = (n: number, max: number) =>
   `revocation view exceeds ${max} records (${n} supplied), cannot certify a revocable receipt`
 

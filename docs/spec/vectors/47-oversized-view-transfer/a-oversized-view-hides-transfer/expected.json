@@ -1,0 +1,12 @@
+{
+  "binding": "not_checked",
+  "errors_contains": [
+    "cannot rule out a transfer"
+  ],
+  "ok": false,
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "trust": "verified",
+  "warnings": []
+}
