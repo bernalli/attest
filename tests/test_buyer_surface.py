@@ -8,6 +8,7 @@ most concrete. These tests hold the parts that must not diverge again.
 
 from __future__ import annotations
 
+import html
 import re
 import subprocess
 import sys
@@ -222,3 +223,83 @@ def test_the_generator_runs_as_a_script() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "what-is-this.html" in result.stdout
+
+
+def _claims_in_html(rendered: str) -> str:
+    """What a person reads in the HTML form: tags dropped, entities resolved."""
+    return _collapse(html.unescape(re.sub(r"<[^>]+>", " ", rendered)))
+
+
+def _claims_in_text(rendered: str) -> str:
+    """What a person reads in the plain form: exactly what is there.
+
+    Deliberately NOT tag-stripped. The plain form legitimately contains
+    `<receipt_id>` as literal text, and a comparison that stripped it would
+    quietly demand that the two forms differ — a test enforcing the very
+    drift it exists to forbid.
+    """
+    return _collapse(rendered)
+
+
+def _collapse(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def test_both_warning_forms_make_the_same_claims() -> None:
+    """The two forms must say the same things — parity of claims, not bytes.
+
+    This module exists to stop hand-written copies of buyer-facing text from
+    drifting, and it held two of them. They had drifted: three statements
+    lived only in the HTML form, among them "a real store or support agent
+    will never need it" — the one sentence that makes a phishing request look
+    wrong. The email uses the PLAIN form, so that sentence was present on
+    every surface where nobody is deceiving the buyer, and absent from the
+    only one an attacker can imitate.
+
+    A parity test is what makes "one source" true instead of merely intended:
+    two strings side by side in one module are two copies until something
+    proves otherwise.
+    """
+    from_html = _claims_in_html(buyer_surface.private_file_warning_html("mylibrary"))
+    from_text = _claims_in_text(buyer_surface.private_file_warning_text("mylibrary"))
+
+    assert from_html == from_text
+
+
+#: Every place that renders a buyer-facing page, counted from the code rather
+#: than remembered. The count per file matters: a second surface added to a
+#: file already on this list is exactly how the itch claim form went a whole
+#: release without the private-file warning while three other surfaces had it.
+EXPECTED_RENDER_PAGE_CALL_SITES = {
+    "src/attest/bundle.py": 1,
+    "bridge/src/attest_bridge/http.py": 2,
+    "tools/gen_buyer_pages.py": 1,
+}
+
+
+def test_every_surface_that_renders_a_buyer_page_is_accounted_for() -> None:
+    """A new buyer-facing page must be a decision, not a discovery.
+
+    What this pins is that the list of surfaces is COUNTED from the code every
+    time, never recalled. A remembered list is an incomplete list: the claim
+    form was missing from the remembered one, and it is the first page an itch
+    buyer ever sees. The same shape has cost this project twice before, both
+    times by collapsing something the code knew into something a person
+    remembered.
+
+    If this fails because you added a surface: give it the private-file
+    warning, give it a test that proves it carries it, then add it here.
+    """
+    found: dict[str, int] = {}
+    for path in sorted(REPO_ROOT.glob("**/*.py")):
+        if any(part in {".venv", "node_modules", ".git", "tests"} for part in path.parts):
+            continue  # a test that renders a page is not a surface a buyer meets
+        if path.name.startswith("test_"):
+            continue
+        if path == REPO_ROOT / "src" / "attest" / "buyer_surface.py":
+            continue  # where render_page is defined, not called
+        count = path.read_text(encoding="utf-8").count("render_page(")
+        if count:
+            found[str(path.relative_to(REPO_ROOT))] = count
+
+    assert found == EXPECTED_RENDER_PAGE_CALL_SITES

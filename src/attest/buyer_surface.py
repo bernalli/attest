@@ -137,6 +137,37 @@ def _private_name(bundle_name: str | None) -> str:
     return _GENERIC_PRIVATE_NAME if bundle_name is None else f"{bundle_name}.private.attest"
 
 
+#: The command that shares one receipt instead of the whole private file.
+_DISCLOSE_COMMAND: Final = "attest disclose <receipt_id>"
+
+#: The warning, as claims rather than as prose — ONE source, two renderings.
+#:
+#: This module exists to stop hand-written copies of buyer-facing text from
+#: drifting, and it used to hold two of them: an HTML paragraph and a plain
+#: one, written separately. They drifted, and the drift was not cosmetic.
+#: Three statements survived only in the HTML — among them "a real store or
+#: support agent will never need it", the one sentence that makes a phishing
+#: request look wrong. The delivery email renders the PLAIN form, so that
+#: sentence reached every surface except the only one an attacker imitates.
+#:
+#: Hence claims, not prose: both forms are generated from this tuple, so a
+#: sentence cannot exist on one surface and not the other. Anything a buyer
+#: must be told is added HERE, once.
+_WARNING_HEADLINE: Final = "Never send {name} to anyone."
+
+_WARNING_CLAIMS: Final = (
+    "That file is the proof the purchase belongs to you: anyone holding it can "
+    "claim to be the buyer.",
+    "Because one private file covers your whole library, handing it over hands "
+    "over proof for every purchase inside at once, not just the one you meant "
+    "to show.",
+    "A real store or support agent will never need it — they can already see your order.",
+    "Keep it private, the way you would keep a paper receipt with your card number on it.",
+    "To prove a single purchase, use {command} instead: it shares that one "
+    "receipt and nothing else.",
+)
+
+
 def private_file_warning_html(bundle_name: str | None = None) -> str:
     """The warning about the private file, as a styled block.
 
@@ -144,6 +175,10 @@ def private_file_warning_html(bundle_name: str | None = None) -> str:
     gets the same emphasis everywhere it appears: same box, same colour, same
     weight. The risk does not change with the surface, so neither does its
     presentation.
+
+    Rendered from :data:`_WARNING_CLAIMS`, the same source
+    :func:`private_file_warning_text` renders — the two forms differ in markup
+    and in nothing else.
 
     Args:
         bundle_name: Bundle stem, e.g. ``"mylibrary"``. ``None`` renders the
@@ -153,18 +188,15 @@ def private_file_warning_html(bundle_name: str | None = None) -> str:
         A ``<div class="warning">`` block.
     """
     name = html.escape(_private_name(bundle_name))
+    command = f"<code>{html.escape(_DISCLOSE_COMMAND)}</code>"
+    paragraphs = "\n".join(
+        f"<p>{html.escape(claim).format(name=name, command=command)}</p>"
+        for claim in _WARNING_CLAIMS
+    )
     return (
         '<div class="warning">\n'
-        f"<h2>Never send {name} to anyone</h2>\n"
-        "<p>That file is the proof the purchase belongs to <em>you</em>: anyone holding\n"
-        "it can claim to be the buyer. And because one private file covers your whole\n"
-        "library, handing it over hands over proof for every purchase inside at once,\n"
-        "not just the one you meant to show. A real store or support agent will never\n"
-        "need it — they can already see your order. Keep it private, the way you would\n"
-        "keep a paper receipt with your card number on it.</p>\n"
-        "<p>To prove a single purchase, use\n"
-        "<code>attest disclose &lt;receipt_id&gt;</code> instead: it shares that one\n"
-        "receipt and nothing else.</p>\n"
+        f"<h2>{html.escape(_WARNING_HEADLINE).format(name=name)}</h2>\n"
+        f"{paragraphs}\n"
         "</div>"
     )
 
@@ -173,8 +205,10 @@ def private_file_warning_text(bundle_name: str | None = None) -> str:
     """The same warning as plain text, for surfaces rendered by someone else.
 
     An email body is displayed by a client this project does not control and
-    cannot verify, so it gets the short form: the same facts, in the same
-    order, with nothing that depends on being styled.
+    cannot verify, so it carries no markup at all — but it carries every claim
+    the styled form carries. It is generated from the same
+    :data:`_WARNING_CLAIMS`, because the surface an attacker can imitate is
+    precisely the one that must not be missing a sentence.
 
     Args:
         bundle_name: Bundle stem. ``None`` renders the generic form.
@@ -183,10 +217,6 @@ def private_file_warning_text(bundle_name: str | None = None) -> str:
         Plain text, no markup, no trailing newline.
     """
     name = _private_name(bundle_name)
-    return (
-        f"{name} is the proof that the receipt is yours. Never send it to anyone "
-        "— not to a shop, not to support. Whoever holds it can claim your purchases "
-        "were theirs, and one file covers your whole library, not just one purchase. "
-        "Keep it with your own files. To prove a single purchase instead, use "
-        "attest disclose <receipt_id>."
-    )
+    sentences = [_WARNING_HEADLINE.format(name=name)]
+    sentences += [claim.format(name=name, command=_DISCLOSE_COMMAND) for claim in _WARNING_CLAIMS]
+    return " ".join(sentences)

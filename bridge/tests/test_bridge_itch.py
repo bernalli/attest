@@ -1321,3 +1321,22 @@ def test_itch_import_rc_2_on_config_error(tmp_path: Path) -> None:
         ["itch-import", "--config", str(missing_config), "--game-id", "123456", str(csv_path)]
     )
     assert rc == 2
+
+
+def test_claim_form_carries_the_private_file_warning(itch_deps: BridgeDeps) -> None:
+    """The claim form is the first thing an itch buyer ever sees.
+
+    `bridge/docs/setup-itch.md` tells the seller to link this page from their
+    game page, so a buyer meets it BEFORE any email — and it was the one
+    rendered surface not carrying the warning about the private half. Being
+    told "never send that file to anyone" only once the file is already in
+    your inbox is being told too late.
+    """
+    app = make_app(itch_deps)
+
+    status, _, body = call_app(app, "GET", "/itch/claim")
+
+    assert status.startswith("200")
+    page = body.decode()
+    assert "private.attest" in page
+    assert "A real store or support agent will never need it" in page
