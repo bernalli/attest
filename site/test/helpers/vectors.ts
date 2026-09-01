@@ -51,7 +51,14 @@ export function revocationView(dir: string): JsonValue[] | null {
   // spelling transfer-view.json and compromise-view.json already use — and
   // `revocation.json` is the older single-record form. Array wins.
   const arrayPath = join(dir, 'revocation-view.json')
-  if (existsSync(arrayPath)) return loadJsonStrict(arrayPath) as JsonValue[]
+  if (existsSync(arrayPath)) {
+    const loaded = loadJsonStrict(arrayPath)
+    // Refuse the wrong shape out loud instead of casting through it: this file
+    // is an array by definition, and a loader that quietly accepts an object
+    // would hand the verifier evidence of a shape it never agreed to read.
+    if (!Array.isArray(loaded)) throw new Error(`${arrayPath} must contain a JSON array`)
+    return loaded
+  }
   const p = join(dir, 'revocation.json')
   return existsSync(p) ? [loadJsonStrict(p)] : null
 }
