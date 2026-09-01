@@ -20,12 +20,9 @@ shuts down or your account disappears.
 
 Today this works where sellers ship DRM-free files and choose to sign —
 think GOG-style stores, itch.io, publishers selling directly. The longer-term
-aim is that closed platforms hand you one too. In the EU, sellers are
-already required to confirm every purchase on a durable medium — that's the
-receipt email in your inbox. attest is that same confirmation in a format a
-machine can verify and you can take with you. No
-store issues attest receipts yet. The standard, the tools and the test suite
-are done and free to use; what's missing is the first seller who signs.
+aim is that closed platforms hand you one too. No store issues attest receipts
+yet. The standard, the tools and the test suite are done and free to use;
+what's missing is the first seller who signs.
 
 ## How is this different from the receipt I already get by email?
 
@@ -37,26 +34,28 @@ formats it differently, so no machine can rely on it. And if you need to prove
 it's real twenty years from now, you need the store alive to ask — or a human
 willing to weigh the evidence for you.
 
-An attest receipt is signed with the seller's cryptographic key: faking one
-means breaking the signature, not editing a document. It's one standard
-format, so one free verifier works for every store that signs. Anyone can
-check it offline, on their own machine, trusting nobody and contacting nobody.
-It carries machine-readable rules for revocation, and for transfer where the
-seller allows it. And it is bound to an identifier of yours — sealed into the
-receipt rather than written in the clear — though what that binding is worth
-takes a longer answer, and it is the next one. Same fact attested. Completely
-different lifespan.
+An attest receipt is signed with a cryptographic key named for the seller: editing
+its signed contents without that key breaks the signature. It uses one standard
+format, so one free verifier works for every store that signs. Anyone can perform
+that check offline, without contacting the seller. The check does not by itself
+authenticate the supplied key as belonging to that seller: every shipped tool
+reports TOFU rather than verified domain provenance, as the offline-verification
+answer below explains. It carries machine-readable rules for revocation, and for
+transfer where the seller allows it. And it is bound to an identifier of yours —
+sealed into the receipt rather than written in the clear — though what that binding
+is worth takes a longer answer, and it is the next one. Same fact attested.
+Completely different lifespan.
 
-The confirmation the law already asks sellers for, as the first answer says, is
-the thing attest gives a durable shape to. It does not add an obligation; it
-offers a format for one that exists.
+attest does not itself create or determine a seller's legal obligations. It
+supplies a machine-verifiable receipt format.
 
 ## If the receipt is just a file, what stops ten people from using the same one?
 
-Nothing stops ten people from *holding* it, and nothing is meant to. The receipt is
-a file you are supposed to copy: back it up, mail it to yourself, keep a second copy
-on another disk. A receipt that resisted copying would be DRM again, and would fail
-for the same reasons DRM fails.
+Nothing stops ten people from holding the shareable file, and nothing is meant to.
+All ten copies verify identically: buyer binding is reported separately and is not
+a component of `ok`. The receipt is a file you are supposed to copy: back it up,
+mail it to yourself, keep a second copy on another disk. A receipt that resisted
+copying would be DRM again, and would fail for the same reasons DRM fails.
 
 What copying does not hand over is the ability to prove the purchase is *yours*.
 When a store exports your receipts you get two files, and only one of them is meant
@@ -146,14 +145,10 @@ trust: "what you buy from me stays yours, even if I disappear" is a selling
 argument, the same one GOG built a whole brand on. An independent publisher
 can offer this tomorrow, and nobody can stop them.
 
-For everyone who won't sign voluntarily, the route is legal, not technical.
-EU law already obliges every online seller to confirm your purchase on a
-durable medium; that's why confirmation emails exist at all. attest is that
-same confirmation in a format a machine can verify and you can carry away. A
-regulator doesn't have to invent a new obligation, only require a usable
-format for one that already exists. The standard is written for exactly that
-moment: published in the open, with two independent implementations, a
-conformance suite and an active IETF draft behind it. The reference code is
+For everyone who will not sign voluntarily, there is no technical mechanism
+here that compels adoption. Any regulatory route is external to the protocol.
+The standard is published in the open, with two independent implementations,
+a conformance suite and an active IETF draft behind it. The reference code is
 Apache-2.0, whose patent grant reaches that code and no further, and the
 specification is CC BY 4.0, which states outright that patent rights are not
 licensed under it. Nothing here charges a fee to implement attest, and nothing
@@ -174,12 +169,12 @@ there is no network code in the Python package or the TypeScript verifier, and t
 browser verifier fetches nothing beyond its own demo sample from its own site. So
 offline is not a mode you switch on. It is the only mode there is.
 
-What you get from it is real and permanent: the signature is valid or it is not, the
-receipt's shape is valid or it is not. Nothing that happens to the store afterwards
-changes either answer. The two implementations were built separately, in Python and
-in TypeScript, and they agree on every vector in the shared conformance corpus; that
-is the evidence that the algorithm is unambiguous rather than one codebase's private
-reading of it. Anyone can run the verifier; nobody has to be asked.
+With the same receipt bytes and the same local verification material, the signature
+and schema checks are reproducible. A later trusted manifest can change the signing
+key's status and therefore change the signature verdict, so the result is not
+immutable with respect to every future input. The Python and TypeScript
+implementations were built separately and are both exercised against the same shared
+conformance corpus. Anyone can run the verifier; nobody has to be asked.
 
 Four things offline verification cannot tell you, and they matter.
 
@@ -233,8 +228,10 @@ reports the receipt as revoked.
 
 What you see is one of a small set of words: `unknown`, `not_revoked_as_of` with a
 date, `revoked`, `transferred`, or `invalid_revocation_ignored` for a record that
-matched your receipt but was refused. Only `revoked` and `transferred` make a receipt
-fail.
+matched your receipt but was refused. Those words describe the revocation component:
+`revoked` and `transferred` directly cap `ok`, but the overall receipt can also fail
+because its signature or schema is invalid, or because verification reported another
+error.
 
 Two things the protocol does not give you. There is no appeal: no dispute step, no
 arbitration, no contest. A revocation record states what happened and never why, and
@@ -277,9 +274,9 @@ file back after the publisher stops distributing — can only be redeemed by sig
 fresh challenge with a key named inside the receipt. Disclosing the salt is forbidden
 as redemption proof, as a rule and not a recommendation, and a receipt cannot carry a
 pledge at all unless it names such a key. So a receipt bound only to your email
-address cannot carry a pledge and cannot redeem one, and whoever inherits your
-receipts inherits that limit: without the key, the pledge does not fire for them. The
-only fix is to be re-issued with a key while the issuer is still there to do it.
+address cannot carry a pledge. Whoever inherits a pledge-bearing receipt without its
+corresponding private key cannot redeem the pledge after it activates. The only fix
+is to be re-issued with a key while the issuer is still there to do it.
 
 ## Can I sell what I bought, or pass it on?
 
@@ -306,19 +303,17 @@ works for receipts that name a key of yours: a receipt bound only to an email ad
 cannot be transferred whatever its `transferable` flag says, because the key, not the
 flag, is the gate the verifier actually applies.
 
-There is no private, seller-free resale, and that is a decision rather than a missing
-feature. Handing your bundle to somebody is not a transfer: you keep exactly the
-ability to prove the receipt is yours that you had before, so the person paying you
-receives nothing exclusive. The legal ground runs the same direction — for e-books and
-most works that are not software, EU case law does not treat a digital sale as
-exhausting the rights holder's control, so a resale without their cooperation is not a
-right this protocol could grant even if the code allowed it.
+There is no private, seller-free resale, and that is a decision rather than a
+missing feature. Handing your bundle to somebody is not a transfer: you keep
+exactly the ability to prove the receipt is yours that you had before, so the
+person paying you receives nothing exclusive. The protocol defines an
+issuer-mediated transfer path; it does not create a seller-free resale right.
 
 One thing a receipt does not do is settle the law. It can carry the seller's assertion
 that a particular sale met the conditions for statutory resale in some jurisdiction.
-That is an assertion, signed by the seller, that no verifier checks: the Python
-reference does not read the field, and the TypeScript verifier checks only that it is
-well-formed.
+Neither verifier determines whether that assertion is legally correct: both validate
+`jurisdiction_flags` only as an object whose values are booleans, as part of ordinary
+schema validation.
 
 ## Why not blockchain / NFT?
 
@@ -329,34 +324,40 @@ exists to solve double-spend and ordering among mutually distrusting parties
 maintaining a shared ledger; a buyer proving they hold a receipt to a verifier
 they choose is a different, simpler problem.
 
-There is a transparency layer, and it is worth being precise about what it is,
-because "append-only log" and "blockchain" get used interchangeably and they are not
-the same thing. v0.2 adds an optional Merkle-tree transparency log (the C2SP
-tlog-tiles format, served as static files) plus timestamp anchoring. No consensus, no
-token, no miners, no shared ledger between distrusting parties — the same family of
-construction used for TLS certificate transparency.
+There is now a transparency layer, and it is worth being precise about what it
+is, because "append-only log" and "blockchain" get used interchangeably and they
+are not the same thing. v0.2 Stage 2 adds an optional Merkle-tree transparency
+log (the C2SP tlog-tiles format, served as static files) plus timestamp
+anchoring. No consensus, no token, no miners, no shared ledger between
+distrusting parties — the same family of construction used for TLS certificate
+transparency.
 
-It **corroborates**, it never authenticates. What a verifier checks is a log-signed
-checkpoint plus an inclusion proof, showing the artifact is in that log's Merkle tree;
-an anchor can further bound when the checkpoint existed. It can never make an unsigned
-or untrusted receipt look genuine — the trust result stays domain control, and
-inclusion evidence is reported separately so the two are never confused.
+It **corroborates**, it never authenticates. What a verifier checks is a
+log-signed checkpoint plus an inclusion proof, which shows the artifact is in
+that log's Merkle tree; an anchor can further bound when the checkpoint existed.
+It can never make an unsigned or untrusted receipt look genuine — the trust
+result stays domain control, and inclusion evidence is reported separately so the
+two are never confused.
 
-And the honest answer to "so who audits the log?" is that **witness cosignatures are
-not anti-equivocation**. An unwitnessed operator can serve one view to you and a
-different one to somebody else and stay internally consistent in both; a verifier
-catches that only if it already holds two conflicting validly-signed checkpoints. The
-verdict `corroboration: "witnessed"` is reachable — one cosignature from a witness you
-have pinned yourself is enough to emit it — but what it says is that a second party
-saw a given head at a given time, not that the party is independent of the log and not
-that no second branch exists. Every witnessed result carries
-`witness_independence_not_established` for that reason. What is missing is not the
-format but the operators: no independently run witness is published today, and the
-witness policy shipped inside the verifier packages is deliberately empty, so
-`witnessed` stays out of reach until you pin a policy of your own.
+And it is worth being equally precise about the limit, because it is the honest
+answer to "so who audits the log?": **witness cosignatures are not
+anti-equivocation**. An unwitnessed operator can serve one view to you and a
+different one to someone else and stay internally consistent in both; a verifier
+catches that only if it already holds two conflicting validly-signed checkpoints.
+Since v0.2 revision 7 the verdict `corroboration: "witnessed"` is reachable — one
+cosignature from a witness you have pinned yourself is enough to emit it — but
+what it says is that a second party saw a given head at a given time, not that
+the party is independent of the log and not that no second branch exists. Every
+witnessed result carries `witness_independence_not_established` for that reason.
+What is missing now is not the format but the operators: no independently run
+witness is published today, and the witness policy shipped inside the verifier
+packages is deliberately empty, so `witnessed` stays out of reach until you pin
+a policy of your own. The spec states this in its own scope section rather than
+burying it.
 
-None of which is load-bearing for the core promise: a receipt verifies offline from
-its bytes and the issuer's key material, with no log reachable, exactly as before.
+None of which is load-bearing for the core promise: a receipt verifies offline
+from its bytes and the issuer's key material, with no log reachable, exactly as
+before.
 
 ## Then why does Bitcoin turn up at all?
 
@@ -417,16 +418,16 @@ both in your hands.
 
 You don't have the file. Then the receipt alone doesn't bring it back. It proves you
 bought the thing; it isn't the thing, and no signature can conjure a file out of a
-dead server. What closes this gap is the preservation pledge: a licence term the
-publisher signs at the moment of sale, committing that when they cease distribution
-the content becomes redistributable to valid receipt holders. It is specified in
-v0.2, implemented in both packages with its own commands, covered by the conformance
-corpus, and `python -m demo.pledge_dies` runs the whole sequence end to end on your
-machine: pledge signed, publisher dies, trigger fires, archive hands the file back to
-somebody who can prove the receipt is theirs, and to nobody else. What is missing is
-not the mechanism. It is a publisher who has signed one, an archive that holds
-anything, and licence prose written by a lawyer rather than the placeholder the demo
-carries.
+dead server. The specified mechanism for addressing this gap is the preservation
+pledge: a licence term the publisher signs at the moment of sale, committing that
+when they cease distribution the content becomes redistributable to valid receipt
+holders. Grant evaluation and redemption verification are implemented in both
+verifier cores; only the Python package exposes `grant` commands. In the default
+`python -m demo.pledge_dies` scenario, the store is deleted, the pledge initially
+stays dormant, the surviving rights holder signs a cessation declaration, and a
+non-normative demo custodian delivers after checking the holder proof. What is
+missing is a production publisher who has signed such a pledge, a production archive
+service, and final licence prose rather than the demo placeholder.
 
 Two holes stay open, and both are worth knowing before you rely on it. A publisher
 that vanishes silently — signing nothing, naming no successor, setting no backstop
@@ -442,13 +443,14 @@ phone-home. A verifier needs only three things to check a receipt: the receipt
 bytes, the issuer's published key material, and, optionally, a revocation feed.
 None of those requires a server attest itself operates — the issuer publishes its
 own keys, and a future registry layer for replicating verification material is
-explicitly optional.
+explicitly optional (see the roadmap in the README).
 
-The caveat is about practice rather than protocol. A verifier that wanted the
-stronger evidence — pinned log keys, a witness policy, Bitcoin block summaries — would
-need somebody to curate and publish those pins, and curation is a soft centre even
-when the protocol has no centre. Today the question has not bitten, for the plain
-reason that the shipped verifiers pin none of them.
+The caveat is about practice rather than protocol. A verifier that wanted stronger
+evidence would need curated pins, and curation is a soft centre even when the
+protocol has no centre. The browser verifier already ships one pinned log key and
+passes it into verification. It ships no pinned Bitcoin block headers and supplies
+no witness policy; the Python and TypeScript library entry points otherwise depend
+on configuration supplied by their caller.
 
 ## Does this save my existing Steam / PlayStation / Kindle library?
 
@@ -460,14 +462,12 @@ the standard is built on. Existing libraries stay exactly as revocable as they
 are today until the store that holds them decides to issue attest receipts for
 them.
 
-The lever for an unwilling incumbent isn't a workaround — it's regulation and market
-pressure, and the standard is written to be useful to both. In the EU the route runs
-through the confirmation sellers already owe, as the first answer says. In the United
-States, the specification names California's AB 2426 and Maryland's HB 208 as the
-kind of law an irrevocable receipt is built to be evidence under — evidence, it is
-careful to say, not a compliance determination. attest is the technical standard those
-pressures could point an incumbent toward adopting; it is not a way around an
-incumbent that declines.
+The lever for an unwilling incumbent isn't a workaround — it's regulation and
+market pressure. In the United States, the specification names California's
+AB 2426 and Maryland's HB 208 as the kind of law an irrevocable receipt is
+built to be evidence under — evidence, it is careful to say, not a compliance
+determination. attest is the technical standard those pressures could point an
+incumbent toward adopting; it is not a way around an incumbent that declines.
 
 ## Is attest a DRM system, a store, or a way to pirate games?
 
