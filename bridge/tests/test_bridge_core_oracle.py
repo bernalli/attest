@@ -151,6 +151,32 @@ def test_pubkey_bound_receipt_is_transferable_and_passes_chain_audit(
     assert audit.link_status == ()
 
 
+def test_email_bound_receipt_has_trivially_valid_chain_audit_at_zero_links(
+    core: IssuingCore, trust_store: Any, key_manifest: dict[str, Any]
+) -> None:
+    # The bridge only ever EMITS receipts, never TRANSFERS them — that is the
+    # normal case (no buyer_pubkey, license.transferable is False). A fresh
+    # email-bound receipt therefore has no transfer chain at all, and
+    # audit_chain's answer for it is trivial: valid with zero links, not a
+    # check that got skipped. This is the sibling of
+    # test_pubkey_bound_receipt_is_transferable_and_passes_chain_audit above,
+    # which exercises the transferable branch.
+    outcome = core.issue_for(_purchase(platform_purchase_id="cs_test_0003b"))
+    payload = outcome.envelope["payload"]
+    assert payload["license"]["transferable"] is False
+    assert verify_mod.verify(_envelope_bytes(outcome.envelope), trust_store).ok is True
+    audit = transfer.audit_chain(
+        [payload],
+        [],
+        [],
+        key_manifest,
+        [],
+        anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
+    )
+    assert audit.valid is True
+    assert audit.link_status == ()
+
+
 def test_bridge_receipt_passes_attest_verify_cli(
     core: IssuingCore, key_manifest: dict[str, Any], tmp_path: Any, capsys: Any
 ) -> None:
