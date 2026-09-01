@@ -235,7 +235,8 @@ the platform.
 ## Fly.io
 
 A Fly Machine can mount only **one** volume, so only the Ledger (a real,
-growing sqlite3 file) uses one; `bridge.toml`, `key-manifest.json`,
+growing SQLite database — its main file plus the WAL sidecars, which is why
+the volume holds the whole directory) uses one; `bridge.toml`, `key-manifest.json`,
 `issuer.seed`, and `issuer.mldsa.json` ride in as base64-encoded secrets
 that Fly writes to disk at boot (the `[[files]]` blocks in
 [`fly.toml`](../deploy/fly.toml)):
