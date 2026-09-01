@@ -13,7 +13,17 @@ type Trust = VerificationResult['trust']
 // include buyer binding. An `ok=true` receipt can still be signed by a key nobody has
 // ever vouched for, which is exactly the case this app has to be honest about.
 
-const EVERY_TRUST: Trust[] = ['verified', 'unauthenticated_tofu', 'unverified_rotation']
+const EVERY_TRUST = [
+  'verified', 'unauthenticated_tofu', 'unverified_rotation',
+] as const satisfies readonly Trust[]
+
+// Compile-time proof that the list above is the WHOLE of `Trust`. Hand-written, it
+// silently stops being "every" the day the verifier grows a fourth value, and the loops
+// below would keep passing while never testing the new one. Same technique
+// site/src/explain.ts uses to prove it explains every result field.
+type UnlistedTrust = Exclude<Trust, (typeof EVERY_TRUST)[number]>
+const _EVERY_TRUST_VALUE_IS_LISTED: UnlistedTrust extends never ? true : never = true
+void _EVERY_TRUST_VALUE_IS_LISTED
 
 describe('desktopVerdict — what the app is allowed to claim', () => {
   test('trust-on-first-use never reaches the green verdict', () => {

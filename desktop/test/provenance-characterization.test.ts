@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import zlib from 'node:zlib'
+import { unzipSync } from 'fflate'
 import { canonicalBytes, loadsStrict } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes } from '../../site/src/intake.js'
 import { runVerify } from '../../site/src/run.js'
@@ -30,27 +30,14 @@ interface Parts {
   bundle: Uint8Array
 }
 
-// The sample bundle is a ZIP; pull the receipt and the manifest out of it so the bare
-// envelope paths start from the same signed bytes as the bundle path. Using node's zlib
-// keeps this independent of the app's own bundle parser: a fixture built by the code
-// under test would prove less.
+// A third-party unzip, so this fixture still does not lean on site/src/bundle.ts —
+// the code whose behaviour the tests below are characterizing — but it reads the
+// central directory instead of scanning for local-header signatures, which mis-reads
+// any archive written with data descriptors and can match a false signature inside
+// compressed data.
 function parts(): Parts {
   const bundle = new Uint8Array(readFileSync(SAMPLE))
-  const found: Record<string, Uint8Array> = {}
-  const view = new DataView(bundle.buffer, bundle.byteOffset, bundle.byteLength)
-  for (let i = 0; i + 4 <= bundle.length; i++) {
-    if (view.getUint32(i, true) !== 0x04034b50) continue // local file header
-    const method = view.getUint16(i + 8, true)
-    const compressed = view.getUint32(i + 18, true)
-    const uncompressed = view.getUint32(i + 22, true)
-    const nameLen = view.getUint16(i + 26, true)
-    const extraLen = view.getUint16(i + 28, true)
-    const nameAt = i + 30
-    const name = new TextDecoder().decode(bundle.subarray(nameAt, nameAt + nameLen))
-    const dataAt = nameAt + nameLen + extraLen
-    const raw = bundle.subarray(dataAt, dataAt + (method === 0 ? uncompressed : compressed))
-    found[name] = method === 0 ? raw : new Uint8Array(zlib.inflateRawSync(raw))
-  }
+  const found = unzipSync(bundle)
   const receiptName = Object.keys(found).find((n) => n.startsWith('receipts/'))
   const manifestName = Object.keys(found).find((n) => n.startsWith('manifests/'))
   if (!receiptName || !manifestName) throw new Error('sample bundle is missing its receipt or manifest')
@@ -62,7 +49,14 @@ function parts(): Parts {
 // 'embedded' path without touching a signed byte.
 function withEmbeddedManifest(envelope: Uint8Array, manifest: Uint8Array): Uint8Array {
   const env = JSON.parse(new TextDecoder().decode(envelope))
-  env.delivery = { issuer_manifest: JSON.parse(new TextDecoder().decode(manifest)) }
+  // The bundle member is a CONTAINER holding `key_manifests` and `artifact_manifests`;
+  // `delivery.issuer_manifest` takes a single KEY MANIFEST, the same distinction the
+  // user-supplied test below spells out. Attaching the container instead makes the
+  // verifier reject the receipt outright ("its own signature does not verify") — and
+  // every assertion in this file was satisfied by a rejected receipt, so the mistake
+  // was invisible.
+  const container = JSON.parse(new TextDecoder().decode(manifest))
+  env.delivery = { issuer_manifest: container.key_manifests[0] }
   return new TextEncoder().encode(JSON.stringify(env))
 }
 
@@ -92,6 +86,10 @@ describe('every provenance the app can reach lands short of green', () => {
     const run = runVerify(job.envelopeBytes, job.trustStore, null, null, {})
     expect(run.result.trust).toBe('unauthenticated_tofu')
     expect(desktopVerdict(run.ok, run.result.trust)).not.toBe('verified')
+    // Anchor: without it this test is satisfied by a receipt that simply broke —
+    // `not.toBe('verified')` is true of 'failed' too. Measured: dropping the manifest
+    // from this path's trust store left the whole suite green.
+    expect(run.ok, 'this path must still pass the four gates').toBe(true)
   })
 
   test("a bare envelope plus a hand-supplied manifest takes provenance 'user-supplied'", () => {
@@ -117,6 +115,10 @@ describe('every provenance the app can reach lands short of green', () => {
     const run = runVerify(result.envelopeBytes, store, null, null, {})
     expect(run.result.trust).toBe('unauthenticated_tofu')
     expect(desktopVerdict(run.ok, run.result.trust)).not.toBe('verified')
+    // Anchor: without it this test is satisfied by a receipt that simply broke —
+    // `not.toBe('verified')` is true of 'failed' too. Measured: dropping the manifest
+    // from this path's trust store left the whole suite green.
+    expect(run.ok, 'this path must still pass the four gates').toBe(true)
   })
 
   test('the sample really does pass the four gates — so the assertions above are about trust, not failure', () => {

@@ -63,9 +63,12 @@ test('an inline module with a WRONG CSP hash does not run — the CSP is enforce
 test("connect-src 'none' refuses a cross-origin fetch, rather than merely failing to make one", async ({ page }) => {
   const traffic = watch(page)
   await page.goto(fixture('connect.html'))
-  // The fixture reports the outcome of its own fetch attempt. BLOCKED means the policy
-  // refused it; a resolved fetch (or a request in the collector) means the belt is gone.
-  await expect(page.locator('#marker')).toHaveText('BLOCKED')
+  // The fixture reports WHY its fetch did not happen, not merely that it did not. A
+  // bare rejection proves nothing here — example.invalid never resolves, so the catch
+  // fires with or without a policy (measured: with connect-src relaxed to https: the
+  // old marker still read BLOCKED). BLOCKED-BY-CSP is set only when the
+  // securitypolicyviolation event fired, which only the policy can produce.
+  await expect(page.locator('#marker')).toHaveText('BLOCKED-BY-CSP')
   expect(traffic.foreign, 'a request escaped despite connect-src none').toEqual([])
   expect(traffic.sockets).toEqual([])
 })

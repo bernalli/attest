@@ -17,6 +17,53 @@ type Trust = VerificationResult['trust']
  */
 export type DesktopVerdict = 'verified' | 'offline_limit' | 'key_history_gap' | 'failed'
 
+export interface Headline {
+  label: string
+  text: string
+  tone: 'good' | 'warn' | 'bad'
+}
+
+/**
+ * The headline copy. Draft pending the project's copy ratification gate.
+ *
+ * `failed` is absent on purpose: the red headline is reused verbatim from the shared
+ * catalogue rather than restated here, so there is exactly one red wording in the
+ * project and no chance of the two drifting apart.
+ *
+ * None of these texts point the reader at a remedy: no shipped tool reaches the
+ * out-of-band `verified` tier today, and an artifact that is downloaded once and never
+ * updated must not freeze an instruction that does not work.
+ */
+export const HEADLINES: Record<Exclude<DesktopVerdict, 'failed'>, Headline> = {
+  offline_limit: {
+    label: 'Checks out — as far as an offline check can go',
+    tone: 'warn',
+    text:
+      'These exact terms were signed by the key this file names, and nothing in them has ' +
+      'changed since. Three things this app cannot settle, offline, on purpose: whether ' +
+      'that key really belongs to the seller it names; whether the seller has since revoked ' +
+      'this receipt, since no revocation feed was consulted; and whether this receipt is ' +
+      'yours rather than a copy someone passed on. The rows below say which is which.',
+  },
+  key_history_gap: {
+    label: 'Signed — but this seller’s key history does not add up',
+    tone: 'warn',
+    text:
+      'The signature over these exact terms checks out. What did not is the seller’s own ' +
+      'record of its keys: a newer key list is not signed by a key from the previous one, ' +
+      'so this app cannot follow the history from one to the next. That is not proof of ' +
+      'anything wrong, and it is not the ordinary offline limit either — it is a gap where ' +
+      'there should not be one. The Key trust row below says it in the spec’s own words.',
+  },
+  verified: {
+    label: 'Receipt verifies',
+    tone: 'good',
+    text:
+      'Signature valid, schema valid, not revoked as far as this check could see, no errors ' +
+      '— and the issuer’s keys were verified out of band, not taken from the file itself.',
+  },
+}
+
 export function desktopVerdict(ok: boolean, trust: Trust): DesktopVerdict {
   if (!ok) return 'failed'
   switch (trust) {
@@ -30,8 +77,15 @@ export function desktopVerdict(ok: boolean, trust: Trust): DesktopVerdict {
     // reporting an ANOMALY.
     case 'unverified_rotation':
       return 'key_history_gap'
-    // No default branch, deliberately: if the verifier ever grows a fourth trust value,
-    // this switch stops compiling instead of quietly returning undefined where a
-    // headline should be.
+    default: {
+      // The `never` assignment keeps the compile-time exhaustiveness a bare switch
+      // already had; the throw adds the half it did not have. `tsc` reads `Trust` out
+      // of attest-verifier's BUILT declarations, so a fourth trust value added to the
+      // verifier's source but not yet rebuilt compiles here and arrives at runtime —
+      // measured: the bare switch then returned `undefined` and the card died later on
+      // `headline.tone`, in a message naming neither this file nor the value.
+      const unknown: never = trust
+      throw new Error(`desktopVerdict: unknown trust value ${JSON.stringify(unknown)}`)
+    }
   }
 }
