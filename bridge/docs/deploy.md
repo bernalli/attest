@@ -29,8 +29,9 @@ image rebuilds matters.
 - the four env vars your `bridge.toml` references via `*_env`:
   `STRIPE_WEBHOOK_SECRET`, `STRIPE_API_KEY`, `ITCH_API_KEY`, `SMTP_PASSWORD`
   (only set the ones you actually use)
-- a writable path for `ledger_path` — the Ledger's sqlite3 file — that
-  **survives restarts**. This is the one requirement that's easy to get
+- a writable persistent directory containing `ledger_path` and SQLite's WAL
+  sidecars — the Ledger is a logical database, not one independently copyable
+  file — that **survives restarts**. This is the one requirement that's easy to get
   wrong: an ephemeral/scratch disk here doesn't lose already-delivered
   receipts (those are safe with the buyer forever), but it does lose your
   replay-dedup memory, so a redeploy right after a webhook retry could
@@ -112,9 +113,12 @@ Two limits are stated here rather than papered over:
   is not best-effort — a unique index enforces it in the database — and the
   cap is a resource guard, not a security boundary.
 - In WAL the Ledger is **three files** (`ledger.sqlite3`, `-wal`, `-shm`), and
-  recently committed rows live in the `-wal` until it is checkpointed. Back up
-  all three, or back up with the bridge stopped. A copy of the `.db` alone,
-  taken from a running bridge, can be missing your most recent receipts.
+  recently committed rows live in the `-wal` until checkpointed. Do not copy
+  those files one by one while the bridge is running: they can change between
+  copies. Use SQLite's online-backup API or an atomic filesystem/volume
+  snapshot. The simplest safe procedure is to stop the bridge, wait for
+  shutdown, and copy the main database after SQLite has closed and
+  checkpointed it.
 
 **Reach the Ledger the same way from every process.** Give each process the
 same absolute `ledger_path`, and when you mount it into a container mount the

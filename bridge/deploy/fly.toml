@@ -25,7 +25,7 @@
 #   fly deploy --config bridge/deploy/fly.toml
 #
 # The one volume (`attest_bridge_data`) starts empty and needs no manual
-# population — it only ever holds the Ledger's sqlite3 file, which the
+# population — it holds the Ledger database and its WAL sidecars, which the
 # bridge creates itself on first run. See bridge/docs/deploy.md.
 app = "attest-bridge"
 primary_region = "iad"

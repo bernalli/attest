@@ -32,7 +32,7 @@ services:
     volumes:
       - ./etc:/etc/attest-bridge:ro    # bridge.toml + key-manifest.json
       - ./secrets:/secrets:ro          # issuer.seed + issuer.mldsa.json (0600 on the host)
-      - ledger-data:/var/lib/attest-bridge   # the Ledger's sqlite3 file — the only writable mount
+      - ledger-data:/var/lib/attest-bridge   # Ledger database + WAL sidecars — the only writable mount
     env_file:
       - .env
     restart: unless-stopped
