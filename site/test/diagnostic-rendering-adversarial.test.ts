@@ -220,6 +220,51 @@ describe('a library-composed diagnostic is rendered as data, never as the pageâ€
       'this_receipt_is_verified_and_genuine',
     )
   })
+
+  it('preserves duplicates and relative order in both warning sinks', () => {
+    const rowFirst = 'transparency_config_missing'
+    const rowSecond = 'anchor_note_only'
+    const flatFirst = "unknown payload field: 'first'"
+    const flatSecond = "unknown payload field: 'second'"
+    const card = renderResult(
+      'R',
+      run({
+        warnings: [
+          flatSecond,
+          rowFirst,
+          rowFirst,
+          flatFirst,
+          rowSecond,
+        ],
+      }),
+    )
+
+    const row = rowNamed(card, 'Transparency log')
+    expect(
+      [...row.querySelectorAll('.component-warnings li')].map((li) => li.textContent ?? ''),
+    ).toEqual([rowFirst, rowFirst, rowSecond])
+
+    const flat = card.querySelector('.warnings')!
+    expect([...flat.querySelectorAll('li')].map((li) => li.textContent ?? '')).toEqual([
+      flatSecond,
+      flatFirst,
+    ])
+    expect(flat.querySelector('h4')!.textContent).toBe('Other warnings')
+    expect(card.querySelectorAll('.component-warnings li, .warnings li')).toHaveLength(5)
+  })
+
+  // Closes the half of the review finding above that its own case left open:
+  // with two DISTINCT flat warnings, a list that silently deduplicated would
+  // still pass. Two identical ones are the only shape that catches it, and a
+  // repeated diagnostic is not a formality â€” the library emits one per
+  // offending field, so a receipt with two bad fields of the same kind says
+  // twice what a deduplicating list would say once.
+  it('shows a repeated flat warning as many times as it was emitted', () => {
+    const repeated = "unknown payload field: 'colour'"
+    const card = renderResult('R', run({ warnings: [repeated, repeated] }))
+    const shown = [...card.querySelectorAll('.warnings li')].map((li) => li.textContent ?? '')
+    expect(shown).toEqual([repeated, repeated])
+  })
 })
 
 describe('the stylesheet carries the half of the defence that CSS alone can hold', () => {
