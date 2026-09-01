@@ -36,6 +36,7 @@ _COMPROMISED = "compromised"
 # any signature work over them.
 MAX_MANIFEST_KEYS = 256
 MAX_ARTIFACT_ENTRIES = 4096
+_ED25519_PUB_LEN = 32
 
 
 def _parse_date(value: str) -> datetime:
@@ -418,9 +419,11 @@ def manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
     explicit in both directions, including that "an Ed25519-only signer's
     manifest signature that carries a stray `sig_ml_dsa_65` MUST likewise be
     treated as invalid". Accepting a present leg that fails would hand an
-    attacker a manifest that certifies receipts while `verify_key_manifest`
-    — still the gate on revocation, transfer, grants and artifact manifests
-    — calls it non-conformant: a revoked receipt reading `ok: true`.
+    attacker a manifest that certifies receipts while the conformance
+    predicate calls it non-conformant: a revoked receipt reading `ok: true`.
+    Revocation and transfer now ask THIS predicate, so that gap is closed
+    for them; `verify_key_manifest` remains the gate on grants and artifact
+    manifests, which still diverge from the receipt path by design.
 
     What it answers instead: the signer's kid resolves in the manifest's own
     `keys[]`, and the Ed25519 leg of `manifest_signature` verifies over the
@@ -513,6 +516,46 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
     except (TypeError, canon.CanonError):
         return False
     return verify_signature_block(signable, candidate["manifest_signature"], signer_entry)
+
+
+def _can_sign_for_continuity(entry: Any) -> bool:
+    """Can this entry actually do what the zero-active guard needs it to do?
+
+    The guard below promises two capabilities — authenticating a revocation
+    record (§12.1 needs an active signer whose signature verifies) and
+    signing a continuous successor manifest (§7.3) — and both need a key
+    that exists and a window that is open, not merely the word "active".
+    An entry saying `active` while carrying no usable public key, or a
+    `valid_to` that falls before its own `valid_from`, satisfies neither,
+    and treating it as one lets the issuer reach the dead end THROUGH the
+    guard rather than around it.
+
+    Deliberately says nothing about `valid_from` versus today's date: an
+    heir whose window opens in the future is a scheduling choice, not a
+    dead end, and the verifier reads the window against a receipt's own
+    `issued_at`, never against a wall clock.
+    """
+    if not isinstance(entry, dict) or entry.get("status") != _ACTIVE:
+        return False
+    pub = entry.get("pub")
+    if not isinstance(pub, str):
+        return False
+    try:
+        if len(keys.b64u_decode(pub)) != _ED25519_PUB_LEN:
+            return False
+    except (ValueError, TypeError):
+        return False
+    valid_from, valid_to = entry.get("valid_from"), entry.get("valid_to")
+    if not isinstance(valid_from, str):
+        return False
+    if valid_to is None:
+        return True
+    if not isinstance(valid_to, str):
+        return False
+    try:
+        return _parse_date(valid_from) <= _parse_date(valid_to)
+    except (TypeError, ValueError):
+        return False
 
 
 def rotate_key_manifest(
@@ -640,7 +683,7 @@ def rotate_key_manifest(
     # deliberately NOT a check in `build_key_manifest`, so already-published or
     # deliberately degenerate single-key trust stores (conformance vectors 12
     # and 13) keep verifying byte-for-byte.
-    if not any(isinstance(e, dict) and e.get("status") == _ACTIVE for e in updated):
+    if not any(_can_sign_for_continuity(e) for e in updated):
         raise ValueError(
             "rotation would leave zero active keys — a manifest with no active key "
             "is a dead end: no new revocation record can authenticate (§12.1 needs "

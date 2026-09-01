@@ -177,15 +177,17 @@ describe('v0.2 hybrid verification', () => {
 
   it('a v0.1 receipt still verifies (v0.2 branch does not regress v0.1)', () => {
     const kid = `${ISSUER}/keys/test#ed25519-1`
-    const seed = Uint8Array.from({ length: 32 }, () => 22)
-    const pub = ed25519.getPublicKey(seed)
+    // `signManifest` always signs with the module-level `edSeed` — the key
+    // entry's `pub` must be `edPub` for the manifest to authenticate itself
+    // (verify() now checks that before reading any key out of it), so this
+    // reuses the module's hybrid signer instead of an unrelated local seed.
     const manifest = signManifest(
-      { issuer: ISSUER, manifest_version: 1, issued_at: VALID_FROM, keys: [{ kid, pub: b64uEncode(pub), valid_from: VALID_FROM, valid_to: null, status: 'active' }] },
+      { issuer: ISSUER, manifest_version: 1, issued_at: VALID_FROM, keys: [{ kid, pub: b64uEncode(edPub), valid_from: VALID_FROM, valid_to: null, status: 'active' }] },
       kid,
       false,
     )
     const payload = basePayload('0.1')
-    const sig = ed25519.sign(canonicalBytes(payload), seed)
+    const sig = ed25519.sign(canonicalBytes(payload), edSeed)
     const envelope = { payload, signatures: [{ kid, alg: 'Ed25519', sig: b64uEncode(sig) }] }
     const result = verify(envelopeBytes(envelope), trustStore(manifest))
     expect(result.signature).toBe('valid')

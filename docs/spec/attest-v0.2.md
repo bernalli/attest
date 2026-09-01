@@ -121,6 +121,27 @@ Result vocabulary (`signature`, `schema`, `revocation`, `binding`, `trust`) and 
 
 Rotation continuity (v0.1 §7.3) is unchanged in mechanism — a manifest at `manifest_version` N+1 is auto-trusted only if signed by a key `active` in the version-N manifest already trusted — but for a **hybrid signer**, that continuity check is enforced through the hybrid manifest signature (§2.3): a candidate rotation manifest whose signer key is hybrid but whose `manifest_signature` has been **downgraded** to an Ed25519-only signature (missing `sig_ml_dsa_65`) fails the AND-verified manifest-signature check and is therefore treated as **not validly signed by that key** for continuity purposes — the chain is discontinuous at that point, and the verifier MUST report `trust: "unverified_rotation"` (v0.1 §11.1) exactly as it would for any other discontinuous rotation, even though the receipt's own hybrid signature (§3) may independently verify cleanly against the manifest in use.
 
+**What a downgraded manifest still carries (normative, 2026-09-01 amendment).** §2.3's
+AND rule governs whether a manifest is CONFORMANT; it does not govern whether the issuer
+signed it. Those are different questions, and a verifier MUST NOT let them diverge in one
+direction only: it MUST NOT hold a manifest authentic enough to certify a receipt and not
+authentic enough to carry the same issuer's revocation, transfer records, grants or
+artifact manifests. A manifest whose Ed25519 leg verifies against the signer's own listed
+key was signed by that issuer, whatever else is missing from its signature block, and a
+verifier evaluating a side-document against it MUST accept it on that basis. Losing the
+PQ leg costs a manifest its TRUST LEVEL — `trust: "unverified_rotation"` per the paragraph
+above — never its power to revoke.
+
+**Rationale, and why the asymmetry is the point.** `manifest_signature` sits OUTSIDE the
+bytes `JCS(manifest)` covers, so no member of it is protected by any signature and anyone
+may add, delete or rewrite one while holding no key at all. Under a single conformance
+predicate, deleting the `sig_ml_dsa_65` leg of an honest manifest — one keyless edit —
+left the receipt certified while every revocation record its issuer had signed was
+discarded as unverifiable, so a genuinely revoked receipt verified clean with its
+revocation silently gone. The rule is therefore severe where evidence can SAVE a receipt
+and permissive where it can only KILL one: an attacker who edits a signature block must
+never gain a verdict by doing so, and dropping a revocation is a verdict gained.
+
 The **single-manifest, un-rotated receipt path** — a bare envelope plus a directly-trusted manifest, with no rotation chain in play — is unaffected by this: it continues to follow the existing v0.1 TOFU model (v0.1 §7.4) unchanged. `trust` is `verified` if the manifest was obtained over TLS from the issuer's own domain, `unauthenticated_tofu` otherwise; the hybrid manifest-signature requirement (§2.3) governs whether the manifest itself is accepted as self-consistent, not whether the verifier's *provenance* for that manifest is upgraded.
 
 ## 5. Worked example (vector `26-hybrid/a-valid-hybrid`)

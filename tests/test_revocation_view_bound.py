@@ -57,21 +57,26 @@ def _record(revoked_at: str = "2026-07-03T00:00:00Z") -> dict[str, Any]:
 def test_manifest_self_verify_runs_once_per_classification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Improvement #17 core: one `verify_key_manifest` call per classification,
-    not one per record — a hostile many-record feed can no longer multiply
-    manifest-verification work."""
+    """Improvement #17 core: one manifest self-verify per classification, not
+    one per record — a hostile many-record feed can no longer multiply
+    manifest-verification work.
+
+    The hoisted call is `manifest_signature_is_authentic`, not
+    `verify_key_manifest`: a manifest downgraded by deleting its PQ leg loses
+    its trust level, never its power to revoke (v0.2 §4). What this test
+    pins is the COUNT, so it follows the function the hoist actually calls."""
     manifest = _key_manifest()
     payload = make_payload(license={"revocability": "policy"})
     view = [_record(f"2026-07-0{i}T00:00:00Z") for i in range(1, 6)]
 
     calls = {"count": 0}
-    real = manifests.verify_key_manifest
+    real = manifests.manifest_signature_is_authentic
 
     def counting(m: dict[str, Any]) -> bool:
         calls["count"] += 1
         return real(m)
 
-    monkeypatch.setattr(manifests, "verify_key_manifest", counting)
+    monkeypatch.setattr(manifests, "manifest_signature_is_authentic", counting)
     warnings: list[str] = []
     errors: list[str] = []
     result = verify._classify_revocation(payload, view, manifest, warnings, errors)

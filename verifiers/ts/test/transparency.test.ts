@@ -667,12 +667,28 @@ function manifestV1(): JsonObject {
     manifest_signature: { kid: RECEIPT_KID, sig: MANIFEST_V1_SIG_B64U },
   })
 }
+// MANIFEST_V1_SIG_B64U covers `status: "active"` for RECEIPT_KID: reusing it
+// unchanged over a body flipped to "compromised" would make the manifest
+// fail to authenticate itself (verify() now checks that before reading any
+// key out of it), turning this into a test of that gate instead of the
+// compromised key it is meant to exercise. A second key entry, signed by a
+// seed this file controls, lets the manifest genuinely say "compromised"
+// for RECEIPT_KID and still be self-consistent.
+const MANIFEST_SIGNER_SEED = Uint8Array.from({ length: 32 }, () => 77)
+const MANIFEST_SIGNER_PUB = ed25519.getPublicKey(MANIFEST_SIGNER_SEED)
+const MANIFEST_SIGNER_KID = `${RECEIPT_ISSUER}/keys/test#ed25519-manifest-signer`
+
 function manifestCompromised(): JsonObject {
-  return parse({
+  const body = {
     issuer: RECEIPT_ISSUER, manifest_version: 1, issued_at: '2026-01-01T00:00:00Z',
-    keys: [{ kid: RECEIPT_KID, pub: b64uEncode(RECEIPT_PUB), valid_from: '2025-01-01T00:00:00Z', valid_to: null, status: 'compromised' }],
-    manifest_signature: { kid: RECEIPT_KID, sig: MANIFEST_V1_SIG_B64U },
-  })
+    keys: [
+      { kid: RECEIPT_KID, pub: b64uEncode(RECEIPT_PUB), valid_from: '2025-01-01T00:00:00Z', valid_to: null, status: 'compromised' },
+      { kid: MANIFEST_SIGNER_KID, pub: b64uEncode(MANIFEST_SIGNER_PUB), valid_from: '2025-01-01T00:00:00Z', valid_to: null, status: 'active' },
+    ],
+  }
+  const signable = parse(body)
+  const sig = ed25519.sign(canonicalBytes(signable), MANIFEST_SIGNER_SEED)
+  return parse({ ...body, manifest_signature: { kid: MANIFEST_SIGNER_KID, sig: b64uEncode(sig) } })
 }
 function manifestV2(): JsonObject {
   return parse({

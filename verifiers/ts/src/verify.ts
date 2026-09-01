@@ -7,6 +7,7 @@ import {
   TrustStore, findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
   duplicateKids,
   artifactChainContinuous, verifyArtifactManifest, signableManifestBytes, verifySignatureBlock,
+  manifestSignatureIsAuthentic,
 } from './manifests.js'
 import { verifyStrict, Ed25519LengthError } from './ed25519.js'
 import { verifyStrict as verifyMldsaStrict, ML_DSA_65_ALG } from './mldsa.js'
@@ -36,6 +37,7 @@ import {
   noKeyInManifest, keyCompromised, keyRetired, issuedAtOutsideWindow, malformedKeyMaterial,
   malformedSigMaterial, unknownField, unknownEol, keyEntryNotHybrid, pyRepr, codePointLength,
   VERIFY_TRANSPARENCY_WARN, COMPROMISE_WARN, manifestExceedsKeys, manifestDuplicateKids,
+  manifestNotSelfConsistent,
 } from './messages.js'
 
 // attest_version values this verifier's verify() step 1 accepts (v0.1 single-sig,
@@ -1037,6 +1039,17 @@ export function verify(
       }
       if (payload['attest_version'] === '0.2' && hasActiveEdOnlySibling(issuerManifestForTransparency)) {
         warnings.push(WARN.MIXED_KEYSET_ACTIVE_ED_ONLY_SIBLING)
+      }
+
+      // The trusted manifest must authenticate ITSELF before any key is read
+      // out of it. The side-document paths have always asked; the receipt path
+      // never did, so a manifest edited after it was trusted certified receipts
+      // signed by the edit. Hoisted here, at the ONE place the manifest is
+      // resolved, so both receipt paths inherit it, and last in this preflight
+      // so the refusals above keep their verdicts and their messages. Python
+      // parity: verify.py's same block.
+      if (!manifestSignatureIsAuthentic(issuerManifestForTransparency)) {
+        return invalid(manifestNotSelfConsistent(issuerId))
       }
     }
 

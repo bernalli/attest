@@ -1386,7 +1386,16 @@ def _resolve_transfer_backing(
     materialized = materialized_claims
 
     receipt_id = payload.get("receipt_id")
-    manifest_ok = manifests.verify_key_manifest(issuer_manifest)
+    # The receipt gate's predicate, deliberately, not `verify_key_manifest`:
+    # a manifest downgraded by deleting its PQ leg loses its TRUST LEVEL,
+    # never its power to revoke. The two must not disagree about whether
+    # the same manifest is authentic — a manifest good enough to certify a
+    # receipt and not good enough to carry the same issuer's revocation
+    # turns a revocation into silence, and reaching that gap costs an
+    # attacker one deletion and no key: `manifest_signature` sits outside
+    # the signed bytes. Severe where evidence can SAVE, permissive where it
+    # can only KILL.
+    manifest_ok = manifests.manifest_signature_is_authentic(issuer_manifest)
 
     def _append_once(warning: str) -> None:
         if warning not in warnings:
@@ -1601,10 +1610,19 @@ def _classify_revocation(
 
     # Authenticated records (any receipt_id) drive the freshness anchor; only
     # signature-verified records may set T (§5 hardening). The manifest's own
-    # self-verify is hoisted out of the loop — one `verify_key_manifest` per
-    # classification, not per record, so a hostile many-record feed cannot
-    # multiply manifest-verification work (review improvement #17).
-    manifest_ok = manifests.verify_key_manifest(issuer_manifest)
+    # self-verify is hoisted out of the loop — one check per classification,
+    # not per record, so a hostile many-record feed cannot multiply
+    # manifest-verification work (review improvement #17).
+    # The receipt gate's predicate, deliberately, not `verify_key_manifest`:
+    # a manifest downgraded by deleting its PQ leg loses its TRUST LEVEL,
+    # never its power to revoke. The two must not disagree about whether
+    # the same manifest is authentic — a manifest good enough to certify a
+    # receipt and not good enough to carry the same issuer's revocation
+    # turns a revocation into silence, and reaching that gap costs an
+    # attacker one deletion and no key: `manifest_signature` sits outside
+    # the signed bytes. Severe where evidence can SAVE, permissive where it
+    # can only KILL.
+    manifest_ok = manifests.manifest_signature_is_authentic(issuer_manifest)
     authenticated_ids: set[int] = set()
     authenticated: list[dict[str, Any]] = []
     if manifest_ok:

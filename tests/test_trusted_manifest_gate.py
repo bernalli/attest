@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from attest import issue, keys, manifests, pq, verify
+from attest import issue, keys, manifests, pq, revocation, verify
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -248,3 +248,70 @@ def test_hostile_manifests_fail_closed_without_raising(mutate: Any) -> None:
     mutate(manifest)
 
     assert manifests.manifest_signature_is_authentic(manifest) is False
+
+
+# --- one manifest, one answer --------------------------------------------------
+#
+# The receipt gate and the side-document gate must not disagree about whether
+# the same manifest is authentic. Where they did, a manifest downgraded by
+# deleting its PQ leg — a keyless edit, since `manifest_signature` is outside
+# the signed bytes — still certified the receipt while every revocation record
+# the issuer signed was dropped as unverifiable. The receipt then read
+# `ok: true` with the revocation silently gone.
+
+
+def _revocable_v02_receipt() -> tuple[bytes, dict[str, Any]]:
+    payload = make_payload(
+        attest_version="0.2",
+        issuer={"id": ISSUER, "display_name": "Example Store"},
+        license={"revocability": "policy"},
+    )
+    envelope = json.dumps(issue.issue(payload, HK, KID_H)).encode("utf-8")
+    record = revocation.build_record(
+        payload["receipt_id"], "revoked", "2026-07-01T00:00:00Z", HK, KID_H
+    )
+    return envelope, record
+
+
+def test_a_downgraded_manifest_keeps_its_power_to_revoke() -> None:
+    """Losing the PQ leg costs a manifest its trust level, never its revocation.
+
+    A verifier must never hold a manifest authentic enough to certify a
+    receipt and not authentic enough to carry the same issuer's revocation:
+    every manifest in that gap turns a revocation into silence, and reaching
+    it costs an attacker one deletion and no key at all.
+    """
+    envelope, record = _revocable_v02_receipt()
+
+    honest = _hybrid_manifest()
+    honest_result = verify.verify(envelope, _store(honest), revocation_view=[record])
+    assert honest_result.revocation == "revoked"
+    assert honest_result.ok is False
+
+    downgraded = _hybrid_manifest()
+    del downgraded["manifest_signature"]["sig_ml_dsa_65"]
+    assert manifests.verify_key_manifest(downgraded) is False
+    assert manifests.manifest_signature_is_authentic(downgraded) is True
+
+    result = verify.verify(envelope, _store(downgraded), revocation_view=[record])
+
+    assert result.signature == "valid"
+    assert result.revocation == "revoked"
+    assert result.ok is False
+
+
+def test_an_unauthentic_manifest_carries_no_revocation_either() -> None:
+    """The tolerance runs one way only: an EDITED manifest still carries nothing.
+
+    The receipt is refused by the gate, so the revocation verdict never
+    matters here — but the record must not be honoured off a manifest whose
+    own signature does not verify.
+    """
+    envelope, record = _revocable_v02_receipt()
+    tampered = _hybrid_manifest()
+    tampered["manifest_signature"]["sig"] = keys.b64u(bytes(64))
+
+    result = verify.verify(envelope, _store(tampered), revocation_view=[record])
+
+    assert result.ok is False
+    assert result.signature != "valid"
