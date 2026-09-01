@@ -96,7 +96,7 @@ describe('inherited-copy audit — regression guard', () => {
   test('the closed token list is the one the plan fixes', () => {
     expect([...AUDIT_TOKENS]).toEqual([
       'can fetch', 'can be', 'can ', 'CLI', 'will ', 'is able', 'supports', 'use the',
-      'run ', 'available',
+      'run ', 'available', 'fetch',
     ])
   })
 

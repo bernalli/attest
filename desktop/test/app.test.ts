@@ -121,27 +121,63 @@ describe('the page says so when its script never runs', () => {
     expect(document.getElementById('boot-failsafe')).not.toBeNull()
   })
 
+  // One predicate, over the WHOLE document. The earlier version read `shellBody()`,
+  // which strips the head — and the head is exactly where a stylesheet link, a <base>
+  // or a meta refresh would go. Measured 2026-09-01: with the body-only version an
+  // `<img src>` planted in the head passed every assertion.
+  //
+  // `<a href>` is the one carve-out: the footer's provenance line carries the project's
+  // address, and nothing fetches an anchor unless a person clicks it. It is a carve-out
+  // for ANCHORS, not for hrefs — `<image xlink:href>` and `<use xlink:href>` are
+  // parse-time fetches that the previous wording claimed were "already refused" and
+  // were not (measured: both reached the network with no policy in force).
+  const selfFetching = (html: string): string[] => {
+    const shell = html
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+    return [
+      /<meta\b[^>]*http-equiv\s*=\s*["']?\s*refresh/i,
+      /<(iframe|embed|object|frame|frameset|portal|image|use|source|track|audio|video|form|base)\b/i,
+      /\sping\s*=/i,
+      /<(?!a\b)[a-zA-Z-]+\b[^>]*\s(?:[a-zA-Z-]+:)?href\s*=/i,
+      /\s(?:src|srcset|poster|background|action|formaction|data)\s*=/i,
+      /url\(|@import/i,
+      /sample/i,
+    ].flatMap((pattern) => {
+      const hit = shell.match(pattern)
+      return hit ? [hit[0]] : []
+    })
+  }
+
   test('the shell fetches nothing while the browser parses it', () => {
-    // A src/url()/<link href> fires at PARSE time, before any script runs and before the
-    // CSP's connect-src is consulted. The only such reference allowed is the script's
-    // own entry, which the build inlines.
-    const body = shellBody().replace(/<script type="module" src="\/src\/main\.ts"><\/script>/, '')
-    expect(body).not.toMatch(/\b(src|srcset|action|formaction|poster|background)\s*=/i)
-    expect(body).not.toMatch(/url\(|@import|<link|<iframe|<img|<embed|<object/i)
-    expect(body).not.toMatch(/sample/i)
+    expect(selfFetching(shellHtml())).toEqual([])
   })
 
-  test('the only hrefs are anchors the reader may choose to follow', () => {
-    // The provenance line in the footer is where a reader is told to re-download this
-    // file and check its checksum, so it carries the project's address. An anchor is not
-    // a request: nothing fetches it unless a person clicks it, and no scenario in the
-    // end-to-end suite does. That is the whole of the carve-out — any OTHER element
-    // carrying an href would be a resource the browser fetches by itself, and the
-    // assertion above already refuses those.
-    const body = shellBody()
-    const hrefs = [...body.matchAll(/<([a-z-]+)\b[^>]*\shref=/gi)].map((m) => m[1]!.toLowerCase())
-    expect(hrefs.length).toBeGreaterThan(0)
-    expect(hrefs.every((tag) => tag === 'a')).toBe(true)
+  test('the same predicate names each construct when it is present (negative self-test)', () => {
+    // An absence assertion whose predicate has quietly stopped matching passes for ever
+    // while proving nothing — the failure that looks exactly like success. Every mutant
+    // below is a reference a browser resolves by itself; the last case is the carve-out
+    // and must still pass, or this block is satisfied by a rule that refuses everything.
+    const planted = (markup: string) => shellHtml().replace('<main>', `${markup}\n<main>`)
+    for (const markup of [
+      '<link rel="prefetch" href="https://example.invalid/x">',
+      '<img src="https://example.invalid/p.png">',
+      '<iframe src="https://example.invalid/"></iframe>',
+      '<svg><image xlink:href="https://example.invalid/p.png"/></svg>',
+      '<svg><use xlink:href="https://example.invalid/s.svg#i"/></svg>',
+      '<a href="#" ping="https://example.invalid/c">x</a>',
+      '<meta http-equiv="refresh" content="0;url=https://example.invalid/">',
+      '<base href="https://example.invalid/">',
+      '<video poster="https://example.invalid/p.png"></video>',
+    ])
+      expect(selfFetching(planted(markup)), `not caught: ${markup}`).not.toEqual([])
+
+    expect(selfFetching(planted('<a href="https://attest-receipts.org/">x</a>'))).toEqual([])
+  })
+
+  test('the shell does carry the anchor the carve-out exists for', () => {
+    expect([...shellHtml().matchAll(/<a\b[^>]*\shref=/gi)].length).toBeGreaterThan(0)
   })
 })
 

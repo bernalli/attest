@@ -32,13 +32,49 @@ const CSP = (scriptHash, styleHash) =>
 
 const sha256b64 = (text) => createHash('sha256').update(text, 'utf8').digest('base64')
 
+/** The document with the inline module, the inline stylesheet and the comments blanked
+ *  out: the markup rules below have to read the shell the browser PARSES, not the
+ *  minified bundle, which carries strings that look like tags. */
+const shellOf = (html) =>
+  html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '<script></script>')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '<style></style>')
+    .replace(/<!--[\s\S]*?-->/g, '')
+
+/** Everything the browser fetches or follows BY ITSELF. `<a href>` is deliberately
+ *  absent: the footer carries anchors a reader may choose to click, which are not
+ *  requests this page makes.
+ *
+ *  Measured 2026-09-01 on chromium and firefox, with THIS artifact's own policy in
+ *  force: every construct below is refused by `default-src 'none'` — EXCEPT the meta
+ *  refresh, which both engines followed off the file (chromium reached DNS, firefox
+ *  navigated away). For that one the policy is no belt at all, so this list is the only
+ *  thing between the artifact and a page that leaves the machine when it is opened. */
+const SELF_FETCHING = [
+  [/<meta\b[^>]*http-equiv\s*=\s*["']?\s*refresh/i,
+   'a meta refresh, which navigates off the page and which no content security policy stops'],
+  [/<(iframe|embed|object|frame|frameset|portal|image|use|source|track|audio|video|form|base)\b/i,
+   'an element that fetches or navigates by itself'],
+  [/\sping\s*=/i,
+   'a ping attribute, which posts to a third party when the link is clicked'],
+  [/<(?!a\b)[a-zA-Z-]+\b[^>]*\s(?:[a-zA-Z-]+:)?href\s*=/i,
+   'an href on something that is not an anchor (xlink:href included)'],
+  [/\s(?:src|srcset|poster|background|action|formaction|data)\s*=/i,
+   'an attribute naming a resource the browser downloads'],
+]
+
 class InlineError extends Error {}
 const refuse = (message) => {
   throw new InlineError(message)
 }
 
-/** Every invariant the finished artifact must satisfy. Used both to validate what this
- *  script just assembled and, through `--check`, to validate a file someone hands back. */
+/** Every invariant the finished artifact must satisfy. Used both on what this script
+ *  just assembled and, through `--check`, on a file someone hands back — where it is a
+ *  CONSISTENCY check and never an identity one. The policy pins the script that is IN
+ *  the file, so an attacker who rewrites the script and recomputes the hash passes:
+ *  measured 2026-09-01, a copy whose whole module had been replaced with
+ *  `document.body.textContent = "Receipt verifies"` exited 0 here and rendered that
+ *  sentence in both engines. Identity is the published SHA-256 of the whole file. */
 function validate(html) {
   const scripts = html.match(/<script\b/gi) ?? []
   if (scripts.length !== 1) refuse(`the artifact must carry exactly one script, found ${scripts.length}`)
@@ -48,6 +84,13 @@ function validate(html) {
   if (/<script\b[^>]*\ssrc=/i.test(html)) refuse('the artifact still references an external script')
   if (/<link\b[^>]*\shref=/i.test(html)) refuse('the artifact still references an external stylesheet or link')
   if (/<img\b[^>]*\ssrc=/i.test(html)) refuse('the artifact references an image; its policy has no img-src')
+
+  const shell = shellOf(html)
+  for (const [pattern, what] of SELF_FETCHING) {
+    const hit = shell.match(pattern)
+    if (hit) refuse(`the artifact carries ${what}: ${hit[0].slice(0, 60)}`)
+  }
+
   if (html.includes('import.meta')) refuse('the artifact contains import.meta, which an inline module cannot resolve')
 
   for (const token of FORBIDDEN) {
@@ -140,7 +183,13 @@ function main(argv) {
   const checkTarget = arg('--check', null)
   if (checkTarget !== null) {
     validate(readFileSync(checkTarget, 'utf8'))
-    process.stdout.write(`inline: ${checkTarget} satisfies every artifact invariant\n`)
+    process.stdout.write(
+      `inline: ${checkTarget} is internally consistent — one inline module, one inline style, ` +
+        'no external reference, and a policy that pins the bytes PRESENT in this file.\n' +
+        'inline: that says NOTHING about whether these are the bytes the project published. ' +
+        'A rewritten script with a recomputed hash passes this check. Compare the file\'s ' +
+        'SHA-256 with the one published beside the download.\n',
+    )
     return
   }
   const inDir = resolve(PKG, arg('--in', 'dist'))

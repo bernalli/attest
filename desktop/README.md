@@ -115,7 +115,7 @@ So the inherited copy is audited rather than assumed. Every user-facing string i
 modules this artifact inlines (`b64u`, `bundle`, `explain`, `intake`, `render`, `run`,
 `trusted-log`) is collected mechanically — every string containing one of the closed
 token list `can fetch`, `can be`, `can `, `CLI`, `will `, `is able`, `supports`,
-`use the`, `run `, `available` — and each one is decided by a **command**, not by
+`use the`, `run `, `available`, `fetch` — and each one is decided by a **command**, not by
 reading. A sentence outside that list is out of scope by construction rather than by
 judgement.
 
@@ -145,8 +145,9 @@ different things about the project's own level of trust.
 | `548ea8e801e8` | `explain.ts` | `can ` | This key was declared compromised by its issuer … nothing here can tell, so the verifier fails closed (spec v0.1 §7.3, v0.2 §19) | This verifier. It claims the compromise path fails closed rather than passing. | `ls docs/spec/vectors \| grep compromise  # 2 vector groups asserting the closed outcome, run by site/test/conformance.test.ts` | **TRUE** | 2026-09-01 |
 | `e54412ea9a54` | `intake.ts` | `can ` | … the file itself is bearer proof: anyone who holds it can claim this | None. States a property of the file format, not something a tool does. | `n/a — no capability asserted` | **NOT-A-TOOL-CLAIM** | 2026-09-01 |
 | `49e795697b5a` | `render.ts` | `CLI` | … it was never examined. Try the attest CLI, or a copy of this page | The attest CLI: that it exists and verifies receipts. | `grep -c 'add_parser("verify"' src/attest/cli.py  # 1` | **TRUE** | 2026-09-01 |
+| `885480988eb3` | `explain.ts` | `fetch` | The issuer’s key manifest was fetched over TLS from the issuer’s own domain — the strongest provenance attest v0.1 defines (spec §7.4) | None. It states what `trust: "verified"` means when it occurs, and this app cannot reach that value: the three provenance paths it can produce are bundle, embedded and user-supplied — never tls. | `cd desktop && npx vitest run provenance-characterization  # 4 tests, one per reachable provenance path` | **NOT-A-TOOL-CLAIM** | 2026-09-01 |
 
-Result of the audit run on 2026-09-01: 7 NOT-A-TOOL-CLAIM, 10 TRUE. No row reads FALSE, so the build is not blocked.
+Result of the audit run on 2026-09-01: 8 NOT-A-TOOL-CLAIM, 10 TRUE. No row reads FALSE, so the build is not blocked.
 
 ## Manual QA before release
 

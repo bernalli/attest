@@ -196,4 +196,17 @@ export const AUDITED_COPY: readonly AuditRow[] = [
     verdict: 'TRUE',
     audited: '2026-09-01',
   },
+  {
+    module: 'explain',
+    sha256: '885480988eb302bc518c34e027742c181f2ccced664fc643701eb75ec7aa0e35',
+    excerpt:
+      'The issuer’s key manifest was fetched over TLS from the issuer’s own domain — the strongest provenance attest v0.1 defines (spec §7.4)',
+    token: 'fetch',
+    claimAbout:
+      'None. It states what `trust: "verified"` MEANS when it occurs, and this app cannot reach that value: the three provenance paths it can produce are bundle, embedded and user-supplied — never tls. Same shape as the two `available` rows above.',
+    command:
+      'cd desktop && npx vitest run provenance-characterization  # 4 tests, one per reachable provenance path, each pinning the verdict short of green',
+    verdict: 'NOT-A-TOOL-CLAIM',
+    audited: '2026-09-01',
+  },
 ]

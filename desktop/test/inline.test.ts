@@ -110,6 +110,32 @@ describe('the inliner refuses rather than copes', () => {
     expect(run.status).not.toBe(0)
     expect(existsSync(join(dir, 'attest-verifier.html'))).toBe(false)
   })
+
+  test.each([
+    ['a meta refresh', '<meta http-equiv="refresh" content="0;url=https://example.invalid/">'],
+    ['an iframe', '<iframe src="https://example.invalid/"></iframe>'],
+    ['an SVG image addressed with xlink:href', '<svg><image xlink:href="https://example.invalid/p.png"/></svg>'],
+    ['an SVG use addressed with xlink:href', '<svg><use xlink:href="https://example.invalid/s.svg#i"/></svg>'],
+    ['an anchor carrying ping', '<a href="#" ping="https://example.invalid/c">x</a>'],
+    ['a base element', '<base href="https://example.invalid/">'],
+    ['an object', '<object data="https://example.invalid/x"></object>'],
+    ['a video poster', '<video poster="https://example.invalid/p.png"></video>'],
+  ])('%s reaches the shell: refused, and nothing is written', (_what, markup) => {
+    // Measured 2026-09-01: with this artifact's own policy in force, every construct
+    // here is refused by the CSP EXCEPT the meta refresh, which both engines followed
+    // off the file. The policy is the second belt; this is the first.
+    const dir = fixtureDist({ body: markup })
+    const run = inline(dir)
+
+    expect(run.status, `${_what} was not refused`).not.toBe(0)
+    expect(existsSync(join(dir, 'attest-verifier.html'))).toBe(false)
+  })
+
+  test('the footer anchor the artifact really carries is NOT refused', () => {
+    // Without this the block above is satisfied by a rule that refuses everything.
+    const dir = fixtureDist({ body: '<a href="https://attest-receipts.org/">attest-receipts.org</a>\n' })
+    expect(inline(dir).status).toBe(0)
+  })
 })
 
 describe('the artifact the build actually produces', () => {

@@ -27,6 +27,12 @@ export const INHERITED_MODULES = [
 export const AUDIT_TOKENS = [
   'can fetch', 'can be', 'can ', 'CLI', 'will ', 'is able', 'supports', 'use the',
   'run ', 'available',
+  // Appended LAST on purpose: the list is first-match, so a token added at the head
+  // would silently re-label every audited row. Measured 2026-09-01: `fetch` widens the
+  // catalogue from 17 candidates to 18, and the one it adds is the copy that describes
+  // the `verified` tier — the same family as the sentence gate G1 was built for, which
+  // the two-word phrase `can fetch` catches only in its historical wording.
+  'fetch',
 ] as const
 
 export interface CopySource {
