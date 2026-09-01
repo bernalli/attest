@@ -36,9 +36,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from attest_bridge.model import ClaimQueueFull
+from attest_bridge.model import ClaimQueueFull, purchase_id_for_log
 
 MAX_PENDING_CLAIMS = 1000
+
+
+class ReceiptAlreadyRecorded(Exception):
+    """`record_receipt` lost a race: its INSERT hit a uniqueness constraint.
+
+    Two constraints can produce it — the `(platform, purchase_id)` PRIMARY KEY
+    of a purchase another writer recorded first, and the UNIQUE
+    `download_token`. WHICH of the two is deliberately not decided here: the
+    text of a sqlite error is not a contract to parse. The caller settles it
+    by re-reading the row (`core.IssuingCore.issue_for`), which is the only
+    answer that cannot be wrong.
+    """
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -205,28 +218,39 @@ class Ledger:
         download_token: str,
         issued_at: str,
     ) -> None:
-        # Deliberately NOT catching sqlite3.IntegrityError here: a duplicate
-        # (platform, purchase_id) must propagate — the caller (core, T5)
-        # checks `get_receipt` first, this PRIMARY KEY is the last line of
-        # defense against a race, not the primary dedup mechanism.
-        with self._lock, self._conn:
-            self._conn.execute(
-                """
-                INSERT INTO receipts
-                    (platform, purchase_id, receipt_id, envelope_json, download_token,
-                     buyer_email, issued_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    platform,
-                    purchase_id,
-                    receipt_id,
-                    json.dumps(envelope),
-                    download_token,
-                    buyer_email,
-                    issued_at,
-                ),
-            )
+        # The (platform, purchase_id) PRIMARY KEY stays the last line of
+        # defense against a race, not the primary dedup mechanism — the caller
+        # (core, T5) checks `get_receipt` first. What changed is what a lost
+        # race produces: sqlite3 never leaves this module, so the caller can
+        # catch it by a name it owns, re-read the winner's row, and answer the
+        # purchase with a duplicate outcome instead of a 500 the platform will
+        # retry straight back into the same race.
+        try:
+            with self._lock, self._conn:
+                self._conn.execute(
+                    """
+                    INSERT INTO receipts
+                        (platform, purchase_id, receipt_id, envelope_json, download_token,
+                         buyer_email, issued_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        platform,
+                        purchase_id,
+                        receipt_id,
+                        json.dumps(envelope),
+                        download_token,
+                        buyer_email,
+                        issued_at,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            # The purchase id is hashed here for the same reason it is hashed
+            # in the logs: this message ends up in operator-visible output.
+            raise ReceiptAlreadyRecorded(
+                f"a uniqueness constraint rejected the receipt for platform={platform!r} "
+                f"purchase_id={purchase_id_for_log(purchase_id)}"
+            ) from exc
 
     def ping(self) -> None:
         """Raise if this Ledger cannot currently be read.

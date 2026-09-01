@@ -98,15 +98,53 @@ def test_get_receipt_returns_none_when_absent(ledger: Ledger) -> None:
     assert ledger.get_receipt("stripe", "cs_missing") is None
 
 
-def test_double_record_receipt_same_purchase_raises_integrity_error(ledger: Ledger) -> None:
+def test_double_record_receipt_same_purchase_raises_receipt_already_recorded(
+    ledger: Ledger,
+) -> None:
+    """The PRIMARY KEY still refuses, but through this module's own exception.
+
+    It used to raise `sqlite3.IntegrityError` verbatim, which made the driver
+    part of every caller's contract. The underlying error is kept as the
+    cause, so an operator still gets the constraint that fired.
+    """
     ledger.record_receipt(
         "stripe", "cs_dup", "receipt-1", _envelope(), "buyer@example.com", "token-1", NOW
     )
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(ledger_mod.ReceiptAlreadyRecorded) as caught:
         ledger.record_receipt(
             "stripe", "cs_dup", "receipt-2", _envelope(), "buyer@example.com", "token-2", NOW
         )
+
+    assert isinstance(caught.value.__cause__, sqlite3.IntegrityError)
+
+
+def test_a_download_token_collision_raises_the_same_exception_as_a_duplicate_purchase(
+    ledger: Ledger,
+) -> None:
+    """Two different constraints, one exception type — deliberately.
+
+    This is why `core.issue_for` re-reads the row instead of treating the
+    exception as proof of a duplicate: here the purchase is brand new and
+    nothing about it was recorded, and calling it a duplicate would answer
+    the buyer with a receipt issued to somebody else.
+    """
+    ledger.record_receipt(
+        "stripe", "cs_first", "receipt-1", _envelope(), "buyer@example.com", "shared-token", NOW
+    )
+
+    with pytest.raises(ledger_mod.ReceiptAlreadyRecorded):
+        ledger.record_receipt(
+            "stripe",
+            "cs_second",
+            "receipt-2",
+            _envelope(),
+            "other@example.com",
+            "shared-token",
+            NOW,
+        )
+
+    assert ledger.get_receipt("stripe", "cs_second") is None
 
 
 def test_by_download_token_hit(ledger: Ledger) -> None:
@@ -407,3 +445,45 @@ def test_stored_receipt_claim_dead_letter_are_frozen_dataclasses() -> None:
         claim.status = "confirmed"  # type: ignore[misc]
     with pytest.raises(AttributeError):
         dead_letter.reason = "y"  # type: ignore[misc]
+
+
+# -- concurrent writers on one file (the PK as last line of defense) -----------
+
+
+def test_a_second_ledger_recording_the_same_purchase_raises_receipt_already_recorded(
+    tmp_path: Path,
+) -> None:
+    """Two Ledger objects, one file: the second INSERT must not leak sqlite3.
+
+    `retry-failed` and `itch-import` open the same file as a second process
+    while `serve` runs, so this is the ordinary shape of a lost race, not a
+    hypothetical one. The caller has to be able to catch it by a name that
+    belongs to this module.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+    first, second = Ledger(db_path), Ledger(db_path)
+    first.record_receipt("stripe", "cs_1", "rcpt-first", _envelope(), "a@example.com", "tok-1", NOW)
+
+    with pytest.raises(ledger_mod.ReceiptAlreadyRecorded):
+        second.record_receipt(
+            "stripe", "cs_1", "rcpt-second", _envelope(), "b@example.com", "tok-2", NOW
+        )
+
+
+def test_the_first_writer_of_a_purchase_keeps_the_row(tmp_path: Path) -> None:
+    db_path = tmp_path / "ledger.sqlite3"
+    first, second = Ledger(db_path), Ledger(db_path)
+    first.record_receipt("stripe", "cs_1", "rcpt-first", _envelope(), "a@example.com", "tok-1", NOW)
+
+    with pytest.raises(ledger_mod.ReceiptAlreadyRecorded):
+        second.record_receipt(
+            "stripe", "cs_1", "rcpt-second", _envelope(), "b@example.com", "tok-2", NOW
+        )
+
+    stored = second.get_receipt("stripe", "cs_1")
+    assert stored is not None
+    assert (stored.receipt_id, stored.download_token, stored.buyer_email) == (
+        "rcpt-first",
+        "tok-1",
+        "a@example.com",
+    )
