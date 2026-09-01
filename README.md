@@ -39,7 +39,9 @@ attest is the counterattack. It can't win back the libraries already lost;
 nothing can. But it's built so the next purchase doesn't end the same way: every
 future purchase gets the one thing every physical purchase always had, a piece
 that's yours — on your own disk, cryptographically provable, out of reach of
-anyone's click. Here's how:
+anyone's click. "Forever" holds against the store disappearing, not against a
+live store declaring its own signing key compromised: that declaration still
+destroys receipts that were never logged and anchored before it. Here's how:
 
 ## What attest is
 
