@@ -1443,8 +1443,17 @@ _CLAIM_SHAPES: tuple[_ClaimShape, ...] = (
     # the count had already moved: "the corpus now contains 212 leaves" sat one
     # line above a "reproduce all 213" that this list DID defend, so the file
     # contradicted itself and every shape here stayed silent.
+    #
+    # The determiner is load-bearing, not decoration. A first version keyed on
+    # `corpus ... contains N leaves` alone read "the v0.1 subset corpus contains
+    # N leaves" and "group 32 corpus contains N leaves" as claims about the
+    # TOTAL, which would report a true sentence as stale — the noun is shared by
+    # every scope, so only the phrase that owns it can say which one is meant.
     _ClaimShape(
-        "corpus-contains", r"\bcorpus (?:now )?contains (\d+) leaves\b", ((1, "corpus_total"),)
+        "corpus-contains",
+        r"\b(?:the|this) (?:full |whole |shared |conformance )?corpus "
+        r"(?:now |currently )?contains (?:all )?(\d+) leaves\b",
+        ((1, "corpus_total"),),
     ),
     _ClaimShape(
         "every-leaf-currently",
