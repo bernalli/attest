@@ -62,7 +62,7 @@ from typing import Any, cast
 from urllib.parse import parse_qs, quote
 
 from attest import buyer_surface
-from attest_bridge.config import BridgeConfig
+from attest_bridge.config import DEFAULT_INFO_URL, BridgeConfig
 from attest_bridge.core import IssuingCore
 from attest_bridge.delivery import Delivery
 from attest_bridge.itch_adapter import ItchAdapter
@@ -508,7 +508,7 @@ def _best_effort_shopify_purchase_id(order: object) -> str | None:
 
 
 def _render_pair_landing(
-    start_response: Any, pair: BundlePair, hrefs: tuple[str, str]
+    start_response: Any, pair: BundlePair, hrefs: tuple[str, str], info_url: str
 ) -> Iterable[bytes]:
     """The page a receipt link lands on: two named downloads, in the order the
     email body uses (shareable first, so the buyer meets the safe file before
@@ -533,7 +533,17 @@ def _render_pair_landing(
         "store is gone.</p>\n"
         f'<p><a href="{private_href}" download>{name}.private.attest</a> is the one to '
         "keep to yourself.</p>\n"
-        f"{buyer_surface.private_file_warning_html(pair.name)}",
+        f"{buyer_surface.private_file_warning_html(pair.name)}\n"
+        # In zero-config mode this page IS the delivery — no email is sent, so
+        # this is the only place the explainer can be offered.
+        #
+        # Written as text rather than as an <a href>, deliberately: every page
+        # this module serves is held to carrying no reference to the outside,
+        # and that rule is not about rendering offline — it is what stops a
+        # link the merchant's own data could inject from leading a buyer
+        # somewhere hostile. The address goes on its own line, the way the
+        # delivery email writes it, so a reader can copy it.
+        f"<p>What are these files? {html.escape(info_url)}</p>",
     ).encode()
     headers = [
         ("Content-Type", "text/html; charset=utf-8"),
@@ -594,7 +604,10 @@ def _serve_receipt_pair(
         )
         return _internal_error(start_response)
     if part is None:
-        return _render_pair_landing(start_response, pair, hrefs)
+        info_url = (
+            deps.config.delivery.info_url if deps.config.delivery is not None else DEFAULT_INFO_URL
+        )
+        return _render_pair_landing(start_response, pair, hrefs, info_url)
     return _pair_file_response(start_response, pair, part)
 
 
@@ -710,7 +723,12 @@ def _handle_itch_claim_form(deps: BridgeDeps, start_response: Any) -> Iterable[b
         '<label>Email <input type="email" name="email" required></label>'
         f'<label>Game <select name="game_id">{options}</select></label>'
         '<button type="submit">Email my receipt</button>'
-        "</form>",
+        "</form>\n"
+        # The seller is told to link this page from their game page, so it is
+        # met BEFORE any email: the warning about the private half belongs
+        # here, not only in the message that arrives afterwards. Generic form —
+        # there is no bundle name yet at claim time.
+        f"{buyer_surface.private_file_warning_html()}",
         extra_css=_CLAIM_FORM_CSS,
     )
     body = page.encode()
@@ -763,6 +781,60 @@ def _handle_itch_claim_post(
     return _json_response(start_response, "202 Accepted", _ITCH_CLAIM_ACCEPTED)
 
 
+# -- readiness ------------------------------------------------------------
+#
+# `/healthz` says the process is alive. `/readyz` says something a merchant
+# actually needs to know and cannot see from the outside: whether a purchase
+# arriving now could become a receipt. The two can disagree for days — a
+# daemon outliving its signing key keeps answering 200 on /healthz while
+# rejecting every purchase.
+#
+# What is checked is exactly what issuance requires, all of it local:
+# a readable Ledger, a signing key inside its validity window, and at least
+# one product to resolve a purchase against.
+#
+# What is deliberately NOT checked: SMTP, the itch API, the Stripe API.
+# Neither is on the issuing path — `IssuingCore.process` records the receipt
+# durably BEFORE any delivery is attempted, and a failed delivery leaves it
+# downloadable and retried by the sweep — so a dead mail relay does not make
+# this bridge unable to do its job, and reporting otherwise would invite an
+# operator to restart a service that is working. A probe that opened an SMTP
+# session on every platform health check (every 15s on Fly) would also be a
+# fine way for a merchant to get rate-limited by their own relay.
+
+
+def _readiness_failure(deps: BridgeDeps) -> str | None:
+    """The first reason this bridge could not issue right now, or None.
+
+    Never raises: a readiness probe that 500s tells an operator nothing
+    about the dependency it was asked about.
+    """
+    try:
+        deps.ledger.ping()
+    except Exception:
+        return "ledger is not readable"
+    try:
+        if not deps.core.signing_key_within_validity(at=_now_rfc3339()):
+            return "signing key is outside its validity window"
+    except Exception:
+        return "signing key could not be checked against the key manifest"
+    if not deps.core.has_configured_products:
+        return "no product is configured"
+    return None
+
+
+def _handle_readyz(deps: BridgeDeps, start_response: Any) -> Iterable[bytes]:
+    failure = _readiness_failure(deps)
+    if failure is None:
+        return _json_response(start_response, "200 OK", {"ready": True})
+    # The reason goes to the operator, never into the response: this route is
+    # unauthenticated and reachable by anyone who can reach the webhook
+    # endpoints, and which dependency of a merchant's bridge is broken is not
+    # theirs to learn.
+    deps.log.warning("readiness check failed: %s", failure)
+    return _json_response(start_response, "503 Service Unavailable", {"ready": False})
+
+
 # -- app ------------------------------------------------------------------
 
 
@@ -778,6 +850,8 @@ def make_app(deps: BridgeDeps) -> WSGIApp:
 
         if method == "GET" and path == "/healthz":
             return _json_response(start_response, "200 OK", {"ok": True})
+        if method == "GET" and path == "/readyz":
+            return _handle_readyz(deps, start_response)
         if method == "POST" and path == "/stripe/webhook":
             return _handle_stripe_webhook(deps, environ, start_response, webhook_lock)
         if method == "POST" and path == "/shopify/webhook":

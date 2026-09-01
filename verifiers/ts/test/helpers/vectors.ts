@@ -57,6 +57,22 @@ export function trustStore(dir: string) {
   }
 }
 export function revocationView(dir: string): unknown[] | null {
+  // Fourth loader of the same corpus, after the two conformance adapters and
+  // tests/test_vectors.py — every one of them has to know the same files, or a
+  // leaf gets verified against evidence it was never handed and passes for the
+  // wrong reason. `revocation-view.json` carries the whole array (the spelling
+  // transfer-view.json and compromise-view.json already use);
+  // `revocation.json` is the older single-record form. Array wins.
+  const arrayPath = join(dir, 'revocation-view.json')
+  if (existsSync(arrayPath)) {
+    const loaded = loadJsonStrict(arrayPath)
+    // Refuse the wrong shape out loud rather than casting through it. Note this
+    // file is NOT type-checked: verifiers/ts/tsconfig.json includes only `src`,
+    // so a bad cast here fails nowhere — which is why the site's copy of this
+    // loader, whose tsconfig does cover its tests, is where the mistake surfaced.
+    if (!Array.isArray(loaded)) throw new Error(`${arrayPath} must contain a JSON array`)
+    return loaded
+  }
   const p = join(dir, 'revocation.json')
   return existsSync(p) ? [loadJsonStrict(p)] : null
 }

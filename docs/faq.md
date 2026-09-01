@@ -59,8 +59,14 @@ durable medium; that's why confirmation emails exist at all. attest is that
 same confirmation in a format a machine can verify and you can carry away. A
 regulator doesn't have to invent a new obligation, only require a usable
 format for one that already exists. The standard is written for exactly that
-moment: open and royalty-free, with two independent implementations, a
-conformance suite and an active IETF draft behind it.
+moment: published in the open, with two independent implementations, a
+conformance suite and an active IETF draft behind it. The reference code is
+Apache-2.0, whose patent grant reaches that code and no further, and the
+specification is CC BY 4.0, which states outright that patent rights are not
+licensed under it. Nothing here charges a fee to implement attest, and nothing
+here is yet a patent commitment to anyone implementing the specification
+independently of that code — the documents say what they cover, and stop short
+of "royalty-free".
 
 And the open bet is adoption itself. No store signs attest receipts today,
 and no regulator mandates them. If that never changes, attest stays a

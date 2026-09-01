@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { explain, explainVerdict, attributeWarning, COMPONENTS, GROUPS } from '../src/explain.js'
 import type { Component } from '../src/explain.js'
@@ -176,6 +176,43 @@ describe('compromise-cutoff copy', () => {
     expect(text).toMatch(/cannot invalidate/)
     // 41r: there the declaration IS anchored; the cutoff dies on §19.3 item 3b.
     expect(text).not.toMatch(/declaration itself carries no anchored time/)
+  })
+
+  it('never offers the buyer a TLS fetch that no shipped tool performs', () => {
+    // This sentence used to say the attest CLI could fetch the manifest over
+    // TLS and reach `verified`. It could not, and still cannot: `verify()`
+    // grants `verified` only when the trust store's provenance is `tls`, and
+    // both `cli.py` and `bundle.py` set provenance to `bundle` unconditionally
+    // while the package ships no HTTP client at all.
+    //
+    // So the assertion is anchored to the CAPABILITY rather than to today's
+    // wording: the premise is checked here, against the reference
+    // implementation, and only while it holds is the promise forbidden. The
+    // day someone implements the fetch, this test fails and whoever adds it
+    // has to come back and rewrite the sentence — which is exactly the
+    // handshake that was missing.
+    // The whole package, not the two modules that happen to set provenance:
+    // the sentence claims nothing published performs the fetch, so a fetch
+    // implemented in any third module has to trip this too.
+    // Recursive, and that word is load-bearing: `src/attest/schema/` holds a
+    // module too, and a flat scan reads "whole package" while walking one
+    // directory. Measured — an HTTP-client import placed there left this test
+    // green, which is the claim failing quietly rather than the code.
+    const pkg = join(__dirname, '..', '..', 'src', 'attest')
+    const implementation = readdirSync(pkg, { recursive: true })
+      .map(String)
+      .filter((name) => name.endsWith('.py'))
+      .map((name) => readFileSync(join(pkg, name), 'utf8'))
+      .join('\n')
+
+    const shipsAnHttpClient =
+      /^\s*(?:import|from)\s+(?:requests|httpx|urllib|aiohttp|http\.client)\b/m.test(implementation)
+    expect(shipsAnHttpClient).toBe(false)
+
+    const text = explain('trust', 'unauthenticated_tofu').text
+    expect(text).not.toMatch(/CLI can fetch/i)
+    // And it still has to tell the reader where TOFU leaves them.
+    expect(text).toMatch(/trust-on-first-use/i)
   })
 
   it('explains the monotone floor and its trust cause', () => {

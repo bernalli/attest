@@ -12,12 +12,19 @@ machine you'll never see, and it's gone.
 
 None of this was ever a secret: it's in the terms of service nobody reads. But
 with physical media all but gone, the fine print is starting to bite. Sony
-spelled it out this August: your PlayStation purchases are a "license, not
-owned". Users across Europe and the UK had already been told what that means in
-practice: on September 1st, 551 movies they had bought — *Terminator 2*,
-*Paddington*, *Apocalypse Now* — disappear from their libraries, because a
-licensing deal expired. No refunds. Who gives me back the money I paid for those
-movies? Who decides whether I keep watching what I legitimately bought? Today the
+mailed account holders a copy of its terms this August; the UK software terms
+say it outright, in clause 4: "The Software is licenced to you, not sold."
+Users across Europe and the UK had already been told what that means in
+practice. PlayStation's own video-content terms say it plainly: "From
+September 1, 2026, due to our content licensing agreements, you will no longer
+be able to access your previously purchased content from Studio Canal, and it
+will be removed from your video library." Films people had paid for —
+*Terminator 2*, *Total Recall*, *Paddington* — gone, because a licensing deal
+expired; the notice lists 551 titles by name. No refund was offered,
+and it was the second time with the same supplier: purchased StudioCanal
+content was removed once before, in August 2022, and that removal was
+never reversed. Who gives me back the money I paid for those movies? Who
+decides whether I keep watching what I legitimately bought? Today the
 answer is: they do. And Sony is no exception. Weeks earlier, Xbox had pulled
 three games not just from the store but from the libraries of everyone who'd
 bought them. Microsoft shut its ebook store in 2019: refunds went out, and every
@@ -84,8 +91,8 @@ it names the three things it does not do in [`demo/README.md`](demo/README.md).
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations. Their published
 self-certification claims are recorded in [`docs/conformance.md`](docs/conformance.md);
-the corpus now contains 216 leaves, and a release may claim the §20-expanded corpus
-only once both implementations reproduce all 216. **Try it in your browser:**
+the corpus now contains 218 leaves, and a release may claim the §20-expanded corpus
+only once both implementations reproduce all 218. **Try it in your browser:**
 <https://attest-receipts.org/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Be clear about the status: no
 store issues attest receipts in production yet, and there are no external reviews.
@@ -165,7 +172,7 @@ amount of protocol fixes that.
 
 Spec v0.1 is complete and v0.2 is specified, with two independent
 implementations — a Python reference implementation and a TypeScript verifier —
-measured by the shared conformance corpus, now 216 leaves across 46 groups: 63
+measured by the shared conformance corpus, now 218 leaves across 47 groups: 63
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
@@ -357,7 +364,7 @@ mark, which has not happened. Conformance claims follow the self-certification
 process in [docs/conformance.md](docs/conformance.md).
 
 **Contributing.** See [`CONTRIBUTING.md`](CONTRIBUTING.md). Implementation pull
-requests must pass all 216 conformance vector leaves and keep both the Python and
+requests must pass all 218 conformance vector leaves and keep both the Python and
 TypeScript suites green.
 
 **Contact.** Use GitHub Issues for technical bugs, GitHub Discussions for

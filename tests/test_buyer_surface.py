@@ -8,7 +8,11 @@ most concrete. These tests hold the parts that must not diverge again.
 
 from __future__ import annotations
 
+import html
+import os
 import re
+import shutil
+import string
 import subprocess
 import sys
 import zipfile
@@ -222,3 +226,218 @@ def test_the_generator_runs_as_a_script() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "what-is-this.html" in result.stdout
+
+
+def test_no_bundle_name_can_put_markup_in_the_styled_warning() -> None:
+    """The styled form escapes the name and then formats — never the reverse.
+
+    That order is safe only because the CLAIM is a constant: `str.format`
+    substitutes arguments verbatim and never rescans them, so a brace arriving
+    through `bundle_name` cannot become a replacement field. What this pins is
+    the other half of the argument — that every tag in the block came from this
+    module and none of them came from the name.
+    """
+    allowed = {
+        '<div class="warning">',
+        "</div>",
+        "<h2>",
+        "</h2>",
+        "<p>",
+        "</p>",
+        "<code>",
+        "</code>",
+    }
+    for bundle_name in HOSTILE_BUNDLE_NAMES:
+        rendered = buyer_surface.private_file_warning_html(bundle_name)
+
+        assert set(re.findall(r"<[^>]*>", rendered)) <= allowed, bundle_name
+
+
+def test_the_warning_templates_use_only_the_fields_the_renderers_supply() -> None:
+    """`{command}` is a hole for TRUSTED markup, and holes need a fence.
+
+    Whatever `{command}` holds is spliced into the styled form AFTER escaping,
+    so it renders as markup. That is correct for one module constant and is
+    cross-site scripting the moment a claim interpolates something a merchant
+    controls — and nothing else in this suite would notice, because every
+    other test feeds the renderers a bundle name, not a new claim.
+    """
+    templates = (buyer_surface._WARNING_HEADLINE, *buyer_surface._WARNING_CLAIMS)
+
+    for template in templates:
+        fields = {
+            field for _, field, _, _ in string.Formatter().parse(template) if field is not None
+        }
+
+        assert fields <= {"name", "command"}, template
+
+
+def _claims_in_html(rendered: str) -> str:
+    """What a person reads in the HTML form: tags dropped, entities resolved."""
+    return _collapse(html.unescape(re.sub(r"<[^>]+>", " ", rendered)))
+
+
+def _claims_in_text(rendered: str) -> str:
+    """What a person reads in the plain form: exactly what is there.
+
+    Deliberately NOT tag-stripped. The plain form legitimately contains
+    `<receipt_id>` as literal text, and a comparison that stripped it would
+    quietly demand that the two forms differ — a test enforcing the very
+    drift it exists to forbid.
+    """
+    return _collapse(rendered)
+
+
+def _collapse(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+#: Bundle stems that exercise the shapes a renderer which escapes and then
+#: formats can get wrong: braces (which `str.format` would read as fields if
+#: the name were ever the template), markup, half-formed entities, whitespace,
+#: and the generic `None` form the itch claim form and the explainer render.
+HOSTILE_BUNDLE_NAMES = (
+    None,
+    "",
+    "mylibrary",
+    "a&b",
+    "a<b>c",
+    "it's",
+    '"quoted"',
+    "{name}",
+    "{command}",
+    "{",
+    "}",
+    "{0}",
+    "{0.__class__}",
+    "{name:>999999}",
+    "&amp;",
+    "&lt",
+    "&#x27;",
+    'x"><script>alert(1)</script>',
+    "</p><p>injected",
+    "<img src=x onerror=alert(1)>",
+    "caf\u00e9\u2013\u00fcn\u00efcode",
+    "line\nbreak\tand tab",
+    "x" * 300,
+)
+
+
+def test_both_warning_forms_make_the_same_claims() -> None:
+    """The two forms must say the same things — parity of claims, not bytes.
+
+    This module exists to stop hand-written copies of buyer-facing text from
+    drifting, and it held two of them. They had drifted: three statements
+    lived only in the HTML form, among them "a real store or support agent
+    will never need it" — the one sentence that makes a phishing request look
+    wrong. The email uses the PLAIN form, so that sentence was present on
+    every surface where nobody is deceiving the buyer, and absent from the
+    only one an attacker can imitate.
+
+    A parity test is what makes "one source" true instead of merely intended:
+    two strings side by side in one module are two copies until something
+    proves otherwise.
+    """
+    for bundle_name in HOSTILE_BUNDLE_NAMES:
+        from_html = _claims_in_html(buyer_surface.private_file_warning_html(bundle_name))
+        from_text = _claims_in_text(buyer_surface.private_file_warning_text(bundle_name))
+
+        assert from_html == from_text, bundle_name
+
+
+#: Every place that renders a buyer-facing page, counted from the code rather
+#: than remembered. The count per file matters: a second surface added to a
+#: file already on this list is exactly how the itch claim form went a whole
+#: release without the private-file warning while three other surfaces had it.
+EXPECTED_RENDER_PAGE_CALL_SITES = {
+    "src/attest/bundle.py": 1,
+    "bridge/src/attest_bridge/http.py": 2,
+    "tools/gen_buyer_pages.py": 1,
+}
+
+
+def test_every_surface_that_renders_a_buyer_page_is_accounted_for() -> None:
+    """A new buyer-facing page must be a decision, not a discovery.
+
+    What this pins is that the list of surfaces is COUNTED from the code every
+    time, never recalled. A remembered list is an incomplete list: the claim
+    form was missing from the remembered one, and it is the first page an itch
+    buyer ever sees. The same shape has cost this project twice before, both
+    times by collapsing something the code knew into something a person
+    remembered.
+
+    If this fails because you added a surface: give it the private-file
+    warning, give it a test that proves it carries it, then add it here.
+    """
+    # Files git TRACKS, not files that happen to sit on disk. Walking the
+    # working tree counts whatever else lives under it — a nested worktree, a
+    # build directory, someone's scratch copy — and then this guard fails for
+    # a reason that has nothing to do with buyer surfaces. A test that can
+    # fail for the wrong reason gets muted, and a muted guard defends nothing.
+    git = shutil.which("git")
+    assert git is not None, "git is not on PATH"
+    # Repository selection is part of what this guard verifies. Inherited
+    # Git overrides must not substitute another worktree, Git dir, or index.
+    git_env = os.environ.copy()
+    for name in tuple(git_env):
+        if name.startswith("GIT_"):
+            del git_env[name]
+    # And the perimeter must be THIS repository's index. Asking a checkout
+    # nested inside another repository would return someone else's file list
+    # — or none at all — and a guard that counts zero surfaces passes while
+    # defending nothing, which is worse than failing.
+    top = subprocess.run(  # noqa: S603 -- fixed argv list, no shell
+        [git, "-C", str(REPO_ROOT), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+        env=git_env,
+    )
+    assert Path(top.stdout.rstrip("\n")).resolve() == REPO_ROOT.resolve()
+    tracked_output = subprocess.run(  # noqa: S603 -- fixed argv list, no shell
+        [git, "-C", str(REPO_ROOT), "ls-files", "-z", "*.py"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+        env=git_env,
+    ).stdout
+    assert tracked_output, "git ls-files returned no tracked Python files"
+    tracked = tracked_output.split("\0")
+
+    found: dict[str, int] = {}
+    for relative in sorted(name for name in tracked if name):
+        path = REPO_ROOT / relative
+        if any(part in {"tests", "node_modules"} for part in path.parts):
+            continue  # a test that renders a page is not a surface a buyer meets
+        if path.name.startswith("test_"):
+            continue
+        if path == REPO_ROOT / "src" / "attest" / "buyer_surface.py":
+            continue  # where render_page is defined, not called
+        source = path.read_text(encoding="utf-8")
+        count = source.count("render_page(")
+        if count:
+            found[str(path.relative_to(REPO_ROOT))] = count
+            # Counting the surfaces is half the guard: the claim form was on
+            # nobody's list AND carried no warning, and only the second half is
+            # what hurt a buyer. A file that renders a buyer page and never
+            # names the warning is the same defect one rename away.
+            assert "private_file_warning" in source, path
+
+    assert found == EXPECTED_RENDER_PAGE_CALL_SITES
+
+
+def test_the_surface_guard_reads_this_repository_and_not_an_inherited_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Which repository the guard interrogates is part of what it guards.
+
+    `git` takes its index from `GIT_INDEX_FILE`, and `--show-toplevel` keeps
+    answering with this checkout while `ls-files` answers from somewhere else
+    entirely. A surface that exists only in the real index then goes uncounted
+    and the guard passes — the exact silence it was written to break. Anything
+    a caller inherited in the environment must not decide the answer.
+    """
+    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "someone-elses-index"))
+    test_every_surface_that_renders_a_buyer_page_is_accounted_for()

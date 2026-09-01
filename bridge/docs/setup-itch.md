@@ -43,6 +43,12 @@ poll_interval_seconds = 60
 max_attempts = 10
 ```
 
+Drop `[stripe]` and `[shopify]` from `bridge.toml` too if you don't sell
+through them — step 3 of setup-stripe.md tells you to drop the *other*
+platform tables, never its own. A table left behind is not inert: the bridge
+resolves the environment variable it names at startup and refuses to start
+when that variable is unset.
+
 Set `ITCH_API_KEY` in your deploy environment to the key from step 1
 (alongside `STRIPE_WEBHOOK_SECRET` etc. — see [deploy.md](deploy.md)).
 

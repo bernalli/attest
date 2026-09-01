@@ -59,6 +59,16 @@ def _trust_store(leaf: Path) -> verify.TrustStore:
 
 
 def _revocation_view(leaf: Path) -> list[dict[str, Any]] | None:
+    # `revocation-view.json` carries the WHOLE array, exactly as
+    # `transfer-view.json` and `compromise-view.json` already do for their own
+    # rails; `revocation.json` is the older single-record spelling and stays
+    # supported unchanged. Until the array spelling existed, a leaf could not
+    # express a view of more than one record, so no vector could reach this
+    # rail's record ceiling at all — which is why the ceiling's behaviour went
+    # unpinned. The array file wins when both are present.
+    array_path = leaf / "revocation-view.json"
+    if array_path.exists():
+        return _load_json(array_path)  # type: ignore[no-any-return]
     path = leaf / "revocation.json"
     if not path.exists():
         return None

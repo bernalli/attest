@@ -14,7 +14,7 @@ export interface VerifyJob {
 
 export type IntakeResult =
   | { kind: 'jobs'; jobs: VerifyJob[]; notices?: string[] }
-  | { kind: 'needs-manifest'; envelopeBytes: Uint8Array; fileName: string; notices?: string[] }
+  | { kind: 'needs-manifest'; envelopeBytes: Uint8Array; label: string; notices?: string[] }
   | { kind: 'rejected'; reason: string }
 
 export const EMPTY_TRUST: TrustStore = { manifests: {}, provenance: {} }
@@ -74,6 +74,28 @@ const receiptIdOf = (bytes: Uint8Array): string | null => {
   }
 }
 
+// The receipt schema's own ULID grammar, mirrored from `bundle.ts`. A label is
+// shown to a person, so its shape is checked before it is shown: a payload can
+// carry any string under `receipt_id` — self-signing one costs an attacker a
+// keypair — and only the ULID shape is a receipt id rather than a sentence.
+const RECEIPT_ID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
+
+/** What the page may call a file whose signed payload names no usable id.
+ *
+ * Deliberately not the file name. A file name and a ZIP member name are the
+ * same kind of thing — a string the person who sent the file chose — and the
+ * defect this constant exists for was exactly that string appearing above a
+ * verdict badge as though the verifier had concluded it.
+ */
+export const UNIDENTIFIED_LABEL = 'Unidentified receipt'
+
+/** The only identifier this page will show for a receipt: the one inside the
+ *  signed payload, shaped as the schema requires, or nothing at all. */
+export const labelFor = (bytes: Uint8Array): string => {
+  const id = receiptIdOf(bytes)
+  return id !== null && RECEIPT_ID_RE.test(id) ? id : UNIDENTIFIED_LABEL
+}
+
 // The id is attacker-supplied text and `proofs` is a plain object, so an id of
 // "__proto__" would otherwise resolve to Object.prototype and be handed on as
 // if it were evidence.
@@ -91,16 +113,18 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
       // bundle from anywhere else gets the same content check as a bare file.
       const notices = parsed.receipts
         .filter((r) => carriesSalt(deliveryOf(r.bytes)))
-        .map((r) => saltNotice(`The receipt ${r.name} in this bundle`))
+        .map((r) => saltNotice(`The receipt ${r.receiptId} in this bundle`))
       return {
         kind: 'jobs',
         jobs: parsed.receipts.map((r) => ({
-          label: r.name,
+          // The signed id, which `parseBundle` read out of the payload. The
+          // member name is how the bytes were found, never what they are.
+          label: r.receiptId,
           envelopeBytes: r.bytes,
           trustStore: parsed.trustStore,
           // Matched on the receipt id inside the signed payload (v0.2 §14),
           // which is the only thing the proof member's name is keyed to.
-          transparency: proofFor(parsed.proofs, receiptIdOf(r.bytes)),
+          transparency: proofFor(parsed.proofs, r.receiptId),
         })),
         ...(notices.length > 0 ? { notices } : {}),
       }
@@ -134,7 +158,7 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
     return {
       kind: 'jobs',
       jobs: [{
-        label: fileName,
+        label: labelFor(bytes),
         envelopeBytes: bytes,
         trustStore: { manifests: { [issuer]: embedded }, provenance: { [issuer]: 'embedded' } },
         transparency: null, // a bare envelope brings no proofs/ member with it
@@ -142,8 +166,8 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
       ...notices,
     }
   }
-  if (parsed) return { kind: 'needs-manifest', envelopeBytes: bytes, fileName, ...notices }
-  return { kind: 'jobs', jobs: [{ label: fileName, envelopeBytes: bytes, trustStore: EMPTY_TRUST, transparency: null }] }
+  if (parsed) return { kind: 'needs-manifest', envelopeBytes: bytes, label: labelFor(bytes), ...notices }
+  return { kind: 'jobs', jobs: [{ label: labelFor(bytes), envelopeBytes: bytes, trustStore: EMPTY_TRUST, transparency: null }] }
 }
 
 export function trustStoreFromManifestBytes(bytes: Uint8Array): TrustStore | null {

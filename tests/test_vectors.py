@@ -150,7 +150,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -217,6 +217,15 @@ def _trust_store(vector_dir: Path) -> verify.TrustStore:
 
 
 def _revocation_view(vector_dir: Path) -> list[dict[str, Any]] | None:
+    # Third loader of the same corpus, after the two conformance adapters: it
+    # has to know the same files they do, or a leaf verifies here against
+    # evidence it was never handed. `revocation-view.json` carries the whole
+    # array (the spelling `transfer-view.json` and `compromise-view.json`
+    # already use); `revocation.json` is the older single-record form. The
+    # array file wins when both are present.
+    array_path = vector_dir / "revocation-view.json"
+    if array_path.exists():
+        return cast("list[dict[str, Any]]", _load_json(array_path))
     path = vector_dir / "revocation.json"
     if not path.exists():
         return None
@@ -502,8 +511,8 @@ def test_redemption_vectors(vector_dir: Path) -> None:
 def test_vectors_directory_is_nonempty() -> None:
     """Guard against a silently-empty parametrize list (e.g. a wrong
     `VECTORS_DIR` path) making the whole suite above vacuously pass."""
-    # Discovered, never enumerated: as of 2026-09-01 the corpus holds 216
-    # leaves across 46 groups — figures tools/check_spec_docs.py checks
+    # Discovered, never enumerated: as of 2026-09-01 the corpus holds 218
+    # leaves across 47 groups — figures tools/check_spec_docs.py checks
     # against the tree on disk, so a stale count here fails CI instead of
     # surviving by inertia (the hand-summed breakdown this comment used to
     # carry had sat five groups behind, at 158). Counted over

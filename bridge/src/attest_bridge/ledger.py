@@ -228,6 +228,18 @@ class Ledger:
                 ),
             )
 
+    def ping(self) -> None:
+        """Raise if this Ledger cannot currently be read.
+
+        Readiness needs a question the database has to actually answer — a
+        connection object survives a file that has since been deleted,
+        truncated or corrupted, so probing the handle proves nothing. Reads
+        one row of the schema this module owns, takes the same lock as every
+        other access, writes nothing.
+        """
+        with self._lock:
+            self._conn.execute("SELECT COUNT(*) FROM receipts").fetchone()
+
     def by_download_token(self, token: str) -> StoredReceipt | None:
         with self._lock:
             row = self._conn.execute(

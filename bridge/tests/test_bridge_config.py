@@ -227,7 +227,7 @@ def test_info_url_defaults_to_the_canonical_page(tmp_path: Path) -> None:
     config = load_config(path, env=_SECRET_ENV)
 
     assert config.delivery is not None
-    assert config.delivery.info_url == config_mod._DEFAULT_INFO_URL
+    assert config.delivery.info_url == config_mod.DEFAULT_INFO_URL
 
 
 def test_default_info_url_page_ships_with_the_site() -> None:
@@ -247,8 +247,8 @@ def test_default_info_url_page_ships_with_the_site() -> None:
     # (4) what to do if the store is gone
     assert "gone" in text.lower() or "no longer" in text.lower() or "closed" in text.lower()
 
-    assert config_mod._DEFAULT_INFO_URL.startswith("https://attest-receipts.org/")
-    assert config_mod._DEFAULT_INFO_URL.rsplit("/", 1)[-1] == page.name
+    assert config_mod.DEFAULT_INFO_URL.startswith("https://attest-receipts.org/")
+    assert config_mod.DEFAULT_INFO_URL.rsplit("/", 1)[-1] == page.name
 
 
 def test_itch_requires_smtp_delivery_at_config_load(tmp_path: Path) -> None:

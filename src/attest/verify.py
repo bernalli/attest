@@ -1520,13 +1520,14 @@ def _classify_revocation(
 
     An oversized view (more than `max_records` entries) is not evaluated —
     never truncated (a subset could misreport), never raised. It fails CLOSED
-    for revocable receipts: for `policy`/`refund_window` an error is recorded
-    (so `ok` is false), because an untrusted view too large to evaluate cannot
-    rule out a revocation and must not certify the receipt — otherwise an
-    append-only feed-poisoning attacker could suppress a genuine revocation by
-    padding past the cap. For `none` (irrevocable) a revocation can never
-    affect `ok`, so it is a non-fatal warning. In both cases revocation is
-    `"unknown"`.
+    for every revocability class: for `policy`/`refund_window` an untrusted
+    view too large to evaluate cannot rule out a revocation, and for `none`
+    (irrevocable) it cannot rule out a *transfer* either — v0.2 §17.3's
+    consent gate applies to ALL revocability classes, and a BACKED
+    `status: "transferred"` record rides this same view. Both are recorded
+    as an error (`ok` becomes `false`); otherwise an append-only
+    feed-poisoning attacker could suppress genuine evidence by padding past
+    the cap. In both cases revocation is `"unknown"`.
 
     v0.2 Stage 3 (§17.3, design doc §4): once the `"revoked"`-status logic
     above has run to completion WITHOUT itself yielding `_REVOCATION_REVOKED`
@@ -1592,11 +1593,20 @@ def _classify_revocation(
                 f"({supplied} supplied), cannot certify a revocable receipt"
             )
         else:
-            # Irrevocable ("none") or unknown-class (rejected at schema): a
-            # revocation can never affect ok, so an oversized view is non-fatal.
-            warnings.append(
+            # Irrevocable ("none") or unknown-class (rejected at schema). This
+            # branch used to be a non-fatal warning, on the grounds that "a
+            # revocation can never affect ok" — true when it was written, and
+            # false since v0.2 §17.3 made the consent gate apply to ALL
+            # revocability classes, `none` included: a BACKED
+            # `status: "transferred"` record caps `ok` for this class too, and
+            # those records ride this very view (see `_classify_revocation`'s
+            # docstring). Returning early on size therefore discarded them as
+            # well, so whoever could append to the view chose which transfer the
+            # verifier never saw. We cannot rule out a transfer, so we cannot
+            # certify.
+            errors.append(
                 f"revocation view exceeds {max_records} records "
-                f"({supplied} supplied), not evaluated"
+                f"({supplied} supplied), cannot rule out a transfer"
             )
         return _REVOCATION_UNKNOWN
 
@@ -2649,6 +2659,22 @@ def verify(
     manifest_freshness_state = _MANIFEST_FRESHNESS_NOT_CHECKED
     transparency_claim_type: str | None = None
     materialized_compromise_view = _materialize_compromise_view(compromise_view)
+    # v0.2 §19.2's 64-claim acceptance floor, given the fail-closed effect §6.3
+    # requires the owning section to define. Discarding an over-ceiling view in
+    # silence is the compromise rail's version of the revocation-view padding
+    # attack `_revocation_state` already refuses below: an attacker who can feed
+    # this channel — one §19.2 itself blesses for untrusted transport — appends
+    # junk claims until a genuine declaration falls off the end, and the receipt
+    # that declaration would have killed verifies green with no warning at all.
+    # We cannot rule out a declaration, so we cannot certify the signing key.
+    compromise_view_supplied = 0
+    compromise_view_oversized = False
+    if compromise_view is not None:
+        try:
+            compromise_view_supplied = list.__len__(compromise_view)
+        except Exception:
+            compromise_view_supplied = _MAX_COMPROMISE_CLAIMS + 1
+        compromise_view_oversized = compromise_view_supplied > _MAX_COMPROMISE_CLAIMS
 
     def _invalid(message: str, *, schema: str = _SCHEMA_NOT_CHECKED) -> VerificationResult:
         errors.append(message)
@@ -2995,6 +3021,11 @@ def verify(
             warnings,
         )
         status = _resolve_key_status(entry, manifest, chain, authenticated_claims, kid)
+        if compromise_view_oversized and status != _STATUS_COMPROMISED:
+            return _invalid(
+                f"compromise view exceeds {_MAX_COMPROMISE_CLAIMS} claims "
+                f"({compromise_view_supplied} supplied), cannot certify the signing key"
+            )
         compromised_rescued = False
         if status == _STATUS_COMPROMISED:
             # Emitted at the point of RESOLUTION and before the §19 disposition,
@@ -3103,6 +3134,11 @@ def verify(
             warnings,
         )
         status = _resolve_key_status(entry, manifest, chain, authenticated_claims, kid)
+        if compromise_view_oversized and status != _STATUS_COMPROMISED:
+            return _invalid(
+                f"compromise view exceeds {_MAX_COMPROMISE_CLAIMS} claims "
+                f"({compromise_view_supplied} supplied), cannot certify the signing key"
+            )
         compromised_rescued = False
         if status == _STATUS_COMPROMISED:
             # Emitted at the point of RESOLUTION and before the §19 disposition,

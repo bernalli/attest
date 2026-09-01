@@ -29,7 +29,10 @@ image rebuilds matters.
   wrong: an ephemeral/scratch disk here doesn't lose already-delivered
   receipts (those are safe with the buyer forever), but it does lose your
   replay-dedup memory, so a redeploy right after a webhook retry could
-  double-issue.
+  double-issue. The bridge refuses to start when the directory holding
+  `ledger_path` does not exist, naming it — it never creates it, precisely
+  so that a volume which failed to mount stops the deploy instead of quietly
+  starting an empty Ledger that has forgotten every webhook it handled.
 
 **TLS is not optional.** Every target below terminates TLS for you
 (Fly/Render/Cloud Run do this automatically; the Docker Compose target needs
@@ -37,6 +40,41 @@ a reverse proxy in front of it — Caddy or nginx with a Let's Encrypt cert are
 the usual choices). Never expose the bridge directly on plain HTTP: a
 webhook body and a downloaded receipt both carry a buyer-binding salt, and
 that salt is a secret in transit, not just at rest.
+
+## Health checks: `/healthz` and `/readyz`
+
+Two endpoints answering two different questions.
+
+`/healthz` is **liveness**: it returns `200 {"ok": true}` as long as the
+process can answer an HTTP request, and checks nothing else. This is what
+the platform targets below health-check on (`fly.toml`, `render.yaml`), and
+deliberately so — see the paragraph after next.
+
+`/readyz` is **readiness**: `200 {"ready": true}` when a purchase arriving
+right now could become a receipt, `503 {"ready": false}` when it could not.
+It checks the three things issuance requires, all locally: the Ledger
+answers a query, the signing key is inside its validity window, and at least
+one product is configured. The expired-key case is the one worth wiring an
+alert to — a bridge whose key has aged out keeps answering `/healthz` with a
+200 while rejecting every purchase, and the merchant otherwise learns this
+from their customers. The response never says *which* check failed: the
+route is unauthenticated, so the reason goes to the service log, where the
+operator can read it and nobody else can.
+
+`/readyz` deliberately does **not** touch SMTP, the itch API, or the Stripe
+API. Delivery is not on the issuing path — a receipt is signed, recorded and
+downloadable before any email is attempted, and a failed send is retried by
+the delivery sweep — so a dead mail relay does not make this bridge unable
+to do its job, and reporting otherwise would invite you to restart a service
+that is working. A probe that opened an SMTP session on every check (every
+15s, on Fly) would also be an efficient way to get rate-limited by your own
+relay.
+
+Point monitoring and alerting at `/readyz`; leave the platform's own health
+check on `/healthz`. Wiring the platform to `/readyz` would pull an instance
+out of routing whenever it cannot *issue* — but a bridge with an expired key
+still serves buyers their existing receipt downloads on `/r/<token>`, and
+taking it out of rotation would break the one thing still working.
 
 ## Docker Compose (self-hosted: a VPS, a home server, ...)
 

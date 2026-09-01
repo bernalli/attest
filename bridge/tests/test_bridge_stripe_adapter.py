@@ -394,6 +394,26 @@ def test_normalize_metadata_product_key_with_api_key_still_validates_line_item_c
         ).normalize(_event(session))
 
 
+def test_normalize_without_api_key_trusts_metadata_and_never_calls_stripe() -> None:
+    # Documented limit (docs/setup-stripe.md, step 3), not a defect: without an
+    # api_key the bridge has no way to count the Checkout Session's line
+    # items, so the multi-item rejection cannot apply and
+    # metadata.attest_product_key is trusted as the merchant's own assertion
+    # that the session has exactly one purchasable line item. The injected
+    # `http_get` below asserts the structural half of that invariant: this
+    # code path must never reach out to Stripe at all.
+    def _unreachable_http_get(_url: str, _headers: dict[str, str]) -> bytes:
+        raise AssertionError("normalize() must not call Stripe without an api_key")
+
+    session = _session(metadata={"attest_product_key": "price_TEST"})
+    event = _event(session)
+    adapter = _adapter(api_key=None, http_get=_unreachable_http_get)
+
+    purchase = adapter.normalize(event)
+
+    assert purchase.product_key == "price_TEST"
+
+
 def test_normalize_no_metadata_and_no_api_key_raises_purchase_rejected_with_exact_message() -> None:
     session = _session(metadata={})
     event = _event(session)

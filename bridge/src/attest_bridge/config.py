@@ -28,7 +28,7 @@ from attest_bridge.model import ConfigError
 # Merchants are not going to write a good "what is this file" explainer
 # themselves, and most won't write one at all. Absent an explicit `info_url`,
 # every receipt email links here instead of failing config load.
-_DEFAULT_INFO_URL = "https://attest-receipts.org/what-is-this.html"
+DEFAULT_INFO_URL = "https://attest-receipts.org/what-is-this.html"
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,7 +293,7 @@ def _load_delivery(table: Mapping[str, Any], env: Mapping[str, str]) -> Delivery
         smtp_username=_require_str(table, "smtp_username", context=context),
         smtp_password=_env(env, table, "smtp_password", context=context),
         from_address=_require_str(table, "from_address", context=context),
-        info_url=_optional_str(table, "info_url", _DEFAULT_INFO_URL, context=context),
+        info_url=_optional_str(table, "info_url", DEFAULT_INFO_URL, context=context),
     )
 
 
