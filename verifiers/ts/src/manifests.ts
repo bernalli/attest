@@ -56,13 +56,39 @@ export function duplicateKids(entries: unknown): string[] {
   return [...dups].sort()
 }
 
-// Returns the keys[] entry with the given `kid` — or null if absent OR
-// AMBIGUOUS (2+ entries share `kid`): with duplicates, element order would
-// decide which lifecycle status wins, so resolution fails closed instead of
-// picking by position (V-L.3, v0.1 §7.1 amendment 2026-08-26). This selects
-// the entry carrying the cryptographic material; a lifecycle STATUS is never
-// decided here — that reads every entry for the kid.
+/** The entry carrying `kid` — or null if absent, AMBIGUOUS, or `kid` is not
+ * a string.
+ *
+ * With duplicates, element order would decide which lifecycle status wins, so
+ * resolution fails closed instead of picking by position (V-L.3, v0.1 §7.1
+ * amendment 2026-08-26). This selects the entry carrying the cryptographic
+ * material; a lifecycle STATUS is never decided here — that reads every entry
+ * for the kid.
+ *
+ * The type guard is here, at the root, so every caller inherits it —
+ * present and future, instead of each one carrying its own copy of the
+ * check. A list of callers is only ever shown to be incomplete when somebody
+ * finds the missing one, which is how this very property slipped past the
+ * duplicate-kid guard: `duplicateKids` compares strings only, so an entry
+ * keyed by a non-string is invisible to it, and the kid inside a signature
+ * block carries no signature of its own because `signableManifestBytes`
+ * drops `manifest_signature`.
+ *
+ * Python parity is the DESTINATION, not yet the state of `main`: the same
+ * guard lands in `manifests.find_key` with the manifest-authentication work,
+ * and until that merges the reference implementation still checks per caller
+ * the way this file used to. Said plainly because a comment claiming a
+ * parity that does not hold yet is how the next reader concludes the
+ * property is covered on both sides and stops looking.
+ *
+ * Note what this does NOT rely on: an integer kid also fails to match
+ * because the admission boundary renders integers as `bigint`, and an object
+ * or array fails to match by identity. Those are accidents of
+ * representation, not defences — a change of dialect at the boundary would
+ * take them away without a single test going red.
+ */
 export function findKey(manifest: JsonObject, kid: string): JsonObject | null {
+  if (typeof kid !== 'string') return null
   const keys = manifest['keys']
   if (!Array.isArray(keys)) return null
   let found: JsonObject | null = null
