@@ -222,7 +222,7 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   not the draft, remains normative, and the published snapshot is several
   amendments behind it. On the Datatracker that first submission is filed as
   `draft-martinalli-open-purchase-receipts-00`. The
-  [XML source](ietf/draft-bernalli-open-purchase-receipts.xml) lives here under
+  [XML source](ietf/draft-martinalli-open-purchase-receipts.xml) lives here under
   the maintainer's current handle and builds clean to txt/html in CI; the next
   revision will go out under that name, declaring the first as the document it
   replaces. Being an I-D means the

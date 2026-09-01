@@ -44,12 +44,12 @@ jobs:
       # inline <reference> element, never an xi:include from bib.ietf.org.
       - name: Build Internet-Draft (pinned toolchain)
         run: |
-          cp ietf/draft-bernalli-open-purchase-receipts.xml \
-            "$RUNNER_TEMP/draft-bernalli-open-purchase-receipts-00.xml"
+          cp ietf/draft-martinalli-open-purchase-receipts.xml \
+            "$RUNNER_TEMP/draft-martinalli-open-purchase-receipts-00.xml"
           uvx --from xml2rfc==3.34.0 xml2rfc \
-            "$RUNNER_TEMP/draft-bernalli-open-purchase-receipts-00.xml" \
+            "$RUNNER_TEMP/draft-martinalli-open-purchase-receipts-00.xml" \
             --text --path "$RUNNER_TEMP" --no-network
-          test -s "$RUNNER_TEMP/draft-bernalli-open-purchase-receipts-00.txt"
+          test -s "$RUNNER_TEMP/draft-martinalli-open-purchase-receipts-00.txt"
 
   supply-chain:
     runs-on: ubuntu-latest

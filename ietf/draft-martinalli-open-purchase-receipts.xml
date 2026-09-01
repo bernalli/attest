@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <rfc xmlns:xi="http://www.w3.org/2001/XInclude"
      category="info"
-     docName="draft-bernalli-open-purchase-receipts-00"
+     docName="draft-martinalli-open-purchase-receipts-00"
      ipr="trust200902"
      submissionType="independent"
      version="3">
   <front>
     <title abbrev="attest Purchase Receipts">attest: Portable, Offline-Verifiable Digital Purchase Receipts</title>
-    <author fullname="bernalli" surname="bernalli">
+    <author initials="S." fullname="Samuele Martinalli" surname="Martinalli">
       <address>
         <email>bernalli@proton.me</email>
       </address>
@@ -1169,7 +1169,7 @@ buyer signs: UTF8("Attest-binding-challenge-v1") || 0x00
       <reference anchor="ATTEST-SCHEMA" target="https://github.com/bernalli/attest/blob/v0.4.0/docs/spec/schema/attest-receipt.schema.json">
         <front>
           <title>attest receipt JSON Schema (attest-receipt.schema.json), revision-pinned</title>
-          <author surname="bernalli" fullname="bernalli"/>
+          <author initials="S." surname="Martinalli" fullname="Samuele Martinalli"/>
           <date year="2026"/>
         </front>
         <annotation>The machine-readable structural authority this profile's
@@ -1252,7 +1252,7 @@ buyer signs: UTF8("Attest-binding-challenge-v1") || 0x00
       <reference anchor="ATTEST-REPO" target="https://github.com/bernalli/attest">
         <front>
           <title>attest: Portable, Offline-Verifiable Digital Purchase Receipts (source repository)</title>
-          <author surname="bernalli" fullname="bernalli"/>
+          <author initials="S." surname="Martinalli" fullname="Samuele Martinalli"/>
           <date year="2026"/>
         </front>
         <annotation>The living, normative specification
