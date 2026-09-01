@@ -36,6 +36,41 @@ jobs:
         with:
           path: site/dist
 
+  # The desktop verifier borrows site/src modules by relative path, so its suite is the
+  # only thing that notices when a change here breaks that seam — in particular the pin
+  # that the site still emits exactly one .verdict node, which the desktop card replaces
+  # to remove the binary headline. `needs: test` inherits the verifiers/ts rebuild
+  # ordering rather than duplicating it: the site suite runs against the COMPILED dist,
+  # so a stale one produces false reds that read like plumbing faults.
+  #
+  # `npm run build --prefix desktop` is deliberately absent until the single-file shell
+  # lands; there is no entry point to build yet.
+  desktop:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            verifiers/ts/package-lock.json
+            desktop/package-lock.json
+      - run: npm ci --prefix verifiers/ts
+      - run: npm run build --prefix verifiers/ts
+      - run: npm ci --prefix desktop
+      - run: npm run typecheck --prefix desktop
+      - run: npm test --prefix desktop
+      # All three engines here, and the install must SUCCEED: a cross-browser gate that
+      # skips when a browser is missing produces a green nobody earned. WebKit runs only
+      # in CI — playwright.config.ts adds it when CI is set — because installing its
+      # system libraries pulls in over two hundred packages, and WebKit-on-Linux
+      # approximates Safari rather than being it. The real Safari check is manual, on a
+      # Mac, before the artifact is announced.
+      - run: cd desktop && npx playwright install --with-deps chromium firefox webkit
+      - run: npm run e2e --prefix desktop
+
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
