@@ -105,8 +105,18 @@ function headlineFor(run: VerifyRun) {
  * `run` describing exactly THESE bytes, and three independent parameters let a caller
  * pair the bytes of one receipt with the verdict of another — silently, in a
  * multi-receipt bundle. Deriving both from the job makes that pairing impossible.
+ *
+ * `droppedFileName` is the ONE string on this card the signature does not cover, and it
+ * arrives as its own parameter because nothing inside the job carries it any more:
+ * `job.label` is the receipt id read out of the signed payload. Printing that under
+ * "File you dropped … (this name is not signed)" would state the exact opposite of the
+ * truth, in a file that is downloaded once and can never be corrected.
  */
-export function renderDesktopCard(job: VerifyJob, run: VerifyRun): HTMLElement {
+export function renderDesktopCard(
+  job: VerifyJob,
+  run: VerifyRun,
+  droppedFileName: string,
+): HTMLElement {
   const card = renderResult(cardTitle(job.envelopeBytes, run), run)
 
   // Fail CLOSED on the seam. The node being replaced carries the site's binary
@@ -138,7 +148,7 @@ export function renderDesktopCard(job: VerifyJob, run: VerifyRun): HTMLElement {
   if (!header) throw new Error('desktop card: the site render has no header to attribute the name in')
   const provenance = document.createElement('p')
   provenance.className = 'supplied-name'
-  provenance.textContent = `File you dropped: ${job.label} (this name is not signed)`
+  provenance.textContent = `File you dropped: ${droppedFileName} (this name is not signed)`
   header.appendChild(provenance)
 
   return card

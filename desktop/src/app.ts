@@ -131,7 +131,11 @@ export function initDesktopApp(doc: Document): DesktopApp {
 
   let currentJobs: VerifyJob[] = []
   let currentNotices: string[] = []
-  let pendingEnvelope: { bytes: Uint8Array; fileName: string } | null = null
+  let pendingEnvelope: { bytes: Uint8Array; fileName: string; label: string } | null = null
+  // The name the OS handed over with the bytes currently on screen. Kept here rather
+  // than on the job because `intake` labels a job from the SIGNED payload: the two are
+  // different strings saying different things, and the card must not confuse them.
+  let droppedFileName = ''
 
   const message = (text: string): HTMLElement => {
     const p = doc.createElement('p')
@@ -160,6 +164,7 @@ export function initDesktopApp(doc: Document): DesktopApp {
               logKeys: LOG_KEYS,
               anchorPolicy: ANCHOR_POLICY,
             }),
+            droppedFileName,
           )
         } catch (e) {
           return renderVerifyFailure(job.label, e instanceof Error ? e.message : String(e))
@@ -169,6 +174,7 @@ export function initDesktopApp(doc: Document): DesktopApp {
   }
 
   function handleBytes(fileName: string, bytes: Uint8Array): void {
+    droppedFileName = fileName
     const r = intake(fileName, bytes)
     if (r.kind === 'rejected') {
       currentJobs = []
@@ -184,7 +190,9 @@ export function initDesktopApp(doc: Document): DesktopApp {
     currentNotices = r.notices ?? []
     if (r.kind === 'needs-manifest') {
       currentJobs = []
-      pendingEnvelope = { bytes: r.envelopeBytes, fileName: r.fileName }
+      // `fileName` is the parameter, not anything intake returns: intake's own `label`
+      // is the signed receipt id.
+      pendingEnvelope = { bytes: r.envelopeBytes, fileName, label: r.label }
       manifestZone.hidden = false
       results.replaceChildren(
         ...currentNotices.map(message),
@@ -208,9 +216,10 @@ export function initDesktopApp(doc: Document): DesktopApp {
       results.replaceChildren(...currentNotices.map(message), message(describeManifestRefusal(bytes)))
       return
     }
+    droppedFileName = pendingEnvelope.fileName
     currentJobs = [
       {
-        label: pendingEnvelope.fileName,
+        label: pendingEnvelope.label,
         envelopeBytes: pendingEnvelope.bytes,
         trustStore,
         transparency: null,

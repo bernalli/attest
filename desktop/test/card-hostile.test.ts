@@ -153,7 +153,7 @@ describe('the headline copy may never out-claim the result', () => {
   test('a broken key history gets its own amber headline on the card', () => {
     const { job, run } = sampleJob()
     const gap = { ...run, ok: true, result: { ...run.result, trust: 'unverified_rotation' as const } }
-    const card = renderDesktopCard(job, gap)
+    const card = renderDesktopCard(job, gap, 'sample.attest')
     const badge = card.querySelector('.verdict')
     expect(badge?.className ?? '').not.toContain('tone-good')
     expect(badge?.textContent ?? '').toMatch(/key history/i)
@@ -164,7 +164,9 @@ describe('the headline copy may never out-claim the result', () => {
 describe('the unsigned name is attributed, or it is not shown', () => {
   test('the supplied name appears once, outside the heading, carrying its qualifier', () => {
     const { job, run } = sampleJob()
-    const card = renderDesktopCard({ ...job, label: ATTACKER_LABEL }, run)
+    // The hostile string now arrives where an unsigned string really can arrive: the
+    // name the OS handed over. `job.label` comes from the signed payload upstream.
+    const card = renderDesktopCard(job, run, ATTACKER_LABEL)
 
     const attributed = card.querySelector('.supplied-name')
     expect(attributed, 'the supplied name must be shown as attributed data, not dropped').not.toBeNull()
@@ -202,7 +204,7 @@ describe('the desktop card changes the header and nothing else', () => {
       clone.querySelector('header')?.remove()
       return clone.innerHTML
     }
-    expect(strip(renderDesktopCard(job, run))).toEqual(strip(renderResult('retired.attest', run)))
+    expect(strip(renderDesktopCard(job, run, 'retired.attest'))).toEqual(strip(renderResult('retired.attest', run)))
   })
 
   test('everything below the header is byte-identical to the site render', () => {
@@ -212,7 +214,7 @@ describe('the desktop card changes the header and nothing else', () => {
       clone.querySelector('header')?.remove()
       return clone.innerHTML
     }
-    const mine = strip(renderDesktopCard(job, run))
+    const mine = strip(renderDesktopCard(job, run, 'retired.attest'))
     const theirs = strip(renderResult('demo.attest', run))
     expect(mine).toEqual(theirs)
     expect(mine.length, 'a parity test over nothing proves nothing').toBeGreaterThan(200)
@@ -242,7 +244,7 @@ describe('the seam this card relies on is checked, not assumed', () => {
     try {
       const { renderDesktopCard: isolated } = await import('../src/card.js')
       const { job, run } = sampleJob()
-      expect(() => isolated(job, run)).toThrow(/\.verdict/)
+      expect(() => isolated(job, run, 'demo.attest')).toThrow(/\.verdict/)
     } finally {
       vi.doUnmock('../../site/src/render.js')
       vi.resetModules()

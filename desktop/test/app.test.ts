@@ -308,6 +308,21 @@ describe('the manifest handover produces a verdict', () => {
     expect(document.querySelectorAll('.verdict')).toHaveLength(1)
     expect(resultsText()).not.toContain('Receipt verifies')
   })
+
+  test('the card still names the file that was dropped, not the manifest and not nothing', () => {
+    // The handover renders a card built long after the drop, from state the app carried
+    // across two events. The name of the dropped file is part of that state, and it is
+    // the one string on the card the signature does not cover — so losing it here shows
+    // up as a card that says "File you dropped: undefined" to a reader who dropped one.
+    const app = mount()
+    app.handleBytes('bare-receipt.attest.json', bareEnvelope())
+    app.handleManifestBytes(singleKeyManifest())
+
+    const supplied = document.querySelector('.supplied-name')?.textContent
+    expect(supplied).toBeTruthy()
+    expect(supplied).toContain('bare-receipt.attest.json')
+    expect(supplied).not.toContain('undefined')
+  })
 })
 
 describe('a bundle renders a card per receipt, each with its own headline', () => {

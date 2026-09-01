@@ -33,7 +33,7 @@ describe('the card is titled by the signature, not by whoever handed over the fi
     // can announce "VERIFIED by Steam" over a genuinely valid signature belonging to
     // someone else entirely. Titling from the payload is what closes it.
     const { job, run } = sampleJob()
-    const card = renderDesktopCard({ ...job, label: ATTACKER_LABEL }, run)
+    const card = renderDesktopCard({ ...job, label: ATTACKER_LABEL }, run, 'demo.attest')
     const title = card.querySelector('h3')?.textContent ?? ''
 
     expect(title).not.toContain('Steam')
@@ -43,7 +43,7 @@ describe('the card is titled by the signature, not by whoever handed over the fi
 
   test('the supplied name may still be shown, but labelled as unsigned and never as the title', () => {
     const { job, run } = sampleJob()
-    const card = renderDesktopCard({ ...job, label: ATTACKER_LABEL }, run)
+    const card = renderDesktopCard({ ...job, label: ATTACKER_LABEL }, run, 'demo.attest')
     const title = card.querySelector('h3')?.textContent ?? ''
     const whole = card.textContent ?? ''
 
@@ -60,7 +60,7 @@ describe('the card is titled by the signature, not by whoever handed over the fi
     // id out of it as the card's title would dress unauthenticated content as identity.
     const { job, run } = sampleJob()
     const broken = { ...run, ok: false, result: { ...run.result, signature: 'invalid' as const } }
-    const card = renderDesktopCard({ ...job, label: 'whatever.attest' }, broken)
+    const card = renderDesktopCard({ ...job, label: 'whatever.attest' }, broken, 'whatever.attest')
     const title = card.querySelector('h3')?.textContent ?? ''
 
     expect(title).not.toContain(REAL_RECEIPT_ID)
@@ -72,14 +72,14 @@ describe('the headline says what the result supports', () => {
   test('a trust-on-first-use receipt never shows the binary "Receipt verifies" headline', () => {
     const { job, run } = sampleJob()
     expect(run.result.trust).toBe('unauthenticated_tofu') // guards the premise of this test
-    const card = renderDesktopCard(job, run)
+    const card = renderDesktopCard(job, run, 'demo.attest')
 
     expect(card.textContent ?? '').not.toContain('Receipt verifies')
   })
 
   test('the amber headline names the three things an ok result leaves open', () => {
     const { job, run } = sampleJob()
-    const card = renderDesktopCard(job, run)
+    const card = renderDesktopCard(job, run, 'demo.attest')
     const headline = card.querySelector('.verdict')?.textContent ?? ''
 
     expect(headline).toMatch(/belongs to the seller/i) // key trust
@@ -89,7 +89,7 @@ describe('the headline says what the result supports', () => {
 
   test('exactly one verdict node survives the header replacement', () => {
     const { job, run } = sampleJob()
-    const card = renderDesktopCard(job, run)
+    const card = renderDesktopCard(job, run, 'demo.attest')
     expect(card.querySelectorAll('.verdict')).toHaveLength(1)
   })
 
@@ -105,7 +105,7 @@ describe('the headline says what the result supports', () => {
 describe('every row the site shows, the desktop shows identically', () => {
   test('component rows match the site render exactly — the header is the only sanctioned difference', () => {
     const { job, run } = sampleJob()
-    const mine = renderDesktopCard(job, run)
+    const mine = renderDesktopCard(job, run, 'demo.attest')
     const theirs = renderResult('demo.attest', run)
 
     const rows = (el: HTMLElement) =>
@@ -119,7 +119,34 @@ describe('every row the site shows, the desktop shows identically', () => {
 describe('untrusted strings stay inert', () => {
   test('a hostile file name creates text, never elements', () => {
     const { job, run } = sampleJob()
-    const card = renderDesktopCard({ ...job, label: '<img src=x onerror=alert(1)>.attest' }, run)
+    const card = renderDesktopCard({ ...job, label: '<img src=x onerror=alert(1)>.attest' }, run, 'plain.attest')
     expect(card.querySelector('img')).toBeNull()
+  })
+})
+
+describe('the name the OS handed over is shown as such, and it is not the signed one', () => {
+  // `intake` labels a job with the SIGNED receipt id (upstream: "every string the
+  // verifier shows comes from the signed payload"). So `job.label` is emphatically NOT
+  // the name of the file a person dropped, and printing it under "File you dropped …
+  // (this name is not signed)" would state the exact opposite of the truth — in a file
+  // that is downloaded once and can never be corrected.
+  test('the supplied-name line names the dropped file, never the signed receipt id', () => {
+    const { job, run } = sampleJob()
+    const card = renderDesktopCard(job, run, 'my-purchase.attest')
+    const supplied = card.querySelector('.supplied-name')?.textContent ?? ''
+
+    expect(supplied).toContain('my-purchase.attest')
+    expect(supplied).toMatch(/not signed/i)
+    expect(supplied).not.toContain(REAL_RECEIPT_ID)
+  })
+
+  test('the dropped name is text, never markup', () => {
+    const { job, run } = sampleJob()
+    const hostile = '<img src=x onerror=alert(1)>.attest'
+    const card = renderDesktopCard(job, run, hostile)
+    const supplied = card.querySelector('.supplied-name')
+
+    expect(supplied?.textContent).toContain(hostile)
+    expect(supplied?.querySelector('img')).toBeNull()
   })
 })
