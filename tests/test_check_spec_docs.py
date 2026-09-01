@@ -2198,6 +2198,12 @@ def test_an_oversized_numeric_claim_is_reported_not_allowed_to_crash(
         "The 130-leaf conformance corpus is the gate.",
         "reproduce all 130 of them",
         "`v0.2` (all leaves, currently 156)",
+        # README.md's own sentence, which shipped stale while the sentence one
+        # line below it was defended: both halves of a self-contradiction have
+        # to be in the vocabulary, or the guard passes a file arguing with
+        # itself.
+        "the corpus now contains 130 leaves",
+        "the corpus contains 130 leaves",
         "130 leaf vectors across 2 groups",
         "measured against the 51-leaf subset",
         # Wrapped across a line break: the shape one version of the guard was

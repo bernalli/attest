@@ -1439,6 +1439,13 @@ _CLAIM_SHAPES: tuple[_ClaimShape, ...] = (
     # written from the examples already in front of it.
     _ClaimShape("reproduce-all", r"\breproduce all (\d+)\b", ((1, "corpus_total"),)),
     _ClaimShape("currently-paren", r"\ball leaves, currently (\d+)\b", ((1, "corpus_total"),)),
+    # Found the same way as the two above, by a review reading README.md while
+    # the count had already moved: "the corpus now contains 212 leaves" sat one
+    # line above a "reproduce all 213" that this list DID defend, so the file
+    # contradicted itself and every shape here stayed silent.
+    _ClaimShape(
+        "corpus-contains", r"\bcorpus (?:now )?contains (\d+) leaves\b", ((1, "corpus_total"),)
+    ),
     _ClaimShape(
         "every-leaf-currently",
         r"\bevery leaf in the corpus \(currently (\d+)\)",

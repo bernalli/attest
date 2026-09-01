@@ -84,7 +84,7 @@ it names the three things it does not do in [`demo/README.md`](demo/README.md).
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations. Their published
 self-certification claims are recorded in [`docs/conformance.md`](docs/conformance.md);
-the corpus now contains 212 leaves, and a release may claim the §20-expanded corpus
+the corpus now contains 213 leaves, and a release may claim the §20-expanded corpus
 only once both implementations reproduce all 213. **Try it in your browser:**
 <https://attest-receipts.org/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Be clear about the status: no

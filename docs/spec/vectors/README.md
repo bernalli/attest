@@ -159,7 +159,7 @@ Checked against [`docs/spec/attest-v0.1.md`](../attest-v0.1.md) §7.2/§7.3 — 
 
 ### 32: anchor profile v2 (G4, v0.2 rev 4 amendment, v0.2 §11.1.1)
 
-Checked against [`docs/spec/attest-v0.2.md`](../attest-v0.2.md) §11.1.1 — the `ots` OTS commitment covers the checkpoint's FULL signed note (header AND signature lines, `signed_note_bytes`) instead of the unsigned header alone (`note_bytes`), closing TM-33's residual chosen-unsigned-note pre-anchoring risk; newly-produced anchors MUST declare `anchor_profile: "signed-note-v2"`, while absent/`"note-v1"` legacy anchors remain fully verifiable forever, classified with warning `anchor_note_only` (eternal verifiability, attest-versioning.md §3). One receipt/checkpoint fixture, three anchor-evidence variants.
+Checked against [`docs/spec/attest-v0.2.md`](../attest-v0.2.md) §11.1.1 — the `ots` OTS commitment covers the checkpoint's FULL signed note (header AND signature lines, `signed_note_bytes`) instead of the unsigned header alone (`note_bytes`), closing TM-33's residual chosen-unsigned-note pre-anchoring risk; newly-produced anchors MUST declare `anchor_profile: "signed-note-v2"`, while absent/`"note-v1"` legacy anchors remain fully verifiable forever, classified with warning `anchor_note_only` (eternal verifiability, attest-versioning.md §3). One receipt/checkpoint fixture, four anchor-evidence variants.
 
 | Leaf | Name | Checks |
 | --- | --- | --- |
