@@ -371,6 +371,51 @@ def verify_key_manifest(manifest: dict[str, Any]) -> bool:
     return verify_signature_block(signable, sig_block, entry)
 
 
+def manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
+    """Did the issuer actually sign THIS manifest, byte for byte?
+
+    Narrower than `verify_key_manifest` on purpose. That function answers
+    "is this manifest conformant", which also fails a hybrid entry whose
+    signature block carries only the Ed25519 leg (`verify_signature_block`'s
+    AND rule). A PQ-downgraded manifest is not a forgery — §7.2's rotation
+    handling already meets it with `trust: "unverified_rotation"`, and the
+    conformance corpus pins that verdict — so a gate meant to catch EDITED
+    manifests must not turn a downgrade into a rejection.
+
+    What it answers instead: the signer's kid resolves in the manifest's own
+    `keys[]`, and the Ed25519 leg of `manifest_signature` verifies over the
+    manifest's signable bytes. That is exactly the property an attacker
+    cannot fake without the issuer's private key, and it is what tells a
+    swapped `pub`, an edited `status` or a mangled signature apart from a
+    manifest the issuer really did sign.
+
+    Keeps the ceiling and duplicate-kid refusals: both make the manifest
+    ambiguous about WHICH key signed it, so authenticity is not decidable.
+    Never raises — untrusted input fails closed.
+    """
+    entries = manifest.get("keys")
+    if isinstance(entries, list) and len(entries) > MAX_MANIFEST_KEYS:
+        return False
+    if duplicate_kids(entries):
+        return False
+    sig_block = manifest.get("manifest_signature")
+    if not isinstance(sig_block, dict):
+        return False
+    entry = find_key(manifest, sig_block.get("kid", ""))
+    if entry is None:
+        return False
+    try:
+        signable = _signable(manifest)
+    except (TypeError, canon.CanonError):
+        return False
+    try:
+        return keys.verify_strict(
+            signable, keys.b64u_decode(sig_block["sig"]), keys.b64u_decode(entry["pub"])
+        )
+    except (KeyError, ValueError, TypeError):
+        return False
+
+
 def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool:
     """True iff `candidate` (version `trusted`+1) was signed by a key `active` in `trusted`.
 

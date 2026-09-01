@@ -2781,6 +2781,24 @@ def verify(
             ):
                 warnings.append(_WARN_MIXED_KEYSET_ACTIVE_ED_ONLY_SIBLING)
 
+            # V-J.7 — the trusted manifest must authenticate ITSELF before any
+            # key is read out of it. The side-document paths have always asked
+            # (`transfer`/`revocation` hoist the same call); the receipt path
+            # never did, so a manifest edited after it was trusted certified
+            # receipts signed by the edit: a swapped `pub` forges a receipt
+            # without the issuer's private key, and a `compromised` status
+            # flipped back to `active` resurrects signatures §7.3 declares
+            # dead. Hoisted here, at the ONE place the manifest is resolved,
+            # so both receipt paths (v0.2 hybrid and v0.1) inherit it.
+            # Deliberately last in this preflight: the keys ceiling above
+            # bounds the work this check does, and running it after the
+            # existing refusals leaves their verdicts and messages unchanged.
+            if not manifests.manifest_signature_is_authentic(issuer_manifest):
+                return _invalid(
+                    f"issuer manifest for {issuer_id!r} is not self-consistent: "
+                    "its own signature does not verify"
+                )
+
         chain = trust_store.chains.get(issuer_id)
         if chain and (not _chain_continuous(chain) or chain[-1] != issuer_manifest):
             # A chain that does not actually end at the manifest being used proves
