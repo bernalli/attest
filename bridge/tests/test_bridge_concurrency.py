@@ -12,13 +12,23 @@ interposing Ledger fires the rival write at the exact point the race needs it.
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import json
+import os
+import queue
+import stat
+import subprocess
+import sys
+import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
+from attest_bridge import delivery as delivery_mod
 from attest_bridge import ledger as ledger_mod
 from attest_bridge.core import IssuingCore
+from attest_bridge.delivery import DeliveryResult
 from attest_bridge.ledger import Ledger, StoredReceipt
 from attest_bridge.model import NormalizedPurchase
 
@@ -190,3 +200,282 @@ def test_the_winners_row_is_left_exactly_as_the_winner_wrote_it(
     stored = Ledger(db).get_receipt("stripe", "cs_test_race")
     assert stored is not None
     assert json.loads(stored.envelope_json) == winner_envelope
+
+
+# -- the delivery sweep, across processes --------------------------------------
+
+_WORKER = Path(__file__).with_name("_sweep_worker.py")
+_RECEIPT_ID = "01HZX0000000000000000SWEEP"
+# How long a second sweep must stay blocked for the bench to believe it is
+# waiting on the lock rather than merely slow. Nothing is slept before this
+# window opens: it starts only once the second process has said it is about to
+# sweep, so process start-up never eats into it.
+_BLOCKED_WINDOW_SECONDS = 2.0
+_GENEROUS = 60.0
+_WORKER_EXITED = "<worker exited>"
+
+
+class _RecordingMailer:
+    """Stands in for `Delivery`: the sweep only asks it to send and reads the
+    status back. Optionally parks inside the send so a second sweep can be
+    observed meeting the lock."""
+
+    def __init__(
+        self,
+        entered: threading.Event | None = None,
+        hold: threading.Event | None = None,
+    ) -> None:
+        self.sent: list[str] = []
+        self._entered = entered
+        self._hold = hold
+
+    def send(self, **kwargs: Any) -> DeliveryResult:
+        self.sent.append(kwargs["receipt_id"])
+        if self._entered is not None:
+            self._entered.set()
+        if self._hold is not None:
+            self._hold.wait(_GENEROUS)
+        return DeliveryResult(status="sent", detail=None)
+
+
+def _record_undelivered(ledger: Ledger, purchase_id: str) -> None:
+    ledger.record_receipt(
+        "stripe",
+        purchase_id,
+        _RECEIPT_ID,
+        {"payload": {"work": {"title": "Stardrift Chronicles"}}},
+        "buyer@example.com",
+        f"handle_{purchase_id}",
+        NOW,
+    )
+
+
+class _Worker:
+    """A worker subprocess, with a reader thread draining its stdout.
+
+    The reader thread is not a nicety. `select` on a buffered pipe reports
+    "nothing to read" while a line already sits in the reader's own buffer, so
+    a bench built on it passes or stalls depending on how the child's writes
+    happened to be split — a false red, and a slow one. A blocking `readline`
+    in a thread feeding a queue has no such window.
+
+    EOF arrives as a marker, never as silence: a worker that DIED must not be
+    mistaken for a worker that is patiently waiting on the lock, which is the
+    exact conclusion this bench draws from a quiet worker.
+    """
+
+    def __init__(self, *args: str) -> None:
+        self._proc = subprocess.Popen(  # noqa: S603
+            [sys.executable, str(_WORKER), *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        self._lines: queue.Queue[str] = queue.Queue()
+        threading.Thread(target=self._pump, daemon=True).start()
+
+    def _pump(self) -> None:
+        assert self._proc.stdout is not None
+        for line in self._proc.stdout:
+            self._lines.put(line.strip())
+        self._lines.put(_WORKER_EXITED)
+
+    def next_line(self, timeout: float) -> str | None:
+        """The next progress marker, or None if the worker stayed silent."""
+        try:
+            return self._lines.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def release(self) -> None:
+        assert self._proc.stdin is not None
+        self._proc.stdin.write("go\n")
+        self._proc.stdin.flush()
+
+    @property
+    def running(self) -> bool:
+        return self._proc.poll() is None
+
+    def kill(self) -> None:
+        self._proc.kill()
+        self._proc.wait(timeout=_GENEROUS)
+
+    def stop(self) -> None:
+        if self.running:
+            self._proc.kill()
+        self._proc.wait(timeout=_GENEROUS)
+
+
+def test_two_processes_sweeping_one_ledger_deliver_the_receipt_once(tmp_path: Path) -> None:
+    """The bench this whole file exists for: one buyer, one email.
+
+    `retry-failed` sweeping while `serve`'s own sweeper runs is the documented
+    workflow, and until the lock existed both would send. The overlap here is
+    not hoped for, it is forced: B is started and observed entering its sweep
+    while A is provably parked inside the send, holding the lock.
+
+    This bench is also the probe for the half of the claim a laptop cannot
+    settle. That `flock` does what it says was measured on a local filesystem;
+    that the volume a deploy target mounts behaves the same way can only be
+    established by running there. Point `tmp_path` inside that mounted volume
+    (`pytest --basetemp=<volume>/tmp`) on the first real Fly or Render deploy:
+    a green here is the answer, and until then the target half is open.
+    """
+    db = tmp_path / "ledger.sqlite3"
+    _record_undelivered(Ledger(db), "cs_sweep")
+    log = tmp_path / "sends.log"
+    log.touch()
+
+    first = _Worker("sweep", str(db), "A", str(log), "block")
+    second: _Worker | None = None
+    try:
+        assert first.next_line(_GENEROUS) == "A:BEFORE-SWEEP"
+        assert first.next_line(_GENEROUS) == "A:IN-SEND"
+
+        second = _Worker("sweep", str(db), "B", str(log), "run")
+        assert second.next_line(_GENEROUS) == "B:BEFORE-SWEEP"
+        assert second.next_line(_BLOCKED_WINDOW_SECONDS) is None, (
+            "the second process swept while the first was still inside the lock"
+        )
+        assert second.running, "the second process died instead of waiting for the lock"
+
+        first.release()
+        assert first.next_line(_GENEROUS) == "A:AFTER-SWEEP delivered=1 failed=0"
+        assert second.next_line(_GENEROUS) == "B:AFTER-SWEEP delivered=0 failed=0"
+    finally:
+        for worker in (first, second):
+            if worker is not None:
+                worker.stop()
+
+    # The log is read as the SEQUENCE it is: collapsing it would throw away
+    # precisely the duplicate this test exists to detect.
+    events = log.read_text().splitlines()
+    assert [line for line in events if "SEND-START" in line] == [f"A:SEND-START {_RECEIPT_ID}"]
+    stored = Ledger(db).get_receipt("stripe", "cs_sweep")
+    assert stored is not None
+    assert stored.delivered_at is not None
+
+
+def test_the_sweep_lock_is_held_for_as_long_as_the_sweep_takes(tmp_path: Path) -> None:
+    """Waiting, not timing out — and the wait is observable from outside."""
+    db = tmp_path / "ledger.sqlite3"
+    _record_undelivered(Ledger(db), "cs_probe")
+    log = tmp_path / "sends.log"
+    log.touch()
+    lock_path = Path(str(db) + delivery_mod.SWEEP_LOCK_SUFFIX)
+
+    worker = _Worker("sweep", str(db), "A", str(log), "block")
+    try:
+        assert worker.next_line(_GENEROUS) == "A:BEFORE-SWEEP"
+        assert worker.next_line(_GENEROUS) == "A:IN-SEND"
+
+        probe = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            worker.release()
+            assert worker.next_line(_GENEROUS) == "A:AFTER-SWEEP delivered=1 failed=0"
+            assert worker.next_line(_GENEROUS) == _WORKER_EXITED
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)  # free once the sweep is over
+        finally:
+            os.close(probe)
+    finally:
+        worker.stop()
+
+
+def test_a_lock_left_behind_by_a_killed_process_does_not_block_the_next_sweep(
+    tmp_path: Path,
+) -> None:
+    """The classic file-lock footgun, checked rather than assumed.
+
+    The lock file is never unlinked — deleting one another process still holds
+    open lets two holders coexist on the recreated file — so the next sweep
+    always meets a file that already exists, sometimes left by a process that
+    died mid-sweep.
+    """
+    db = tmp_path / "ledger.sqlite3"
+    _record_undelivered(Ledger(db), "cs_after_crash")
+    lock_path = Path(str(db) + delivery_mod.SWEEP_LOCK_SUFFIX)
+
+    holder = _Worker("hold-lock", str(lock_path))
+    assert holder.next_line(_GENEROUS) == "HELD"
+    holder.kill()
+
+    mailer = _RecordingMailer()
+    assert delivery_mod.sweep_undelivered(
+        ledger=Ledger(db),
+        delivery=mailer,  # type: ignore[arg-type]
+        public_base_url="https://receipts.example.com",
+    ) == (1, 0)
+    assert lock_path.exists(), "the lock file must survive its sweep, never be unlinked"
+    assert stat.S_IMODE(lock_path.stat().st_mode) == 0o600
+
+
+def test_a_sweep_that_cannot_take_the_lock_sends_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail loud. A filesystem without locking must stop the sweep.
+
+    Falling back to an unlocked sweep would be the worst outcome available:
+    the deployments that cannot lock are exactly the ones running more than
+    one writer, which is when duplicate delivery actually happens.
+    """
+    db = tmp_path / "ledger.sqlite3"
+    _record_undelivered(Ledger(db), "cs_nolock")
+
+    def _no_locking(_fd: int, _op: int) -> None:
+        raise OSError(errno.ENOTSUP, "locking is not supported by this filesystem")
+
+    monkeypatch.setattr(delivery_mod.fcntl, "flock", _no_locking)
+    mailer = _RecordingMailer()
+
+    with pytest.raises(OSError, match="locking is not supported"):
+        delivery_mod.sweep_undelivered(
+            ledger=Ledger(db),
+            delivery=mailer,  # type: ignore[arg-type]
+            public_base_url="https://receipts.example.com",
+        )
+
+    assert mailer.sent == []
+
+
+def test_two_threads_of_one_process_still_deliver_the_receipt_once(tmp_path: Path) -> None:
+    """The in-process guarantee the module lock used to give, kept.
+
+    A file lock is held per open file description, so a fresh descriptor per
+    acquisition is what makes two threads of one process serialize on it. A
+    descriptor shared at module level would be re-entrant between threads and
+    would silently give this back.
+    """
+    db = tmp_path / "ledger.sqlite3"
+    _record_undelivered(Ledger(db), "cs_threads")
+    inside = threading.Event()
+    release = threading.Event()
+    blocking = _RecordingMailer(entered=inside, hold=release)
+    second = _RecordingMailer()
+
+    def _sweep(mailer: _RecordingMailer) -> None:
+        delivery_mod.sweep_undelivered(
+            ledger=Ledger(db),
+            delivery=mailer,  # type: ignore[arg-type]
+            public_base_url="https://receipts.example.com",
+        )
+
+    first_thread = threading.Thread(target=_sweep, args=(blocking,))
+    first_thread.start()
+    try:
+        assert inside.wait(_GENEROUS), "the first sweep never reached its send"
+        second_thread = threading.Thread(target=_sweep, args=(second,))
+        second_thread.start()
+        second_thread.join(_BLOCKED_WINDOW_SECONDS)
+        assert second_thread.is_alive(), (
+            "the second thread swept while the first was inside the lock"
+        )
+    finally:
+        release.set()
+        first_thread.join(timeout=_GENEROUS)
+    second_thread.join(timeout=_GENEROUS)
+
+    assert blocking.sent == [_RECEIPT_ID]
+    assert second.sent == []

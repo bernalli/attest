@@ -167,6 +167,11 @@ class Ledger:
     """
 
     def __init__(self, db_path: Path) -> None:
+        # Kept so that anything needing to coordinate ACROSS processes on this
+        # Ledger — the delivery sweep's file lock — can derive its own path
+        # from the one file every writer already agrees on, instead of being
+        # told a second path that could disagree with this one.
+        self.db_path = db_path
         # Secrecy contract: the file must never exist world/group readable,
         # not even for the instant between creation and a later chmod — set
         # the mode at creation time, then re-assert it once connected.

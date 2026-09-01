@@ -487,3 +487,15 @@ def test_the_first_writer_of_a_purchase_keeps_the_row(tmp_path: Path) -> None:
         "tok-1",
         "a@example.com",
     )
+
+
+def test_ledger_exposes_the_file_every_writer_shares(tmp_path: Path) -> None:
+    """Cross-process coordination needs the path, not a second copy of it.
+
+    The delivery sweep's file lock derives its own path from this one, so a
+    Ledger that did not remember where it lives would force callers to pass a
+    path alongside it — two sources of truth for one file.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+
+    assert Ledger(db_path).db_path == db_path

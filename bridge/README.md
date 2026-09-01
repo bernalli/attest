@@ -26,9 +26,10 @@ database, or its uptime ever again.
 Receipt email delivery is at-least-once. If the bridge crashes after SMTP has
 accepted a message but before the Ledger records it as delivered, its retry
 sweep sends the same already-issued receipt again; it never creates a second
-receipt. Sweeps are serialized within one process; concurrent processes can
-overlap delivery, so the delivery-attempt cap is a per-process bound rather
-than a global guarantee.
+receipt. Sweeps are serialized across every process that shares one Ledger —
+a `retry-failed` run waits for a sweep already in flight instead of doubling
+it — so the delivery-attempt cap is a real bound per receipt, and that crash
+window is the only way the same email goes out twice.
 
 ## Get started
 
