@@ -194,8 +194,13 @@ describe('compromise-cutoff copy', () => {
     // The whole package, not the two modules that happen to set provenance:
     // the sentence claims nothing published performs the fetch, so a fetch
     // implemented in any third module has to trip this too.
+    // Recursive, and that word is load-bearing: `src/attest/schema/` holds a
+    // module too, and a flat scan reads "whole package" while walking one
+    // directory. Measured — an HTTP-client import placed there left this test
+    // green, which is the claim failing quietly rather than the code.
     const pkg = join(__dirname, '..', '..', 'src', 'attest')
-    const implementation = readdirSync(pkg)
+    const implementation = readdirSync(pkg, { recursive: true })
+      .map(String)
       .filter((name) => name.endsWith('.py'))
       .map((name) => readFileSync(join(pkg, name), 'utf8'))
       .join('\n')
