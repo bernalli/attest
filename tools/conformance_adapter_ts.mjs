@@ -72,6 +72,13 @@ function trustStore(dir) {
 }
 
 function revocationView(dir) {
+  // Python parity: revocation-view.json carries the WHOLE array, as
+  // transfer-view.json and compromise-view.json already do for their rails;
+  // revocation.json is the older single-record spelling and still works. Until
+  // the array spelling existed no leaf could express a multi-record view, so
+  // this rail's record ceiling could not be pinned by any vector. Array wins.
+  const arrayPath = join(dir, 'revocation-view.json')
+  if (existsSync(arrayPath)) return loadJsonStrict(arrayPath)
   const p = join(dir, 'revocation.json')
   return existsSync(p) ? [loadJsonStrict(p)] : null
 }

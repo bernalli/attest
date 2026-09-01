@@ -37,7 +37,12 @@ describe('parseBundle', () => {
     const { zip, issuer } = sampleZip()
     const parsed = parseBundle(zip)
     expect(parsed.receipts).toHaveLength(1)
-    expect(parsed.receipts[0].name).toBe('01HZX0000000000000000000AA')
+    // The SIGNED id, not the member name. This archive is built with the two
+    // deliberately different — the member is called `01HZX…AA` while the
+    // payload says `01JZ5PDHT…` — because a bundle from anywhere else may name
+    // its members anything at all (v0.1 §14.1 specifies a wildcard), and an
+    // attacker will name them something that reads like a verdict.
+    expect(parsed.receipts[0].receiptId).toBe('01JZ5PDHT0000G40R40M30E209')
     expect(parsed.trustStore.provenance[issuer]).toBe('bundle')
     const run = runVerify(parsed.receipts[0].bytes, parsed.trustStore)
     expect(run.result.signature).toBe('valid')

@@ -1,4 +1,4 @@
-// The conformance merge gate (46 vector groups / 215 leaves): this suite discovers every leaf under
+// The conformance merge gate (47 vector groups / 217 leaves): this suite discovers every leaf under
 // `docs/spec/vectors/` and asserts the produced VerificationResult matches
 // its `expected.json`, using the exact same match rules as the Python
 // reference's `tests/test_vectors.py`. Passing this suite in full IS the
@@ -9,7 +9,7 @@
 // parametrization rather than being run twice:
 //
 //  - the default: verify(), for every leaf that ships none of the three files
-//    below (187 leaves). Four of its optional leaf files are:
+//    below (189 leaves). Four of its optional leaf files are:
 //      * `compromise-view.json` (group 41, v0.2 §19): key-manifest
 //        compromise declarations, fed as `compromiseView`.
 //      * `grant-view.json` (group 37, v0.2 §18.4): the evidence OBJECT

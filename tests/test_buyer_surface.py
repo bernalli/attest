@@ -9,7 +9,9 @@ most concrete. These tests hold the parts that must not diverge again.
 from __future__ import annotations
 
 import html
+import os
 import re
+import shutil
 import string
 import subprocess
 import sys
@@ -367,9 +369,47 @@ def test_every_surface_that_renders_a_buyer_page_is_accounted_for() -> None:
     If this fails because you added a surface: give it the private-file
     warning, give it a test that proves it carries it, then add it here.
     """
+    # Files git TRACKS, not files that happen to sit on disk. Walking the
+    # working tree counts whatever else lives under it — a nested worktree, a
+    # build directory, someone's scratch copy — and then this guard fails for
+    # a reason that has nothing to do with buyer surfaces. A test that can
+    # fail for the wrong reason gets muted, and a muted guard defends nothing.
+    git = shutil.which("git")
+    assert git is not None, "git is not on PATH"
+    # Repository selection is part of what this guard verifies. Inherited
+    # Git overrides must not substitute another worktree, Git dir, or index.
+    git_env = os.environ.copy()
+    for name in tuple(git_env):
+        if name.startswith("GIT_"):
+            del git_env[name]
+    # And the perimeter must be THIS repository's index. Asking a checkout
+    # nested inside another repository would return someone else's file list
+    # — or none at all — and a guard that counts zero surfaces passes while
+    # defending nothing, which is worse than failing.
+    top = subprocess.run(  # noqa: S603 -- fixed argv list, no shell
+        [git, "-C", str(REPO_ROOT), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+        env=git_env,
+    )
+    assert Path(top.stdout.rstrip("\n")).resolve() == REPO_ROOT.resolve()
+    tracked_output = subprocess.run(  # noqa: S603 -- fixed argv list, no shell
+        [git, "-C", str(REPO_ROOT), "ls-files", "-z", "*.py"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+        env=git_env,
+    ).stdout
+    assert tracked_output, "git ls-files returned no tracked Python files"
+    tracked = tracked_output.split("\0")
+
     found: dict[str, int] = {}
-    for path in sorted(REPO_ROOT.glob("**/*.py")):
-        if any(part in {".venv", "node_modules", ".git", "tests"} for part in path.parts):
+    for relative in sorted(name for name in tracked if name):
+        path = REPO_ROOT / relative
+        if any(part in {"tests", "node_modules"} for part in path.parts):
             continue  # a test that renders a page is not a surface a buyer meets
         if path.name.startswith("test_"):
             continue
@@ -386,3 +426,18 @@ def test_every_surface_that_renders_a_buyer_page_is_accounted_for() -> None:
             assert "private_file_warning" in source, path
 
     assert found == EXPECTED_RENDER_PAGE_CALL_SITES
+
+
+def test_the_surface_guard_reads_this_repository_and_not_an_inherited_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Which repository the guard interrogates is part of what it guards.
+
+    `git` takes its index from `GIT_INDEX_FILE`, and `--show-toplevel` keeps
+    answering with this checkout while `ls-files` answers from somewhere else
+    entirely. A surface that exists only in the real index then goes uncounted
+    and the guard passes — the exact silence it was written to break. Anything
+    a caller inherited in the environment must not decide the answer.
+    """
+    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "someone-elses-index"))
+    test_every_surface_that_renders_a_buyer_page_is_accounted_for()

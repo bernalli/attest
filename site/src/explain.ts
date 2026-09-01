@@ -114,7 +114,13 @@ const CATALOG: Record<Component, Record<string, Explanation>> = {
     unauthenticated_tofu: {
       label: 'Key trust',
       tone: 'warn',
-      text: 'The issuer’s keys came from inside the file you dropped, not from the issuer’s website — the math checks out, but a browser cannot confirm who published these keys (and this page never phones home to try). That is trust-on-first-use, reported honestly; the attest CLI can fetch the manifest over TLS for the “verified” level (spec §7.4).',
+      // This sentence used to end by telling the reader that the attest CLI
+      // could fetch the manifest over TLS and reach `verified`. It cannot:
+      // `cli.py` and `bundle.py` both set provenance to `bundle`
+      // unconditionally, and the package ships no HTTP client at all — the CLI
+      // module docstring says so in as many words. Naming a remedy that does
+      // not exist is worse than naming none, because the reader stops looking.
+      text: 'The issuer’s keys came from inside the file you dropped, not from the issuer’s website — the math checks out, but a browser cannot confirm who published these keys (and this page never phones home to try). That is trust-on-first-use, reported honestly. The spec reserves a stronger level, “verified”, for keys fetched over TLS from the issuer’s own domain (§7.4); no attest tool published today performs that fetch, so nothing you can run here reaches it.',
     },
     unverified_rotation: {
       label: 'Key trust',

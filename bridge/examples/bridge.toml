@@ -6,6 +6,11 @@
 # value — so this file is safe to commit alongside your deployment config.
 # `load_config` resolves each `*_env` variable at startup and refuses to
 # start (raising ConfigError, naming the missing variable) if it is unset.
+#
+# `# @table-start <name>` / `# @table-end <name>` mark exactly the lines a
+# reader removes when told to omit a table — banner included. The bridge
+# itself never reads them; they exist only for the test suite that checks
+# this file's own onboarding guides. Do not delete them when editing a table.
 
 public_base_url = "https://receipts.example.com"
 ledger_path = "/var/lib/attest-bridge/ledger.sqlite3"
@@ -18,23 +23,30 @@ seed_path = "/secrets/issuer.seed"               # from: attest keygen --hybrid
 mldsa_key_path = "/secrets/issuer.mldsa.json"    # from: attest keygen --hybrid
 manifest_path = "/etc/attest-bridge/key-manifest.json"  # from: attest manifest init
 
+# @table-start stripe
 # Omit this whole table if you don't sell through Stripe.
 [stripe]
 webhook_secret_env = "STRIPE_WEBHOOK_SECRET"     # whsec_... from the Stripe dashboard
 api_key_env = "STRIPE_API_KEY"                   # optional: only for line-items fallback
+# @table-end stripe
 
+# @table-start shopify
 # Omit this whole table if you don't sell through Shopify. The signing secret
 # is the only value needed: an orders/paid webhook already carries its line
 # items, so there is no API token and no follow-up request.
 [shopify]
 webhook_secret_env = "SHOPIFY_WEBHOOK_SECRET"
+# @table-end shopify
 
+# @table-start itch
 # Omit this whole table if you don't sell through itch.io.
 [itch]
 api_key_env = "ITCH_API_KEY"
 poll_interval_seconds = 60
 max_attempts = 10
+# @table-end itch
 
+# @table-start delivery
 # Omit this whole table for download-link-only mode (no receipt emails sent).
 [delivery]
 smtp_host = "smtp.example.com"
@@ -46,6 +58,7 @@ from_address = "receipts@example.com"
 # (https://attest-receipts.org/what-is-this.html), the same link every
 # receipt email uses by default.
 info_url = "https://store.example.com/what-is-this-file"
+# @table-end delivery
 
 # One [products.<product_key>] table per SKU you sell. `<product_key>` is
 # whatever identifier the platform's webhook uses to name the purchased

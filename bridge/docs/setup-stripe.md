@@ -136,9 +136,13 @@ Edit it:
   when `attest_product_key` metadata supplies the product mapping. Without an
   API key, the count is unknowable: setting `attest_product_key` asserts that
   the Checkout Session has exactly one purchasable line item.
-- Drop the `[itch]` table if you don't also sell on itch.io (see
-  [setup-itch.md](setup-itch.md)), and the `[delivery]` table if you're happy
-  with download-link-only (no receipt emails — see step 8).
+- Drop every platform table you don't sell through: `[shopify]` (see
+  [setup-shopify.md](setup-shopify.md)) and `[itch]` (see
+  [setup-itch.md](setup-itch.md)). A table left in the file is not inert —
+  the bridge resolves the environment variable each one names at startup and
+  refuses to start when it is unset, so a rail you never configured stops
+  `check-config` before it prints anything. Drop the `[delivery]` table too
+  if you're happy with download-link-only (no receipt emails — see step 8).
 
 `seed_path`, `mldsa_key_path`, and `manifest_path` above point at wherever
 your deploy target mounts these files — `/secrets/...` and
@@ -189,7 +193,17 @@ export here:
 ```sh
 export STRIPE_WEBHOOK_SECRET=whsec_testsecret123
 export STRIPE_API_KEY=sk_test_dummy   # only for check-config; unused once api_key_env is commented out
+export SMTP_PASSWORD=throwaway        # only if you kept the [delivery] table
 ```
+
+Every table you kept needs its variable, not just the ones the feature you
+are testing uses: `check-config` resolves every `*_env` a surviving table
+names, and one left unset stops it with a `config error:` naming that
+variable — whatever it guards. `SMTP_PASSWORD` above is the shipped
+example's `[delivery]` table; if you dropped that table in step 3, drop the
+line too. `ITCH_API_KEY` and `SHOPIFY_WEBHOOK_SECRET` are the same story for
+the rails covered in [setup-itch.md](setup-itch.md) and
+[setup-shopify.md](setup-shopify.md).
 
 Keep `STRIPE_API_KEY` exported if you want `check-config` to report
 `stripe: configured` against the untouched `bridge.toml` from step 3; with
@@ -211,8 +225,13 @@ issuer: store.example.com (kid=store.example.com/keys/2026-07#hybrid-1)
 public_base_url: https://receipts.example.com
 products: price_1PxYzEXAMPLE
 stripe: configured
+shopify: not configured
+itch: not configured
 delivery: download-link-only
 ```
+
+The last line reflects what you kept: `delivery: smtp` if the `[delivery]`
+table is still there, `download-link-only` if you dropped it.
 
 Anything wrong is reported as a `config error:` naming the exact field,
 instead. This step never touches the network or creates the Ledger — it's

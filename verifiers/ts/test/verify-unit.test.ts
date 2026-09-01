@@ -9,6 +9,7 @@ import { authorizationMessage, recordHash } from '../src/transfer.js'
 import { encodeEntry, receiptCoreHash } from '../src/tlog.js'
 import { b64uEncode } from '../src/b64u.js'
 import { parsePolicy as parseWitnessPolicy } from '../src/witness.js'
+import { MAX_ENVELOPE_BYTES } from '../src/schema.js'
 import { buildTree, inclusionProof, signCheckpoint, type HybridTestKeys } from './helpers/tlog-builder.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
@@ -23,6 +24,22 @@ describe('verify unit', () => {
     expect(r.signature).toBe('invalid')
     expect(r.schema).toBe('not_checked')
     expect(r.trust).toBe('unauthenticated_tofu')
+    expect(isOk(r)).toBe(false)
+  })
+  // v0.1 §11.3's raw-envelope acceptance floor: 2^20 bytes, judged on the
+  // undecoded bytes at step 0, reported as `schema: "invalid"`. Python pins it
+  // in test_envelope_over_byte_ceiling_rejected; this side pinned nothing, so
+  // deleting the check here would have left both suites green — the ceiling is
+  // normative, and a normative rule enforced in one core only is a parity claim
+  // nothing defends.
+  it('raw envelope over the byte ceiling -> schema invalid (v0.1 §11.3)', () => {
+    const oversized = enc(`{"payload":{"padding":"${'x'.repeat(MAX_ENVELOPE_BYTES)}"}}`)
+    expect(oversized.length).toBeGreaterThan(MAX_ENVELOPE_BYTES)
+
+    const r = verify(oversized, emptyStore)
+
+    expect(r.schema).toBe('invalid')
+    expect(r.errors.some((e) => e.includes('envelope exceeds'))).toBe(true)
     expect(isOk(r)).toBe(false)
   })
   it('isOk is the 4-gate rule', () => {
