@@ -73,6 +73,16 @@ function itemFor(diagnostic: string): HTMLElement {
   return card.querySelector('.component-warnings li, .warnings li') as HTMLElement
 }
 
+/** The whole card, for the one property `itemFor` cannot answer: whether the
+ *  declared quarantine (`<details><pre class="raw">`, JSON.stringify of the
+ *  whole result, never neutralized — plan premise 10) still shows a REAL
+ *  Cf-carrying diagnostic verbatim. `itemFor` deliberately never reaches this
+ *  block; this is the test that proves the block is unaffected instead of
+ *  assuming it from a design that merely doesn't look. */
+function cardFor(diagnostic: string): HTMLElement {
+  return renderResult('R', { ok: true, result: zeroResult({ warnings: [diagnostic] }) })
+}
+
 function textOutsideOperands(root: HTMLElement): string {
   const clone = root.cloneNode(true) as HTMLElement
   for (const q of [...clone.querySelectorAll('.diag-operand')]) q.remove()
@@ -127,6 +137,16 @@ describe('every diagnostic the corpus really produces', () => {
     const carriers = [...diagnostics].filter((d) => HOSTILE_IN_QUOTES.test(d))
     expect(carriers.length).toBeGreaterThanOrEqual(1)
     for (const d of carriers) expect(itemFor(d).textContent).toContain(REPLACEMENT)
+  })
+
+  it('leaves the genuine format character recoverable, unreplaced, in the raw quarantine', () => {
+    const carriers = [...diagnostics].filter((d) => HOSTILE_IN_QUOTES.test(d))
+    expect(carriers.length).toBeGreaterThanOrEqual(1)
+    for (const d of carriers) {
+      const raw = cardFor(d).querySelector('details pre.raw')!.textContent ?? ''
+      expect(raw).toContain(d)
+      expect(raw).not.toContain(REPLACEMENT)
+    }
   })
 
   it('keeps every non-page part inside a structural citation', () => {
