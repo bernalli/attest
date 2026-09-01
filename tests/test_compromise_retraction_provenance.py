@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from attest import anchor, canon, issue, keys, manifests, tlog, verify
@@ -216,6 +216,12 @@ def test_pin_stale_newer_source_still_kills_without_retraction_warning() -> None
     _assert_not_retracted(result)
 
 
+# No wall-clock deadline: the body signs manifests, so its runtime tracks
+# machine load rather than anything about the code. Under the full suite
+# (which now runs bridge and witness too) it sailed past Hypothesis's
+# 200ms default and reported FlakyFailure — a red that carried no
+# information about the property under test.
+@settings(deadline=None)
 @given(st.sampled_from([MISSING, "2", 2.0, 2.5, True, False, None]))
 def test_no_retraction_when_marking_source_version_is_not_an_integer(source_version: Any) -> None:
     trusted = _manifest(3, [_entry("active")])
@@ -348,7 +354,18 @@ def _load_json(path: Path) -> Any:
 def _load_vector_trust_store(case: str, *, trusted_version: int | None = None) -> verify.TrustStore:
     raw = _load_json(VECTORS / case / "manifests.json")
     if trusted_version is not None:
-        raw["manifests"]["store.example.com"]["manifest_version"] = trusted_version
+        trusted = raw["manifests"]["store.example.com"]
+        trusted["manifest_version"] = trusted_version
+        # Re-sign: `manifest_version` is inside the signed body, and the
+        # receipt path now authenticates the trusted manifest before reading
+        # any key out of it. Left unsigned, the rewritten manifest is refused
+        # as edited and the verdict under test is never reached. The vector's
+        # signer is seed byte 4 — the same deterministic material
+        # `tools/gen_vectors.py` builds this group from.
+        body = {key: value for key, value in trusted.items() if key != "manifest_signature"}
+        trusted["manifest_signature"] = manifests.sign_signature_block(
+            canon.canonical_bytes(body), _kp(4), trusted["manifest_signature"]["kid"]
+        )
     return verify.TrustStore(
         manifests=raw["manifests"],
         provenance=raw["provenance"],

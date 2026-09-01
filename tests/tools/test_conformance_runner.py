@@ -197,7 +197,7 @@ def test_select_subset_v01_is_exactly_61_leaves_of_the_real_corpus() -> None:
     # conformance.
     leaves = cr.find_leaf_dirs(REAL_VECTORS)
     subset = cr.select_subset(leaves, REAL_VECTORS, "v0.1")
-    assert len(subset) == 61
+    assert len(subset) == 63
 
 
 def test_select_subset_v02_is_the_full_real_corpus() -> None:

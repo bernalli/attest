@@ -181,7 +181,18 @@ function vectorTrustStore(caseName: string, trustedVersion: bigint): TrustStore 
     artifact_manifest_chains: Record<string, unknown>
   }
   const manifests = toJcs(raw.manifests) as Record<string, JsonObject>
-  manifests['store.example.com']!.manifest_version = trustedVersion
+  const trusted = manifests['store.example.com']!
+  trusted.manifest_version = trustedVersion
+  // Re-sign: `manifest_version` sits inside the signed body, and verify()
+  // now authenticates the trusted manifest before reading any key out of
+  // it. Left unsigned, the rewritten manifest would be refused as edited
+  // before the retraction-provenance check under test is ever reached.
+  // The vector's signer is seed byte 4 -- the same deterministic material
+  // gen_vectors.py builds this group from.
+  const signingKid = (trusted.manifest_signature as JsonObject)['kid'] as string
+  const body: JsonObject = { ...trusted }
+  delete body['manifest_signature']
+  trusted.manifest_signature = signBlock(body, seed(4), signingKid)
   return {
     manifests,
     provenance: raw.provenance,

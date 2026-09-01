@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { ed25519 } from '@noble/curves/ed25519'
 import { CanonError, JsonObject, JsonValue, canonicalBytes, loadsStrict } from '../src/canon.js'
 import { TrustStore } from '../src/manifests.js'
+import { b64uEncode } from '../src/b64u.js'
 import { verify } from '../src/verify.js'
 
 const DEPTH_MESSAGE = 'maximum nesting depth exceeded'
@@ -135,22 +137,31 @@ function basePayloadJson(extraMember: string): string {
   }`
 }
 
+// The manifest below is now genuinely self-signed (2026-09-01: verify()
+// authenticates the trusted manifest before reading any key out of it) --
+// the property under test here is about the PAYLOAD's canonicalization
+// failure, so the manifest itself must be authentic to let the receipt
+// path reach that check instead of being turned away at the gate.
+const MANIFEST_SEED = Uint8Array.from({ length: 32 }, () => 9)
+const MANIFEST_PUB = b64uEncode(ed25519.getPublicKey(MANIFEST_SEED))
+
 function trustStore(): TrustStore {
+  const body: JsonObject = {
+    issuer: ISSUER,
+    manifest_version: 1n,
+    issued_at: '2026-01-01T00:00:00Z',
+    keys: [{
+      kid: KID,
+      pub: MANIFEST_PUB,
+      valid_from: '2026-01-01T00:00:00Z',
+      valid_to: null,
+      status: 'active',
+    }],
+  }
+  const sig = ed25519.sign(canonicalBytes(body), MANIFEST_SEED)
   return {
     manifests: {
-      [ISSUER]: {
-        issuer: ISSUER,
-        manifest_version: 1n,
-        issued_at: '2026-01-01T00:00:00Z',
-        keys: [{
-          kid: KID,
-          pub: ZERO_B64U_32,
-          valid_from: '2026-01-01T00:00:00Z',
-          valid_to: null,
-          status: 'active',
-        }],
-        manifest_signature: { kid: KID, sig: '' },
-      },
+      [ISSUER]: { ...body, manifest_signature: { kid: KID, sig: b64uEncode(sig) } },
     },
     provenance: {},
   }

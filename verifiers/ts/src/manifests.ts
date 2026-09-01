@@ -172,6 +172,47 @@ export function verifyKeyManifest(manifest: JsonObject): boolean {
   } catch { return false }
 }
 
+/** Did the issuer actually sign THIS manifest, byte for byte?
+ *
+ * Narrower than `verifyKeyManifest` on purpose — the Python twin is
+ * `manifests.manifest_signature_is_authentic`, and the two must agree. That
+ * function answers "is this manifest conformant", which also fails a hybrid
+ * signer whose block carries only the Ed25519 leg. The carve-out here is
+ * exactly one case and no wider: a hybrid signer whose `manifest_signature`
+ * OMITS `sig_ml_dsa_65`, which `26-hybrid/h-manifest-downgraded-continuity`
+ * pins as `ok: true`.
+ *
+ * A PQ leg that is PRESENT is not that case. `manifest_signature` sits
+ * OUTSIDE the bytes `signableManifestBytes` covers, so none of its members
+ * carry a signature and anyone can graft one on with no key at all; §2.3 is
+ * fail-closed in both directions, a stray leg on an Ed25519-only signer
+ * included. Never throws.
+ */
+export function manifestSignatureIsAuthentic(manifest: JsonObject): boolean {
+  try {
+    const entriesForCeiling = manifest['keys']
+    if (Array.isArray(entriesForCeiling) && entriesForCeiling.length > MAX_MANIFEST_KEYS) return false
+    if (duplicateKids(entriesForCeiling).length > 0) return false
+    const sigBlock = asObject(manifest['manifest_signature'])
+    if (!sigBlock) return false
+    const kid = sigBlock['kid']
+    if (typeof kid !== 'string') return false
+    const entry = findKey(manifest, kid)
+    if (!entry) return false
+    const signable = signableManifestBytes(manifest)
+    const sig = sigBlock['sig'], pub = entry['pub']
+    if (typeof sig !== 'string' || typeof pub !== 'string') return false
+    if (!verifyStrict(signable, b64uDecode(sig), b64uDecode(pub))) return false
+    // Absent: the one downgrade the corpus pins. Present: signed material
+    // that must verify, or the manifest has been edited.
+    const mldsaSig = sigBlock['sig_ml_dsa_65']
+    if (mldsaSig === undefined) return true
+    const mldsaPub = entry['pub_ml_dsa_65']
+    if (typeof mldsaSig !== 'string' || typeof mldsaPub !== 'string') return false
+    return verifyMldsaStrict(signable, b64uDecode(mldsaSig), b64uDecode(mldsaPub))
+  } catch { return false }
+}
+
 export function withinValidity(issuedAt: unknown, entry: JsonObject): boolean {
   const issued = parseStrictUtc(issuedAt)
   const from = parseStrictUtc(entry['valid_from'])

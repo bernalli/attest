@@ -1599,16 +1599,24 @@ def gen_10_unknown_field() -> None:
 
 def gen_11_manifest_tamper() -> None:
     """A key's `status` flipped from `active` to `compromised` after the
-    manifest was signed. `verify()` never re-checks a trust-store manifest's
-    own self-signature (that is the caller's responsibility before trusting
-    a manifest at all — see `manifests.verify_key_manifest`); it reads
-    `status` directly off whatever manifest the trust store hands it. So the
-    tampered manifest has two independently checkable effects, both asserted
-    here: (a) it no longer self-verifies (`manifest_pristine.json` lets the
-    replay test check this directly), and (b) any receipt genuinely signed
-    while the key WAS active now reports `signature: invalid` via the §6
-    step 3 fail-closed compromise check, because the trust store's copy says
-    `compromised` regardless of what was true when the manifest was signed."""
+    manifest was signed.
+
+    This leaf used to record the opposite premise: that `verify()` never
+    re-checks a trust-store manifest's own self-signature, because doing so
+    was "the caller's responsibility before trusting a manifest at all". That
+    was a written choice, not an oversight — but no shipped entry point ever
+    discharged it (`bundle.import_bundle` and `cli._load_trust_dir` both
+    build a `TrustStore` without it, and `TrustStore` is a plain frozen
+    container), so the responsibility belonged to nobody. A tampered manifest
+    therefore certified receipts signed by the tampering.
+
+    The receipt path now authenticates the manifest before reading any key
+    out of it, so the refusal here arrives from that gate rather than from
+    the §6 step 3 compromise check further down. The verdict is unchanged —
+    `signature: invalid`, `ok: false` — and both effects the leaf has always
+    asserted still hold: the tampered manifest no longer self-verifies
+    (`manifest_pristine.json` lets the replay test check that directly), and
+    a receipt genuinely signed while the key WAS active is refused."""
     payload = issue.build_payload(**_base_payload_kwargs())
     _assert_schema_valid(payload)
     envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)  # signed while genuinely active
@@ -1627,11 +1635,13 @@ def gen_11_manifest_tamper() -> None:
         "binding": "not_checked",
         "trust": "verified",
         "ok": False,
-        "errors_contains": ["compromised"],
+        "errors_contains": ["is not self-consistent"],
         "warnings": [],
         "note": (
             "manifests.json carries the TAMPERED manifest (what verify() is fed); "
-            "manifest_pristine.json is the untampered, self-consistent original."
+            "manifest_pristine.json is the untampered, self-consistent original. "
+            "The refusal now comes from the manifest gate, which runs before any "
+            "key is read; the verdict is the same one this leaf always pinned."
         ),
     }
     write_vector(
@@ -8292,6 +8302,76 @@ def gen_45_revocation_anchor_status() -> None:
         )
 
 
+def gen_46_manifest_unauthenticated() -> None:
+    """The trusted key manifest is authenticated before any key is read from it.
+
+    Group 11 tampers with a `status`, which is the direction that would be
+    refused anyway: the compromise check further down catches it, so a
+    verifier with no manifest gate still produced the right verdict there and
+    the corpus read as if the property were covered. These two leaves tamper
+    in the directions where, without the gate, the receipt is ACCEPTED.
+
+    `a` corrupts the manifest's own signature and changes nothing else, so
+    every key it lists is exactly as the issuer published it. `b` is the one
+    worth stating plainly: the attacker replaces a key entry's `pub` with
+    their own and signs a receipt under the unchanged kid, forging a valid
+    receipt WITHOUT EVER HOLDING THE ISSUER'S PRIVATE KEY. In both the
+    manifest no longer self-verifies, and in both the honest control is the
+    same receipt against the pristine manifest, which verifies.
+    """
+    pristine_manifest = _manifest_material(ISSUER_ID, ISSUER_KID, ISSUER_KP)
+    assert manifests.verify_key_manifest(pristine_manifest) is True
+
+    expected = {
+        "signature": "invalid",
+        "schema": "not_checked",
+        "revocation": "unknown",
+        "binding": "not_checked",
+        "trust": "verified",
+        "ok": False,
+        "errors_contains": ["is not self-consistent"],
+        "warnings": [],
+        "note": (
+            "manifests.json carries the TAMPERED manifest (what verify() is fed); "
+            "manifest_pristine.json is the untampered original, which verifies."
+        ),
+    }
+
+    # a — the signature alone is destroyed; the key material is untouched.
+    payload = issue.build_payload(**_base_payload_kwargs())
+    _assert_schema_valid(payload)
+    envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)
+    corrupted = copy.deepcopy(pristine_manifest)
+    corrupted["manifest_signature"]["sig"] = keys.b64u(bytes(64))
+    assert manifests.verify_key_manifest(corrupted) is False
+    write_vector(
+        "46-manifest-unauthenticated/a-signature-corrupted",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, corrupted, "tls")),
+        expected=expected,
+        manifest_pristine=pristine_manifest,
+    )
+
+    # b — the attacker's key is swapped in and the receipt is forged under it.
+    forged_payload = issue.build_payload(**_base_payload_kwargs())
+    _assert_schema_valid(forged_payload)
+    forged_envelope = issue.issue(forged_payload, EVIL_KP, ISSUER_KID)
+    swapped = copy.deepcopy(pristine_manifest)
+    swapped["keys"][0]["pub"] = keys.b64u(EVIL_KP.pub)
+    assert manifests.verify_key_manifest(swapped) is False
+    write_vector(
+        "46-manifest-unauthenticated/b-key-swapped-forged-receipt",
+        payload=forged_payload,
+        envelope=forged_envelope,
+        envelope_raw=None,
+        trust=_trust_material((ISSUER_ID, swapped, "tls")),
+        expected=expected,
+        manifest_pristine=pristine_manifest,
+    )
+
+
 def main() -> None:
     _clear_leaf_dirs(VECTORS_DIR)
     VECTORS_DIR.mkdir(parents=True, exist_ok=True)
@@ -8340,6 +8420,7 @@ def main() -> None:
     gen_43_publisher_authority()
     gen_44_manifest_duplicate_kid()
     gen_45_revocation_anchor_status()
+    gen_46_manifest_unauthenticated()
     leaf_count = sum(1 for _ in VECTORS_DIR.rglob("expected.json"))
     print(f"generated {leaf_count} vector cases under {VECTORS_DIR}")
 

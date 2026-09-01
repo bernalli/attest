@@ -5,7 +5,7 @@ import {
   materializeArray, materializeValue, ownArrayLength, ownViewMember,
   MAX_ADMISSION_NODES, VIEW_ARRAY_ELEMENT_NESTING, VIEW_MEMBER_ABSENT, VIEW_MEMBER_COLLAPSED,
 } from './canon.js'
-import { verifyKeyManifest, findKey, verifySignatureBlock } from './manifests.js'
+import { verifyKeyManifest, manifestSignatureIsAuthentic, findKey, verifySignatureBlock } from './manifests.js'
 import { parseStrictUtc, parseIsoLenient, validStage3UtcTimestamp } from './dates.js'
 import { LogKey, encodeEntry, TlogError } from './tlog.js'
 import { AnchorPolicy, validatePolicy } from './anchor.js'
@@ -242,7 +242,14 @@ function resolveTransferBacking(
   }
 
   const receiptId = payload['receipt_id']
-  const manifestOk = verifyKeyManifest(issuerManifest)
+  // The receipt gate's predicate, deliberately, not verifyKeyManifest: a
+  // manifest downgraded by deleting its PQ leg loses its TRUST LEVEL,
+  // never its power to revoke (v0.2 §4). The two must not disagree about
+  // whether the same manifest is authentic — the gap turns a revocation
+  // into silence, and reaching it costs one keyless deletion, since
+  // manifest_signature sits outside the signed bytes. Python parity:
+  // verify.py's _resolve_transfer_backing and _classify_revocation.
+  const manifestOk = manifestSignatureIsAuthentic(issuerManifest)
 
   const appendOnce = (warning: string) => { if (!warnings.includes(warning)) warnings.push(warning) }
 
@@ -384,7 +391,14 @@ export function classifyRevocation(
   }
 
   // One manifest self-verify per classification, not per record (improvement #17).
-  const manifestOk = verifyKeyManifest(issuerManifest)
+  // The receipt gate's predicate, deliberately, not verifyKeyManifest: a
+  // manifest downgraded by deleting its PQ leg loses its TRUST LEVEL,
+  // never its power to revoke (v0.2 §4). The two must not disagree about
+  // whether the same manifest is authentic — the gap turns a revocation
+  // into silence, and reaching it costs one keyless deletion, since
+  // manifest_signature sits outside the signed bytes. Python parity:
+  // verify.py's _resolve_transfer_backing and _classify_revocation.
+  const manifestOk = manifestSignatureIsAuthentic(issuerManifest)
   const auth: boolean[] = admittedView.map((r) => { const o = asObject(r); return manifestOk && o !== null && verifyRecordSignature(o, issuerManifest) })
 
   // freshness anchor T = max revoked_at over AUTHENTICATED STATEMENT-STATUS
