@@ -76,6 +76,7 @@ from attest import (
     issue,
     keys,
     manifests,
+    ots,
     pq,
     revocation,
     tlog,
@@ -563,6 +564,120 @@ def _anchor_policy_json(policy: anchor.AnchorPolicy) -> dict[str, Any]:
         },
         "crqc_horizon": policy.crqc_horizon,
     }
+
+
+# --- converted-OTS anchor material (group 32 leaf d) ------------------------
+#
+# Leaf 32d carries anchor evidence whose proof and pinned header came out of
+# `attest.ots.convert_ots` itself, so replaying the corpus makes every core —
+# including the TypeScript verifier and any third-party implementation running
+# `tools/conformance_runner.py` — verify what the converter really emits
+# instead of a hand-built imitation of it. `tests/test_ots_corpus_parity.py`
+# re-derives this material from the live converter and demands the committed
+# leaf still match, because nothing re-runs this generator in CI.
+#
+# Two deliberate independences keep the leaf from confirming itself. The `.ots`
+# bytes are serialized HERE rather than imported from the converter's own
+# tests, and the accumulator is replayed by `_replay_ots_ops` rather than by
+# `anchor.replay_ots_op_chain` — the operator header handed to `convert_ots`
+# has to be right according to an oracle the converter does not share, or the
+# merkle-root check inside `convert_ots` degenerates into a tautology.
+_OTS_MAGIC = b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94"
+_OTS_TAG_SHA256 = b"\x08"
+_OTS_TAG_APPEND = b"\xf0"
+_OTS_TAG_ATTESTATION = b"\x00"
+_OTS_TAG_BITCOIN = bytes.fromhex("0588960d73d71901")
+# A 32-byte sibling, the width a real calendar aggregation appends.
+_OTS_SIBLING = hashlib.sha256(b"attest-vectors-32d-ots-sibling-v1").digest()
+_OTS_HEADER_HASH = hashlib.sha256(b"attest-vectors-32d-ots-header-v1").hexdigest()
+_OTS_HEADER_TIME = 1700000000  # transparency.py's own KAT (-> 2023-11-14T22:13:20Z)
+# A plausible mainnet height for that timestamp. Nothing in the leaf depends
+# on the value; it only has to agree between the `.ots` and the header.
+_OTS_HEIGHT = 816000
+
+
+def _ots_varuint(value: int) -> bytes:
+    assert value >= 0
+    encoded = bytearray()
+    remaining = value
+    while True:
+        byte = remaining & 0x7F
+        remaining >>= 7
+        if not remaining:
+            encoded.append(byte)
+            return bytes(encoded)
+        encoded.append(byte | 0x80)
+
+
+def _ots_varbytes(value: bytes) -> bytes:
+    return _ots_varuint(len(value)) + value
+
+
+def _detached_ots_file(digest: bytes, *, sibling: bytes, height: int) -> bytes:
+    """One detached `.ots` proof: digest -> append(sibling) -> sha256 -> bitcoin."""
+    return b"".join(
+        [
+            _OTS_MAGIC,
+            b"\x01",  # major version
+            _OTS_TAG_SHA256,  # file hash op
+            digest,
+            _OTS_TAG_APPEND,
+            _ots_varbytes(sibling),
+            _OTS_TAG_SHA256,
+            _OTS_TAG_ATTESTATION,
+            _OTS_TAG_BITCOIN,
+            _ots_varbytes(_ots_varuint(height)),
+        ]
+    )
+
+
+def _replay_ots_ops(seed: bytes, ops: list[list[str]]) -> bytes:
+    """Replay an emitted op-chain WITHOUT the verifier's own replay function."""
+    accumulator = seed
+    for op in ops:
+        if op[0] == "append":
+            accumulator = accumulator + bytes.fromhex(op[1])
+        elif op[0] == "prepend":
+            accumulator = bytes.fromhex(op[1]) + accumulator
+        elif op[0] == "sha256":
+            accumulator = hashlib.sha256(accumulator).digest()
+        else:
+            raise AssertionError(f"unsupported op in generator oracle: {op[0]}")
+    return accumulator
+
+
+def converted_ots_anchor_material(
+    signed_note_bytes: bytes,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the real converter over a real `.ots` and return what it emits.
+
+    Returns the anchor proof exactly as `attest log anchor --ots-proof` would
+    attach it (the converted proof plus the `kind` that command stamps, see
+    `cli.py`'s `new_proofs`) and the `pinned_headers` mapping the converter
+    wrote alongside it.
+    """
+    seed = hashlib.sha256(signed_note_bytes).digest()
+    # The oracle: append(sibling) then sha256, derived from the `.ots` tree
+    # written just below, never from the converter's replay.
+    expected_root = hashlib.sha256(seed + _OTS_SIBLING).hexdigest()
+    parsed = ots.parse_ots(_detached_ots_file(seed, sibling=_OTS_SIBLING, height=_OTS_HEIGHT))
+    assert len(parsed.paths) == 1
+    assert [op.name for op in parsed.paths[0].ops] == ["append", "sha256"]
+    assert parsed.paths[0].attestation.height == _OTS_HEIGHT
+
+    header = ots.OperatorHeader(
+        height=_OTS_HEIGHT,
+        header_hash=_OTS_HEADER_HASH,
+        merkle_root=expected_root,
+        time=_OTS_HEADER_TIME,
+    )
+    result = ots.convert_ots(parsed, seed, [header])
+    assert len(result.proofs) == 1
+    assert [entry.converted for entry in result.report] == [True]
+    proof = dict(result.proofs[0].proof)
+    ops = proof["ops"]
+    assert _replay_ots_ops(seed, ops).hex() == proof["header_merkle_root"] == expected_root
+    return {**proof, "kind": "ots"}, dict(result.pinned_headers)
 
 
 def _hex_proof(proof: list[bytes]) -> list[str]:
@@ -3740,6 +3855,10 @@ def gen_32_anchor_v2() -> None:
       standing exactly like pre-G4 evidence always has (eternal
       verifiability, attest-versioning.md §3), but now carries the
       `anchor_note_only` warning classifying it as the weaker profile.
+    - (d) the same clean v2 case as (a), except the proof and its pinned
+      header were produced by `attest.ots.convert_ots` from a real detached
+      `.ots` file instead of assembled here by hand -> the one leaf in the
+      corpus that holds the project's OWN converter to both cores.
     """
     payload = issue.build_payload(**_base_payload_kwargs())
     _assert_schema_valid(payload)
@@ -3894,6 +4013,60 @@ def gen_32_anchor_v2() -> None:
         transparency=_evidence(anchors={"checkpoint": checkpoint_text, "proofs": [ots_proof_c]}),
         log_keys=[_log_key()],
         anchor_policy=policy_c,
+    )
+
+    # --- (d) converted-from-ots: leaves (a)-(c) build their op-chain by hand,
+    # so they pin what the SPEC says a v2 anchor looks like and nothing at all
+    # about what this project's own converter produces. This leaf carries the
+    # output of `attest.ots.convert_ots` over a real detached `.ots` proof,
+    # attached the way `log anchor --ots-proof` attaches it, so the corpus —
+    # and therefore the TypeScript verifier, which replays every leaf — is the
+    # place where Python's converter and the other core are held to the same
+    # bytes. `tests/test_ots_corpus_parity.py` pins this material to the live
+    # converter so the leaf cannot go stale in silence. ---
+    ots_proof_d, pinned_headers_d = converted_ots_anchor_material(signed_note_bytes)
+    policy_d = anchor.AnchorPolicy(
+        pinned_headers={
+            header_hash: anchor.PinnedHeader(
+                header_hash=str(pinned["header_hash"]),
+                merkle_root=str(pinned["merkle_root"]),
+                time=int(pinned["time"]),
+            )
+            for header_hash, pinned in pinned_headers_d.items()
+        },
+        crqc_horizon=None,
+    )
+    # The converted chain is genuinely richer than (a)'s single hash: it opens
+    # with the operand-carrying step a real calendar aggregation leaves behind.
+    assert [op[0] for op in ots_proof_d["ops"]] == ["append", "sha256"]
+    write_vector(
+        "32-anchor-v2/d-converted-from-ots",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": "anchored_before:2023-11-14T22:13:20Z",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": True,
+            "errors": [],
+            "warnings": [],
+        },
+        transparency=_evidence(
+            anchors={
+                "checkpoint": checkpoint_text,
+                "proofs": [ots_proof_d],
+                "anchor_profile": "signed-note-v2",
+            }
+        ),
+        log_keys=[_log_key()],
+        anchor_policy=policy_d,
     )
 
 
