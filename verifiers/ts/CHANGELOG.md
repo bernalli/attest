@@ -4,6 +4,17 @@ All notable changes to `attest-verifier` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] — 2026-09-01
+
+### Changed
+
+- **No code change.** This release exists to publish the README already
+  corrected in `main` to npm, which freezes the README at whatever it read at
+  publish time. The per-surface leaf counts the README used to cite there —
+  150/4/20/4 summing to 178 — have already been removed from `main`'s README:
+  they move every time the corpus grows, and a number no test defends goes
+  stale without anyone noticing. Behavior is unchanged from 0.9.0.
+
 ## [0.9.0] — 2026-08-31
 
 ### Added
