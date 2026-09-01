@@ -763,6 +763,60 @@ def _handle_itch_claim_post(
     return _json_response(start_response, "202 Accepted", _ITCH_CLAIM_ACCEPTED)
 
 
+# -- readiness ------------------------------------------------------------
+#
+# `/healthz` says the process is alive. `/readyz` says something a merchant
+# actually needs to know and cannot see from the outside: whether a purchase
+# arriving now could become a receipt. The two can disagree for days — a
+# daemon outliving its signing key keeps answering 200 on /healthz while
+# rejecting every purchase.
+#
+# What is checked is exactly what issuance requires, all of it local:
+# a readable Ledger, a signing key inside its validity window, and at least
+# one product to resolve a purchase against.
+#
+# What is deliberately NOT checked: SMTP, the itch API, the Stripe API.
+# Neither is on the issuing path — `IssuingCore.process` records the receipt
+# durably BEFORE any delivery is attempted, and a failed delivery leaves it
+# downloadable and retried by the sweep — so a dead mail relay does not make
+# this bridge unable to do its job, and reporting otherwise would invite an
+# operator to restart a service that is working. A probe that opened an SMTP
+# session on every platform health check (every 15s on Fly) would also be a
+# fine way for a merchant to get rate-limited by their own relay.
+
+
+def _readiness_failure(deps: BridgeDeps) -> str | None:
+    """The first reason this bridge could not issue right now, or None.
+
+    Never raises: a readiness probe that 500s tells an operator nothing
+    about the dependency it was asked about.
+    """
+    try:
+        deps.ledger.ping()
+    except Exception:
+        return "ledger is not readable"
+    try:
+        if not deps.core.signing_key_within_validity(at=_now_rfc3339()):
+            return "signing key is outside its validity window"
+    except Exception:
+        return "signing key could not be checked against the key manifest"
+    if not deps.core.has_configured_products:
+        return "no product is configured"
+    return None
+
+
+def _handle_readyz(deps: BridgeDeps, start_response: Any) -> Iterable[bytes]:
+    failure = _readiness_failure(deps)
+    if failure is None:
+        return _json_response(start_response, "200 OK", {"ready": True})
+    # The reason goes to the operator, never into the response: this route is
+    # unauthenticated and reachable by anyone who can reach the webhook
+    # endpoints, and which dependency of a merchant's bridge is broken is not
+    # theirs to learn.
+    deps.log.warning("readiness check failed: %s", failure)
+    return _json_response(start_response, "503 Service Unavailable", {"ready": False})
+
+
 # -- app ------------------------------------------------------------------
 
 
@@ -778,6 +832,8 @@ def make_app(deps: BridgeDeps) -> WSGIApp:
 
         if method == "GET" and path == "/healthz":
             return _json_response(start_response, "200 OK", {"ok": True})
+        if method == "GET" and path == "/readyz":
+            return _handle_readyz(deps, start_response)
         if method == "POST" and path == "/stripe/webhook":
             return _handle_stripe_webhook(deps, environ, start_response, webhook_lock)
         if method == "POST" and path == "/shopify/webhook":

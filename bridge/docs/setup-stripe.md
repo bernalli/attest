@@ -197,12 +197,12 @@ export SMTP_PASSWORD=throwaway        # only if you kept the [delivery] table
 ```
 
 Every table you kept needs its variable, not just the ones the feature you
-are testing uses: the bridge resolves every `*_env` the config names before
-it validates anything else, so one left unset stops `check-config` with a
-`config error:` naming it — whatever it guards. `SMTP_PASSWORD` above is the
-shipped example's `[delivery]` table; if you dropped that table in step 3,
-drop the line too. `ITCH_API_KEY` and `SHOPIFY_WEBHOOK_SECRET` are the same
-story for the rails covered in [setup-itch.md](setup-itch.md) and
+are testing uses: `check-config` resolves every `*_env` a surviving table
+names, and one left unset stops it with a `config error:` naming that
+variable — whatever it guards. `SMTP_PASSWORD` above is the shipped
+example's `[delivery]` table; if you dropped that table in step 3, drop the
+line too. `ITCH_API_KEY` and `SHOPIFY_WEBHOOK_SECRET` are the same story for
+the rails covered in [setup-itch.md](setup-itch.md) and
 [setup-shopify.md](setup-shopify.md).
 
 Keep `STRIPE_API_KEY` exported if you want `check-config` to report
@@ -229,6 +229,9 @@ shopify: not configured
 itch: not configured
 delivery: download-link-only
 ```
+
+The last line reflects what you kept: `delivery: smtp` if the `[delivery]`
+table is still there, `download-link-only` if you dropped it.
 
 Anything wrong is reported as a `config error:` naming the exact field,
 instead. This step never touches the network or creates the Ledger — it's

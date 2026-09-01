@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import secrets
+import signal
 import socketserver
 import stat
 import sys
@@ -44,7 +45,12 @@ from attest import bundle, issue, validate
 from attest_bridge.catalog import ProductCatalog, ProductTemplate
 from attest_bridge.config import load_config
 from attest_bridge.core import IssuingCore
-from attest_bridge.delivery import DELIVERY_SWEEP_SECONDS, Delivery, sweep_undelivered
+from attest_bridge.delivery import (
+    DELIVERY_SWEEP_SECONDS,
+    SMTP_TIMEOUT_SECONDS,
+    Delivery,
+    sweep_undelivered,
+)
 from attest_bridge.http import BridgeDeps, make_app
 from attest_bridge.itch_adapter import ItchAdapter, ItchPoller
 from attest_bridge.ledger import Ledger
@@ -406,6 +412,28 @@ def _write_dry_run_pair_no_follow(
         raise
 
 
+def _ledger_open_error(ledger_path: Path, exc: OSError) -> str:
+    """Why the Ledger could not be opened, in terms of what to do about it.
+
+    The missing-directory case is deliberately NOT repaired by creating the
+    directory: on a deploy target whose persistent volume failed to mount,
+    doing so starts an empty Ledger that looks healthy, and an empty Ledger
+    has forgotten every webhook it has already handled — the receipts get
+    issued a second time. Refusing to start is the safe answer; saying which
+    directory is missing is what makes it actionable.
+    """
+    if isinstance(exc, FileNotFoundError):
+        return (
+            f"ledger directory {str(ledger_path.parent)!r} does not exist: create it, or "
+            "mount there the persistent volume your deploy target provides (see "
+            "bridge/docs/deploy.md). It is never created automatically — an unmounted "
+            "volume would otherwise start an empty Ledger on every boot, losing the "
+            "record of which purchases were already issued."
+        )
+    reason = exc.strerror or str(exc)
+    return f"cannot open the ledger at {str(ledger_path)!r}: {reason}"
+
+
 def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
     """Assemble the full runtime: config, issuer, ledger, delivery, core, adapters.
 
@@ -415,7 +443,14 @@ def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
     config = load_config(config_path)
     issuer = load_issuer(config.issuer)
     catalog = ProductCatalog(config.products)
-    ledger = Ledger(config.ledger_path)
+    try:
+        ledger = Ledger(config.ledger_path)
+    except OSError as exc:
+        # Honour this function's fail-fast contract: an unreadable OS error
+        # from the very first Ledger open is the shape a container started
+        # without its volume takes, and a raw traceback tells the operator
+        # nothing about what to mount.
+        raise ConfigError(_ledger_open_error(config.ledger_path, exc)) from exc
     delivery = Delivery(config.delivery, legal_texts=config.legal_texts)
     core = IssuingCore(
         catalog=catalog,
@@ -494,6 +529,29 @@ def _run_delivery_sweeper(stop: threading.Event, deps: BridgeDeps, log: logging.
         stop.wait(DELIVERY_SWEEP_SECONDS)
 
 
+def _install_shutdown_handlers(httpd: Any, log: logging.Logger) -> None:
+    """Stop serving on SIGTERM/SIGINT instead of waiting to be killed.
+
+    Without this the process is killed with SIGKILL on every deploy: it runs
+    as PID 1 in each documented target, and the kernel discards a signal PID
+    1 has no explicit handler for, so the default "terminate" disposition
+    never applies. That is not merely untidy — delivery is at-least-once,
+    and a kill landing between SMTP accepting a message and `mark_delivered`
+    recording it re-sends that receipt on the next sweep.
+
+    `shutdown()` blocks until `serve_forever()` returns and this handler runs
+    on the very thread sitting inside it, so calling it here directly would
+    deadlock. It goes to a short-lived thread instead.
+    """
+
+    def _request_shutdown(signum: int, _frame: Any) -> None:
+        log.info("received signal %d, shutting down", signum)
+        threading.Thread(target=httpd.shutdown, name="shutdown", daemon=True).start()
+
+    for received in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(received, _request_shutdown)
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     log = logging.getLogger("attest_bridge")
     logging.basicConfig(level=logging.INFO)
@@ -551,13 +609,18 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             handler_class=_SanitizedRequestHandler,
         ) as httpd:
             log.info("attest-bridge serving on %s:%d", host, port)
+            _install_shutdown_handlers(httpd, log)
             httpd.serve_forever()
     finally:
         stop_event.set()
         if poller_thread is not None:
             poller_thread.join(timeout=5)
         if sweeper_thread is not None:
-            sweeper_thread.join(timeout=5)
+            # Long enough to cover a send already in flight: the sweeper can
+            # be inside an SMTP exchange, and cutting it off between the
+            # server accepting the message and `mark_delivered` writing it
+            # down is exactly what makes a receipt arrive twice.
+            sweeper_thread.join(timeout=SMTP_TIMEOUT_SECONDS + 5)
     return _RC_OK
 
 

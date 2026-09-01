@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -59,12 +60,22 @@ _GUIDES = {
 }
 
 
+def _table_header(line: str) -> str | None:
+    """The top-level table a header line opens, or None if it is not one.
+
+    `[[a]]` (array of tables) counts: matching only `[a]` is how an unwanted
+    section survives a removal that reports success.
+    """
+    match = re.match(r"^\[\[?([^\[\]]+)\]\]?\s*$", line.strip())
+    return None if match is None else match.group(1).split(".")[0].strip()
+
+
 def _top_level_tables(config_text: str) -> list[str]:
     """Top-level table names, in file order, `[a.b]` reported as `a`."""
     seen: list[str] = []
-    for match in re.finditer(r"^\[([^\]]+)\]", config_text, flags=re.MULTILINE):
-        name = match.group(1).split(".")[0].strip()
-        if name not in seen:
+    for line in config_text.splitlines():
+        name = _table_header(line)
+        if name is not None and name not in seen:
             seen.append(name)
     return seen
 
@@ -74,29 +85,36 @@ def _platform_rails(config_text: str) -> list[str]:
 
 
 def _drop_table(config_text: str, table: str) -> str:
-    """Remove `[table]` and its sub-tables, up to the next unrelated table.
+    """Remove `[table]` — every section of it — from a TOML document.
 
     Mirrors what a reader does with "omit this whole table": the commented
-    banner above the table goes with it, since it is that table's own
+    banner above a section goes with it, since it is that section's own
     explanation.
+
+    Handles what the shipped example does not currently contain but a future
+    edit might: an `[[array-of-tables]]` header, and a child `[table.child]`
+    sitting somewhere other than directly below its parent. Both used to be
+    left behind silently, which for this file is the worst possible failure
+    — the config would keep a rail the guide told the reader to drop, and
+    the test would call that a pass.
+
+    What it still does NOT understand is TOML string syntax: a line that
+    begins with `[` inside a multi-line string reads as a header here. That
+    limit is contained rather than hidden — every caller re-parses the
+    result with `tomllib` and asserts the table is gone, so a document this
+    function mangles fails loudly instead of quietly testing the wrong file.
     """
     lines = config_text.splitlines(keepends=True)
     out: list[str] = []
     index = 0
     while index < len(lines):
-        stripped = lines[index].lstrip()
-        header = re.match(r"^\[([^\]]+)\]", stripped)
-        if header is not None and header.group(1).split(".")[0].strip() == table:
-            # Walk back over the comment banner that introduces this table.
+        header = _table_header(lines[index])
+        if header == table:
             while out and out[-1].lstrip().startswith("#"):
                 out.pop()
             index += 1
-            while index < len(lines):
-                nxt = re.match(r"^\[([^\]]+)\]", lines[index].lstrip())
-                if nxt is not None and nxt.group(1).split(".")[0].strip() != table:
-                    break
+            while index < len(lines) and _table_header(lines[index]) is None:
                 index += 1
-            # Leave at most one blank separator behind.
             while out and not out[-1].strip():
                 out.pop()
             out.append("\n")
@@ -150,22 +168,39 @@ def _text_read_before_running_check_config(guide_name: str) -> str:
     return "\n".join(parts)
 
 
+def _list_items(paragraph: str) -> list[str]:
+    """Split a blank-line-delimited block into one unit per list item.
+
+    A markdown bullet list has no blank line between its items, so splitting
+    on blank lines alone leaves a whole multi-bullet list as ONE block. That
+    is not a formatting detail: it credits a "drop" verb in one bullet to a
+    table name mentioned in a different, unrelated bullet several lines away
+    — which is exactly how this test came to pass for guides that never told
+    the reader to drop that table at all. Continuation lines (indented, no
+    leading "- ") stay attached to the item above them.
+    """
+    if not re.search(r"^- ", paragraph, flags=re.MULTILINE):
+        return [paragraph]
+    return re.split(r"\n(?=- )", paragraph)
+
+
 def _tables_the_guide_says_to_remove(guide_text: str, rails: list[str]) -> set[str]:
     """Rails a guide tells the reader to take out of the config.
 
-    The unit is the paragraph, not the line: prose wraps where it wraps, and
-    a test that demanded the verb and the table name land on the same line
-    would be dictating line breaks instead of checking that the reader was
-    told.
+    The unit is the single instruction — a bullet where the guide uses a
+    list, a blank-line-delimited block otherwise — never the whole markdown
+    paragraph. Prose still wraps where it wraps, so verb and table name need
+    not share a line; they do have to belong to the same instruction.
     """
     told: set[str] = set()
     for paragraph in re.split(r"\n\s*\n", guide_text):
-        lowered = paragraph.lower()
-        if not any(verb in lowered for verb in _REMOVAL_VERBS):
-            continue
-        for rail in rails:
-            if f"[{rail}]" in paragraph:
-                told.add(rail)
+        for item in _list_items(paragraph):
+            lowered = item.lower()
+            if not any(verb in lowered for verb in _REMOVAL_VERBS):
+                continue
+            for rail in rails:
+                if f"[{rail}]" in item:
+                    told.add(rail)
     return told
 
 
@@ -255,6 +290,13 @@ def test_guide_instructions_alone_reach_a_clean_check_config(
 
     for name in told_to_remove:
         config_text = _drop_table(config_text, name)
+    still_present = told_to_remove & tomllib.loads(config_text).keys()
+    assert not still_present, (
+        f"_drop_table claims to remove {sorted(told_to_remove)} but "
+        f"{sorted(still_present)} is still a top-level table afterward: the "
+        "hand-rolled TOML editor failed silently (an [[array-of-tables]] "
+        "header, for one, is not matched by its regex)"
+    )
     config_text = _localize(config_text, tmp_path, hybrid_keys, key_manifest)
 
     # Every `*_env` still named by the config has to be named by the guide
@@ -326,3 +368,70 @@ def test_sample_check_config_output_matches_what_the_cli_prints(
     assert [line.split(":")[0] for line in sample] == [line.split(":")[0] for line in printed], (
         f"{guide_name} shows a check-config summary that the CLI does not print"
     )
+
+
+def test_every_endpoint_the_docs_name_is_routed_by_the_app() -> None:
+    """A path a merchant is told to configure has to exist.
+
+    `deploy.md` tells the reader which endpoint to point a platform health
+    check and their monitoring at; `fly.toml` and `render.yaml` put one in a
+    config file that only fails at deploy time, on their infrastructure. A
+    renamed or dropped route would be discovered there instead of here.
+    """
+    app_source = (_BRIDGE_ROOT / "src" / "attest_bridge" / "http.py").read_text(encoding="utf-8")
+    routed = set(re.findall(r'path == "(/[a-z/]+)"', app_source))
+    assert routed, "no routes found: the routing shape this test reads has changed"
+
+    documented: set[str] = set()
+    for path in list(_DOCS.glob("*.md")) + list((_BRIDGE_ROOT / "deploy").glob("*")):
+        if path.is_dir():
+            continue
+        text = path.read_text(encoding="utf-8")
+        documented |= {name for name in routed | {"/healthz", "/readyz"} if name in text}
+
+    missing = sorted(name for name in documented if name not in routed)
+    assert not missing, f"documented endpoints that the app does not route: {missing}"
+
+
+class TestDropTableOnInputTheExampleDoesNotContainYet:
+    """`_drop_table` edits TOML by hand, and the tests above only ever feed it
+    the one blessed `examples/bridge.toml`. These pin the shapes a future
+    edit to that file could introduce — the property being that a table the
+    caller asked to remove is either GONE or the failure is loud. Silently
+    keeping it is the one outcome that would let a broken guide pass.
+    """
+
+    def _dropped(self, toml_text: str, table: str) -> dict[str, Any]:
+        return tomllib.loads(_drop_table(toml_text, table))
+
+    def test_array_of_tables_section_is_removed(self) -> None:
+        toml_text = "[a]\nx = 1\n\n[[b]]\ny = 1\n\n[c]\nz = 1\n"
+        assert "b" not in self._dropped(toml_text, "b")
+
+    def test_child_table_far_from_its_parent_is_removed_too(self) -> None:
+        toml_text = "[a]\nx = 1\n\n[c]\nz = 1\n\n[a.child]\ny = 1\n"
+        result = self._dropped(toml_text, "a")
+        assert "a" not in result
+        assert "c" in result, "removing [a] must not take unrelated sections with it"
+
+    def test_repeated_section_of_the_same_table_is_removed(self) -> None:
+        toml_text = "[a]\nx = 1\n\n[b]\ny = 1\n\n[a]\nx2 = 2\n"
+        assert "a" not in self._dropped(toml_text, "a")
+
+    def test_a_bracket_line_inside_a_multiline_string_fails_loudly(self) -> None:
+        """The documented limit, pinned as loud rather than silent.
+
+        `_drop_table` does not parse TOML strings, so a line starting with
+        `[` inside one reads as a header. What must never happen is that it
+        quietly produces a plausible-looking config: the damage has to be
+        visible to `tomllib`.
+        """
+        toml_text = '[a]\ndescription = """\n[b] not a header, prose.\n"""\n\n[b]\ny = 1\n'
+        try:
+            result = self._dropped(toml_text, "b")
+        except tomllib.TOMLDecodeError:
+            return  # loud, which is the contract
+        assert "b" not in result, (
+            "_drop_table left [b] behind while parsing the document as if it "
+            "had succeeded — the silent failure this class exists to rule out"
+        )

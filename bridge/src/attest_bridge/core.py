@@ -68,6 +68,27 @@ class IssuingCore:
         self._public_base_url = public_base_url
         self._delivery = delivery
 
+    @property
+    def has_configured_products(self) -> bool:
+        """Whether any purchase could resolve to terms at all.
+
+        Asked of the catalog this core will actually resolve against, not of
+        the config it was built from: readiness must report on the object
+        that decides, or it reports on a copy that can drift from it.
+        """
+        return bool(self._catalog.keys())
+
+    def signing_key_within_validity(self, *, at: str) -> bool:
+        """Whether this issuer's `kid` may sign at RFC3339 instant `at`.
+
+        One definition, two callers: `issue_for` refuses a purchase on it,
+        and the readiness route reports on it. Kept as a method rather than
+        duplicated at the HTTP layer so the two can never drift into
+        disagreeing about whether this bridge can still issue.
+        """
+        entry = manifests.find_key(self._issuer.manifest_snapshot, self._issuer.kid)
+        return entry is not None and verifier._within_validity(at, entry)
+
     def issue_for(self, purchase: NormalizedPurchase) -> IssueOutcome:
         """Issue (or return the already-issued) receipt for `purchase`.
 
@@ -102,8 +123,7 @@ class IssuingCore:
         # (3) A daemon can outlive its signing key. Refuse this purchase in the
         # recoverable path rather than producing a receipt the verifier rejects.
         issued_at = _now_rfc3339()
-        entry = manifests.find_key(self._issuer.manifest_snapshot, self._issuer.kid)
-        if entry is None or not verifier._within_validity(issued_at, entry):
+        if not self.signing_key_within_validity(at=issued_at):
             reason = f"signing key {self._issuer.kid!r} is outside its validity window"
             _log.error(
                 "purchase %s rejected: %s",
