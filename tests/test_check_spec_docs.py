@@ -2198,6 +2198,16 @@ def test_an_oversized_numeric_claim_is_reported_not_allowed_to_crash(
         "The 130-leaf conformance corpus is the gate.",
         "reproduce all 130 of them",
         "`v0.2` (all leaves, currently 156)",
+        # README.md's own sentence, which shipped stale while the sentence one
+        # line below it was defended: both halves of a self-contradiction have
+        # to be in the vocabulary, or the guard passes a file arguing with
+        # itself.
+        "the corpus now contains 130 leaves",
+        "the corpus contains 130 leaves",
+        "this corpus contains 130 leaves",
+        "the corpus currently contains 130 leaves",
+        "the corpus now contains all 130 leaves",
+        "the full corpus contains 130 leaves",
         "130 leaf vectors across 2 groups",
         "measured against the 51-leaf subset",
         # Wrapped across a line break: the shape one version of the guard was
@@ -2209,6 +2219,23 @@ def test_corpus_counts_rejects_a_stale_claim(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
 ) -> None:
     assert _corpus_case(tmp_path, monkeypatch, body) != []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # A count scoped to something SMALLER than the corpus is not a claim
+        # about the total, and reading it as one would report a true sentence
+        # as stale — the failure mode a shape earns by matching on the noun
+        # alone instead of on the phrase that owns it.
+        "the v0.1 subset corpus contains 130 leaves",
+        "group 32 corpus contains 130 leaves",
+    ],
+)
+def test_a_scoped_count_is_not_read_as_the_corpus_total(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    assert _corpus_case(tmp_path, monkeypatch, body) == []
 
 
 def test_corpus_counts_accepts_the_true_counts(

@@ -190,6 +190,20 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The converter's own output is now held to both cores.** `log ots-convert`
+  produces anchor material in Python, and every test that followed it to a
+  verdict ran that material through the Python verifier — one implementation
+  agreeing with itself. Cross-language parity is this project's central claim,
+  and the TypeScript verifier had never seen a byte the converter emitted. It
+  does now: conformance leaf `32-anchor-v2/d-converted-from-ots` carries a
+  proof and pinned header produced by `ots.convert_ots` from a real detached
+  `.ots` file, so the corpus — which every runner replays, the reference
+  implementations and any third party alike — settles the question instead of a
+  hand check settling it once. The corpus grows from 212 leaves to 213, and
+  `tests/test_ots_corpus_parity.py` re-derives the leaf's material from the
+  live converter so a shape change cannot leave the committed bytes asserting
+  the old form in silence.
+
 - **`attest log ots-convert`, the missing half of anchoring.** Anchor evidence
   has always been verifiable, but nothing in this package could produce it from
   a real OpenTimestamps attestation: the CLI declared the conversion out of
