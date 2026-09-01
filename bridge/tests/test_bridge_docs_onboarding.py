@@ -97,7 +97,7 @@ def _platform_rails(config_text: str) -> list[str]:
 _TABLE_MARKER = re.compile(r"^\s*#\s*@table-(start|end)\s+(\S+)\s*$")
 
 
-def _table_spans(lines: list[str]) -> dict[str, tuple[int, int]]:
+def _table_spans(config_text: str) -> dict[str, tuple[int, int]]:
     """Line-index spans (inclusive) bounded by `@table-start`/`@table-end`.
 
     Raises on any marker that is not exactly balanced: a start with no
@@ -105,7 +105,17 @@ def _table_spans(lines: list[str]) -> dict[str, tuple[int, int]]:
     another still-open span. Nesting is rejected rather than supported
     because nothing in this file needs it, and a marker parser that accepts
     shapes nobody uses is exactly the kind of code this helper replaced.
+
+    Also raises if a marker names something that is not a real top-level
+    table of `config_text`, per `tomllib`. This scanner still knows nothing
+    about TOML strings — a line inside a `\"\"\"..\"\"\"` value that reads
+    exactly `# @table-start ghost` matches `_TABLE_MARKER` exactly as a real
+    banner would — but asking whether the NAME it claims exists is a check
+    this scanner CAN make without ever parsing quotes, and it catches a
+    marker with no real table behind it before any line is cut.
     """
+    lines = config_text.splitlines(keepends=True)
+    real_tables = set(_top_level_tables(config_text))
     spans: dict[str, tuple[int, int]] = {}
     open_name: str | None = None
     open_index = -1
@@ -115,6 +125,10 @@ def _table_spans(lines: list[str]) -> dict[str, tuple[int, int]]:
             continue
         kind, name = match.group(1), match.group(2)
         if kind == "start":
+            if name not in real_tables:
+                raise ValueError(
+                    f"@table-start {name!r} does not name a top-level table in this document"
+                )
             if open_name is not None:
                 raise ValueError(
                     f"unbalanced table markers: @table-start {name!r} opened while "
@@ -142,7 +156,7 @@ def _table_spans(lines: list[str]) -> dict[str, tuple[int, int]]:
 
 def _marked_tables(config_text: str) -> set[str]:
     """Names of every table bounded by a balanced `@table-start`/`@table-end` pair."""
-    return set(_table_spans(config_text.splitlines(keepends=True)))
+    return set(_table_spans(config_text))
 
 
 def _drop_table(config_text: str, table: str) -> str:
@@ -155,10 +169,18 @@ def _drop_table(config_text: str, table: str) -> str:
     It is deliberately not a general TOML editor: it does not parse table
     headers, does not know what a bracket means, and does not look at
     anything but its own marker comments. A table with no markers around it
-    cannot be dropped at all, loudly rather than by silent corruption.
+    cannot be dropped at all, loudly rather than by silent corruption. Two
+    checks lean on `tomllib` as an oracle instead of teaching this scanner
+    anything about TOML grammar: `_table_spans` rejects a marker whose name
+    is not a real table before any cut happens, and the cut result below is
+    re-parsed before it is ever returned — catching a span that, unknown to
+    a scanner blind to string literals, ran through the middle of one.
+    Removing an entire table's own lines from a document that parsed before
+    always leaves a document that parses after, so this can never reject a
+    legitimate drop.
     """
     lines = config_text.splitlines(keepends=True)
-    spans = _table_spans(lines)
+    spans = _table_spans(config_text)
     if table not in spans:
         raise ValueError(f"no @table-start/@table-end markers found for [{table}]: nothing to drop")
     start, end = spans[table]
@@ -171,7 +193,16 @@ def _drop_table(config_text: str, table: str) -> str:
     while after_index < len(lines) and not lines[after_index].strip():
         after_index += 1
 
-    return "".join(before) + "\n" + "".join(lines[after_index:])
+    result = "".join(before) + "\n" + "".join(lines[after_index:])
+
+    try:
+        tomllib.loads(result)
+    except tomllib.TOMLDecodeError as error:
+        raise ValueError(
+            f"dropping [{table}] produced text tomllib cannot parse: {error}"
+        ) from error
+
+    return result
 
 
 def _same_toml_value(left: Any, right: Any) -> bool:
@@ -526,6 +557,43 @@ def _mutate_by_duplicating_first_line(text: str, marker: str) -> str:
     raise AssertionError(f"no line contains {marker!r} in the example file")
 
 
+def _mutate_by_embedding_a_marker_pair_inside_a_multiline_string(text: str, table_name: str) -> str:
+    """Splice a `\"\"\"`-string in front of `[issuer]` whose START marker sits
+    INSIDE the string and whose END marker sits AFTER the string closes.
+
+    `_TABLE_MARKER` matches a line by its own shape, never by asking what
+    surrounds it: a line that reads exactly `# @table-start <table_name>`
+    trips it whether that line is a real section banner or the first line
+    of a TOML string value. Putting the two markers on either side of the
+    string's closing `\"\"\"` produces the shape a marker scanner cannot see
+    coming — the span it records covers the close, so cutting it removes
+    the close along with whatever the markers claim to bound.
+    """
+    lines = text.splitlines(keepends=True)
+    anchor = next(index for index, line in enumerate(lines) if line.startswith("[issuer]"))
+    decoy = [
+        'decoy = """\n',
+        f"# @table-start {table_name}\n",
+        "irrelevant string content\n",
+        '"""\n',
+        f"# @table-end {table_name}\n",
+    ]
+    return "".join([*lines[:anchor], *decoy, *lines[anchor:]])
+
+
+def _mutate_by_renaming_a_marker_pair(text: str, table_name: str, new_name: str) -> str:
+    """The real example with one marker pair's name swapped for a fake one.
+
+    The actual `[<table_name>]` section and its markers' positions are
+    untouched — only the name inside the two marker comments changes, so
+    the document still balances and the only thing wrong with it is that
+    `new_name` names no top-level table `tomllib` can find.
+    """
+    return text.replace(f"@table-start {table_name}", f"@table-start {new_name}").replace(
+        f"@table-end {table_name}", f"@table-end {new_name}"
+    )
+
+
 class TestTableSpansAndDropTable:
     """`_drop_table` no longer deduces TOML structure from the text: it cuts
     between `@table-start <name>` / `@table-end <name>` marker comments, and
@@ -599,6 +667,50 @@ class TestTableSpansAndDropTable:
         for table in sorted(removable):
             after = _drop_table(before, table)
             _assert_dropped_exactly(before, after, {table})
+
+    def test_marker_naming_an_unknown_table_outside_any_string_raises(self) -> None:
+        """A marker whose name is not a real top-level table is rejected on
+        sight, with no bearing on strings at all: the plainest shape of the
+        name check the redesign adds.
+        """
+        mutated = _mutate_by_renaming_a_marker_pair(
+            _EXAMPLE_CONFIG.read_text(encoding="utf-8"), "shopify", "ghost"
+        )
+
+        with pytest.raises(ValueError, match="does not name a top-level table"):
+            _drop_table(mutated, "ghost")
+
+    def test_marker_pair_inside_a_multiline_string_naming_an_unknown_table_raises(
+        self,
+    ) -> None:
+        """The shape that defeated the redesign before this fix: a marker
+        comment sitting inside a `\"\"\"`-string, with its partner after the
+        string closes, so the span the scanner records covers the close.
+        `ghost` names no real table, so the name check catches it before any
+        line is ever cut — the corrupt span is never even reached.
+        """
+        mutated = _mutate_by_embedding_a_marker_pair_inside_a_multiline_string(
+            _EXAMPLE_CONFIG.read_text(encoding="utf-8"), "ghost"
+        )
+
+        with pytest.raises(ValueError, match="does not name a top-level table"):
+            _drop_table(mutated, "ghost")
+
+    def test_marker_pair_inside_a_multiline_string_naming_a_real_table_raises(
+        self,
+    ) -> None:
+        """Same shape, but naming `issuer` — a table that genuinely exists
+        and carries no markers of its own. The name check alone would let
+        this through, since `issuer` is a real top-level table; only
+        re-parsing `_drop_table`'s own output catches the string it would
+        otherwise silently leave unterminated.
+        """
+        mutated = _mutate_by_embedding_a_marker_pair_inside_a_multiline_string(
+            _EXAMPLE_CONFIG.read_text(encoding="utf-8"), "issuer"
+        )
+
+        with pytest.raises(ValueError, match="tomllib cannot parse"):
+            _drop_table(mutated, "issuer")
 
 
 class TestTopLevelTables:
