@@ -1119,6 +1119,10 @@ def test_log_anchor_help_names_ots_convert_without_overclaiming(
     help_text = " ".join(capsys.readouterr().out.split())
 
     assert "ots-convert" in help_text
+    assert "each convertible Bitcoin path" in help_text
+    assert "matching block header" in help_text
+    assert "Skipped paths" in help_text
+    assert "one converted Bitcoin-path file" in help_text
     # Residual truth, all three still required after the pointer lands:
     # the material comes from elsewhere, acquiring it is not this CLI's
     # job, and nothing here reaches the network.
@@ -3023,6 +3027,64 @@ def test_log_anchor_refuses_to_append_to_existing_bundle_declaring_explicit_note
 
     assert rc == 2
     assert "note-v1" in captured.err
+    assert not out_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("malformation", "fragment"),
+    [
+        ("anchors-not-object", "'anchors' member must be a JSON object"),
+        ("checkpoint-missing", "anchors.checkpoint must be a string"),
+        ("checkpoint-mismatch", "anchors.checkpoint does not match"),
+        ("proofs-missing", "anchors.proofs must be a JSON array"),
+        ("proofs-not-list", "anchors.proofs must be a JSON array"),
+    ],
+)
+def test_log_anchor_refuses_malformed_existing_anchor_transition(
+    tmp_path: Path,
+    capsys: CapSys,
+    malformation: str,
+    fragment: str,
+) -> None:
+    evidence = _minimal_anchor_evidence()
+    checkpoint_text = evidence["checkpoint"]
+    if malformation == "anchors-not-object":
+        evidence["anchors"] = []
+    elif malformation == "checkpoint-missing":
+        evidence["anchors"] = {"proofs": []}
+    elif malformation == "checkpoint-mismatch":
+        evidence["anchors"] = {"checkpoint": "different checkpoint", "proofs": []}
+    elif malformation == "proofs-missing":
+        evidence["anchors"] = {"checkpoint": checkpoint_text}
+    else:
+        evidence["anchors"] = {"checkpoint": checkpoint_text, "proofs": {}}
+
+    log_dir = _log_init(tmp_path, origin=LOG_ORIGIN)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    proof_path = tmp_path / "ots-proof.json"
+    proof_path.write_text(json.dumps(_v2_ots_proof(checkpoint_text)), encoding="utf-8")
+    out_path = tmp_path / "anchored.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "anchor",
+            "--dir",
+            str(log_dir),
+            "--evidence",
+            str(evidence_path),
+            "--ots-proof",
+            str(proof_path),
+            "--out",
+            str(out_path),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert fragment in captured.err
     assert not out_path.exists()
 
 

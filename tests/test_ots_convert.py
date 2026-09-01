@@ -1517,7 +1517,7 @@ def test_anchored_before_composes_over_two_converted_bitcoin_paths(
     (anchor.py, `AnchorVerdict`).
 
     Each half already had coverage on its own -- the converter emitting one
-    proof file per Bitcoin path
+    proof file per convertible Bitcoin path backed by a matching header
     (`test_log_ots_convert_keeps_same_height_paths_as_distinct_files`), and
     `log anchor` appending a second v2 proof onto a v2 bundle
     (`test_log_anchor_permits_appending_a_second_v2_proof_to_a_v2_bundle`)
@@ -1534,11 +1534,10 @@ def test_anchored_before_composes_over_two_converted_bitcoin_paths(
       -- that is the cost of the lost path, stated as a verifier verdict
       rather than as prose in a report.
     * both proofs, attached older-then-newer AND newer-then-older. Both
-      orders must compose to the OLDER time. Asserting both is what makes
-      this a test of the reduction and not of an accident: taking the
-      maximum, keeping whichever proof was attached last, and keeping
-      whichever was attached first each satisfy one of the two orders while
-      failing the other, so no single-order assertion can tell them apart.
+      orders must compose to the OLDER time. The pair of results distinguishes
+      all four candidate reductions: minimum yields older/older, maximum
+      newer/newer, first-wins older/newer, and last-wins newer/older. No
+      single-order assertion distinguishes all four.
     """
     from tests.test_cli import (
         _issue,
