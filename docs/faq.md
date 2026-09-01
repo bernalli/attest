@@ -149,14 +149,14 @@ them. The lever for an unwilling incumbent isn't a workaround — it's regulatio
 and market pressure: disclosure laws already on the books (California's AB 2426,
 Maryland's HB 208), and the conversation the European Commission opened on
 16 June 2026 when it answered the Stop Destroying Videogames citizens'
-initiative. Be precise about what that answer was: the Commission declined
-to impose any legal obligation to keep games playable, and committed instead
-to initiate, by the end of 2026, an exchange with the industry and consumer
-representatives aimed at drawing up a voluntary code of conduct on managing
-a game's end of life. What is due by the end of 2026 is the exchange, not
-the code. attest is the technical standard those pressures could point an
-incumbent toward adopting; it is not a way around an incumbent that
-declines.
+initiative. Be precise about what that answer was: the Commission declined,
+at this stage, to impose any legal obligation to keep games playable, and
+committed instead to initiate, by the end of 2026, an exchange with the
+industry and consumer representatives aimed at drawing up a voluntary code
+of conduct on managing a game's end of life. What is due by the end of 2026
+is the exchange, not the code. attest is the technical standard those
+pressures could point an incumbent toward adopting; it is not a way around
+an incumbent that declines.
 
 ## Why not blockchain / NFT?
 
