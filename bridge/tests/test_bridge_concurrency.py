@@ -552,3 +552,27 @@ def test_a_second_writer_fails_loudly_and_leaves_the_ledger_intact(
     after = Ledger(db)
     assert after.get_receipt("stripe", "cs_rival") is not None
     assert after.get_receipt("stripe", "cs_mine") is None
+
+
+def test_two_spellings_of_one_ledger_meet_on_the_same_lock(tmp_path: Path) -> None:
+    """A lock keyed on the path as typed is two locks, and two locks are none.
+
+    Nothing stops a second process from reaching the same Ledger by another
+    route — most plainly a symlink to the database file. Derived from the
+    spelling, each process would take a lock of its own and both would send.
+    """
+    real = tmp_path / "ledger.sqlite3"
+    _record_undelivered(Ledger(real), "cs_spelling")
+    alias = tmp_path / "alias.sqlite3"
+    alias.symlink_to(real)
+
+    delivery_mod.sweep_undelivered(
+        ledger=Ledger(alias),
+        delivery=_RecordingMailer(),  # type: ignore[arg-type]
+        public_base_url="https://receipts.example.com",
+    )
+
+    assert Path(str(real) + delivery_mod.SWEEP_LOCK_SUFFIX).exists()
+    assert not Path(str(alias) + delivery_mod.SWEEP_LOCK_SUFFIX).exists(), (
+        "the sweep locked a file of its own instead of the one every writer shares"
+    )

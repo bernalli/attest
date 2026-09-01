@@ -98,7 +98,10 @@ def _sweep_lock(ledger: Ledger) -> Iterator[None]:
     holds open lets two holders coexist on the recreated file, which is the
     failure this exists to prevent.
     """
-    lock_path = Path(str(ledger.db_path) + SWEEP_LOCK_SUFFIX)
+    # Resolved, so two processes that spell the same Ledger differently — a
+    # symlinked directory, a relative path — still meet on one lock file
+    # rather than each taking its own and sending the same email.
+    lock_path = Path(f"{ledger.db_path.expanduser().resolve(strict=False)}{SWEEP_LOCK_SUFFIX}")
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
