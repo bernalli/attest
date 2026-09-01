@@ -430,6 +430,18 @@ def _ledger_open_error(ledger_path: Path, exc: OSError) -> str:
             "volume would otherwise start an empty Ledger on every boot, losing the "
             "record of which purchases were already issued."
         )
+    if isinstance(exc, PermissionError):
+        # The container runs the bridge unprivileged, so a volume or host
+        # directory left owned by root is the ordinary shape of this error.
+        # An operator fixes it by chowning to a NUMBER — the account exists
+        # inside the image, not on their host — so the message carries the
+        # number this process is actually running as.
+        return (
+            f"ledger directory {str(ledger_path.parent)!r} is not writable by this "
+            f"process, which runs as uid {os.getuid()}: give that uid the directory "
+            f"(`chown -R {os.getuid()}:{os.getgid()} <the directory you mounted there>` "
+            "on the host, for a bind mount) — see bridge/docs/deploy.md."
+        )
     reason = exc.strerror or str(exc)
     return f"cannot open the ledger at {str(ledger_path)!r}: {reason}"
 

@@ -41,6 +41,36 @@ the usual choices). Never expose the bridge directly on plain HTTP: a
 webhook body and a downloaded receipt both carry a buyer-binding salt, and
 that salt is a secret in transit, not just at rest.
 
+## The bridge runs unprivileged (uid `10001`)
+
+The image creates an account `attest`, uid and gid **`10001`**, and the
+server runs as it — never as root. That matters here more than it does for a
+static site: this process holds your signing key and parses bodies anyone on
+the internet can send it.
+
+The container's `ENTRYPOINT` still starts as root, for two steps and no
+others: decoding the `*_B64` material on targets that need it (Render), and
+taking ownership of the Ledger volume, which arrives root-owned the first
+time a platform mounts it. Then it drops to `10001` with `setpriv` and
+`exec`s the server. If it cannot drop — `setpriv` missing from a rebuilt
+image — it refuses to start rather than keep going as root.
+
+What this costs you: **nothing on Fly.io or Render**, where the volume is
+handed over automatically. On Docker Compose the Ledger is a named volume and
+is likewise handled for you, but `etc/` and `secrets/` are **bind mounts from
+your host**, and your host has no `attest` account — so give them to the
+number:
+
+```sh
+sudo chown -R 10001:10001 bridge/deploy/etc bridge/deploy/secrets
+```
+
+Do that before the first `up` (and again after you replace a key file). Skip
+it and the bridge starts, cannot read `issuer.seed`, and says so. The same
+goes for a Ledger directory you mount yourself: if it is not writable, the
+bridge refuses to start and names the uid to chown to, rather than starting
+without a memory of which purchases it has already issued.
+
 ## Health checks: `/healthz` and `/readyz`
 
 Two endpoints answering two different questions.
