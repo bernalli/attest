@@ -23,16 +23,22 @@ function isObject(v: unknown): v is Record<string, unknown> {
 // bounded string, not as "whatever the payload happens to hold", and if the
 // schema ever loosens these two fields the title stays bounded anyway.
 //
-// The receipt-id shape is DUPLICATED, not imported: it is not exported anywhere, and
-// counting the copies rather than remembering them gives EIGHT across two languages —
-// four in Python (bundle, transfer, cli, revocation) and four in TypeScript
-// (verifiers/ts schema and transfer, site bundle, and this one). The site's copy says
-// as much: "Mirrors the reference importer's `_RECEIPT_ID_RE`". Consolidating it spans
-// both implementations and is nobody's task while several fronts write on these
-// surfaces, so the standing rule is the one that costs nothing: whoever edits one of
-// the eight checks the other seven, because they are the validator that decides what
-// counts as a receipt id — and on the surfaces a buyer reads, that check is the
-// primary defence rather than a convenience.
+// The receipt-id shape is DUPLICATED, not imported: it is exported nowhere, and the
+// site's own copy says as much — "Mirrors the reference importer's `_RECEIPT_ID_RE`".
+// Copies live in both implementations, Python and TypeScript, and this is one of them.
+//
+// Deliberately no count here. Two people counted these on the same day and disagreed,
+// and neither was wrong: they were reading trees at different commits, and a number
+// written into a comment is stale the moment a copy is added or removed. Count them
+// instead, from an up-to-date checkout:
+//
+//   grep -rn '0-7\]\[0-9A-HJKMNP-TV-Z\]{25}' --include=*.ts --include=*.py .
+//
+// Consolidating spans both implementations and is nobody's task while several fronts
+// write on these surfaces. The standing rule costs nothing: whoever edits one copy
+// checks the others, because together they are the validator that decides what counts
+// as a receipt id — and on a surface a buyer reads, that check is the primary defence
+// rather than a convenience.
 const RECEIPT_ID_SHAPE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
 const ISSUER_ID_SHAPE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
 
