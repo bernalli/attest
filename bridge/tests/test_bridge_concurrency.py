@@ -17,6 +17,7 @@ import fcntl
 import json
 import os
 import queue
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -479,3 +480,75 @@ def test_two_threads_of_one_process_still_deliver_the_receipt_once(tmp_path: Pat
 
     assert blocking.sent == [_RECEIPT_ID]
     assert second.sent == []
+
+
+# -- what the journal mode buys, and what it does not --------------------------
+
+
+def test_an_open_reader_does_not_block_a_write(tmp_path: Path) -> None:
+    """The reason WAL is the right journal for this service.
+
+    The bridge reads on the request thread while the itch poller and the
+    delivery sweep write. Under the rollback journal a reader that is still
+    inside its transaction holds a shared lock and the write dies `database
+    is locked` — a paid webhook answered with a 500 because someone was
+    downloading a receipt.
+    """
+    db = tmp_path / "ledger.sqlite3"
+    Ledger(db)
+    reader = sqlite3.connect(db)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM receipts").fetchone()
+
+        Ledger(db).record_receipt(
+            "stripe",
+            "cs_while_reading",
+            "receipt-1",
+            {"payload": {"work": {"title": "Stardrift Chronicles"}}},
+            "buyer@example.com",
+            "handle-while-reading",
+            NOW,
+        )
+    finally:
+        reader.close()
+
+    stored = Ledger(db).get_receipt("stripe", "cs_while_reading")
+    assert stored is not None
+
+
+def test_a_second_writer_fails_loudly_and_leaves_the_ledger_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WAL admits one writer at a time — and that is a clean error, not damage.
+
+    The failure mode `deploy.md` used to describe generally was a corrupted
+    file. On a filesystem with working locks it is this: the second writer is
+    told it cannot have the database, and everything the first one wrote is
+    there afterwards. Worth pinning, because it is the claim the deploy guide
+    now makes to a merchant choosing where to run.
+    """
+    db = tmp_path / "ledger.sqlite3"
+    Ledger(db)
+    monkeypatch.setattr(ledger_mod, "_BUSY_TIMEOUT_MS", 100)
+    rival = sqlite3.connect(db)
+    try:
+        rival.execute("BEGIN IMMEDIATE")
+        rival.execute(
+            "INSERT INTO receipts (platform, purchase_id, receipt_id, envelope_json, "
+            "download_token, buyer_email, issued_at) VALUES (?,?,?,?,?,?,?)",
+            ("stripe", "cs_rival", "receipt-rival", "{}", "handle-rival", "r@example.com", NOW),
+        )
+
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            Ledger(db).record_receipt(
+                "stripe", "cs_mine", "receipt-mine", {}, "m@example.com", "handle-mine", NOW
+            )
+
+        rival.commit()
+    finally:
+        rival.close()
+
+    after = Ledger(db)
+    assert after.get_receipt("stripe", "cs_rival") is not None
+    assert after.get_receipt("stripe", "cs_mine") is None

@@ -499,3 +499,84 @@ def test_ledger_exposes_the_file_every_writer_shares(tmp_path: Path) -> None:
     db_path = tmp_path / "ledger.sqlite3"
 
     assert Ledger(db_path).db_path == db_path
+
+
+# -- journal mode and busy timeout: declared, not inherited --------------------
+
+
+def _record_one(ledger: Ledger, purchase_id: str = "cs_wal") -> None:
+    ledger.record_receipt(
+        "stripe", purchase_id, "receipt-1", _envelope(), "buyer@example.com", "handle-1", NOW
+    )
+
+
+def test_the_ledger_journal_is_wal_when_another_connection_asks(tmp_path: Path) -> None:
+    """The journal mode is a deployment property, so it is set here, not hoped for.
+
+    Left implicit it was the rollback journal, under which any open reader
+    blocks the writer — and the bridge reads on the request thread while the
+    poller and the sweep write.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+    _record_one(Ledger(db_path))
+
+    other = sqlite3.connect(db_path)
+    try:
+        assert other.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        other.close()
+
+
+def test_the_wal_sidecars_are_as_secret_as_the_database_itself(tmp_path: Path) -> None:
+    """In WAL the Ledger is THREE files, and committed rows live in two of them.
+
+    `-wal` holds rows not yet checkpointed into the database — envelopes,
+    with their `delivery.salt`. The 0600 contract covers the secret, not the
+    filename it happens to sit in.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+    _record_one(Ledger(db_path))
+
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(str(db_path) + suffix)
+        assert sidecar.exists(), f"expected {suffix} beside a WAL Ledger"
+        assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+
+
+def test_the_busy_timeout_is_declared_rather_than_left_to_the_driver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same number as the implicit default — but ours, and visible in the file.
+
+    A default that lives in the driver is a deployment property nobody can
+    read, review or change; asserting the value the module declares is what
+    makes it one.
+    """
+    monkeypatch.setattr(ledger_mod, "_BUSY_TIMEOUT_MS", 1234)
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+
+    # The connection is private on purpose; there is no other way to ask a
+    # sqlite handle what timeout it is carrying.
+    assert ledger._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 1234
+
+
+def test_a_database_that_cannot_use_wal_refuses_to_open(tmp_path: Path) -> None:
+    """Fail closed: never degrade silently to the journal this task removed.
+
+    An in-memory database is a real database that genuinely cannot go WAL, so
+    this exercises the refusal rather than a stub of it. The message has to
+    carry the path and the mode actually obtained: the operator's next move
+    is about the filesystem the Ledger sits on.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+    conn = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(sqlite3.OperationalError) as caught:
+            ledger_mod._enable_wal(conn, db_path)
+    finally:
+        conn.close()
+
+    message = str(caught.value)
+    assert str(db_path) in message
+    assert "memory" in message

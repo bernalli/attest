@@ -30,6 +30,7 @@ import re
 import secrets
 import signal
 import socketserver
+import sqlite3
 import stat
 import sys
 import tempfile
@@ -232,27 +233,42 @@ def _dry_run_http_get(
     return http_get
 
 
+def _ledger_files(ledger_path: Path) -> tuple[Path, ...]:
+    """Every file that IS the Ledger, resolved.
+
+    The Ledger is journalled in WAL, so on disk it is three files: the
+    database, `-wal`, and `-shm`. The `-wal` holds rows sqlite has committed
+    but not yet checkpointed into the database — receipts a buyer has already
+    been promised — so a guard that protects only `ledger_path` protects the
+    Ledger's name rather than the Ledger.
+    """
+    resolved = ledger_path.expanduser().resolve(strict=False)
+    return (resolved, Path(f"{resolved}-wal"), Path(f"{resolved}-shm"))
+
+
 def _guard_dry_run_out_path(out_path: Path, *, ledger_path: Path) -> Path:
     """Refuse any `--out` that could clobber the merchant's production Ledger.
 
     Containment of the Ledger on the constructor side is not enough: the
-    receipt writer opens `--out` for truncation, so a path that IS the ledger
-    — or a symlink resolving to it — would destroy it.
+    receipt writer opens `--out` for truncation, so a path that IS any of the
+    Ledger's files — or a symlink resolving to one — would destroy it.
     """
     resolved_out = out_path.expanduser().resolve(strict=False)
-    resolved_ledger = ledger_path.expanduser().resolve(strict=False)
-    if resolved_out == resolved_ledger:
+    ledger_files = _ledger_files(ledger_path)
+    if resolved_out in ledger_files:
         raise ConfigError(
-            f"--out {str(out_path)!r} is the configured ledger_path — refusing to overwrite it"
+            f"--out {str(out_path)!r} is part of the configured Ledger — refusing to overwrite it"
         )
     if out_path.is_symlink():
         raise ConfigError(
             f"--out {str(out_path)!r} is a symlink — refusing to write the receipt through it"
         )
-    if out_path.exists() and ledger_path.exists() and out_path.samefile(ledger_path):
-        raise ConfigError(
-            f"--out {str(out_path)!r} is the same file as ledger_path — refusing to overwrite it"
-        )
+    for member in ledger_files:
+        if out_path.exists() and member.exists() and out_path.samefile(member):
+            raise ConfigError(
+                f"--out {str(out_path)!r} is the same file as {str(member)!r}, part of the "
+                "configured Ledger — refusing to overwrite it"
+            )
     return resolved_out
 
 
@@ -412,7 +428,7 @@ def _write_dry_run_pair_no_follow(
         raise
 
 
-def _ledger_open_error(ledger_path: Path, exc: OSError) -> str:
+def _ledger_open_error(ledger_path: Path, exc: OSError | sqlite3.OperationalError) -> str:
     """Why the Ledger could not be opened, in terms of what to do about it.
 
     The missing-directory case is deliberately NOT repaired by creating the
@@ -422,6 +438,11 @@ def _ledger_open_error(ledger_path: Path, exc: OSError) -> str:
     issued a second time. Refusing to start is the safe answer; saying which
     directory is missing is what makes it actionable.
     """
+    if isinstance(exc, sqlite3.OperationalError):
+        # `Ledger.__init__` refuses a database it cannot put in WAL, and that
+        # refusal already names the path and what the filesystem has to
+        # provide. Repeating it here would only make it longer.
+        return str(exc)
     if isinstance(exc, FileNotFoundError):
         return (
             f"ledger directory {str(ledger_path.parent)!r} does not exist: create it, or "
@@ -457,11 +478,12 @@ def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
     catalog = ProductCatalog(config.products)
     try:
         ledger = Ledger(config.ledger_path)
-    except OSError as exc:
-        # Honour this function's fail-fast contract: an unreadable OS error
-        # from the very first Ledger open is the shape a container started
-        # without its volume takes, and a raw traceback tells the operator
-        # nothing about what to mount.
+    except (OSError, sqlite3.OperationalError) as exc:
+        # Honour this function's fail-fast contract. Two shapes reach here: an
+        # OS error from the very first Ledger open, which is what a container
+        # started without its volume looks like, and sqlite refusing a
+        # database it cannot journal in WAL. A raw traceback for either tells
+        # the operator nothing about what to mount or where to put the file.
         raise ConfigError(_ledger_open_error(config.ledger_path, exc)) from exc
     delivery = Delivery(config.delivery, legal_texts=config.legal_texts)
     core = IssuingCore(

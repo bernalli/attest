@@ -9,6 +9,16 @@ byte is ever written to it (`Path.touch(mode=0o600)`), then re-chmods it
 after connecting as a belt-and-braces guard for a file that predates this
 contract (documented in T10).
 
+The journal is WAL, declared at connection time and verified (`_enable_wal`),
+because this process reads on the request thread while the itch poller and
+the delivery sweep write: under the rollback journal an open reader blocks
+every writer. That makes the Ledger THREE files on disk — `.db`, `-wal`,
+`-shm` — and the first two hold committed rows, so all three inherit the
+secrecy contract above and a copy taken while the bridge is running must
+include them (or be taken with the process stopped). The busy timeout is
+declared alongside it, at the same value the driver would have used
+implicitly, so it can be read and changed here rather than inherited.
+
 Timestamps are always CALLER-SUPPLIED RFC3339 strings — this module never
 reads a clock — which keeps tests deterministic and hands retry/backoff
 policy entirely to the caller. RFC3339's lexicographic-equals-chronological
@@ -39,6 +49,31 @@ from typing import Any
 from attest_bridge.model import ClaimQueueFull, purchase_id_for_log
 
 MAX_PENDING_CLAIMS = 1000
+
+# Declared rather than inherited. It is the same number CPython's driver uses
+# by default, which is the point: a deployment property nobody can read in the
+# source is one nobody can review or change.
+_BUSY_TIMEOUT_MS = 5000
+
+
+def _enable_wal(conn: sqlite3.Connection, db_path: Path) -> None:
+    """Put this database in WAL, or refuse to use it at all.
+
+    sqlite answers `PRAGMA journal_mode=WAL` with the mode it ENDED UP in
+    rather than with an error, so a filesystem that cannot support WAL leaves
+    the connection quietly on the rollback journal — under which an open
+    reader blocks every writer, which is precisely what this call exists to
+    remove. Read the answer back and fail closed on anything else.
+    """
+    row = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+    mode = None if row is None else str(row[0]).lower()
+    if mode != "wal":
+        raise sqlite3.OperationalError(
+            f"the ledger at {str(db_path)!r} could not be put in WAL journal mode "
+            f"(sqlite reports {mode!r}). It needs a filesystem with working file "
+            "locking: a local disk or a mounted block device, never a network share. "
+            "See bridge/docs/deploy.md."
+        )
 
 
 class ReceiptAlreadyRecorded(Exception):
@@ -180,6 +215,11 @@ class Ledger:
         os.chmod(db_path, 0o600)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        with self._lock:
+            # Before the schema, and before any caller can reach this object:
+            # both are properties of the connection, not of a statement.
+            _enable_wal(self._conn, db_path)
+            self._conn.execute(f"PRAGMA busy_timeout = {int(_BUSY_TIMEOUT_MS)}")
         with self._lock, self._conn:
             self._conn.executescript(_SCHEMA)
 
