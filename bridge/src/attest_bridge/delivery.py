@@ -62,9 +62,10 @@ SMTP_TIMEOUT_SECONDS = 15
 MAX_DELIVERY_ATTEMPTS = 10
 DELIVERY_SWEEP_SECONDS = 300
 
-# The sweep lock lives beside the Ledger, never on the Ledger file itself:
-# sqlite takes POSIX locks of its own on that file, and a separate channel
-# cannot interfere with them or with WAL's sidecars.
+# Keep the side lock for compatibility with an older process during a rolling
+# restart, but key the primary lock on the database inode. Path-derived locks
+# cannot unify hard links or file bind mounts and can be bypassed by unlinking
+# and recreating the lock file.
 SWEEP_LOCK_SUFFIX = ".sweep.lock"
 
 SMTPFactory = Callable[[str, int, float], smtplib.SMTP]
@@ -77,7 +78,8 @@ def _sweep_lock(ledger: Ledger) -> Iterator[None]:
     `retry-failed` and `itch-import` are second processes on the same file
     while `serve` runs — the workflow the merchant guides describe — so an
     in-process lock left them free to send the same receipt at the same time.
-    A `flock` on a file beside the Ledger covers all of them.
+    A `flock` on the Ledger's own inode — plus the compatibility lock beside
+    it, for a process still running the older build — covers all of them.
 
     Blocking and untimed, which is the honest shape of what it replaces: the
     second sweep WAITS, then re-reads each row and skips what the first one
@@ -102,12 +104,21 @@ def _sweep_lock(ledger: Ledger) -> Iterator[None]:
     # symlinked directory, a relative path — still meet on one lock file
     # rather than each taking its own and sending the same email.
     lock_path = Path(f"{ledger.db_path.expanduser().resolve(strict=False)}{SWEEP_LOCK_SUFFIX}")
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    db_path = ledger.db_path.expanduser().resolve(strict=True)
+    db_fd = os.open(db_path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
+        # Inode-keyed: symlink, relative path, hardlink, case aliases and
+        # file bind mounts all converge here. It also survives deletion of the
+        # compatibility lockfile while a sweep is in progress.
+        fcntl.flock(db_fd, fcntl.LOCK_EX)
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(lock_fd)
     finally:
-        os.close(fd)  # closing the descriptor releases the lock
+        os.close(db_fd)  # closing the descriptor releases the lock
 
 
 @dataclass(frozen=True, slots=True)

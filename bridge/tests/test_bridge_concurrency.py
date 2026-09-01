@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -576,3 +577,59 @@ def test_two_spellings_of_one_ledger_meet_on_the_same_lock(tmp_path: Path) -> No
     assert not Path(str(alias) + delivery_mod.SWEEP_LOCK_SUFFIX).exists(), (
         "the sweep locked a file of its own instead of the one every writer shares"
     )
+
+
+def _assert_second_lock_waits(first: Any, second: Any) -> None:
+    entered = threading.Event()
+
+    def take_second() -> None:
+        with delivery_mod._sweep_lock(second):
+            entered.set()
+
+    with delivery_mod._sweep_lock(first):
+        thread = threading.Thread(target=take_second)
+        thread.start()
+        assert not entered.wait(_BLOCKED_WINDOW_SECONDS)
+    thread.join(_GENEROUS)
+    assert not thread.is_alive()
+    assert entered.is_set()
+
+
+def test_hardlink_spellings_lock_the_same_ledger_inode(tmp_path: Path) -> None:
+    """A second name for one inode is one Ledger, and must take one lock.
+
+    A path-derived lock cannot see that: each spelling gets a lock file of its
+    own and both sweeps send. The Ledger's own inode is the identity every
+    spelling shares.
+    """
+    real = tmp_path / "ledger.sqlite3"
+    ledger = Ledger(real)
+    alias = tmp_path / "hardlink.sqlite3"
+    os.link(real, alias)
+
+    _assert_second_lock_waits(ledger, SimpleNamespace(db_path=alias))
+
+
+def test_deleting_the_side_lock_cannot_split_a_live_lock(tmp_path: Path) -> None:
+    """Unlinking the lock file mid-sweep must not let a second sweeper in.
+
+    Anything with write access to the Ledger's directory can remove the lock
+    file — a stale-file cleanup, an operator, a container restart script. On a
+    lock keyed only on that file the next sweeper recreates the name and walks
+    straight in, next to a sweep that is still sending.
+    """
+    db = tmp_path / "ledger.sqlite3"
+    first, second = Ledger(db), Ledger(db)
+    entered = threading.Event()
+
+    def take_second() -> None:
+        with delivery_mod._sweep_lock(second):
+            entered.set()
+
+    with delivery_mod._sweep_lock(first):
+        Path(str(db) + delivery_mod.SWEEP_LOCK_SUFFIX).unlink()
+        thread = threading.Thread(target=take_second)
+        thread.start()
+        assert not entered.wait(_BLOCKED_WINDOW_SECONDS)
+    thread.join(_GENEROUS)
+    assert entered.is_set()

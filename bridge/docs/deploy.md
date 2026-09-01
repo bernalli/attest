@@ -94,9 +94,13 @@ file, and they are safe. Three separate things make them safe:
   `(platform, purchase_id)` primary key refuses the second, and the second
   responds by re-reading the row and returning the stored receipt as a
   duplicate. One purchase keeps one receipt and one buyer-binding salt.
-- **Delivery.** The retry sweep takes an exclusive file lock beside the
-  Ledger, so a `retry-failed` run waits for a sweep already in flight instead
-  of emailing the same receipt a second time.
+- **Delivery.** The retry sweep takes an exclusive file lock on the Ledger's
+  own inode (plus a compatibility lock beside it, so a process still running
+  an older build serializes too), so a `retry-failed` run waits for a sweep
+  already in flight instead of emailing the same receipt a second time.
+  Keying the lock on the inode rather than on the path is what makes a
+  symlink, a relative path or a second hard link resolve to one lock instead
+  of two.
 - **The journal.** The Ledger is opened in WAL with a declared busy timeout,
   so a reader never blocks a writer and a second writer gets a clean "database
   is locked" — never a damaged file.
@@ -111,6 +115,15 @@ Two limits are stated here rather than papered over:
   recently committed rows live in the `-wal` until it is checkpointed. Back up
   all three, or back up with the bridge stopped. A copy of the `.db` alone,
   taken from a running bridge, can be missing your most recent receipts.
+
+**Reach the Ledger the same way from every process.** Give each process the
+same absolute `ledger_path`, and when you mount it into a container mount the
+**whole directory**, never the database file on its own. Opening one WAL
+database through a hard link, or through a bind mount of just the file, is
+not supported: SQLite derives `-wal` and `-shm` from the name it was opened
+with, so a second name means a second pair of sidecars in a second place, and
+the two processes stop sharing the journal that keeps them consistent. The
+delivery lock survives those spellings; the journal does not.
 
 About the file lock, precisely: it was measured on a local filesystem, which
 is what all three targets provide — Fly volumes and Render disks are block
