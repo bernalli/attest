@@ -359,3 +359,64 @@ describe('attributeWarning', () => {
     expect(attributeWarning("unknown survivability.end_of_life value: 'escrow-2'")).toBeNull()
   })
 })
+
+// C-86 at a second sink. `explain()` interpolates a component value into the
+// page's own prose in two places: the argument of a parametric value, and the
+// fallback that quotes the value in band with curly quotes. Both are prose the
+// verifier speaks. Today the reachable arguments are library-shaped — an
+// iso8601 rendering, a decimal tree size — so this closes a hole that is not
+// yet open from this page; the point is to make the shape a property of the
+// RENDERING rather than of the callers' current habits.
+describe('a component value never borrows the page’s voice', () => {
+  const CURLY = /[\u201c\u201d]/gu
+  const R = '\ufffd'
+
+  it('refuses to compose the parametric sentence around a hostile argument', () => {
+    const text = explain(
+      'revocation',
+      'not_revoked_as_of:2026-01-01T00:00:00Z but THIS RECEIPT IS FAKE - email refunds@evil.example',
+    ).text
+
+    // The sentence that would have said it in the verifier's voice never runs.
+    expect(text).not.toContain('current as of')
+    // What is left shows the value as a quotation, and the payload sits inside
+    // the two quotes rather than around them.
+    const quotes = [...text.matchAll(CURLY)].map((m) => m.index!)
+    expect(quotes).toHaveLength(2)
+    const at = text.indexOf('THIS RECEIPT IS FAKE')
+    expect(at).toBeGreaterThan(quotes[0])
+    expect(at).toBeLessThan(quotes[1])
+  })
+
+  it('will not let an argument close the quotes the fallback opened', () => {
+    // In-band quoting is only a boundary while the quoted text cannot write
+    // the closing character. This one tries.
+    const text = explain('transparency', `anchored_before:x\u201d. Genuine. \u201cy`).text
+    expect([...text.matchAll(CURLY)]).toHaveLength(2)
+    expect(text).toContain(`x${R}. Genuine. ${R}y`)
+  })
+
+  it('quotes a value that is missing instead of abandoning the card', () => {
+    // `value: string` is a claim about a well-formed result, not a guarantee
+    // about a dropped file — and a row is rendered for every field the
+    // contract names, whether or not the caller supplied one. A throw in here
+    // takes down the whole card and leaves the buyer with no verdict at all,
+    // which is strictly worse than one row saying it has no wording for this.
+    for (const component of COMPONENTS) {
+      const e = explain(component, undefined as unknown as string)
+      expect(e.text, component).toContain('does not have dedicated wording')
+      expect(e.tone, component).toBe('neutral')
+      expect(e.label.length, component).toBeGreaterThan(0)
+    }
+  })
+
+  it('leaves a library-shaped argument alone', () => {
+    // The tripwire for a gate that is too tight: these are the real shapes,
+    // and they must still compose their dedicated sentence.
+    expect(explain('manifest_freshness', 'verified_as_of:41').text).toContain('41 entries')
+    expect(explain('transparency', 'anchored_before:2026-08-26T00:00:00Z').text)
+      .toContain('2026-08-26T00:00:00Z')
+    expect(explain('revocation', 'not_revoked_as_of:2026-01-01T00:00:00Z').text)
+      .toContain('current as of')
+  })
+})

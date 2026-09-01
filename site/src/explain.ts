@@ -1,4 +1,5 @@
 import type { VerificationResult } from 'attest-verifier'
+import { neutralized } from './untrusted-text.js'
 
 export type Tone = 'good' | 'warn' | 'bad' | 'neutral'
 export interface Explanation {
@@ -363,6 +364,21 @@ const PARAMETRIC: {
   },
 ]
 
+// C-86 at a second sink: everything below this line interpolates a component
+// value into the page's own prose. A parametric argument is spoken in the
+// verifier's voice, so it is composed only when it has the shape the library
+// produces — an iso8601 rendering, a decimal count. Anything else falls to the
+// fallback, which quotes rather than speaks. Reachable arguments are already
+// library-shaped today; this makes that a property of the RENDERING instead of
+// a habit of the current callers.
+const PARAMETRIC_ARG_RE = /^[0-9A-Za-z:+.\-]{1,64}$/
+
+// The fallback quotes in band, with curly quotes, and an in-band quote is only
+// a boundary while the quoted text cannot write the closing character. Both
+// curly quotes are in the hostile class of untrusted-text.ts for exactly this
+// reason, so an operand cannot close what the sentence opened.
+const MAX_QUOTED_VALUE_CHARS = 120
+
 const COMPROMISE_RESCUE_APPLIED = 'compromise_rescue_applied'
 const COMPROMISE_CUTOFF_UNANCHORED = 'compromise_cutoff_unanchored'
 const COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT = 'compromise_rescue_requires_anchored_receipt'
@@ -457,25 +473,38 @@ export function explain(
   value: string,
   result?: VerificationResult,
 ): Explanation {
+  // `value: string` is a claim about a well-formed result, not a guarantee
+  // about a dropped file: the result reaches this page through JSON, and a row
+  // is rendered for every field the contract names whether or not one arrived.
+  // A TypeError raised in here abandons the whole card and leaves the buyer
+  // with no verdict at all, which is strictly worse than one row saying there
+  // is no wording for what turned up.
+  //
+  // Coercing is safe here and deliberately is not in diagnostic.ts, where a
+  // coerced string could match a template and borrow the page's voice: the
+  // only branch a non-string can reach from here is the fallback, which quotes
+  // unconditionally and neutralizes what it quotes.
+  const v = typeof value === 'string' ? value : String(value)
   if (component === 'signature') {
-    const signature = explainSignature(value, result)
+    const signature = explainSignature(v, result)
     if (signature) return signature
   }
   if (component === 'trust') {
-    const trust = explainTrust(value, result)
+    const trust = explainTrust(v, result)
     if (trust) return trust
   }
-  const hit = CATALOG[component][value]
+  const hit = CATALOG[component][v]
   if (hit) return hit
   for (const p of PARAMETRIC) {
-    if (p.component === component && value.startsWith(p.prefix)) {
-      return p.explain(value.slice(p.prefix.length))
+    if (p.component === component && v.startsWith(p.prefix)) {
+      const arg = v.slice(p.prefix.length)
+      if (PARAMETRIC_ARG_RE.test(arg)) return p.explain(arg)
     }
   }
   return {
     label: FALLBACK[component],
     tone: 'neutral',
-    text: `This verifier does not have dedicated wording for “${value}” — see the raw result below and spec §11.1 for the normative meaning.`,
+    text: `This verifier does not have dedicated wording for “${neutralized(v, MAX_QUOTED_VALUE_CHARS)}” — see the raw result below and spec §11.1 for the normative meaning.`,
   }
 }
 
