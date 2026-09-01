@@ -12,12 +12,19 @@ machine you'll never see, and it's gone.
 
 None of this was ever a secret: it's in the terms of service nobody reads. But
 with physical media all but gone, the fine print is starting to bite. Sony
-spelled it out this August: your PlayStation purchases are a "license, not
-owned". Users across Europe and the UK had already been told what that means in
-practice: on September 1st, 551 movies they had bought — *Terminator 2*,
-*Paddington*, *Apocalypse Now* — disappear from their libraries, because a
-licensing deal expired. No refunds. Who gives me back the money I paid for those
-movies? Who decides whether I keep watching what I legitimately bought? Today the
+mailed account holders a copy of its terms this August; the UK software terms
+say it outright, in clause 4: "The Software is licenced to you, not sold."
+Users across Europe and the UK had already been told what that means in
+practice. PlayStation's own video-content terms say it plainly: "From
+September 1, 2026, due to our content licensing agreements, you will no longer
+be able to access your previously purchased content from Studio Canal, and it
+will be removed from your video library." Films people had paid for —
+*Terminator 2*, *Total Recall*, *Paddington* — gone, because a licensing deal
+expired; the notice lists 551 titles by name. No refund was offered,
+and it was the second time with the same supplier: purchased StudioCanal
+content was removed once before, in August 2022, and that removal was
+never reversed. Who gives me back the money I paid for those movies? Who
+decides whether I keep watching what I legitimately bought? Today the
 answer is: they do. And Sony is no exception. Weeks earlier, Xbox had pulled
 three games not just from the store but from the libraries of everyone who'd
 bought them. Microsoft shut its ebook store in 2019: refunds went out, and every
