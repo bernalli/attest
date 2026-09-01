@@ -1389,7 +1389,16 @@ def _resolve_transfer_backing(
     materialized = materialized_claims
 
     receipt_id = payload.get("receipt_id")
-    manifest_ok = manifests.verify_key_manifest(issuer_manifest)
+    # The receipt gate's predicate, deliberately, not `verify_key_manifest`:
+    # a manifest downgraded by deleting its PQ leg loses its TRUST LEVEL,
+    # never its power to revoke. The two must not disagree about whether
+    # the same manifest is authentic — a manifest good enough to certify a
+    # receipt and not good enough to carry the same issuer's revocation
+    # turns a revocation into silence, and reaching that gap costs an
+    # attacker one deletion and no key: `manifest_signature` sits outside
+    # the signed bytes. Severe where evidence can SAVE, permissive where it
+    # can only KILL.
+    manifest_ok = manifests.manifest_signature_is_authentic(issuer_manifest)
 
     def _append_once(warning: str) -> None:
         if warning not in warnings:
@@ -1604,10 +1613,19 @@ def _classify_revocation(
 
     # Authenticated records (any receipt_id) drive the freshness anchor; only
     # signature-verified records may set T (§5 hardening). The manifest's own
-    # self-verify is hoisted out of the loop — one `verify_key_manifest` per
-    # classification, not per record, so a hostile many-record feed cannot
-    # multiply manifest-verification work (review improvement #17).
-    manifest_ok = manifests.verify_key_manifest(issuer_manifest)
+    # self-verify is hoisted out of the loop — one check per classification,
+    # not per record, so a hostile many-record feed cannot multiply
+    # manifest-verification work (review improvement #17).
+    # The receipt gate's predicate, deliberately, not `verify_key_manifest`:
+    # a manifest downgraded by deleting its PQ leg loses its TRUST LEVEL,
+    # never its power to revoke. The two must not disagree about whether
+    # the same manifest is authentic — a manifest good enough to certify a
+    # receipt and not good enough to carry the same issuer's revocation
+    # turns a revocation into silence, and reaching that gap costs an
+    # attacker one deletion and no key: `manifest_signature` sits outside
+    # the signed bytes. Severe where evidence can SAVE, permissive where it
+    # can only KILL.
+    manifest_ok = manifests.manifest_signature_is_authentic(issuer_manifest)
     authenticated_ids: set[int] = set()
     authenticated: list[dict[str, Any]] = []
     if manifest_ok:
@@ -2784,6 +2802,24 @@ def verify(
             ):
                 warnings.append(_WARN_MIXED_KEYSET_ACTIVE_ED_ONLY_SIBLING)
 
+            # V-J.7 — the trusted manifest must authenticate ITSELF before any
+            # key is read out of it. The side-document paths have always asked
+            # (`transfer`/`revocation` hoist the same call); the receipt path
+            # never did, so a manifest edited after it was trusted certified
+            # receipts signed by the edit: a swapped `pub` forges a receipt
+            # without the issuer's private key, and a `compromised` status
+            # flipped back to `active` resurrects signatures §7.3 declares
+            # dead. Hoisted here, at the ONE place the manifest is resolved,
+            # so both receipt paths (v0.2 hybrid and v0.1) inherit it.
+            # Deliberately last in this preflight: the keys ceiling above
+            # bounds the work this check does, and running it after the
+            # existing refusals leaves their verdicts and messages unchanged.
+            if not manifests.manifest_signature_is_authentic(issuer_manifest):
+                return _invalid(
+                    f"issuer manifest for {issuer_id!r} is not self-consistent: "
+                    "its own signature does not verify"
+                )
+
         chain = trust_store.chains.get(issuer_id)
         if chain and (not _chain_continuous(chain) or chain[-1] != issuer_manifest):
             # A chain that does not actually end at the manifest being used proves
@@ -2924,8 +2960,13 @@ def verify(
         if not isinstance(issuer_id, str):
             return _invalid("malformed payload: missing issuer.id")
 
-        manifest = trust_store.manifests.get(issuer_id)
-        if manifest is None:
+        # The SAME object the manifest gate authenticated above. Re-resolving
+        # would authenticate one read and verify against another. The
+        # isinstance also closes a crash: a trust store mapping an issuer to
+        # a non-dict used to raise AttributeError out of the library, while
+        # the TypeScript verifier failed closed on the same input.
+        manifest = issuer_manifest
+        if not isinstance(manifest, dict):
             return _invalid(f"no trusted manifest for issuer {issuer_id!r}")
 
         # G1's manifest-keys ceiling and G6's mixed-keyset detection are both
@@ -3028,8 +3069,13 @@ def verify(
         if not isinstance(issuer_id, str):
             return _invalid("malformed payload: missing issuer.id")
 
-        manifest = trust_store.manifests.get(issuer_id)
-        if manifest is None:
+        # The SAME object the manifest gate authenticated above. Re-resolving
+        # would authenticate one read and verify against another. The
+        # isinstance also closes a crash: a trust store mapping an issuer to
+        # a non-dict used to raise AttributeError out of the library, while
+        # the TypeScript verifier failed closed on the same input.
+        manifest = issuer_manifest
+        if not isinstance(manifest, dict):
             return _invalid(f"no trusted manifest for issuer {issuer_id!r}")
 
         # G1's manifest-keys ceiling is handled above, hoisted immediately

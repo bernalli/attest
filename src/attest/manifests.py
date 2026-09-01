@@ -36,6 +36,7 @@ _COMPROMISED = "compromised"
 # any signature work over them.
 MAX_MANIFEST_KEYS = 256
 MAX_ARTIFACT_ENTRIES = 4096
+_ED25519_PUB_LEN = 32
 
 
 def _parse_date(value: str) -> datetime:
@@ -134,7 +135,18 @@ def find_key(manifest: dict[str, Any], kid: str) -> dict[str, Any] | None:
     the way a lifecycle STATUS is decided: status resolution reads every entry
     for the kid (`_entries_for_kid` here, `verify._resolve_key_status`), so an
     ambiguous manifest can only ever be refused, never resolved leniently.
+
+    A `kid` that is not a string resolves NOTHING, here at the root. The
+    signature above says `str`, but nothing enforced it at runtime, and the
+    kid inside a signature block is attacker-chosen: it is not covered by the
+    signature (`_signable` drops `manifest_signature`). An entry keyed by the
+    integer 5 — or by null, true, an array, an object — was resolvable and
+    invisible to `duplicate_kids`, which compares strings only, so the
+    ambiguity guard could not see it either. Every caller now inherits the
+    refusal, including the ones that never look at a signature block.
     """
+    if not isinstance(kid, str):
+        return None
     entries = manifest.get("keys", [])
     if not isinstance(entries, list):
         return None
@@ -361,7 +373,17 @@ def verify_key_manifest(manifest: dict[str, Any]) -> bool:
     sig_block = manifest.get("manifest_signature")
     if not isinstance(sig_block, dict):
         return False
-    entry = find_key(manifest, sig_block.get("kid", ""))
+    # THE defence against a non-string kid lives in `find_key`, at the root,
+    # where every caller inherits it — including the ones that never read a
+    # signature block. This check is not that defence: it states the
+    # precondition this function depends on, so a reader sees the contract
+    # without chasing it. If these two ever disagree, `find_key` is the one
+    # that is load-bearing; deleting it would reopen the hole in callers no
+    # list remembers, which is how the same property escaped V-L.3.
+    kid = dict.get(sig_block, "kid")
+    if not isinstance(kid, str):
+        return False
+    entry = find_key(manifest, kid)
     if entry is None:
         return False
     try:
@@ -369,6 +391,87 @@ def verify_key_manifest(manifest: dict[str, Any]) -> bool:
     except (TypeError, canon.CanonError):
         return False
     return verify_signature_block(signable, sig_block, entry)
+
+
+def manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
+    """Did the issuer actually sign THIS manifest, byte for byte?
+
+    Narrower than `verify_key_manifest` on purpose. That function answers
+    "is this manifest conformant", which also fails a hybrid entry whose
+    signature block carries only the Ed25519 leg (`verify_signature_block`'s
+    AND rule). The carve-out is exactly one case and no wider: a hybrid
+    signer whose `manifest_signature` OMITS `sig_ml_dsa_65`, which
+    `26-hybrid/h-manifest-downgraded-continuity` pins as `ok: true` — so a
+    gate meant to catch EDITED manifests must not turn that one into a
+    rejection.
+
+    Be careful with the usual justification for tolerating it, because it is
+    only half true: the rotation chain does drop `trust` to
+    `"unverified_rotation"` for a downgraded manifest, but that answer comes
+    from the CHAIN, and a verifier holding none gets no answer at all — a
+    receipt then reads `trust: "verified"` with no warning that the
+    manifest's PQ protection was never checked. The tolerance rests on the
+    pinned vector, not on a mitigation that fires everywhere.
+
+    A PQ leg that is PRESENT is not that case. `manifest_signature` sits
+    OUTSIDE `_signable`, so none of its members carry a signature of their
+    own and anyone can graft one on with no key at all. v0.2 §2.3 is
+    explicit in both directions, including that "an Ed25519-only signer's
+    manifest signature that carries a stray `sig_ml_dsa_65` MUST likewise be
+    treated as invalid". Accepting a present leg that fails would hand an
+    attacker a manifest that certifies receipts while the conformance
+    predicate calls it non-conformant: a revoked receipt reading `ok: true`.
+    Revocation and transfer now ask THIS predicate, so that gap is closed
+    for them; `verify_key_manifest` remains the gate on grants and artifact
+    manifests, which still diverge from the receipt path by design.
+
+    What it answers instead: the signer's kid resolves in the manifest's own
+    `keys[]`, and the Ed25519 leg of `manifest_signature` verifies over the
+    manifest's signable bytes. That is exactly the property an attacker
+    cannot fake without the issuer's private key, and it is what tells a
+    swapped `pub`, an edited `status` or a mangled signature apart from a
+    manifest the issuer really did sign.
+
+    Keeps the ceiling and duplicate-kid refusals: both make the manifest
+    ambiguous about WHICH key signed it, so authenticity is not decidable.
+    Never raises — untrusted input fails closed.
+    """
+    entries = manifest.get("keys")
+    if isinstance(entries, list) and len(entries) > MAX_MANIFEST_KEYS:
+        return False
+    if duplicate_kids(entries):
+        return False
+    sig_block = manifest.get("manifest_signature")
+    if not isinstance(sig_block, dict):
+        return False
+    kid = dict.get(sig_block, "kid")
+    if not isinstance(kid, str):
+        return False
+    entry = find_key(manifest, kid)
+    if entry is None:
+        return False
+    try:
+        signable = _signable(manifest)
+    except (TypeError, canon.CanonError):
+        return False
+    try:
+        if not keys.verify_strict(
+            signable, keys.b64u_decode(sig_block["sig"]), keys.b64u_decode(entry["pub"])
+        ):
+            return False
+        # Absent: the one downgrade the corpus pins. Present: signed material
+        # that must verify, or the manifest has been edited.
+        if "sig_ml_dsa_65" not in sig_block:
+            return True
+        if "pub_ml_dsa_65" not in entry:
+            return False
+        return pq.verify_strict(
+            signable,
+            keys.b64u_decode(sig_block["sig_ml_dsa_65"]),
+            keys.b64u_decode(entry["pub_ml_dsa_65"]),
+        )
+    except (KeyError, ValueError, TypeError):
+        return False
 
 
 def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool:
@@ -413,6 +516,46 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
     except (TypeError, canon.CanonError):
         return False
     return verify_signature_block(signable, candidate["manifest_signature"], signer_entry)
+
+
+def _can_sign_for_continuity(entry: Any) -> bool:
+    """Can this entry actually do what the zero-active guard needs it to do?
+
+    The guard below promises two capabilities — authenticating a revocation
+    record (§12.1 needs an active signer whose signature verifies) and
+    signing a continuous successor manifest (§7.3) — and both need a key
+    that exists and a window that is open, not merely the word "active".
+    An entry saying `active` while carrying no usable public key, or a
+    `valid_to` that falls before its own `valid_from`, satisfies neither,
+    and treating it as one lets the issuer reach the dead end THROUGH the
+    guard rather than around it.
+
+    Deliberately says nothing about `valid_from` versus today's date: an
+    heir whose window opens in the future is a scheduling choice, not a
+    dead end, and the verifier reads the window against a receipt's own
+    `issued_at`, never against a wall clock.
+    """
+    if not isinstance(entry, dict) or entry.get("status") != _ACTIVE:
+        return False
+    pub = entry.get("pub")
+    if not isinstance(pub, str):
+        return False
+    try:
+        if len(keys.b64u_decode(pub)) != _ED25519_PUB_LEN:
+            return False
+    except (ValueError, TypeError):
+        return False
+    valid_from, valid_to = entry.get("valid_from"), entry.get("valid_to")
+    if not isinstance(valid_from, str):
+        return False
+    if valid_to is None:
+        return True
+    if not isinstance(valid_to, str):
+        return False
+    try:
+        return _parse_date(valid_from) <= _parse_date(valid_to)
+    except (TypeError, ValueError):
+        return False
 
 
 def rotate_key_manifest(
@@ -540,7 +683,7 @@ def rotate_key_manifest(
     # deliberately NOT a check in `build_key_manifest`, so already-published or
     # deliberately degenerate single-key trust stores (conformance vectors 12
     # and 13) keep verifying byte-for-byte.
-    if not any(isinstance(e, dict) and e.get("status") == _ACTIVE for e in updated):
+    if not any(_can_sign_for_continuity(e) for e in updated):
         raise ValueError(
             "rotation would leave zero active keys — a manifest with no active key "
             "is a dead end: no new revocation record can authenticate (§12.1 needs "
@@ -707,7 +850,10 @@ def verify_artifact_manifest(manifest: dict[str, Any], key_manifest: dict[str, A
         return False
     if manifest.get("issuer") != key_manifest.get("issuer"):
         return False
-    entry = find_key(key_manifest, sig_block.get("kid", ""))
+    kid = dict.get(sig_block, "kid")
+    if not isinstance(kid, str):
+        return False
+    entry = find_key(key_manifest, kid)
     if entry is None or entry.get("status") != _ACTIVE:
         return False
     try:

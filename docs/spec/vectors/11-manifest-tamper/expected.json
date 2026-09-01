@@ -1,9 +1,9 @@
 {
   "binding": "not_checked",
   "errors_contains": [
-    "compromised"
+    "is not self-consistent"
   ],
-  "note": "manifests.json carries the TAMPERED manifest (what verify() is fed); manifest_pristine.json is the untampered, self-consistent original.",
+  "note": "manifests.json carries the TAMPERED manifest (what verify() is fed); manifest_pristine.json is the untampered, self-consistent original. The refusal now comes from the manifest gate, which runs before any key is read; the verdict is the same one this leaf always pinned.",
   "ok": false,
   "revocation": "unknown",
   "schema": "not_checked",

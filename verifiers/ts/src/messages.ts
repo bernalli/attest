@@ -110,6 +110,9 @@ export const WARN = {
 export const unsupportedAttestVersion = (v: unknown) => `unsupported attest_version: ${pyRepr(v)}`
 export const signaturesCount = (n: number) => `signatures must contain exactly one entry, got ${n}`
 export const unsupportedSigAlg = (alg: unknown) => `unsupported signature algorithm: ${pyRepr(alg)}`
+export const manifestNotSelfConsistent = (issuer: string) =>
+  `issuer manifest for ${pyRepr(issuer)} is not self-consistent: its own signature does not verify`
+
 export const noTrustedManifest = (issuer: string) => `no trusted manifest for issuer ${pyRepr(issuer)}`
 export const noKeyInManifest = (kid: string) => `no key ${pyRepr(kid)} in issuer manifest`
 export const keyCompromised = (kid: string) => `key ${kid} is compromised`

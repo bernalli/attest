@@ -1132,3 +1132,84 @@ def test_verify_key_manifest_still_accepts_a_degenerate_single_key_manifest() ->
     for status in ("retired", "compromised"):
         entries = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, status)]
         assert manifests.verify_key_manifest(_hand_signed_manifest(entries, KP1, KID1)) is True
+
+
+# --- the zero-active guard checks capability, not the word "active" ------------
+#
+# v0.1 §7.3's rotation guard exists to stop an issuer publishing a manifest it
+# can neither revoke nor rotate under. It used to read `status == "active"`
+# and nothing else, so an entry that says "active" while carrying no usable
+# key material — or a validity window that is closed before it opens —
+# satisfied it, and the issuer reached the dead end THROUGH the guard rather
+# than around it. Reachable from the CLI, exit 0.
+
+_ROT_ISSUER = "rot.example.com"
+_ROT_KP = keys.from_seed(bytes([91]) * 32)
+_ROT_KP2 = keys.from_seed(bytes([92]) * 32)
+_ROT_OLD = f"{_ROT_ISSUER}/keys/old#ed25519-1"
+_ROT_HEIR = f"{_ROT_ISSUER}/keys/heir#ed25519-2"
+
+
+def _rotate_retiring_the_only_signer(heir: dict[str, Any]) -> dict[str, Any]:
+    base = manifests.build_key_manifest(
+        _ROT_ISSUER,
+        1,
+        "2026-01-01T00:00:00Z",
+        [manifests.key_entry(_ROT_OLD, _ROT_KP.pub, "2026-01-01T00:00:00Z"), heir],
+        _ROT_KP,
+        _ROT_OLD,
+    )
+    return manifests.rotate_key_manifest(
+        base, _ROT_KP, _ROT_OLD, "2026-06-01T00:00:00Z", retire_kids=[_ROT_OLD]
+    )
+
+
+def test_rotation_leaving_a_usable_active_heir_is_allowed() -> None:
+    """Positive control: a real successor must still let the rotation through."""
+    heir = manifests.key_entry(_ROT_HEIR, _ROT_KP2.pub, "2026-01-01T00:00:00Z")
+
+    rotated = _rotate_retiring_the_only_signer(heir)
+
+    assert manifests.find_key(rotated, _ROT_HEIR)["status"] == "active"
+
+
+@pytest.mark.parametrize(
+    "heir,reason",
+    [
+        pytest.param(
+            manifests.key_entry(
+                _ROT_HEIR, _ROT_KP2.pub, "2026-06-01T00:00:00Z", "2026-01-01T00:00:00Z", "active"
+            ),
+            "window closes before it opens",
+            id="inverted-validity-window",
+        ),
+        pytest.param(
+            {**manifests.key_entry(_ROT_HEIR, _ROT_KP2.pub, "2026-01-01T00:00:00Z"), "pub": "@@@"},
+            "public key does not decode",
+            id="pub-not-b64u",
+        ),
+        pytest.param(
+            {
+                key: value
+                for key, value in manifests.key_entry(
+                    _ROT_HEIR, _ROT_KP2.pub, "2026-01-01T00:00:00Z"
+                ).items()
+                if key != "pub"
+            },
+            "no key material at all",
+            id="pub-absent",
+        ),
+    ],
+)
+def test_an_active_entry_that_cannot_sign_does_not_satisfy_the_guard(
+    heir: dict[str, Any], reason: str
+) -> None:
+    """Saying "active" is not the same as being able to sign.
+
+    Each heir here would leave the issuer exactly where the guard exists to
+    prevent: unable to authenticate a revocation record (§12.1 needs an
+    active signer whose key verifies) and unable to sign a continuous
+    successor (§7.3).
+    """
+    with pytest.raises(ValueError, match="zero active keys"):
+        _rotate_retiring_the_only_signer(heir)

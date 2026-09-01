@@ -353,7 +353,10 @@ def _verify_signed_document(
     (never the verifier's clock), and the signature must verify over
     `JCS(document)` with `signature` removed, under the §13 AND-rule."""
     sig_block = cast(dict[str, Any], dict.get(document, "signature"))
-    entry = manifests.find_key(key_manifest, dict.get(sig_block, "kid", ""))
+    kid = dict.get(sig_block, "kid")
+    if not isinstance(kid, str):
+        return False
+    entry = manifests.find_key(key_manifest, kid)
     if entry is None or dict.get(entry, "status") != _ACTIVE:
         return False
     signed_at = transfer._parse_date(cast(str, dict.get(document, timestamp_member)))
