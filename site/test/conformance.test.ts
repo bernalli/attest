@@ -171,6 +171,11 @@ describe('the §19 copy each group-41 leaf produces through the site adapter', (
     // 41u is 41m with an OLDER trusted pin: same signature story, but the
     // verifier holds no evidence of a retraction, so the trust row stays hedged.
     'u-stale-pin-not-a-retraction': /no anchored proof/,
+    // 41w is 41m's fixture with the view padded one past the 64-claim ceiling.
+    // The key never resolves to `compromised` — the ceiling refuses before the
+    // rescue branches are reached — so this lands on the generic invalid-
+    // signature story, with the ceiling diagnostic in the errors it points to.
+    'w-oversized-view-does-not-certify': /does not carry a valid signature/,
   }
 
   const g41 = leaves.filter((d) => V.vectorId(d).startsWith('41-compromise-cutoff/'))
