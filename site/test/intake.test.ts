@@ -33,7 +33,9 @@ describe('intake', () => {
     const r = intake('library.attest', zip)
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
     expect(r.jobs).toHaveLength(1)
-    expect(r.jobs[0].label).toBe('R1')
+    // Labelled by the signed payload, not by the member called `R1`: the
+    // central directory is attacker-controlled metadata no signature covers.
+    expect(r.jobs[0].label).toBe('01JZ5PDHT0000G40R40M30E209')
     expect(runVerify(r.jobs[0].envelopeBytes, r.jobs[0].trustStore).result.signature).toBe('valid')
   })
 
@@ -59,9 +61,12 @@ describe('intake', () => {
     })
     const r = intake('library.attest', zip)
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
+    // Labels are signed ids now, so this map is keyed by what the payloads
+    // say rather than by what their members are called — which is the same
+    // property this test was already making about the evidence pairing.
     const byLabel = Object.fromEntries(r.jobs.map((j) => [j.label, j]))
-    expect(byLabel['order-4711'].transparency).not.toBeNull()
-    expect(byLabel[`${proven}-copy`].transparency).toBeNull()
+    expect(byLabel[proven].transparency).not.toBeNull()
+    expect(byLabel[other].transparency).toBeNull()
   })
 
   // `proofs` is a plain object and the id comes out of untrusted bytes.
@@ -177,7 +182,8 @@ describe('intake: the salted-envelope notice', () => {
     const r = intake('library.attest', zip)
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
     expect(r.notices).toBeDefined()
-    expect(r.notices!.join(' ')).toContain('R1')
+    // The notice names the receipt by its signed id, never by the member name.
+    expect(r.notices!.join(' ')).toContain('01JZ5PDHT0000G40R40M30E209')
     expect(r.notices!.join(' ')).toMatch(/never/i)
   })
 
