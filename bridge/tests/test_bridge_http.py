@@ -10,15 +10,18 @@ import io
 import json
 import logging
 import re
+import sqlite3
 import threading
 import zipfile
+from dataclasses import replace
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 import pytest
 from attest_bridge import http as http_mod
-from attest_bridge.config import BridgeConfig, IssuerConfig, StripeConfig
+from attest_bridge.catalog import ProductCatalog
+from attest_bridge.config import BridgeConfig, DeliveryConfig, IssuerConfig, StripeConfig
 from attest_bridge.core import IssuingCore
 from attest_bridge.delivery import Delivery
 from attest_bridge.http import BridgeDeps, make_app
@@ -1164,6 +1167,138 @@ def test_no_route_serves_salt_bytes_under_a_shareable_name(
 
     assert private_responses == 2
     assert shareable_responses == 4
+
+
+# -- readiness (/readyz) --------------------------------------------------
+#
+# `/healthz` answers "is this process alive". These pin the different
+# question `/readyz` answers: "could this bridge turn a purchase into a
+# receipt right now" — which is false, with a 200 on /healthz, whenever the
+# Ledger has become unreadable or the signing key has aged out of its
+# validity window.
+
+
+def test_readyz_returns_200_when_the_bridge_could_issue(deps: BridgeDeps) -> None:
+    app = make_app(deps)
+    status, _, body = call_app(app, "GET", "/readyz")
+    assert status.startswith("200")
+    assert json.loads(body) == {"ready": True}
+
+
+def test_readyz_returns_503_when_the_ledger_cannot_be_queried(
+    deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _broken_ping() -> None:
+        raise sqlite3.OperationalError("database disk image is malformed")
+
+    monkeypatch.setattr(deps.ledger, "ping", _broken_ping)
+    app = make_app(deps)
+
+    status, _, body = call_app(app, "GET", "/readyz")
+
+    assert status.startswith("503")
+    assert json.loads(body) == {"ready": False}
+
+
+def test_readyz_returns_503_when_the_signing_key_is_outside_its_validity_window(
+    deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same condition core.issue_for refuses a purchase on: a daemon can
+    # outlive its signing key, and every purchase from that moment on is
+    # rejected while /healthz keeps answering 200.
+    monkeypatch.setattr("attest_bridge.core.verifier._within_validity", lambda *_: False)
+    app = make_app(deps)
+
+    status, _, body = call_app(app, "GET", "/readyz")
+
+    assert status.startswith("503")
+    assert json.loads(body) == {"ready": False}
+
+
+def test_readyz_returns_503_when_no_product_is_configured(
+    deps: BridgeDeps, issuer_identity: IssuerIdentity, ledger: Ledger
+) -> None:
+    # An empty catalog means every purchase resolves to UnmappedProduct: the
+    # bridge is running and cannot issue anything, which is the exact state
+    # readiness exists to report.
+    empty_core = IssuingCore(
+        catalog=ProductCatalog({}),
+        issuer=issuer_identity,
+        ledger=ledger,
+        public_base_url="https://receipts.example.com",
+        delivery=Delivery(None),
+    )
+    deps = replace(deps, core=empty_core)
+    app = make_app(deps)
+
+    status, _, body = call_app(app, "GET", "/readyz")
+
+    assert status.startswith("503")
+    assert json.loads(body) == {"ready": False}
+
+
+def test_readyz_never_reveals_which_dependency_failed(
+    deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The reason belongs to the operator's log, not to a public response.
+
+    This route answers unauthenticated callers on the same host as the
+    webhook endpoints, so it says only ready/not-ready. The operator needs
+    the reason, and gets it where only they can read it.
+    """
+
+    def _broken_ping() -> None:
+        raise sqlite3.OperationalError("database disk image is malformed")
+
+    monkeypatch.setattr(deps.ledger, "ping", _broken_ping)
+    app = make_app(deps)
+
+    with caplog.at_level(logging.WARNING):
+        _, _, body = call_app(app, "GET", "/readyz")
+
+    assert b"ledger" not in body.lower()
+    assert b"malformed" not in body.lower()
+    assert "ledger" in caplog.text
+
+
+def test_readyz_touches_no_network_dependency(
+    deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Readiness is local by design: no SMTP, no itch, no Stripe.
+
+    A platform health check runs every few seconds; opening an SMTP session
+    on each one is how a merchant gets rate-limited by their own relay. And
+    delivery is not on the issuing path — a receipt is durably recorded and
+    downloadable before any email is attempted — so a dead relay must not
+    make this bridge report itself unable to work.
+    """
+
+    def _exploding_factory(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("/readyz must not open an SMTP connection")
+
+    delivery = Delivery(
+        DeliveryConfig(
+            smtp_host="smtp.invalid",
+            smtp_port=587,
+            smtp_username="receipts@example.com",
+            smtp_password="unused",  # noqa: S106 - test fixture, never sent anywhere
+            from_address="receipts@example.com",
+            info_url=None,
+        ),
+        smtp_factory=_exploding_factory,
+    )
+    ready_deps = replace(deps, delivery=delivery)
+    app = make_app(ready_deps)
+
+    status, _, _ = call_app(app, "GET", "/readyz")
+
+    assert status.startswith("200")
+
+
+def test_readyz_rejects_methods_other_than_get(deps: BridgeDeps) -> None:
+    app = make_app(deps)
+    status, _, _ = call_app(app, "POST", "/readyz")
+    assert status.startswith("404")
 
 
 def test_download_landing_links_the_explainer(deps: BridgeDeps, issued: StoredReceipt) -> None:
