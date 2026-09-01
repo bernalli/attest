@@ -113,6 +113,16 @@ def _table_spans(config_text: str) -> dict[str, tuple[int, int]]:
     banner would — but asking whether the NAME it claims exists is a check
     this scanner CAN make without ever parsing quotes, and it catches a
     marker with no real table behind it before any line is cut.
+
+    Also raises if a table name is opened by more than one balanced pair,
+    even when the pairs do not nest (the first closes before the second
+    opens). Two such pairs are not an error the scanner would otherwise
+    notice — each is individually balanced — but the dict this function
+    returns can only hold one span per name, so without this check whichever
+    pair is scanned LAST silently wins and the other is discarded with no
+    error: a decoy pair placed after the real one makes `drop_table` cut the
+    decoy's (harmless) span while leaving the real table entirely in place,
+    and `drop_table` reports success.
     """
     lines = config_text.splitlines(keepends=True)
     real_tables = set(_top_level_tables(config_text))
@@ -133,6 +143,12 @@ def _table_spans(config_text: str) -> dict[str, tuple[int, int]]:
                 raise ValueError(
                     f"unbalanced table markers: @table-start {name!r} opened while "
                     f"@table-start {open_name!r} is still open"
+                )
+            if name in spans:
+                raise ValueError(
+                    f"@table-start {name!r} reopens a table that already has a "
+                    "balanced @table-start/@table-end pair earlier in this "
+                    "document: a table name may be marked at most once"
                 )
             open_name, open_index = name, index
         else:
@@ -169,15 +185,20 @@ def _drop_table(config_text: str, table: str) -> str:
     It is deliberately not a general TOML editor: it does not parse table
     headers, does not know what a bracket means, and does not look at
     anything but its own marker comments. A table with no markers around it
-    cannot be dropped at all, loudly rather than by silent corruption. Two
+    cannot be dropped at all, loudly rather than by silent corruption. Three
     checks lean on `tomllib` as an oracle instead of teaching this scanner
     anything about TOML grammar: `_table_spans` rejects a marker whose name
-    is not a real table before any cut happens, and the cut result below is
-    re-parsed before it is ever returned — catching a span that, unknown to
-    a scanner blind to string literals, ran through the middle of one.
+    is not a real table, and a table name marked by more than one balanced
+    pair, before any cut happens; the cut result below is re-parsed before
+    it is ever returned, catching a span that, unknown to a scanner blind to
+    string literals, ran through the middle of a string; and finally the
+    reparsed result is checked to no longer contain `table` at all, because
+    a span can point at the WRONG lines — entirely inside a multi-line
+    string value, never crossing its quotes — and still produce text that
+    parses fine while leaving the requested table completely untouched.
     Removing an entire table's own lines from a document that parsed before
-    always leaves a document that parses after, so this can never reject a
-    legitimate drop.
+    always leaves a document that parses after and no longer contains that
+    table, so none of these three checks can ever reject a legitimate drop.
     """
     lines = config_text.splitlines(keepends=True)
     spans = _table_spans(config_text)
@@ -196,11 +217,17 @@ def _drop_table(config_text: str, table: str) -> str:
     result = "".join(before) + "\n" + "".join(lines[after_index:])
 
     try:
-        tomllib.loads(result)
+        parsed_after = tomllib.loads(result)
     except tomllib.TOMLDecodeError as error:
         raise ValueError(
             f"dropping [{table}] produced text tomllib cannot parse: {error}"
         ) from error
+
+    if table in parsed_after:
+        raise ValueError(
+            f"dropping [{table}] left it present in the reparsed output: the "
+            "marker span did not cover that table's own lines"
+        )
 
     return result
 
@@ -220,7 +247,7 @@ def _same_toml_value(left: Any, right: Any) -> bool:
         )
     if isinstance(left, float):
         return struct.pack(">d", left) == struct.pack(">d", right)
-    return left == right
+    return bool(left == right)
 
 
 def _assert_dropped_exactly(before: str, after: str, dropped: set[str]) -> None:
@@ -581,6 +608,51 @@ def _mutate_by_embedding_a_marker_pair_inside_a_multiline_string(text: str, tabl
     return "".join([*lines[:anchor], *decoy, *lines[anchor:]])
 
 
+def _mutate_by_embedding_a_marker_pair_fully_inside_a_multiline_string(
+    text: str, table_name: str
+) -> str:
+    """Splice a `\"\"\"`-string in front of `[issuer]` whose START and END
+    markers BOTH sit inside the string, never touching its opening or
+    closing quote line.
+
+    Unlike `_mutate_by_embedding_a_marker_pair_inside_a_multiline_string`,
+    cutting this span leaves the string's own delimiters intact, so the
+    result is still syntactically valid TOML. Re-parsing alone cannot tell
+    that the cut lines were the wrong ones — only checking that the
+    requested table actually disappeared can.
+    """
+    lines = text.splitlines(keepends=True)
+    anchor = next(index for index, line in enumerate(lines) if line.startswith("[issuer]"))
+    decoy = [
+        'decoy = """\n',
+        f"# @table-start {table_name}\n",
+        "irrelevant string content\n",
+        f"# @table-end {table_name}\n",
+        '"""\n',
+    ]
+    return "".join([*lines[:anchor], *decoy, *lines[anchor:]])
+
+
+def _mutate_by_duplicating_a_marker_pair_with_a_decoy_elsewhere(text: str, table_name: str) -> str:
+    """The real example with a second, decoy `@table-start`/`@table-end`
+    pair for `table_name` spliced in right after the real one closes.
+
+    The decoy is fully outside any string and outside any other span, and
+    it closes before anything else opens, so nothing about it is "nested" —
+    it is simply a second balanced pair sharing a name with the first.
+    """
+    lines = text.splitlines(keepends=True)
+    end_marker = f"# @table-end {table_name}"
+    anchor = next(index for index, line in enumerate(lines) if line.strip() == end_marker) + 1
+    decoy = [
+        "\n",
+        f"# @table-start {table_name}\n",
+        "# decoy: not a real section, just a same-named marker pair\n",
+        f"# @table-end {table_name}\n",
+    ]
+    return "".join([*lines[:anchor], *decoy, *lines[anchor:]])
+
+
 def _mutate_by_renaming_a_marker_pair(text: str, table_name: str, new_name: str) -> str:
     """The real example with one marker pair's name swapped for a fake one.
 
@@ -711,6 +783,42 @@ class TestTableSpansAndDropTable:
 
         with pytest.raises(ValueError, match="tomllib cannot parse"):
             _drop_table(mutated, "issuer")
+
+    def test_marker_pair_fully_inside_a_multiline_string_naming_a_real_table_is_caught(
+        self,
+    ) -> None:
+        """The shape that slips past BOTH earlier defences at once: a marker
+        pair that sits entirely inside a multi-line string and never crosses
+        its closing quotes cuts only interior string content, so the result
+        is still syntactically valid — the name check passed before the cut
+        (`issuer` is real) and the re-parse passes after it (the string is
+        still properly closed). Only checking that `issuer` itself is gone
+        from the reparsed document catches that the span pointed at the
+        wrong lines the whole time.
+        """
+        mutated = _mutate_by_embedding_a_marker_pair_fully_inside_a_multiline_string(
+            _EXAMPLE_CONFIG.read_text(encoding="utf-8"), "issuer"
+        )
+
+        with pytest.raises(ValueError, match="left it present in the reparsed output"):
+            _drop_table(mutated, "issuer")
+
+    def test_duplicate_marker_pair_for_the_same_table_is_rejected(self) -> None:
+        """Two balanced `@table-start`/`@table-end shopify` pairs in the same
+        document — a decoy spliced in well after the real `[shopify]`
+        section closes, so neither pair nests inside the other. `_table_spans`
+        keys its result by name, so without this check whichever pair the
+        single-pass scan sees LAST silently overwrites the other with no
+        error: here that is the decoy, so `drop_table` would cut the decoy's
+        harmless span, report success, and leave the real `[shopify]` table
+        completely untouched.
+        """
+        mutated = _mutate_by_duplicating_a_marker_pair_with_a_decoy_elsewhere(
+            _EXAMPLE_CONFIG.read_text(encoding="utf-8"), "shopify"
+        )
+
+        with pytest.raises(ValueError, match="marked at most once"):
+            _drop_table(mutated, "shopify")
 
 
 class TestTopLevelTables:
