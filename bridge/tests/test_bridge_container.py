@@ -151,6 +151,38 @@ def test_an_already_unprivileged_container_execs_the_server_directly(tmp_path: P
     )
 
 
+def test_malformed_base64_aborts_without_a_file_or_temp_residue(tmp_path: Path) -> None:
+    """Undecodable material must leave nothing behind, not even a temp name.
+
+    `materialize` decodes into a `mktemp` sibling and renames, so a failed
+    decode must abort with no file at the real path and no readable partial
+    beside it — the temp carries secret bytes on the paths that succeed.
+    """
+    etc = tmp_path / "etc"
+    secrets = tmp_path / "secrets"
+    ledger = tmp_path / "ledger"
+    script = tmp_path / "entrypoint.sh"
+    script.write_text(
+        _ENTRYPOINT.read_text()
+        .replace("/etc/attest-bridge", str(etc))
+        .replace("/secrets", str(secrets))
+        .replace("/var/lib/attest-bridge", str(ledger))
+    )
+    script.chmod(0o700)
+
+    result = subprocess.run(  # noqa: S603
+        ["/bin/sh", str(script)],
+        env={**os.environ, "BRIDGE_TOML_B64": "!!!!"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode != 0
+    assert not (etc / "bridge.toml").exists()
+    assert list(etc.glob(".attest-bridge.*")) == []
+
+
 def test_the_deploy_guide_names_the_uid_the_image_actually_creates() -> None:
     # A merchant bind-mounting keys chowns them to this number. If the image
     # moves and the guide does not, the bridge cannot read its signing key.

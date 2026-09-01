@@ -1743,6 +1743,17 @@ def test_itch_dry_run_refuses_to_write_over_the_ledgers_wal_sidecars(
     config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
     ledger_path = _ledger_path_of(config_path)
     live = Ledger(ledger_path)  # held open: the sidecars exist only alongside a connection
+    # A committed row living in the -wal, so the check below is about the
+    # Ledger's contents and not merely about a filename still being there.
+    live.record_receipt(
+        "stripe",
+        "committed",
+        "receipt-1",
+        {"payload": {"work": {"title": "kept"}}},
+        "buyer@example.com",
+        "handle-kept",
+        "2026-09-01T00:00:00Z",
+    )
 
     try:
         for suffix in ("-wal", "-shm"):
@@ -1753,5 +1764,6 @@ def test_itch_dry_run_refuses_to_write_over_the_ledgers_wal_sidecars(
 
             assert rc == 2, f"--out pointed at {suffix} was accepted"
             assert sidecar.exists()
+            assert live.get_receipt("stripe", "committed") is not None
     finally:
         live._conn.close()
