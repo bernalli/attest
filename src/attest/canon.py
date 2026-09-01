@@ -287,9 +287,10 @@ def loads_strict(data: bytes) -> object:
 # bytes. The identifier is historical and does not define the measurement unit.
 MAX_ADMISSION_BYTES = 10_000_000
 # Node budget for the own-data copy. It can never change an admissible/
-# inadmissible answer: every node costs at least one byte of canonical form, so
-# a structure over this many nodes cannot fit under the code-point ceiling either. It
-# only makes the refusal REACHABLE, before an unbounded container has been
+# inadmissible answer: every node costs at least one code point of canonical
+# form, so a structure over this many nodes cannot fit under the code-point
+# ceiling either. It only makes the refusal REACHABLE, before an unbounded
+# container has been
 # walked to the end.
 MAX_ADMISSION_NODES = MAX_ADMISSION_BYTES
 

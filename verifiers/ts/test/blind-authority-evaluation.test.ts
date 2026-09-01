@@ -702,7 +702,7 @@ describe('blind publisher authority evaluation', () => {
     })
   })
 
-  it('[PERMISSIVA] an authorization document exactly at the evidence byte ceiling remains admissible', () => {
+  it('[PERMISSIVA] an authorization document exactly at the evidence code-point ceiling remains admissible', () => {
     const exact = authorizationWithCanonicalSize(EVIDENCE_BYTE_CEILING)
     expectAuthority(payload(), trustStore(), view([exact]), {
       publisher_authority: 'authorized',
@@ -711,7 +711,7 @@ describe('blind publisher authority evaluation', () => {
     })
   })
 
-  it('[RESTRITTIVA] an authorization document one byte over the evidence byte ceiling is set aside alone', () => {
+  it('[RESTRITTIVA] an authorization document one code point over the evidence code-point ceiling is set aside alone', () => {
     const over = authorizationWithCanonicalSize(EVIDENCE_BYTE_CEILING + 1)
     expectAuthority(payload(), trustStore(), view([over], 1), {
       publisher_authority: 'unattested',
