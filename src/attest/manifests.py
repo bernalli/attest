@@ -134,7 +134,18 @@ def find_key(manifest: dict[str, Any], kid: str) -> dict[str, Any] | None:
     the way a lifecycle STATUS is decided: status resolution reads every entry
     for the kid (`_entries_for_kid` here, `verify._resolve_key_status`), so an
     ambiguous manifest can only ever be refused, never resolved leniently.
+
+    A `kid` that is not a string resolves NOTHING, here at the root. The
+    signature above says `str`, but nothing enforced it at runtime, and the
+    kid inside a signature block is attacker-chosen: it is not covered by the
+    signature (`_signable` drops `manifest_signature`). An entry keyed by the
+    integer 5 — or by null, true, an array, an object — was resolvable and
+    invisible to `duplicate_kids`, which compares strings only, so the
+    ambiguity guard could not see it either. Every caller now inherits the
+    refusal, including the ones that never look at a signature block.
     """
+    if not isinstance(kid, str):
+        return None
     entries = manifest.get("keys", [])
     if not isinstance(entries, list):
         return None
@@ -361,7 +372,17 @@ def verify_key_manifest(manifest: dict[str, Any]) -> bool:
     sig_block = manifest.get("manifest_signature")
     if not isinstance(sig_block, dict):
         return False
-    entry = find_key(manifest, sig_block.get("kid", ""))
+    # THE defence against a non-string kid lives in `find_key`, at the root,
+    # where every caller inherits it — including the ones that never read a
+    # signature block. This check is not that defence: it states the
+    # precondition this function depends on, so a reader sees the contract
+    # without chasing it. If these two ever disagree, `find_key` is the one
+    # that is load-bearing; deleting it would reopen the hole in callers no
+    # list remembers, which is how the same property escaped V-L.3.
+    kid = dict.get(sig_block, "kid")
+    if not isinstance(kid, str):
+        return False
+    entry = find_key(manifest, kid)
     if entry is None:
         return False
     try:
@@ -377,10 +398,29 @@ def manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
     Narrower than `verify_key_manifest` on purpose. That function answers
     "is this manifest conformant", which also fails a hybrid entry whose
     signature block carries only the Ed25519 leg (`verify_signature_block`'s
-    AND rule). A PQ-downgraded manifest is not a forgery — §7.2's rotation
-    handling already meets it with `trust: "unverified_rotation"`, and the
-    conformance corpus pins that verdict — so a gate meant to catch EDITED
-    manifests must not turn a downgrade into a rejection.
+    AND rule). The carve-out is exactly one case and no wider: a hybrid
+    signer whose `manifest_signature` OMITS `sig_ml_dsa_65`, which
+    `26-hybrid/h-manifest-downgraded-continuity` pins as `ok: true` — so a
+    gate meant to catch EDITED manifests must not turn that one into a
+    rejection.
+
+    Be careful with the usual justification for tolerating it, because it is
+    only half true: the rotation chain does drop `trust` to
+    `"unverified_rotation"` for a downgraded manifest, but that answer comes
+    from the CHAIN, and a verifier holding none gets no answer at all — a
+    receipt then reads `trust: "verified"` with no warning that the
+    manifest's PQ protection was never checked. The tolerance rests on the
+    pinned vector, not on a mitigation that fires everywhere.
+
+    A PQ leg that is PRESENT is not that case. `manifest_signature` sits
+    OUTSIDE `_signable`, so none of its members carry a signature of their
+    own and anyone can graft one on with no key at all. v0.2 §2.3 is
+    explicit in both directions, including that "an Ed25519-only signer's
+    manifest signature that carries a stray `sig_ml_dsa_65` MUST likewise be
+    treated as invalid". Accepting a present leg that fails would hand an
+    attacker a manifest that certifies receipts while `verify_key_manifest`
+    — still the gate on revocation, transfer, grants and artifact manifests
+    — calls it non-conformant: a revoked receipt reading `ok: true`.
 
     What it answers instead: the signer's kid resolves in the manifest's own
     `keys[]`, and the Ed25519 leg of `manifest_signature` verifies over the
@@ -401,7 +441,10 @@ def manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
     sig_block = manifest.get("manifest_signature")
     if not isinstance(sig_block, dict):
         return False
-    entry = find_key(manifest, sig_block.get("kid", ""))
+    kid = dict.get(sig_block, "kid")
+    if not isinstance(kid, str):
+        return False
+    entry = find_key(manifest, kid)
     if entry is None:
         return False
     try:
@@ -409,8 +452,20 @@ def manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
     except (TypeError, canon.CanonError):
         return False
     try:
-        return keys.verify_strict(
+        if not keys.verify_strict(
             signable, keys.b64u_decode(sig_block["sig"]), keys.b64u_decode(entry["pub"])
+        ):
+            return False
+        # Absent: the one downgrade the corpus pins. Present: signed material
+        # that must verify, or the manifest has been edited.
+        if "sig_ml_dsa_65" not in sig_block:
+            return True
+        if "pub_ml_dsa_65" not in entry:
+            return False
+        return pq.verify_strict(
+            signable,
+            keys.b64u_decode(sig_block["sig_ml_dsa_65"]),
+            keys.b64u_decode(entry["pub_ml_dsa_65"]),
         )
     except (KeyError, ValueError, TypeError):
         return False
@@ -752,7 +807,10 @@ def verify_artifact_manifest(manifest: dict[str, Any], key_manifest: dict[str, A
         return False
     if manifest.get("issuer") != key_manifest.get("issuer"):
         return False
-    entry = find_key(key_manifest, sig_block.get("kid", ""))
+    kid = dict.get(sig_block, "kid")
+    if not isinstance(kid, str):
+        return False
+    entry = find_key(key_manifest, kid)
     if entry is None or entry.get("status") != _ACTIVE:
         return False
     try:

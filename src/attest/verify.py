@@ -2939,8 +2939,13 @@ def verify(
         if not isinstance(issuer_id, str):
             return _invalid("malformed payload: missing issuer.id")
 
-        manifest = trust_store.manifests.get(issuer_id)
-        if manifest is None:
+        # The SAME object the manifest gate authenticated above. Re-resolving
+        # would authenticate one read and verify against another. The
+        # isinstance also closes a crash: a trust store mapping an issuer to
+        # a non-dict used to raise AttributeError out of the library, while
+        # the TypeScript verifier failed closed on the same input.
+        manifest = issuer_manifest
+        if not isinstance(manifest, dict):
             return _invalid(f"no trusted manifest for issuer {issuer_id!r}")
 
         # G1's manifest-keys ceiling and G6's mixed-keyset detection are both
@@ -3043,8 +3048,13 @@ def verify(
         if not isinstance(issuer_id, str):
             return _invalid("malformed payload: missing issuer.id")
 
-        manifest = trust_store.manifests.get(issuer_id)
-        if manifest is None:
+        # The SAME object the manifest gate authenticated above. Re-resolving
+        # would authenticate one read and verify against another. The
+        # isinstance also closes a crash: a trust store mapping an issuer to
+        # a non-dict used to raise AttributeError out of the library, while
+        # the TypeScript verifier failed closed on the same input.
+        manifest = issuer_manifest
+        if not isinstance(manifest, dict):
             return _invalid(f"no trusted manifest for issuer {issuer_id!r}")
 
         # G1's manifest-keys ceiling is handled above, hoisted immediately

@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from attest import issue, keys, manifests, verify
+from attest import issue, keys, manifests, pq, verify
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -131,3 +131,120 @@ def test_a_compromised_key_cannot_be_resurrected_by_editing_its_status() -> None
 
     assert result.ok is False
     assert result.signature != "valid"
+
+
+# --- the carve-out, pinned in both directions ---------------------------------
+#
+# The hybrid tolerance is the single most security-relevant decision in this
+# gate, and it had no test in either direction: an exception nothing pins is
+# one the next hand widens or "fixes" blind. A present-but-wrong PQ leg was
+# accepted here while `verify_key_manifest` refused it, which certified a
+# receipt while every revocation record the issuer signed was dropped.
+
+KID_H = f"{ISSUER}/keys/test#hybrid-1"
+HK = pq.HybridSigningKeys(ed=keys.from_seed(bytes([73]) * 32), mldsa=pq.generate())
+
+
+def _hybrid_manifest() -> dict[str, Any]:
+    entry = manifests.key_entry(
+        KID_H, HK.ed.pub, "2026-01-01T00:00:00Z", None, "active", pub_ml_dsa_65=HK.mldsa.pub
+    )
+    return manifests.build_key_manifest(ISSUER, 1, "2026-06-01T00:00:00Z", [entry], HK, KID_H)
+
+
+def _v02_receipt() -> bytes:
+    payload = make_payload(
+        attest_version="0.2", issuer={"id": ISSUER, "display_name": "Example Store"}
+    )
+    return json.dumps(issue.issue(payload, HK, KID_H)).encode("utf-8")
+
+
+def test_v02_hybrid_receipt_path_inherits_the_gate() -> None:
+    """The gate is hoisted so BOTH receipt paths get it — pin the v0.2 one."""
+    tampered = _hybrid_manifest()
+    tampered["manifest_signature"]["sig"] = keys.b64u(bytes(64))
+
+    result = verify.verify(_v02_receipt(), _store(tampered))
+
+    assert result.ok is False
+    assert result.signature != "valid"
+
+
+def test_absent_pq_leg_is_the_one_downgrade_the_gate_accepts() -> None:
+    """The carve-out, pinned in the ACCEPTING direction.
+
+    The rotation chain answers a hybrid signer's Ed25519-only manifest
+    signature, and `26-hybrid/h-manifest-downgraded-continuity` pins
+    `ok: true` for it. A gate that rejected it would break a verdict the
+    spec intends, so this tolerance must not be tightened by accident.
+    """
+    downgraded = _hybrid_manifest()
+    del downgraded["manifest_signature"]["sig_ml_dsa_65"]
+
+    assert manifests.verify_key_manifest(downgraded) is False
+    assert manifests.manifest_signature_is_authentic(downgraded) is True
+    assert verify.verify(_v02_receipt(), _store(downgraded)).signature == "valid"
+
+
+def test_a_present_pq_leg_that_does_not_verify_is_not_a_downgrade() -> None:
+    """`manifest_signature` sits OUTSIDE the signed bytes, so its members are
+    unauthenticated: anyone can graft a PQ leg on with no key at all. An
+    ABSENT leg is the downgrade the corpus blesses; a PRESENT one that fails
+    is an edit, and v0.2 §2.3's AND rule calls it invalid."""
+    grafted = _hybrid_manifest()
+    grafted["manifest_signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(pq.ML_DSA_65_SIG_LEN))
+
+    assert manifests.manifest_signature_is_authentic(grafted) is False
+
+
+def test_a_stray_pq_leg_on_a_non_hybrid_signer_is_refused() -> None:
+    """v0.2 §2.3: an Ed25519-only signer's manifest signature carrying a stray
+    `sig_ml_dsa_65` MUST likewise be treated as invalid.
+
+    The gate must not disagree with `verify_key_manifest` here, or the same
+    manifest certifies receipts while every revocation record the issuer
+    signs is dropped as unverifiable — a revoked receipt reading `ok: true`.
+    """
+    kp = keys.from_seed(bytes([75]) * 32)
+    kid = f"{ISSUER}/keys/test#ed25519-stray"
+    manifest = manifests.build_key_manifest(
+        ISSUER,
+        1,
+        "2026-06-01T00:00:00Z",
+        [manifests.key_entry(kid, kp.pub, "2026-01-01T00:00:00Z")],
+        kp,
+        kid,
+    )
+    manifest["manifest_signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(pq.ML_DSA_65_SIG_LEN))
+
+    assert manifests.verify_key_manifest(manifest) is False
+    assert manifests.manifest_signature_is_authentic(manifest) is False
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda m: m.update(keys={"not": "a list"}), id="keys-not-a-list"),
+        pytest.param(lambda m: m.update(keys=[None]), id="keys-member-not-a-dict"),
+        pytest.param(lambda m: m.update(manifest_signature=[]), id="sig-block-not-a-dict"),
+        pytest.param(lambda m: m["manifest_signature"].pop("sig"), id="sig-absent"),
+        pytest.param(lambda m: m["manifest_signature"].update(sig=7), id="sig-not-a-string"),
+        pytest.param(
+            lambda m: m["manifest_signature"].update(sig=keys.b64u(bytes(32))), id="sig-short"
+        ),
+        pytest.param(lambda m: m["keys"][0].pop("pub"), id="pub-absent"),
+        pytest.param(lambda m: m["keys"][0].update(pub="@@@@"), id="pub-not-b64u"),
+        pytest.param(lambda m: m.update(extra=1.5), id="body-outside-the-jcs-profile"),
+        pytest.param(lambda m: m["keys"].append({"kid": KID_H}), id="duplicate-kid"),
+    ],
+)
+def test_hostile_manifests_fail_closed_without_raising(mutate: Any) -> None:
+    """The docstring promises "Never raises — untrusted input fails closed".
+
+    A promise in a docstring that no test drives is a promise the next
+    refactor is free to break silently.
+    """
+    manifest = _hybrid_manifest()
+    mutate(manifest)
+
+    assert manifests.manifest_signature_is_authentic(manifest) is False

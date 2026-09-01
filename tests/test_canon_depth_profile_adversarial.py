@@ -235,9 +235,26 @@ def test_issue_allows_salt_at_the_depth_ceiling_without_false_rejection() -> Non
 
 
 def _key_manifest_with_extra(extra: object) -> dict[str, Any]:
+    """A trusted manifest carrying an extra member, still signed over it.
+
+    The extra member goes in BEFORE the signature: the receipt path now
+    authenticates the trusted manifest before reading any key out of it, so
+    a manifest mutated after signing is refused there and never reaches the
+    check these tests are about, which is a property of the PAYLOAD. Where
+    `extra` is itself outside the JCS profile the manifest cannot be signed
+    at all — that is the case the caller is asserting on, so it is left
+    unsigned and the CanonError surfaces where the test expects it.
+    """
     entry = manifests.key_entry(KID, KP.pub, "2026-01-01T00:00:00Z")
     manifest = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", [entry], KP, KID)
     manifest["extra_profile_depth"] = extra
+    body = {key: value for key, value in manifest.items() if key != "manifest_signature"}
+    try:
+        manifest["manifest_signature"] = manifests.sign_signature_block(
+            canon.canonical_bytes(body), KP, KID
+        )
+    except canon.CanonError:
+        pass
     return manifest
 
 

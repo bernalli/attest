@@ -183,10 +183,11 @@ def test_p2_malformed_manifests_never_raise_out_of_the_entry_points(
             f"verify() raised an undeclared TypeError on a mutated claim: {exc}"
         )
 
-    # The three read-only `manifests` entry points declare no exception at all:
-    # anything escaping these four calls fails the test by propagating.
+    # The four read-only `manifests` entry points declare no exception at all:
+    # anything escaping these five calls fails the test by propagating.
     manifests.find_key(manifest, KID)
     manifests.verify_key_manifest(manifest)
+    manifests.manifest_signature_is_authentic(manifest)
     manifests.check_continuity(WELL_FORMED, manifest)
     manifests.check_continuity(manifest, WELL_FORMED)
 
