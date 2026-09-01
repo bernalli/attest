@@ -2649,6 +2649,22 @@ def verify(
     manifest_freshness_state = _MANIFEST_FRESHNESS_NOT_CHECKED
     transparency_claim_type: str | None = None
     materialized_compromise_view = _materialize_compromise_view(compromise_view)
+    # v0.2 §19.2's 64-claim acceptance floor, given the fail-closed effect §6.3
+    # requires the owning section to define. Discarding an over-ceiling view in
+    # silence is the compromise rail's version of the revocation-view padding
+    # attack `_revocation_state` already refuses below: an attacker who can feed
+    # this channel — one §19.2 itself blesses for untrusted transport — appends
+    # junk claims until a genuine declaration falls off the end, and the receipt
+    # that declaration would have killed verifies green with no warning at all.
+    # We cannot rule out a declaration, so we cannot certify the signing key.
+    compromise_view_supplied = 0
+    compromise_view_oversized = False
+    if compromise_view is not None:
+        try:
+            compromise_view_supplied = list.__len__(compromise_view)
+        except Exception:
+            compromise_view_supplied = _MAX_COMPROMISE_CLAIMS + 1
+        compromise_view_oversized = compromise_view_supplied > _MAX_COMPROMISE_CLAIMS
 
     def _invalid(message: str, *, schema: str = _SCHEMA_NOT_CHECKED) -> VerificationResult:
         errors.append(message)
@@ -2995,6 +3011,11 @@ def verify(
             warnings,
         )
         status = _resolve_key_status(entry, manifest, chain, authenticated_claims, kid)
+        if compromise_view_oversized and status != _STATUS_COMPROMISED:
+            return _invalid(
+                f"compromise view exceeds {_MAX_COMPROMISE_CLAIMS} claims "
+                f"({compromise_view_supplied} supplied), cannot certify the signing key"
+            )
         compromised_rescued = False
         if status == _STATUS_COMPROMISED:
             # Emitted at the point of RESOLUTION and before the §19 disposition,
@@ -3103,6 +3124,11 @@ def verify(
             warnings,
         )
         status = _resolve_key_status(entry, manifest, chain, authenticated_claims, kid)
+        if compromise_view_oversized and status != _STATUS_COMPROMISED:
+            return _invalid(
+                f"compromise view exceeds {_MAX_COMPROMISE_CLAIMS} claims "
+                f"({compromise_view_supplied} supplied), cannot certify the signing key"
+            )
         compromised_rescued = False
         if status == _STATUS_COMPROMISED:
             # Emitted at the point of RESOLUTION and before the §19 disposition,

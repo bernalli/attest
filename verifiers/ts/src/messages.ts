@@ -116,6 +116,8 @@ export const manifestNotSelfConsistent = (issuer: string) =>
 export const noTrustedManifest = (issuer: string) => `no trusted manifest for issuer ${pyRepr(issuer)}`
 export const noKeyInManifest = (kid: string) => `no key ${pyRepr(kid)} in issuer manifest`
 export const keyCompromised = (kid: string) => `key ${kid} is compromised`
+export const compromiseViewOverflow = (cap: number, supplied: number) =>
+  `compromise view exceeds ${cap} claims (${supplied} supplied), cannot certify the signing key`
 export const keyRetired = (kid: string) => `key ${kid} is retired`
 export const issuedAtOutsideWindow = (issuedAt: unknown) => `issued_at ${pyRepr(issuedAt)} outside key validity window`
 export const malformedKeyMaterial = (msg: string) => `malformed key material: ${msg}`

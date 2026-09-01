@@ -213,7 +213,15 @@ describe('v0.2 §19 compromiseView adversarial boundaries', () => {
     }]
 
     expect(verifyWith(store(), acceptedBoundary).signature).toBe('invalid')
-    expect(verifyWith(store(), rejectedBoundary).signature).toBe('valid')
+    // An over-ceiling view is refused, not silently dropped: §19.2's fail-closed
+    // effect, and Python parity with test_verify_compromise.py. Until 2026-09-01
+    // this line asserted 'valid' — with a GENUINE declaration in the view, so it
+    // stated the padding attack and pinned it as correct: 64 junk members made a
+    // real compromise declaration stop biting, and the receipt it should have
+    // killed verified green.
+    const rejected = verifyWith(store(), rejectedBoundary)
+    expect(rejected.signature).toBe('invalid')
+    expect(rejected.errors.some(e => e.includes('compromise view exceeds 64 claims'))).toBe(true)
   })
 
   // docs/spec/attest-v0.2.md:1014, 1030 — malformed view members are untrusted and cannot abort valid ones.

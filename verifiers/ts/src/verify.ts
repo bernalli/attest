@@ -35,7 +35,8 @@ import {
 } from './transparency.js'
 import {
   ERR, WARN, unsupportedAttestVersion, signaturesCount, unsupportedSigAlg, noTrustedManifest,
-  noKeyInManifest, keyCompromised, keyRetired, issuedAtOutsideWindow, malformedKeyMaterial,
+  noKeyInManifest, keyCompromised, compromiseViewOverflow, keyRetired, issuedAtOutsideWindow,
+  malformedKeyMaterial,
   malformedSigMaterial, unknownField, unknownEol, keyEntryNotHybrid, pyRepr, codePointLength,
   VERIFY_TRANSPARENCY_WARN, COMPROMISE_WARN, manifestExceedsKeys, manifestDuplicateKids,
   manifestNotSelfConsistent,
@@ -921,6 +922,12 @@ export function verify(
   let manifestFreshnessState: string = MANIFEST_FRESHNESS_NOT_CHECKED
   let transparencyClaimType: string | null = null
   const materializedCompromiseView = materializeCompromiseView(compromiseView)
+  // Python parity: verify.py's `compromise_view_oversized`. §19.2's acceptance
+  // floor given the fail-closed effect §6.3 requires of the owning section;
+  // silence here is the padding attack revocation-bound.test.ts already pins on
+  // the sibling rail.
+  const compromiseViewSupplied = compromiseView == null ? 0 : compromiseView.length
+  const compromiseViewOversized = compromiseViewSupplied > MAX_COMPROMISE_CLAIMS
   const invalid = (message: string, schema: Schema = 'not_checked'): VerificationResult => {
     errors.push(message)
     return {
@@ -1198,6 +1205,8 @@ export function verify(
       materializedCompromiseView, manifest, entry, chain, issuerId, kid, warnings,
     )
     const status = resolveKeyStatus(entry, manifest, chain, authenticatedClaims, kid)
+    if (compromiseViewOversized && status !== 'compromised')
+      return invalid(compromiseViewOverflow(MAX_COMPROMISE_CLAIMS, compromiseViewSupplied))
     let compromisedRescued = false
     if (status === 'compromised') {
       // At the point of RESOLUTION and before the §19 disposition, so it reads
@@ -1264,6 +1273,8 @@ export function verify(
       materializedCompromiseView, manifest, entry, chain, issuerId, kid, warnings,
     )
     const status = resolveKeyStatus(entry, manifest, chain, authenticatedClaims, kid)
+    if (compromiseViewOversized && status !== 'compromised')
+      return invalid(compromiseViewOverflow(MAX_COMPROMISE_CLAIMS, compromiseViewSupplied))
     let compromisedRescued = false
     if (status === 'compromised') {
       // At the point of RESOLUTION and before the §19 disposition, so it reads
