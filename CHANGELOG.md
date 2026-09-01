@@ -4,6 +4,41 @@ All notable changes to `attest-receipts` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`log anchor` no longer repairs a malformed `anchors` block in silence.** The
+  command used to coerce any unusable `anchors` member — a non-object, a missing
+  or non-string `anchors.checkpoint`, a missing or non-array `anchors.proofs` —
+  to an empty proof list and then overwrite it, so an operator who passed a
+  damaged evidence file got a plausible-looking result built on nothing they
+  had supplied. It now refuses all four shapes, and refuses an
+  `anchors.checkpoint` that diverges from the evidence's own top-level
+  checkpoint, where previously those proofs were retained and re-stamped with
+  the new checkpoint. This is a narrowing of accepted input on a published CLI:
+  a file with `"anchors": null` was ignored before and is an error now. Every
+  fixture in this repository already sets `anchors.checkpoint` to the evidence's
+  own checkpoint, and no test relied on the old leniency.
+
+### Fixed
+
+- **`log anchor --help` promised one proof file per Bitcoin path**, which
+  `log ots-convert` does not deliver: a path whose block header was not supplied,
+  whose merkle root does not match, or whose op-chain is untranslatable produces
+  no file at all, and is named instead in the conversion report. The help now
+  says what the converter does, and points at it — previously it stated only that
+  acquiring anchor material was out of the CLI's scope, which stayed literally
+  true while leaving the reader of that text, who is precisely the person looking
+  for the new command, without it.
+- **The composition that justifies the conversion report is now proved
+  end-to-end.** That a lost path can cost the oldest claim rested on the minimum
+  being taken over multiple proofs; both halves were covered separately and
+  nothing exercised them together. A test now converts a two-Bitcoin-path `.ots`,
+  attaches the proofs in both orders, and pins the older time as the verdict in
+  each — asserting both orders is what separates the real reduction from
+  first-attached-wins and last-attached-wins, which no single-order test can do.
+
 ## [0.9.0] — 2026-08-31
 
 ### Changed
@@ -18,10 +53,11 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   refused by a verifier that had never seen one. The per-proof operation cap is
   now 256 and the per-operand cap 16384 hex characters, and a per-chain operand
   TOTAL of 65536 hex characters joins them. The total is not a decoration: the
-  outer evidence ceiling is normative (v0.1 §11.3) and cannot be raised to meet
-  the inner caps, so without it their product would admit roughly 268MB of
-  operands against a ceiling of 10MB — evidence the evaluator accepts would be
-  refused before ever reaching it. The total also tightens the aggregate rather
+  outer evidence ceiling is normative (v0.2 §6.3) and cannot be raised to meet
+  the inner caps, so without it their product would admit 268,435,456 operand
+  characters against a 10,000,000-character ceiling — evidence the evaluator
+  accepts would be refused before ever reaching it. The total also tightens
+  the aggregate rather
   than loosening it: one proof may now carry 65536 hex characters of
   attacker-chosen bytes where it could previously carry twice that. What does
   grow is the operation count per bundle and the peak single concatenation.

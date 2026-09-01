@@ -2071,12 +2071,25 @@ def _cmd_log_anchor(args: argparse.Namespace) -> int:
     # proofs' profile without re-anchoring them. Refuse instead of
     # overwriting; check this BEFORE reading --ots-proof at all, since the
     # append is refused regardless of what it contains.
-    existing_anchors = evidence.get("anchors")
-    existing_proofs: list[Any] = (
-        existing_anchors["proofs"]
-        if isinstance(existing_anchors, dict) and isinstance(existing_anchors.get("proofs"), list)
-        else []
-    )
+    existing_proofs: list[Any] = []
+    existing_anchors: dict[str, Any] | None = None
+    if "anchors" in evidence:
+        raw_anchors = evidence["anchors"]
+        if not isinstance(raw_anchors, dict):
+            raise CliUsageError(f"{args.evidence}'s 'anchors' member must be a JSON object")
+        existing_anchors = raw_anchors
+        anchors_checkpoint = existing_anchors.get("checkpoint")
+        if not isinstance(anchors_checkpoint, str):
+            raise CliUsageError(f"{args.evidence}'s anchors.checkpoint must be a string")
+        if anchors_checkpoint != checkpoint_text:
+            raise CliUsageError(
+                f"{args.evidence}'s anchors.checkpoint does not match its top-level checkpoint"
+            )
+        raw_proofs = existing_anchors.get("proofs")
+        if not isinstance(raw_proofs, list):
+            raise CliUsageError(f"{args.evidence}'s anchors.proofs must be a JSON array")
+        existing_proofs = raw_proofs
+
     if existing_proofs:
         existing_profile = (
             existing_anchors.get("anchor_profile") if isinstance(existing_anchors, dict) else None
@@ -3338,6 +3351,10 @@ def build_parser() -> argparse.ArgumentParser:
             "ATTACHES anchor material obtained OUTSIDE this process to a `log prove`-produced "
             "evidence file's `anchors` member (acquiring an OTS/Bitcoin attestation or an "
             "RFC 3161 timestamp is out of this CLI's scope — it never touches the network). "
+            "For a detached .ots over this evidence's signed checkpoint that you already hold, "
+            "`attest log ots-convert` turns each convertible Bitcoin path for which you supplied "
+            "a matching block header into one --ots-proof JSON file. Skipped paths are named in "
+            "its conversion report, and it performs no network I/O either. "
             "--dir's config.json is read only to confirm the evidence's own checkpoint origin "
             "actually belongs to this log."
         ),
@@ -3348,7 +3365,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--ots-proof",
         required=True,
         type=Path,
-        help="JSON object: ops/header_merkle_root/header_hash/header_time",
+        help=(
+            "JSON object: ops/header_merkle_root/header_hash/header_time "
+            "(pass one converted Bitcoin-path file emitted by `attest log ots-convert`)"
+        ),
     )
     p.add_argument(
         "--rfc3161-token",

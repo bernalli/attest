@@ -226,18 +226,21 @@ _HEX_LOWER = frozenset("0123456789abcdef")
 # This outer cap must COVER everything the downstream evaluators' own inner
 # caps accept, or evaluator-valid evidence gets falsely rejected here.
 # Worst-case legitimate bundle, derived from those inner caps: checkpoint +
-# prior_checkpoint + the anchors bundle's own checkpoint copy at ~500KB each
-# (tlog._MAX_NOTE_TEXT_LEN) = ~1.5MB, plus anchors operands at 64 proofs x
-# 65_536 total hex chars per proof (anchor._MAX_PROOFS_PER_EVIDENCE,
-# _MAX_TOTAL_OP_HEX_LEN) = ~4.2MB, plus JSON overhead for proofs carrying up
-# to 256 ops (~4-5KB per proof, ~300KB), plus inclusion/consistency proofs
-# (~8KB) — ~6MB total, ~4MB inside this ceiling. The cap still bounds hostile
-# materialization before the JSON decoder performs a second full traversal.
+# prior_checkpoint + the anchors bundle's own checkpoint copy at 500,000
+# characters each (tlog._MAX_NOTE_TEXT_LEN) = 1,500,000 characters, plus
+# anchors operands at 64 proofs x 65_536 total hex chars per proof
+# (anchor._MAX_PROOFS_PER_EVIDENCE, _MAX_TOTAL_OP_HEX_LEN) = 4,194,304
+# characters, plus JSON overhead for proofs carrying up to 256 ops (~4,000-
+# 5,000 characters per proof, ~300,000), plus inclusion/consistency proofs
+# (~8,000) — ~6,000,000 characters total, ~4,000,000 characters inside this
+# 10,000,000-character ceiling. The cap still bounds hostile materialization
+# before the JSON decoder performs a second full traversal.
 #
 # The operand term is bounded by the per-chain TOTAL, never by
-# `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN`: that product is 268_435_456 chars
-# and would overshoot this ceiling by ~260MB. This ceiling is normative
-# (canon.MAX_ADMISSION_BYTES, v0.1 §11.3) and cannot be raised to meet the
+# `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN`: that product is 268,435,456 operand
+# characters and would overshoot this 10,000,000-character ceiling by
+# ~258,000,000 characters. This ceiling is normative
+# (canon.MAX_ADMISSION_BYTES, v0.2 §6.3) and cannot be raised to meet the
 # inner caps, so the total-operand cap is what makes the raised per-op caps
 # admissible at all — re-derive this arithmetic whenever any of the three
 # moves, and see tests/test_anchor.py for it as an executable assertion.
@@ -655,7 +658,7 @@ def _evaluate_transparency_claim(
         # never a stateful mapping/value supplied by the caller. The size cap
         # prevents decoding an arbitrarily large serialized evidence bundle.
         # The copy of the value's OWN data runs FIRST and refuses on a node
-        # budget: the byte cap below is compared against a serialization that
+        # budget: the code-point cap below is compared against a serialization that
         # has ALREADY been produced, so a caller value whose iteration never
         # ends would hang here before any cap could fire -- and a hang reaches
         # no `except` clause, which is why the enclosing one is not a defence
@@ -1265,7 +1268,7 @@ def _revocation_deadline_satisfied(
         # every following phase sees one ordinary JSON object, never a
         # stateful mapping/value supplied by the caller.
         # Own-data copy first, for the same reason as the transparency sink:
-        # the byte cap cannot fire on a serialization that never returns.
+        # the code-point cap cannot fire on a serialization that never returns.
         serialized_evidence = canon.dumps(
             _own_data_copy(revocation_evidence, [_MAX_EVIDENCE_NODES])
         )

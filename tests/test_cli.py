@@ -1091,6 +1091,46 @@ def test_verify_help_exits_0(capsys: CapSys) -> None:
     assert exc_info.value.code == 0
 
 
+def test_log_anchor_help_names_ots_convert_without_overclaiming(
+    capsys: CapSys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`log anchor --help` is read by exactly the operator who is holding a
+    detached `.ots` file and wondering what to do with it next. Saying only
+    that anchor material "is out of this CLI's scope" was true before `log
+    ots-convert` existed and is still true -- ACQUIRING an attestation needs
+    a calendar and a network this CLI never opens a socket to -- but it is
+    now the wrong place for the help to stop: CONVERTING a proof the
+    operator already holds is in scope, and offline. The help has to keep
+    the truthful half and name the command.
+
+    The three residual-truth assertions are the point of the pin, not
+    decoration: this surface must never drift into promising more than the
+    code does, so the sentence that scopes the command OUT of acquisition
+    has to survive every future edit that adds a pointer to it.
+    """
+    # Pin the wrap width. argparse fills the description to the terminal
+    # width and textwrap breaks on hyphens, so on a narrow console
+    # `ots-convert` can be split across two lines and no substring check
+    # would survive; at this width the description is emitted unwrapped.
+    monkeypatch.setenv("COLUMNS", "2000")
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["log", "anchor", "--help"])
+    assert exc_info.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+
+    assert "ots-convert" in help_text
+    assert "each convertible Bitcoin path" in help_text
+    assert "matching block header" in help_text
+    assert "Skipped paths" in help_text
+    assert "one converted Bitcoin-path file" in help_text
+    # Residual truth, all three still required after the pointer lands:
+    # the material comes from elsewhere, acquiring it is not this CLI's
+    # job, and nothing here reaches the network.
+    assert "OUTSIDE this process" in help_text
+    assert "out of this CLI's scope" in help_text
+    assert "never touches the network" in help_text
+
+
 # --- manifest rotate: retirement / compromise flags --------------------------
 
 
@@ -2987,6 +3027,64 @@ def test_log_anchor_refuses_to_append_to_existing_bundle_declaring_explicit_note
 
     assert rc == 2
     assert "note-v1" in captured.err
+    assert not out_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("malformation", "fragment"),
+    [
+        ("anchors-not-object", "'anchors' member must be a JSON object"),
+        ("checkpoint-missing", "anchors.checkpoint must be a string"),
+        ("checkpoint-mismatch", "anchors.checkpoint does not match"),
+        ("proofs-missing", "anchors.proofs must be a JSON array"),
+        ("proofs-not-list", "anchors.proofs must be a JSON array"),
+    ],
+)
+def test_log_anchor_refuses_malformed_existing_anchor_transition(
+    tmp_path: Path,
+    capsys: CapSys,
+    malformation: str,
+    fragment: str,
+) -> None:
+    evidence = _minimal_anchor_evidence()
+    checkpoint_text = evidence["checkpoint"]
+    if malformation == "anchors-not-object":
+        evidence["anchors"] = []
+    elif malformation == "checkpoint-missing":
+        evidence["anchors"] = {"proofs": []}
+    elif malformation == "checkpoint-mismatch":
+        evidence["anchors"] = {"checkpoint": "different checkpoint", "proofs": []}
+    elif malformation == "proofs-missing":
+        evidence["anchors"] = {"checkpoint": checkpoint_text}
+    else:
+        evidence["anchors"] = {"checkpoint": checkpoint_text, "proofs": {}}
+
+    log_dir = _log_init(tmp_path, origin=LOG_ORIGIN)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    proof_path = tmp_path / "ots-proof.json"
+    proof_path.write_text(json.dumps(_v2_ots_proof(checkpoint_text)), encoding="utf-8")
+    out_path = tmp_path / "anchored.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "anchor",
+            "--dir",
+            str(log_dir),
+            "--evidence",
+            str(evidence_path),
+            "--ots-proof",
+            str(proof_path),
+            "--out",
+            str(out_path),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert fragment in captured.err
     assert not out_path.exists()
 
 

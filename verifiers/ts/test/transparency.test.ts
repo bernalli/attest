@@ -979,8 +979,9 @@ describe('verify(): Stage 2 integration', () => {
     // it harmonizes is not enforcing the invariant its name claims.
     //
     // The binding inner constraint is the per-chain operand TOTAL, not
-    // MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN: that product would overshoot the
-    // outer ceiling by ~260MB, which is why MAX_TOTAL_OP_HEX_LEN exists.
+    // MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN: that product is 268,435,456 operand
+    // characters and would overshoot the 10,000,000-character outer ceiling by
+    // ~258,000,000 characters, which is why MAX_TOTAL_OP_HEX_LEN exists.
     //
     // The bundle sits at the worst case on BOTH binding axes: maximal
     // operands until the operand total is spent, then empty-operand ops
