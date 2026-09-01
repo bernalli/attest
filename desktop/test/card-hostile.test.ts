@@ -2,6 +2,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL as NodeURL } from 'node:url'
+import { loadsStrict } from 'attest-verifier'
 import { intake, type VerifyJob } from '../../site/src/intake.js'
 import { runVerify, type VerifyRun } from '../../site/src/run.js'
 import { renderResult } from '../../site/src/render.js'
@@ -174,7 +175,36 @@ describe('the unsigned name is attributed, or it is not shown', () => {
   })
 })
 
+// A receipt that produces WARNINGS. The sample bundle produces none, so a parity test
+// driven only by it never compares the per-row warning blocks or the "other warnings"
+// list — the parity would be declared over a path that is never walked.
+//
+// The vectors carry a PREBUILT trust store (`manifests`, `provenance`, `chains`), not a
+// bundle member, so the job is assembled directly rather than through the bundle parser.
+// Measured: this one reports the signing key as retired while the receipt still verifies.
+const VECTORS = fileURLToPath(new NodeURL('../../docs/spec/vectors/', import.meta.url))
+
+function warningJob(): { job: VerifyJob; run: VerifyRun } {
+  const dir = `${VECTORS}12-retired-key-ok/`
+  const envelopeBytes = new Uint8Array(readFileSync(`${dir}envelope.json`))
+  const trustStore = loadsStrict(new Uint8Array(readFileSync(`${dir}manifests.json`))) as never
+  const job: VerifyJob = { label: 'retired.attest', envelopeBytes, trustStore, transparency: null }
+  return { job, run: runVerify(envelopeBytes, trustStore, null, null, {}) }
+}
+
 describe('the desktop card changes the header and nothing else', () => {
+  test('a receipt carrying warnings renders them identically to the site', () => {
+    const { job, run } = warningJob()
+    expect(run.result.warnings.length, 'this fixture exists to carry warnings').toBeGreaterThan(0)
+
+    const strip = (el: HTMLElement) => {
+      const clone = el.cloneNode(true) as HTMLElement
+      clone.querySelector('header')?.remove()
+      return clone.innerHTML
+    }
+    expect(strip(renderDesktopCard(job, run))).toEqual(strip(renderResult('retired.attest', run)))
+  })
+
   test('everything below the header is byte-identical to the site render', () => {
     const { job, run } = sampleJob()
     const strip = (el: HTMLElement) => {

@@ -31,16 +31,22 @@ const ISSUER_ID_SHAPE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-
  * The name a file arrives under is chosen by whoever handed the file over and is
  * covered by no signature, so the title comes out of the payload instead.
  *
- * And only from a payload that passed BOTH the signature and the schema gate. A
- * valid signature alone says the bytes were signed by SOME key the file itself
- * named — under trust-on-first-use the attacker supplies the key and the manifest
- * too — so it says nothing about their shape. A payload that fails the schema is
- * signed text of no fixed form, and it reaches this heading verbatim: measured,
- * `receipt_id` can then be 200,000 characters, carry a right-to-left override, or
- * read "01M0YX8RAPJ5BQ8WJSS4CBK43F — store.nebula.example ✅ VERIFIED PURCHASE"
- * and be printed above the verdict as if it were the receipt's identity. The
- * schema gate is what bounds these two fields to a ULID and a hostname; the two
- * regexes above are the belt that survives it.
+ * The PRIMARY defence is the shape check on each value, not a gate on some other
+ * component of the verdict. `site/src/bundle.ts` already works this way — it accepts a
+ * receipt id only when `RECEIPT_ID_RE` matches it — and the reason is that a shape
+ * check holds on its own, while a gate borrows a guarantee someone else maintains. The
+ * two regexes above are that check, and they are byte-identical to the ones the bundle
+ * parser and the schema validator already carry.
+ *
+ * What made the gate necessary to add as well: a valid signature alone says the bytes
+ * were signed by SOME key the file itself named — under trust-on-first-use the attacker
+ * supplies the key and the manifest too — so it says nothing about their shape. Measured
+ * against the earlier version, which gated on the signature only, a schema-invalid
+ * payload put 200,000 characters, a right-to-left override, a Cyrillic homoglyph domain,
+ * and the string "01M0YX8RAPJ5BQ8WJSS4CBK43F — store.nebula.example ✅ VERIFIED PURCHASE"
+ * straight into this heading, above the verdict. The shape checks alone would refuse all
+ * of those; the schema gate adds the remaining case, where both quoted fields are
+ * well-formed while the rest of the payload is not.
  */
 export function cardTitle(envelopeBytes: Uint8Array, run: VerifyRun): string {
   if (run.result.signature !== 'valid' || run.result.schema !== 'valid')
