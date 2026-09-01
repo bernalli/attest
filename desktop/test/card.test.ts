@@ -150,3 +150,27 @@ describe('the name the OS handed over is shown as such, and it is not the signed
     expect(supplied?.querySelector('img')).toBeNull()
   })
 })
+
+describe('the two amber headlines are told apart by the stylesheet, not only by wording', () => {
+  // A headline whose only distinguishing feature is its wording is not a multi-state
+  // headline: a reader who has learned "amber means the ordinary offline limit" will
+  // read the anomaly as the limit. So the two carry different classes, and the
+  // stylesheet is free to make them look different.
+  const headerClasses = (trust: 'unauthenticated_tofu' | 'unverified_rotation'): string => {
+    const { job, run } = sampleJob()
+    const shaped = { ...run, ok: true, result: { ...run.result, trust } }
+    const card = renderDesktopCard(job, shaped, 'demo.attest')
+    return card.querySelector('.verdict')?.className ?? ''
+  }
+
+  test('a key-history gap is not styled as the ordinary offline limit', () => {
+    expect(headerClasses('unverified_rotation')).not.toEqual(headerClasses('unauthenticated_tofu'))
+  })
+
+  test('both remain cautionary, and neither is styled as a pass', () => {
+    for (const trust of ['unauthenticated_tofu', 'unverified_rotation'] as const) {
+      expect(headerClasses(trust)).toContain('tone-warn')
+      expect(headerClasses(trust)).not.toContain('tone-good')
+    }
+  })
+})

@@ -68,6 +68,36 @@
 </section>
 </main>
 
+<!--
+  The footer is the artifact's provenance line, and it exists because of what this file
+  IS: a document anyone can copy and edit. Nothing stops someone publishing a page that
+  looks like this one and always answers "verifies", and a document carries no code
+  signature to tell them apart. The checksum, checked against the project's own site, is
+  the only defence available to it — so the file states where it came from and how to
+  check it, in itself, where a reader who never visits the site can still find it.
+
+  The two version numbers are substituted at build time. No timestamp: the build has to
+  be byte-reproducible, and a clock is the classic way to lose that.
+-->
+<footer>
+  <p>
+    attest desktop verifier <strong>__DESKTOP_VERSION__</strong> ·
+    verification engine attest-verifier <strong>__ATTEST_VERIFIER_VERSION__</strong>
+  </p>
+  <p>
+    This file never updates itself — a verifier that phones home is not a local one. The
+    log keys it trusts are compiled in and age with it, so before you believe a
+    <em>does NOT verify</em> answer from a copy you have had for a while, fetch a current
+    one from <a href="https://attest-receipts.org/">attest-receipts.org</a>.
+  </p>
+  <p>
+    Anyone can write a page that always says “verifies”. Check that this file is the one
+    the project published: its SHA-256 is listed beside the download, and you can compute
+    it yourself with <code>sha256sum</code> on Linux, <code>shasum -a 256</code> on macOS,
+    or <code>certutil -hashfile</code> on Windows.
+  </p>
+</footer>
+
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

@@ -121,13 +121,27 @@ describe('the page says so when its script never runs', () => {
     expect(document.getElementById('boot-failsafe')).not.toBeNull()
   })
 
-  test('the shell references no external resource — nothing in it can open a socket', () => {
-    // A src/href/url() fires at PARSE time, before any script runs and before the CSP's
-    // connect-src is consulted. The only reference allowed is the script's own entry.
+  test('the shell fetches nothing while the browser parses it', () => {
+    // A src/url()/<link href> fires at PARSE time, before any script runs and before the
+    // CSP's connect-src is consulted. The only such reference allowed is the script's
+    // own entry, which the build inlines.
     const body = shellBody().replace(/<script type="module" src="\/src\/main\.ts"><\/script>/, '')
-    expect(body).not.toMatch(/\b(src|srcset|href|action|formaction|poster|background)\s*=/i)
+    expect(body).not.toMatch(/\b(src|srcset|action|formaction|poster|background)\s*=/i)
     expect(body).not.toMatch(/url\(|@import|<link|<iframe|<img|<embed|<object/i)
     expect(body).not.toMatch(/sample/i)
+  })
+
+  test('the only hrefs are anchors the reader may choose to follow', () => {
+    // The provenance line in the footer is where a reader is told to re-download this
+    // file and check its checksum, so it carries the project's address. An anchor is not
+    // a request: nothing fetches it unless a person clicks it, and no scenario in the
+    // end-to-end suite does. That is the whole of the carve-out — any OTHER element
+    // carrying an href would be a resource the browser fetches by itself, and the
+    // assertion above already refuses those.
+    const body = shellBody()
+    const hrefs = [...body.matchAll(/<([a-z-]+)\b[^>]*\shref=/gi)].map((m) => m[1]!.toLowerCase())
+    expect(hrefs.length).toBeGreaterThan(0)
+    expect(hrefs.every((tag) => tag === 'a')).toBe(true)
   })
 })
 

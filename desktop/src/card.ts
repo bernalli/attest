@@ -90,14 +90,21 @@ export function cardTitle(envelopeBytes: Uint8Array, run: VerifyRun): string {
   }
 }
 
-function headlineFor(run: VerifyRun) {
+function headlineFor(run: VerifyRun): { label: string; text: string; className: string } {
   const verdict = desktopVerdict(run.ok, run.result.trust)
   if (verdict === 'failed') {
     // Reused verbatim: one red wording in the project, never two that can drift.
     const red = explainVerdict(false)
-    return { label: red.label, text: red.text, tone: 'bad' as const }
+    return { label: red.label, text: red.text, className: 'verdict tone-bad' }
   }
-  return HEADLINES[verdict]
+  const headline = HEADLINES[verdict]
+  // Four states, four appearances. `key_history_gap` keeps `tone-warn` — it IS
+  // cautionary — and adds a class of its own, because sharing one class with
+  // `offline_limit` would leave the two distinguishable only by their wording, and a
+  // reader who has learned that amber means the ordinary offline limit would read an
+  // anomaly as the limit.
+  const extra = verdict === 'key_history_gap' ? ' verdict-key-gap' : ''
+  return { label: headline.label, text: headline.text, className: `verdict tone-${headline.tone}${extra}` }
 }
 
 /**
@@ -131,7 +138,7 @@ export function renderDesktopCard(
 
   const headline = headlineFor(run)
   const replacement = document.createElement('p')
-  replacement.className = `verdict tone-${headline.tone}`
+  replacement.className = headline.className
   const strong = document.createElement('strong')
   strong.textContent = headline.label
   const span = document.createElement('span')
