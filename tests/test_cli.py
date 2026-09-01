@@ -1091,6 +1091,42 @@ def test_verify_help_exits_0(capsys: CapSys) -> None:
     assert exc_info.value.code == 0
 
 
+def test_log_anchor_help_names_ots_convert_without_overclaiming(
+    capsys: CapSys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`log anchor --help` is read by exactly the operator who is holding a
+    detached `.ots` file and wondering what to do with it next. Saying only
+    that anchor material "is out of this CLI's scope" was true before `log
+    ots-convert` existed and is still true -- ACQUIRING an attestation needs
+    a calendar and a network this CLI never opens a socket to -- but it is
+    now the wrong place for the help to stop: CONVERTING a proof the
+    operator already holds is in scope, and offline. The help has to keep
+    the truthful half and name the command.
+
+    The three residual-truth assertions are the point of the pin, not
+    decoration: this surface must never drift into promising more than the
+    code does, so the sentence that scopes the command OUT of acquisition
+    has to survive every future edit that adds a pointer to it.
+    """
+    # Pin the wrap width. argparse fills the description to the terminal
+    # width and textwrap breaks on hyphens, so on a narrow console
+    # `ots-convert` can be split across two lines and no substring check
+    # would survive; at this width the description is emitted unwrapped.
+    monkeypatch.setenv("COLUMNS", "2000")
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["log", "anchor", "--help"])
+    assert exc_info.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+
+    assert "ots-convert" in help_text
+    # Residual truth, all three still required after the pointer lands:
+    # the material comes from elsewhere, acquiring it is not this CLI's
+    # job, and nothing here reaches the network.
+    assert "OUTSIDE this process" in help_text
+    assert "out of this CLI's scope" in help_text
+    assert "never touches the network" in help_text
+
+
 # --- manifest rotate: retirement / compromise flags --------------------------
 
 

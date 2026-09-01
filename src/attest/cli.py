@@ -3338,6 +3338,9 @@ def build_parser() -> argparse.ArgumentParser:
             "ATTACHES anchor material obtained OUTSIDE this process to a `log prove`-produced "
             "evidence file's `anchors` member (acquiring an OTS/Bitcoin attestation or an "
             "RFC 3161 timestamp is out of this CLI's scope — it never touches the network). "
+            "An .ots file you already hold is a different matter: `attest log ots-convert` "
+            "turns an upgraded detached OpenTimestamps proof into the --ots-proof JSON this "
+            "command expects, and performs no network I/O either. "
             "--dir's config.json is read only to confirm the evidence's own checkpoint origin "
             "actually belongs to this log."
         ),
@@ -3348,7 +3351,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--ots-proof",
         required=True,
         type=Path,
-        help="JSON object: ops/header_merkle_root/header_hash/header_time",
+        help=(
+            "JSON object: ops/header_merkle_root/header_hash/header_time "
+            "(one file per Bitcoin path, as emitted by `attest log ots-convert`)"
+        ),
     )
     p.add_argument(
         "--rfc3161-token",
