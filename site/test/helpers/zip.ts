@@ -51,6 +51,12 @@ export function concat(parts: readonly Uint8Array[]): Uint8Array {
   return result
 }
 
+// General-purpose bit 11: the names below are written as UTF-8 by
+// `TextEncoder`, and without this flag a reader is entitled to decode them as
+// CP437 — fflate does, which silently turns every non-ASCII name into mojibake
+// and would make a test about a hostile Unicode name pass for the wrong reason.
+const UTF8_NAMES = 0x0800
+
 export function storedZip(entries: readonly StoredEntry[]): Uint8Array {
   const locals: Uint8Array[] = []
   const central: Uint8Array[] = []
@@ -60,13 +66,13 @@ export function storedZip(entries: readonly StoredEntry[]): Uint8Array {
     const filename = encoder.encode(name)
     const checksum = crc32(bytes)
     const local = concat([
-      u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(0x04034b50), u16(20), u16(UTF8_NAMES), u16(0), u16(0), u16(0),
       u32(checksum), u32(bytes.length), u32(bytes.length), u16(filename.length), u16(0),
       filename, bytes,
     ])
     locals.push(local)
     central.push(concat([
-      u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(0x02014b50), u16(20), u16(20), u16(UTF8_NAMES), u16(0), u16(0), u16(0),
       u32(checksum), u32(bytes.length), u32(bytes.length), u16(filename.length), u16(0),
       u16(0), u16(0), u16(0), u32(0), u32(offset), filename,
     ]))

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { explain, explainVerdict, attributeWarning, COMPONENTS, GROUPS } from '../src/explain.js'
 import type { Component } from '../src/explain.js'
@@ -191,13 +191,17 @@ describe('compromise-cutoff copy', () => {
     // day someone implements the fetch, this test fails and whoever adds it
     // has to come back and rewrite the sentence — which is exactly the
     // handshake that was missing.
-    const src = (name: string): string =>
-      readFileSync(join(__dirname, '..', '..', 'src', 'attest', name), 'utf8')
-    const implementation = src('cli.py') + src('bundle.py')
+    // The whole package, not the two modules that happen to set provenance:
+    // the sentence claims nothing published performs the fetch, so a fetch
+    // implemented in any third module has to trip this too.
+    const pkg = join(__dirname, '..', '..', 'src', 'attest')
+    const implementation = readdirSync(pkg)
+      .filter((name) => name.endsWith('.py'))
+      .map((name) => readFileSync(join(pkg, name), 'utf8'))
+      .join('\n')
 
-    const shipsAnHttpClient = /^\s*(?:import|from)\s+(?:requests|httpx|urllib|aiohttp)\b/m.test(
-      implementation,
-    )
+    const shipsAnHttpClient =
+      /^\s*(?:import|from)\s+(?:requests|httpx|urllib|aiohttp|http\.client)\b/m.test(implementation)
     expect(shipsAnHttpClient).toBe(false)
 
     const text = explain('trust', 'unauthenticated_tofu').text

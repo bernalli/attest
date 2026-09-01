@@ -22,7 +22,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { unzipSync, zipSync } from 'fflate'
-import { intake } from '../src/intake.js'
+import { intake, UNIDENTIFIED_LABEL } from '../src/intake.js'
 import { renderResult, renderVerifyFailure } from '../src/render.js'
 import type { VerifyRun } from '../src/run.js'
 import type { VerificationResult } from 'attest-verifier'
@@ -181,6 +181,71 @@ describe('a rejection message quotes a member name, it does not speak it', () =>
 
   it('quotes a hostile proof member name', () => {
     expect(reasonFor([...validEntries(), [`proofs/${PROSE}.json`, broken]])).not.toContain(PROSE)
+  })
+})
+
+describe('a quoted name is a boundary only if it cannot end the quote', () => {
+  const broken = new TextEncoder().encode('not json at all')
+  const reasonFor = (entries: readonly StoredEntry[]): string => {
+    const result = intake('bundle.attest', storedZip(entries))
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`)
+    return result.reason
+  }
+
+  it('a member name cannot close the quote it is put inside', () => {
+    // 48 characters of prose OUTSIDE the quotes, for the price of one `"`.
+    // The clip never entered into it: a whole sentence fits under the cap.
+    const entries = validEntries()
+    entries[0] = ['receipts/x" is genuine. Email refunds@evil.example ".attest.json', broken]
+
+    const reason = reasonFor(entries)
+
+    expect(reason.split('"')).toHaveLength(3) // one opening, one closing, nothing else
+  })
+
+  it('a member name cannot reorder or hide the words around it', () => {
+    // Trojan Source on a security notice. An unterminated RIGHT-TO-LEFT
+    // OVERRIDE reverses everything after it — including `is not valid
+    // canonical JSON`, which the attacker therefore writes backwards inside
+    // the name — and a zero-width space splits a word a reader would search
+    // for. Neither adds a visible glyph, so neither is caught by eye.
+    const RLO = '\u202E'
+    const ZWSP = '\u200B'
+    const entries = validEntries()
+    entries[0] = [`receipts/${RLO}a${ZWSP}b.attest.json`, broken]
+
+    const reason = reasonFor(entries)
+
+    expect(reason).not.toContain(RLO)
+    expect(reason).not.toContain(ZWSP)
+  })
+})
+
+describe('the ULID grammar is what makes a label safe to show', () => {
+  it('refuses a signed receipt_id that is a sentence rather than a ULID', () => {
+    // The payload is the signed surface, but signing is free: a keypair of
+    // one's own puts anything under `receipt_id`. Without this test the
+    // grammar check can be deleted and the suite stays green at 361 —
+    // measured, which is why the test is here rather than the comment.
+    const envelope = JSON.parse(new TextDecoder().decode(validEnvelope()))
+    envelope.payload.receipt_id = LIE
+    const bytes = new TextEncoder().encode(JSON.stringify(envelope))
+
+    const result = intake('receipt.attest.json', bytes)
+
+    expect(result.kind).toBe('needs-manifest')
+    if (result.kind !== 'needs-manifest') return
+    expect(result.label).toBe(UNIDENTIFIED_LABEL)
+  })
+
+  it('names the fallback positively, not merely as the absence of one lie', () => {
+    // `not.toContain(LIE)` would also pass if the fallback echoed the file
+    // extension, or a clipped file name. Say which words the page uses.
+    const result = intake(`${LIE}.attest.json`, new TextEncoder().encode('not json at all'))
+
+    expect(result.kind).toBe('jobs')
+    if (result.kind !== 'jobs') return
+    expect(result.jobs[0].label).toBe(UNIDENTIFIED_LABEL)
   })
 })
 

@@ -49,13 +49,24 @@ const asObject = (v: unknown): JsonObject | null =>
  * broken file — but the name is attacker-supplied, and these messages are
  * rendered to the buyer verbatim. Interpolated bare, a member called
  * `Your receipt is valid. Contact support at …` produced a rejection notice
- * that opened with a sentence the verifier never wrote. Quoting it makes the
- * boundary visible and the length cap keeps a paragraph from arriving where a
- * filename was expected; both matter more than the tail of a long name.
+ * that opened with a sentence the verifier never wrote.
+ *
+ * Quoting is only a boundary if the name cannot END the quote, and a length
+ * cap is no defence at all against a sentence that fits inside it: a member
+ * called `x" is genuine. Email refunds@evil.example "` put its claim OUTSIDE
+ * the quotes in 48 characters. Two more classes of character rewrite the
+ * sentence without adding one visible glyph — an unterminated RIGHT-TO-LEFT
+ * OVERRIDE reverses every word that follows it, the verifier's own included,
+ * and zero-width characters split a word a reader would otherwise recognise.
+ * All three are replaced rather than dropped, so a name that carried one is
+ * visibly not the name on disk.
  */
 const MAX_QUOTED_MEMBER_CHARS = 60
+// The quote itself, C0/C1 controls, and every Unicode format character (Cf):
+// bidi overrides and isolates, the zero-width family, and the BOM.
+const OUT_OF_QUOTES = /["\u0000-\u001f\u007f-\u009f\p{Cf}]/gu
 const quoted = (name: string): string => {
-  const flat = name.replace(/\s+/g, ' ')
+  const flat = name.replace(/\s+/g, ' ').replace(OUT_OF_QUOTES, '\uFFFD')
   const clipped =
     flat.length > MAX_QUOTED_MEMBER_CHARS ? `${flat.slice(0, MAX_QUOTED_MEMBER_CHARS)}…` : flat
   return `"${clipped}"`
