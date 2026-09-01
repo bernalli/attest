@@ -3462,6 +3462,75 @@ def gen_28_transparency() -> None:
         anchor_policy=_empty_anchor_policy(),
     )
 
+    # --- (o) genuine log evidence for a receipt whose signature is
+    # STRUCTURALLY invalid. Leaf (i) is often read as this case and is not:
+    # its envelope is byte-identical to vector 13's, so its signature is
+    # genuine and the refusal is the compromised-key rule (v0.1 §7.3). Here
+    # the key is `active` and untouched, and the signature bytes themselves
+    # do not verify — so the refusal carries the signature literal, never
+    # `compromised`. Paired with (i): same observable conclusion, two
+    # different causes, and now one leaf for each.
+    #
+    # The signature is 64 zero bytes: valid LENGTH, invalid value. A wrong
+    # length is refused earlier and by a different literal (`malformed
+    # signature material: Ed25519 signature must be 64 bytes`, measured),
+    # which is a different property and would not exercise this one.
+    #
+    # What this leaf shows is the relying-party consequence: honest log
+    # evidence for a receipt that does not verify is reported honestly as
+    # `logged` and moves no verdict. What it does NOT show is v0.2 §8's
+    # admission rule — a conformance leaf is a VERIFIER fixture and never
+    # reaches `tlog.encode_entry`, and the `receipt` entry carries no
+    # signature to look at. That rule is defended by unit tests over
+    # `encode_entry` in tests/test_tlog.py; do not cite this leaf for it.
+    envelope_o = copy.deepcopy(envelope)
+    envelope_o["signatures"][0]["sig"] = keys.b64u(bytes(64))
+    entry_o = {
+        "type": "receipt",
+        "issuer": ISSUER_ID,
+        "core_sha256": tlog.receipt_core_hash(envelope_o),
+    }
+    entry_bytes_o = tlog.encode_entry(entry_o)
+    root_o = tlog.build_tree([entry_bytes_o])
+    checkpoint_o = _sign_checkpoint_oracle(LOG_ORIGIN, 1, root_o)
+    assert tlog.verify_inclusion(tlog.leaf_hash(entry_bytes_o), 0, 1, [], root_o)
+    # The evidence commits to THIS envelope, not to (a)'s: `receipt_core_hash`
+    # covers the signature bytes, so a corrupted signature is a different core
+    # and reusing (a)'s entry would make the leaf prove entry-hash mismatch
+    # instead — which is already vector (g).
+    assert entry_o["core_sha256"] != entry_a["core_sha256"]
+    write_vector(
+        "28-transparency/o-malformed-signature-logged",
+        payload=payload,
+        envelope=envelope_o,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, _manifest_material(ISSUER_ID, ISSUER_KID, ISSUER_KP), "tls")
+        ),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": "logged",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": False,
+            "errors_contains": ["signature verification failed"],
+            "warnings": [],
+        },
+        transparency={
+            "entry": entry_o,
+            "leaf_index": 0,
+            "tree_size": 1,
+            "inclusion_proof": _hex_proof(tlog.inclusion_proof([entry_bytes_o], 0)),
+            "checkpoint": checkpoint_o,
+        },
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
+    )
+
 
 # --- vector 29 (G1 normative ceilings, attest-versioning.md §5 amendment) ---
 #

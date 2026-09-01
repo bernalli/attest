@@ -571,7 +571,7 @@ def check_pc08_corpus_claim(pc_rows: list[PcRow], vectors_path: Path) -> list[st
     transfer-chain payloads embedded in ``chain.json``.
 
     The former are found mechanically by filename; the latter deliberately are
-    not, so parse the three chain fixtures' ``payloads`` arrays as JSON.  Keep
+    not, so parse the four chain fixtures' ``payloads`` arrays as JSON.  Keep
     the prose pin explicit about both the count and that distinction.
     """
     pc08_rows = [row for row in pc_rows if row.pc_id == 8]
