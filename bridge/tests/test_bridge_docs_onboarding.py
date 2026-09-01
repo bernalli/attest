@@ -61,109 +61,117 @@ _GUIDES = {
 }
 
 
-def _table_header(line: str) -> str | None:
-    """The top-level table a header line opens, or None if it is not one.
+def _is_table_value(value: Any) -> bool:
+    """Whether a top-level TOML value is a table, or an array of them.
 
-    `[[a]]` (array of tables) counts, and so does a header followed by an
-    inline comment — the shipped example has one. Failing to recognise
-    either is worse than it sounds: an unrecognised header does not end the
-    section being removed, so the removal keeps eating the tables that
-    follow it.
+    A plain array (`foo = [1, 2, 3]`) and an array-of-tables (`[[foo]]`)
+    parse to the same Python type — `list` — so the only way to tell them
+    apart after the fact is to look at what is inside: a non-empty array
+    whose every element is itself a table.
     """
-    match = re.match(r"^\[\[?([^\[\]]+)\]\]?\s*(#.*)?$", line.strip())
-    return None if match is None else match.group(1).split(".")[0].strip()
-
-
-def _is_bare_table_path(name: str) -> bool:
-    return bool(name) and all(
-        part
-        and all(
-            character.isascii() and (character.isalnum() or character in "_-")
-            for character in part
-        )
-        for part in name.split(".")
-    )
-
-
-def _require_supported_toml_document(config_text: str) -> None:
-    """Reject TOML whose table structure this small editor cannot prove."""
-    try:
-        tomllib.loads(config_text)
-    except tomllib.TOMLDecodeError as error:
-        raise ValueError("unsupported TOML document: it must be valid TOML") from error
-
-    if '\"\"\"' in config_text or "'''" in config_text:
-        raise ValueError("unsupported TOML document: multiline strings are not supported")
-
-    for line in config_text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("["):
-            continue
-        header_without_comment = stripped.split("#", maxsplit=1)[0].rstrip()
-        bracket_count = 2 if header_without_comment.startswith("[[") else 1
-        closing_brackets = "]" * bracket_count
-        name = header_without_comment[bracket_count:-bracket_count]
-        if (
-            not header_without_comment.endswith(closing_brackets)
-            or not _is_bare_table_path(name)
-            or _table_header(line) != name.split(".")[0]
-        ):
-            raise ValueError(
-                "unsupported TOML document: table headers must use bare dotted keys"
-            )
+    if isinstance(value, dict):
+        return True
+    return isinstance(value, list) and bool(value) and all(isinstance(item, dict) for item in value)
 
 
 def _top_level_tables(config_text: str) -> list[str]:
-    """Top-level table names, in file order, `[a.b]` reported as `a`."""
-    seen: list[str] = []
-    for line in config_text.splitlines():
-        name = _table_header(line)
-        if name is not None and name not in seen:
-            seen.append(name)
-    return seen
+    """Top-level table names, in file order, `[a.b]` reported as `a`.
+
+    Reads structure from `tomllib`, the reference parser, instead of
+    deducing it from the text: a top-level key IS a top-level table because
+    `tomllib` says so, never because a line matched a header-shaped regex —
+    a regex cannot tell a real header from `[1]` sitting inside an array
+    value, and one that tries is what this file replaced.
+
+    File order survives the round trip through `tomllib.loads` because
+    Python dicts preserve insertion order and `tomllib` inserts each
+    top-level key the first time it parses that key, reading top to bottom.
+    """
+    return [name for name, value in tomllib.loads(config_text).items() if _is_table_value(value)]
 
 
 def _platform_rails(config_text: str) -> list[str]:
     return [name for name in _top_level_tables(config_text) if name not in _NON_PLATFORM_TABLES]
 
 
+_TABLE_MARKER = re.compile(r"^\s*#\s*@table-(start|end)\s+(\S+)\s*$")
+
+
+def _table_spans(lines: list[str]) -> dict[str, tuple[int, int]]:
+    """Line-index spans (inclusive) bounded by `@table-start`/`@table-end`.
+
+    Raises on any marker that is not exactly balanced: a start with no
+    matching end, an end with no matching start, or a start nested inside
+    another still-open span. Nesting is rejected rather than supported
+    because nothing in this file needs it, and a marker parser that accepts
+    shapes nobody uses is exactly the kind of code this helper replaced.
+    """
+    spans: dict[str, tuple[int, int]] = {}
+    open_name: str | None = None
+    open_index = -1
+    for index, line in enumerate(lines):
+        match = _TABLE_MARKER.match(line)
+        if match is None:
+            continue
+        kind, name = match.group(1), match.group(2)
+        if kind == "start":
+            if open_name is not None:
+                raise ValueError(
+                    f"unbalanced table markers: @table-start {name!r} opened while "
+                    f"@table-start {open_name!r} is still open"
+                )
+            open_name, open_index = name, index
+        else:
+            if open_name is None:
+                raise ValueError(
+                    f"unbalanced table markers: @table-end {name!r} has no matching @table-start"
+                )
+            if name != open_name:
+                raise ValueError(
+                    f"unbalanced table markers: @table-end {name!r} does not close "
+                    f"@table-start {open_name!r}"
+                )
+            spans[open_name] = (open_index, index)
+            open_name, open_index = None, -1
+    if open_name is not None:
+        raise ValueError(
+            f"unbalanced table markers: @table-start {open_name!r} has no matching end"
+        )
+    return spans
+
+
+def _marked_tables(config_text: str) -> set[str]:
+    """Names of every table bounded by a balanced `@table-start`/`@table-end` pair."""
+    return set(_table_spans(config_text.splitlines(keepends=True)))
+
+
 def _drop_table(config_text: str, table: str) -> str:
-    """Remove `[table]` — every section of it — from a TOML document.
+    """Remove the section between `@table-start table` and `@table-end table`.
 
     Mirrors what a reader does with "omit this whole table": the commented
-    banner above a section goes with it, since it is that section's own
-    explanation.
+    banner above a section goes with it, because the marker is drawn around
+    the banner too — this helper never has to guess where a section starts.
 
-    Handles what the shipped example does not currently contain but a future
-    edit might: an `[[array-of-tables]]` header, and a child `[table.child]`
-    sitting somewhere other than directly below its parent. Both used to be
-    left behind silently, which for this file is the worst possible failure
-    — the config would keep a rail the guide told the reader to drop, and
-    the test would call that a pass.
-
-    It is deliberately not a general TOML editor. Before editing, it rejects
-    input outside the subset it can prove it understands: valid TOML with no
-    multi-line strings and only bare dotted keys in table headers.
+    It is deliberately not a general TOML editor: it does not parse table
+    headers, does not know what a bracket means, and does not look at
+    anything but its own marker comments. A table with no markers around it
+    cannot be dropped at all, loudly rather than by silent corruption.
     """
-    _require_supported_toml_document(config_text)
     lines = config_text.splitlines(keepends=True)
-    out: list[str] = []
-    index = 0
-    while index < len(lines):
-        header = _table_header(lines[index])
-        if header == table:
-            while out and out[-1].lstrip().startswith("#"):
-                out.pop()
-            index += 1
-            while index < len(lines) and _table_header(lines[index]) is None:
-                index += 1
-            while out and not out[-1].strip():
-                out.pop()
-            out.append("\n")
-            continue
-        out.append(lines[index])
-        index += 1
-    return "".join(out)
+    spans = _table_spans(lines)
+    if table not in spans:
+        raise ValueError(f"no @table-start/@table-end markers found for [{table}]: nothing to drop")
+    start, end = spans[table]
+
+    before = lines[:start]
+    while before and not before[-1].strip():
+        before.pop()
+
+    after_index = end + 1
+    while after_index < len(lines) and not lines[after_index].strip():
+        after_index += 1
+
+    return "".join(before) + "\n" + "".join(lines[after_index:])
 
 
 def _same_toml_value(left: Any, right: Any) -> bool:
@@ -218,9 +226,7 @@ def _assert_dropped_exactly(before: str, after: str, dropped: set[str]) -> None:
     ("before_value", "after_value"),
     [("true", "1"), ("false", "0"), ("1", "1.0")],
 )
-def test_assert_dropped_exactly_rejects_type_changes(
-    before_value: str, after_value: str
-) -> None:
+def test_assert_dropped_exactly_rejects_type_changes(before_value: str, after_value: str) -> None:
     before = f"[survivor]\nvalue = {before_value}\n"
     after = f"[survivor]\nvalue = {after_value}\n"
 
@@ -493,82 +499,139 @@ def test_every_endpoint_the_docs_name_is_routed_by_the_app() -> None:
     assert not missing, f"documented endpoints that the app does not route: {missing}"
 
 
-class TestDropTableOnInputTheExampleDoesNotContainYet:
-    """`_drop_table` edits TOML by hand, and the tests above only ever feed it
-    the one blessed `examples/bridge.toml`. These pin the shapes a future
-    edit to that file could introduce — the property being that a table the
-    caller asked to remove is either GONE or the failure is loud. Silently
-    keeping it is the one outcome that would let a broken guide pass.
+def _mutate_by_dropping_first_line(text: str, marker: str) -> str:
+    """The real example with the first line containing `marker` removed.
+
+    Used to build hostile marker layouts BY MUTATION of the shipped file
+    instead of writing broken TOML by hand: a hand-written list of "bad
+    shapes" shares the blind spots of whoever wrote it.
+    """
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if marker in line:
+            return "".join(lines[:index] + lines[index + 1 :])
+    raise AssertionError(f"no line contains {marker!r} in the example file")
+
+
+def _mutate_by_duplicating_first_line(text: str, marker: str) -> str:
+    """The real example with the first line containing `marker` repeated.
+
+    Produces two `@table-start` in a row with no `@table-end` between them —
+    the nested-marker shape.
+    """
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if marker in line:
+            return "".join([*lines[: index + 1], line, *lines[index + 1 :]])
+    raise AssertionError(f"no line contains {marker!r} in the example file")
+
+
+class TestTableSpansAndDropTable:
+    """`_drop_table` no longer deduces TOML structure from the text: it cuts
+    between `@table-start <name>` / `@table-end <name>` marker comments, and
+    those markers are the ONLY thing it looks at. A line that merely looks
+    like a table header — `[1]` inside an array value, for instance — is
+    just text to it, because it never asks whether a line is a header at
+    all.
     """
 
-    def _dropped(self, toml_text: str, table: str) -> dict[str, Any]:
-        return tomllib.loads(_drop_table(toml_text, table))
+    _COUNTEREXAMPLE = "[a]\nx = [\n  [1]\n]\n\n[b]\ny = 1\n"
 
-    _VALID_TABLES = "[a]\nx = 1\n\n[b]\ny = 1\n"
+    def test_marker_absent_for_the_requested_table_raises(self) -> None:
+        # Valid TOML, valid markers for "a" — none for "b".
+        toml_text = "# @table-start a\n[a]\nx = 1\n# @table-end a\n\n[b]\ny = 1\n"
 
-    @pytest.mark.parametrize(
-        "broken_header",
-        ("[[a]", "[a]]", "[a..b]", "[.a]", "[a.]", "[a b]", "[a,b]", '["a]'),
-    )
-    def test_malformed_headers_mutated_from_valid_input_are_rejected(
-        self, broken_header: str
-    ) -> None:
-        toml_text = self._VALID_TABLES.replace("[a]", broken_header, 1)
-
-        with pytest.raises(tomllib.TOMLDecodeError):
-            tomllib.loads(toml_text)
-        with pytest.raises(ValueError, match="unsupported TOML document"):
-            _drop_table(toml_text, "a")
-
-    @pytest.mark.parametrize("header", ('["a.b"]', '["a]"]'))
-    def test_quoted_table_keys_are_rejected(self, header: str) -> None:
-        toml_text = self._VALID_TABLES.replace("[a]", header, 1)
-
-        assert tomllib.loads(toml_text)
-        with pytest.raises(ValueError, match="unsupported TOML document"):
-            _drop_table(toml_text, "a")
-
-    def test_array_of_tables_section_is_removed(self) -> None:
-        toml_text = "[a]\nx = 1\n\n[[b]]\ny = 1\n\n[c]\nz = 1\n"
-        assert "b" not in self._dropped(toml_text, "b")
-
-    def test_child_table_far_from_its_parent_is_removed_too(self) -> None:
-        toml_text = "[a]\nx = 1\n\n[c]\nz = 1\n\n[a.child]\ny = 1\n"
-        result = self._dropped(toml_text, "a")
-        assert "a" not in result
-        assert "c" in result, "removing [a] must not take unrelated sections with it"
-
-    def test_repeated_section_of_the_same_table_is_rejected(self) -> None:
-        toml_text = "[a]\nx = 1\n\n[b]\ny = 1\n\n[a]\nx2 = 2\n"
-
-        with pytest.raises(tomllib.TOMLDecodeError):
-            tomllib.loads(toml_text)
-        with pytest.raises(ValueError, match="unsupported TOML document"):
-            _drop_table(toml_text, "a")
-
-    def test_a_bracket_line_inside_a_multiline_string_is_rejected(self) -> None:
-        toml_text = '[a]\ndescription = """\n[b]\n"""\n\n[b]\ny = 1\n'
-
-        assert tomllib.loads(toml_text)
-        with pytest.raises(ValueError, match="unsupported TOML document"):
+        with pytest.raises(ValueError, match="no @table-start/@table-end markers"):
             _drop_table(toml_text, "b")
 
-    def test_header_followed_by_an_inline_comment_is_recognised(self) -> None:
-        """The shape the shipped example actually uses.
+    def test_start_marker_without_matching_end_raises(self) -> None:
+        mutated = _mutate_by_dropping_first_line(
+            _EXAMPLE_CONFIG.read_text(encoding="utf-8"), "@table-end shopify"
+        )
 
-        `[products.price_1PxYzEXAMPLE]` carries a trailing `# Stripe price
-        id…` comment. A matcher that misses it does not merely skip that
-        header — it fails to end the section being removed, so the removal
-        runs on and eats the commented table's contents.
+        with pytest.raises(ValueError, match="unbalanced table markers"):
+            _drop_table(mutated, "itch")
+
+    def test_end_marker_without_matching_start_raises(self) -> None:
+        mutated = _mutate_by_dropping_first_line(
+            _EXAMPLE_CONFIG.read_text(encoding="utf-8"), "@table-start shopify"
+        )
+
+        with pytest.raises(ValueError, match="unbalanced table markers"):
+            _drop_table(mutated, "itch")
+
+    def test_nested_start_markers_raise(self) -> None:
+        mutated = _mutate_by_duplicating_first_line(
+            _EXAMPLE_CONFIG.read_text(encoding="utf-8"), "@table-start shopify"
+        )
+
+        with pytest.raises(ValueError, match="unbalanced table markers"):
+            _drop_table(mutated, "itch")
+
+    def test_hostile_lookalike_without_markers_is_rejected_not_corrupted(self) -> None:
+        """The controexample that defeated the old line-scanning precondition.
+
+        `  [1]` inside the array value for `x` reads, to any line scanner,
+        exactly like a table header. Without markers there is nothing this
+        helper can do but refuse — which is safe, unlike the old behaviour
+        of accepting the document and corrupting it.
         """
-        toml_text = "[a]\nx = 1\n\n[b]  # a trailing note\ny = 1\n"
-        result = _drop_table(toml_text, "a")
+        with pytest.raises(ValueError, match="no @table-start/@table-end markers"):
+            _drop_table(self._COUNTEREXAMPLE, "a")
+
+    def test_hostile_lookalike_with_markers_is_handled_correctly(self) -> None:
+        """The same document, marked up, is dropped correctly and stays valid TOML."""
+        marked = "# @table-start a\n[a]\nx = [\n  [1]\n]\n# @table-end a\n\n[b]\ny = 1\n"
+
+        result = _drop_table(marked, "a")
+
         parsed = tomllib.loads(result)
         assert "a" not in parsed
-        assert parsed["b"] == {"y": 1}, "removing [a] swallowed the commented table below it"
+        assert parsed["b"] == {"y": 1}
 
-    def test_removing_one_table_leaves_the_real_example_intact(self) -> None:
-        """The regression, on the real file rather than a synthetic one."""
+    def test_removable_table_removed_from_the_real_example_leaves_others_intact(
+        self,
+    ) -> None:
         before = _EXAMPLE_CONFIG.read_text(encoding="utf-8")
-        after = _drop_table(before, "delivery")
-        _assert_dropped_exactly(before, after, {"delivery"})
+        removable = _marked_tables(before)
+        assert removable, "the example carries no @table-start/@table-end markers at all"
+
+        for table in sorted(removable):
+            after = _drop_table(before, table)
+            _assert_dropped_exactly(before, after, {table})
+
+
+class TestTopLevelTables:
+    """`_top_level_tables` reads structure from `tomllib.loads`, never from text."""
+
+    def test_preserves_file_order_not_alphabetical_order(self) -> None:
+        toml_text = "[zeta]\nx = 1\n\n[alpha]\ny = 1\n"
+
+        assert _top_level_tables(toml_text) == ["zeta", "alpha"]
+
+    def test_excludes_non_table_top_level_keys(self) -> None:
+        toml_text = "top_level_scalar = 1\ntop_level_array = [1, 2]\n\n[a]\nx = 1\n"
+
+        assert _top_level_tables(toml_text) == ["a"]
+
+    def test_array_of_tables_counts_as_a_table(self) -> None:
+        toml_text = "[[a]]\nx = 1\n\n[b]\ny = 1\n"
+
+        assert _top_level_tables(toml_text) == ["a", "b"]
+
+    def test_dotted_child_header_is_reported_under_its_parent(self) -> None:
+        toml_text = "[a.child]\nx = 1\n"
+
+        assert _top_level_tables(toml_text) == ["a"]
+
+    def test_real_example_tables_are_enumerated_in_appearance_order(self) -> None:
+        config_text = _EXAMPLE_CONFIG.read_text(encoding="utf-8")
+
+        assert _top_level_tables(config_text) == [
+            "issuer",
+            "stripe",
+            "shopify",
+            "itch",
+            "delivery",
+            "products",
+        ]
