@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import struct
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,45 @@ def _table_header(line: str) -> str | None:
     return None if match is None else match.group(1).split(".")[0].strip()
 
 
+def _is_bare_table_path(name: str) -> bool:
+    return bool(name) and all(
+        part
+        and all(
+            character.isascii() and (character.isalnum() or character in "_-")
+            for character in part
+        )
+        for part in name.split(".")
+    )
+
+
+def _require_supported_toml_document(config_text: str) -> None:
+    """Reject TOML whose table structure this small editor cannot prove."""
+    try:
+        tomllib.loads(config_text)
+    except tomllib.TOMLDecodeError as error:
+        raise ValueError("unsupported TOML document: it must be valid TOML") from error
+
+    if '\"\"\"' in config_text or "'''" in config_text:
+        raise ValueError("unsupported TOML document: multiline strings are not supported")
+
+    for line in config_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("["):
+            continue
+        header_without_comment = stripped.split("#", maxsplit=1)[0].rstrip()
+        bracket_count = 2 if header_without_comment.startswith("[[") else 1
+        closing_brackets = "]" * bracket_count
+        name = header_without_comment[bracket_count:-bracket_count]
+        if (
+            not header_without_comment.endswith(closing_brackets)
+            or not _is_bare_table_path(name)
+            or _table_header(line) != name.split(".")[0]
+        ):
+            raise ValueError(
+                "unsupported TOML document: table headers must use bare dotted keys"
+            )
+
+
 def _top_level_tables(config_text: str) -> list[str]:
     """Top-level table names, in file order, `[a.b]` reported as `a`."""
     seen: list[str] = []
@@ -101,12 +141,11 @@ def _drop_table(config_text: str, table: str) -> str:
     — the config would keep a rail the guide told the reader to drop, and
     the test would call that a pass.
 
-    What it still does NOT understand is TOML string syntax: a line that
-    begins with `[` inside a multi-line string reads as a header here. That
-    limit is contained rather than hidden — every caller re-parses the
-    result with `tomllib` and asserts the table is gone, so a document this
-    function mangles fails loudly instead of quietly testing the wrong file.
+    It is deliberately not a general TOML editor. Before editing, it rejects
+    input outside the subset it can prove it understands: valid TOML with no
+    multi-line strings and only bare dotted keys in table headers.
     """
+    _require_supported_toml_document(config_text)
     lines = config_text.splitlines(keepends=True)
     out: list[str] = []
     index = 0
@@ -125,6 +164,24 @@ def _drop_table(config_text: str, table: str) -> str:
         out.append(lines[index])
         index += 1
     return "".join(out)
+
+
+def _same_toml_value(left: Any, right: Any) -> bool:
+    """Compare parsed TOML values without Python's cross-type equality."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _same_toml_value(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _same_toml_value(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    if isinstance(left, float):
+        return struct.pack(">d", left) == struct.pack(">d", right)
+    return left == right
 
 
 def _assert_dropped_exactly(before: str, after: str, dropped: set[str]) -> None:
@@ -151,10 +208,24 @@ def _assert_dropped_exactly(before: str, after: str, dropped: set[str]) -> None:
         f"{sorted(expected_survivors - parsed_after.keys())}"
     )
     for table in expected_survivors:
-        assert parsed_after[table] == parsed_before[table], (
+        assert _same_toml_value(parsed_after[table], parsed_before[table]), (
             f"_drop_table left [{table}] behind but changed its contents — "
             "it ran past the end of the section it was removing"
         )
+
+
+@pytest.mark.parametrize(
+    ("before_value", "after_value"),
+    [("true", "1"), ("false", "0"), ("1", "1.0")],
+)
+def test_assert_dropped_exactly_rejects_type_changes(
+    before_value: str, after_value: str
+) -> None:
+    before = f"[survivor]\nvalue = {before_value}\n"
+    after = f"[survivor]\nvalue = {after_value}\n"
+
+    with pytest.raises(AssertionError, match="changed its contents"):
+        _assert_dropped_exactly(before, after, set())
 
 
 def _guide_text_including_referrals(guide_name: str) -> str:
@@ -433,6 +504,30 @@ class TestDropTableOnInputTheExampleDoesNotContainYet:
     def _dropped(self, toml_text: str, table: str) -> dict[str, Any]:
         return tomllib.loads(_drop_table(toml_text, table))
 
+    _VALID_TABLES = "[a]\nx = 1\n\n[b]\ny = 1\n"
+
+    @pytest.mark.parametrize(
+        "broken_header",
+        ("[[a]", "[a]]", "[a..b]", "[.a]", "[a.]", "[a b]", "[a,b]", '["a]'),
+    )
+    def test_malformed_headers_mutated_from_valid_input_are_rejected(
+        self, broken_header: str
+    ) -> None:
+        toml_text = self._VALID_TABLES.replace("[a]", broken_header, 1)
+
+        with pytest.raises(tomllib.TOMLDecodeError):
+            tomllib.loads(toml_text)
+        with pytest.raises(ValueError, match="unsupported TOML document"):
+            _drop_table(toml_text, "a")
+
+    @pytest.mark.parametrize("header", ('["a.b"]', '["a]"]'))
+    def test_quoted_table_keys_are_rejected(self, header: str) -> None:
+        toml_text = self._VALID_TABLES.replace("[a]", header, 1)
+
+        assert tomllib.loads(toml_text)
+        with pytest.raises(ValueError, match="unsupported TOML document"):
+            _drop_table(toml_text, "a")
+
     def test_array_of_tables_section_is_removed(self) -> None:
         toml_text = "[a]\nx = 1\n\n[[b]]\ny = 1\n\n[c]\nz = 1\n"
         assert "b" not in self._dropped(toml_text, "b")
@@ -443,27 +538,20 @@ class TestDropTableOnInputTheExampleDoesNotContainYet:
         assert "a" not in result
         assert "c" in result, "removing [a] must not take unrelated sections with it"
 
-    def test_repeated_section_of_the_same_table_is_removed(self) -> None:
+    def test_repeated_section_of_the_same_table_is_rejected(self) -> None:
         toml_text = "[a]\nx = 1\n\n[b]\ny = 1\n\n[a]\nx2 = 2\n"
-        assert "a" not in self._dropped(toml_text, "a")
 
-    def test_a_bracket_line_inside_a_multiline_string_fails_loudly(self) -> None:
-        """The documented limit, pinned as loud rather than silent.
+        with pytest.raises(tomllib.TOMLDecodeError):
+            tomllib.loads(toml_text)
+        with pytest.raises(ValueError, match="unsupported TOML document"):
+            _drop_table(toml_text, "a")
 
-        `_drop_table` does not parse TOML strings, so a line starting with
-        `[` inside one reads as a header. What must never happen is that it
-        quietly produces a plausible-looking config: the damage has to be
-        visible to `tomllib`.
-        """
-        toml_text = '[a]\ndescription = """\n[b] not a header, prose.\n"""\n\n[b]\ny = 1\n'
-        try:
-            result = self._dropped(toml_text, "b")
-        except tomllib.TOMLDecodeError:
-            return  # loud, which is the contract
-        assert "b" not in result, (
-            "_drop_table left [b] behind while parsing the document as if it "
-            "had succeeded — the silent failure this class exists to rule out"
-        )
+    def test_a_bracket_line_inside_a_multiline_string_is_rejected(self) -> None:
+        toml_text = '[a]\ndescription = """\n[b]\n"""\n\n[b]\ny = 1\n'
+
+        assert tomllib.loads(toml_text)
+        with pytest.raises(ValueError, match="unsupported TOML document"):
+            _drop_table(toml_text, "b")
 
     def test_header_followed_by_an_inline_comment_is_recognised(self) -> None:
         """The shape the shipped example actually uses.
