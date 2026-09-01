@@ -63,10 +63,13 @@ _GUIDES = {
 def _table_header(line: str) -> str | None:
     """The top-level table a header line opens, or None if it is not one.
 
-    `[[a]]` (array of tables) counts: matching only `[a]` is how an unwanted
-    section survives a removal that reports success.
+    `[[a]]` (array of tables) counts, and so does a header followed by an
+    inline comment — the shipped example has one. Failing to recognise
+    either is worse than it sounds: an unrecognised header does not end the
+    section being removed, so the removal keeps eating the tables that
+    follow it.
     """
-    match = re.match(r"^\[\[?([^\[\]]+)\]\]?\s*$", line.strip())
+    match = re.match(r"^\[\[?([^\[\]]+)\]\]?\s*(#.*)?$", line.strip())
     return None if match is None else match.group(1).split(".")[0].strip()
 
 
@@ -122,6 +125,36 @@ def _drop_table(config_text: str, table: str) -> str:
         out.append(lines[index])
         index += 1
     return "".join(out)
+
+
+def _assert_dropped_exactly(before: str, after: str, dropped: set[str]) -> None:
+    """`_drop_table` removed what was asked and NOTHING else.
+
+    Checking only that the requested tables are gone is half an invariant,
+    and the missing half is where the damage is: an unrecognised header line
+    makes the removal run past the end of its own section and swallow the
+    tables below it. That loss is invisible to a "did it disappear" check —
+    the config still parses, and the test still passes, against a file that
+    is no longer the one the guide describes.
+    """
+    parsed_before = tomllib.loads(before)
+    parsed_after = tomllib.loads(after)
+    still_present = dropped & parsed_after.keys()
+    assert not still_present, (
+        f"_drop_table was asked to remove {sorted(dropped)} but "
+        f"{sorted(still_present)} survived: the hand-rolled TOML editor "
+        "failed silently"
+    )
+    expected_survivors = parsed_before.keys() - dropped
+    assert expected_survivors == parsed_after.keys(), (
+        "_drop_table removed tables nobody asked it to: missing "
+        f"{sorted(expected_survivors - parsed_after.keys())}"
+    )
+    for table in expected_survivors:
+        assert parsed_after[table] == parsed_before[table], (
+            f"_drop_table left [{table}] behind but changed its contents — "
+            "it ran past the end of the section it was removing"
+        )
 
 
 def _guide_text_including_referrals(guide_name: str) -> str:
@@ -290,12 +323,8 @@ def test_guide_instructions_alone_reach_a_clean_check_config(
 
     for name in told_to_remove:
         config_text = _drop_table(config_text, name)
-    still_present = told_to_remove & tomllib.loads(config_text).keys()
-    assert not still_present, (
-        f"_drop_table claims to remove {sorted(told_to_remove)} but "
-        f"{sorted(still_present)} is still a top-level table afterward: the "
-        "hand-rolled TOML editor failed silently (an [[array-of-tables]] "
-        "header, for one, is not matched by its regex)"
+    _assert_dropped_exactly(
+        _EXAMPLE_CONFIG.read_text(encoding="utf-8"), config_text, told_to_remove
     )
     config_text = _localize(config_text, tmp_path, hybrid_keys, key_manifest)
 
@@ -435,3 +464,23 @@ class TestDropTableOnInputTheExampleDoesNotContainYet:
             "_drop_table left [b] behind while parsing the document as if it "
             "had succeeded — the silent failure this class exists to rule out"
         )
+
+    def test_header_followed_by_an_inline_comment_is_recognised(self) -> None:
+        """The shape the shipped example actually uses.
+
+        `[products.price_1PxYzEXAMPLE]` carries a trailing `# Stripe price
+        id…` comment. A matcher that misses it does not merely skip that
+        header — it fails to end the section being removed, so the removal
+        runs on and eats the commented table's contents.
+        """
+        toml_text = "[a]\nx = 1\n\n[b]  # a trailing note\ny = 1\n"
+        result = _drop_table(toml_text, "a")
+        parsed = tomllib.loads(result)
+        assert "a" not in parsed
+        assert parsed["b"] == {"y": 1}, "removing [a] swallowed the commented table below it"
+
+    def test_removing_one_table_leaves_the_real_example_intact(self) -> None:
+        """The regression, on the real file rather than a synthetic one."""
+        before = _EXAMPLE_CONFIG.read_text(encoding="utf-8")
+        after = _drop_table(before, "delivery")
+        _assert_dropped_exactly(before, after, {"delivery"})
