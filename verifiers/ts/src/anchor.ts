@@ -73,7 +73,7 @@ const MAX_OPS_PER_PROOF = 256
 const MAX_CHECKPOINT_TEXT_LEN = 500_000
 const MAX_OP_HEX_LEN = 16384 // hex chars (8192 bytes) per append/prepend operand
 // The per-chain operand TOTAL, and the reason the two caps above could be
-// raised at all: verify.ts's outer evidence ceiling is normative (v0.1 §11.3)
+// raised at all: verify.ts's outer evidence ceiling is normative (v0.2 §16.1)
 // and cannot be raised to meet them. Without this cap,
 // MAX_PROOFS_PER_EVIDENCE * MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN would admit
 // ~268MB of operands against a 10MB ceiling. It tightens the aggregate rather

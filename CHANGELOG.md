@@ -18,7 +18,7 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   refused by a verifier that had never seen one. The per-proof operation cap is
   now 256 and the per-operand cap 16384 hex characters, and a per-chain operand
   TOTAL of 65536 hex characters joins them. The total is not a decoration: the
-  outer evidence ceiling is normative (v0.1 §11.3) and cannot be raised to meet
+  outer evidence ceiling is normative (v0.2 §16.1) and cannot be raised to meet
   the inner caps, so without it their product would admit roughly 268MB of
   operands against a ceiling of 10MB — evidence the evaluator accepts would be
   refused before ever reaching it. The total also tightens the aggregate rather

@@ -258,7 +258,10 @@ export function canonicalBytes(v: JsonValue): Uint8Array { return new TextEncode
 // the bytes a signature is checked over and the values consumed afterwards come
 // from one reconstruction, whatever the caller's object did during it.
 
-// The canonical-byte ceiling a single admitted unit may occupy (v0.1 §11.3).
+// The ceiling a single admitted unit's canonical form may occupy (v0.2 §16.1).
+// Measured in CODE POINTS of that canonical JSON text, not in encoded UTF-8
+// bytes — the name predates the measurement and is kept because it is
+// exported public API.
 // One definition for the whole package: the transparency evidence bound, the
 // transfer-view bound and the transfer-evidence bound are the same number, and
 // a number restated three times is a number that will drift.

@@ -237,7 +237,7 @@ _HEX_LOWER = frozenset("0123456789abcdef")
 # The operand term is bounded by the per-chain TOTAL, never by
 # `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN`: that product is 268_435_456 chars
 # and would overshoot this ceiling by ~260MB. This ceiling is normative
-# (canon.MAX_ADMISSION_BYTES, v0.1 §11.3) and cannot be raised to meet the
+# (canon.MAX_ADMISSION_BYTES, v0.2 §16.1) and cannot be raised to meet the
 # inner caps, so the total-operand cap is what makes the raised per-op caps
 # admissible at all — re-derive this arithmetic whenever any of the three
 # moves, and see tests/test_anchor.py for it as an executable assertion.

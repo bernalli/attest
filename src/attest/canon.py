@@ -282,7 +282,10 @@ def loads_strict(data: bytes) -> object:
 # will diverge, so the boundary has exactly one spelling and both callers
 # import it. §18.4 states the rule; this module is where the rule is executed.
 
-# The canonical-byte ceiling a single admitted unit may occupy (v0.1 §11.3).
+# The ceiling a single admitted unit's canonical form may occupy (v0.2 §16.1).
+# Measured in CODE POINTS of that canonical JSON text, not in encoded UTF-8
+# bytes — the name predates the measurement and is kept because the
+# TypeScript twin exports it as public API.
 MAX_ADMISSION_BYTES = 10_000_000
 # Node budget for the own-data copy. It can never change an admissible/
 # inadmissible answer: every node costs at least one byte of canonical form, so
