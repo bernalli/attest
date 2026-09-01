@@ -6,6 +6,38 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The web verifier put an unsigned string in the heading directly above its
+  own verdict.** The label came from the name of the ZIP member, which is
+  central-directory metadata no signature covers, so rewriting one entry — and
+  nothing else, not one byte of payload or signature — made the page read
+  `VERIFIED by Steam - Official Purchase - Genuine` above `Receipt verifies`,
+  while the signed payload named a different issuer entirely. A lie with a valid
+  signature under it, on the page a buyer meets first. Every label now comes
+  from the signed payload: `parseBundle` returns the `receipt_id` it already
+  reads out of the envelope, and the bare-envelope paths derive it the same way
+  and check it against the schema's ULID grammar, so a self-signed payload
+  carrying a sentence in that field cannot be shown either. Where nothing signed
+  is available to quote, the page says so in its own words rather than echoing
+  the name it was handed. The same string reached two further surfaces and both
+  are closed: the notice about a salted receipt named the member, and three
+  rejection messages interpolated it bare — a member called `Your receipt is
+  valid. Contact support at …` opened a message the verifier never wrote. Those
+  names are now quoted and clipped, which keeps them useful for finding a broken
+  file without letting them arrive as prose.
+
+- **The verifier told buyers the CLI could fetch a key manifest over TLS to
+  reach the `verified` trust level.** It cannot, and no shipped tool can:
+  `cli.py` and `bundle.py` both set provenance to `bundle` unconditionally,
+  `verify()` grants `verified` only for provenance `tls`, and the package
+  contains no HTTP client at all. Naming a remedy that does not exist is worse
+  than naming none, because the reader stops looking. The wording now attributes
+  the level to the spec (§7.4) and states plainly that nothing published today
+  performs that fetch. The test that holds it is anchored to the capability
+  rather than the sentence: it reads the reference implementation, and only
+  while no HTTP client is present does it forbid the promise.
+
 ## [0.9.1] — 2026-09-01
 
 ### Changed

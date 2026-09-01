@@ -39,7 +39,7 @@ export function initApp(doc: Document): AppHandle {
 
   let currentJobs: VerifyJob[] = []
   let currentNotices: string[] = []
-  let pendingEnvelope: { bytes: Uint8Array; fileName: string } | null = null
+  let pendingEnvelope: { bytes: Uint8Array; label: string } | null = null
 
   // Notices are prepended on every render, not written once: `renderJobs` runs
   // again on every disclosure and on the manifest handover, and a warning that
@@ -91,7 +91,7 @@ export function initApp(doc: Document): AppHandle {
     currentNotices = r.notices ?? []
     if (r.kind === 'needs-manifest') {
       currentJobs = []
-      pendingEnvelope = { bytes: r.envelopeBytes, fileName: r.fileName }
+      pendingEnvelope = { bytes: r.envelopeBytes, label: r.label }
       manifestZone.hidden = false
       results.replaceChildren(
         ...currentNotices.map((text) => message(doc, text)),
@@ -115,7 +115,7 @@ export function initApp(doc: Document): AppHandle {
       )
       return
     }
-    currentJobs = [{ label: pendingEnvelope.fileName, envelopeBytes: pendingEnvelope.bytes, trustStore, transparency: null }]
+    currentJobs = [{ label: pendingEnvelope.label, envelopeBytes: pendingEnvelope.bytes, trustStore, transparency: null }]
     pendingEnvelope = null
     manifestZone.hidden = true
     renderJobs(null)

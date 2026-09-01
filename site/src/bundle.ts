@@ -20,7 +20,13 @@ export const DEFAULT_CAPS: Caps = {
 }
 
 export interface ParsedBundle {
-  receipts: { name: string; bytes: Uint8Array }[]
+  // Keyed by the `receipt_id` inside the SIGNED payload, never by the member
+  // name. A ZIP central directory is attacker-controlled metadata that no
+  // signature covers: a member renamed to `VERIFIED by Steam - Official
+  // Purchase` used to travel from here into the heading above the verdict
+  // badge, with the real signature checking out underneath it. The member name
+  // finds the bytes; it never describes them.
+  receipts: { receiptId: string; bytes: Uint8Array }[]
   trustStore: TrustStore
   // v0.2 §14: one untrusted §10.2 evidence bundle per receipt, keyed by the
   // receipt id its member name pins. This is EVIDENCE and nothing else — the
@@ -36,6 +42,24 @@ const PRIVATE_MSG =
 
 const asObject = (v: unknown): JsonObject | null =>
   v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as JsonObject) : null
+
+/** A member name as it may appear in a message a person reads.
+ *
+ * Naming the offending member is worth keeping — it is how someone finds the
+ * broken file — but the name is attacker-supplied, and these messages are
+ * rendered to the buyer verbatim. Interpolated bare, a member called
+ * `Your receipt is valid. Contact support at …` produced a rejection notice
+ * that opened with a sentence the verifier never wrote. Quoting it makes the
+ * boundary visible and the length cap keeps a paragraph from arriving where a
+ * filename was expected; both matter more than the tail of a long name.
+ */
+const MAX_QUOTED_MEMBER_CHARS = 60
+const quoted = (name: string): string => {
+  const flat = name.replace(/\s+/g, ' ')
+  const clipped =
+    flat.length > MAX_QUOTED_MEMBER_CHARS ? `${flat.slice(0, MAX_QUOTED_MEMBER_CHARS)}…` : flat
+  return `"${clipped}"`
+}
 
 // The receipt schema's own ULID grammar (Crockford base32, 26 chars, leading
 // character 0-7). Mirrors the reference importer's `_RECEIPT_ID_RE`.
@@ -56,12 +80,12 @@ function receiptPayloadId(name: string, bytes: Uint8Array): string {
   try {
     envelope = asObject(loadsStrict(bytes))
   } catch {
-    throw new BundleError(`receipt entry ${name} is not valid canonical JSON`)
+    throw new BundleError(`receipt entry ${quoted(name)} is not valid canonical JSON`)
   }
   const payload = asObject(envelope?.['payload'])
   const receiptId = payload?.['receipt_id']
   if (typeof receiptId !== 'string' || !RECEIPT_ID_RE.test(receiptId))
-    throw new BundleError(`receipt entry ${name} has invalid receipt_id; expected uppercase ULID`)
+    throw new BundleError(`receipt entry ${quoted(name)} has invalid receipt_id; expected uppercase ULID`)
   return receiptId
 }
 
@@ -69,7 +93,7 @@ function proofMemberReceiptId(name: string): string {
   const relative = name.slice('proofs/'.length)
   const receiptId = relative.endsWith('.json') ? relative.slice(0, -'.json'.length) : ''
   if (relative !== `${receiptId}.json` || !RECEIPT_ID_RE.test(receiptId))
-    throw new BundleError(`invalid proof member path ${name} — expected proofs/<ULID>.json`)
+    throw new BundleError(`invalid proof member path ${quoted(name)} — expected proofs/<ULID>.json`)
   return receiptId
 }
 
@@ -87,7 +111,7 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
         if (entryCount > caps.maxEntries)
           throw new BundleError(`bundle declares over ${caps.maxEntries} entries — refusing a possible zip bomb`)
         if (file.originalSize > caps.maxMemberBytes)
-          throw new BundleError(`member ${file.name} is over the per-member decompression cap — refusing a possible zip bomb`)
+          throw new BundleError(`member ${quoted(file.name)} is over the per-member decompression cap — refusing a possible zip bomb`)
         declaredTotal += file.originalSize
         if (declaredTotal > caps.maxTotalBytes)
           throw new BundleError('bundle is over the aggregate decompression cap — refusing a possible zip bomb')
@@ -121,7 +145,7 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
       throw new BundleError('bundle inflated past the aggregate cap — refusing a possible zip bomb')
   }
 
-  const receipts: { name: string; bytes: Uint8Array }[] = []
+  const receipts: { receiptId: string; bytes: Uint8Array }[] = []
   const keyManifestsByIssuer = new Map<string, JsonObject[]>()
   const proofs: Record<string, JsonValue> = {}
 
@@ -133,13 +157,13 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
       if (receiptIds.has(receiptId))
         throw new BundleError(`bundle lists receipt_id ${receiptId} more than once`)
       receiptIds.add(receiptId)
-      receipts.push({ name: name.slice('receipts/'.length, -'.attest.json'.length), bytes: entries[name] })
+      receipts.push({ receiptId, bytes: entries[name] })
     } else if (name.startsWith('manifests/') && name.endsWith('.json')) {
       let blob: JsonObject | null
       try {
         blob = asObject(loadsStrict(entries[name]))
       } catch {
-        throw new BundleError(`manifest entry ${name} is not valid canonical JSON`)
+        throw new BundleError(`manifest entry ${quoted(name)} is not valid canonical JSON`)
       }
       const issuer = blob?.['issuer']
       if (blob === null || typeof issuer !== 'string') continue // mirror the reference importer: skip unshaped blobs
@@ -152,7 +176,7 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
       try {
         evidence = loadsStrict(entries[name])
       } catch {
-        throw new BundleError(`proof entry ${name} is not valid JSON`)
+        throw new BundleError(`proof entry ${quoted(name)} is not valid JSON`)
       }
       // Mirror the reference importer: a non-object proof is dropped, not
       // fatal. Its contents are untrusted §10.2 evidence either way — the

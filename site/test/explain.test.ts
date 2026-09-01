@@ -178,6 +178,34 @@ describe('compromise-cutoff copy', () => {
     expect(text).not.toMatch(/declaration itself carries no anchored time/)
   })
 
+  it('never offers the buyer a TLS fetch that no shipped tool performs', () => {
+    // This sentence used to say the attest CLI could fetch the manifest over
+    // TLS and reach `verified`. It could not, and still cannot: `verify()`
+    // grants `verified` only when the trust store's provenance is `tls`, and
+    // both `cli.py` and `bundle.py` set provenance to `bundle` unconditionally
+    // while the package ships no HTTP client at all.
+    //
+    // So the assertion is anchored to the CAPABILITY rather than to today's
+    // wording: the premise is checked here, against the reference
+    // implementation, and only while it holds is the promise forbidden. The
+    // day someone implements the fetch, this test fails and whoever adds it
+    // has to come back and rewrite the sentence — which is exactly the
+    // handshake that was missing.
+    const src = (name: string): string =>
+      readFileSync(join(__dirname, '..', '..', 'src', 'attest', name), 'utf8')
+    const implementation = src('cli.py') + src('bundle.py')
+
+    const shipsAnHttpClient = /^\s*(?:import|from)\s+(?:requests|httpx|urllib|aiohttp)\b/m.test(
+      implementation,
+    )
+    expect(shipsAnHttpClient).toBe(false)
+
+    const text = explain('trust', 'unauthenticated_tofu').text
+    expect(text).not.toMatch(/CLI can fetch/i)
+    // And it still has to tell the reader where TOFU leaves them.
+    expect(text).toMatch(/trust-on-first-use/i)
+  })
+
   it('explains the monotone floor and its trust cause', () => {
     const r = result({
       signature: 'invalid',
