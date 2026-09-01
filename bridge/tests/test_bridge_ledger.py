@@ -98,7 +98,7 @@ def test_get_receipt_returns_none_when_absent(ledger: Ledger) -> None:
     assert ledger.get_receipt("stripe", "cs_missing") is None
 
 
-def test_double_record_receipt_same_purchase_raises_receipt_already_recorded(
+def test_double_record_receipt_same_purchase_raises_purchase_already_recorded(
     ledger: Ledger,
 ) -> None:
     """The PRIMARY KEY still refuses, but through this module's own exception.
@@ -111,7 +111,7 @@ def test_double_record_receipt_same_purchase_raises_receipt_already_recorded(
         "stripe", "cs_dup", "receipt-1", _envelope(), "buyer@example.com", "token-1", NOW
     )
 
-    with pytest.raises(ledger_mod.ReceiptAlreadyRecorded) as caught:
+    with pytest.raises(ledger_mod.PurchaseAlreadyRecorded) as caught:
         ledger.record_receipt(
             "stripe", "cs_dup", "receipt-2", _envelope(), "buyer@example.com", "token-2", NOW
         )
@@ -119,21 +119,21 @@ def test_double_record_receipt_same_purchase_raises_receipt_already_recorded(
     assert isinstance(caught.value.__cause__, sqlite3.IntegrityError)
 
 
-def test_a_download_token_collision_raises_the_same_exception_as_a_duplicate_purchase(
+def test_a_download_token_collision_raises_its_own_exception(
     ledger: Ledger,
 ) -> None:
-    """Two different constraints, one exception type — deliberately.
+    """Two different constraints, two exception types — deliberately.
 
-    This is why `core.issue_for` re-reads the row instead of treating the
-    exception as proof of a duplicate: here the purchase is brand new and
-    nothing about it was recorded, and calling it a duplicate would answer
-    the buyer with a receipt issued to somebody else.
+    Here the purchase is brand new and nothing about it was recorded, so
+    calling it a duplicate would answer the buyer with a receipt issued to
+    somebody else. `core.issue_for` catches only the duplicate-purchase type,
+    and this one goes past it.
     """
     ledger.record_receipt(
         "stripe", "cs_first", "receipt-1", _envelope(), "buyer@example.com", "shared-token", NOW
     )
 
-    with pytest.raises(ledger_mod.ReceiptAlreadyRecorded):
+    with pytest.raises(ledger_mod.DownloadTokenAlreadyRecorded):
         ledger.record_receipt(
             "stripe",
             "cs_second",
@@ -145,6 +145,39 @@ def test_a_download_token_collision_raises_the_same_exception_as_a_duplicate_pur
         )
 
     assert ledger.get_receipt("stripe", "cs_second") is None
+
+
+def test_an_integrity_error_that_is_not_a_conflict_is_not_dressed_up_as_one(
+    ledger: Ledger,
+) -> None:
+    """A NOT NULL violation is a data defect, and must not answer as a race.
+
+    Every `IntegrityError` used to leave here as "already recorded", so a
+    caller — and an operator reading the log — was told a rival writer had
+    won a purchase that no writer ever recorded. Classification re-reads:
+    neither the purchase nor the token is there, so nothing about this is a
+    conflict and the driver's own error goes back untouched.
+    """
+    with pytest.raises(sqlite3.IntegrityError) as caught:
+        ledger.record_receipt(
+            "stripe",
+            "cs_defect",
+            "receipt-1",
+            _envelope(),
+            None,  # type: ignore[arg-type]
+            "token-defect",
+            NOW,
+        )
+
+    assert not isinstance(caught.value, ledger_mod.ReceiptConflict)
+    assert "NOT NULL" in str(caught.value)
+    assert ledger.get_receipt("stripe", "cs_defect") is None
+
+
+def test_both_conflict_types_share_one_base_a_caller_can_catch(ledger: Ledger) -> None:
+    """One name for "a uniqueness constraint rejected this", two for which."""
+    assert issubclass(ledger_mod.PurchaseAlreadyRecorded, ledger_mod.ReceiptConflict)
+    assert issubclass(ledger_mod.DownloadTokenAlreadyRecorded, ledger_mod.ReceiptConflict)
 
 
 def test_by_download_token_hit(ledger: Ledger) -> None:
@@ -464,7 +497,7 @@ def test_a_second_ledger_recording_the_same_purchase_raises_receipt_already_reco
     first, second = Ledger(db_path), Ledger(db_path)
     first.record_receipt("stripe", "cs_1", "rcpt-first", _envelope(), "a@example.com", "tok-1", NOW)
 
-    with pytest.raises(ledger_mod.ReceiptAlreadyRecorded):
+    with pytest.raises(ledger_mod.PurchaseAlreadyRecorded):
         second.record_receipt(
             "stripe", "cs_1", "rcpt-second", _envelope(), "b@example.com", "tok-2", NOW
         )
@@ -475,7 +508,7 @@ def test_the_first_writer_of_a_purchase_keeps_the_row(tmp_path: Path) -> None:
     first, second = Ledger(db_path), Ledger(db_path)
     first.record_receipt("stripe", "cs_1", "rcpt-first", _envelope(), "a@example.com", "tok-1", NOW)
 
-    with pytest.raises(ledger_mod.ReceiptAlreadyRecorded):
+    with pytest.raises(ledger_mod.PurchaseAlreadyRecorded):
         second.record_receipt(
             "stripe", "cs_1", "rcpt-second", _envelope(), "b@example.com", "tok-2", NOW
         )

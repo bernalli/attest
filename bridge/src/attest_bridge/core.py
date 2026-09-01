@@ -28,7 +28,7 @@ from attest import issue, manifests
 from attest import verify as verifier
 from attest_bridge.catalog import ProductCatalog
 from attest_bridge.delivery import Delivery
-from attest_bridge.ledger import Ledger, ReceiptAlreadyRecorded
+from attest_bridge.ledger import Ledger, PurchaseAlreadyRecorded
 from attest_bridge.model import NormalizedPurchase, PurchaseRejected, purchase_id_for_log
 from attest_bridge.signing import IssuerIdentity
 
@@ -190,14 +190,14 @@ class IssuingCore:
                 download_token=secrets.token_urlsafe(32),
                 issued_at=payload["issued_at"],
             )
-        except ReceiptAlreadyRecorded:
-            # Re-read rather than infer. Two constraints can reject this
-            # INSERT and only one of them means "already issued": if the
-            # purchase's row is there, a rival recorded it between step (1)
-            # and here and its receipt is the real one. If it is NOT there,
-            # what fired was the UNIQUE download_token — a different purchase
-            # entirely — and answering with a duplicate outcome would hand
-            # this buyer a receipt that was never issued to them.
+        except PurchaseAlreadyRecorded:
+            # Only THIS conflict means "already issued". A UNIQUE
+            # download_token collision is a different purchase entirely and
+            # arrives as its own exception, which this clause does not catch:
+            # answering it with a duplicate outcome would hand this buyer a
+            # receipt that was never issued to them. Re-read rather than
+            # infer even so — the row the buyer gets back is the winner's, not
+            # one reconstructed from the exception.
             winner = self._ledger.get_receipt(purchase.platform, purchase.platform_purchase_id)
             if winner is None:
                 raise

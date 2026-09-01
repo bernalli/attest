@@ -76,16 +76,23 @@ def _enable_wal(conn: sqlite3.Connection, db_path: Path) -> None:
         )
 
 
-class ReceiptAlreadyRecorded(Exception):
-    """`record_receipt` lost a race: its INSERT hit a uniqueness constraint.
+class ReceiptConflict(Exception):
+    """Base class for a semantically classified receipt uniqueness conflict.
 
-    Two constraints can produce it — the `(platform, purchase_id)` PRIMARY KEY
-    of a purchase another writer recorded first, and the UNIQUE
-    `download_token`. WHICH of the two is deliberately not decided here: the
-    text of a sqlite error is not a contract to parse. The caller settles it
-    by re-reading the row (`core.IssuingCore.issue_for`), which is the only
-    answer that cannot be wrong.
+    `record_receipt` classifies by RE-READING, never by parsing the text of a
+    sqlite error, which is not a contract. An `IntegrityError` that is neither
+    of the two subclasses below is not a lost race at all — a NOT NULL
+    violation is the plain case — and is re-raised as itself rather than
+    dressed up as one.
     """
+
+
+class PurchaseAlreadyRecorded(ReceiptConflict):
+    """The `(platform, purchase_id)` row already exists."""
+
+
+class DownloadTokenAlreadyRecorded(ReceiptConflict):
+    """Another receipt already owns the proposed download token."""
 
 
 _SCHEMA = """
@@ -266,10 +273,12 @@ class Ledger:
         # The (platform, purchase_id) PRIMARY KEY stays the last line of
         # defense against a race, not the primary dedup mechanism — the caller
         # (core, T5) checks `get_receipt` first. What changed is what a lost
-        # race produces: sqlite3 never leaves this module, so the caller can
-        # catch it by a name it owns, re-read the winner's row, and answer the
-        # purchase with a duplicate outcome instead of a 500 the platform will
-        # retry straight back into the same race.
+        # race produces: a name this module owns, so the caller can catch it,
+        # re-read the winner's row, and answer the purchase with a duplicate
+        # outcome instead of a 500 the platform will retry straight back into
+        # the same race. Only a genuine conflict gets that name — an
+        # `IntegrityError` from any other constraint stays what it is, because
+        # a data defect answered as a race is a defect nobody goes looking for.
         try:
             with self._lock, self._conn:
                 self._conn.execute(
@@ -290,12 +299,20 @@ class Ledger:
                     ),
                 )
         except sqlite3.IntegrityError as exc:
-            # The purchase id is hashed here for the same reason it is hashed
-            # in the logs: this message ends up in operator-visible output.
-            raise ReceiptAlreadyRecorded(
-                f"a uniqueness constraint rejected the receipt for platform={platform!r} "
-                f"purchase_id={purchase_id_for_log(purchase_id)}"
-            ) from exc
+            # Which constraint fired is settled by re-reading, never by
+            # reading the driver's message. The purchase id is hashed for the
+            # same reason it is hashed in the logs: this text ends up in
+            # operator-visible output.
+            if self.get_receipt(platform, purchase_id) is not None:
+                raise PurchaseAlreadyRecorded(
+                    f"receipt already exists for platform={platform!r} "
+                    f"purchase_id={purchase_id_for_log(purchase_id)}"
+                ) from exc
+            if self.by_download_token(download_token) is not None:
+                raise DownloadTokenAlreadyRecorded(
+                    "another receipt already owns the proposed download token"
+                ) from exc
+            raise
 
     def ping(self) -> None:
         """Raise if this Ledger cannot currently be read.

@@ -170,7 +170,7 @@ def test_an_integrity_error_that_is_not_a_duplicate_purchase_is_never_reported_a
         public_base_url="https://receipts.example.com",
     )
 
-    with pytest.raises(ledger_mod.ReceiptAlreadyRecorded):
+    with pytest.raises(ledger_mod.DownloadTokenAlreadyRecorded):
         core.issue_for(_purchase(platform_purchase_id="cs_test_fresh"))
 
     assert ledger.get_receipt("stripe", "cs_test_fresh") is None
