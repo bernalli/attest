@@ -2,6 +2,7 @@ import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
 import {
   JsonObject, JsonValue, canonicalBytes, dumps, CanonError, loadsStrict, materializeArray,
+  MAX_ADMISSION_BYTES,
 } from './canon.js'
 import {
   TrustStore, findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
@@ -64,11 +65,11 @@ const MAX_JCS_INTEGER = 2n ** 53n
 // The operand term is bounded by the per-chain TOTAL, never by
 // MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN: that product is 268_435_456 chars and
 // would overshoot this ceiling by ~260MB. This ceiling is normative (v0.2
-// §16.1) and cannot be raised to meet the inner caps, so the total-operand
+// §6.3) and cannot be raised to meet the inner caps, so the total-operand
 // cap is what makes the raised per-op caps admissible at all — re-derive this
 // whenever any of the three moves. Mirrors verify.py's
 // `_MAX_TRANSPARENCY_EVIDENCE_LEN`.
-const MAX_TRANSPARENCY_EVIDENCE_LEN = 10_000_000
+const MAX_TRANSPARENCY_EVIDENCE_LEN = MAX_ADMISSION_BYTES
 export const MAX_TRANSPARENCY_EVIDENCE_LEN_ = MAX_TRANSPARENCY_EVIDENCE_LEN
 
 export type Signature = 'valid' | 'invalid'

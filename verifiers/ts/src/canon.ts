@@ -258,10 +258,9 @@ export function canonicalBytes(v: JsonValue): Uint8Array { return new TextEncode
 // the bytes a signature is checked over and the values consumed afterwards come
 // from one reconstruction, whatever the caller's object did during it.
 
-// The ceiling a single admitted unit's canonical form may occupy (v0.2 §16.1).
+// The ceiling a single admitted unit's canonical form may occupy (v0.2 §6.3).
 // Measured in CODE POINTS of that canonical JSON text, not in encoded UTF-8
-// bytes — the name predates the measurement and is kept because it is
-// exported public API.
+// bytes. The identifier is historical and does not define the measurement unit.
 // One definition for the whole package: the transparency evidence bound, the
 // transfer-view bound and the transfer-evidence bound are the same number, and
 // a number restated three times is a number that will drift.
@@ -269,7 +268,7 @@ export const MAX_ADMISSION_BYTES = 10_000_000
 
 // Node budget for the own-data copy. It can never change an admissible/
 // inadmissible answer: every node costs at least one byte of canonical form, so
-// a structure over this many nodes cannot fit under the byte ceiling either. It
+// a structure over this many nodes cannot fit under the code-point ceiling either. It
 // only makes the refusal REACHABLE, before an unbounded container has been
 // walked to the end.
 export const MAX_ADMISSION_NODES = MAX_ADMISSION_BYTES
@@ -344,7 +343,7 @@ export function ownArrayLength(value: unknown): number | null {
  *
  * The budget refuses on a node count rather than after the work is already
  * done: a lazy or unbounded container would otherwise run to the end (that is,
- * never) before any byte ceiling could fire.
+ * never) before any code-point ceiling could fire.
  */
 export function ownDataCopy(
   value: unknown,
@@ -420,8 +419,8 @@ export function admitValue(
     const serialized = dumps(ownDataCopy(probe, { left: MAX_ADMISSION_NODES }, options))
     // The ceiling is measured on the UNIT, not on the probe. The probe exists
     // to put the unit at its real depth in the view, and each wrapper adds
-    // exactly the two bytes `[` and `]` — so a unit sitting exactly AT the
-    // ceiling would otherwise read as two bytes over per level of nesting and
+    // exactly the two code points `[` and `]` — so a unit sitting exactly AT the
+    // ceiling would otherwise read as two code points over per nesting level and
     // be refused for the position it occupies rather than for its size.
     const measured = codePointLength(serialized) - 2 * nesting
     if (measured > MAX_ADMISSION_BYTES) return { admitted: false, value: null }

@@ -237,7 +237,7 @@ _HEX_LOWER = frozenset("0123456789abcdef")
 # The operand term is bounded by the per-chain TOTAL, never by
 # `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN`: that product is 268_435_456 chars
 # and would overshoot this ceiling by ~260MB. This ceiling is normative
-# (canon.MAX_ADMISSION_BYTES, v0.2 §16.1) and cannot be raised to meet the
+# (canon.MAX_ADMISSION_BYTES, v0.2 §6.3) and cannot be raised to meet the
 # inner caps, so the total-operand cap is what makes the raised per-op caps
 # admissible at all — re-derive this arithmetic whenever any of the three
 # moves, and see tests/test_anchor.py for it as an executable assertion.
@@ -655,7 +655,7 @@ def _evaluate_transparency_claim(
         # never a stateful mapping/value supplied by the caller. The size cap
         # prevents decoding an arbitrarily large serialized evidence bundle.
         # The copy of the value's OWN data runs FIRST and refuses on a node
-        # budget: the byte cap below is compared against a serialization that
+        # budget: the code-point cap below is compared against a serialization that
         # has ALREADY been produced, so a caller value whose iteration never
         # ends would hang here before any cap could fire -- and a hang reaches
         # no `except` clause, which is why the enclosing one is not a defence
@@ -1265,7 +1265,7 @@ def _revocation_deadline_satisfied(
         # every following phase sees one ordinary JSON object, never a
         # stateful mapping/value supplied by the caller.
         # Own-data copy first, for the same reason as the transparency sink:
-        # the byte cap cannot fire on a serialization that never returns.
+        # the code-point cap cannot fire on a serialization that never returns.
         serialized_evidence = canon.dumps(
             _own_data_copy(revocation_evidence, [_MAX_EVIDENCE_NODES])
         )

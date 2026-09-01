@@ -282,14 +282,13 @@ def loads_strict(data: bytes) -> object:
 # will diverge, so the boundary has exactly one spelling and both callers
 # import it. §18.4 states the rule; this module is where the rule is executed.
 
-# The ceiling a single admitted unit's canonical form may occupy (v0.2 §16.1).
+# The ceiling a single admitted unit's canonical form may occupy (v0.2 §6.3).
 # Measured in CODE POINTS of that canonical JSON text, not in encoded UTF-8
-# bytes — the name predates the measurement and is kept because the
-# TypeScript twin exports it as public API.
+# bytes. The identifier is historical and does not define the measurement unit.
 MAX_ADMISSION_BYTES = 10_000_000
 # Node budget for the own-data copy. It can never change an admissible/
 # inadmissible answer: every node costs at least one byte of canonical form, so
-# a structure over this many nodes cannot fit under the byte ceiling either. It
+# a structure over this many nodes cannot fit under the code-point ceiling either. It
 # only makes the refusal REACHABLE, before an unbounded container has been
 # walked to the end.
 MAX_ADMISSION_NODES = MAX_ADMISSION_BYTES
@@ -308,7 +307,7 @@ def own_data_copy(value: object, budget: list[int]) -> object:
 
     `dumps` walks a mapping with `for k in obj`, reads its members with
     `obj[k]` and walks a sequence with `enumerate(obj)` -- all shadowable --
-    and its byte ceiling is compared against a serialization it has ALREADY
+    and its code-point ceiling is compared against a serialization it has ALREADY
     produced. A subclass whose iteration never ends therefore hangs the caller
     before any ceiling can fire, which is the one way §18.4's "reconstruction
     is bounded and fails closed" can still be broken from a WELL-TYPED view.
