@@ -6,6 +6,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-09-01
+
 ### Changed
 
 - **`log anchor` no longer repairs a malformed `anchors` block in silence.** The
