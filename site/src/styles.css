@@ -59,7 +59,13 @@ h2 { margin-top: 2.2rem; }
 .component { border-left: 4px solid var(--tone, var(--neutral)); padding: 0.15rem 0 0.15rem 0.8rem; margin: 0.7rem 0; }
 .component dt { display: flex; gap: 0.6rem; align-items: baseline; }
 .component-name { font-weight: 600; }
-.component-value { color: var(--tone, var(--neutral)); }
+/* Untrusted text, like an operand: neutralized and clipped in render.ts, and
+   isolated here for the half CSS alone can hold — RTL letters are not format
+   characters, so nothing in the text pass touches them (C-91). */
+.component-value { color: var(--tone, var(--neutral)); unicode-bidi: isolate; overflow-wrap: anywhere; }
+/* A wire token is [a-z0-9_] and bounded, so it needs no isolation; it is still
+   the one string rendered uncited, and it must not push the page sideways. */
+.diag-code { overflow-wrap: anywhere; }
 .component dd { margin: 0.15rem 0 0; color: var(--muted); }
 /* A warning shown against the row it qualifies. It borrows the row's tone
    rather than shouting in red: it explains a value, it is not a second

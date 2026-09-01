@@ -1,6 +1,6 @@
 import type { VerifyRun } from './run.js'
 import type { Component } from './explain.js'
-import { GROUPS, attributeWarning, explain, explainVerdict } from './explain.js'
+import { GROUPS, attributeWarning, displayValue, explain, explainVerdict } from './explain.js'
 import { segmentDiagnostic } from './diagnostic.js'
 import { neutralized } from './untrusted-text.js'
 
@@ -35,7 +35,15 @@ function operandNode(text: string): HTMLQuoteElement {
   return el('q', 'diag-operand', neutralized(text, MAX_DIAG_OPERAND_CHARS))
 }
 
-function diagnosticItem(diagnostic: string): HTMLLIElement {
+// The same cap and the same character policy the fallback sentence applies to
+// a value it cannot speak (explain.ts). A component value is untrusted text on
+// the surface a reader sees: <code> keeps it out of the page's prose, and
+// nothing else about the element makes a bidi override or a 50 000-character
+// run harmless. Neutralizing here is byte-identical on every benign value, so
+// a reader can still search for the word the spec uses.
+const MAX_COMPONENT_VALUE_CHARS = 120
+
+function diagnosticItem(diagnostic: unknown): HTMLLIElement {
   const li = el('li', 'diagnostic')
   const seg = segmentDiagnostic(diagnostic)
   if (seg.kind === 'token') {
@@ -53,7 +61,7 @@ function diagnosticItem(diagnostic: string): HTMLLIElement {
   return li
 }
 
-function list(title: string, className: string, items: string[]): HTMLElement | null {
+function list(title: string, className: string, items: readonly unknown[]): HTMLElement | null {
   if (items.length === 0) return null
   const wrap = el('div', className)
   wrap.appendChild(el('h4', undefined, title))
@@ -66,12 +74,12 @@ function list(title: string, className: string, items: string[]): HTMLElement | 
 // Split `warnings[]` into the rows they qualify and the ones that qualify the
 // receipt as a whole. Attribution never drops a warning: whatever no rule
 // claims keeps its old place in the flat list below the rows.
-function bucketWarnings(warnings: string[]): {
-  byComponent: Map<Component, string[]>
-  unattributed: string[]
+function bucketWarnings(warnings: readonly unknown[]): {
+  byComponent: Map<Component, unknown[]>
+  unattributed: unknown[]
 } {
-  const byComponent = new Map<Component, string[]>()
-  const unattributed: string[] = []
+  const byComponent = new Map<Component, unknown[]>()
+  const unattributed: unknown[] = []
   for (const warning of warnings) {
     const component = attributeWarning(warning)
     if (component === null) {
@@ -85,13 +93,15 @@ function bucketWarnings(warnings: string[]): {
   return { byComponent, unattributed }
 }
 
-function componentRow(component: Component, run: VerifyRun, warnings: string[]): HTMLElement {
-  const value = run.result[component]
+function componentRow(component: Component, run: VerifyRun, warnings: readonly unknown[]): HTMLElement {
+  const value: unknown = run.result[component]
   const e = explain(component, value, run.result)
   const row = el('div', `component tone-${e.tone}`)
   const dt = el('dt')
   dt.appendChild(el('span', 'component-name', e.label))
-  dt.appendChild(el('code', 'component-value', value))
+  dt.appendChild(
+    el('code', 'component-value', neutralized(displayValue(value), MAX_COMPONENT_VALUE_CHARS)),
+  )
   row.appendChild(dt)
   row.appendChild(el('dd', undefined, e.text))
   if (warnings.length > 0) {
@@ -106,6 +116,17 @@ function componentRow(component: Component, run: VerifyRun, warnings: string[]):
     row.appendChild(dd)
   }
   return row
+}
+
+// The declared quarantine must not be the thing that takes the card down:
+// `JSON.stringify` throws on a bigint and on a cycle, and neither is excluded
+// by a type that describes a well-formed result.
+function rawJson(result: unknown): string {
+  try {
+    return JSON.stringify(result, (_k, v: unknown) => (typeof v === 'bigint' ? `${v}` : v), 2)
+  } catch {
+    return '(this result cannot be shown as JSON — see the rows above)'
+  }
 }
 
 export function renderResult(label: string, run: VerifyRun): HTMLElement {
@@ -123,7 +144,13 @@ export function renderResult(label: string, run: VerifyRun): HTMLElement {
   // Ten rows under three questions rather than one flat run of ten. The
   // grouping is the copy decision of V-G.2 D5, and it is what stops the five
   // components v0.2 added from being read as footnotes to the five v0.1 had.
-  const { byComponent, unattributed } = bucketWarnings(run.result.warnings)
+  // Two array fields the contract names and a dropped file may not supply.
+  // `for...of` on `undefined` throws, and a throw here abandons the card.
+  const resultWarnings: readonly unknown[] = Array.isArray(run.result.warnings)
+    ? run.result.warnings
+    : []
+  const resultErrors: readonly unknown[] = Array.isArray(run.result.errors) ? run.result.errors : []
+  const { byComponent, unattributed } = bucketWarnings(resultWarnings)
   for (const group of GROUPS) {
     const section = el('section', 'group')
     section.appendChild(el('h4', 'group-question', group.question))
@@ -141,12 +168,12 @@ export function renderResult(label: string, run: VerifyRun): HTMLElement {
   const flatTitle = byComponent.size > 0 ? 'Other warnings' : 'Warnings'
   const warnings = list(flatTitle, 'warnings', unattributed)
   if (warnings) article.appendChild(warnings)
-  const errors = list('Errors', 'errors', run.result.errors)
+  const errors = list('Errors', 'errors', resultErrors)
   if (errors) article.appendChild(errors)
 
   const details = el('details')
   details.appendChild(el('summary', undefined, 'Raw result'))
-  details.appendChild(el('pre', 'raw', JSON.stringify(run.result, null, 2)))
+  details.appendChild(el('pre', 'raw', rawJson(run.result)))
   article.appendChild(details)
 
   return article

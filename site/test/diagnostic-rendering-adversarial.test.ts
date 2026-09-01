@@ -267,6 +267,8 @@ describe('a library-composed diagnostic is rendered as data, never as the pageâ€
   })
 })
 
+const css = readFileSync(join(__dirname, '..', 'src', 'styles.css'), 'utf8')
+
 describe('the stylesheet carries the half of the defence that CSS alone can hold', () => {
   // RTL *letters* are not format characters, so they survive neutralization and
   // can still reorder the words around a citation; only `unicode-bidi` stops
@@ -274,7 +276,6 @@ describe('the stylesheet carries the half of the defence that CSS alone can hold
   // sideways. jsdom computes no bidi layout, so no assertion in this suite can
   // observe the effect â€” this one pins the declaration's presence, which is
   // all an executable test can do here (C-91, declared residual).
-  const css = readFileSync(join(__dirname, '..', 'src', 'styles.css'), 'utf8')
   const block = css.slice(css.indexOf('.diag-operand'))
 
   it('isolates an operand from the bidirectional text around it', () => {
@@ -284,5 +285,75 @@ describe('the stylesheet carries the half of the defence that CSS alone can hold
 
   it('keeps an unbroken operand from forcing horizontal scroll', () => {
     expect(block.slice(0, block.indexOf('}'))).toContain('overflow-wrap: anywhere')
+  })
+})
+
+describe('a component value is untrusted text too', () => {
+  // The value beside the row name is the same wire string the sentence below
+  // refuses to speak: `not_revoked_as_of:<T>` carries `revoked_at` verbatim
+  // out of an authenticated revocation record, and `Date.parse` accepts a
+  // parenthesised comment after a date, so <T> is attacker text.
+  const HOSTILE = `not_revoked_as_of:2020-01-01 (${RLO}gnitset${ZWSP}) REFUND AT refunds@evil.example`
+
+  it('leaves no format character in the value beside the row name', () => {
+    const card = renderResult('R', run({ revocation: HOSTILE }))
+    const clone = card.cloneNode(true) as HTMLElement
+    for (const d of [...clone.querySelectorAll('details')]) d.remove()
+    expect(/\p{Cf}/u.test(clone.textContent ?? '')).toBe(false)
+    expect(card.querySelector('details pre.raw')!.textContent).toContain(HOSTILE)
+  })
+
+  it('clips a value that would flood the row', () => {
+    const card = renderResult('R', run({ grant: 'x'.repeat(50_000) }))
+    const shown = rowNamed(card, 'Preservation pledge').querySelector('code.component-value')!
+    expect((shown.textContent ?? '').length).toBeLessThanOrEqual(121)
+  })
+
+  it('renders a benign value exactly as the library produced it', () => {
+    const card = renderResult('R', run({ trust: 'unauthenticated_tofu' }))
+    expect(rowNamed(card, 'Key trust').querySelector('code.component-value')!.textContent)
+      .toBe('unauthenticated_tofu')
+  })
+
+  it('shows a row for a value that never arrived instead of abandoning the card', () => {
+    const broken = greenResult()
+    delete (broken as Partial<VerificationResult>).schema
+    delete (broken as Partial<VerificationResult>).warnings
+    const card = renderResult('R', { ok: true, result: broken })
+    expect(card.querySelectorAll('.component')).toHaveLength(12)
+    expect(rowNamed(card, 'Schema').querySelector('dd')!.textContent)
+      .toContain('does not have dedicated wording')
+  })
+})
+
+describe('attribution never makes a warning disappear', () => {
+  it('shows a warning whose text names a member of Object.prototype', () => {
+    for (const name of Object.getOwnPropertyNames(Object.prototype)) {
+      const card = renderResult('R', run({ warnings: [name] }))
+      const shown = [...card.querySelectorAll('.warnings li, .component-warnings li')]
+        .map((li) => li.textContent ?? '')
+      expect(shown, name).toContain(name)
+    }
+  })
+})
+
+describe('a wire token is bounded like every other untrusted string', () => {
+  it('quotes a token-shaped string too long to be a token', () => {
+    const flood = `a_${'b'.repeat(5000)}`
+    const card = renderResult('R', run({ warnings: [flood] }))
+    const li = card.querySelector('.warnings li')!
+    expect(li.querySelector('code.diag-code')).toBeNull()
+    expect((li.querySelector('.diag-operand')!.textContent ?? '').length).toBeLessThanOrEqual(301)
+  })
+
+  it('still renders every token the wire surface defines as code', () => {
+    const card = renderResult('R', run({ warnings: ['compromise_rescue_requires_anchored_receipt'] }))
+    expect(card.querySelector('code.diag-code')!.textContent)
+      .toBe('compromise_rescue_requires_anchored_receipt')
+  })
+
+  it('keeps an unbroken token from forcing horizontal scroll', () => {
+    const codeBlock = css.slice(css.indexOf('.diag-code'))
+    expect(codeBlock.slice(0, codeBlock.indexOf('}'))).toContain('overflow-wrap: anywhere')
   })
 })

@@ -21,7 +21,13 @@ export type SegmentedDiagnostic =
 
 // A wire token cannot spell a sentence, an email address or a URL: no spaces,
 // no dots, no '@'. Every key of explain.ts's EXACT table matches this shape.
-const TOKEN_RE = /^[a-z0-9_]+$/
+// It is also SHORT: the longest token the wire surface defines is 43
+// characters, and a token is the one branch rendered uncited and unclipped, so
+// an unbounded one is the flooding the operand cap exists to stop, let through
+// by the other door. Beyond the bound the string is not a token: it degrades
+// to `opaque` and is quoted, which costs readability and never safety.
+const MAX_TOKEN_CHARS = 64
+const TOKEN_RE = new RegExp(`^[a-z0-9_]{1,${MAX_TOKEN_CHARS}}$`)
 
 const OPERAND: unique symbol = Symbol('operand')
 type Template = readonly (string | typeof OPERAND)[]
