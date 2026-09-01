@@ -214,9 +214,13 @@ def private_file_warning_text(bundle_name: str | None = None) -> str:
         bundle_name: Bundle stem. ``None`` renders the generic form.
 
     Returns:
-        Plain text, no markup, no trailing newline.
+        Plain text, no markup, one claim per line, no trailing newline.
     """
     name = _private_name(bundle_name)
     sentences = [_WARNING_HEADLINE.format(name=name)]
     sentences += [claim.format(name=name, command=_DISCLOSE_COMMAND) for claim in _WARNING_CLAIMS]
-    return " ".join(sentences)
+    # One claim per line. The email body around this breaks its own lines on
+    # purpose, and the sentence that has to survive a phishing attempt is the
+    # third of six: buried mid-paragraph in a single long run, it is present
+    # without being read, which is the failure this text exists to prevent.
+    return "\n".join(sentences)
