@@ -43,8 +43,8 @@ jobs:
   # ordering rather than duplicating it: the site suite runs against the COMPILED dist,
   # so a stale one produces false reds that read like plumbing faults.
   #
-  # `npm run build --prefix desktop` is deliberately absent until the single-file shell
-  # lands; there is no entry point to build yet.
+  # The build is now part of the gate: `npm run e2e` opens the BUILT artifact over
+  # file://, so a job that skipped the build would have nothing to open.
   desktop:
     needs: test
     runs-on: ubuntu-latest
@@ -62,6 +62,7 @@ jobs:
       - run: npm ci --prefix desktop
       - run: npm run typecheck --prefix desktop
       - run: npm test --prefix desktop
+      - run: npm run build --prefix desktop
       # All three engines here, and the install must SUCCEED: a cross-browser gate that
       # skips when a browser is missing produces a green nobody earned. WebKit runs only
       # in CI — playwright.config.ts adds it when CI is set — because installing its
@@ -70,6 +71,41 @@ jobs:
       # Mac, before the artifact is announced.
       - run: cd desktop && npx playwright install --with-deps chromium firefox webkit
       - run: npm run e2e --prefix desktop
+
+      # Same scanners, same pinned versions and the same allow-list the supply-chain job
+      # already uses on the other two ecosystems. No new scanner is introduced: the point
+      # of this package is that it adds no dependency the repository did not already
+      # carry, and the SBOM is how that is checked rather than asserted.
+      - name: Install syft, grype, grant (pinned)
+        env:
+          SYFT_VERSION: v1.46.0
+          GRYPE_VERSION: v0.115.0
+          GRANT_VERSION: v0.6.8
+        run: |
+          curl -sSfL "https://raw.githubusercontent.com/anchore/syft/${SYFT_VERSION}/install.sh"  | sh -s -- -b "$HOME/.local/bin" "${SYFT_VERSION}"
+          curl -sSfL "https://raw.githubusercontent.com/anchore/grype/${GRYPE_VERSION}/install.sh" | sh -s -- -b "$HOME/.local/bin" "${GRYPE_VERSION}"
+          curl -sSfL "https://raw.githubusercontent.com/anchore/grant/${GRANT_VERSION}/install.sh" | sh -s -- -b "$HOME/.local/bin" "${GRANT_VERSION}"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: SBOM, vulnerability and licence gate for desktop
+        run: |
+          npm ci --omit=dev --prefix desktop
+          syft dir:desktop -o cyclonedx-json=sbom-desktop.cdx.json
+          grype sbom:sbom-desktop.cdx.json --fail-on high
+          grant check -c .grant.yaml sbom-desktop.cdx.json
+
+      # The artifact and its checksum, so the local build can be compared with the one CI
+      # produced. That comparison is what turns "the build is not self-randomising" into
+      # "the build is reproducible across machines", which is what a published checksum
+      # needs to mean.
+      - name: Record the artifact checksum
+        run: sha256sum desktop/dist/attest-verifier.html | tee desktop/dist/attest-verifier.html.sha256
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-verifier
+          path: |
+            desktop/dist/attest-verifier.html
+            desktop/dist/attest-verifier.html.sha256
+            sbom-desktop.cdx.json
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
