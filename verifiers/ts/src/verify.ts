@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
 import {
   JsonObject, JsonValue, canonicalBytes, dumps, CanonError, loadsStrict, materializeArray,
-  MAX_ADMISSION_BYTES,
+  ownArrayLength, MAX_ADMISSION_BYTES,
 } from './canon.js'
 import {
   TrustStore, findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
@@ -35,7 +35,8 @@ import {
 } from './transparency.js'
 import {
   ERR, WARN, unsupportedAttestVersion, signaturesCount, unsupportedSigAlg, noTrustedManifest,
-  noKeyInManifest, keyCompromised, keyRetired, issuedAtOutsideWindow, malformedKeyMaterial,
+  noKeyInManifest, keyCompromised, compromiseViewOverflow, keyRetired, issuedAtOutsideWindow,
+  malformedKeyMaterial,
   malformedSigMaterial, unknownField, unknownEol, keyEntryNotHybrid, pyRepr, codePointLength,
   VERIFY_TRANSPARENCY_WARN, COMPROMISE_WARN, manifestExceedsKeys, manifestDuplicateKids,
   manifestNotSelfConsistent,
@@ -921,6 +922,21 @@ export function verify(
   let manifestFreshnessState: string = MANIFEST_FRESHNESS_NOT_CHECKED
   let transparencyClaimType: string | null = null
   const materializedCompromiseView = materializeCompromiseView(compromiseView)
+  // Python parity: verify.py's `compromise_view_oversized`. §19.2's acceptance
+  // floor given the fail-closed effect §6.3 requires of the owning section;
+  // silence here is the padding attack revocation-bound.test.ts already pins on
+  // the sibling rail. Reads the length via `ownArrayLength` — the same
+  // own-property-descriptor read `materializeArray` uses internally, and the one
+  // `revocation.ts` already counts its own view with — rather than the plain
+  // `.length` getter: a Proxy over a real array can make `get` and
+  // `getOwnPropertyDescriptor` disagree on `length` (Array's length is writable,
+  // so no invariant forces the two traps to match), so reading through the
+  // unguarded getter here would let such an object report "small" to THIS check
+  // while `materializeArray` still sees the true over-ceiling count and drops the
+  // view — reopening the exact silent-drop bug this check exists to close.
+  const compromiseViewSupplied =
+    compromiseView == null ? 0 : (ownArrayLength(compromiseView) ?? MAX_COMPROMISE_CLAIMS + 1)
+  const compromiseViewOversized = compromiseViewSupplied > MAX_COMPROMISE_CLAIMS
   const invalid = (message: string, schema: Schema = 'not_checked'): VerificationResult => {
     errors.push(message)
     return {
@@ -1198,6 +1214,8 @@ export function verify(
       materializedCompromiseView, manifest, entry, chain, issuerId, kid, warnings,
     )
     const status = resolveKeyStatus(entry, manifest, chain, authenticatedClaims, kid)
+    if (compromiseViewOversized && status !== 'compromised')
+      return invalid(compromiseViewOverflow(MAX_COMPROMISE_CLAIMS, compromiseViewSupplied))
     let compromisedRescued = false
     if (status === 'compromised') {
       // At the point of RESOLUTION and before the §19 disposition, so it reads
@@ -1264,6 +1282,8 @@ export function verify(
       materializedCompromiseView, manifest, entry, chain, issuerId, kid, warnings,
     )
     const status = resolveKeyStatus(entry, manifest, chain, authenticatedClaims, kid)
+    if (compromiseViewOversized && status !== 'compromised')
+      return invalid(compromiseViewOverflow(MAX_COMPROMISE_CLAIMS, compromiseViewSupplied))
     let compromisedRescued = false
     if (status === 'compromised') {
       // At the point of RESOLUTION and before the §19 disposition, so it reads

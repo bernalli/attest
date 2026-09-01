@@ -8,10 +8,11 @@ the view had no size bound. This file pins the two hardenings:
 - the manifest self-verify runs exactly once per classification
   (`verify_record_signature` + hoisted `verify_key_manifest`);
 - an oversized view is not evaluated (`revocation: "unknown"`), and it fails
-  CLOSED for revocable receipts (`policy`/`refund_window` → an error, so
-  `ok` is false) while only warning for irrevocable `none` receipts — never
-  truncation, never a raise. Fail-closed is the fix for the append-only
-  feed-poisoning suppression attack flagged in the final review round.
+  CLOSED for every revocability class — `policy`/`refund_window` (an error,
+  so `ok` is false) and, since 2026-09-01, `none` too (a BACKED
+  `status: "transferred"` record rides the same view and must not be hidden
+  by an oversized feed) — never truncation, never a raise. Fail-closed is
+  the fix for the append-only feed-poisoning suppression attack.
 
 Mirrored on the TS side by `verifiers/ts/test/revocation-bound.test.ts`.
 """
@@ -155,9 +156,18 @@ def test_oversized_view_on_revocable_receipt_fails_closed() -> None:
     assert result.ok is False
 
 
-def test_oversized_view_on_irrevocable_receipt_warns_and_stays_ok() -> None:
-    """Overflow on an irrevocable ("none") receipt is a non-fatal warning:
-    revocation can never affect ok, so an oversized feed cannot force not-ok."""
+def test_oversized_view_on_irrevocable_receipt_fails_closed() -> None:
+    """Overflow on an irrevocable ("none") receipt fails closed too.
+
+    Until 2026-09-01 this test asserted a non-fatal warning and `ok is True`,
+    on the reasoning the spec itself carried: "a revocation record can never
+    affect ok". That was true when it was written and false from v0.2 §17.3
+    onward, which extended the consent gate to ALL revocability classes — a
+    backed `status: "transferred"` record caps `ok` for `none` as well, and it
+    rides this same view. Asserting the old behaviour meant asserting that an
+    oversized feed may hide a transfer from the one class we present as the
+    strongest.
+    """
     payload = make_payload()  # revocability: none (base payload default)
     envelope = issue.issue(payload, KP, KID)
     view = [_record(f"2026-07-0{i}T00:00:00Z") for i in range(1, 5)]  # 4 records
@@ -168,9 +178,11 @@ def test_oversized_view_on_irrevocable_receipt_warns_and_stays_ok() -> None:
         max_revocation_records=3,
     )
     assert result.revocation == "unknown"
-    assert "revocation view exceeds 3 records (4 supplied), not evaluated" in result.warnings
-    assert result.errors == ()
-    assert result.ok is True
+    assert (
+        "revocation view exceeds 3 records (4 supplied), cannot rule out a transfer"
+        in result.errors
+    )
+    assert result.ok is False
 
 
 def test_padding_a_genuine_revocation_past_the_cap_cannot_suppress_it() -> None:

@@ -44,6 +44,21 @@ export function trustStore(dir: string): TrustStore {
   }
 }
 export function revocationView(dir: string): JsonValue[] | null {
+  // Fifth loader of the same corpus (two conformance adapters,
+  // tests/test_vectors.py, verifiers/ts/test/helpers/vectors.ts, this one).
+  // Each has to know the same files or a leaf is verified against evidence it
+  // was never handed. `revocation-view.json` carries the whole array — the
+  // spelling transfer-view.json and compromise-view.json already use — and
+  // `revocation.json` is the older single-record form. Array wins.
+  const arrayPath = join(dir, 'revocation-view.json')
+  if (existsSync(arrayPath)) {
+    const loaded = loadJsonStrict(arrayPath)
+    // Refuse the wrong shape out loud instead of casting through it: this file
+    // is an array by definition, and a loader that quietly accepts an object
+    // would hand the verifier evidence of a shape it never agreed to read.
+    if (!Array.isArray(loaded)) throw new Error(`${arrayPath} must contain a JSON array`)
+    return loaded
+  }
   const p = join(dir, 'revocation.json')
   return existsSync(p) ? [loadJsonStrict(p)] : null
 }

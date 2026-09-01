@@ -213,7 +213,37 @@ describe('v0.2 §19 compromiseView adversarial boundaries', () => {
     }]
 
     expect(verifyWith(store(), acceptedBoundary).signature).toBe('invalid')
-    expect(verifyWith(store(), rejectedBoundary).signature).toBe('valid')
+    // An over-ceiling view is refused, not silently dropped: §19.2's fail-closed
+    // effect, and Python parity with test_verify_compromise.py. Until 2026-09-01
+    // this line asserted 'valid' — with a GENUINE declaration in the view, so it
+    // stated the padding attack and pinned it as correct: 64 junk members made a
+    // real compromise declaration stop biting, and the receipt it should have
+    // killed verified green.
+    const rejected = verifyWith(store(), rejectedBoundary)
+    expect(rejected.signature).toBe('invalid')
+    expect(rejected.errors.some(e => e.includes('compromise view exceeds 64 claims'))).toBe(true)
+  })
+
+  // A view that lies about its own size must not be counted twice, once per liar.
+  it('counts an over-ceiling view by its own length descriptor, not by a getter that lies', () => {
+    const real = [...Array.from({ length: 64 }, () => null), {
+      manifest: declaration(), evidence: null,
+    }]
+    // `length` on an array is writable, so no ECMAScript invariant forces the
+    // `get` trap to agree with `getOwnPropertyDescriptor`. Reading the ceiling
+    // check through the getter while the materializer reads the descriptor gives
+    // two answers for one quantity — the shape that lets a caller be "small"
+    // for the guard and "oversized" for the drop, which is the silent-drop bug
+    // the guard exists to close.
+    const liar = new Proxy(real, {
+      get: (target, prop, receiver) =>
+        prop === 'length' ? 1 : Reflect.get(target, prop, receiver),
+    })
+
+    const result = verifyWith(store(), liar)
+
+    expect(result.signature).toBe('invalid')
+    expect(result.errors.some(e => e.includes('compromise view exceeds 64 claims'))).toBe(true)
   })
 
   // docs/spec/attest-v0.2.md:1014, 1030 — malformed view members are untrusted and cannot abort valid ones.

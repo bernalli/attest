@@ -439,3 +439,39 @@ def test_non_list_transfer_view_raises_type_error() -> None:
             _trust_store(),
             transfer_view={"record": {}, "evidence": None},  # type: ignore[arg-type]
         )
+
+
+def test_oversized_revocation_view_still_honours_a_transfer_on_none() -> None:
+    """An over-ceiling view must not hide a transfer from an irrevocable receipt.
+
+    The over-ceiling branch treats `none` as non-fatal because "a revocation can
+    never affect ok" — true before Stage 3, and no longer true since §17.3 made
+    the consent gate apply to ALL revocability classes, `none` included: a backed
+    `status: "transferred"` record caps `ok` for this class too. Those records
+    ride the same `revocation_view`, so returning early on size discards them as
+    well, and whoever can append to that view decides which transfer the verifier
+    never sees.
+    """
+    hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
+    record = _transfer_record()
+    bundle = _transfer_log_bundle([record], hk)[0]
+    envelope = _envelope("none")
+
+    result = verify.verify(
+        _to_bytes(envelope),
+        _trust_store(),
+        revocation_view=[_transferred_revocation_record(), None, None],  # type: ignore[list-item]
+        transfer_view=[{"record": record, "evidence": bundle}],
+        log_keys=[_transfer_log_key(hk)],
+        anchor_policy=_no_horizon_policy(),
+        max_revocation_records=2,
+    )
+
+    # The property under test is that the receipt is NOT certified, not which of
+    # the two ways of getting there is used. Honouring the transfer over the
+    # ceiling would mean reading a view too large to evaluate; refusing to
+    # certify keeps the ceiling and still denies the caller a green verdict it
+    # cannot support. `revocation` stays `unknown` — nothing was evaluated — and
+    # that is exactly why `ok` may not be true.
+    assert result.ok is False
+    assert any("cannot rule out a transfer" in error for error in result.errors)

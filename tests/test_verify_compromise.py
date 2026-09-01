@@ -345,8 +345,15 @@ def test_compromise_view_cap_accepts_sixty_four_claims_but_skips_sixty_five() ->
 
     assert accepted.signature == "valid"
     assert accepted.warnings == ("compromise_cutoff_claim_ignored",)
-    assert skipped.signature == "valid"
-    assert skipped.warnings == ()
+    # An over-ceiling view is refused, not silently dropped: v0.2 §19.2's
+    # fail-closed effect. Until 2026-09-01 the two lines below asserted
+    # `"valid"` and `()`, which pinned the fail-open behaviour — a view padded
+    # past the ceiling made a genuine declaration stop biting, with no warning.
+    # This fixture pads with already-invalid claims, so nothing is lost here;
+    # `test_oversized_view_carrying_a_genuine_declaration_does_not_certify_the_key`
+    # is the one that shows what the silence was costing.
+    assert skipped.signature == "invalid"
+    assert any("compromise view exceeds 64 claims" in error for error in skipped.errors)
 
 
 def test_oversized_compromise_view_does_not_suppress_held_chain_floor() -> None:
@@ -543,6 +550,47 @@ def test_inadmissible_compromise_claim_does_not_discard_authenticated_cutoff() -
         log_keys=[_log_key(hk)],
         anchor_policy=_policy(receipt_header, claim_header),
         compromise_view=[_claim(claim_manifest, claim_evidence), {"padding": 1.5}],
+    )
+
+    assert result.signature == "invalid"
+    assert result.ok is False
+
+
+def test_oversized_view_carrying_a_genuine_declaration_does_not_certify_the_key() -> None:
+    """A view padded past the ceiling must not quietly restore a compromised key.
+
+    The claims a size guard drops are the ones that can only NARROW the set of
+    valid signatures, so dropping them in silence hands anyone able to append to
+    this channel — the one v0.2 §19.2 blesses for untrusted transport — a way to
+    switch the v0.1 §7.3 floor back off. `_revocation_state` already refuses the
+    same padding attack on the sibling rail, and §6.3 requires the section owning
+    a rail to define the fail-closed effect of a unit it does not admit.
+
+    The existing ceiling tests cannot see this: they pad with claims that are
+    already invalid, so no genuine declaration is ever the thing that falls off
+    the end.
+    """
+    envelope = _receipt()
+    trusted = _active_manifest()
+    claim_manifest = _compromise_manifest()
+    hk = _hybrid_log_keys()
+    receipt_evidence, receipt_header = _anchored_evidence(
+        _receipt_entry(envelope), hk, 1_700_003_600
+    )
+    claim_evidence, claim_header = _anchored_evidence(
+        _manifest_entry(claim_manifest), hk, 1_700_003_600
+    )
+    padding = _claim(
+        _compromise_manifest(issuer=OTHER_ISSUER, signing_kp=KPD, signing_kid=OTHER_KID)
+    )
+
+    result = verify.verify(
+        _verify_bytes(envelope),
+        _trust_store(trusted),
+        transparency=receipt_evidence,
+        log_keys=[_log_key(hk)],
+        anchor_policy=_policy(receipt_header, claim_header),
+        compromise_view=[_claim(claim_manifest, claim_evidence)] + [padding] * 64,
     )
 
     assert result.signature == "invalid"
