@@ -50,6 +50,12 @@ rest of the file):
 webhook_secret_env = "SHOPIFY_WEBHOOK_SECRET"
 ```
 
+Drop `[stripe]` and `[itch]` from `bridge.toml` too if you don't sell
+through them — step 3 of setup-stripe.md tells you to drop the *other*
+platform tables, never its own. A table left behind is not inert: the bridge
+resolves the environment variable it names at startup and refuses to start
+when that variable is unset.
+
 Then one `[products.shopify_<variant_id>]` table per item you sell. The product
 key is `shopify_` followed by the **variant id** — the variant is Shopify's unit
 of sale, the equivalent of a Stripe price id. Find it in the admin: open the

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import stat
+import threading
 import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -49,6 +51,7 @@ sku = "SDC-STD-001"
 """
 
 _SHOPIFY_ENV_VAR = "SHOPIFY_WEBHOOK_SECRET_CLI_TEST"  # env var NAME, not a secret
+_SMTP_PASSWORD_ENV_VAR = "SMTP_PASSWORD_CLI_TEST"  # noqa: S105 - env var NAME, not a secret
 _SHOPIFY_VARIANT_PRODUCT = f"""
 [products.shopify_49148385]
 title = "The Long Dusk"
@@ -1524,3 +1527,160 @@ def test_example_config_declares_legal_text_path() -> None:
     delivery_section = text[text.index("[delivery]") : text.index("[products.")]
     assert "info_url" in delivery_section
     assert "optional" in delivery_section.lower()
+
+
+def test_serve_reports_a_config_error_when_the_ledger_directory_is_missing(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A missing Ledger directory is a config error, not a traceback.
+
+    This is what a container run without its volume mounted looks like, and
+    it is the first thing a merchant sees when a deploy target is wired
+    wrong. `_build_deps` promises to raise `ConfigError` fail-fast, so the
+    unreadable `FileNotFoundError` that `Ledger.__init__` raises through it
+    has to be translated at that boundary — and the message has to name the
+    directory, because the fix is to create or mount it.
+
+    Deliberately NOT auto-created: an unmounted volume would then look
+    healthy while the Ledger silently starts empty on every boot, losing
+    webhook idempotency and re-issuing receipts already issued.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    config_path = _write_config(
+        tmp_path, hybrid_keys, key_manifest, products_toml=_PRICE_TEST_PRODUCT
+    )
+    missing_dir = tmp_path / "not-mounted"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            str(tmp_path / "ledger.sqlite3"), str(missing_dir / "ledger.sqlite3")
+        ),
+        encoding="utf-8",
+    )
+
+    rc = cli.main(["serve", "--config", str(config_path)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("config error:")
+    assert str(missing_dir) in err
+    assert not missing_dir.exists()
+
+
+def test_serve_shutdown_waits_for_the_delivery_sweeper(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shutdown path has to run with a sweeper thread actually present.
+
+    With no `[delivery]` table there is no sweeper, so the branch that joins
+    it never executes — which is how a NameError in that branch could ship
+    unnoticed and only ever fire on a merchant's machine, at shutdown, with
+    delivery configured. This exercises the branch.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    monkeypatch.setenv(_SMTP_PASSWORD_ENV_VAR, "throwaway")
+    monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: signal.SIG_DFL)
+
+    class FakeServer:
+        def __enter__(self) -> FakeServer:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def serve_forever(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    monkeypatch.setattr(cli, "make_server", lambda *a, **k: FakeServer())
+    delivery_toml = (
+        "[delivery]\n"
+        'smtp_host = "smtp.example.com"\n'
+        "smtp_port = 587\n"
+        'smtp_username = "receipts@example.com"\n'
+        f'smtp_password_env = "{_SMTP_PASSWORD_ENV_VAR}"\n'
+        'from_address = "receipts@example.com"\n'
+    )
+    config_path = _write_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        products_toml=_PRICE_TEST_PRODUCT,
+        extra_toml=delivery_toml,
+    )
+
+    assert cli.main(["serve", "--config", str(config_path)]) == 0
+
+
+def test_serve_shuts_down_on_sigterm_instead_of_being_killed(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SIGTERM must stop the server, not be ignored until SIGKILL arrives.
+
+    Measured before this was handled: the container exited 137 (SIGKILL)
+    after its grace period, on every single stop. As PID 1 — which is what
+    this process is in every deploy target — a signal with no explicit
+    handler is discarded by the kernel, so the default "terminate" never
+    applies and every deploy ends in a forced kill.
+
+    That matters beyond tidiness: delivery is at-least-once, and the sweep
+    that retries it runs every few minutes. A kill landing between SMTP
+    accepting a message and `mark_delivered` recording it sends the buyer
+    their receipt twice — so an orderly stop is what keeps the widest
+    instance of that window from being opened by routine deploys.
+
+    Signals are captured rather than raised: with the handler missing, a real
+    SIGTERM would terminate the test session instead of failing this test.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    handlers: dict[int, Any] = {}
+    shutdown_calls: list[str] = []
+    stopped = threading.Event()
+
+    def fake_signal(signum: int, handler: Any) -> Any:
+        handlers[signum] = handler
+        return signal.SIG_DFL
+
+    class FakeServer:
+        def __enter__(self) -> FakeServer:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def serve_forever(self) -> None:
+            # The handler registered above is what a real SIGTERM would run;
+            # invoking it here stands in for the signal arriving while the
+            # server is blocked in this call. A real serve_forever returns
+            # only once shutdown() has been requested, so this one waits for
+            # it too — the handler is allowed to do that work off-thread.
+            assert signal.SIGTERM in handlers, "serve() installed no SIGTERM handler"
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            assert stopped.wait(timeout=5), "SIGTERM handler never asked the server to stop"
+
+        def shutdown(self) -> None:
+            shutdown_calls.append("shutdown")
+            stopped.set()
+
+    monkeypatch.setattr(cli.signal, "signal", fake_signal)
+    monkeypatch.setattr(cli, "make_server", lambda *a, **k: FakeServer())
+    config_path = _write_config(tmp_path, hybrid_keys, key_manifest)
+
+    rc = cli.main(["serve", "--config", str(config_path)])
+
+    assert rc == 0
+    assert signal.SIGINT in handlers, "serve() installed no SIGINT handler"
+    # A handler that only sets a flag would leave serve_forever blocked: the
+    # shutdown has to actually be requested of the server.
+    assert shutdown_calls == ["shutdown"]
