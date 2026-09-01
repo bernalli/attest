@@ -55,8 +55,11 @@ can offer this tomorrow, and nobody can stop them.
 
 For everyone who won't sign voluntarily, the route is legal, not technical.
 EU law already obliges every online seller to confirm your purchase on a
-durable medium; that's why confirmation emails exist at all. attest is that
-same confirmation in a format a machine can verify and you can carry away. A
+durable medium — Article 8(7) of the Consumer Rights Directive (2011/83/EU),
+which Article 2(10) defines as something that lets you store the information,
+keep it accessible for as long as you need it, and reproduce it unchanged.
+That's why confirmation emails exist at all. attest is that same confirmation
+in a format a machine can verify and you can carry away. A
 regulator doesn't have to invent a new obligation, only require a usable
 format for one that already exists. The standard is written for exactly that
 moment: published in the open, with two independent implementations, a
@@ -144,9 +147,15 @@ the standard is built on. Existing libraries stay exactly as revocable as they
 are today until the store that holds them decides to issue attest receipts for
 them. The lever for an unwilling incumbent isn't a workaround — it's regulation
 and market pressure: disclosure laws already on the books (California's AB 2426,
-Maryland's HB 208) and forums like the EU's end-of-life industry code of conduct
-due by the end of 2026. attest is the technical standard those pressures could
-point an incumbent toward adopting; it is not a way around an incumbent that
+Maryland's HB 208), and the conversation the European Commission opened on
+16 June 2026 when it answered the Stop Destroying Videogames citizens'
+initiative. Be precise about what that answer was: the Commission declined
+to impose any legal obligation to keep games playable, and committed instead
+to initiate, by the end of 2026, an exchange with the industry and consumer
+representatives aimed at drawing up a voluntary code of conduct on managing
+a game's end of life. What is due by the end of 2026 is the exchange, not
+the code. attest is the technical standard those pressures could point an
+incumbent toward adopting; it is not a way around an incumbent that
 declines.
 
 ## Why not blockchain / NFT?
