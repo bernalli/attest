@@ -1291,3 +1291,98 @@ def test_receipt_core_hash_raises_on_non_array_signatures() -> None:
 def test_receipt_core_hash_raises_on_non_dict_envelope() -> None:
     with pytest.raises(tlog.TlogError):
         tlog.receipt_core_hash(cast(dict[str, Any], "not-a-dict"))
+
+
+# --- v0.2 §8: admission looks at the entry's shape, never at the receipt's
+# --- signature ----------------------------------------------------------------
+#
+# The rule is that a log admits a `receipt` entry on the closed member set
+# alone: `type`, `issuer`, `core_sha256`. `issuer` is an unauthenticated
+# browsing hint, and no signature check gates admission — a log that refused
+# entries whose receipts do not verify would be making a trust decision the
+# log is not entitled to make, and would let an issuer erase evidence of a
+# receipt it later regrets by breaking its own signature.
+#
+# This is asserted in the spec and, until now, defended by nothing. The
+# conformance corpus cannot defend it: a vector is a VERIFIER fixture, it
+# never reaches `encode_entry`, and the entry it would carry has no signature
+# inside it to look at. The property has to be tested where it lives.
+
+
+def _b64u(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _envelope_with_signature(sig_b64u: str) -> dict[str, Any]:
+    """A minimal envelope shaped the way `receipt_core_hash` requires."""
+    return {
+        "payload": {"receipt_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "attest_version": "0.1"},
+        "signatures": [
+            {"kid": "shop.example.com/keys/2026#ed25519-1", "alg": "Ed25519", "sig": sig_b64u}
+        ],
+    }
+
+
+def test_admission_takes_a_receipt_whose_signature_could_never_verify() -> None:
+    """The rule of v0.2 §8, tested where it lives.
+
+    The receipt's signature here is 64 zero bytes: it verifies against no
+    key, under any manifest. Its entry must still be admitted, because
+    admission reads the entry's shape and the entry carries no signature at
+    all — only a hash of the receipt core.
+    """
+    envelope = _envelope_with_signature(_b64u(bytes(64)))
+    entry = {
+        "type": "receipt",
+        "issuer": "shop.example.com",
+        "core_sha256": tlog.receipt_core_hash(envelope),
+    }
+
+    encoded = tlog.encode_entry(entry)
+
+    assert encoded == canon.dumps(entry).encode("utf-8")
+
+
+def test_admission_is_indifferent_to_the_signature_it_commits_to() -> None:
+    """Two receipts differing ONLY in their signature bytes.
+
+    `receipt_core_hash` commits to the signature bytes deliberately (an entry
+    must only ever describe a signature that already existed when it was
+    logged), so the two entries are NOT the same entry. What must be the same
+    is their fate: both admitted, on identical grounds. If admission ever
+    starts asking whether the signature verifies, this is the test that goes
+    red — the one above would still pass, because a single case cannot tell
+    "admitted" from "admitted for the wrong reason".
+    """
+    honest = _envelope_with_signature(_b64u(bytes(range(64))))
+    broken = _envelope_with_signature(_b64u(bytes(64)))
+
+    honest_hash = tlog.receipt_core_hash(honest)
+    broken_hash = tlog.receipt_core_hash(broken)
+    assert honest_hash != broken_hash
+
+    for core in (honest_hash, broken_hash):
+        entry = {"type": "receipt", "issuer": "shop.example.com", "core_sha256": core}
+        assert tlog.encode_entry(entry) == canon.dumps(entry).encode("utf-8")
+
+
+def test_admission_still_refuses_an_entry_whose_shape_is_wrong() -> None:
+    """The other half: indifference to the signature is not indifference.
+
+    Without this beside the two above, they would be consistent with a log
+    that admits anything at all.
+    """
+    envelope = _envelope_with_signature(_b64u(bytes(64)))
+    core = tlog.receipt_core_hash(envelope)
+
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry({"type": "receipt", "issuer": "shop.example.com"})
+    with pytest.raises(tlog.TlogError):
+        tlog.encode_entry(
+            {
+                "type": "receipt",
+                "issuer": "shop.example.com",
+                "core_sha256": core,
+                "signature_checked": True,
+            }
+        )
