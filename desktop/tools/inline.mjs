@@ -57,6 +57,8 @@ const SELF_FETCHING = [
    'an element that fetches or navigates by itself'],
   [/\sping\s*=/i,
    'a ping attribute, which posts to a third party when the link is clicked'],
+  [/<a\b[^>]*\shref\s*=\s*["']?\s*javascript:/i,
+   'an anchor with a javascript: href, which runs script when the anchor is clicked'],
   [/<(?!a\b)[a-zA-Z-]+\b[^>]*\s(?:[a-zA-Z-]+:)?href\s*=/i,
    'an href on something that is not an anchor (xlink:href included)'],
   [/\s(?:src|srcset|poster|background|action|formaction|data)\s*=/i,

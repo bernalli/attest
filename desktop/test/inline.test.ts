@@ -117,6 +117,7 @@ describe('the inliner refuses rather than copes', () => {
     ['an SVG image addressed with xlink:href', '<svg><image xlink:href="https://example.invalid/p.png"/></svg>'],
     ['an SVG use addressed with xlink:href', '<svg><use xlink:href="https://example.invalid/s.svg#i"/></svg>'],
     ['an anchor carrying ping', '<a href="#" ping="https://example.invalid/c">x</a>'],
+    ['an anchor with a javascript: href', '<a href="javascript:alert(1)">x</a>'],
     ['a base element', '<base href="https://example.invalid/">'],
     ['an object', '<object data="https://example.invalid/x"></object>'],
     ['a video poster', '<video poster="https://example.invalid/p.png"></video>'],
