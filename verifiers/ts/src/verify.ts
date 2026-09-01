@@ -2,11 +2,13 @@ import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
 import {
   JsonObject, JsonValue, canonicalBytes, dumps, CanonError, loadsStrict, materializeArray,
+  MAX_ADMISSION_BYTES,
 } from './canon.js'
 import {
   TrustStore, findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
   duplicateKids,
   artifactChainContinuous, verifyArtifactManifest, signableManifestBytes, verifySignatureBlock,
+  manifestSignatureIsAuthentic,
 } from './manifests.js'
 import { verifyStrict, Ed25519LengthError } from './ed25519.js'
 import { verifyStrict as verifyMldsaStrict, ML_DSA_65_ALG } from './mldsa.js'
@@ -36,6 +38,7 @@ import {
   noKeyInManifest, keyCompromised, keyRetired, issuedAtOutsideWindow, malformedKeyMaterial,
   malformedSigMaterial, unknownField, unknownEol, keyEntryNotHybrid, pyRepr, codePointLength,
   VERIFY_TRANSPARENCY_WARN, COMPROMISE_WARN, manifestExceedsKeys, manifestDuplicateKids,
+  manifestNotSelfConsistent,
 } from './messages.js'
 
 // attest_version values this verifier's verify() step 1 accepts (v0.1 single-sig,
@@ -55,20 +58,23 @@ const MAX_JCS_INTEGER = 2n ** 53n
 // This outer cap must COVER everything the downstream evaluators' own inner
 // caps accept, or evaluator-valid evidence gets falsely rejected here.
 // Worst-case legitimate bundle, derived from those inner caps: checkpoint +
-// prior_checkpoint + the anchors bundle's own checkpoint copy at ~500KB each
-// = ~1.5MB, plus anchors operands at 64 proofs x 65_536 total hex chars per
-// proof (MAX_PROOFS_PER_EVIDENCE, MAX_TOTAL_OP_HEX_LEN) = ~4.2MB, plus JSON
-// overhead for proofs carrying up to 256 ops (~300KB), plus
-// inclusion/consistency proofs (~8KB) — ~6MB total, ~4MB inside this ceiling.
+// prior_checkpoint + the anchors bundle's own checkpoint copy at 500,000
+// characters each = 1,500,000 characters, plus anchors operands at 64 proofs
+// x 65_536 total hex chars per proof (MAX_PROOFS_PER_EVIDENCE,
+// MAX_TOTAL_OP_HEX_LEN) = 4,194,304 characters, plus JSON overhead for proofs
+// carrying up to 256 ops (~300,000), plus inclusion/consistency proofs
+// (~8,000) — ~6,000,000 characters total, ~4,000,000 characters inside this
+// 10,000,000-character ceiling.
 //
 // The operand term is bounded by the per-chain TOTAL, never by
-// MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN: that product is 268_435_456 chars and
-// would overshoot this ceiling by ~260MB. This ceiling is normative (v0.1
-// §11.3) and cannot be raised to meet the inner caps, so the total-operand
+// MAX_OPS_PER_PROOF * MAX_OP_HEX_LEN: that product is 268,435,456 operand
+// characters and would overshoot this 10,000,000-character ceiling by
+// ~258,000,000 characters. This ceiling is normative (v0.2 §6.3) and cannot
+// be raised to meet the inner caps, so the total-operand
 // cap is what makes the raised per-op caps admissible at all — re-derive this
 // whenever any of the three moves. Mirrors verify.py's
 // `_MAX_TRANSPARENCY_EVIDENCE_LEN`.
-const MAX_TRANSPARENCY_EVIDENCE_LEN = 10_000_000
+const MAX_TRANSPARENCY_EVIDENCE_LEN = MAX_ADMISSION_BYTES
 export const MAX_TRANSPARENCY_EVIDENCE_LEN_ = MAX_TRANSPARENCY_EVIDENCE_LEN
 
 export type Signature = 'valid' | 'invalid'
@@ -1037,6 +1043,17 @@ export function verify(
       }
       if (payload['attest_version'] === '0.2' && hasActiveEdOnlySibling(issuerManifestForTransparency)) {
         warnings.push(WARN.MIXED_KEYSET_ACTIVE_ED_ONLY_SIBLING)
+      }
+
+      // The trusted manifest must authenticate ITSELF before any key is read
+      // out of it. The side-document paths have always asked; the receipt path
+      // never did, so a manifest edited after it was trusted certified receipts
+      // signed by the edit. Hoisted here, at the ONE place the manifest is
+      // resolved, so both receipt paths inherit it, and last in this preflight
+      // so the refusals above keep their verdicts and their messages. Python
+      // parity: verify.py's same block.
+      if (!manifestSignatureIsAuthentic(issuerManifestForTransparency)) {
+        return invalid(manifestNotSelfConsistent(issuerId))
       }
     }
 

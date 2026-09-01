@@ -298,9 +298,28 @@ def test_manifest_entry_missing_valid_from_fails_closed() -> None:
 
 def test_manifest_entry_missing_pub_fails_closed_with_malformed_key_material() -> None:
     """A trust-store manifest entry missing `pub` must fail closed with a clear
-    "malformed key material" error, never crash with an unhandled KeyError."""
-    entry = {"kid": KID, "valid_from": "2026-01-01T00:00:00Z", "valid_to": None, "status": "active"}
-    manifest = {"issuer": ISSUER, "keys": [entry]}
+    "malformed key material" error, never crash with an unhandled KeyError.
+
+    The manifest is signed by a SECOND, well-formed entry, so it is
+    self-consistent and reaches the key lookup: since V-J.7 the receipt path
+    refuses an unauthenticated manifest before reading any key out of it, and
+    an unsigned one would be turned away by that gate instead — testing this
+    property on a bare dict would no longer test it.
+    """
+    signer_kid = f"{ISSUER}/keys/test#ed25519-signer"
+    signer_kp = keys.from_seed(bytes([11]) * 32)
+    broken = {
+        "kid": KID,
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_to": None,
+        "status": "active",
+    }
+    signer = manifests.key_entry(signer_kid, signer_kp.pub, "2026-01-01T00:00:00Z", None, "active")
+    manifest = manifests.build_key_manifest(
+        ISSUER, 1, "2026-01-01T00:00:00Z", [broken, signer], signer_kp, signer_kid
+    )
+    assert manifests.verify_key_manifest(manifest) is True
+
     envelope = issue.issue(make_payload(), KP, KID)
     result = verify.verify(_to_bytes(envelope), _trust_store(manifest))
     assert result.signature == "invalid"

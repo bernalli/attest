@@ -11,14 +11,23 @@ import { VECTORS_ROOT, envelopeBytes, trustStore, revocationView } from './helpe
 import { verify, isOk } from '../src/verify.js'
 import { MAX_REVOCATION_RECORDS } from '../src/revocation.js'
 
-// Wrap verifyKeyManifest in a call-counting spy that delegates to the real
-// implementation, so the once-per-classification contract is testable.
+// Wrap verifyKeyManifest and manifestSignatureIsAuthentic in call-counting
+// spies that delegate to the real implementation, so the once-per-classification
+// contract is testable. classifyRevocation's per-classification hoist calls
+// manifestSignatureIsAuthentic (the receipt gate's predicate, narrower than
+// verifyKeyManifest — see revocation.ts) since the trusted-manifest
+// authentication fix; verifyKeyManifest is still spied on because
+// verifyRecord (unrelated to that hoist) still calls it.
 vi.mock('../src/manifests.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/manifests.js')>()
-  return { ...actual, verifyKeyManifest: vi.fn(actual.verifyKeyManifest) }
+  return {
+    ...actual,
+    verifyKeyManifest: vi.fn(actual.verifyKeyManifest),
+    manifestSignatureIsAuthentic: vi.fn(actual.manifestSignatureIsAuthentic),
+  }
 })
 
-import { verifyKeyManifest } from '../src/manifests.js'
+import { verifyKeyManifest, manifestSignatureIsAuthentic } from '../src/manifests.js'
 import { classifyRevocation, verifyRecord, verifyRecordSignature } from '../src/revocation.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
@@ -70,14 +79,14 @@ const policyPayload = parse({
 })
 
 describe('cached manifest self-verify (improvement #17)', () => {
-  it('runs verifyKeyManifest exactly once per classification', () => {
+  it('runs manifestSignatureIsAuthentic exactly once per classification', () => {
     const view = [1, 2, 3, 4, 5].map((d) => record(`2026-07-0${d}T00:00:00Z`))
     const warnings: string[] = []
     const errors: string[] = []
-    vi.mocked(verifyKeyManifest).mockClear()
+    vi.mocked(manifestSignatureIsAuthentic).mockClear()
     const result = classifyRevocation(policyPayload, view, keyManifest, warnings, errors)
     expect(result).toBe('revoked')
-    expect(vi.mocked(verifyKeyManifest)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(manifestSignatureIsAuthentic)).toHaveBeenCalledTimes(1)
   })
 
   it('verifyRecordSignature accepts a valid record against a pre-verified manifest', () => {

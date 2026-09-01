@@ -226,18 +226,21 @@ _HEX_LOWER = frozenset("0123456789abcdef")
 # This outer cap must COVER everything the downstream evaluators' own inner
 # caps accept, or evaluator-valid evidence gets falsely rejected here.
 # Worst-case legitimate bundle, derived from those inner caps: checkpoint +
-# prior_checkpoint + the anchors bundle's own checkpoint copy at ~500KB each
-# (tlog._MAX_NOTE_TEXT_LEN) = ~1.5MB, plus anchors operands at 64 proofs x
-# 65_536 total hex chars per proof (anchor._MAX_PROOFS_PER_EVIDENCE,
-# _MAX_TOTAL_OP_HEX_LEN) = ~4.2MB, plus JSON overhead for proofs carrying up
-# to 256 ops (~4-5KB per proof, ~300KB), plus inclusion/consistency proofs
-# (~8KB) — ~6MB total, ~4MB inside this ceiling. The cap still bounds hostile
-# materialization before the JSON decoder performs a second full traversal.
+# prior_checkpoint + the anchors bundle's own checkpoint copy at 500,000
+# characters each (tlog._MAX_NOTE_TEXT_LEN) = 1,500,000 characters, plus
+# anchors operands at 64 proofs x 65_536 total hex chars per proof
+# (anchor._MAX_PROOFS_PER_EVIDENCE, _MAX_TOTAL_OP_HEX_LEN) = 4,194,304
+# characters, plus JSON overhead for proofs carrying up to 256 ops (~4,000-
+# 5,000 characters per proof, ~300,000), plus inclusion/consistency proofs
+# (~8,000) — ~6,000,000 characters total, ~4,000,000 characters inside this
+# 10,000,000-character ceiling. The cap still bounds hostile materialization
+# before the JSON decoder performs a second full traversal.
 #
 # The operand term is bounded by the per-chain TOTAL, never by
-# `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN`: that product is 268_435_456 chars
-# and would overshoot this ceiling by ~260MB. This ceiling is normative
-# (canon.MAX_ADMISSION_BYTES, v0.1 §11.3) and cannot be raised to meet the
+# `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN`: that product is 268,435,456 operand
+# characters and would overshoot this 10,000,000-character ceiling by
+# ~258,000,000 characters. This ceiling is normative
+# (canon.MAX_ADMISSION_BYTES, v0.2 §6.3) and cannot be raised to meet the
 # inner caps, so the total-operand cap is what makes the raised per-op caps
 # admissible at all — re-derive this arithmetic whenever any of the three
 # moves, and see tests/test_anchor.py for it as an executable assertion.
@@ -655,7 +658,7 @@ def _evaluate_transparency_claim(
         # never a stateful mapping/value supplied by the caller. The size cap
         # prevents decoding an arbitrarily large serialized evidence bundle.
         # The copy of the value's OWN data runs FIRST and refuses on a node
-        # budget: the byte cap below is compared against a serialization that
+        # budget: the code-point cap below is compared against a serialization that
         # has ALREADY been produced, so a caller value whose iteration never
         # ends would hang here before any cap could fire -- and a hang reaches
         # no `except` clause, which is why the enclosing one is not a defence
@@ -1265,7 +1268,7 @@ def _revocation_deadline_satisfied(
         # every following phase sees one ordinary JSON object, never a
         # stateful mapping/value supplied by the caller.
         # Own-data copy first, for the same reason as the transparency sink:
-        # the byte cap cannot fire on a serialization that never returns.
+        # the code-point cap cannot fire on a serialization that never returns.
         serialized_evidence = canon.dumps(
             _own_data_copy(revocation_evidence, [_MAX_EVIDENCE_NODES])
         )
@@ -1386,7 +1389,16 @@ def _resolve_transfer_backing(
     materialized = materialized_claims
 
     receipt_id = payload.get("receipt_id")
-    manifest_ok = manifests.verify_key_manifest(issuer_manifest)
+    # The receipt gate's predicate, deliberately, not `verify_key_manifest`:
+    # a manifest downgraded by deleting its PQ leg loses its TRUST LEVEL,
+    # never its power to revoke. The two must not disagree about whether
+    # the same manifest is authentic — a manifest good enough to certify a
+    # receipt and not good enough to carry the same issuer's revocation
+    # turns a revocation into silence, and reaching that gap costs an
+    # attacker one deletion and no key: `manifest_signature` sits outside
+    # the signed bytes. Severe where evidence can SAVE, permissive where it
+    # can only KILL.
+    manifest_ok = manifests.manifest_signature_is_authentic(issuer_manifest)
 
     def _append_once(warning: str) -> None:
         if warning not in warnings:
@@ -1601,10 +1613,19 @@ def _classify_revocation(
 
     # Authenticated records (any receipt_id) drive the freshness anchor; only
     # signature-verified records may set T (§5 hardening). The manifest's own
-    # self-verify is hoisted out of the loop — one `verify_key_manifest` per
-    # classification, not per record, so a hostile many-record feed cannot
-    # multiply manifest-verification work (review improvement #17).
-    manifest_ok = manifests.verify_key_manifest(issuer_manifest)
+    # self-verify is hoisted out of the loop — one check per classification,
+    # not per record, so a hostile many-record feed cannot multiply
+    # manifest-verification work (review improvement #17).
+    # The receipt gate's predicate, deliberately, not `verify_key_manifest`:
+    # a manifest downgraded by deleting its PQ leg loses its TRUST LEVEL,
+    # never its power to revoke. The two must not disagree about whether
+    # the same manifest is authentic — a manifest good enough to certify a
+    # receipt and not good enough to carry the same issuer's revocation
+    # turns a revocation into silence, and reaching that gap costs an
+    # attacker one deletion and no key: `manifest_signature` sits outside
+    # the signed bytes. Severe where evidence can SAVE, permissive where it
+    # can only KILL.
+    manifest_ok = manifests.manifest_signature_is_authentic(issuer_manifest)
     authenticated_ids: set[int] = set()
     authenticated: list[dict[str, Any]] = []
     if manifest_ok:
@@ -2781,6 +2802,24 @@ def verify(
             ):
                 warnings.append(_WARN_MIXED_KEYSET_ACTIVE_ED_ONLY_SIBLING)
 
+            # V-J.7 — the trusted manifest must authenticate ITSELF before any
+            # key is read out of it. The side-document paths have always asked
+            # (`transfer`/`revocation` hoist the same call); the receipt path
+            # never did, so a manifest edited after it was trusted certified
+            # receipts signed by the edit: a swapped `pub` forges a receipt
+            # without the issuer's private key, and a `compromised` status
+            # flipped back to `active` resurrects signatures §7.3 declares
+            # dead. Hoisted here, at the ONE place the manifest is resolved,
+            # so both receipt paths (v0.2 hybrid and v0.1) inherit it.
+            # Deliberately last in this preflight: the keys ceiling above
+            # bounds the work this check does, and running it after the
+            # existing refusals leaves their verdicts and messages unchanged.
+            if not manifests.manifest_signature_is_authentic(issuer_manifest):
+                return _invalid(
+                    f"issuer manifest for {issuer_id!r} is not self-consistent: "
+                    "its own signature does not verify"
+                )
+
         chain = trust_store.chains.get(issuer_id)
         if chain and (not _chain_continuous(chain) or chain[-1] != issuer_manifest):
             # A chain that does not actually end at the manifest being used proves
@@ -2921,8 +2960,13 @@ def verify(
         if not isinstance(issuer_id, str):
             return _invalid("malformed payload: missing issuer.id")
 
-        manifest = trust_store.manifests.get(issuer_id)
-        if manifest is None:
+        # The SAME object the manifest gate authenticated above. Re-resolving
+        # would authenticate one read and verify against another. The
+        # isinstance also closes a crash: a trust store mapping an issuer to
+        # a non-dict used to raise AttributeError out of the library, while
+        # the TypeScript verifier failed closed on the same input.
+        manifest = issuer_manifest
+        if not isinstance(manifest, dict):
             return _invalid(f"no trusted manifest for issuer {issuer_id!r}")
 
         # G1's manifest-keys ceiling and G6's mixed-keyset detection are both
@@ -3025,8 +3069,13 @@ def verify(
         if not isinstance(issuer_id, str):
             return _invalid("malformed payload: missing issuer.id")
 
-        manifest = trust_store.manifests.get(issuer_id)
-        if manifest is None:
+        # The SAME object the manifest gate authenticated above. Re-resolving
+        # would authenticate one read and verify against another. The
+        # isinstance also closes a crash: a trust store mapping an issuer to
+        # a non-dict used to raise AttributeError out of the library, while
+        # the TypeScript verifier failed closed on the same input.
+        manifest = issuer_manifest
+        if not isinstance(manifest, dict):
             return _invalid(f"no trusted manifest for issuer {issuer_id!r}")
 
         # G1's manifest-keys ceiling is handled above, hoisted immediately

@@ -49,7 +49,7 @@ error. The closedness is in canonicalization and semantics, not in what
 fields a payload may carry: attest's signing step is not a choice among
 proof suites but one mandatory canonicalization profile, attest-JCS (v0.1
 §9), whose output is byte-exact across the Python and TypeScript reference
-implementations by construction of the 213-leaf conformance corpus — a
+implementations by construction of the 215-leaf conformance corpus — a
 verifier that does not reproduce attest-JCS exactly cannot verify an attest
 receipt at all. Choosing a purpose-built envelope over a Verifiable
 Credential is choosing that fixed-core, single-canonicalization,
@@ -160,7 +160,7 @@ is that trading that no-canonicalization simplicity for a strict, narrow,
 corpus-enforced canonicalizer is the safer engineering trade-off when the
 signed bytes must be recoverable from a parsed JSON object in any language,
 rather than preserved from whichever producer happened to serialize the
-wire form — and the 213-leaf conformance corpus, exercised byte-identically
+wire form — and the 215-leaf conformance corpus, exercised byte-identically
 by the Python and TypeScript reference verifiers, is what makes that bet
 checkable rather than merely asserted.
 
@@ -294,19 +294,24 @@ corroborative, never authoritative: v0.2 §10 states as Stage 2's central
 correctness property that log evidence never upgrades `trust` and can never
 make an unsigned or invalidly-signed receipt authentic — a receipt that
 fails signature verification stays failed regardless of what the log says
-about it (conformance vector 28i pins exactly this: a receipt rejected for a
-compromised signing key still honestly reports `transparency: "logged"` for
-its own genuinely-logged evidence). One shared property is genuine: RFC 9943
-§9.2 is explicit that registration proves only that an issuer produced a
+about it (conformance vector 28i pins one instance: a receipt whose
+signature is genuine but whose signing key is now marked compromised is
+rejected, and still reports `transparency: "logged"` for its own
+genuinely-logged evidence — the log records what was submitted and
+changes no verdict). One shared property is genuine: RFC 9943 §9.2 is
+explicit that registration proves only that an issuer produced a
 statement, never that its contents are accurate, and neither system lets
 transparency evidence turn an invalidly-signed statement into a valid one.
 But where signature verification sits is NOT shared. A SCITT transparency
 service MUST verify and authenticate a signed statement *before* it registers
 it (RFC 9943 §§5.1.1.1, 6.3); attest's log append validates only the closed
 log-entry shape (v0.2 §8), a receipt entry's `issuer` is an unauthenticated
-hint, and no receipt-signature check gates admission — which is precisely why
-conformance vector 28i can log an invalidly-signed receipt at all. On that
-axis attest's log is *more* purely corroborative than SCITT's, not less. The
+hint, and no receipt-signature check gates admission at all: what is
+admitted turns on the shape of the log entry, never on whether the
+receipt inside it verifies (v0.2 §8 alone — the corpus carries no leaf
+that logs a structurally invalid signature, and 28i exercises the
+compromised-key rejection, which is a different failure). On that axis
+attest's log is *more* purely corroborative than SCITT's, not less. The
 relying-party end differs too, though less starkly than a bare "requires"
 would suggest: SCITT's security guidance treats a discoverable receipt from a
 trusted transparency service as important to a statement's standing
@@ -359,3 +364,4 @@ read no remote-attestation semantics into any attest document.
 
 - **2026-07-23 (rev 1)**: initial annex — vectors: none
 - **2026-08-26 (rev 2)**: corrected a stale corpus size — the annex said 130 leaves in two places while the corpus has held 158 since rev 8 of v0.2; no claim of this document changes — vectors: none
+- **2026-09-01 (rev 3)**: corrected this document's description of its own evidence — §6 said conformance vector 28i "can log an invalidly-signed receipt", but 28i's `signatures[0].sig` is byte-identical to `13-compromised-key`, which v0.1 §15 describes as genuinely signed by a key now marked compromised; its `signature: "invalid"` is the encoding of the compromised-key rejection (v0.1 §7.3), not a malformed signature. The claim the sentence supported — that log admission turns on entry shape and never on whether the receipt verifies — is unchanged and rests on v0.2 §8; the corpus carries no leaf logging a structurally invalid signature, and the text now says so instead of citing 28i as proof of it — vectors: none

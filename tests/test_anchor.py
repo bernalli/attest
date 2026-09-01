@@ -803,9 +803,9 @@ def test_caps_admit_a_real_ots_bitcoin_attestation() -> None:
 
     `_MAX_TOTAL_OP_HEX_LEN` is not decoration: it is what keeps the raised
     per-op caps inside `verify`'s outer evidence ceiling, which is normative
-    (`canon.MAX_ADMISSION_BYTES`, v0.1 §11.3) and therefore cannot be raised to
+    (`canon.MAX_ADMISSION_BYTES`, v0.2 §6.3) and therefore cannot be raised to
     meet them. Without it, `_MAX_PROOFS_PER_EVIDENCE * _MAX_OPS_PER_PROOF *
-    _MAX_OP_HEX_LEN` admits ~268MB of operands against a 10MB ceiling.
+    _MAX_OP_HEX_LEN` admits 268,435,456 operand characters against a 10,000,000-character ceiling.
     """
     assert anchor._MAX_OPS_PER_PROOF == 256
     assert anchor._MAX_OP_HEX_LEN == 16384

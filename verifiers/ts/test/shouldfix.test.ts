@@ -50,7 +50,16 @@ it('verify downgrades trust when the chain tail is not the used manifest', () =>
   const sig = b64uEncode(ed25519.sign(canonicalBytes(parse(payload)), seedS))
   const envelope = { payload, signatures: [{ kid: kidS, alg: 'Ed25519', sig }] }
 
-  const used = parse({ issuer: ISSUER, manifest_version: 1, keys: [{ kid: kidS, pub: pubS, valid_from: '2026-01-01T00:00:00Z', valid_to: null, status: 'active' }] })
+  // `used` must authenticate itself: verify() now checks that before
+  // reading any key out of the trusted manifest, so it is self-signed with
+  // the same key it lists. `unrelated` never needs a real signature — the
+  // chain here has a single member, so `chainContinuous` is trivially true
+  // and only the tail-vs-used byte compare (which this test exercises) is
+  // reached, never `unrelated`'s own authenticity.
+  const used = parse(signManifest(
+    { issuer: ISSUER, manifest_version: 1, keys: [{ kid: kidS, pub: pubS, valid_from: '2026-01-01T00:00:00Z', valid_to: null, status: 'active' }] },
+    kidS, seedS,
+  ))
   const unrelated = parse({ issuer: ISSUER, manifest_version: 5, keys: [{ kid: kidS, pub: pubX, valid_from: '2026-01-01T00:00:00Z', valid_to: null, status: 'active' }] })
   const store = { manifests: { [ISSUER]: used }, provenance: { [ISSUER]: 'tls' }, chains: { [ISSUER]: [unrelated] } }
 

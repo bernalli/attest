@@ -264,7 +264,10 @@ def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]
         sig_block = record["signature"]
         if not isinstance(sig_block, dict):
             return False
-        entry = manifests.find_key(key_manifest, sig_block.get("kid", ""))
+        kid = dict.get(sig_block, "kid")
+        if not isinstance(kid, str):
+            return False
+        entry = manifests.find_key(key_manifest, kid)
         if entry is None or entry.get("status") != _ACTIVE:
             return False
         body = {key: value for key, value in record.items() if key != "signature"}

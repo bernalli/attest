@@ -1505,3 +1505,175 @@ def test_log_ots_convert_output_feeds_log_anchor_and_verify_end_to_end(
 
     assert rc == 0
     assert result["transparency"] == "anchored_before:2023-11-14T22:13:20Z"
+
+
+def test_anchored_before_composes_over_two_converted_bitcoin_paths(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """Prove end to end the claim that the conversion report makes in prose
+    and that `_walk_proofs` implements in code: losing one Bitcoin path can
+    cost the operator the OLDEST anchoring claim, because `anchored_before`
+    is the MINIMUM pinned header time over every proof that verified
+    (anchor.py, `AnchorVerdict`).
+
+    Each half already had coverage on its own -- the converter emitting one
+    proof file per convertible Bitcoin path backed by a matching header
+    (`test_log_ots_convert_keeps_same_height_paths_as_distinct_files`), and
+    `log anchor` appending a second v2 proof onto a v2 bundle
+    (`test_log_anchor_permits_appending_a_second_v2_proof_to_a_v2_bundle`)
+    -- but nothing joined them: no test converted a genuinely two-path
+    `.ots`, attached BOTH proofs through two `log anchor` calls, and
+    asserted which of the two times the verifier then reports. That join is
+    what the claim rests on, so it is what is asserted here.
+
+    The `.ots` forks into an older Bitcoin path (height 765432) and a newer
+    one (765500), whose pinned headers are 68 seconds apart. Four verdicts
+    come out of those same two converted proof files:
+
+    * each proof alone. The newer one alone reports the newer, WEAKER time
+      -- that is the cost of the lost path, stated as a verifier verdict
+      rather than as prose in a report.
+    * both proofs, attached older-then-newer AND newer-then-older. Both
+      orders must compose to the OLDER time. The pair of results distinguishes
+      all four candidate reductions: minimum yields older/older, maximum
+      newer/newer, first-wins older/newer, and last-wins newer/older. No
+      single-order assertion distinguishes all four.
+    """
+    from tests.test_cli import (
+        _issue,
+        _keygen,
+        _keygen_hybrid,
+        _log_append,
+        _log_init,
+        _log_keys_file,
+        _log_prove,
+        _log_sign_checkpoint,
+        _manifest_init,
+        _receipt_entry,
+        _trust_dir,
+        _write_payload,
+    )
+
+    log_dir = _log_init(tmp_path)
+    log_ed_seed, log_ed_pub, log_mldsa = _keygen_hybrid(tmp_path, "log-signer")
+    issuer_seed, _issuer_pub = _keygen(tmp_path, "issuer")
+    manifest_path = _manifest_init(tmp_path, issuer_seed)
+    payload_path = _write_payload(tmp_path)
+    envelope_path = _issue(tmp_path, issuer_seed, payload_path)
+    trust_dir = _trust_dir(tmp_path, manifest_path)
+
+    _log_append(tmp_path, log_dir, _receipt_entry(envelope_path))
+    _log_sign_checkpoint(log_dir, log_ed_seed, log_mldsa)
+    evidence_path = _log_prove(tmp_path, log_dir, 0)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    checkpoint = tlog.parse_checkpoint(evidence["checkpoint"])
+    signed_note_seed = hashlib.sha256(checkpoint.signed_note_bytes).digest()
+
+    # `_headers_for_parsed` pins each header's time at 1_700_000_000 +
+    # height, so the lower block height is also the older wall-clock time:
+    # 765432 -> 2023-11-23T18:50:32Z, 765500 -> 2023-11-23T18:51:40Z.
+    height_older = 765_432
+    height_newer = 765_500
+    older_time = "anchored_before:2023-11-23T18:50:32Z"
+    newer_time = "anchored_before:2023-11-23T18:51:40Z"
+
+    ots_path = tmp_path / "two-paths.ots"
+    ots_path.write_bytes(
+        _ots_with_tree(
+            TAG_FORK
+            + _branch_append(b"vh8-older-path", height_older)
+            + _branch_prepend(b"vh8-newer-path", height_newer),
+            digest=signed_note_seed,
+        )
+    )
+    parsed = ots.parse_ots(ots_path.read_bytes())
+    # Pins the walk order the proof filenames below are derived from.
+    assert [path.attestation.height for path in parsed.paths] == [height_older, height_newer]
+    headers_path = _write_json(
+        tmp_path / "headers.json",
+        [header.__dict__ for header in _headers_for_parsed(signed_note_seed, parsed)],
+    )
+    converted_dir = tmp_path / "converted"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "log",
+            "ots-convert",
+            "--ots",
+            str(ots_path),
+            "--evidence",
+            str(evidence_path),
+            "--block-headers",
+            str(headers_path),
+            "--out-dir",
+            str(converted_dir),
+        ]
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["proofs"] == 2
+
+    proof_older = converted_dir / f"proof-0-{height_older}.json"
+    proof_newer = converted_dir / f"proof-1-{height_newer}.json"
+    assert proof_older.exists()
+    assert proof_newer.exists()
+    pinned_headers_path = converted_dir / "pinned-headers.json"
+    log_keys_path = _log_keys_file(tmp_path, log_ed_pub, log_mldsa)
+
+    def _anchor(source: Path, proof: Path, out_name: str) -> Path:
+        """Attach one converted proof onto `source`, returning the result."""
+        out_path = tmp_path / out_name
+        capsys.readouterr()
+        rc = cli.main(
+            [
+                "log",
+                "anchor",
+                "--dir",
+                str(log_dir),
+                "--evidence",
+                str(source),
+                "--ots-proof",
+                str(proof),
+                "--out",
+                str(out_path),
+            ]
+        )
+        assert rc == 0
+        capsys.readouterr()
+        return out_path
+
+    def _transparency(anchored: Path) -> str:
+        capsys.readouterr()
+        rc = cli.main(
+            [
+                "verify",
+                str(envelope_path),
+                "--trust-dir",
+                str(trust_dir),
+                "--transparency",
+                str(anchored),
+                "--log-keys",
+                str(log_keys_path),
+                "--anchor-policy",
+                str(pinned_headers_path),
+            ]
+        )
+        result = json.loads(capsys.readouterr().out)
+        assert rc == 0
+        return str(result["transparency"])
+
+    # Each path alone. The newer path alone is the operator who recovered
+    # only one of the two: a real, verified anchor, and a weaker claim.
+    older_only = _anchor(evidence_path, proof_older, "anchored-older-only.json")
+    newer_only = _anchor(evidence_path, proof_newer, "anchored-newer-only.json")
+    assert _transparency(older_only) == older_time
+    assert _transparency(newer_only) == newer_time
+
+    # Both paths, attached in either order onto the single-proof bundles
+    # above. The composed evidence must report the older claim both times.
+    older_then_newer = _anchor(older_only, proof_newer, "anchored-older-then-newer.json")
+    newer_then_older = _anchor(newer_only, proof_older, "anchored-newer-then-older.json")
+    for composed in (older_then_newer, newer_then_older):
+        assert len(json.loads(composed.read_text(encoding="utf-8"))["anchors"]["proofs"]) == 2
+    assert _transparency(older_then_newer) == older_time
+    assert _transparency(newer_then_older) == older_time

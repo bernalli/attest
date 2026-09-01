@@ -56,13 +56,43 @@ export function duplicateKids(entries: unknown): string[] {
   return [...dups].sort()
 }
 
-// Returns the keys[] entry with the given `kid` — or null if absent OR
-// AMBIGUOUS (2+ entries share `kid`): with duplicates, element order would
-// decide which lifecycle status wins, so resolution fails closed instead of
-// picking by position (V-L.3, v0.1 §7.1 amendment 2026-08-26). This selects
-// the entry carrying the cryptographic material; a lifecycle STATUS is never
-// decided here — that reads every entry for the kid.
+/** The entry carrying `kid` — or null if absent, AMBIGUOUS, or `kid` is not
+ * a string.
+ *
+ * With duplicates, element order would decide which lifecycle status wins, so
+ * resolution fails closed instead of picking by position (V-L.3, v0.1 §7.1
+ * amendment 2026-08-26). This selects the entry carrying the cryptographic
+ * material; a lifecycle STATUS is never decided here — that reads every entry
+ * for the kid.
+ *
+ * The type guard is here, at the root, so every caller inherits it —
+ * present and future, instead of each one carrying its own copy of the
+ * check. A list of callers is only ever shown to be incomplete when somebody
+ * finds the missing one, which is how this very property slipped past the
+ * duplicate-kid guard: `duplicateKids` compares strings only, so an entry
+ * keyed by a non-string is invisible to it, and the kid inside a signature
+ * block carries no signature of its own because `signableManifestBytes`
+ * drops `manifest_signature`.
+ *
+ * Python parity: `manifests.find_key` holds the same guard at the same
+ * place, so the two cores refuse the same input for the same reason. That
+ * sentence was written twice — first claiming a parity that had not landed
+ * yet, then corrected to promise it, and now stating it — because a comment
+ * about parity goes stale from the OTHER side of the fence without anyone
+ * touching this file. If the reference ever moves this check, this line is
+ * wrong again and nothing here will fail.
+ *
+ * A warning for whoever tests this next, paid for once already. A test that
+ * passes the pre-parse JavaScript literal into a parsed manifest can miss
+ * for the wrong reason — integers become `bigint` at the admission boundary,
+ * and objects and arrays acquire a different identity — so three of five
+ * negative cases went green with no guard in place at all. Those are
+ * accidents of the TEST, not defences in this function: looked up by the
+ * value the parsed entry actually carries, every one of the five resolves
+ * unless the guard below refuses it.
+ */
 export function findKey(manifest: JsonObject, kid: string): JsonObject | null {
+  if (typeof kid !== 'string') return null
   const keys = manifest['keys']
   if (!Array.isArray(keys)) return null
   let found: JsonObject | null = null
@@ -143,6 +173,47 @@ export function verifyKeyManifest(manifest: JsonObject): boolean {
     if (!entry) return false
     return verifySignatureBlock(signableManifestBytes(manifest), sigBlock, entry)
     // NOTE: deliberately does NOT check entry.status — a retired/compromised signer still self-verifies.
+  } catch { return false }
+}
+
+/** Did the issuer actually sign THIS manifest, byte for byte?
+ *
+ * Narrower than `verifyKeyManifest` on purpose — the Python twin is
+ * `manifests.manifest_signature_is_authentic`, and the two must agree. That
+ * function answers "is this manifest conformant", which also fails a hybrid
+ * signer whose block carries only the Ed25519 leg. The carve-out here is
+ * exactly one case and no wider: a hybrid signer whose `manifest_signature`
+ * OMITS `sig_ml_dsa_65`, which `26-hybrid/h-manifest-downgraded-continuity`
+ * pins as `ok: true`.
+ *
+ * A PQ leg that is PRESENT is not that case. `manifest_signature` sits
+ * OUTSIDE the bytes `signableManifestBytes` covers, so none of its members
+ * carry a signature and anyone can graft one on with no key at all; §2.3 is
+ * fail-closed in both directions, a stray leg on an Ed25519-only signer
+ * included. Never throws.
+ */
+export function manifestSignatureIsAuthentic(manifest: JsonObject): boolean {
+  try {
+    const entriesForCeiling = manifest['keys']
+    if (Array.isArray(entriesForCeiling) && entriesForCeiling.length > MAX_MANIFEST_KEYS) return false
+    if (duplicateKids(entriesForCeiling).length > 0) return false
+    const sigBlock = asObject(manifest['manifest_signature'])
+    if (!sigBlock) return false
+    const kid = sigBlock['kid']
+    if (typeof kid !== 'string') return false
+    const entry = findKey(manifest, kid)
+    if (!entry) return false
+    const signable = signableManifestBytes(manifest)
+    const sig = sigBlock['sig'], pub = entry['pub']
+    if (typeof sig !== 'string' || typeof pub !== 'string') return false
+    if (!verifyStrict(signable, b64uDecode(sig), b64uDecode(pub))) return false
+    // Absent: the one downgrade the corpus pins. Present: signed material
+    // that must verify, or the manifest has been edited.
+    const mldsaSig = sigBlock['sig_ml_dsa_65']
+    if (mldsaSig === undefined) return true
+    const mldsaPub = entry['pub_ml_dsa_65']
+    if (typeof mldsaSig !== 'string' || typeof mldsaPub !== 'string') return false
+    return verifyMldsaStrict(signable, b64uDecode(mldsaSig), b64uDecode(mldsaPub))
   } catch { return false }
 }
 
