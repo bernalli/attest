@@ -15,7 +15,16 @@ export default defineConfig({
   forbidOnly: CI,
   reporter: 'list',
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        // DNS taken away beneath the page, so "no request left the file:// scheme" is
+        // not resting on the page's own good behaviour. Chromium only: the flag is
+        // Chromium's, and the collectors that DO run everywhere are the authority.
+        launchOptions: { args: ['--host-resolver-rules=MAP * ~NOTFOUND'] },
+      },
+    },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
     ...(CI ? [{ name: 'webkit', use: { ...devices['Desktop Safari'] } }] : []),
   ],
