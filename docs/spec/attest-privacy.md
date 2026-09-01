@@ -42,6 +42,7 @@ Actor names are the canonical ones fixed in `attest-threat-model.md` §2 and are
 | Date | Change |
 | --- | --- |
 | 2026-07-18 | Initial publication: §1 status and scope, §2 data inventory, §3 what each observer learns, §4 pseudonymity and unlinkability limits, §5 log privacy, §6 GDPR annex, §7 testable claims. |
+| 2026-09-01 (v0.2 rev 11) | Reviewed the newly normed, already-enforced serialized-evidence admission ceiling. It changes no field, artifact, observer, disclosure path, or data flow; all existing privacy classifications remain unchanged. |
 
 ## 2. Data inventory
 

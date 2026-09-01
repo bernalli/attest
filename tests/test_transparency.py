@@ -1331,9 +1331,10 @@ def test_verify_accepts_evaluator_max_scale_anchor_evidence() -> None:
     # Harmonization guard (review finding): the outer materialization cap
     # must COVER what the anchor evaluator's own inner caps accept. The
     # binding inner constraint is the per-chain operand TOTAL, not
-    # `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN` — that product is ~268M chars and
-    # would overshoot the outer ceiling by ~260MB, which is exactly why the
-    # total cap exists (see anchor._MAX_TOTAL_OP_HEX_LEN). 64 OTS proofs each
+    # `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN` — that product is 268,435,456
+    # operand characters and would overshoot the 10,000,000-character outer
+    # ceiling by ~258,000,000 characters, which is exactly why the total cap
+    # exists (see anchor._MAX_TOTAL_OP_HEX_LEN). 64 OTS proofs each
     # carrying operands summing to that total serialize past 4M chars and must
     # still verify end-to-end — never degrade to
     # transparency_claim_unresolvable as a false negative.

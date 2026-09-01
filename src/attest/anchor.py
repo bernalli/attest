@@ -93,12 +93,13 @@ _MAX_CHECKPOINT_TEXT_LEN = 500_000
 _MAX_OP_HEX_LEN = 16384  # hex chars (8192 bytes) per append/prepend operand
 # The per-chain operand TOTAL, and the reason the two caps above could be
 # raised at all. `verify`'s outer evidence ceiling is normative
-# (`canon.MAX_ADMISSION_BYTES`, v0.1 §11.3) and so cannot be raised to meet
+# (`canon.MAX_ADMISSION_BYTES`, v0.2 §6.3) and so cannot be raised to meet
 # them: without this cap, `_MAX_PROOFS_PER_EVIDENCE * _MAX_OPS_PER_PROOF *
-# _MAX_OP_HEX_LEN` would admit ~268MB of operands against a 10MB ceiling, and
-# evidence this module accepts would be refused before it ever arrived. With
-# it, the worst case is 64 * 65_536 = ~4.2MB of operands plus ~1.5MB of
-# checkpoint text — inside the ceiling with room to spare.
+# _MAX_OP_HEX_LEN` would admit 268,435,456 operand characters against a
+# 10,000,000-character ceiling, and evidence this module accepts would be
+# refused before it ever arrived. With it, the worst case is
+# 64 * 65_536 = 4,194,304 operand characters plus 1,500,000 characters of
+# checkpoint text — inside the 10,000,000-character ceiling with room to spare.
 #
 # It also tightens the aggregate rather than loosening it: the old regime
 # admitted `_MAX_OPS_PER_PROOF * _MAX_OP_HEX_LEN` = 131_072 hex chars of
