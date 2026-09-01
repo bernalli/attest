@@ -1,6 +1,8 @@
 import type { VerifyRun } from './run.js'
 import type { Component } from './explain.js'
 import { GROUPS, attributeWarning, explain, explainVerdict } from './explain.js'
+import { segmentDiagnostic } from './diagnostic.js'
+import { neutralized } from './untrusted-text.js'
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -13,12 +15,50 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node
 }
 
+// C-86: a diagnostic is library-COMPOSED text over attacker-influenced
+// operands — nothing signs a word of it, exactly as nothing signed a ZIP
+// member name (C-70). So the page renders it as DATA: wire tokens and framings
+// the page itself knows in the page's own voice, every operand inside a <q>
+// citation, neutralized. A <q> is a boundary no character of the operand can
+// close, unlike an in-band quote.
+//
+// On benign input the li's textContent stays byte-identical to the wire
+// string, so a reader can still search for the words the spec uses; the
+// verbatim string always survives in the Raw result JSON below, which is the
+// declared quarantine and does not clip.
+//
+// The cap is anti-flooding, not anti-persuasion: a short hostile sentence sits
+// entirely inside the citation, and it is the citation that disarms it.
+const MAX_DIAG_OPERAND_CHARS = 300
+
+function operandNode(text: string): HTMLQuoteElement {
+  return el('q', 'diag-operand', neutralized(text, MAX_DIAG_OPERAND_CHARS))
+}
+
+function diagnosticItem(diagnostic: string): HTMLLIElement {
+  const li = el('li', 'diagnostic')
+  const seg = segmentDiagnostic(diagnostic)
+  if (seg.kind === 'token') {
+    li.appendChild(el('code', 'diag-code', seg.code))
+  } else if (seg.kind === 'known-literal') {
+    li.textContent = seg.text
+  } else if (seg.kind === 'composed') {
+    for (const part of seg.parts) {
+      if (part.kind === 'literal') li.appendChild(document.createTextNode(part.text))
+      else li.appendChild(operandNode(part.text))
+    }
+  } else {
+    li.appendChild(operandNode(seg.operand))
+  }
+  return li
+}
+
 function list(title: string, className: string, items: string[]): HTMLElement | null {
   if (items.length === 0) return null
   const wrap = el('div', className)
   wrap.appendChild(el('h4', undefined, title))
   const ul = el('ul')
-  for (const item of items) ul.appendChild(el('li', undefined, item))
+  for (const item of items) ul.appendChild(diagnosticItem(item))
   wrap.appendChild(ul)
   return wrap
 }
@@ -55,12 +95,13 @@ function componentRow(component: Component, run: VerifyRun, warnings: string[]):
   row.appendChild(dt)
   row.appendChild(el('dd', undefined, e.text))
   if (warnings.length > 0) {
-    // The warning stays VERBATIM: these tokens are a cross-language wire
-    // surface a reader can search for, and paraphrasing one here would send
-    // them looking for words the spec does not use.
+    // Nothing here is paraphrased: these tokens are a cross-language wire
+    // surface a reader can search for, and rewording one would send them
+    // looking for words the spec does not use. But the string is not the
+    // page's prose either — see diagnosticItem above for the split.
     const dd = el('dd', 'component-warnings')
     const ul = el('ul')
-    for (const w of warnings) ul.appendChild(el('li', undefined, w))
+    for (const w of warnings) ul.appendChild(diagnosticItem(w))
     dd.appendChild(ul)
     row.appendChild(dd)
   }
