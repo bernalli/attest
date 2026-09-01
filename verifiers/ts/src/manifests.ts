@@ -74,18 +74,22 @@ export function duplicateKids(entries: unknown): string[] {
  * block carries no signature of its own because `signableManifestBytes`
  * drops `manifest_signature`.
  *
- * Python parity is the DESTINATION, not yet the state of `main`: the same
- * guard lands in `manifests.find_key` with the manifest-authentication work,
- * and until that merges the reference implementation still checks per caller
- * the way this file used to. Said plainly because a comment claiming a
- * parity that does not hold yet is how the next reader concludes the
- * property is covered on both sides and stops looking.
+ * Python parity: `manifests.find_key` holds the same guard at the same
+ * place, so the two cores refuse the same input for the same reason. That
+ * sentence was written twice — first claiming a parity that had not landed
+ * yet, then corrected to promise it, and now stating it — because a comment
+ * about parity goes stale from the OTHER side of the fence without anyone
+ * touching this file. If the reference ever moves this check, this line is
+ * wrong again and nothing here will fail.
  *
- * Note what this does NOT rely on: an integer kid also fails to match
- * because the admission boundary renders integers as `bigint`, and an object
- * or array fails to match by identity. Those are accidents of
- * representation, not defences — a change of dialect at the boundary would
- * take them away without a single test going red.
+ * A warning for whoever tests this next, paid for once already. A test that
+ * passes the pre-parse JavaScript literal into a parsed manifest can miss
+ * for the wrong reason — integers become `bigint` at the admission boundary,
+ * and objects and arrays acquire a different identity — so three of five
+ * negative cases went green with no guard in place at all. Those are
+ * accidents of the TEST, not defences in this function: looked up by the
+ * value the parsed entry actually carries, every one of the five resolves
+ * unless the guard below refuses it.
  */
 export function findKey(manifest: JsonObject, kid: string): JsonObject | null {
   if (typeof kid !== 'string') return null
