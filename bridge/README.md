@@ -41,10 +41,11 @@ window is the only way the same email goes out twice.
 - [`docs/setup-shopify.md`](docs/setup-shopify.md) — the same, for Shopify
   order webhooks (keypair, manifest and deploy are shared with the Stripe
   guide; this covers what differs).
-- [`docs/deploy.md`](docs/deploy.md) — the three deploy targets (Docker
-  Compose, Fly.io, Render), all built from
-  [`deploy/Dockerfile`](deploy/Dockerfile), plus why Cloud Run isn't a safe
-  fourth, and the TLS requirement common
-  to all of them.
+- [`docs/deploy.md`](docs/deploy.md) — the three deploy targets, all built
+  from [`deploy/Dockerfile`](deploy/Dockerfile). Fly.io is the shortest path
+  to a bridge answering a real webhook; Docker Compose is the sovereign one,
+  TLS included and written out in full; Render is the third. Also: why Cloud
+  Run isn't a safe fourth, why one `serve` process per Ledger is a
+  correctness requirement, and the TLS requirement common to all of them.
 - [`examples/bridge.toml`](examples/bridge.toml) — the annotated config
   template every setup guide above starts from.
