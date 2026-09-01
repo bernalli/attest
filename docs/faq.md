@@ -46,9 +46,6 @@ sealed into the receipt rather than written in the clear — though what that bi
 is worth takes a longer answer, and it is the next one. Same fact attested.
 Completely different lifespan.
 
-attest does not itself create or determine a seller's legal obligations. It
-supplies a machine-verifiable receipt format.
-
 ## If the receipt is just a file, what stops ten people from using the same one?
 
 Nothing stops ten people from holding the shareable file, and nothing is meant to.
@@ -134,8 +131,8 @@ warning attached. The receipt describes what you were sold. It does not change i
 
 ## Nobody forces a seller to adopt this. So what's the point?
 
-Nobody forces them, true. That's why there are two routes, and neither is a
-fantasy.
+Nobody forces them, true, and nothing here could. What the protocol offers is
+a single route, open only to sellers who already have a reason to take it.
 
 For a DRM-free seller, the cost is close to zero and the reason is
 commercial. attest-bridge runs as one small self-hosted service next to the
