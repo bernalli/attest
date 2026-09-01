@@ -1164,3 +1164,18 @@ def test_no_route_serves_salt_bytes_under_a_shareable_name(
 
     assert private_responses == 2
     assert shareable_responses == 4
+
+
+def test_download_landing_links_the_explainer(deps: BridgeDeps, issued: StoredReceipt) -> None:
+    """The zero-config download path must offer a way to understand the files.
+
+    With no SMTP configured this page IS the delivery: the email — which does
+    link the explainer — is never sent. Without the link, that buyer ends up
+    holding two files and having nowhere to learn what the private one is.
+    """
+    app = make_app(deps)
+
+    status, _, body = call_app(app, "GET", _token_url(issued))
+
+    assert status.startswith("200")
+    assert "what-is-this.html" in body.decode()
