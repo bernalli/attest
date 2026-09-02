@@ -6,6 +6,10 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Verify one right here in your browser.">
+  <meta property="og:title" content="attest — own what you buy: a receipt you hold, verified offline in your browser">
+  <meta property="og:description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Verify one right here in your browser.">
+  <meta property="og:url" content="https://attest-receipts.org/">
+  <meta property="og:type" content="website">
   <title>attest — own what you buy: a receipt you hold, verified offline in your browser</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
@@ -16,14 +20,16 @@
 <header class="hero">
   <h1>attest</h1>
   <p class="tagline">Own what you buy. The seller signs a receipt, you hold the file, anyone can verify it offline — even after the store is gone.</p>
-  <p>An open standard for seller-signed purchase receipts the buyer holds. The seller signs
-     once at checkout; the buyer keeps the file; a gate can verify it offline afterwards —
-     issuer, license grant, buyer binding — with no surviving service of any kind, and tell
-     a buyer apart from someone who merely holds a copy. Where the seller is still around,
-     or simply hands over a DRM-free installer, none of this is needed.</p>
+  <p>attest is the durable, portable, user-held layer of ownership for digital content. The
+     seller signs a receipt once at checkout; the buyer keeps the file; anyone can verify it
+     offline afterwards — issuer, license grant, buyer binding — with no surviving service of
+     any kind. It works today wherever files are sold DRM-free, and it is built so a regulator
+     can require it of closed platforms: the purchase confirmation the law already mandates,
+     in a form a machine can verify and you can carry away.</p>
   <nav>
+    <a href="start-here.html">Start here</a>
     <a href="https://github.com/bernalli/attest">GitHub</a>
-    <a href="https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.1.md">Spec v0.1</a>
+    <a href="https://github.com/bernalli/attest/tree/main/docs/spec">Specification</a>
     <a href="https://github.com/bernalli/attest/blob/main/docs/faq.md">FAQ</a>
   </nav>
 </header>
@@ -70,16 +76,21 @@
   </section>
 
   <section class="explainer">
-    <h2>The case</h2>
-    <p>An archive holds an offline copy of a digital good it is authorized to release, but
-       only to the people who bought it — a game, an album, a film, an ebook, a piece of
-       software. The store that sold it is gone, and its customer database went
-       with it. The archive still has to decide, with no human in the loop, which claimants
-       may download the file. That decision is what attest is for — and only that: while the
-       seller is still around, or hands the buyer a DRM-free installer, or where a judge is
-       the one reading the evidence, nothing here is needed. No archive runs such a gate
-       today; whether anyone ever will is the
-       <a href="https://github.com/bernalli/attest#readme">open question</a>.</p>
+    <h2>Who this is for</h2>
+    <p>A seller who ships DRM-free files can start signing this afternoon, without asking
+       anyone's permission: every buyer walks away with content plus proof, both in their
+       hands. That is the first track — the proof still verifies when the shop is gone — and
+       it needs nobody's approval to work.</p>
+    <p>The second track is the closed platforms, the ones that will never sign voluntarily.
+       In the EU they are already required to confirm every purchase on a durable medium —
+       Article 8(7) of the Consumer Rights Directive (2011/83/EU) — which is why confirmation
+       emails exist. attest is that same confirmation in a format a machine can verify and a
+       buyer can take away, so a regulator has a usable format to point at instead of a new
+       obligation to invent.</p>
+    <p>Being honest about where this stands: no store issues attest receipts yet, and no
+       regulator mandates them. The standard, two independent implementations and the
+       conformance suite are done and free to use. What is missing is the first seller who
+       signs.</p>
 
     <h2>How it works</h2>
     <ol>
@@ -105,6 +116,10 @@
       <li><strong>Not a resale market.</strong> v0.1 defines no transfer protocol at all;
           v0.2 §17 adds transfer only where the issuer mediates it, and never a general
           right to resell.</li>
+      <li><strong>Not a shield against a live seller.</strong> "Forever" holds against the
+          store disappearing, not against a live store declaring one of its own signing keys
+          compromised: that declaration still destroys the receipts signed with that key that
+          were never logged and anchored before it.</li>
     </ul>
     <p>Skeptical? Good — read the <a href="https://github.com/bernalli/attest/blob/main/docs/faq.md">FAQ</a>,
        it answers the questions a reasonable person asks.</p>
