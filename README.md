@@ -1,4 +1,4 @@
-<img src="logo/banner.png" alt="attest">
+<img src="https://raw.githubusercontent.com/bernalli/attest/main/logo/banner.png" alt="attest">
 
 **Own what you buy.** The seller signs a receipt, you hold the file, anyone can
 verify it offline — even after the store is gone.

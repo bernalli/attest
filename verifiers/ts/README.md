@@ -1,6 +1,6 @@
 # attest-verifier
 
-An independent TypeScript implementation of an attest verifier, covering both published profiles: [v0.1](../../docs/spec/attest-v0.1.md) (Ed25519) and [v0.2](../../docs/spec/attest-v0.2.md) (hybrid Ed25519 + ML-DSA-65, plus Stage 2 transparency and anchoring evidence, Stage 3's issuer-mediated transfer, Stage 4's preservation pledge, §19's time-boxed compromise rescue, and §20's publisher authority). It checks a signed attest receipt envelope and reports its signature, schema, trust, revocation, and buyer-binding status — it does not issue, sign, or mutate receipts, manifests, or revocation records. Issuance is the Python reference implementation's job (`attest` package, repo root); this package only ever reads.
+An independent TypeScript implementation of an attest verifier, covering both published profiles: [v0.1](https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.1.md) (Ed25519) and [v0.2](https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.2.md) (hybrid Ed25519 + ML-DSA-65, plus Stage 2 transparency and anchoring evidence, Stage 3's issuer-mediated transfer, Stage 4's preservation pledge, §19's time-boxed compromise rescue, and §20's publisher authority). It checks a signed attest receipt envelope and reports its signature, schema, trust, revocation, and buyer-binding status — it does not issue, sign, or mutate receipts, manifests, or revocation records. Issuance is the Python reference implementation's job (`attest` package, repo root); this package only ever reads.
 
 ## Independence claim
 
@@ -100,7 +100,7 @@ Nothing in `src/` touches `node:*` APIs — base64 uses `btoa`/`atob`, crypto is
 npm test -- conformance
 ```
 
-This runs `test/conformance.test.ts`, which discovers every leaf directory under [`docs/spec/vectors/`](../../docs/spec/vectors/) (any directory containing an `expected.json`, walked recursively so multi-part vectors like `07-unicode-canon/a-...` and `17-binding-proven/b-...` are included) and routes each leaf to the surface its files name. A leaf belongs to exactly one of four:
+This runs `test/conformance.test.ts`, which discovers every leaf directory under [`docs/spec/vectors/`](https://github.com/bernalli/attest/tree/main/docs/spec/vectors/) (any directory containing an `expected.json`, walked recursively so multi-part vectors like `07-unicode-canon/a-...` and `17-binding-proven/b-...` are included) and routes each leaf to the surface its files name. A leaf belongs to exactly one of four:
 
 - **`verify()`**, for every leaf naming none of the three files below: envelope bytes, trust store, revocation view, disclosure, and the evidence channels of Stage 2, Stage 3, Stage 4, §19 and §20. Four of those channels are files a leaf opts into — `transfer-view.json` (v0.2 §17), `grant-view.json` (v0.2 §18.4, the sunset-grant evidence object `{grant[, later_grants][, declarations][, anchor]}`), `compromise-view.json` (v0.2 §19, key-manifest compromise declarations), and `authority-view.json` (v0.2 §20, publisher authorization evidence). Supplying `grant-view.json` *is* Stage 4's capability gate: a leaf without it gets `grant`/`grant_trust` at `not_checked`, which is exactly what group 37's own v0.1 negative control pins.
 - **`auditChain`** (v0.2 §17.5), for a leaf carrying `chain.json`.
