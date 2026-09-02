@@ -400,10 +400,20 @@ def test_send_body_names_the_private_file_and_warns_not_to_forward() -> None:
     assert "never" in text.lower()
     # The body carries the shared warning verbatim rather than a reworded copy:
     # this surface is one of the three that drifted apart when each kept its own.
-    assert (
-        buyer_surface.private_file_warning_text(private_name.removesuffix(".private.attest"))
-        in text
-    )
+    warning = buyer_surface.private_file_warning_text(private_name.removesuffix(".private.attest"))
+    assert warning in text
+    # And the file it tells the buyer to send instead is the ATTACHED shareable
+    # half, by the attachment's own filename — not a name derived here from the
+    # same stem, which would agree with the warning even when the attachment
+    # did not.
+    answer = warning.splitlines()[-1]
+    named = [
+        token.lstrip("(").rstrip(".,:;)")
+        for token in answer.split()
+        if token.rstrip(".,:;)").endswith(".attest") and not token.startswith(".")
+    ]
+    assert named == [shareable_name]
+    assert shareable_name != private_name
     # The pre-existing pointers survive the rewrite.
     assert "https://receipts.example.com/r/tok_abc123" in text
     assert "https://merchant.example.com/attest/what-is-this" in text

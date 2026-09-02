@@ -6,6 +6,7 @@ anywhere on that path.
 
 from __future__ import annotations
 
+import html
 import io
 import json
 import logging
@@ -989,6 +990,34 @@ def test_the_two_bridge_csps_differ_only_on_form_action() -> None:
     assert landing == form
     assert "form-action 'none'" in http_mod._CSP_LANDING
     assert "form-action 'self'" in http_mod._CSP_CLAIM_FORM
+
+
+def test_download_landing_warning_names_the_file_the_download_actually_serves(
+    deps: BridgeDeps, issued: StoredReceipt
+) -> None:
+    """The landing page tells the buyer which file to send instead of the
+    private one, and that name has to be the name the download link hands
+    them — read from the `Content-Disposition` the route emits, not rebuilt
+    here from the same slug. If the served filename moves and the warning's
+    wording does not, the buyer is told to send a file they were never given.
+    """
+    app = make_app(deps)
+    _, _, page = call_app(app, "GET", _token_url(issued))
+    _, headers, _ = call_app(app, "GET", _token_url(issued), query="part=receipt")
+
+    served = re.fullmatch(r'attachment; filename="([^"]+)"', headers["Content-Disposition"])
+    assert served is not None
+    block = re.search(r'<div class="warning">(.*?)</div>', page.decode("utf-8"), re.S)
+    assert block is not None
+    answer = html.unescape(re.findall(r"<p>(.*?)</p>", block.group(1), re.S)[-1])
+    named = [
+        token.lstrip("(").rstrip(".,:;)")
+        for token in answer.split()
+        if token.rstrip(".,:;)").endswith(".attest") and not token.startswith(".")
+    ]
+
+    assert named == [served.group(1)]
+    assert not served.group(1).endswith(".private.attest")
 
 
 def test_download_part_receipt_is_a_salt_free_bundle(

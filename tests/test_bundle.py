@@ -10,8 +10,10 @@ single-receipt sharing unit for the email-attachment integration path.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
+import re
 import warnings as warnings_module
 import zipfile
 from pathlib import Path
@@ -259,6 +261,41 @@ def test_readme_present_and_warns_about_private_file(tmp_path: Path) -> None:
 
     assert "mylibrary.private.attest" in readme
     assert "never" in readme.lower()
+
+
+def test_readme_names_the_two_files_export_actually_wrote(tmp_path: Path) -> None:
+    """The warning tells a buyer which file never to send and which one to send
+    instead, by name — and both names must be the names of the files beside
+    the README, not names the renderer believes export uses.
+
+    Held to the paths `export` RETURNS rather than to a string built here: if
+    the file naming in `export` moves and the warning's wording does not, a
+    buyer is told to send a file that does not exist, and a test that checked
+    the sentence against itself would stay green.
+    """
+    envelope = _envelope(receipt_id="01J1V5B4M9Z8QWERTY12345689")
+
+    attest_path, private_path = bundle.export(
+        [envelope], [_key_manifest()], [], _legal_texts(), tmp_path, "mylibrary"
+    )
+    with zipfile.ZipFile(attest_path) as zf:
+        readme = zf.read("README.html").decode("utf-8")
+
+    block = re.search(r'<div class="warning">(.*?)</div>', readme, re.S)
+    assert block is not None
+    headline = re.search(r"<h2>(.*?)</h2>", block.group(1), re.S)
+    assert headline is not None
+    paragraphs = re.findall(r"<p>(.*?)</p>", block.group(1), re.S)
+
+    def files_named(text: str) -> list[str]:
+        tokens = (token.lstrip("(").rstrip(".,:;)") for token in html.unescape(text).split())
+        return [t for t in tokens if t.endswith(".attest") and not t.startswith(".")]
+
+    assert files_named(headline.group(1)) == [private_path.name]
+    assert files_named(paragraphs[-1]) == [attest_path.name]
+    # And the one it says to send is a file that exists, and is not the secret.
+    assert (tmp_path / files_named(paragraphs[-1])[0]).is_file()
+    assert files_named(paragraphs[-1]) != [private_path.name]
 
 
 def test_readme_states_proofs_are_corroboration_not_authenticity(tmp_path: Path) -> None:

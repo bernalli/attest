@@ -122,8 +122,13 @@ def render_page(
 
 # --- The canonical explanation ----------------------------------------------
 
-#: How to name the private file when the concrete name is not known (the
-#: explainer page is reached by people whose bundle this code never saw).
+#: How to name the private file when the concrete name is not known: the
+#: explainer page is reached by people whose bundle this code never saw, and
+#: the itch claim form by people who have no bundle yet. A pattern is tolerable
+#: here only because it matches nothing but private halves. There is
+#: deliberately no ``*.attest`` counterpart for the shareable one — that glob
+#: also matches ``*.private.attest``, the very file the warning says never to
+#: send, so a warning that named it would be pointing at both files at once.
 _GENERIC_PRIVATE_NAME: Final = "*.private.attest"
 
 
@@ -137,8 +142,16 @@ def _private_name(bundle_name: str | None) -> str:
     return _GENERIC_PRIVATE_NAME if bundle_name is None else f"{bundle_name}.private.attest"
 
 
-#: The command that shares one receipt instead of the whole private file.
-_DISCLOSE_COMMAND: Final = "attest disclose <receipt_id>"
+def _shareable_name(bundle_name: str) -> str:
+    """Return the shareable half's name for a bundle that exists, unescaped.
+
+    Same suffix rule as :func:`attest.bundle.export`, which is what makes the
+    name the warning gives a buyer the name of the file beside it. Same
+    escaping rule as :func:`_private_name`. There is no generic form on
+    purpose: see :data:`_GENERIC_PRIVATE_NAME`.
+    """
+    return f"{bundle_name}.attest"
+
 
 #: The warning, as claims rather than as prose — ONE source, two renderings.
 #:
@@ -153,6 +166,11 @@ _DISCLOSE_COMMAND: Final = "attest disclose <receipt_id>"
 #: Hence claims, not prose: both forms are generated from this tuple, so a
 #: sentence cannot exist on one surface and not the other. Anything a buyer
 #: must be told is added HERE, once.
+#:
+#: These are the claims about the RISK, and the risk does not depend on where
+#: the reader is standing, so they are identical on every surface. The one
+#: sentence that legitimately varies — the answer to "then what may I send?"
+#: — lives separately below, in :data:`_ANSWERS`.
 _WARNING_HEADLINE: Final = "Never send {name} to anyone."
 
 _WARNING_CLAIMS: Final = (
@@ -163,12 +181,70 @@ _WARNING_CLAIMS: Final = (
     "to show.",
     "A real store or support agent will never need it — they can already see your order.",
     "Keep it private, the way you would keep a paper receipt with your card number on it.",
-    "To prove a single purchase, use {command} instead: it shares that one "
-    "receipt and nothing else.",
 )
 
+#: The answer to the question the headline provokes. Told never to send one
+#: file, a buyer needs to know what they may send, and the honest answer has
+#: to fit what they actually hold when they read it.
+#:
+#: It used to be ``attest disclose <receipt_id>``, which is correct and
+#: useless: these words are read on a claim form linked from a game page, by
+#: someone who has never opened a terminal and never will. The alternative
+#: that is always true is the other half of the pair — same purchases, no
+#: proof of ownership (v0.1 §14.1). But WHICH half, and whether it exists yet,
+#: depends on where the reader stands, and that is the one thing this module
+#: lets a surface change:
+#:
+#: * a bundle README, a download page, a delivery email: the pair exists and
+#:   its name is known, so the answer is that file, by name;
+#: * the explainer page: the reader has a download, and this code never saw
+#:   it, so the answer describes the file by the rule its name follows;
+#: * the itch claim form: nothing has been sent yet, so the answer may not
+#:   pretend a file is on the reader's disk — it says what will arrive.
+#:
+#: The descriptive rule is spelled out in full rather than as ``*.attest``,
+#: because that glob also matches the private half. Per-receipt granularity is
+#: a real thing the CLI does and the spec documents (v0.1 §13); it is not what
+#: this sentence is for.
+_ANSWER_NAMED: Final = (
+    "If anyone needs to see what you bought, send them {shareable} instead: it "
+    "shows the same purchases and gives no one a way to claim them."
+)
+_ANSWER_UNNAMED: Final = (
+    "If anyone needs to see what you bought, send them the other file from your "
+    "download instead — the one whose name ends in .attest but not in "
+    ".private.attest. It shows the same purchases and gives no one a way to "
+    "claim them."
+)
+_ANSWER_UNDELIVERED: Final = (
+    "Your receipt will arrive as two files. If anyone needs to see what you "
+    "bought, send them the other one — the one whose name ends in .attest but "
+    "not in .private.attest. It shows the same purchases and gives no one a way "
+    "to claim them."
+)
+#: Every answer template, for tests that check what fields the templates use.
+_ANSWERS: Final = (_ANSWER_NAMED, _ANSWER_UNNAMED, _ANSWER_UNDELIVERED)
 
-def private_file_warning_html(bundle_name: str | None = None) -> str:
+
+def _claims(bundle_name: str | None, delivered: bool) -> tuple[str, ...]:
+    """The claim templates for this reader, in order: risk first, answer last.
+
+    Raises:
+        ValueError: if a bundle name is given for a pair that has not been
+            delivered. A name is the name of a file the renderer is vouching
+            for; a page that has one to show is a page whose reader can get
+            it, and a caller asking for both is confused about its surface.
+    """
+    if bundle_name is not None:
+        if not delivered:
+            raise ValueError("a named bundle is one the reader can get: it cannot be undelivered")
+        answer = _ANSWER_NAMED
+    else:
+        answer = _ANSWER_UNNAMED if delivered else _ANSWER_UNDELIVERED
+    return (*_WARNING_CLAIMS, answer)
+
+
+def private_file_warning_html(bundle_name: str | None = None, *, delivered: bool = True) -> str:
     """The warning about the private file, as a styled block.
 
     This is the single most consequential thing a buyer can get wrong, so it
@@ -181,27 +257,33 @@ def private_file_warning_html(bundle_name: str | None = None) -> str:
     and in nothing else.
 
     Args:
-        bundle_name: Bundle stem, e.g. ``"mylibrary"``. ``None`` renders the
-            generic form for contexts with no specific file in hand.
+        bundle_name: Bundle stem, e.g. ``"mylibrary"``, for a surface that
+            has the pair in hand. ``None`` renders the generic form for a
+            reader whose file this code never saw.
+        delivered: Whether the reader already has (or is one click from) the
+            pair. ``False`` is for a surface met BEFORE anything is sent, such
+            as the itch claim form: the answer then describes what will
+            arrive instead of naming a file that does not exist yet. Only
+            meaningful with ``bundle_name=None``.
 
     Returns:
         A ``<div class="warning">`` block.
     """
-    name = html.escape(_private_name(bundle_name))
-    command = f"<code>{html.escape(_DISCLOSE_COMMAND)}</code>"
+    fields = {"name": html.escape(_private_name(bundle_name))}
+    if bundle_name is not None:
+        fields["shareable"] = html.escape(_shareable_name(bundle_name))
     paragraphs = "\n".join(
-        f"<p>{html.escape(claim).format(name=name, command=command)}</p>"
-        for claim in _WARNING_CLAIMS
+        f"<p>{html.escape(claim).format(**fields)}</p>" for claim in _claims(bundle_name, delivered)
     )
     return (
         '<div class="warning">\n'
-        f"<h2>{html.escape(_WARNING_HEADLINE).format(name=name)}</h2>\n"
+        f"<h2>{html.escape(_WARNING_HEADLINE).format(name=fields['name'])}</h2>\n"
         f"{paragraphs}\n"
         "</div>"
     )
 
 
-def private_file_warning_text(bundle_name: str | None = None) -> str:
+def private_file_warning_text(bundle_name: str | None = None, *, delivered: bool = True) -> str:
     """The same warning as plain text, for surfaces rendered by someone else.
 
     An email body is displayed by a client this project does not control and
@@ -212,13 +294,16 @@ def private_file_warning_text(bundle_name: str | None = None) -> str:
 
     Args:
         bundle_name: Bundle stem. ``None`` renders the generic form.
+        delivered: As for :func:`private_file_warning_html`.
 
     Returns:
         Plain text, no markup, one claim per line, no trailing newline.
     """
-    name = _private_name(bundle_name)
-    sentences = [_WARNING_HEADLINE.format(name=name)]
-    sentences += [claim.format(name=name, command=_DISCLOSE_COMMAND) for claim in _WARNING_CLAIMS]
+    fields = {"name": _private_name(bundle_name)}
+    if bundle_name is not None:
+        fields["shareable"] = _shareable_name(bundle_name)
+    sentences = [_WARNING_HEADLINE.format(name=fields["name"])]
+    sentences += [claim.format(**fields) for claim in _claims(bundle_name, delivered)]
     # One claim per line. The email body around this breaks its own lines on
     # purpose, and the sentence that has to survive a phishing attempt is the
     # third of six: buried mid-paragraph in a single long run, it is present

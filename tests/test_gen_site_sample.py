@@ -10,8 +10,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import zipfile
 from pathlib import Path
 from types import ModuleType
+
+import pytest
+
+from attest import bundle
 
 
 def _load_generator() -> ModuleType:
@@ -43,3 +48,44 @@ def test_generator_produces_verifiable_sample(tmp_path: Path) -> None:
 
     # The secrets file must never land in the published output directory.
     assert not list(tmp_path.glob("*.private.attest"))
+
+
+def test_refresh_readme_rewrites_only_that_member(tmp_path: Path) -> None:
+    """`--refresh-readme` exists so the committed sample can follow a wording
+    change without minting a key or growing the public log. That is only safe
+    if it touches nothing else: every other member — the signed receipt, the
+    manifest, the legal text, any proof — must come out byte-identical, and
+    the README must be exactly what a fresh export of the same name renders.
+    """
+    gen = _load_generator()
+    attest_path = Path(gen.main(tmp_path)["attest"])
+
+    # Age the committed README by hand, the way a rewording ages it.
+    with zipfile.ZipFile(attest_path) as zf:
+        before = {info.filename: zf.read(info) for info in zf.infolist()}
+    stale = dict(before)
+    stale["README.html"] = b"<!doctype html><p>an older README</p>"
+    with zipfile.ZipFile(attest_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for member, data in stale.items():
+            zf.writestr(member, data)
+
+    assert gen.refresh_readme(attest_path) is True
+
+    with zipfile.ZipFile(attest_path) as zf:
+        after = {info.filename: zf.read(info) for info in zf.infolist()}
+    assert list(after) == list(before)
+    assert after["README.html"].decode("utf-8") == bundle._render_readme("demo")
+    for member in before:
+        if member != "README.html":
+            assert after[member] == before[member], member
+    # Already current: a second run is a no-op, and says so.
+    assert gen.refresh_readme(attest_path) is False
+
+
+def test_refresh_readme_refuses_anything_but_a_shareable_bundle(tmp_path: Path) -> None:
+    gen = _load_generator()
+    for name in ("demo.private.attest", "demo.zip", "demo"):
+        path = tmp_path / name
+        path.write_bytes(b"")
+        with pytest.raises(RuntimeError):
+            gen.refresh_readme(path)

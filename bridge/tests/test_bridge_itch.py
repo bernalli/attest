@@ -1340,3 +1340,13 @@ def test_claim_form_carries_the_private_file_warning(itch_deps: BridgeDeps) -> N
     page = body.decode()
     assert "private.attest" in page
     assert "A real store or support agent will never need it" in page
+
+    # And what it offers instead has to be something this reader can act on.
+    # A buyer who arrived here from a game page has a browser, not a shell,
+    # and — this being the form that REQUESTS the email — no file yet. So the
+    # page carries the pre-delivery form of the warning: it says what will
+    # arrive, names no command, and points at no file as if it were already
+    # on the reader's disk, nor at a pattern that would match both halves.
+    assert buyer_surface.private_file_warning_html(delivered=False) in page
+    assert "attest disclose" not in page
+    assert "*.attest" not in page
