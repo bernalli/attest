@@ -19,7 +19,7 @@ jobs:
           NPM="$(grep -m1 '"version"' verifiers/ts/package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')"
           echo "tag=$TAG py=$PY npm=$NPM"
           test "$TAG" = "$PY" && test "$TAG" = "$NPM"
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.21"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
