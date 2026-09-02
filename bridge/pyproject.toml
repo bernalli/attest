@@ -10,6 +10,11 @@ requires-python = ">=3.12"
 dependencies = ["attest-receipts>=0.4.0"]
 classifiers = ["Private :: Do Not Upload"]
 
+[project.urls]
+Repository = "https://github.com/bernalli/attest"
+Issues = "https://github.com/bernalli/attest/issues"
+Funding = "https://github.com/sponsors/bernalli"
+
 [project.scripts]
 attest-bridge = "attest_bridge.cli:main"
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sqlite3
 import stat
 import threading
 import zipfile
@@ -1001,7 +1002,12 @@ def test_itch_dry_run_rejects_out_equal_to_or_symlinked_to_production_ledger(
 
     assert cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(ledger_path)]) == 2
 
-    Ledger(ledger_path)
+    # Closed before the snapshot on purpose. In WAL, sqlite checkpoints into
+    # the main database when the last connection closes, so a Ledger left open
+    # here would rewrite these bytes at an unpredictable moment — and the
+    # comparison below would be measuring sqlite's housekeeping instead of
+    # what the dry run did.
+    Ledger(ledger_path)._conn.close()
     before = ledger_path.read_bytes()
     link_path = tmp_path / "ledger-link.attest"
     link_path.symlink_to(ledger_path)
@@ -1684,3 +1690,80 @@ def test_serve_shuts_down_on_sigterm_instead_of_being_killed(
     # A handler that only sets a flag would leave serve_forever blocked: the
     # shutdown has to actually be requested of the server.
     assert shutdown_calls == ["shutdown"]
+
+
+def test_serve_reports_a_ledger_that_cannot_use_wal_as_a_config_error(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The other way a Ledger refuses to open, and it is not an OSError.
+
+    A filesystem that cannot do WAL — a network share without working locks —
+    makes `Ledger.__init__` raise `sqlite3.OperationalError`, which the
+    fail-fast promise of `_build_deps` has to translate exactly as it
+    translates a missing directory. Untranslated, the merchant gets a
+    traceback naming a sqlite pragma instead of the sentence that tells them
+    where to put the file.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    config_path = _write_config(
+        tmp_path, hybrid_keys, key_manifest, products_toml=_PRICE_TEST_PRODUCT
+    )
+    refusal = "could not be put in WAL journal mode (sqlite reports 'delete')"
+
+    def _refuse(_path: Path) -> None:
+        raise sqlite3.OperationalError(refusal)
+
+    monkeypatch.setattr(cli, "Ledger", _refuse)
+
+    rc = cli.main(["serve", "--config", str(config_path)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("config error:")
+    assert refusal in err
+
+
+def test_itch_dry_run_refuses_to_write_over_the_ledgers_wal_sidecars(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In WAL the Ledger is three files, and two of them can hold live rows.
+
+    `-wal` carries rows sqlite has committed but not yet checkpointed into
+    the main database — receipts a buyer has already been promised. Guarding
+    only `ledger_path` would leave a command whose entire premise is that it
+    cannot touch production with a writable path straight into it.
+    """
+    config_path = _write_itch_dry_run_config(tmp_path, hybrid_keys, key_manifest, monkeypatch)
+    ledger_path = _ledger_path_of(config_path)
+    live = Ledger(ledger_path)  # held open: the sidecars exist only alongside a connection
+    # A committed row living in the -wal, so the check below is about the
+    # Ledger's contents and not merely about a filename still being there.
+    live.record_receipt(
+        "stripe",
+        "committed",
+        "receipt-1",
+        {"payload": {"work": {"title": "kept"}}},
+        "buyer@example.com",
+        "handle-kept",
+        "2026-09-01T00:00:00Z",
+    )
+
+    try:
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(str(ledger_path) + suffix)
+            assert sidecar.exists(), f"expected {suffix} beside an open WAL Ledger"
+
+            rc = cli.main(["itch-dry-run", "--config", str(config_path), "--out", str(sidecar)])
+
+            assert rc == 2, f"--out pointed at {suffix} was accepted"
+            assert sidecar.exists()
+            assert live.get_receipt("stripe", "committed") is not None
+    finally:
+        live._conn.close()

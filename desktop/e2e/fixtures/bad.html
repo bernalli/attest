@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'sha256-BVWbaYBa0Q61Ivgp8sgSsgG1SxvU+3dhcqfWiqYoumE='; style-src 'sha256-Ud/GjEIywzlwvO/Ve2+9j0iaexrYLJCe9yltG8LK0Fc='; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>probe: wrong hash</title>
+<style>body{font-family:system-ui,sans-serif;margin:2rem}#marker{font-weight:700}</style>
+</head>
+<body>
+<p>CSP probe: <span id="marker">NOT-RUN</span></p>
+<script type="module">
+document.getElementById('marker').textContent = 'RAN'
+</script>
+</body>
+</html>

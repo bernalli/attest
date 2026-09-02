@@ -40,13 +40,16 @@ submitted message can leak into the caller or the Ledger's
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import smtplib
 import ssl
-import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 
 from attest import bundle, buyer_surface
@@ -58,9 +61,64 @@ _SMTP_SSL_PORT = 465
 SMTP_TIMEOUT_SECONDS = 15
 MAX_DELIVERY_ATTEMPTS = 10
 DELIVERY_SWEEP_SECONDS = 300
-_SWEEP_LOCK = threading.Lock()
+
+# Keep the side lock for compatibility with an older process during a rolling
+# restart, but key the primary lock on the database inode. Path-derived locks
+# cannot unify hard links or file bind mounts and can be bypassed by unlinking
+# and recreating the lock file.
+SWEEP_LOCK_SUFFIX = ".sweep.lock"
 
 SMTPFactory = Callable[[str, int, float], smtplib.SMTP]
+
+
+@contextmanager
+def _sweep_lock(ledger: Ledger) -> Iterator[None]:
+    """Serialize delivery sweeps across every process sharing one Ledger.
+
+    `retry-failed` and `itch-import` are second processes on the same file
+    while `serve` runs — the workflow the merchant guides describe — so an
+    in-process lock left them free to send the same receipt at the same time.
+    A `flock` on the Ledger's own inode — plus the compatibility lock beside
+    it, for a process still running the older build — covers all of them.
+
+    Blocking and untimed, which is the honest shape of what it replaces: the
+    second sweep WAITS, then re-reads each row and skips what the first one
+    delivered. The wait is bounded by the sweep itself (one pass over the
+    backlog, each send bounded by `SMTP_TIMEOUT_SECONDS`), so `retry-failed`
+    can pause behind a running sweeper and will not pause indefinitely.
+
+    A fresh descriptor per acquisition is load-bearing: `flock` is held per
+    open file description, so a descriptor cached at module level would be
+    re-entrant between threads of one process and would quietly give back the
+    in-process serialization this replaces.
+
+    An `OSError` from `flock` — a filesystem without locking — propagates.
+    Sweeping unlocked as a fallback would be the worst branch available: the
+    deployments that cannot lock are the ones most likely to have two writers.
+
+    The lock file is never unlinked. Removing one that another process still
+    holds open lets two holders coexist on the recreated file, which is the
+    failure this exists to prevent.
+    """
+    # Resolved, so two processes that spell the same Ledger differently — a
+    # symlinked directory, a relative path — still meet on one lock file
+    # rather than each taking its own and sending the same email.
+    lock_path = Path(f"{ledger.db_path.expanduser().resolve(strict=False)}{SWEEP_LOCK_SUFFIX}")
+    db_path = ledger.db_path.expanduser().resolve(strict=True)
+    db_fd = os.open(db_path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        # Inode-keyed: symlink, relative path, hardlink, case aliases and
+        # file bind mounts all converge here. It also survives deletion of the
+        # compatibility lockfile while a sweep is in progress.
+        fcntl.flock(db_fd, fcntl.LOCK_EX)
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(lock_fd)
+    finally:
+        os.close(db_fd)  # closing the descriptor releases the lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,17 +337,22 @@ def sweep_undelivered(
 ) -> tuple[int, int]:
     """Retry undelivered receipts without letting one row abort the sweep.
 
-    Delivery is at-least-once: a crash after SMTP accepts a message but before
-    `mark_delivered` can resend the same stored envelope. It is never
-    re-issued, and rows at the attempt cap remain operator-visible. Sweeps are
-    serialized only within this process; across processes delivery can overlap
-    and the attempt cap is therefore a per-process bound, not a global one.
+    Sweeps are serialized across every process sharing this Ledger, by a file
+    lock beside it (`_sweep_lock`), so the attempt cap is a real bound per row
+    and two sweepers cannot send the same receipt at once.
+
+    Delivery remains at-least-once, for the one case a lock cannot cover: a
+    crash after SMTP accepts a message but before `mark_delivered` commits
+    resends that same stored envelope. It is never re-issued, and rows at the
+    attempt cap remain operator-visible.
     """
     delivered = 0
     failed_or_skipped = 0
+    # Before the lock, deliberately: a bridge with no SMTP configured has
+    # nothing to serialize and should not create a lock file to say so.
     if isinstance(delivery, Delivery) and not delivery.configured:
         return delivered, failed_or_skipped
-    with _SWEEP_LOCK:
+    with _sweep_lock(ledger):
         for candidate in ledger.undelivered():
             # The snapshot selects candidates only. State deciding whether to
             # send must be current so overlapping in-process callers cannot

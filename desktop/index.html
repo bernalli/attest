@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>attest — check a receipt</title>
+</head>
+<body>
+
+<!--
+  This markup is STATIC on purpose, and that is the whole point of it.
+
+  The page ships in its failed state: the banner below visible, the dropzone disabled.
+  The script clears both as its last action, once its wiring cannot fail. So a script
+  that never runs — a CSP hash that no longer matches the bytes, an engine that will not
+  execute an inline module, a file truncated in transit — leaves a page that SAYS it did
+  not start, instead of a page that looks ready, accepts a dropped receipt and answers
+  nothing. That silent version is the failure this packaging was chosen to avoid.
+
+  An earlier version built this markup from a JavaScript string, which could not work:
+  the banner would not exist until the script had run, so the one case it exists for
+  produced an empty page. Insurance against JavaScript, written in JavaScript.
+
+  It follows that the banner must live HERE and nowhere else. Two copies would be the
+  opposite failure — the script removes one, and a working app would show the other for
+  ever.
+-->
+<p id="boot-failsafe" class="boot-failsafe" role="alert">
+  This verifier did not start — do not trust anything on this page.
+  Re-download it and check its SHA-256.
+</p>
+
+<header>
+  <h1>attest</h1>
+  <p>Check a receipt. Everything happens on this page: it cannot reach the network, and
+     it does not need to.</p>
+</header>
+
+<main>
+<section class="verifier">
+  <div id="dropzone" role="button" tabindex="0" aria-disabled="true">
+    <strong>Drop a receipt here</strong>
+    <span>or click to choose a file</span>
+  </div>
+  <input id="file-input" type="file" hidden>
+
+  <div id="manifest-zone" hidden>
+    <p>This receipt does not carry the seller’s key list. Drop that file here.</p>
+    <input id="manifest-input" type="file" hidden>
+    <button id="manifest-pick" type="button">Choose the key list</button>
+  </div>
+
+  <details class="binding">
+    <summary>Prove this receipt is yours</summary>
+    <label for="binding-identifier">The email address or account id it was issued to</label>
+    <input id="binding-identifier" type="text">
+    <label for="binding-type">Which of the two that is</label>
+    <select id="binding-type">
+      <option value="email">email</option>
+      <option value="account">account</option>
+    </select>
+    <label for="binding-salt">The salt from your .private.attest file</label>
+    <input id="binding-salt" type="text">
+    <button id="binding-apply" type="button">Check</button>
+  </details>
+
+  <div id="results"></div>
+</section>
+</main>
+
+<!--
+  The footer is the artifact's provenance line, and it exists because of what this file
+  IS: a document anyone can copy and edit. Nothing stops someone publishing a page that
+  looks like this one and always answers "verifies", and a document carries no code
+  signature to tell them apart. The checksum, checked against the project's own site, is
+  the only defence available to it — so the file states where it came from and how to
+  check it, in itself, where a reader who never visits the site can still find it.
+
+  The two version numbers are substituted at build time. No timestamp: the build has to
+  be byte-reproducible, and a clock is the classic way to lose that.
+-->
+<footer>
+  <p>
+    attest desktop verifier <strong>__DESKTOP_VERSION__</strong> ·
+    verification engine attest-verifier <strong>__ATTEST_VERIFIER_VERSION__</strong>
+  </p>
+  <p>
+    This file never updates itself — a verifier that phones home is not a local one. The
+    log keys it trusts are compiled in and age with it, so before you believe a
+    <em>does NOT verify</em> answer from a copy you have had for a while, fetch a current
+    one from <a href="https://attest-receipts.org/">attest-receipts.org</a>.
+  </p>
+  <p>
+    Anyone can write a page that always says “verifies”. Check that this file is the one
+    the project published: its SHA-256 is listed beside the download, and you can compute
+    it yourself with <code>sha256sum</code> on Linux, <code>shasum -a 256</code> on macOS,
+    or <code>certutil -hashfile</code> on Windows.
+  </p>
+</footer>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

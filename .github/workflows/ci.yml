@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.21"
       # `dev` is a PEP 621 optional-dependency extra, not a PEP 735 group:
@@ -44,18 +44,18 @@ jobs:
       # inline <reference> element, never an xi:include from bib.ietf.org.
       - name: Build Internet-Draft (pinned toolchain)
         run: |
-          cp ietf/draft-bernalli-open-purchase-receipts.xml \
-            "$RUNNER_TEMP/draft-bernalli-open-purchase-receipts-00.xml"
+          cp ietf/draft-martinalli-open-purchase-receipts.xml \
+            "$RUNNER_TEMP/draft-martinalli-open-purchase-receipts-00.xml"
           uvx --from xml2rfc==3.34.0 xml2rfc \
-            "$RUNNER_TEMP/draft-bernalli-open-purchase-receipts-00.xml" \
+            "$RUNNER_TEMP/draft-martinalli-open-purchase-receipts-00.xml" \
             --text --path "$RUNNER_TEMP" --no-network
-          test -s "$RUNNER_TEMP/draft-bernalli-open-purchase-receipts-00.txt"
+          test -s "$RUNNER_TEMP/draft-martinalli-open-purchase-receipts-00.txt"
 
   supply-chain:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.21"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

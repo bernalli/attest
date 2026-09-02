@@ -1,5 +1,6 @@
 import { unzipSync } from 'fflate'
 import { loadsStrict } from 'attest-verifier'
+import { neutralized } from './untrusted-text.js'
 import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
 
 export class BundleError extends Error {}
@@ -62,15 +63,10 @@ const asObject = (v: unknown): JsonObject | null =>
  * visibly not the name on disk.
  */
 const MAX_QUOTED_MEMBER_CHARS = 60
-// The quote itself, C0/C1 controls, and every Unicode format character (Cf):
-// bidi overrides and isolates, the zero-width family, and the BOM.
-const OUT_OF_QUOTES = /["\u0000-\u001f\u007f-\u009f\p{Cf}]/gu
-const quoted = (name: string): string => {
-  const flat = name.replace(/\s+/g, ' ').replace(OUT_OF_QUOTES, '\uFFFD')
-  const clipped =
-    flat.length > MAX_QUOTED_MEMBER_CHARS ? `${flat.slice(0, MAX_QUOTED_MEMBER_CHARS)}…` : flat
-  return `"${clipped}"`
-}
+// The character policy lives in `untrusted-text.ts` and is shared with the
+// diagnostic renderer: one rule, so the two cannot drift apart at the first
+// correction. This caller's only job is the in-band quoting and the cap.
+const quoted = (name: string): string => `"${neutralized(name, MAX_QUOTED_MEMBER_CHARS)}"`
 
 // The receipt schema's own ULID grammar (Crockford base32, 26 chars, leading
 // character 0-7). Mirrors the reference importer's `_RECEIPT_ID_RE`.

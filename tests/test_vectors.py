@@ -511,7 +511,7 @@ def test_redemption_vectors(vector_dir: Path) -> None:
 def test_vectors_directory_is_nonempty() -> None:
     """Guard against a silently-empty parametrize list (e.g. a wrong
     `VECTORS_DIR` path) making the whole suite above vacuously pass."""
-    # Discovered, never enumerated: as of 2026-09-01 the corpus holds 217
+    # Discovered, never enumerated: as of 2026-09-01 the corpus holds 218
     # leaves across 47 groups — figures tools/check_spec_docs.py checks
     # against the tree on disk, so a stale count here fails CI instead of
     # surviving by inertia (the hand-summed breakdown this comment used to

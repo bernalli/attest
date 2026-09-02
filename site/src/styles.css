@@ -59,13 +59,35 @@ h2 { margin-top: 2.2rem; }
 .component { border-left: 4px solid var(--tone, var(--neutral)); padding: 0.15rem 0 0.15rem 0.8rem; margin: 0.7rem 0; }
 .component dt { display: flex; gap: 0.6rem; align-items: baseline; }
 .component-name { font-weight: 600; }
-.component-value { color: var(--tone, var(--neutral)); }
+/* Untrusted text, like an operand: neutralized and clipped in render.ts, and
+   isolated here for the half CSS alone can hold — RTL letters are not format
+   characters, so nothing in the text pass touches them (C-91). */
+.component-value { color: var(--tone, var(--neutral)); unicode-bidi: isolate; overflow-wrap: anywhere; }
+/* A wire token is [a-z0-9_] and bounded, so it needs no isolation; it is still
+   the one string rendered uncited, and it must not push the page sideways. */
+.diag-code { overflow-wrap: anywhere; }
 .component dd { margin: 0.15rem 0 0; color: var(--muted); }
 /* A warning shown against the row it qualifies. It borrows the row's tone
    rather than shouting in red: it explains a value, it is not a second
    verdict on top of it. */
 .component-warnings ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
 .component-warnings li { color: var(--tone, var(--neutral)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+/* C-86: a diagnostic operand is untrusted input shown as a citation — never
+   the page's own voice. <q> gives it a boundary no operand character can
+   close; the tint and monospace mark it as data; unicode-bidi keeps RTL
+   letters from reordering the verifier's words around it (they are not format
+   characters, so nothing in the text pass touches them — this rule is the only
+   thing holding that line, C-91); overflow-wrap keeps a long unbroken operand
+   from forcing horizontal scroll. */
+.diag-operand {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-style: normal;
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+  background: color-mix(in srgb, var(--fg) 8%, var(--bg));
+  border-radius: 4px;
+  padding: 0 0.2em;
+}
 .warnings h4, .errors h4 { margin: 0.8rem 0 0.2rem; }
 .errors { color: var(--bad); }
 .raw { overflow-x: auto; background: color-mix(in srgb, var(--fg) 5%, var(--bg)); padding: 0.75rem; border-radius: 8px; }

@@ -39,7 +39,9 @@ attest is the counterattack. It can't win back the libraries already lost;
 nothing can. But it's built so the next purchase doesn't end the same way: every
 future purchase gets the one thing every physical purchase always had, a piece
 that's yours — on your own disk, cryptographically provable, out of reach of
-anyone's click. Here's how:
+anyone's click. "Forever" holds against the store disappearing, not against a
+live store declaring its own signing key compromised: that declaration still
+destroys receipts that were never logged and anchored before it. Here's how:
 
 ## What attest is
 
@@ -91,8 +93,8 @@ it names the three things it does not do in [`demo/README.md`](demo/README.md).
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations. Their published
 self-certification claims are recorded in [`docs/conformance.md`](docs/conformance.md);
-the corpus now contains 217 leaves, and a release may claim the §20-expanded corpus
-only once both implementations reproduce all 217. **Try it in your browser:**
+the corpus now contains 218 leaves, and a release may claim the §20-expanded corpus
+only once both implementations reproduce all 218. **Try it in your browser:**
 <https://attest-receipts.org/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Be clear about the status: no
 store issues attest receipts in production yet, and there are no external reviews.
@@ -172,7 +174,7 @@ amount of protocol fixes that.
 
 Spec v0.1 is complete and v0.2 is specified, with two independent
 implementations — a Python reference implementation and a TypeScript verifier —
-measured by the shared conformance corpus, now 217 leaves across 47 groups: 63
+measured by the shared conformance corpus, now 218 leaves across 47 groups: 63
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
@@ -220,7 +222,7 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   not the draft, remains normative, and the published snapshot is several
   amendments behind it. On the Datatracker that first submission is filed as
   `draft-martinalli-open-purchase-receipts-00`. The
-  [XML source](ietf/draft-bernalli-open-purchase-receipts.xml) lives here under
+  [XML source](ietf/draft-martinalli-open-purchase-receipts.xml) lives here under
   the maintainer's current handle and builds clean to txt/html in CI; the next
   revision will go out under that name, declaring the first as the document it
   replaces. Being an I-D means the
@@ -364,7 +366,7 @@ mark, which has not happened. Conformance claims follow the self-certification
 process in [docs/conformance.md](docs/conformance.md).
 
 **Contributing.** See [`CONTRIBUTING.md`](CONTRIBUTING.md). Implementation pull
-requests must pass all 217 conformance vector leaves and keep both the Python and
+requests must pass all 218 conformance vector leaves and keep both the Python and
 TypeScript suites green.
 
 **Contact.** Use GitHub Issues for technical bugs, GitHub Discussions for

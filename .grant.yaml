@@ -19,3 +19,4 @@ require-license: true
 ignore-packages:
   - attest-verifier
   - attest-receipts
+  - attest-desktop-verifier

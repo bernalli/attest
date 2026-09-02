@@ -1,0 +1,30 @@
+/*
+ * Additions over ../../site/src/styles.css, which is imported first and unmodified.
+ *
+ * CLOSED LIST — three rules, and there is a reason for each. The shared sheet styles
+ * `.verdict.tone-good strong` and `.verdict.tone-bad strong` only, because the surface
+ * it was written for has a two-state headline. This app has four, and two of them are
+ * amber. Without these rules the amber headlines would inherit the plain body colour
+ * and read as unremarkable positives — the single worst outcome available to a verdict.
+ */
+
+/* (1) The ordinary offline limit: amber, and visibly not a pass. */
+.verdict.tone-warn strong { color: var(--warn); }
+
+/* (2) A key history that does not add up. Cautionary like the row above — it keeps
+ *     tone-warn — but never identical to it: the two say different things, and a
+ *     reader who has learned that amber means the ordinary limit must not read an
+ *     anomaly as the limit. */
+.verdict.verdict-key-gap strong { text-decoration: underline; text-underline-offset: 0.15em; }
+
+/* (3) The boot failsafe. It ships visible and the script removes it, so it must be
+ *     impossible to overlook while it is there: a page that did not start must not
+ *     look like a page waiting for a file. */
+.boot-failsafe {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  border: 2px solid var(--bad);
+  border-radius: 6px;
+  color: var(--bad);
+  font-weight: 700;
+}

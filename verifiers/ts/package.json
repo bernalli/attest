@@ -6,6 +6,7 @@
   "author": "Samuele Martinalli",
   "homepage": "https://attest-receipts.org/",
   "repository": { "type": "git", "url": "git+https://github.com/bernalli/attest.git", "directory": "verifiers/ts" },
+  "funding": "https://github.com/sponsors/bernalli",
   "bugs": { "url": "https://github.com/bernalli/attest/issues" },
   "keywords": ["digital-ownership", "receipts", "verifier", "offline-verification", "ed25519", "drm-free", "digital-goods"],
   "type": "module",

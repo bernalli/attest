@@ -49,7 +49,7 @@ error. The closedness is in canonicalization and semantics, not in what
 fields a payload may carry: attest's signing step is not a choice among
 proof suites but one mandatory canonicalization profile, attest-JCS (v0.1
 §9), whose output is byte-exact across the Python and TypeScript reference
-implementations by construction of the 217-leaf conformance corpus — a
+implementations by construction of the 218-leaf conformance corpus — a
 verifier that does not reproduce attest-JCS exactly cannot verify an attest
 receipt at all. Choosing a purpose-built envelope over a Verifiable
 Credential is choosing that fixed-core, single-canonicalization,
@@ -160,7 +160,7 @@ is that trading that no-canonicalization simplicity for a strict, narrow,
 corpus-enforced canonicalizer is the safer engineering trade-off when the
 signed bytes must be recoverable from a parsed JSON object in any language,
 rather than preserved from whichever producer happened to serialize the
-wire form — and the 217-leaf conformance corpus, exercised byte-identically
+wire form — and the 218-leaf conformance corpus, exercised byte-identically
 by the Python and TypeScript reference verifiers, is what makes that bet
 checkable rather than merely asserted.
 
@@ -308,9 +308,13 @@ it (RFC 9943 §§5.1.1.1, 6.3); attest's log append validates only the closed
 log-entry shape (v0.2 §8), a receipt entry's `issuer` is an unauthenticated
 hint, and no receipt-signature check gates admission at all: what is
 admitted turns on the shape of the log entry, never on whether the
-receipt inside it verifies (v0.2 §8 alone — the corpus carries no leaf
-that logs a structurally invalid signature, and 28i exercises the
-compromised-key rejection, which is a different failure). On that axis
+receipt inside it verifies (v0.2 §8 alone — the corpus now carries `28o`,
+genuine log evidence for a receipt whose signature does not verify, with
+the signing key `active` and untouched; `28i` is a different failure
+again, the compromised-key rejection. Neither exercises §8's admission
+rule, which no conformance vector can reach: a vector is a verifier
+fixture and never reaches the log-entry encoder, so that rule is held by
+unit tests over the encoder instead). On that axis
 attest's log is *more* purely corroborative than SCITT's, not less. The
 relying-party end differs too, though less starkly than a bare "requires"
 would suggest: SCITT's security guidance treats a discoverable receipt from a
@@ -365,3 +369,4 @@ read no remote-attestation semantics into any attest document.
 - **2026-07-23 (rev 1)**: initial annex — vectors: none
 - **2026-08-26 (rev 2)**: corrected a stale corpus size — the annex said 130 leaves in two places while the corpus has held 158 since rev 8 of v0.2; no claim of this document changes — vectors: none
 - **2026-09-01 (rev 3)**: corrected this document's description of its own evidence — §6 said conformance vector 28i "can log an invalidly-signed receipt", but 28i's `signatures[0].sig` is byte-identical to `13-compromised-key`, which v0.1 §15 describes as genuinely signed by a key now marked compromised; its `signature: "invalid"` is the encoding of the compromised-key rejection (v0.1 §7.3), not a malformed signature. The claim the sentence supported — that log admission turns on entry shape and never on whether the receipt verifies — is unchanged and rests on v0.2 §8; the corpus carries no leaf logging a structurally invalid signature, and the text now says so instead of citing 28i as proof of it — vectors: none
+- **2026-09-01 (rev 4)**: §6's replacement sentence from rev 3 was true when written and is no longer true: the corpus now carries `28o`, genuine log evidence for a receipt whose signature does not verify. Its `sig` is a correct-length 64-byte value whose all-zero `R` decodes as a small-order point and is therefore structurally invalid under v0.1 §10's pinned verification rules; rev 3's literal claim that the corpus carried no such leaf became false when `28o` joined the corpus. The earlier sentence is corrected rather than defended through a narrower use of "invalid". The claim this passage supports is unchanged: log admission turns on entry shape and never on the receipt's signature, and it rests on v0.2 §8 plus unit tests over the log-entry encoder, because no conformance vector reaches that encoder — vectors: 28-transparency/o-malformed-signature-logged

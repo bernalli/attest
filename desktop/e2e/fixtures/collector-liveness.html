@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>collector liveness</title>
+</head>
+<body>
+<p id="marker">not-tried</p>
+<!--
+  DELIBERATELY carries no content security policy. This page is not the artifact and
+  proves nothing about it: it is the negative self-test for the request collectors that
+  every other scenario relies on. Those scenarios all assert that NOTHING left the
+  file:// scheme, and that assertion is worth nothing from a listener that cannot see a
+  request in the first place — a failure that looks exactly like success.
+
+  The host is under the reserved .invalid top-level domain (RFC 2606), which never
+  resolves anywhere, so nothing can be reached and no data can leave.
+-->
+<script type="module">
+try { await fetch('https://collector-liveness.invalid/probe') } catch (e) { /* expected */ }
+try { new WebSocket('wss://collector-liveness.invalid/probe') } catch (e) { /* expected */ }
+document.getElementById('marker').textContent = 'tried'
+</script>
+</body>
+</html>

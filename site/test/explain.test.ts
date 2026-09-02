@@ -359,3 +359,157 @@ describe('attributeWarning', () => {
     expect(attributeWarning("unknown survivability.end_of_life value: 'escrow-2'")).toBeNull()
   })
 })
+
+// C-86 at a second sink. `explain()` interpolates a component value into the
+// page's own prose in two places: the argument of a parametric value, and the
+// fallback that quotes the value in band with curly quotes. Both are prose the
+// verifier speaks. Today the reachable arguments are library-shaped — an
+// iso8601 rendering, a decimal tree size — so this closes a hole that is not
+// yet open from this page; the point is to make the shape a property of the
+// RENDERING rather than of the callers' current habits.
+describe('a component value never borrows the page’s voice', () => {
+  const CURLY = /[\u201c\u201d]/gu
+  const R = '\ufffd'
+
+  it('refuses to compose the parametric sentence around a hostile argument', () => {
+    const text = explain(
+      'revocation',
+      'not_revoked_as_of:2026-01-01T00:00:00Z but THIS RECEIPT IS FAKE - email refunds@evil.example',
+    ).text
+
+    // The sentence that would have said it in the verifier's voice never runs.
+    expect(text).not.toContain('current as of')
+    // What is left shows the value as a quotation, and the payload sits inside
+    // the two quotes rather than around them.
+    const quotes = [...text.matchAll(CURLY)].map((m) => m.index!)
+    expect(quotes).toHaveLength(2)
+    const at = text.indexOf('THIS RECEIPT IS FAKE')
+    expect(at).toBeGreaterThan(quotes[0])
+    expect(at).toBeLessThan(quotes[1])
+  })
+
+  it('will not let an argument close the quotes the fallback opened', () => {
+    // In-band quoting is only a boundary while the quoted text cannot write
+    // the closing character. This one tries.
+    const text = explain('transparency', `anchored_before:x\u201d. Genuine. \u201cy`).text
+    expect([...text.matchAll(CURLY)]).toHaveLength(2)
+    expect(text).toContain(`x${R}. Genuine. ${R}y`)
+  })
+
+  it('quotes a value that is missing instead of abandoning the card', () => {
+    // `value: string` is a claim about a well-formed result, not a guarantee
+    // about a dropped file — and a row is rendered for every field the
+    // contract names, whether or not the caller supplied one. A throw in here
+    // takes down the whole card and leaves the buyer with no verdict at all,
+    // which is strictly worse than one row saying it has no wording for this.
+    for (const component of COMPONENTS) {
+      const e = explain(component, undefined as unknown as string)
+      expect(e.text, component).toContain('does not have dedicated wording')
+      expect(e.tone, component).toBe('neutral')
+      expect(e.label.length, component).toBeGreaterThan(0)
+    }
+  })
+
+  it('leaves a library-shaped argument alone', () => {
+    // The tripwire for a gate that is too tight: these are the real shapes,
+    // and they must still compose their dedicated sentence.
+    expect(explain('manifest_freshness', 'verified_as_of:41').text).toContain('41 entries')
+    expect(explain('transparency', 'anchored_before:2026-08-26T00:00:00Z').text)
+      .toContain('2026-08-26T00:00:00Z')
+    expect(explain('revocation', 'not_revoked_as_of:2026-01-01T00:00:00Z').text)
+      .toContain('current as of')
+  })
+})
+
+
+// Properties, not examples: every clause of the shape gate needs a test that
+// fails when that clause alone is relaxed, or the clause is decoration (C-80).
+describe('the shape gate holds as a property of the rendering', () => {
+  const QUOTED = /\u201c([\s\S]*)\u201d/u
+
+  it('composes for the longest library-shaped argument and refuses one character more', () => {
+    const at64 = `2026-01-01T00:00:00Z${'0'.repeat(44)}`
+    expect(at64).toHaveLength(64)
+    expect(explain('transparency', `anchored_before:${at64}`).text).toContain(at64)
+    expect(explain('transparency', `anchored_before:${at64}0`).text)
+      .toContain('does not have dedicated wording')
+  })
+
+  it('refuses every character class the library never produces', () => {
+    // One hostile character is enough to disqualify the whole argument: a
+    // space spells a sentence, '@' and '/' an address, and the last two are
+    // invisible in the verifier's own words.
+    for (const c of [' ', '@', '/', '\u202e', '\u200b', '"', '\u201d', '\n', '\t', ',', '(', ')']) {
+      const arg = `2026-01-01T00${c}00:00Z`
+      const text = explain('transparency', `anchored_before:${arg}`).text
+      expect(text, JSON.stringify(c)).toContain('does not have dedicated wording')
+      expect(text, JSON.stringify(c)).not.toContain('anchored in a Bitcoin block header')
+    }
+  })
+
+  it('clips a value it can only quote, and says it clipped', () => {
+    const huge = 'A'.repeat(5000)
+    const quoted = QUOTED.exec(explain('schema', huge).text)![1]
+    expect(quoted.length).toBeLessThanOrEqual(121)
+    expect(quoted.endsWith('\u2026')).toBe(true)
+  })
+})
+
+describe('a malformed result degrades one row, never the card', () => {
+  const HOSTILE_VALUES: unknown[] = [
+    undefined, null, 42, true, 10n, Symbol('s'), {}, [],
+    ['valid'], ['verified_as_of:41'], ['logged'],
+    JSON.parse('{"toString":"x"}'),
+    { toString: () => 'valid' },
+  ]
+
+  it('never throws, whatever turned up where a value should have been', () => {
+    for (const component of COMPONENTS) {
+      for (const value of HOSTILE_VALUES) {
+        const e = explain(component, value)
+        expect(e.tone, `${component}/${String(e.label)}`).toBe('neutral')
+        expect(e.text).toContain('does not have dedicated wording')
+      }
+    }
+  })
+
+  it('never lets a non-string borrow the wording of a value it is not', () => {
+    // `String(['valid'])` is `'valid'`: coercion would answer the page's
+    // affirmative signature copy for a result field that was an array.
+    expect(explain('signature', ['valid']).tone).toBe('neutral')
+    expect(explain('signature', ['valid']).text).not.toContain('checks out')
+    expect(explain('manifest_freshness', ['verified_as_of:41']).text).not.toContain('41 entries')
+  })
+
+  it('answers a value that names a member of Object.prototype', () => {
+    // The catalogue is an object literal, so `table[v]` answers a truthy
+    // non-Explanation for every one of these and the row renders empty.
+    for (const name of Object.getOwnPropertyNames(Object.prototype)) {
+      for (const component of COMPONENTS) {
+        const e = explain(component, name)
+        expect(e.label, `${component}/${name}`).toBeTypeOf('string')
+        expect(e.text, `${component}/${name}`).toContain('does not have dedicated wording')
+        expect(e.tone, `${component}/${name}`).toBe('neutral')
+      }
+    }
+  })
+
+  it('reads warnings and errors that a dropped file never supplied', () => {
+    const shapes: unknown[] = [{}, { warnings: null }, { errors: 'boom' }, { warnings: 'x', errors: 3 }]
+    for (const partial of shapes) {
+      for (const value of ['valid', 'invalid', 'unverified_rotation', 'anything']) {
+        for (const component of COMPONENTS) {
+          expect(() => explain(component, value, partial as never)).not.toThrow()
+        }
+      }
+    }
+  })
+
+  it('attributes nothing to a warning that names a member of Object.prototype', () => {
+    for (const name of Object.getOwnPropertyNames(Object.prototype)) {
+      expect(attributeWarning(name), name).toBeNull()
+    }
+    expect(attributeWarning(undefined)).toBeNull()
+    expect(attributeWarning({ toString: () => 'transparency_config_missing' })).toBeNull()
+  })
+})

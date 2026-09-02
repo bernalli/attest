@@ -28,7 +28,7 @@ from attest import issue, manifests
 from attest import verify as verifier
 from attest_bridge.catalog import ProductCatalog
 from attest_bridge.delivery import Delivery
-from attest_bridge.ledger import Ledger
+from attest_bridge.ledger import Ledger, PurchaseAlreadyRecorded
 from attest_bridge.model import NormalizedPurchase, PurchaseRejected, purchase_id_for_log
 from attest_bridge.signing import IssuerIdentity
 
@@ -97,6 +97,14 @@ class IssuingCore:
         catalog entry (propagated from `ProductCatalog.resolve`, never
         guessed). Any `attest.issue.IssueError` escapes as-is — a bug, not a
         purchase-input problem (500 path, T8).
+
+        Under concurrency the idempotency check at step (1) and the write at
+        step (7) are a check-then-act pair, and a second process (a
+        `retry-failed` run, another worker) can record the same purchase in
+        between. First writer wins: the loser discards what it just signed and
+        returns the STORED receipt as a duplicate outcome. The losing
+        envelope and its buyer-binding salt are never delivered and never
+        recorded, so one purchase keeps exactly one salt.
         """
         # (0) Defense-in-depth re-gate: the adapter boundary already rejects a
         # malformed pubkey (`model.decode_buyer_pubkey`), but this class never
@@ -172,15 +180,36 @@ class IssuingCore:
         # (7) Record in the Ledger before returning (Global Constraint 9:
         # issue + ledger-record first, delivery — T6 — happens after).
         receipt_id: str = payload["receipt_id"]
-        self._ledger.record_receipt(
-            platform=purchase.platform,
-            purchase_id=purchase.platform_purchase_id,
-            receipt_id=receipt_id,
-            envelope=envelope,
-            buyer_email=purchase.buyer_identifier,
-            download_token=secrets.token_urlsafe(32),
-            issued_at=payload["issued_at"],
-        )
+        try:
+            self._ledger.record_receipt(
+                platform=purchase.platform,
+                purchase_id=purchase.platform_purchase_id,
+                receipt_id=receipt_id,
+                envelope=envelope,
+                buyer_email=purchase.buyer_identifier,
+                download_token=secrets.token_urlsafe(32),
+                issued_at=payload["issued_at"],
+            )
+        except PurchaseAlreadyRecorded:
+            # Only THIS conflict means "already issued". A UNIQUE
+            # download_token collision is a different purchase entirely and
+            # arrives as its own exception, which this clause does not catch:
+            # answering it with a duplicate outcome would hand this buyer a
+            # receipt that was never issued to them. Re-read rather than
+            # infer even so — the row the buyer gets back is the winner's, not
+            # one reconstructed from the exception.
+            winner = self._ledger.get_receipt(purchase.platform, purchase.platform_purchase_id)
+            if winner is None:
+                raise
+            _log.warning(
+                "purchase %s was recorded by another writer first: returning the stored receipt",
+                purchase_id_for_log(purchase.platform_purchase_id),
+            )
+            return IssueOutcome(
+                receipt_id=winner.receipt_id,
+                envelope=json.loads(winner.envelope_json),
+                duplicate=True,
+            )
 
         return IssueOutcome(receipt_id=receipt_id, envelope=envelope, duplicate=False)
 
