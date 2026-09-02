@@ -187,9 +187,88 @@ const metaShape = (token, ctx) => {
   return null
 }
 
+/** The canonical spelling of the one link this document may carry: the attribute name in
+ *  any case the parser accepts, then `="` + the URL exactly as the WHATWG parser
+ *  serialises it + `"`. Comparing the SOURCE BYTES and not the decoded value is the
+ *  whole point: the parser decodes `&#104;ttps:` and `https&colon;` into the allowed
+ *  link, so a rule that read the decoded value would accept every spelling of it. */
+const canonicalRaw = (raw, expected) =>
+  raw.slice(0, 4).toLowerCase() === 'href' && raw.slice(4) === `="${expected}"`
+
+/**
+ * What a browser would do with this href, and whether the document may carry it. The
+ * verdict is on the RESOLVED url — after character references are decoded, tabs and
+ * newlines dropped and the scheme lowercased — and on the raw bytes, never on the
+ * spelling in between.
+ */
+export function classifyUrl(raw, value, ids) {
+  let url
+  try {
+    url = new URL(value, BASE_URL)
+  } catch {
+    return {
+      raw, value, resolved: null, protocol: null, host: null,
+      accepted: false, reason: 'unparseable',
+    }
+  }
+  const verdict = (accepted, reason) => ({
+    raw, value, resolved: url.href, protocol: url.protocol, host: url.host, accepted, reason,
+  })
+  if (url.protocol === 'https:' && ALLOWED_HOSTS.includes(url.host)) {
+    // A username in front of an allowed host is a link that READS as somewhere else.
+    if (url.username !== '' || url.password !== '') return verdict(false, 'userinfo')
+    return canonicalRaw(raw, url.href) ? verdict(true, '') : verdict(false, 'canonical')
+  }
+  if (value.startsWith('#') && value.length > 1) {
+    if (!ids.has(value.slice(1))) return verdict(false, 'missing-target')
+    return canonicalRaw(raw, value) && url.href === `${BASE_URL}${value}`
+      ? verdict(true, '')
+      : verdict(false, 'canonical')
+  }
+  return verdict(false, 'scheme')
+}
+
+const idsOf = (ctx) => {
+  const ids = new Set()
+  for (const token of ctx.tokens)
+    for (const attr of token.attrs) if (attr.name === 'id') ids.add(attr.value)
+  return ids
+}
+
+/** Every anchor's href, with the source bytes of the attribute beside the decoded value. */
+const anchors = (ctx) => {
+  const ids = idsOf(ctx)
+  return ctx.tokens
+    .filter((t) => t.name === 'a')
+    .flatMap((token) => {
+      const href = attributesOf(token).get('href')
+      if (href === undefined) return []
+      const span = token.location.attrs?.href
+      const raw =
+        span === undefined ? '' : ctx.html.slice(span.startOffset, span.endOffset)
+      return [{ token, verdict: classifyUrl(raw, href, ids) }]
+    })
+}
+
+const urlRule = (id, reasons) => ({
+  id,
+  check: (ctx) =>
+    anchors(ctx)
+      .filter(({ verdict }) => !verdict.accepted && reasons.includes(verdict.reason))
+      .map(({ token, verdict }) =>
+        refusal(
+          id,
+          at(token),
+          `${verdict.reason}: ${verdict.raw.slice(0, 60)} resolves to ` +
+            `${verdict.resolved === null ? 'nothing a URL parser can read' : verdict.resolved}`,
+        ),
+      ),
+})
+
 const first = (ctx, name) => ctx.tokens.find((t) => t.name === name)
 
-export const RULE_IDS = ['R-INPUT', 'R-PARSE', 'R-ELEMENT', 'R-ATTRIBUTE', 'R-VALUE', 'R-META', 'R-COUNT']
+export const RULE_IDS = ['R-INPUT', 'R-PARSE', 'R-ELEMENT', 'R-ATTRIBUTE', 'R-VALUE', 'R-META',
+                         'R-COUNT', 'R-URL', 'R-URL-CANONICAL', 'R-REF']
 
 export const RULES = [
   {
@@ -346,6 +425,27 @@ export const RULES = [
         .map(([what, found, want]) =>
           refusal('R-COUNT', `document@0`, `${what}: found ${found}, this document carries ${want}`),
         )
+    },
+  },
+  urlRule('R-URL', ['unparseable', 'scheme', 'userinfo']),
+  urlRule('R-URL-CANONICAL', ['canonical']),
+  {
+    id: 'R-REF',
+    check: (ctx) => {
+      const ids = idsOf(ctx)
+      const dangling = anchors(ctx)
+        .filter(({ verdict }) => verdict.reason === 'missing-target')
+        .map(({ token, verdict }) =>
+          refusal('R-REF', at(token), `${verdict.value} names nothing in this document`),
+        )
+      const labels = ctx.tokens
+        .filter((t) => t.name === 'label')
+        .flatMap((token) => {
+          const target = attributesOf(token).get('for')
+          if (target === undefined || ids.has(target)) return []
+          return [refusal('R-REF', at(token), `for="${target}" names no control in this document`)]
+        })
+      return [...dangling, ...labels]
     },
   },
 ]

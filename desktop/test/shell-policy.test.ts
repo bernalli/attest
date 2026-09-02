@@ -5,7 +5,14 @@ import { fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
 
 import type { RuleId } from '../tools/shell-policy.mjs'
-import { RULE_IDS, RULES, decodeShell, tokenizeShell, validateShell } from '../tools/shell-policy.mjs'
+import {
+  RULE_IDS,
+  RULES,
+  classifyUrl,
+  decodeShell,
+  tokenizeShell,
+  validateShell,
+} from '../tools/shell-policy.mjs'
 import type { Mutant } from './helpers/shell-mutants.js'
 import { artifact, mutant, mutants, plant, sourceShell } from './helpers/shell-mutants.js'
 
@@ -302,5 +309,35 @@ describe('the rules do not depend on where a construct sits', () => {
         `row ${row.n} inside the select`,
       ).not.toHaveLength(0)
     }
+  })
+})
+
+describe('the one link the document carries, and the fragment branch beside it', () => {
+  test('a fragment naming something real is accepted', () => {
+    const grown = plant(artifact().html, 'BODY', '<a href="#dropzone">x</a>')
+    expect(
+      validateShell(Buffer.from(grown.html, 'utf8'), {
+        stage: 'artifact',
+        expectedCsp: grown.csp,
+      }),
+    ).toEqual([])
+  })
+
+  test('a duplicated href keeps the first, exactly as every engine does', () => {
+    // The parser complains, and the document is refused for that. But the value the
+    // rules would have judged is the FIRST one - the safe one here - so a reader of the
+    // refusal is not told the wrong thing about what the link would have done.
+    const row = mutant(107)
+    const { tokens, html } = tokenizeShell(row.bytes.toString('utf8'))
+    const anchor = tokens.find((t) => t.name === 'a')
+    expect(anchor).toBeDefined()
+    const span = anchor?.location.attrs?.['href']
+    const raw = html.slice(span?.startOffset ?? 0, span?.endOffset ?? 0)
+    const value = anchor?.attrs.find((a) => a.name === 'href')?.value ?? ''
+    expect(value).toBe('https://attest-receipts.org/')
+    const ids = new Set(
+      tokens.flatMap((t) => t.attrs.filter((a) => a.name === 'id').map((a) => a.value)),
+    )
+    expect(classifyUrl(raw, value, ids).accepted).toBe(true)
   })
 })
