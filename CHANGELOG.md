@@ -8,6 +8,43 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Two conforming verifiers could read one file two different ways, and one
+  byte was enough to decide which.** A `.attest` bundle is a ZIP archive, and
+  "which members does this archive hold" had more than one answer: the
+  reference importer's ZIP library places the central directory immediately
+  before the end-of-central-directory record and ignores that record's entry
+  counter, while the browser verifier's library trusts the counter and the
+  declared offset literally. Lowering the counter by one, in a single byte,
+  hid a member from one importer and not from the other; and a file carrying
+  two internally consistent directories — no counter touched, nothing inside
+  either directory untrue — handed each importer a different receipt under the
+  same file hash. `import_bundle` no longer asks a library which members an
+  archive holds. It reads the container itself, in a fixed order it shares
+  step for step with the browser verifier, and refuses any archive in which
+  the two addressings could disagree: the end record must be the last 22 bytes
+  and declare no comment, the archive must be single-disk and free of ZIP64
+  structures, the two entry counters must agree, and the central directory
+  must occupy exactly the bytes ending where that record begins. Inside it the
+  walk is exact, and every record must be backed by a local header naming the
+  same member and by data that lies before the directory. Each member's
+  inflated length and CRC-32 are then checked against its record, and a stored
+  DEFLATE block whose length fields do not agree is refused rather than left
+  to whichever decoder is running — the one malformed stream the two decoders
+  judged differently. Nothing an honest producer writes leaves that form: the
+  bundles `export` writes, the shipped sample and the archives the browser's
+  own tests build are all inside it, and a shared corpus of hostile archives
+  is now read by both implementations, with a fuzzer that compares their
+  verdicts on archives nobody chose.
+
+- **A shareable bundle carrying the buyer's own secrets was imported without a
+  word.** The browser verifier has always refused a `.attest` that lists
+  `salts.json` or a `keys/` member — that file is a `.private.attest` under the
+  wrong name, and it holds the binding secrets a buyer must never share. The
+  reference importer accepted it. It now refuses it too, deciding on the member
+  list before anything is decompressed. The `.private.attest` half is
+  unaffected: the salts belong there, and that is where they are still read
+  from. A caller who was importing such a file will now see `BundleError`.
+
 - **The warning every buyer reads now points at something within their reach
   instead of at a command.** Told never to send `<name>.private.attest` to
   anyone, a buyer asks the obvious next question, and the answer was

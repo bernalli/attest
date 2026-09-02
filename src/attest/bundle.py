@@ -44,20 +44,22 @@ verifier.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import hashlib
 import html
 import json
+import mmap
 import os
 import re
 import stat
 import zipfile
-from collections import Counter
+from collections.abc import Buffer, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from attest import buyer_surface, canon, keys, manifests, verify
+from attest import buyer_surface, canon, container, keys, manifests, verify
 
 _PROVENANCE_BUNDLE = "bundle"
 _SECRET_FILE_MODE = 0o600  # disclose output carries delivery.salt (a bearer secret)
@@ -70,7 +72,6 @@ _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _MAX_MEMBER_BYTES = 64 * 1024 * 1024  # 64 MiB per decompressed member
 _MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # 1 GiB decompressed across one bundle
 _MAX_ENTRIES = 100_000  # central-directory entry count
-_READ_CHUNK = 1024 * 1024  # 1 MiB streaming read granularity
 _RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 #: The placeholders `_render_readme` substitutes, matched in a single pass.
@@ -459,74 +460,71 @@ def export(
     return attest_path, private_path
 
 
-class _SizeBudget:
-    """Reads zip members under a per-member cap and a shared aggregate cap,
-    streaming so a member is never fully decompressed into memory before its
-    size is known. The streamed byte count — not the (spoofable)
-    `ZipInfo.file_size` header — is authoritative, which is what catches a
-    bomb whose header lies low."""
-
-    def __init__(self, max_member_bytes: int, max_total_bytes: int) -> None:
-        self._max_member = max_member_bytes
-        self._max_total = max_total_bytes
-        self._spent = 0
-
-    def read(self, zf: zipfile.ZipFile, name: str) -> bytes:
-        cap = min(self._max_member, self._max_total - self._spent)
-        chunks: list[bytes] = []
-        got = 0
-        with zf.open(name) as member:
-            while True:
-                chunk = member.read(_READ_CHUNK)
-                if not chunk:
-                    break
-                got += len(chunk)
-                if got > cap:
-                    raise BundleError(
-                        f"member {name!r} exceeds the decompression size cap "
-                        f"(max {self._max_member} bytes/member, {self._max_total} "
-                        "bytes/bundle) — refusing to import a possible zip bomb"
-                    )
-                chunks.append(chunk)
-        self._spent += got
-        return b"".join(chunks)
+#: Members a shareable bundle must never carry: they are the buyer's own
+#: binding secrets, and a file holding them is a `.private.attest` under the
+#: wrong name. The browser verifier has always refused such an archive; this
+#: importer refuses it too, so the two agree on what a shareable bundle IS and
+#: not only on what it contains (v0.1 §9).
+_PRIVATE_MEMBER = "salts.json"
+_PRIVATE_PREFIX = "keys/"
+_PRIVATE_MSG = (
+    "this looks like a .private.attest — it holds buyer-binding salts and keys; "
+    "refusing to import it as a shareable bundle"
+)
 
 
-def _guard_zip(zf: zipfile.ZipFile, max_entries: int, max_total_bytes: int) -> None:
-    """Zero-cost pre-read gates: reject a central directory with too many
-    entries, or one whose DECLARED uncompressed total already exceeds the
-    aggregate cap (catches an honest-but-huge bundle, and a header lying high,
-    before a single byte is decompressed)."""
-    infos = zf.infolist()
-    if len(infos) > max_entries:
-        raise BundleError(
-            f"bundle declares {len(infos)} entries, over the {max_entries} cap "
-            "— refusing to import a possible zip bomb"
+@contextlib.contextmanager
+def _open_container(path: Path) -> Iterator[Buffer]:
+    """Map a container read-only, so the whole-buffer model the container reader
+    needs costs no copy of a large bundle. An empty file cannot be mapped, and
+    must still earn a verdict about the container rather than an OSError."""
+    with open(path, "rb") as fh:
+        if os.fstat(fh.fileno()).st_size == 0:
+            yield b""
+            return
+        with mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+            yield mapped
+
+
+def _as_bundle_error(error: container.ContainerError) -> BundleError:
+    """Carry a container refusal across the boundary in this module's own voice.
+    The member name is appended here, in this language's idiom, and never
+    interpolated by the reader itself."""
+    if error.member is not None and error.code in {"duplicate-name", "record-stored-size"}:
+        return BundleError(f"{error}: {error.member!r}")
+    return BundleError(str(error))
+
+
+def _members(
+    buf: Buffer, *, max_entries: int, max_member_bytes: int, max_total_bytes: int
+) -> dict[str, container.Member]:
+    """The member list, keyed by name. The mapping is only safe because the
+    reader has already refused a directory that repeats a name: building a
+    name-keyed map from attacker-supplied names without that guarantee is how a
+    duplicated member silently shadows its sibling."""
+    try:
+        members = container.canonical_members(
+            buf,
+            max_entries=max_entries,
+            max_member_bytes=max_member_bytes,
+            max_total_bytes=max_total_bytes,
         )
-    declared_total = sum(info.file_size for info in infos)
-    if declared_total > max_total_bytes:
-        raise BundleError(
-            f"bundle declares {declared_total} uncompressed bytes, over the "
-            f"{max_total_bytes} cap — refusing to import a possible zip bomb"
-        )
+    except container.ContainerError as error:
+        raise _as_bundle_error(error) from None
+    return {member.name: member for member in members}
 
 
-def _reject_duplicate_member_names(zf: zipfile.ZipFile) -> None:
-    """v0.1 §14.1 (2026-08-26 amendment): a central directory repeating a member
-    name is rejected whole. Name-based reads (`zf.open(<str>)`) resolve EVERY
-    duplicate to one entry, so a duplicated member silently shadows its sibling
-    — while both entries remain physically present in the file. Import must
-    never guess; recovery of an already-circulating duplicated bundle is an
-    operator action (extract by entry, re-export a clean bundle)."""
-    counts = Counter(zf.namelist())
-    duplicates = sorted(name for name, n in counts.items() if n > 1)
-    if duplicates:
-        raise BundleError(
-            f"bundle central directory repeats member name(s): {duplicates} — "
-            "refusing to import: duplicated members shadow each other on name-based "
-            "reads. Both entries are still physically present in this file; extract "
-            "them with a tool that reads by entry, then re-export a clean bundle"
-        )
+def _refuse_private_material(members: dict[str, container.Member]) -> None:
+    """Decided on the member LIST, before a single member is read."""
+    if any(name == _PRIVATE_MEMBER or name.startswith(_PRIVATE_PREFIX) for name in members):
+        raise BundleError(_PRIVATE_MSG)
+
+
+def _read(buf: Buffer, member: container.Member, budget: container.ReadBudget) -> bytes:
+    try:
+        return container.read_member(buf, member, budget)
+    except container.ContainerError as error:
+        raise _as_bundle_error(error) from None
 
 
 def _loads(data: bytes) -> Any:
@@ -572,21 +570,26 @@ def import_bundle(
     # import_bundle call, not per-zip) — reused below for the .private.attest
     # salts read so a hostile .attest/.private.attest pair cannot each spend up
     # to max_total_bytes and together decompress 2x the aggregate ceiling.
-    budget = _SizeBudget(max_member_bytes, max_total_bytes)
+    budget = container.ReadBudget(max_member_bytes, max_total_bytes)
 
-    with zipfile.ZipFile(attest_path, "r") as zf:
-        _guard_zip(zf, max_entries, max_total_bytes)
-        _reject_duplicate_member_names(zf)
-        for filename in sorted(zf.namelist()):
+    with _open_container(attest_path) as buf:
+        members = _members(
+            buf,
+            max_entries=max_entries,
+            max_member_bytes=max_member_bytes,
+            max_total_bytes=max_total_bytes,
+        )
+        _refuse_private_material(members)
+        for filename in sorted(members):
             if filename.startswith("receipts/") and filename.endswith(".attest.json"):
-                envelope = _loads(budget.read(zf, filename))
+                envelope = _loads(_read(buf, members[filename], budget))
                 receipt_id = _receipt_payload_id(envelope, filename)
                 if receipt_id in seen_receipt_ids:
                     raise BundleError(f"bundle lists receipt_id {receipt_id!r} more than once")
                 seen_receipt_ids.add(receipt_id)
                 receipts.append(envelope)
             elif filename.startswith("manifests/") and filename.endswith(".json"):
-                blob = _loads(budget.read(zf, filename))
+                blob = _loads(_read(buf, members[filename], budget))
                 issuer = blob.get("issuer")
                 if not isinstance(issuer, str):
                     continue
@@ -597,7 +600,7 @@ def import_bundle(
                         artifact_manifests.setdefault(series, []).append(am)
             elif filename.startswith("legal/") and filename.endswith(".txt"):
                 digest = filename[len("legal/") : -len(".txt")]
-                content = budget.read(zf, filename)
+                content = _read(buf, members[filename], budget)
                 if hashlib.sha256(content).hexdigest() != digest:
                     raise BundleError(
                         f"legal text {digest!r} failed its own integrity check on import "
@@ -606,7 +609,7 @@ def import_bundle(
                 legal_texts[digest] = content
             elif filename.startswith("proofs/"):
                 receipt_id = _proof_member_receipt_id(filename)
-                evidence = _loads(budget.read(zf, filename))
+                evidence = _loads(_read(buf, members[filename], budget))
                 if isinstance(evidence, dict):
                     proofs[receipt_id] = evidence
 
@@ -641,11 +644,19 @@ def import_bundle(
 
     salts: dict[str, bytes] = {}
     if private_path is not None:
-        with zipfile.ZipFile(private_path, "r") as zf:
-            _guard_zip(zf, max_entries, max_total_bytes)
-            _reject_duplicate_member_names(zf)
-            if "salts.json" in zf.namelist():
-                raw_salts: dict[str, str] = _loads(budget.read(zf, "salts.json"))
+        # The private half legitimately carries the salts the shareable half
+        # must never hold: same reader, same budget, no private-material refusal.
+        with _open_container(private_path) as private_buf:
+            private_members = _members(
+                private_buf,
+                max_entries=max_entries,
+                max_member_bytes=max_member_bytes,
+                max_total_bytes=max_total_bytes,
+            )
+            if _PRIVATE_MEMBER in private_members:
+                raw_salts: dict[str, str] = _loads(
+                    _read(private_buf, private_members[_PRIVATE_MEMBER], budget)
+                )
                 salts = {receipt_id: keys.b64u_decode(s) for receipt_id, s in raw_salts.items()}
 
     return ImportedBundle(

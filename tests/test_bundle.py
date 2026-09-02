@@ -930,3 +930,140 @@ def test_import_refuses_two_members_carrying_the_same_payload_receipt_id(
 
     with pytest.raises(bundle.BundleError, match="more than once"):
         bundle.import_bundle(hostile)
+
+
+# --- import: the container is read canonically (v0.1 §14.1) -------------------
+
+CONTAINER_CORPUS = Path(__file__).resolve().parents[1] / "tests" / "container-corpus"
+
+
+def _corpus_bundle(tmp_path: Path, leaf: str, name: str) -> Path:
+    """Copy a corpus archive under a `.attest` name, so the importer sees the
+    exact bytes the shared corpus pins."""
+    path = tmp_path / name
+    path.write_bytes((CONTAINER_CORPUS / leaf / "archive.zip").read_bytes())
+    return path
+
+
+def test_import_refuses_an_archive_with_two_central_directories(tmp_path: Path) -> None:
+    """The case no counter check can see: one file, two internally consistent
+    directories, and two readers that each find a different receipt. Nothing
+    inside either directory is a lie — the file is."""
+    hostile = _corpus_bundle(tmp_path, "exhibit-D-prefix", "two-directories.attest")
+    with pytest.raises(bundle.BundleError, match="canonical form"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_an_archive_whose_entry_counters_disagree(tmp_path: Path) -> None:
+    """One byte in the end record used to decide which members a verifier sees."""
+    hostile = _corpus_bundle(tmp_path, "exhibit-B2-counter", "counter.attest")
+    with pytest.raises(bundle.BundleError, match="counters disagree"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_a_shareable_bundle_that_carries_private_material(
+    tmp_path: Path,
+) -> None:
+    """A `.attest` listing `salts.json` is a `.private.attest` under the wrong
+    name: it holds the buyer's binding secrets, and importing it as a shareable
+    bundle is exactly the mistake the file naming exists to prevent. The browser
+    verifier has always refused it; this importer now refuses it too."""
+    hostile = _corpus_bundle(tmp_path, "exhibit-C-salts-honest", "with-salts.attest")
+    with pytest.raises(bundle.BundleError, match=r"\.private\.attest"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_a_shareable_bundle_that_carries_a_key(tmp_path: Path) -> None:
+    """`keys/` is the other half of the same refusal."""
+    hostile = tmp_path / "with-keys.attest"
+    with zipfile.ZipFile(hostile, "w") as zf:
+        zf.writestr("receipts/01HZX0000000000000000000AA.attest.json", b"{}")
+        zf.writestr("keys/signing.json", b"{}")
+    with pytest.raises(bundle.BundleError, match=r"\.private\.attest"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_private_material_before_reading_any_member(tmp_path: Path) -> None:
+    """The refusal is decided on the member LIST, so nothing beside the secrets
+    is ever decompressed: the check now happens where the browser verifier's
+    comment always claimed it did.
+
+    The other member's deflate stream is deliberately corrupt. Reading members
+    first would produce a complaint about that stream; refusing the list first
+    produces the complaint about the secrets, which is the ordering under test.
+    """
+    hostile = tmp_path / "salts-and-garbage.attest"
+    corrupt = (CONTAINER_CORPUS / "deflate-garbage" / "archive.zip").read_bytes()
+    with zipfile.ZipFile(hostile, "w") as zf:
+        zf.writestr("receipts/01HZX0000000000000000000AA.attest.json", corrupt)
+        zf.writestr("salts.json", b"{}")
+    with pytest.raises(bundle.BundleError, match=r"\.private\.attest"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_a_member_only_one_decoder_would_accept(tmp_path: Path) -> None:
+    """A stored deflate block whose length fields do not agree: this importer's
+    decoder refuses it and the browser's never reads that field, so the verdict
+    is made by shared code rather than by whichever library is running."""
+    hostile = _corpus_bundle(tmp_path, "deflate-stored-block-bad-complement", "bad-deflate.attest")
+    with pytest.raises(bundle.BundleError, match="not a valid deflate stream"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_an_empty_file(tmp_path: Path) -> None:
+    """An empty file cannot be memory-mapped; the verdict must still be a
+    refusal about the container, not an OSError about the mapping."""
+    empty = tmp_path / "empty.attest"
+    empty.write_bytes(b"")
+    with pytest.raises(bundle.BundleError, match="not a readable zip archive"):
+        bundle.import_bundle(empty)
+
+
+def test_import_still_reads_the_private_sibling_for_salts(tmp_path: Path) -> None:
+    """The private archive legitimately carries `salts.json`: the refusal above
+    is about the SHAREABLE half, and this is the pair that must keep working."""
+    receipt_id = "01J1V5B4M9Z8QWERTY12345699"
+    envelope = _envelope(receipt_id=receipt_id)
+    attest_path, private_path = bundle.export(
+        [envelope], [_key_manifest()], [], _legal_texts(), tmp_path, "mylibrary"
+    )
+    imported = bundle.import_bundle(attest_path, private_path)
+    assert imported.salts[receipt_id] == SALT_A
+
+
+def test_import_accepts_an_archive_with_a_gap_between_members(tmp_path: Path) -> None:
+    """The canonical form does not require members to tile the archive: a gap
+    between two members is not a second reading of the file, and refusing one
+    would tighten the rule past what the divergence needs."""
+    honest = _corpus_bundle(tmp_path, "honest-gap-between-members", "gap.attest")
+    imported = bundle.import_bundle(honest)
+    assert len(imported.receipts) == 1
+
+
+def test_import_ignores_a_member_no_family_claims_even_when_it_is_corrupt(
+    tmp_path: Path,
+) -> None:
+    """Members are read on demand, and an archive can carry something neither
+    importer looks at. Reading every member eagerly would make such a file fatal
+    on one side and invisible on the other — same bytes, two verdicts, which is
+    the defect this whole change closes. The browser verifier has the twin of
+    this test.
+    """
+    receipt_id = "01J1V5B4M9Z8QWERTY12345697"
+    attest_path, _private = bundle.export(
+        [_envelope(receipt_id=receipt_id)], [_key_manifest()], [], _legal_texts(), tmp_path, "lib"
+    )
+    marker = b"CORRUPT-ME-PLEASE-0123456789"
+    hostile = tmp_path / "with-unknown.attest"
+    with zipfile.ZipFile(attest_path) as src, zipfile.ZipFile(hostile, "w") as dst:
+        for info in src.infolist():
+            dst.writestr(info.filename, src.read(info.filename))
+        dst.writestr("unknown.bin", marker)
+    raw = bytearray(hostile.read_bytes())
+    # Flip a byte of the member's DATA, leaving its CRC-32 record untouched: the
+    # member is now unreadable, and nothing reads it.
+    raw[raw.index(marker)] ^= 0xFF
+    hostile.write_bytes(bytes(raw))
+
+    imported = bundle.import_bundle(hostile)
+    assert len(imported.receipts) == 1

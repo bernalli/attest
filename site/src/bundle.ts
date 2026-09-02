@@ -1,24 +1,16 @@
-import { unzipSync } from 'fflate'
 import { loadsStrict } from 'attest-verifier'
+import { canonicalMembers, readMember, ReadBudget, ContainerError } from './container.js'
+import type { Member } from './container.js'
 import { neutralized } from './untrusted-text.js'
 import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
 
 export class BundleError extends Error {}
 export class PrivateBundleError extends BundleError {}
 
-export interface Caps {
-  maxEntries: number
-  maxMemberBytes: number
-  maxTotalBytes: number
-}
-
-// Tighter than the Python reference importer on purpose: this runs in a
-// browser tab. Same three-gate model (entry count, per-member, aggregate).
-export const DEFAULT_CAPS: Caps = {
-  maxEntries: 10_000,
-  maxMemberBytes: 64 * 1024 * 1024,
-  maxTotalBytes: 256 * 1024 * 1024,
-}
+export type { ContainerCaps as Caps } from './container.js'
+import type { ContainerCaps as Caps } from './container.js'
+export { DEFAULT_CONTAINER_CAPS as DEFAULT_CAPS } from './container.js'
+import { DEFAULT_CONTAINER_CAPS as DEFAULT_CAPS } from './container.js'
 
 export interface ParsedBundle {
   // Keyed by the `receipt_id` inside the SIGNED payload, never by the member
@@ -68,6 +60,21 @@ const MAX_QUOTED_MEMBER_CHARS = 60
 // correction. This caller's only job is the in-band quoting and the cap.
 const quoted = (name: string): string => `"${neutralized(name, MAX_QUOTED_MEMBER_CHARS)}"`
 
+/** Order member names the way the reference importer does: by Unicode code
+ * point. JavaScript's default string comparison orders by UTF-16 code unit, so
+ * a name outside the basic plane sorts before one whose BMP character is above
+ * the surrogate range — and the two importers would meet a broken member in a
+ * different order, and complain about a different one. */
+const byCodePoint = (left: string, right: string): number => {
+  const a = [...left]
+  const b = [...right]
+  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+    const difference = a[index].codePointAt(0)! - b[index].codePointAt(0)!
+    if (difference !== 0) return difference
+  }
+  return a.length - b.length
+}
+
 // The receipt schema's own ULID grammar (Crockford base32, 26 chars, leading
 // character 0-7). Mirrors the reference importer's `_RECEIPT_ID_RE`.
 const RECEIPT_ID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
@@ -105,51 +112,40 @@ function proofMemberReceiptId(name: string): string {
 }
 
 export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): ParsedBundle {
-  let entryCount = 0
-  let declaredTotal = 0
-  let entries: Record<string, Uint8Array>
+  // The member list comes from the canonical container reader, not from a ZIP
+  // library's own reading of the archive: two readers address the central
+  // directory differently, and an archive that exploits that used to show this
+  // page one set of members and the reference importer another. The reader
+  // refuses any archive where the two addressings could disagree, so the list
+  // below is the only list that file has.
+  let members
   try {
-    entries = unzipSync(bytes, {
-      filter(file) {
-        // Secrets are rejected BEFORE anything is decompressed.
-        if (file.name === 'salts.json' || file.name.startsWith('keys/'))
-          throw new PrivateBundleError(PRIVATE_MSG)
-        entryCount += 1
-        if (entryCount > caps.maxEntries)
-          throw new BundleError(`bundle declares over ${caps.maxEntries} entries — refusing a possible zip bomb`)
-        if (file.originalSize > caps.maxMemberBytes)
-          throw new BundleError(`member ${quoted(file.name)} is over the per-member decompression cap — refusing a possible zip bomb`)
-        declaredTotal += file.originalSize
-        if (declaredTotal > caps.maxTotalBytes)
-          throw new BundleError('bundle is over the aggregate decompression cap — refusing a possible zip bomb')
-        return true
-      },
-    })
+    members = canonicalMembers(bytes, caps)
   } catch (e) {
-    if (e instanceof BundleError) throw e
+    if (e instanceof ContainerError) throw new BundleError(e.message)
     throw new BundleError('not a readable zip archive — expected a .attest bundle or a .attest.json receipt')
   }
 
-  // V-L.6 (v0.1 §14.1, 2026-08-26 amendment): entryCount is incremented per
-  // raw central-directory entry inside `filter`, BEFORE Record keys collapse —
-  // a mismatch against the surviving key count means duplicate member names,
-  // which silently shadow each other (and diverge from the reference importer,
-  // which resolves every duplicate to the LAST entry instead of the first).
-  const uniqueNames = Object.keys(entries).length
-  if (entryCount !== uniqueNames)
-    throw new BundleError(
-      `bundle central directory repeats ${entryCount - uniqueNames} member name(s) — refusing to import: duplicated members shadow each other`,
-    )
+  // Secrets are refused from the member LIST, before anything is decompressed —
+  // which is what the old comment here claimed while the check sat inside the
+  // library's own walk, where a member the archive hid never reached it.
+  for (const member of members)
+    if (member.name === 'salts.json' || member.name.startsWith('keys/'))
+      throw new PrivateBundleError(PRIVATE_MSG)
 
-  // Declared sizes are header data and can lie low; the inflated lengths are
-  // authoritative (mirrors the reference importer's streamed-size rule).
-  let actualTotal = 0
-  for (const data of Object.values(entries)) {
-    if (data.length > caps.maxMemberBytes)
-      throw new BundleError('a member inflated past the per-member cap — refusing a possible zip bomb')
-    actualTotal += data.length
-    if (actualTotal > caps.maxTotalBytes)
-      throw new BundleError('bundle inflated past the aggregate cap — refusing a possible zip bomb')
+  // Members are read ON DEMAND, and only the ones a family below claims. The
+  // reference importer does the same, and reading every member here instead
+  // meant a corrupt member no importer looks at — `unknown.bin` with a broken
+  // CRC — was fatal on this page and invisible to the reference one. Same
+  // bytes, two verdicts, which is the whole defect being closed.
+  const budget = new ReadBudget(caps.maxMemberBytes, caps.maxTotalBytes)
+  const read = (member: Member): Uint8Array => {
+    try {
+      return readMember(bytes, member, budget)
+    } catch (e) {
+      if (e instanceof ContainerError) throw new BundleError(e.message)
+      throw e
+    }
   }
 
   const receipts: { receiptId: string; bytes: Uint8Array }[] = []
@@ -158,17 +154,19 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
 
   const receiptIds = new Set<string>()
 
-  for (const name of Object.keys(entries).sort()) {
+  for (const member of [...members].sort((a, b) => byCodePoint(a.name, b.name))) {
+    const name = member.name
     if (name.startsWith('receipts/') && name.endsWith('.attest.json')) {
-      const receiptId = receiptPayloadId(name, entries[name])
+      const memberBytes = read(member)
+      const receiptId = receiptPayloadId(name, memberBytes)
       if (receiptIds.has(receiptId))
         throw new BundleError(`bundle lists receipt_id ${receiptId} more than once`)
       receiptIds.add(receiptId)
-      receipts.push({ receiptId, bytes: entries[name] })
+      receipts.push({ receiptId, bytes: memberBytes })
     } else if (name.startsWith('manifests/') && name.endsWith('.json')) {
       let blob: JsonObject | null
       try {
-        blob = asObject(loadsStrict(entries[name]))
+        blob = asObject(loadsStrict(read(member)))
       } catch {
         throw new BundleError(`manifest entry ${quoted(name)} is not valid canonical JSON`)
       }
@@ -181,7 +179,7 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
       const receiptId = proofMemberReceiptId(name)
       let evidence: JsonValue
       try {
-        evidence = loadsStrict(entries[name])
+        evidence = loadsStrict(read(member))
       } catch {
         throw new BundleError(`proof entry ${quoted(name)} is not valid JSON`)
       }

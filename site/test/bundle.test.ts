@@ -250,9 +250,13 @@ describe('parseBundle: duplicate member names', () => {
     expect(() => parseBundle(storedZip([[NAME, bytes], [NAME, bytes]]))).toThrow(/repeats/)
   })
 
-  it('rejects three entries under one name and reports the count', () => {
+  it('rejects three entries under one name', () => {
+    // The refusal no longer counts the repeats. Counting them meant comparing
+    // two numbers drawn from the same walk of the directory, which is what a
+    // hostile archive could make agree; the reader now refuses the first
+    // repeated name and stops, exactly as the reference importer does.
     expect(() => parseBundle(storedZip([[NAME, env()], [NAME, env()], [NAME, env()]]))).toThrow(
-      /repeats 2 member name/,
+      /repeats member name/,
     )
   })
 
@@ -300,5 +304,85 @@ describe('parseBundle: receipt payload ids', () => {
   it('refuses two distinct member names carrying one receipt_id', () => {
     const other = 'receipts/01HZX0000000000000000000AB.attest.json'
     expect(() => parseBundle(storedZip([[NAME, env()], [other, env()]]))).toThrow(/more than once/)
+  })
+})
+
+// --- the container is read canonically (v0.1 §14.1) --------------------------
+//
+// These archives come from the shared corpus, so this page and the reference
+// importer are judged on the same bytes rather than on two hand-built fixtures
+// that happen to look alike.
+
+describe('parseBundle on the shared container corpus', () => {
+  const leaf = (name: string): Uint8Array =>
+    new Uint8Array(
+      readFileSync(join(VECTORS_ROOT, '..', '..', '..', 'tests', 'container-corpus', name, 'archive.zip')),
+    )
+
+  it('refuses a file carrying two central directories', () => {
+    // The exhibit that no counter check can see: this page used to read one
+    // receipt out of it and the reference importer another, with neither
+    // archive telling a lie about itself.
+    expect(() => parseBundle(leaf('exhibit-D-prefix'))).toThrow(/canonical form/)
+  })
+
+  it('refuses a file whose entry counters disagree', () => {
+    // One byte used to decide which members this page saw.
+    expect(() => parseBundle(leaf('exhibit-B2-counter'))).toThrow(/counters disagree/)
+  })
+
+  it('refuses the archive that used to smuggle the buyer secrets past the filter', () => {
+    // The counter hid `salts.json` from this page entirely, so the secrets
+    // filter never saw it. The file is now refused before the question of
+    // which members it holds can be asked.
+    expect(() => parseBundle(leaf('exhibit-C2-salts'))).toThrow(/counters disagree/)
+  })
+
+  it('still refuses an honest archive that carries the buyer secrets', () => {
+    expect(() => parseBundle(leaf('exhibit-C-salts-honest'))).toThrow(PrivateBundleError)
+  })
+
+  it('refuses a repeated member name', () => {
+    expect(() => parseBundle(leaf('exhibit-A-honest'))).toThrow(/repeats member name/)
+  })
+
+  it('refuses a member whose deflate stream only one decoder would accept', () => {
+    // A stored block with a wrong complement field: the reference importer's
+    // decoder refuses it, this page's decoder never reads that field, so the
+    // verdict is made by shared code instead of by whichever library runs.
+    expect(() => parseBundle(leaf('deflate-stored-block-bad-complement'))).toThrow(
+      /not a valid deflate stream/,
+    )
+  })
+})
+
+describe('parseBundle reads members on demand', () => {
+  it('ignores a member no family claims even when it is corrupt', () => {
+    // The twin of the reference importer's own test: an archive can carry
+    // something neither importer looks at. Reading every member eagerly made
+    // such a file fatal here and invisible there — same bytes, two verdicts,
+    // which is the defect this whole change closes.
+    const envelope = new Uint8Array(readFileSync(join(V01, 'envelope.json')))
+    const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
+    const manifests = d.manifests as JsonObject
+    const issuer = Object.keys(manifests)[0]
+    const blob: JsonObject = { issuer, key_manifests: [manifests[issuer]], artifact_manifests: [] }
+    const marker = new TextEncoder().encode('CORRUPT-ME-PLEASE-0123456789')
+    const raw = zipSync(
+      {
+        ['receipts/01HZX0000000000000000000AA.attest.json']: envelope,
+        [`manifests/${issuer}.json`]: canonicalBytes(blob),
+        ['unknown.bin']: marker,
+      },
+      { level: 0 },
+    )
+    // Flip a byte of the unknown member's DATA, leaving its CRC-32 record
+    // untouched: the member is now unreadable, and nothing reads it.
+    const at = raw.findIndex((_, index) =>
+      marker.every((byte, offset) => raw[index + offset] === byte),
+    )
+    expect(at).toBeGreaterThan(0)
+    raw[at] ^= 0xff
+    expect(parseBundle(raw).receipts).toHaveLength(1)
   })
 })
