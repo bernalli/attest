@@ -23,12 +23,8 @@ htmlcov/
 .idea/
 .vscode/
 
-# Agent / test runtime state
-.superpowers/
-docs/superpowers/
+# Test runtime state
 .hypothesis/
-.codex-wt/
-.claude/
 
 # Internet-Draft local build output (already matched by the generic
 # `build/` rule above; named explicitly for discoverability).
