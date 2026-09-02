@@ -13,9 +13,9 @@ from attest_bridge.core import IssuingCore
 from attest_bridge.delivery import Delivery
 from attest_bridge.model import NormalizedPurchase, PurchaseRejected, UnmappedProduct
 from attest_bridge.signing import load_issuer
-from conftest import ISSUER
+from conftest import ISSUER, KID
 
-from attest import anchor, bundle, cli, keys, pq, transfer
+from attest import anchor, bundle, cli, keys, pq, revocation, tlog, transfer
 from attest import verify as verify_mod
 
 
@@ -424,3 +424,151 @@ def test_delivered_email_carries_an_importable_bundle_that_verifies_offline(
         imported.legal_texts[extracted["payload"]["license"]["legal_text_sha256"]]
         == (legal_texts[extracted["payload"]["license"]["legal_text_sha256"]])
     )
+
+
+# -- chain of title: the bridge's receipt as a real root ------------------------
+#
+# The two zero-link audits above cannot fail. `audit_chain` over a freshly
+# issued receipt returns valid with no links for ANY input, so they certify
+# nothing about what the bridge actually bound into the receipt — a bridge
+# that wrote the wrong pubkey, or none, would keep them green. The tests below
+# build the FIRST REAL LINK on top of a bridge receipt, which is the only way
+# to ask the audit surface a question about this bridge's work.
+
+_TRANSFER_LOG_ORIGIN = "transfer-log.example.com/2026"
+_TRANSFER_LOG_NAME = "attest-transfer-log-1"
+_NEW_RECEIPT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+_TRANSFERRED_AT = "2026-08-01T00:00:00Z"
+
+
+@pytest.fixture(scope="session")
+def transfer_log_keys() -> pq.HybridSigningKeys:
+    """The transfer log is a third party: its own keys, not the issuer's."""
+    return pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
+
+
+def _logged(record: dict[str, Any], log_keys: pq.HybridSigningKeys) -> dict[str, Any]:
+    """One genuine transfer-log inclusion bundle for a single record."""
+    entry = {
+        "type": "transfer-record",
+        "issuer": ISSUER,
+        "record_sha256": transfer.record_hash(record),
+    }
+    leaves = [tlog.encode_entry(entry)]
+    checkpoint = tlog.sign_checkpoint(
+        _TRANSFER_LOG_ORIGIN, len(leaves), tlog.build_tree(leaves), log_keys, _TRANSFER_LOG_NAME
+    )
+    return {
+        "entry": entry,
+        "leaf_index": 0,
+        "tree_size": len(leaves),
+        "inclusion_proof": [node.hex() for node in tlog.inclusion_proof(leaves, 0)],
+        "checkpoint": checkpoint,
+    }
+
+
+def _audit_one_transfer(
+    *,
+    core: IssuingCore,
+    key_manifest: dict[str, Any],
+    hybrid_keys: pq.HybridSigningKeys,
+    log_keys: pq.HybridSigningKeys,
+    purchase_id: str,
+    buyer_kp: keys.SigningKeyPair,
+    authorizing_kp: keys.SigningKeyPair,
+) -> transfer.ChainAuditResult:
+    """Issue through the bridge, then audit one transfer away from it.
+
+    `authorizing_kp` is what the two callers vary: the buyer's own key, which
+    the receipt names as the holder, or a stranger's.
+    """
+    outcome = core.issue_for(_purchase(platform_purchase_id=purchase_id, buyer_pubkey=buyer_kp.pub))
+    payload = outcome.envelope["payload"]
+    new_holder = keys.generate()
+    new_holder_pubkey = keys.b64u(new_holder.pub)
+
+    record = transfer.build_record(
+        payload["receipt_id"],
+        _NEW_RECEIPT_ID,
+        new_holder_pubkey,
+        _TRANSFERRED_AT,
+        transfer.sign_authorization(
+            payload["receipt_id"], new_holder_pubkey, _TRANSFERRED_AT, authorizing_kp
+        ),
+        hybrid_keys,
+        KID,
+    )
+    return transfer.audit_chain(
+        [payload, {"receipt_id": _NEW_RECEIPT_ID, "buyer": {"pubkey": new_holder_pubkey}}],
+        [{"record": record, "evidence": _logged(record, log_keys)}],
+        [
+            revocation.build_record(
+                payload["receipt_id"], "transferred", _TRANSFERRED_AT, hybrid_keys, KID
+            )
+        ],
+        key_manifest,
+        [
+            tlog.LogKey(
+                origin=_TRANSFER_LOG_ORIGIN,
+                name=_TRANSFER_LOG_NAME,
+                ed25519_pub=log_keys.ed.pub,
+                mldsa_pub=log_keys.mldsa.pub,
+            )
+        ],
+        anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
+    )
+
+
+def test_a_bridge_receipt_is_a_working_root_of_title(
+    core: IssuingCore,
+    key_manifest: dict[str, Any],
+    hybrid_keys: pq.HybridSigningKeys,
+    transfer_log_keys: pq.HybridSigningKeys,
+) -> None:
+    """The buyer's own key can move a bridge-issued receipt on.
+
+    This is the claim the bridge makes to a buyer who supplies a pubkey, and
+    until there is a link in the chain nothing checks it: the audit has to
+    accept a transfer authorized by exactly the key the bridge committed to.
+    """
+    buyer_kp = keys.generate()
+
+    audit = _audit_one_transfer(
+        core=core,
+        key_manifest=key_manifest,
+        hybrid_keys=hybrid_keys,
+        log_keys=transfer_log_keys,
+        purchase_id="cs_test_chain_ok",
+        buyer_kp=buyer_kp,
+        authorizing_kp=buyer_kp,
+    )
+
+    assert audit.valid is True, audit.errors
+    assert audit.link_status == ("valid",)
+
+
+def test_a_transfer_the_buyer_never_authorized_does_not_audit(
+    core: IssuingCore,
+    key_manifest: dict[str, Any],
+    hybrid_keys: pq.HybridSigningKeys,
+    transfer_log_keys: pq.HybridSigningKeys,
+) -> None:
+    """The same chain, signed by someone who is not the holder.
+
+    Without this the positive test above proves only that `audit_chain`
+    returns valid — the answer it also gives when it is not looking. Here
+    everything is genuine except the one signature that matters: the record
+    is issuer-signed, logged and revoked exactly as before.
+    """
+    audit = _audit_one_transfer(
+        core=core,
+        key_manifest=key_manifest,
+        hybrid_keys=hybrid_keys,
+        log_keys=transfer_log_keys,
+        purchase_id="cs_test_chain_forged",
+        buyer_kp=keys.generate(),
+        authorizing_kp=keys.generate(),
+    )
+
+    assert audit.valid is False
+    assert audit.link_status == ("invalid",)

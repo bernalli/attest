@@ -9,6 +9,16 @@ byte is ever written to it (`Path.touch(mode=0o600)`), then re-chmods it
 after connecting as a belt-and-braces guard for a file that predates this
 contract (documented in T10).
 
+The journal is WAL, declared at connection time and verified (`_enable_wal`),
+because this process reads on the request thread while the itch poller and
+the delivery sweep write: under the rollback journal an open reader blocks
+every writer. That makes the Ledger THREE files on disk — `.db`, `-wal`,
+`-shm` — and the first two hold committed rows, so all three inherit the
+secrecy contract above and a copy taken while the bridge is running must
+include them (or be taken with the process stopped). The busy timeout is
+declared alongside it, at the same value the driver would have used
+implicitly, so it can be read and changed here rather than inherited.
+
 Timestamps are always CALLER-SUPPLIED RFC3339 strings — this module never
 reads a clock — which keeps tests deterministic and hands retry/backoff
 policy entirely to the caller. RFC3339's lexicographic-equals-chronological
@@ -36,9 +46,54 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from attest_bridge.model import ClaimQueueFull
+from attest_bridge.model import ClaimQueueFull, purchase_id_for_log
 
 MAX_PENDING_CLAIMS = 1000
+
+# Declared rather than inherited. It is the same number CPython's driver uses
+# by default, which is the point: a deployment property nobody can read in the
+# source is one nobody can review or change.
+_BUSY_TIMEOUT_MS = 5000
+
+
+def _enable_wal(conn: sqlite3.Connection, db_path: Path) -> None:
+    """Put this database in WAL, or refuse to use it at all.
+
+    sqlite answers `PRAGMA journal_mode=WAL` with the mode it ENDED UP in
+    rather than with an error, so a filesystem that cannot support WAL leaves
+    the connection quietly on the rollback journal — under which an open
+    reader blocks every writer, which is precisely what this call exists to
+    remove. Read the answer back and fail closed on anything else.
+    """
+    row = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+    mode = None if row is None else str(row[0]).lower()
+    if mode != "wal":
+        raise sqlite3.OperationalError(
+            f"the ledger at {str(db_path)!r} could not be put in WAL journal mode "
+            f"(sqlite reports {mode!r}). It needs a filesystem with working file "
+            "locking: a local disk or a mounted block device, never a network share. "
+            "See bridge/docs/deploy.md."
+        )
+
+
+class ReceiptConflict(Exception):
+    """Base class for a semantically classified receipt uniqueness conflict.
+
+    `record_receipt` classifies by RE-READING, never by parsing the text of a
+    sqlite error, which is not a contract. An `IntegrityError` that is neither
+    of the two subclasses below is not a lost race at all — a NOT NULL
+    violation is the plain case — and is re-raised as itself rather than
+    dressed up as one.
+    """
+
+
+class PurchaseAlreadyRecorded(ReceiptConflict):
+    """The `(platform, purchase_id)` row already exists."""
+
+
+class DownloadTokenAlreadyRecorded(ReceiptConflict):
+    """Another receipt already owns the proposed download token."""
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -154,6 +209,11 @@ class Ledger:
     """
 
     def __init__(self, db_path: Path) -> None:
+        # Kept so that anything needing to coordinate ACROSS processes on this
+        # Ledger — the delivery sweep's file lock — can derive its own path
+        # from the one file every writer already agrees on, instead of being
+        # told a second path that could disagree with this one.
+        self.db_path = db_path
         # Secrecy contract: the file must never exist world/group readable,
         # not even for the instant between creation and a later chmod — set
         # the mode at creation time, then re-assert it once connected.
@@ -162,6 +222,11 @@ class Ledger:
         os.chmod(db_path, 0o600)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        with self._lock:
+            # Before the schema, and before any caller can reach this object:
+            # both are properties of the connection, not of a statement.
+            _enable_wal(self._conn, db_path)
+            self._conn.execute(f"PRAGMA busy_timeout = {int(_BUSY_TIMEOUT_MS)}")
         with self._lock, self._conn:
             self._conn.executescript(_SCHEMA)
 
@@ -205,28 +270,49 @@ class Ledger:
         download_token: str,
         issued_at: str,
     ) -> None:
-        # Deliberately NOT catching sqlite3.IntegrityError here: a duplicate
-        # (platform, purchase_id) must propagate — the caller (core, T5)
-        # checks `get_receipt` first, this PRIMARY KEY is the last line of
-        # defense against a race, not the primary dedup mechanism.
-        with self._lock, self._conn:
-            self._conn.execute(
-                """
-                INSERT INTO receipts
-                    (platform, purchase_id, receipt_id, envelope_json, download_token,
-                     buyer_email, issued_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    platform,
-                    purchase_id,
-                    receipt_id,
-                    json.dumps(envelope),
-                    download_token,
-                    buyer_email,
-                    issued_at,
-                ),
-            )
+        # The (platform, purchase_id) PRIMARY KEY stays the last line of
+        # defense against a race, not the primary dedup mechanism — the caller
+        # (core, T5) checks `get_receipt` first. What changed is what a lost
+        # race produces: a name this module owns, so the caller can catch it,
+        # re-read the winner's row, and answer the purchase with a duplicate
+        # outcome instead of a 500 the platform will retry straight back into
+        # the same race. Only a genuine conflict gets that name — an
+        # `IntegrityError` from any other constraint stays what it is, because
+        # a data defect answered as a race is a defect nobody goes looking for.
+        try:
+            with self._lock, self._conn:
+                self._conn.execute(
+                    """
+                    INSERT INTO receipts
+                        (platform, purchase_id, receipt_id, envelope_json, download_token,
+                         buyer_email, issued_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        platform,
+                        purchase_id,
+                        receipt_id,
+                        json.dumps(envelope),
+                        download_token,
+                        buyer_email,
+                        issued_at,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            # Which constraint fired is settled by re-reading, never by
+            # reading the driver's message. The purchase id is hashed for the
+            # same reason it is hashed in the logs: this text ends up in
+            # operator-visible output.
+            if self.get_receipt(platform, purchase_id) is not None:
+                raise PurchaseAlreadyRecorded(
+                    f"receipt already exists for platform={platform!r} "
+                    f"purchase_id={purchase_id_for_log(purchase_id)}"
+                ) from exc
+            if self.by_download_token(download_token) is not None:
+                raise DownloadTokenAlreadyRecorded(
+                    "another receipt already owns the proposed download token"
+                ) from exc
+            raise
 
     def ping(self) -> None:
         """Raise if this Ledger cannot currently be read.

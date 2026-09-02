@@ -98,15 +98,86 @@ def test_get_receipt_returns_none_when_absent(ledger: Ledger) -> None:
     assert ledger.get_receipt("stripe", "cs_missing") is None
 
 
-def test_double_record_receipt_same_purchase_raises_integrity_error(ledger: Ledger) -> None:
+def test_double_record_receipt_same_purchase_raises_purchase_already_recorded(
+    ledger: Ledger,
+) -> None:
+    """The PRIMARY KEY still refuses, but through this module's own exception.
+
+    It used to raise `sqlite3.IntegrityError` verbatim, which made the driver
+    part of every caller's contract. The underlying error is kept as the
+    cause, so an operator still gets the constraint that fired.
+    """
     ledger.record_receipt(
         "stripe", "cs_dup", "receipt-1", _envelope(), "buyer@example.com", "token-1", NOW
     )
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(ledger_mod.PurchaseAlreadyRecorded) as caught:
         ledger.record_receipt(
             "stripe", "cs_dup", "receipt-2", _envelope(), "buyer@example.com", "token-2", NOW
         )
+
+    assert isinstance(caught.value.__cause__, sqlite3.IntegrityError)
+
+
+def test_a_download_token_collision_raises_its_own_exception(
+    ledger: Ledger,
+) -> None:
+    """Two different constraints, two exception types — deliberately.
+
+    Here the purchase is brand new and nothing about it was recorded, so
+    calling it a duplicate would answer the buyer with a receipt issued to
+    somebody else. `core.issue_for` catches only the duplicate-purchase type,
+    and this one goes past it.
+    """
+    ledger.record_receipt(
+        "stripe", "cs_first", "receipt-1", _envelope(), "buyer@example.com", "shared-token", NOW
+    )
+
+    with pytest.raises(ledger_mod.DownloadTokenAlreadyRecorded):
+        ledger.record_receipt(
+            "stripe",
+            "cs_second",
+            "receipt-2",
+            _envelope(),
+            "other@example.com",
+            "shared-token",
+            NOW,
+        )
+
+    assert ledger.get_receipt("stripe", "cs_second") is None
+
+
+def test_an_integrity_error_that_is_not_a_conflict_is_not_dressed_up_as_one(
+    ledger: Ledger,
+) -> None:
+    """A NOT NULL violation is a data defect, and must not answer as a race.
+
+    Every `IntegrityError` used to leave here as "already recorded", so a
+    caller — and an operator reading the log — was told a rival writer had
+    won a purchase that no writer ever recorded. Classification re-reads:
+    neither the purchase nor the token is there, so nothing about this is a
+    conflict and the driver's own error goes back untouched.
+    """
+    with pytest.raises(sqlite3.IntegrityError) as caught:
+        ledger.record_receipt(
+            "stripe",
+            "cs_defect",
+            "receipt-1",
+            _envelope(),
+            None,  # type: ignore[arg-type]
+            "token-defect",
+            NOW,
+        )
+
+    assert not isinstance(caught.value, ledger_mod.ReceiptConflict)
+    assert "NOT NULL" in str(caught.value)
+    assert ledger.get_receipt("stripe", "cs_defect") is None
+
+
+def test_both_conflict_types_share_one_base_a_caller_can_catch(ledger: Ledger) -> None:
+    """One name for "a uniqueness constraint rejected this", two for which."""
+    assert issubclass(ledger_mod.PurchaseAlreadyRecorded, ledger_mod.ReceiptConflict)
+    assert issubclass(ledger_mod.DownloadTokenAlreadyRecorded, ledger_mod.ReceiptConflict)
 
 
 def test_by_download_token_hit(ledger: Ledger) -> None:
@@ -407,3 +478,138 @@ def test_stored_receipt_claim_dead_letter_are_frozen_dataclasses() -> None:
         claim.status = "confirmed"  # type: ignore[misc]
     with pytest.raises(AttributeError):
         dead_letter.reason = "y"  # type: ignore[misc]
+
+
+# -- concurrent writers on one file (the PK as last line of defense) -----------
+
+
+def test_a_second_ledger_recording_the_same_purchase_raises_receipt_already_recorded(
+    tmp_path: Path,
+) -> None:
+    """Two Ledger objects, one file: the second INSERT must not leak sqlite3.
+
+    `retry-failed` and `itch-import` open the same file as a second process
+    while `serve` runs, so this is the ordinary shape of a lost race, not a
+    hypothetical one. The caller has to be able to catch it by a name that
+    belongs to this module.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+    first, second = Ledger(db_path), Ledger(db_path)
+    first.record_receipt("stripe", "cs_1", "rcpt-first", _envelope(), "a@example.com", "tok-1", NOW)
+
+    with pytest.raises(ledger_mod.PurchaseAlreadyRecorded):
+        second.record_receipt(
+            "stripe", "cs_1", "rcpt-second", _envelope(), "b@example.com", "tok-2", NOW
+        )
+
+
+def test_the_first_writer_of_a_purchase_keeps_the_row(tmp_path: Path) -> None:
+    db_path = tmp_path / "ledger.sqlite3"
+    first, second = Ledger(db_path), Ledger(db_path)
+    first.record_receipt("stripe", "cs_1", "rcpt-first", _envelope(), "a@example.com", "tok-1", NOW)
+
+    with pytest.raises(ledger_mod.PurchaseAlreadyRecorded):
+        second.record_receipt(
+            "stripe", "cs_1", "rcpt-second", _envelope(), "b@example.com", "tok-2", NOW
+        )
+
+    stored = second.get_receipt("stripe", "cs_1")
+    assert stored is not None
+    assert (stored.receipt_id, stored.download_token, stored.buyer_email) == (
+        "rcpt-first",
+        "tok-1",
+        "a@example.com",
+    )
+
+
+def test_ledger_exposes_the_file_every_writer_shares(tmp_path: Path) -> None:
+    """Cross-process coordination needs the path, not a second copy of it.
+
+    The delivery sweep's file lock derives its own path from this one, so a
+    Ledger that did not remember where it lives would force callers to pass a
+    path alongside it — two sources of truth for one file.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+
+    assert Ledger(db_path).db_path == db_path
+
+
+# -- journal mode and busy timeout: declared, not inherited --------------------
+
+
+def _record_one(ledger: Ledger, purchase_id: str = "cs_wal") -> None:
+    ledger.record_receipt(
+        "stripe", purchase_id, "receipt-1", _envelope(), "buyer@example.com", "handle-1", NOW
+    )
+
+
+def test_the_ledger_journal_is_wal_when_another_connection_asks(tmp_path: Path) -> None:
+    """The journal mode is a deployment property, so it is set here, not hoped for.
+
+    Left implicit it was the rollback journal, under which any open reader
+    blocks the writer — and the bridge reads on the request thread while the
+    poller and the sweep write.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+    _record_one(Ledger(db_path))
+
+    other = sqlite3.connect(db_path)
+    try:
+        assert other.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        other.close()
+
+
+def test_the_wal_sidecars_are_as_secret_as_the_database_itself(tmp_path: Path) -> None:
+    """In WAL the Ledger is THREE files, and committed rows live in two of them.
+
+    `-wal` holds rows not yet checkpointed into the database — envelopes,
+    with their `delivery.salt`. The 0600 contract covers the secret, not the
+    filename it happens to sit in.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+    _record_one(Ledger(db_path))
+
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(str(db_path) + suffix)
+        assert sidecar.exists(), f"expected {suffix} beside a WAL Ledger"
+        assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+
+
+def test_the_busy_timeout_is_declared_rather_than_left_to_the_driver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same number as the implicit default — but ours, and visible in the file.
+
+    A default that lives in the driver is a deployment property nobody can
+    read, review or change; asserting the value the module declares is what
+    makes it one.
+    """
+    monkeypatch.setattr(ledger_mod, "_BUSY_TIMEOUT_MS", 1234)
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+
+    # The connection is private on purpose; there is no other way to ask a
+    # sqlite handle what timeout it is carrying.
+    assert ledger._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 1234
+
+
+def test_a_database_that_cannot_use_wal_refuses_to_open(tmp_path: Path) -> None:
+    """Fail closed: never degrade silently to the journal this task removed.
+
+    An in-memory database is a real database that genuinely cannot go WAL, so
+    this exercises the refusal rather than a stub of it. The message has to
+    carry the path and the mode actually obtained: the operator's next move
+    is about the filesystem the Ledger sits on.
+    """
+    db_path = tmp_path / "ledger.sqlite3"
+    conn = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(sqlite3.OperationalError) as caught:
+            ledger_mod._enable_wal(conn, db_path)
+    finally:
+        conn.close()
+
+    message = str(caught.value)
+    assert str(db_path) in message
+    assert "memory" in message

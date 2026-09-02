@@ -402,9 +402,15 @@ attest verify ./imported/receipts/<receipt_id>.attest.json --trust-dir ./importe
 > hand-issuance — the bridge always embeds the salt inline, by design, since
 > it has no separate channel to hand a buyer their salt out-of-band.
 
-> **The Ledger database is a secret.** `ledger_path` (a sqlite3 file) stores
-> every issued envelope verbatim, salt included, and is created 0600. Back it
-> up **encrypted**. It is not part of the trust model — nothing `attest
+> **The Ledger database is a secret.** It stores every issued envelope
+> verbatim, salt included, and is created `0600` — that is why it is a
+> secret, and why the sentence below is about protecting it rather than
+> merely keeping it. While the bridge runs it consists of `ledger_path`
+> plus SQLite's `-wal` and `-shm` sidecars; committed receipts can still
+> live only in `-wal`. Back it up **encrypted**, using SQLite's
+> online backup API or an atomic volume snapshot. Otherwise stop the bridge
+> first and copy the database only after shutdown; never copy the live files
+> sequentially. It is not part of the trust model — nothing `attest
 > verify` depends on it — but losing it loses your replay-dedup memory and
 > buyers' download-token links; a receipt already delivered to a buyer stays
 > valid forever regardless of what happens to this file.
