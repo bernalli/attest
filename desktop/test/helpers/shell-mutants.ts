@@ -101,6 +101,12 @@ const CSP = (scriptHash: string, styleHash: string): string =>
   `style-src 'sha256-${styleHash}'; connect-src 'none'; ` +
   `base-uri 'none'; form-action 'none'`
 
+/** The policy the build computes for a given inline module and stylesheet. Exported so
+ *  the browser bench can assemble documents of its own without a third copy of the
+ *  shape drifting away from this one and from tools/inline.mjs. */
+export const policyFor = (script: string, style: string): string =>
+  CSP(sha256b64(script), sha256b64(style))
+
 /** Plants `what` into `html` and returns the document AND the policy it now declares.
  *  Planting into the stylesheet recomputes the policy on purpose: a mutant whose hash
  *  pin no longer matches is refused before the markup rules ever run, which would make
@@ -556,27 +562,33 @@ const ROWS: readonly Row[] = [
 
 let corpus: readonly Mutant[] | null = null
 
+/** The corpus built against a document the caller already has, building nothing.
+ *  `mutants()` below runs `npm run build` so a unit run can never measure yesterday's
+ *  bytes; a browser run has several workers and that build is a race between them —
+ *  measured 2026-09-02, two of them rebuilt `dist/` under each other and one read the
+ *  artifact in the window where vite had emptied the directory. */
+export function mutantsFrom(art: { html: string; csp: string }): readonly Mutant[] {
+  return ROWS.map((row) => {
+    const stage = row.stage ?? 'artifact'
+    const base = stage === 'artifact' ? art.html : sourceShell()
+    const baseCsp = stage === 'artifact' ? art.csp : ''
+    if (row.raw !== undefined)
+      return { ...row, stage, bytes: row.raw(base), expectedCsp: baseCsp } as Mutant
+    if (row.whole !== undefined)
+      return {
+        ...row,
+        stage,
+        bytes: Buffer.from(row.whole(base), 'utf8'),
+        expectedCsp: baseCsp,
+      } as Mutant
+    if (row.markup === undefined) throw new Error(`row ${row.n} plants nothing`)
+    const grown = plant(base, row.where, row.markup)
+    return { ...row, stage, bytes: Buffer.from(grown.html, 'utf8'), expectedCsp: grown.csp } as Mutant
+  })
+}
+
 export function mutants(): readonly Mutant[] {
-  if (corpus === null) {
-    const art = artifact()
-    corpus = ROWS.map((row) => {
-      const stage = row.stage ?? 'artifact'
-      const base = stage === 'artifact' ? art.html : sourceShell()
-      const baseCsp = stage === 'artifact' ? art.csp : ''
-      if (row.raw !== undefined)
-        return { ...row, stage, bytes: row.raw(base), expectedCsp: baseCsp } as Mutant
-      if (row.whole !== undefined)
-        return {
-          ...row,
-          stage,
-          bytes: Buffer.from(row.whole(base), 'utf8'),
-          expectedCsp: baseCsp,
-        } as Mutant
-      if (row.markup === undefined) throw new Error(`row ${row.n} plants nothing`)
-      const grown = plant(base, row.where, row.markup)
-      return { ...row, stage, bytes: Buffer.from(grown.html, 'utf8'), expectedCsp: grown.csp } as Mutant
-    })
-  }
+  if (corpus === null) corpus = mutantsFrom(artifact())
   return corpus
 }
 
