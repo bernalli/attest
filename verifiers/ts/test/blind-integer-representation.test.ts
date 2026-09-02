@@ -588,15 +588,16 @@ describe('blind grant-view admission is per member and getter-free', () => {
 
   test('PERMISSIVA proxy traps deliver whatever verdict the genuine grant they carry deserves', () => {
     const floor = grantDocument()
-    // Counting the descriptor trap is what pins §18.4's actual guarantee: the
-    // caller's object is read ONCE per member. A wall-clock ceiling only ever
-    // stood in for this, and badly — it reds under CPU contention and stays
-    // green for a boundary that reads the same member twice.
+    // Count both permitted descriptor reads and actual value deliveries: this
+    // must also catch an ordinary property read added after reconstruction.
     const descriptorReads = new Map<string, number>()
+    const valueReads = new Map<string, number>()
     const proxy = new Proxy(
       {},
       {
         get(_target, prop) {
+          const name = String(prop)
+          valueReads.set(name, (valueReads.get(name) ?? 0) + 1)
           if (prop === 'grant') return floor
           if (prop === 'declarations') return [declarationDocument()]
           return undefined
@@ -633,6 +634,8 @@ describe('blind grant-view admission is per member and getter-free', () => {
     expect(isOk(result as never)).toBe(true)
     expect(descriptorReads.get('grant')).toBe(1)
     expect(descriptorReads.get('declarations')).toBe(1)
+    expect(valueReads.get('grant')).toBe(1)
+    expect(valueReads.get('declarations')).toBe(1)
   })
 
   test('PERMISSIVA non-enumerable grant_view declaration is absent data and does not activate', () => {
@@ -766,7 +769,6 @@ describe('blind wall-clock limits for hostile lazy containers', () => {
           grantView: { grant: floor, declarations: lying },
         } as never) as never,
       { signature: 'valid', schema: 'valid', grant: 'not_checked', grant_trust: 'not_checked', ok: true },
-      250,
     ).result
     expect(result.grant).toBe('not_checked')
   })
