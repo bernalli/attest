@@ -27,6 +27,7 @@ Homepage = "https://attest-receipts.org/"
 Repository = "https://github.com/bernalli/attest"
 Documentation = "https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.2.md"
 Issues = "https://github.com/bernalli/attest/issues"
+Funding = "https://github.com/sponsors/bernalli"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov", "hypothesis>=6", "ruff", "mypy", "dilithium-py>=1.4", "pyyaml>=6"]
