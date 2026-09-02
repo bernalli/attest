@@ -3,15 +3,15 @@
 *A whitepaper on durable digital ownership: the seller signs a receipt, you hold the file, anyone
 can verify it offline — even after the store is gone.*
 
-> **Status: draft, second round (September 2026).** This file contains three things: the outline
-> of the finished document (Part A); five of its sections written in full — the thesis, the
-> trilemma, the clock, the two tracks, and what it does not do — so that the register can be judged
-> before the rest is written (Part B); and a short note listing the decisions the author had to take
-> and wants confirmed or overturned (Part C, to be removed before publication). Every factual claim
-> in Part B was checked against the specification, the code and the running demonstrations on the
-> day of writing, and every claim about a law or a regulator's act against the text of that act; the
-> sources are named inline or in the outline. Nothing in this document is a promise the repository
-> cannot keep.
+> **Status: draft, third round (September 2026).** This file contains three things: the outline of
+> the finished document (Part A); seven of its sections written in full — the thesis, what you
+> actually bought, how it works, the trilemma, the clock, the two tracks, and what it does not do —
+> so that the register can be judged before the rest is written (Part B); and a short note listing
+> the decisions the author had to take and wants confirmed or overturned (Part C, to be removed
+> before publication). Every factual claim in Part B was checked against the specification, the code
+> and the running demonstrations on the day of writing, and every claim about a law or a regulator's
+> act against the text of that act; the sources are named inline or in the outline. Nothing in this
+> document is a promise the repository cannot keep.
 
 ---
 
@@ -39,8 +39,8 @@ Conventions that hold for every section:
 | 0 | Front matter | How do I read this, and how long is it? | this outline | 2 paragraphs |
 | 1 | **The thesis** (written, Part B) | What is this, in one sentence — and why should I care? | canonical project sentence; `README.md` opening; `docs/faq.md` "What is attest?"; the named limit from `docs/faq.md` "The store that signed my receipts shut down" | 9 paragraphs |
 | 2 | Someone paid, and has nothing | Has this actually happened to people like me? | four verified cases, one per market — Amazon/*1984* (2009), Microsoft ebook store (2019), Sony/StudioCanal on PlayStation (1 September 2026, seller's own notice), Ubisoft/*The Crew* (2023–24); `README.md` opening; the verified case notes of 1 September | 10 paragraphs |
-| 3 | What you actually bought | What exactly is the thing I am missing? | `README.md` "What attest is"; v0.1 §2 "What a receipt is" | 7 paragraphs |
-| 4 | How it works | What does the seller give me, and how does a stranger check it? | `README.md` "How it works, for humans"; `docs/faq.md` "Who validates it?", "Is this centralized?"; v0.1 §7 (keys), §8 (buyer binding), §12 (revocation records), §14 (the two files); `site/index.html` CSP and `site/e2e/site.spec.ts` for the browser verifier. Revocation is described as a mechanism the verifier evaluates, never as something a seller can do today: the command-line tool on `main` has no `revoke` verb (its verbs are `keygen`, `issue`, `verify`, `export`, `import`, `inspect`, `disclose`, `check-artifact`, plus `transfer` and `grant` groups), and the bridge has no refund handling | 9 paragraphs + In detail |
+| 3 | **What you actually bought** (written, Part B) | What exactly is the thing I am missing? | `README.md` "What attest is"; v0.1 §2 "What a receipt is" (quoted), §4–§6 (the envelope, the fields, immutability and the irrevocability conditional), §8.1 (the commitment), §14 (the two files) | 7 paragraphs |
+| 4 | **How it works** (written, Part B) | What does the seller give me, and how does a stranger check it? | `README.md` "How it works, for humans"; `docs/faq.md` "What does 'verify offline' actually check, and what can't it tell me?", "Who can revoke my receipt, and what would I see?", "Is this centralized?"; v0.1 §7 (keys), §8 (buyer binding), §11 (the algorithm and its vocabulary), §12 (revocation records), §13–§14 (disclose and the two files); `site/index.html` CSP and `site/e2e/site.spec.ts` for the browser verifier, `desktop/README.md` for the downloadable one. Revocation is described as a mechanism the verifier evaluates, never as something a seller can do today: the command-line tool on `main` has no `revoke` verb at any level (its top-level verbs, read from the tool's own definition, are `authority`, `check-artifact`, `disclose`, `export`, `grant`, `import`, `inspect`, `issue`, `keygen`, `log`, `manifest`, `transfer`, `verify`), the bridge has no refund handling, and the web and downloadable verifiers consult no revocation feed and pin no block headers. Every input `verify` accepts is listed with its producer, or the absence of one (`src/attest/cli.py`, `src/attest/verify.py`, `site/src/trusted-log.ts`) | 13 paragraphs + In detail |
 | 5 | **The trilemma** (written, Part B) | If a file can be copied perfectly, how can it be *mine*? | the internal analysis of duplication and the sharing/exclusivity/survival contradiction (research notes of 24 August); v0.1 §8 (the two bindings); v0.2 §17 (issuer-mediated transfer, log-required honouring, earliest-logged-wins, holder binding); `docs/faq.md` "Is attest a DRM system…"; `src/attest/cli.py` on `main` for which side of each mechanism has a shipped command (transfer and pledge redemption do; the ordinary binding challenge does not) | 10 paragraphs + In detail |
 | 6 | **The clock** (written, Part B) | Why is Bitcoin in here, if this is not a blockchain thing? | v0.2 §11.1–§11.3 (anchoring), §19 (the anchored-cutoff rescue); `src/attest/cli.py` (no anchoring flag on `issue`), `src/attest/verify.py` and `verifiers/ts/src/verify.ts` (anchoring off by default), `site/src/trusted-log.ts` (empty header set); `docs/faq.md` "Why not blockchain / NFT?" | 13 paragraphs + In detail |
 | 7 | **Two tracks, one standard** (written, Part B) | Who would ever issue one of these? | `README.md` "What attest is" (both tracks); `docs/faq.md` "Nobody forces a seller…"; `bridge/src/attest_bridge/` (the three checkout adapters; refunded orders skipped); Directive 2011/83/EU of 25 October 2011, Article 8(7) and Article 2(10), read on the published text; the European Commission's reply of 16 June 2026 to the *Stop Destroying Videogames* citizens' initiative, read on press release IP/26/1369; California AB 2426 (Chapter 513, Statutes of 2024; in force 1 January 2025), Business and Professions Code §17500.6 read on the codified text | 12 paragraphs + In detail |
@@ -53,10 +53,11 @@ Conventions that hold for every section:
 | 14 | What is needed now, and colophon | What should I do, and on what terms is all this offered? | `README.md` seller and contact paragraphs; `LICENSE`, `LICENSE-docs`; `docs/faq.md` on the patent boundary | 5 paragraphs |
 | 15 | Notes | Where does each external fact come from? | numbered sources for sections 2, 7, 8, 9 only; internal facts link to the live surface instead | as needed |
 
-Order of writing after this round: 2, 3 and 4 next (the opening case in section 2 is gated on the
-decision recorded in Part C, point 2); then 9–14; the front matter last, when the body is stable.
-Sections 5 and 7 were written in the second round, because they were the two remaining places
-where the document could lose a hostile reader.
+Order of writing after this round: 2 next (the opening case is gated on the decision recorded in
+Part C, point 2); then 9–14; the front matter last, when the body is stable. Sections 5 and 7 were
+written in the second round, because they were the two remaining places where the document could
+lose a hostile reader; sections 3 and 4 in the third, because they are where every term the later
+sections rely on is first explained.
 
 ---
 
@@ -121,6 +122,322 @@ mechanism is, what it is not, what it costs, where it is honest about being unfi
 you can do — as a buyer, a seller, a regulator or an engineer — if you decide it is worth having.
 The section on what it does not do comes *before* the section on why it is worth having, on
 purpose.
+
+---
+
+### 3. What you actually bought
+
+When you buy a book in a shop you leave with two things, and rarely notice the second. The first is
+the book. The second is the evidence of the deal: a till receipt, a line on a card statement, the
+shop's name on the bag, a friend who watched you pay. Nobody thinks of these as part of the
+purchase, because the book is its own proof — it is on your shelf, and taking it would mean breaking
+in. A digital purchase separates those two things and then keeps both of them. The file, if you are
+given one at all, sits behind an account. The evidence that you bought it is a row in the seller's
+database, and the confirmation email is a copy of that row, formatted for you, that only the seller
+can vouch for. On the day the seller is gone, or disagrees with you, the row is gone and the email
+is a document anyone could have written.
+
+What attest gives you is the second thing, made durable and put in your hands. The specification
+defines it in one sentence: a receipt "is evidence of a license grant and its terms, signed by the
+issuer identified in the receipt". In plain words, it is a small file in which the seller states, in
+a form that cannot be altered without the alteration showing, that on this date it granted this
+licence, for this work, on these terms, to the person this receipt is bound to. *Signed* means
+exactly that: the seller has applied to the file a mark that only the seller can make and that
+anyone can check, so that changing a single character inside the file breaks the mark. How the mark
+is made and how a stranger checks it is the next section. This section is about what the file says.
+
+Everything inside a receipt is there to answer, years later, a question the seller may no longer be
+around to answer. *Who granted it?* The seller, named by its internet domain — the identity that
+every key and every check hangs on — and by a display name that carries no weight of its own. *What
+was granted?* The title and publisher of the work, the seller's own identifiers for it and, for a
+download, a snapshot of what was delivered: each file's name, size and fingerprint, a fingerprint
+being a short string computed from a file's contents that changes if a single byte does, so that the
+copy on your disk can be matched against the copy you were sold. *On what terms?* Whether the
+licence is perpetual or a subscription; whether the seller kept the right to withdraw it, and if so
+under which of three fixed classes — never, within a refund window of a stated number of days, or
+under a policy the receipt points at; whether it may be passed on; whether the file was sold free of
+digital locks; and the licence text itself, which travels beside the receipt and is fixed inside it
+by its fingerprint, so that the terms you agreed to cannot be rewritten afterwards. *What happens if
+the seller stops?* Whether you were promised the right to download again, and what the seller
+committed to at the end of the product's life. *When?* The date of issue, written by the seller. And
+*to whom?* — which is the one field that is deliberately not readable, and has its own paragraph
+below.
+
+Now the sentence that draws the boundary around all of this, quoted because the specification chose
+its words with care: "A receipt is not a claim of 'ownership'; it does not promise access 'forever'
+— it promises that the *evidence* verifies indefinitely and that the referenced *terms* remain
+producible." Read that against the title on the cover of this document. *Own what you buy* is the
+aim; the receipt is the instrument, and the instrument is narrower than the aim. It records what the
+seller granted — a licence, with its terms — and it does not turn a licence into anything else. A
+seller cannot sign away rights it never had, and a receipt cannot confer them. What the receipt puts
+in your possession is the evidence: a thing you hold, that says what the deal was, and keeps saying
+it after everyone else has stopped. "Durable, portable, user-held", the three words this document
+uses for attest throughout, describe that evidence, not the content it refers to.
+
+Two properties of the file follow from its job. It is immutable: once signed, nothing inside a
+receipt ever changes. Everything about a purchase that *can* change afterwards — whether it was
+withdrawn, whether the delivered files were updated, whether the seller's keys are still in use —
+lives in separate documents that the seller signs and publishes on its own, and that a verifier may
+or may not have been shown. That split is what lets a receipt be checked in twenty years without
+asking anyone: the receipt is complete in itself. It is also the receipt's blind spot: on its own,
+it cannot tell you what happened after it was signed. And the receipt is honest about its own reach.
+One for a file sold under a digital lock is allowed, because a receipt is still better than nothing,
+but a verifier is required to warn on it and forbidden to present it as something you could use
+anywhere else. A receipt never removes a lock, and the specification never claims it does. A receipt
+may claim the strongest class, "never withdrawn", only if the file was sold without locks, with a
+right to download again, and lists what was delivered — and the specification says of such a receipt
+that it is evidence, not a determination that the seller complied with any law; section 7 is where
+the law comes in.
+
+The field that names the buyer names nobody. Instead of your email address or account name, the
+receipt carries a *commitment*: a fingerprint computed over that identifier together with a secret
+the seller generates for that one receipt and hands to you separately. From the fingerprint alone
+nobody can recover who you are — the computation is deliberately slow, so that guessing email
+addresses against it is not practical — and yet you, holding the secret, can show anyone that the
+receipt was issued to you. That is why the receipt can be shown to a stranger, posted on a forum or
+handed to an archive without exposing you: the shareable file says *someone* bought this; the
+secret, kept in a second file, is what says it was you. A receipt may also carry a public key of
+yours, for a stronger proof; today, wherever a purchase happens without an app on the buyer's side,
+that field is empty by design. What proving it is yours costs, and what it does not prove, is in the
+next section.
+
+So what you actually bought, on any store that signs, is two things again, both in your hands. Where
+files are sold without locks: the file and the receipt, content plus proof. Where the platform keeps
+the file, the receipt would be the same document, and what differs is whether you hold the thing it
+refers to — the receipt does not deliver it and is not a backup of it. The difference from today is
+not that the file is more yours. It is that the evidence exists, in a form that outlives the counter
+it was issued at, and that anyone can read.
+
+---
+
+### 4. How it works
+
+#### What the seller has
+
+A seller who wants to sign receipts needs one thing it probably does not have yet: a **key pair**.
+It is two halves of a single mathematical object. The private half stays with the seller and is the
+only thing in the world that can produce the seller's signature on a file; the public half can be
+given to anyone and lets them check such a signature without being able to make one. A signature is
+a short string computed from the private half and the exact bytes of a file, and it checks out only
+against that public half and those exact bytes: change the file, or use a different key, and the
+check fails. The seller publishes its public half on its own website, at a fixed address every
+verifier knows to look at — `/.well-known/attest.json` under the seller's domain — inside a **key
+manifest**: a signed list of the seller's keys, each with a name, a period of validity and a status.
+The manifest is signed too, so nothing about a key's life can be altered without breaking that
+signature. And the seller's identity, throughout, is its domain: every key's name begins with it,
+and a key published for one domain can never validate a receipt that claims to come from another.
+There is no registry to be listed in and nobody to ask permission from; controlling the domain is
+the whole credential — a strength on the day the seller signs, and a limit on the day the domain
+changes hands, which section 8 states in full.
+
+Keys are meant to change. A seller retires a key and adds a new one by publishing a new manifest,
+numbered one higher than the last, and a verifier that trusted the old manifest accepts the new one
+only if it was signed by a key that was in use in the old one — an unbroken chain, so that a
+stranger cannot slip in a manifest of their own. A retired key keeps every receipt it ever signed
+valid. A key declared **compromised** — stolen — does the opposite: every signature it ever made is
+rejected from then on, and the marking, once seen by a verifier, cannot be unseen or reversed.
+Declaring one is a shipped command (`attest manifest rotate --compromise-kid`), and it is the
+seller's one lever that reaches backwards; sections 6 and 8 say how far it reaches, and why the
+rescue that would bound it has evidence no shipped tool can package.
+
+#### What you get
+
+At checkout, the seller's tools sign a receipt for the purchase and deliver it to you. Both shipped
+issuing tools — the command-line `attest issue`, and the bridge that runs beside a Stripe, itch.io
+or Shopify checkout and signs on each paid order — can write a copy of the seller's key manifest
+into the receipt's unsigned delivery block, so that a single receipt file carries enough to be
+verified on its own. Beyond that you get a **bundle**: a `.attest` file, an ordinary zip archive,
+containing your receipts, the seller's key and artifact manifests, the licence texts every receipt
+refers to — each checked against the fingerprint the receipt fixes it with, at the moment of export,
+because a receipt whose terms can no longer be produced is a signature without a deal — and a
+README, generated in plain language, explaining what the bundle is, how to verify it even if the
+store no longer exists, and which file must not be shared. That file is yours to copy, back up and
+hand around.
+
+Beside it is a second file, `<name>.private.attest`, and the name is the warning. It carries the
+secrets that bind each receipt to you — the salt for every receipt, and any buyer keys — and nothing
+else; the shareable bundle has those secrets stripped from every receipt inside it. Share the first
+file with anyone. Keep the second with your own things: a conforming tool must warn you every time
+it reads it, and the shipped one does. To show one purchase to one party, `attest disclose` writes a
+single receipt with its own salt and manifests — never your whole library, because a library's
+secrets, disclosed together, prove every purchase in it at once.
+
+#### What a stranger checks
+
+Now the other side of the counter: a marketplace honouring old purchases, an archive, a court, your
+own future self. A **verifier** takes the receipt bytes and the seller's key material and answers
+five questions, separately and in a fixed order — never one yes-or-no, because the five are
+different kinds of fact and collapsing them is how a green tick lies. *Is the signature genuine?*
+Did the seller's key, and no other, sign exactly these bytes. *Is the receipt well-formed?* Does it
+carry every field the standard requires, in the form it requires. *Has it been withdrawn?* As far as
+the verifier has been shown: shown nothing, it answers "unknown", and unknown does not fail the
+receipt. *Has anyone proved it is theirs?* Only if someone tried; otherwise "not checked". *Where
+did the keys come from?* The question that decides how much the first answer is worth. From those
+the verifier states one summary word, `ok`, which means: signature genuine, receipt well-formed,
+nothing shown says it was withdrawn or passed on, and no error. Binding and key provenance are
+reported beside it and never folded into it. The honest reading of a green result, in the project's
+own words elsewhere, is "the signature is genuine and nothing I was shown says otherwise" — which is
+not the sentence "this receipt is valid today".
+
+Offline is not a mode you switch on; it is the only mode there is. Neither implementation contains
+any code for talking to a network: the verification libraries in both languages and the command-line
+tool cannot fetch anything. The verifier on the project's website is a page that runs entirely
+inside your browser. Its content-security policy — the instruction a page gives the browser about
+what it may connect to — forbids every host but the one the page came from, so the receipt you drop
+on it never leaves the tab, and a test in the project's suite fails if a single request goes
+anywhere else. Load the page, cut the network, verify. The same verifier ships as a single
+downloadable file that opens in a browser from your disk, with the same policy and the same test.
+Whichever you use, nothing about your purchase is sent to anyone, including the people who wrote
+this.
+
+#### Nobody in the middle
+
+Who validates a receipt, then? Nobody in particular, and that is the design rather than a gap in it.
+There is no attest authority, no registry that has to exist, no phone-home. A verifier needs three
+things and no server: the receipt bytes, the seller's published key material and, optionally, a feed
+of the seller's withdrawal records. The seller publishes its own keys; the tools are free; the
+standard is open. The one soft centre is curation. A verifier that wants stronger evidence than the
+file in front of it has to have chosen, in advance, which public log keys, which observers and which
+block headers it trusts, and somebody has to curate those. The browser verifier ships with one
+pinned log key, no pinned block headers and no observer policy, which is why the stronger verdicts
+described in section 6 are out of its reach.
+
+That brings the limit that sits beside this whole section, and it is the one to carry away. The
+standard reserves its strongest trust level, "verified", for key material fetched over an encrypted
+connection from the seller's own domain — proof that whoever controls the domain published these
+keys. No tool this project ships performs that fetch: not the command-line tool, not the browser
+page, not the downloadable file. Every verification anyone can run today reports the other level,
+**trust on first use**: the keys came from inside the file you were handed, or from a manifest you
+supplied yourself. The mathematics is exactly as sound either way. What is absent is anyone
+confirming who published those keys — so if a stranger sends you a bundle from a shop you have never
+heard of, a green result is evidence that the file is consistent with itself, not evidence that the
+shop is real. The page says as much beside every result, and section 8 returns to it.
+
+#### Proving it is yours
+
+A copy of the shareable file verifies exactly as the original does, and it is meant to. What a copy
+cannot do is answer the question *is this yours?*, and the standard defines two ways to answer it.
+The everyday way uses the secret from the private file: you disclose your identifier and that
+receipt's salt, the verifier recomputes the commitment and compares it with the one sealed in the
+receipt, and the answer is "proven" or "not proven". It works with the shipped tools — the
+command-line verifier takes it as options, the browser page has a panel for it, and the project's
+own sample demonstrates it. It is also, in the standard's words, "a replayable bearer proof":
+whoever you show it to can show it to someone else and be believed, and it hands over your
+identifier. Per-receipt salts keep the damage to one receipt, and a verifier is required to treat
+the disclosed identifier as personal data not to be kept. The strong way needs a key of yours signed
+into the receipt at the time of sale: a verifier invents a fresh challenge, you sign it with the
+private half of your key, and the signed answer proves you hold that key without revealing anything
+and without being reusable, because the next challenge will be different. Both implementations know
+how to check such an answer, and the command-line verifier even has inputs for the challenge and the
+response. No shipped tool produces the answer: the buyer's side of that exchange exists only as a
+library call, and the key it needs is empty by default on every receipt issued without an app on the
+buyer's side — which today is every receipt. So the proof a buyer can actually perform with what
+ships is the disclosure, and the stronger one is specified, checked and not yet in anyone's hands.
+Nothing obliges a verifier to ask for either; one that never asks sees a copy and an original as the
+same file.
+
+#### Withdrawing a receipt
+
+A receipt can be withdrawn only within the class the seller sealed into it at the moment of sale,
+and the instrument is a **revocation record**: a separate, small, signed document naming the
+receipt, saying "revoked" and carrying its own signed time. A verifier honours such a record only if
+it was signed by a key currently in use — a record from a retired or a stolen key is ignored, with a
+warning, never obeyed — and then applies the class. "Never" means the record is refused and the
+receipt stays good, however genuine the signature: the verifier enforces the seller's promise
+against the seller. "Refund window" means the record counts only if its own signed time falls within
+the stated number of days after issue; the verifier never consults its own clock, which the seller
+or the buyer could set to anything. "Policy" means a correctly signed record is honoured as it
+stands, because the verifier cannot read the terms it refers to. Shown no records, a verifier says
+"unknown"; shown records that name other receipts, it reports the date of the freshest one it could
+authenticate, so that you know how current its picture is. There is no appeal inside the protocol
+and no reason is ever recorded; and a withdrawal does not reach your disk, a point section 9 comes
+back to.
+
+That is the mechanism as the verifier evaluates it, and it is complete in both implementations. It
+is not something a seller can do today, and this document says so in the same breath. The
+command-line tool on the project's main branch has no command that produces a revocation record. Its
+top-level verbs are `authority`, `check-artifact`, `disclose`, `export`, `grant`, `import`,
+`inspect`, `issue`, `keygen`, `log`, `manifest`, `transfer` and `verify` — read off the tool's own
+definition rather than off a list of what one would expect to find — and the only place it writes a
+record of this shape is inside a transfer, where the record says "transferred". The bridge skips a
+refunded order and issues nothing for it. On the verifier's side the picture is narrower still. The
+browser page and the downloadable file consult no revocation feed at all, so there the answer is
+always "unknown". And even handed a record, a verifier configured as those two are — one public log
+key pinned, no block headers pinned — could not honour a refund-window withdrawal, because for a
+verifier that evaluates log evidence the standard also requires proof that the record was publicly
+logged and timestamped inside the window, and with no headers pinned no timestamp can be
+established. Read every sentence about revocation in this document, then, as a rule the verifier
+enforces, exercised today by nobody.
+
+One more producer is missing, and it sits under the two above. The standard lets a receipt's
+existence be recorded in a public, append-only log, so that it can later be dated by the clock
+section 6 describes; it is what the rescue against a stolen key, and the logged refund window just
+mentioned, both start from. The shipped log commands are the log operator's — create a log, append
+an entry supplied as a file, sign a checkpoint, emit a proof — and none of them computes the entry a
+receipt would need; the only code that does is the generator of the project's own test corpus. No
+receipt issued with the shipped tools can be entered in a log today, so nothing built on logging
+protects any receipt today. The gap is in tooling, it is known, and it is listed among the open
+problems rather than left for a reader to discover.
+
+What can and cannot be done today, in one place. A buyer can receive a receipt, keep it, verify it
+offline at trust on first use, prove it theirs by disclosure, and share one receipt safely. A seller
+can generate keys, publish and rotate a manifest, declare a key stolen, issue receipts by hand or
+from a checkout, export bundles, counter-sign a transfer, and sign a preservation pledge. Neither
+can, with what ships: withdraw a receipt, enter one in a log, package a compromise declaration so
+that a verifier can bound it, or answer a binding challenge. The verifier evaluates all four. The
+rest of this document keeps the two lists apart.
+
+> **In detail: the algorithm, the vocabulary, the two files, and each input's producer.** A
+> conforming verifier runs v0.1 §11 in order and stops at the first rejection: (0) parse the bytes
+> once, under the restricted canonical JSON profile, and use that one object everywhere; (1)
+> envelope well-formedness — a supported `attest_version`, exactly one entry in `signatures`, `alg`
+> equal to `"Ed25519"`; (2) issuer binding — the signing key is resolved *only* from the trust
+> store's manifest for `payload.issuer.id`, and both the key's domain prefix and the manifest's own
+> `issuer` must equal it; (3) key checks — the key is present, its status is not `compromised`
+> (unconditional for a verifier that cannot evaluate log evidence; the v0.2 §19 cutoff applies only
+> to one that can), `issued_at` lies inside the key's validity window, and a `retired` key continues
+> with a warning; (4) the Ed25519 signature over the canonical payload; (5) the JSON Schema; (6)
+> revocation, only if a view was supplied; (7) binding, only if a disclosure was supplied. The
+> result is five components with fixed literals (§11.1): `signature` valid/invalid; `schema`
+> valid/invalid/not_checked; `revocation` unknown, `not_revoked_as_of:<T>`, revoked,
+> invalid_revocation_ignored, and, under v0.2 §17.3, transferred; `binding`
+> proven/not_proven/not_checked; `trust` verified/unauthenticated_tofu/unverified_rotation. `ok` is
+> signature valid *and* schema valid *and* revocation neither revoked nor transferred *and* no
+> errors; `trust` is resolved as soon as the issuer can be read and is never reset by a later
+> failure, and it is `verified` only when the trust store's provenance for that issuer is `"tls"`. A
+> key manifest (§7.1) carries `issuer`, a monotonically increasing `manifest_version`, `issued_at`,
+> the `keys[]` entries — `kid` of the form `<domain>/keys/<label>#<name>`, `pub`, `valid_from`,
+> `valid_to`, `status` in active/retired/compromised — and a `manifest_signature` over the rest;
+> continuity (§7.3) requires manifest N+1 to be signed by a key active in N, and `compromised` is
+> absorbing. The `.attest` bundle (§14.1) holds `receipts/*.attest.json` with `delivery.salt`
+> stripped, `manifests/<issuer>.json`, `legal/<sha256>.txt` verified against each receipt's hash
+> bindings at export, an optional `proofs/` member (v0.2 §14), and `README.html`; the
+> `.private.attest` sibling (§14.2) holds `salts.json` and, if used, `keys/`. A receipt's `delivery`
+> member (§4.2) is unsigned, may carry the salt and a manifest snapshot, and cannot forge or
+> invalidate anything. Now the completeness check this document applies to every defence: for each
+> input the shipped `attest verify` accepts, who produces it. `--trust-dir`: manifests from
+> `manifest init`/`rotate` or an imported bundle — shipped, and the tool records their provenance as
+> `bundle` unconditionally, so `verified` is unreachable from it. `--revocations`: a JSON array of
+> records — no shipped producer; the only call to `revocation.build_record` in the tool sits in
+> `transfer record --revocation-out` and emits `status: "transferred"`. `--disclose-identifier`,
+> `--disclose-type`, `--disclose-salt`: the salt comes from `issue --salt-out` or the exported
+> `salts.json` — shipped. `--disclose-challenge-nonce`, `--disclose-challenge-sig`: consumed, and
+> the buyer-side signer (`commitment.sign_challenge`) has no caller in the tool — no producer.
+> `--transparency`: `log prove` emits evidence for an entry already in a log, but the `receipt`
+> entry itself (`tlog.receipt_core_hash`) is computed nowhere in the tool or the bridge; `log
+> append` takes the entry as a file the operator wrote — no producer for receipts. `--log-keys`,
+> `--anchor-policy`, `--crqc-horizon`, `--witness-policy`: verifier configuration the caller
+> supplies; no pinned block headers ship with anything. `--grant-view`: `grant issue`, `grant
+> declare` — shipped. `--authority-view`: `authority issue` — shipped. Three of `verify()`'s inputs
+> have no command-line flag at all: `transfer_view` (the record exists — `transfer record` writes it
+> — but the packaged verifier cannot be handed it), `compromise_view` (no flag, and no producer
+> anywhere) and `revocation_evidence` (no flag). The browser verifier passes `null` as its
+> revocation view, one pinned log key, and an anchor policy whose set of pinned headers is empty;
+> its page-level policy is `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'
+> data:; connect-src 'self'; base-uri 'none'; form-action 'none'`, and its end-to-end suite asserts
+> that verifying the sample produces no request to any host but its own, that the sample reports
+> `unauthenticated_tofu`, that salt disclosure reaches `proven`, and that a tampered receipt is
+> refused.
 
 ---
 
@@ -885,3 +1202,39 @@ scelto.*
     standing»** vengono dall'essay del 1° settembre (non pubblicato): la sezione 5 le riusa, la 7
     le richiama. Se l'essay va pubblicato a sua volta, i due testi si citeranno a vicenda; se
     muore, il whitepaper è la sede. Decisione di collocazione, non di stesura.
+
+*Voci aggiunte nel terzo giro (sezioni 3 e 4):*
+
+23. **La sezione 1 e il sottotitolo portano ancora «ownership» come descrizione di attest, e
+    collidono con C-132.** La sezione 1 apre con «layer of ownership» e il sottotitolo dice «durable
+    digital ownership»; la spec dice testualmente che una ricevuta «is not a claim of "ownership"»,
+    e la resa fedele della tesi ratificata è «possession». Non li ho corretti perché sono fuori dal
+    perimetro di questo giro (sezioni 3 e 4 soltanto): la sezione 3 cita la frase della spec per
+    intero e usa «possession»/«evidence»; finché la 1 resta com'è, il documento si contraddice a
+    distanza di due pagine. La sezione 5 usa «ownership» in senso argomentativo («what ownership
+    gives you is standing»), che è un'altra cosa e non l'ho toccata. **Da correggere nello stesso
+    atto in cui si ratifica la resa inglese.**
+24. **L'outline citava una voce della FAQ che su `main` non esiste** («Who validates it?»). Le voci
+    realmente usate per la sezione 4 sono «What does "verify offline" actually check, and what can't
+    it tell me?», «Who can revoke my receipt, and what would I see?» e «Is this centralized?»; la
+    riga 4 dell'outline è allineata.
+25. **Lunghezza della sezione 4: 13 paragrafi contro i 9 previsti.** Il di più è tutto il criterio
+    di completezza (C-129): ogni difesa descritta porta accanto il suo produttore, o la sua assenza
+    — revoca, log, cutoff, challenge di binding — e la sottosezione «Withdrawing a receipt» da sola
+    ne assorbe tre. Tagliare significa scegliere *quale* produttore mancante tacere. **Da confermare
+    o tagliare.**
+26. **La sezione 4 è la prima superficie che dice, in questi termini, che nessuna ricevuta emessa
+    con gli strumenti spediti è loggabile (C-130).** README e FAQ dicono «no shipped tool logs a
+    receipt yet», che è coerente; la sezione aggiunge che `log append` esiste ma prende la entry da
+    un file scritto dall'operatore, e che l'unico codice che calcola la entry di una ricevuta è il
+    generatore del corpus. Misurato oggi.
+27. **La sezione 3 non nomina la legge per la condizione di irrevocabilità (§6.1).** La spec
+    appoggia quella ricevuta a esenzioni come AB 2426; la sezione 3 dice solo che la spec la chiama
+    «evidence, not a compliance determination» e rimanda alla 7, dove AB 2426 è citata con capitolo,
+    data e articolo (C-125). Ripeterla in 3 avrebbe voluto la citazione intera due volte.
+28. **Un fatto di contorno su C-131, verificato scrivendo**: la pagina web e l'app scaricabile
+    passano `null` come vista di revoca, quindi lì la risposta è sempre `unknown` prima ancora che
+    il vincolo dei pin vuoti entri in gioco. La sezione 4 dice entrambe le cose in quest'ordine —
+    «non consultano alcun feed» e poi «e anche con un record in mano, configurate così, non
+    potrebbero onorare una finestra di rimborso» — perché la seconda vale per chiunque copi quella
+    configurazione, non solo per le due superfici.
