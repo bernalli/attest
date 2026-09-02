@@ -56,9 +56,15 @@ jobs:
           cache: npm
           cache-dependency-path: |
             verifiers/ts/package-lock.json
+            site/package-lock.json
             desktop/package-lock.json
       - run: npm ci --prefix verifiers/ts
       - run: npm run build --prefix verifiers/ts
+      # desktop's tsconfig includes ../site/src, so the typecheck reads the site's
+      # imports and needs the site's modules on disk. Without this the job is green on
+      # a developer machine that has them from other work and red here, which is the
+      # wrong way round: CI is the one that should notice first.
+      - run: npm ci --prefix site
       - run: npm ci --prefix desktop
       - run: npm run typecheck --prefix desktop
       - run: npm test --prefix desktop
