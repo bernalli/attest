@@ -169,6 +169,11 @@ describe('the module is what it claims to be', () => {
  * there: for every construct in the corpus the named rule must refuse it, and removing
  * that rule must let it through. The second half is the one that catches a test which
  * passes for a reason other than the one it claims.
+ *
+ * The second half reaches ten rules of eleven. R-INPUT is returned from the catch around
+ * `decodeShell`, before `validateShell` consults `rules`, so removing it cannot change
+ * any verdict — the rows below filter it out, and the two tests at lines 112-124 are
+ * what actually prove it fires.
  */
 describe('every rule is load-bearing, and every mutant names the rule that refuses it', () => {
   const implemented = new Set<RuleId>(RULE_IDS)
@@ -208,11 +213,24 @@ describe('every rule is load-bearing, and every mutant names the rule that refus
     for (const id of RULE_IDS) expect(named, `${id} has no mutant`).toContain(id)
   })
 
-  test('every rule has a construct that only IT refuses', () => {
+  test('every rule but R-INPUT has a construct that only IT refuses', () => {
     // The stronger form of the same idea. A rule named by rows that other rules also
     // catch is a rule nobody can watch fail on its own - and a rule nobody can watch
     // fail is one that could already have stopped working.
-    for (const id of RULE_IDS) {
+    //
+    // R-INPUT is excluded, and naming it here is the point rather than an omission. Its
+    // rows carry `sole: true`, but that flag is a DECLARATION on them and not a
+    // measurement: `validateShell` returns the R-INPUT refusal from the catch around
+    // `decodeShell`, before it ever consults `rules`, so the removal test above skips
+    // those rows and nothing here would notice if the flag were wrong. Counting R-INPUT
+    // as satisfied on the strength of it is the assertion telling itself what it wants
+    // to hear. What proves R-INPUT fires is the pair of tests at lines 112-124: bytes no
+    // tokenizer ever sees, asserted to yield exactly ['R-INPUT'].
+    const measured = RULE_IDS.filter((id) => id !== 'R-INPUT')
+    expect(measured, 'R-INPUT has stopped being the only unmeasurable rule').toHaveLength(
+      RULE_IDS.length - 1,
+    )
+    for (const id of measured) {
       const alone = mutants().filter((m) => m.sole && m.rules.length === 1 && m.rules[0] === id)
       expect(alone.length, `${id} is never the only rule refusing anything`).toBeGreaterThan(0)
     }

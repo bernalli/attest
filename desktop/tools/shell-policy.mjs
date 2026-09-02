@@ -587,8 +587,14 @@ export const RULES = [
 
 /**
  * Every refusal the document earns, or an empty array. `rules` is a parameter so a test
- * can remove one rule and watch a mutant go from refused to accepted — the only proof
- * that a rule is load-bearing. Nothing but the tests ever passes it.
+ * can remove one rule and watch a mutant go from refused to accepted, which is how TEN
+ * of the eleven rules are shown to be load-bearing.
+ *
+ * R-INPUT is the eleventh and the removal test cannot reach it: the refusal below comes
+ * out of the catch around `decodeShell`, before `rules` is consulted at all, so removing
+ * the rule from the list changes nothing and a row that removed it would pass for the
+ * wrong reason. What R-INPUT does is proved directly instead, on bytes no tokenizer ever
+ * sees — shell-policy.test.ts:112-124. Nothing but the tests ever passes `rules`.
  */
 export function validateShell(bytes, options, rules = RULES) {
   let html

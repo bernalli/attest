@@ -10,8 +10,11 @@ import { URL as NodeURL, fileURLToPath } from 'node:url'
  * the author's blind spots.
  *
  * Every entry names the rule that must refuse it, so a rule can be removed and the
- * mutant watched to go from refused to accepted — the only evidence that a rule is
- * load-bearing rather than decorative.
+ * mutant watched to go from refused to accepted — the evidence that a rule is
+ * load-bearing rather than decorative, for the ten rules that removal reaches. R-INPUT
+ * is not one of them: `validateShell` returns its refusal before it consults `rules` at
+ * all, so its rows declare `sole` rather than having it measured, and what the rule
+ * really does is proved directly in shell-policy.test.ts:112-124.
  */
 
 const ROOT = fileURLToPath(new NodeURL('../..', import.meta.url))
@@ -60,7 +63,9 @@ export interface Mutant {
   /** Every rule that MUST produce a refusal for this mutant. */
   rules: readonly RuleId[]
   /** True when the rules above are the ONLY ones that refuse this mutant, so removing
-   *  them makes the document pass entirely. Measured, not assumed. */
+   *  them makes the document pass entirely. Measured, not assumed — except on the two
+   *  R-INPUT rows, where nothing can measure it: that refusal is returned before `rules`
+   *  is read, so removing the rule cannot change the verdict. */
   sole: boolean
   bytes: Buffer
   markup?: string
@@ -156,7 +161,8 @@ interface Row {
   where: Where
   rules: readonly RuleId[]
   /** True when the named rules are the ONLY ones that refuse this mutant, so removing
-   *  them makes the whole document pass. Measured against the policy, not assumed. */
+   *  them makes the whole document pass. Measured against the policy, not assumed — with
+   *  the R-INPUT rows as the declared exception, for the reason given on `Mutant.sole`. */
   sole: boolean
   stage?: 'artifact' | 'source'
   /** The markup planted at `where`. */
