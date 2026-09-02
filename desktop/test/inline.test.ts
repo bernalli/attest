@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { mutant, plant } from './helpers/shell-mutants.js'
+
 /**
  * The build's last stage turns a folder of files into ONE document.
  *
@@ -41,7 +43,8 @@ function fixtureDist(options: { js?: string; css?: string; head?: string; body?:
   writeFileSync(join(dir, 'assets', 'app.css'), options.css ?? 'body{margin:0}\n')
   writeFileSync(
     join(dir, 'index.html'),
-    `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>t</title>\n` +
+    `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n` +
+      `<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>t</title>\n` +
       `<script type="module" crossorigin src="./assets/app.js"></script>\n` +
       `<link rel="stylesheet" crossorigin href="./assets/app.css">\n${options.head ?? ''}</head>\n` +
       `<body>\n<p>__DESKTOP_VERSION__ __ATTEST_VERIFIER_VERSION__</p>\n${options.body ?? ''}</body>\n</html>\n`,
@@ -222,5 +225,58 @@ describe('the artifact the build actually produces', () => {
 
     expect(run.status).not.toBe(0)
     expect(`${run.stderr}`).toMatch(/hash|sha256|policy/i)
+  })
+})
+
+describe('the shell policy is what --check now enforces', () => {
+  const copy = (bytes: Buffer | string): string => {
+    const file = join(mkdtempSync(join(tmpdir(), 'shell-policy-')), 'artifact.html')
+    writeFileSync(file, bytes)
+    return file
+  }
+
+  // Every one of these exits 0 against the rules this replaces, measured before the
+  // change: only the meta refresh and the literal `javascript:` spelling were caught.
+  test.each([
+    [40, 'a meta refresh inside the select, which no tree parser sees'],
+    [47, 'a javascript href'],
+    [48, 'a data href carrying a document'],
+    [67, 'the allowed link with its first letter as a character reference'],
+    [84, 'a stylesheet fetch hidden between two strings'],
+    [102, 'a byte order mark'],
+  ])('row %i (%s) is refused, and the refusal names a rule', (n) => {
+    const run = check(copy(mutant(n).bytes))
+    expect(run.status).not.toBe(0)
+    expect(`${run.stderr}`).toMatch(/R-[A-Z-]+/)
+  })
+
+  test.each([
+    ['a tab inside the scheme', 'java\tscript:alert(1)'],
+    ['the first letter as a decimal reference', '&#106;avascript:alert(1)'],
+  ])('%s is refused, and the refusal names a rule', (_what, raw) => {
+    const grown = plant(readFileSync(ARTIFACT, 'utf8'), 'BODY', `<a href="${raw}">x</a>`)
+    const run = check(copy(grown.html))
+    expect(run.status).not.toBe(0)
+    expect(`${run.stderr}`).toMatch(/R-URL/)
+  })
+
+  test('a module the tokenizer ends later than the hash regex does is refused', () => {
+    // The hash pins what the REGEX captured. `<!--<script>` puts the tokenizer into its
+    // double-escaped state, so the first `</script>` does not end the element - the
+    // browser executes past the point the hash covers. Consistent on its own terms: the
+    // policy is recomputed over the capture, exactly as someone rewriting the file would.
+    const html = readFileSync(ARTIFACT, 'utf8')
+    const doubled = html
+      .replace('<script type="module">', () => '<script type="module">/*<!--<script>*/ ')
+      .replace('</script>', () => '</script></script>')
+    const captured = doubled.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1] ?? ''
+    const repinned = doubled.replace(
+      /script-src 'sha256-[^']*'/,
+      () => `script-src 'sha256-${sha256b64(captured)}'`,
+    )
+
+    const run = check(copy(repinned))
+    expect(run.status).not.toBe(0)
+    expect(`${run.stderr}`).toContain('coherence')
   })
 })

@@ -5,14 +5,26 @@
 // assembled output, and nothing is written when one of them fails, because the file
 // this produces is downloaded once and never re-checked by anyone.
 //
-// No dependency: the shapes it parses are the ones vite emits, and a build step that
-// pulled in a parser would widen the supply chain of an artifact whose whole argument
-// is that it has almost none.
+// The markup rules live in ./shell-policy.mjs and are an ALLOWLIST over the HTML
+// tokenizer's start-tag stream: every element name, every attribute, every value and
+// every resolved URL must be one the policy enumerates, wherever the tag occurs. They
+// used to be regular expressions over the raw text, and that was wrong three times in a
+// row - the browser decodes character references, drops tabs and newlines and
+// lowercases the scheme BEFORE it decides what a link is, so a check on the spelling
+// could always be spelled around. The rules deliberately run on TOKENS and not on a
+// parsed tree: tree builders disagree (parse5 still drops tags inside <select> that
+// current engines keep), while a start-tag token becomes an element in every one of
+// them. The tokenizer is parse5, which this package already installs for its tests:
+// declaring it here installs nothing new, the SBOM is unchanged, and the shipped
+// artifact carries no byte of it. What changes is only that the same code which already
+// runs in `npm test` now also runs here, one step later in the same job.
 
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { decodeShell, scriptAndStyleText, tokenizeShell, validateShell } from './shell-policy.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG = resolve(HERE, '..')
@@ -32,39 +44,6 @@ const CSP = (scriptHash, styleHash) =>
 
 const sha256b64 = (text) => createHash('sha256').update(text, 'utf8').digest('base64')
 
-/** The document with the inline module, the inline stylesheet and the comments blanked
- *  out: the markup rules below have to read the shell the browser PARSES, not the
- *  minified bundle, which carries strings that look like tags. */
-const shellOf = (html) =>
-  html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '<script></script>')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '<style></style>')
-    .replace(/<!--[\s\S]*?-->/g, '')
-
-/** Everything the browser fetches or follows BY ITSELF. `<a href>` is deliberately
- *  absent: the footer carries anchors a reader may choose to click, which are not
- *  requests this page makes.
- *
- *  Measured 2026-09-01 on chromium and firefox, with THIS artifact's own policy in
- *  force: every construct below is refused by `default-src 'none'` — EXCEPT the meta
- *  refresh, which both engines followed off the file (chromium reached DNS, firefox
- *  navigated away). For that one the policy is no belt at all, so this list is the only
- *  thing between the artifact and a page that leaves the machine when it is opened. */
-const SELF_FETCHING = [
-  [/<meta\b[^>]*http-equiv\s*=\s*["']?\s*refresh/i,
-   'a meta refresh, which navigates off the page and which no content security policy stops'],
-  [/<(iframe|embed|object|frame|frameset|portal|image|use|source|track|audio|video|form|base)\b/i,
-   'an element that fetches or navigates by itself'],
-  [/\sping\s*=/i,
-   'a ping attribute, which posts to a third party when the link is clicked'],
-  [/<a\b[^>]*\shref\s*=\s*["']?\s*javascript:/i,
-   'an anchor with a javascript: href, which runs script when the anchor is clicked'],
-  [/<(?!a\b)[a-zA-Z-]+\b[^>]*\s(?:[a-zA-Z-]+:)?href\s*=/i,
-   'an href on something that is not an anchor (xlink:href included)'],
-  [/\s(?:src|srcset|poster|background|action|formaction|data)\s*=/i,
-   'an attribute naming a resource the browser downloads'],
-]
-
 class InlineError extends Error {}
 const refuse = (message) => {
   throw new InlineError(message)
@@ -77,20 +56,12 @@ const refuse = (message) => {
  *  measured 2026-09-01, a copy whose whole module had been replaced with
  *  `document.body.textContent = "Receipt verifies"` exited 0 here and rendered that
  *  sentence in both engines. Identity is the published SHA-256 of the whole file. */
-function validate(html) {
-  const scripts = html.match(/<script\b/gi) ?? []
-  if (scripts.length !== 1) refuse(`the artifact must carry exactly one script, found ${scripts.length}`)
-  const styles = html.match(/<style\b/gi) ?? []
-  if (styles.length !== 1) refuse(`the artifact must carry exactly one inline style, found ${styles.length}`)
-
-  if (/<script\b[^>]*\ssrc=/i.test(html)) refuse('the artifact still references an external script')
-  if (/<link\b[^>]*\shref=/i.test(html)) refuse('the artifact still references an external stylesheet or link')
-  if (/<img\b[^>]*\ssrc=/i.test(html)) refuse('the artifact references an image; its policy has no img-src')
-
-  const shell = shellOf(html)
-  for (const [pattern, what] of SELF_FETCHING) {
-    const hit = shell.match(pattern)
-    if (hit) refuse(`the artifact carries ${what}: ${hit[0].slice(0, 60)}`)
+function validate(bytes) {
+  let html
+  try {
+    html = decodeShell(bytes)
+  } catch (e) {
+    refuse(`R-INPUT at document@0: ${e instanceof Error ? e.message : String(e)}`)
   }
 
   if (html.includes('import.meta')) refuse('the artifact contains import.meta, which an inline module cannot resolve')
@@ -114,6 +85,22 @@ function validate(html) {
     refuse(
       'the content security policy does not pin these bytes — the sha256 hash in the ' +
         `policy does not match the inline content.\n  declared: ${declared[1]}\n  expected: ${expected}`,
+    )
+  }
+
+  const refusals = validateShell(bytes, { stage: 'artifact', expectedCsp: expected })
+  if (refusals.length > 0) {
+    refuse(refusals.map((r) => `${r.rule} at ${r.where}: ${r.detail}`).join('\n  '))
+  }
+
+  // The hash above pins what the REGEX captured, and the tokenizer can end an element
+  // later than the regex does: `<!--<script>` inside the module puts it into its
+  // double-escaped state, so the first `</script>` does not close anything and the
+  // browser executes past the point the policy covers.
+  const text = scriptAndStyleText(tokenizeShell(html))
+  if (text.script !== script[1] || text.style !== style[1]) {
+    refuse(
+      'coherence: the tokenizer and the hash pin disagree on where the inline script or style ends',
     )
   }
   return html
@@ -172,7 +159,7 @@ function build(inDir, outFile) {
     refuse('the shell has no charset meta to anchor the policy to')
   html = html.replace('<meta charset="utf-8">', () => `<meta charset="utf-8">\n${csp}`)
 
-  validate(html)
+  validate(Buffer.from(html, 'utf8'))
   writeFileSync(outFile, html)
   return html
 }
@@ -184,7 +171,7 @@ function main(argv) {
   }
   const checkTarget = arg('--check', null)
   if (checkTarget !== null) {
-    validate(readFileSync(checkTarget, 'utf8'))
+    validate(readFileSync(checkTarget))
     process.stdout.write(
       `inline: ${checkTarget} is internally consistent — one inline module, one inline style, ` +
         'no external reference, and a policy that pins the bytes PRESENT in this file.\n' +
