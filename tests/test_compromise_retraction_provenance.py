@@ -259,16 +259,26 @@ def test_trusted_duplicate_compromised_entry_suppresses_retraction_in_both_order
         [_entry("compromised"), _entry("active")],
     ],
 )
-def test_chain_duplicate_entries_are_all_consulted_in_both_orders(
+def test_chain_duplicate_entries_are_refused_instead_of_consulted_in_both_orders(
     source_entries: list[dict[str, Any]],
 ) -> None:
+    """An ambiguous chain member is refused, so no entry of it is consulted.
+
+    This test previously asserted that every duplicated entry WAS consulted and
+    that a retraction was therefore established. That reading of §19.3 is what
+    let one duplicated entry marking the declaring signer `compromised` deny
+    the §19 cutoff: v0.1 §7.1 refuses an ambiguous manifest wherever it is
+    consumed, and a held chain member is a consumption site. The claim twin
+    below still consults every entry — a different site, still undecided.
+    """
     trusted = _manifest(3, [_entry("active")])
     source = _manifest(2, source_entries)
 
     result = _run(trusted, chain=[source, trusted])
 
     assert result.signature == "invalid"
-    _assert_retracted_once(result)
+    assert any("duplicate kid" in error for error in result.errors)
+    _assert_not_retracted(result)
 
 
 @pytest.mark.parametrize(
@@ -454,3 +464,124 @@ def test_omitted_trusted_kid_never_reaches_the_provenance_rule() -> None:
     # from D1.3; if review prefers the other reading, the spec sentence and the
     # emission point both move together.
     _assert_not_retracted(result)
+
+
+# --- v0.2 §19.3 item 3b: who may DENY the cutoff -----------------------------
+#
+# Denying the cutoff is the direction that WIDENS — a receipt §19.1 would have
+# rejected survives — so a held manifest is admitted to that clause only when
+# the TRUSTED manifest vouches for its signer. The tests below pin the
+# predicate directly, and the two above them pin its SCOPE: the absorbing floor
+# (v0.1 §7.3), item 3a's vouching set, the retraction warning and the `trust`
+# label all keep reading the unfiltered held set. That boundary is measured,
+# not chosen: widening the predicate to item 3a flips vector `41s` from
+# ok=False to ok=True, because there every member is signed by a key the head
+# marks `compromised`, and without their entries to date the signer the cutoff
+# falls and the forgeries survive.
+
+_VOUCH_OTHER_KID = f"{ISSUER}/keys/2026#ed25519"
+
+
+def _vouches(member: dict[str, Any], trusted: dict[str, Any]) -> bool:
+    return verify._trusted_manifest_vouches_for_member(member, trusted)  # type: ignore[attr-defined]
+
+
+def _trusted_with_signer(status: str, *, valid_to: str | None = None) -> dict[str, Any]:
+    """A trusted manifest whose OTHER kid — the one that signs the member
+    under test — carries `status`."""
+    return _manifest(
+        3,
+        [
+            _entry("active"),
+            manifests.key_entry(_VOUCH_OTHER_KID, SECOND.pub, VALID_FROM, valid_to, status),
+        ],
+        signing_kp=SIGNER,
+        signing_kid=KID,
+    )
+
+
+def _member_signed_by_other(entries: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """A held chain member signed by `_VOUCH_OTHER_KID`, and LISTING that kid
+    itself — so the member self-authenticates and a verifier checking it only
+    against its own `keys[]` admits it. That is the whole point: the thief
+    holds the key, so he satisfies a self-check by construction."""
+    signer_entry = manifests.key_entry(_VOUCH_OTHER_KID, SECOND.pub, VALID_FROM, None, "active")
+    return _manifest(
+        2,
+        [*(entries if entries is not None else [_entry("compromised")]), signer_entry],
+        signing_kp=SECOND,
+        signing_kid=_VOUCH_OTHER_KID,
+    )
+
+
+def test_a_member_signed_by_a_key_the_trusted_manifest_calls_stolen_denies_nothing() -> None:
+    """The exploitable case, at the level of the predicate.
+
+    A thief holding the compromised key can always produce a member whose own
+    `manifest_signature` verifies against the copy of that key he puts inside
+    it, so a self-check admits him. Only the trusted manifest can say the key
+    was no longer the issuer's to sign with.
+    """
+    member = _member_signed_by_other()
+    assert manifests.manifest_signature_is_authentic(member) is True  # self-check passes
+    assert _vouches(member, _trusted_with_signer("compromised")) is False
+
+
+@pytest.mark.parametrize("status", ["active", "retired"])
+def test_a_member_signed_by_a_key_the_trusted_manifest_still_stands_behind_is_admitted(
+    status: str,
+) -> None:
+    """The predicate must not become a blanket ban on chain members: a
+    genuinely vouched member still denies the cutoff, which is what §19.3
+    item 3b is for."""
+    assert _vouches(_member_signed_by_other(), _trusted_with_signer(status)) is True
+
+
+def test_a_member_whose_signer_the_trusted_manifest_has_never_heard_of_denies_nothing() -> None:
+    trusted = _manifest(3, [_entry("active")], signing_kp=SIGNER, signing_kid=KID)
+    assert _vouches(_member_signed_by_other(), trusted) is False
+
+
+def test_a_member_whose_signature_does_not_verify_denies_nothing() -> None:
+    """The weak case, still closed: edited after signing, so the bytes no
+    longer match whatever key is asked to vouch for them."""
+    member = _member_signed_by_other()
+    member["keys"] = [_entry("active")]
+    assert _vouches(member, _trusted_with_signer("active")) is False
+
+
+def test_a_member_issued_outside_its_signers_validity_window_denies_nothing() -> None:
+    stale = _trusted_with_signer("active", valid_to="2025-01-15T00:00:00Z")
+    assert _vouches(_member_signed_by_other(), stale) is False
+
+
+def test_a_member_over_the_keys_ceiling_denies_nothing_without_canonicalizing() -> None:
+    """Fail-closed on the §11.3 ceiling BEFORE the member is canonicalized, so
+    a hostile `keys[]` cannot buy unbounded work on this rail."""
+    oversized = _member_signed_by_other()
+    oversized["keys"] = [
+        manifests.key_entry(
+            f"{ISSUER}/keys/pad-{i}#ed25519", SIGNER.pub, VALID_FROM, None, "active"
+        )
+        for i in range(manifests.MAX_MANIFEST_KEYS + 1)
+    ]
+    assert _vouches(oversized, _trusted_with_signer("active")) is False
+
+
+def test_an_unvouched_member_still_feeds_the_floor_and_the_retraction_warning() -> None:
+    """SCOPE control — the filter is confined to the cutoff-denial clause.
+
+    This member is NOT vouched for (its signer is `compromised` in the trusted
+    manifest), so it may not deny a cutoff. It must still be read by everything
+    else: v0.1 §7.3's absorbing floor kills the receipt, and the retraction is
+    still reported. A filter that leaked into these paths would let an issuer
+    retract a compromise marking by rotating the key that published it.
+    """
+    trusted = _trusted_with_signer("compromised")
+    member = _member_signed_by_other([_entry("compromised")])
+
+    result = _run(trusted, chain=[member, trusted])
+
+    assert result.signature == "invalid"
+    assert any("compromised" in error for error in result.errors)
+    _assert_retracted_once(result)

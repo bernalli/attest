@@ -3217,7 +3217,17 @@ def gen_28_transparency() -> None:
             "manifest_freshness": "not_checked",
             "ok": False,
             "errors_contains": ["compromised"],
-            "warnings": [],
+            # v0.2 §19.4 row 2 keys this warning on the VERIFIER being
+            # Stage-2-capable and the receipt having no anchored standing,
+            # with `D = any` — it does not ask whether a compromise view was
+            # supplied. Row 1's explicit "no new warning" for non-Stage-2
+            # verifiers proves the contrast is deliberate, and §19.1 restates
+            # it with no condition. This leaf IS that row: Stage-2 config
+            # present, key compromised from the trusted manifest, receipt only
+            # `logged`. Pinning `[]` here certified a divergence between the
+            # table and the code and made the shipped runner declare a
+            # spec-faithful verifier NON CONFORMANT.
+            "warnings": ["compromise_rescue_requires_anchored_receipt"],
         },
         transparency=_evidence_a(),
         log_keys=[_log_key()],
@@ -6978,6 +6988,26 @@ def gen_41_compromise_cutoff() -> None:
       ceiling itself: `signature: "invalid"`, `"compromise view exceeds 64
       claims"`, no warnings (the ceiling returns before any are appended).
       `v` is reserved for other work.
+    - (x) (b)'s fixture plus a HELD chain member listing the declaring signer
+      twice, `active` and `compromised` -> v0.1 §7.1 refuses an ambiguous
+      manifest wherever it is consumed, and §19.3 item 3b consumes held chain
+      members, so the member is refused before any status is read out of it.
+      Unrefused, the duplicate denies the cutoff while its `active` sibling
+      still vouches, and the receipt (b) rejects verifies `ok: true`. Signed
+      by K rather than by the duplicated K2, so the member's own signature
+      verifies and the ambiguity is the only defect the leaf pins.
+    - (y) (c)'s shape with NO `compromise-view.json` at all -> §19.4 row 2 is
+      keyed on the verifier being Stage-2-capable and the receipt having no
+      anchored standing, with `D = any`, so the warning is owed whether or
+      not a view was supplied.
+    - (z) (b)'s fixture plus a held chain member marking the declaring signer
+      `compromised`, with NO duplicate and a signature that GENUINELY
+      verifies, because it is signed by K -- the key the trusted manifest
+      declares stolen. Denying the cutoff widens, so §19.3 item 3b admits a
+      held manifest only when the TRUSTED manifest vouches for its signer:
+      the member denies nothing and (b)'s rejection stands. A verifier that
+      checks a member against its own `keys[]` admits this one, since the
+      thief holds K and satisfies that check by construction.
     """
     payload = issue.build_payload(**_base_payload_kwargs())  # revocability: "none"
     _assert_schema_valid(payload)
@@ -7104,6 +7134,53 @@ def gen_41_compromise_cutoff() -> None:
 
     def _claim(manifest: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
         return {"manifest": manifest, "evidence": evidence}
+
+    def _ambiguous_manifest(
+        version: int, issued_at: str, entries: list[dict[str, Any]], *, signer: str
+    ) -> dict[str, Any]:
+        """A manifest listing one kid TWICE, signed over its own ambiguous body.
+
+        `build_key_manifest` refuses to emit this — v0.1 §7.1 forbids an issuer
+        from signing an ambiguous manifest — so it is assembled by hand, which
+        is exactly what a hostile or legacy issuer can still publish and what
+        the VERIFIER side has to be measured against.
+
+        `signer` is deliberate: signing with a kid the duplicate does NOT touch
+        keeps `find_key` unambiguous for the signature block, so the signature
+        bytes genuinely verify under the signer's own entry. That isolates the
+        AMBIGUITY as the single defect — signed by the duplicated kid instead,
+        the leaf would ALSO be a manifest whose signature cannot be checked,
+        and it would no longer say which of the two properties the refusal
+        came from.
+
+        Note what this does NOT claim: `manifest_signature_is_authentic` is
+        `False` here regardless of the signer, because that predicate refuses
+        an ambiguous manifest outright — a duplicate makes it undecidable
+        WHICH key signed. The isolation is at the level of the cryptography,
+        asserted below against the signer's resolved entry.
+        """
+        signing_kp = ISSUER_KP if signer == ISSUER_KID else ROTATED_KP
+        body: dict[str, Any] = {
+            "issuer": ISSUER_ID,
+            "manifest_version": version,
+            "issued_at": issued_at,
+            "keys": entries,
+        }
+        body["manifest_signature"] = {
+            "kid": signer,
+            "sig": keys.b64u(keys.sign(manifests._signable(body), signing_kp)),
+        }
+        assert manifests.duplicate_kids(body["keys"]) == [ROTATED_KID]
+        signer_entry = manifests.find_key(body, signer)
+        assert signer_entry is not None  # the duplicate is on another kid
+        assert (
+            manifests.verify_signature_block(
+                manifests._signable(body), body["manifest_signature"], signer_entry
+            )
+            is True
+        )
+        assert manifests.manifest_signature_is_authentic(body) is False
+        return body
 
     trust_v2 = _trust_material((ISSUER_ID, v2, "tls"))
 
@@ -7766,6 +7843,153 @@ def gen_41_compromise_cutoff() -> None:
             "errors": [],
             "warnings": [],
         },
+    )
+
+    # --- (x) chain-member-duplicate-kid-refused ---------------------------
+    # (b)'s exact fixture — receipt anchored at H2, declaration at H1, so
+    # §19.1 mandates rejection — plus a HELD chain member that lists the
+    # declaring signer K2 twice, once `active` and once `compromised`.
+    # v0.1 §7.1 refuses an ambiguous manifest "wherever a key manifest is
+    # consumed", and §19.3 item 3b consumes held chain members: the member is
+    # therefore refused before any status or signer is read out of it, which
+    # is why this leaf's transparency fields report that no evidence was ever
+    # evaluated. Without that refusal the duplicate's `compromised` entry
+    # denies the cutoff while its `active` sibling still supplies a valid
+    # vouching signer, and the receipt (b) rejects verifies `ok: true` —
+    # every forgery anchored after the theft resurrected by one extra array
+    # element on a manifest nothing authenticates. The member is signed by K,
+    # not by the duplicated K2, so its own signature genuinely verifies and
+    # the ambiguity is the only defect the leaf pins.
+    bundle = _log([_manifest_entry(v2), _receipt_entry(envelope)], "x")
+    claim_x, header_x1 = bundle(0, 1, COMPROMISE_H1)
+    receipt_x, header_x2 = bundle(1, 2, COMPROMISE_H2)
+    v1_ambiguous = _ambiguous_manifest(
+        1, MANIFEST_ISSUED_AT, [k_active, k2_active, k2_compromised], signer=ISSUER_KID
+    )
+    write_vector(
+        "41-compromise-cutoff/x-chain-member-duplicate-kid-refused",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, v2, "tls"),
+            chains={ISSUER_ID: [v1_ambiguous, v2]},
+        ),
+        expected={
+            "signature": "invalid",
+            "schema": "invalid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": "not_checked",
+            "corroboration": "none",
+            "manifest_freshness": "not_checked",
+            "ok": False,
+            "errors_contains": ["duplicate kid"],
+            "warnings": [],
+        },
+        transparency=receipt_x,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_x1, header_x2),
+        compromise_view=[_claim(v2, claim_x)],
+    )
+
+    # --- (y) stage2-unanchored-receipt-warns-without-view -----------------
+    # §19.4 row 2 keys `compromise_rescue_requires_anchored_receipt` on the
+    # VERIFIER being Stage-2-capable and the receipt having no anchored
+    # standing, with `D = any` — it does not ask whether a compromise view
+    # was supplied, and row 1's explicit "no new warning" for non-Stage-2
+    # verifiers proves the contrast is deliberate. (c) is the same shape WITH
+    # a view; this leaf is the row itself: full Stage-2 configuration, key
+    # `compromised` from the trusted manifest, receipt only `logged`, and no
+    # `compromise-view.json` at all. The warning is what tells a caller the
+    # rescue rail existed and the receipt failed to reach it.
+    bundle = _log([_manifest_entry(v2), _receipt_entry(envelope)], "y")
+    _, header_y1 = bundle(0, 1, COMPROMISE_H1)
+    receipt_y, _ = bundle(1, 2)
+    write_vector(
+        "41-compromise-cutoff/y-stage2-unanchored-receipt-warns-without-view",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust_v2,
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "transparency": "logged",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_requires_anchored_receipt"],
+        },
+        transparency=receipt_y,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_y1),
+    )
+
+    # --- (z) stolen-key-chain-member-cannot-deny-cutoff -------------------
+    # (b)'s fixture again — receipt anchored at H2, declaration at H1, so
+    # §19.1 mandates rejection — plus a held chain member that marks the
+    # DECLARING signer K2 `compromised` at manifest_version 1. No duplicate,
+    # nothing malformed: the member is a well-formed v0.1 §7.1 manifest whose
+    # own `manifest_signature` GENUINELY verifies, asserted below. Its one
+    # defect is who vouches for it — it is signed by K, the very key the
+    # trusted manifest declares stolen, which is the one signature a thief can
+    # always produce. Denying the cutoff is the direction that widens (the
+    # receipt survives), so §19.3 item 3b's exclusion clause admits a held
+    # manifest only when the TRUSTED manifest vouches for its signer; K is
+    # `compromised` there, so this member denies nothing and the receipt dies
+    # with `compromise_rescue_receipt_after_cutoff` as (b) does.
+    #
+    # Built deliberately with a VALID signature: a member with a broken
+    # signature is the weak case, and a verifier that only checks a member
+    # against its own `keys[]` passes it while still admitting this one — the
+    # thief holds K, so he satisfies a self-check by construction. The chain
+    # is a SINGLE member that does not end at the trusted manifest, which is
+    # also the shape a continuity-based guard would wave through:
+    # `check_continuity` is vacuously true on a one-member chain.
+    bundle = _log([_manifest_entry(v2), _receipt_entry(envelope)], "z")
+    claim_z, header_z1 = bundle(0, 1, COMPROMISE_H1)
+    receipt_z, header_z2 = bundle(1, 2, COMPROMISE_H2)
+    v1_signed_by_stolen_key = manifests.build_key_manifest(
+        ISSUER_ID, 1, MANIFEST_ISSUED_AT, [k_active, k2_compromised], ISSUER_KP, ISSUER_KID
+    )
+    # The member is conformant AND self-authenticating: the leaf isolates
+    # "vouched for by a stolen key" from every structural defect.
+    assert manifests.verify_key_manifest(v1_signed_by_stolen_key) is True
+    assert manifests.manifest_signature_is_authentic(v1_signed_by_stolen_key) is True
+    assert manifests.duplicate_kids(v1_signed_by_stolen_key["keys"]) == []
+    assert v1_signed_by_stolen_key["manifest_signature"]["kid"] == ISSUER_KID
+    write_vector(
+        "41-compromise-cutoff/z-stolen-key-chain-member-cannot-deny-cutoff",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, v2, "tls"),
+            chains={ISSUER_ID: [v1_signed_by_stolen_key]},
+        ),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "unverified_rotation",
+            "transparency": f"anchored_before:{COMPROMISE_H2_ISO}",
+            "corroboration": "logged",
+            "manifest_freshness": "not_checked",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": ["compromise_rescue_receipt_after_cutoff"],
+        },
+        transparency=receipt_z,
+        log_keys=[_log_key()],
+        anchor_policy=_policy(header_z1, header_z2),
+        compromise_view=[_claim(v2, claim_z)],
     )
 
 

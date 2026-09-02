@@ -72,14 +72,22 @@ def _receipt() -> dict[str, Any]:
 
 
 def test_duplicate_trusted_kid_cannot_hide_compromise_from_status_floor() -> None:
-    """v0.1 §7.3: *any* held entry that marks K compromised must win.
+    """v0.1 §7.1: an ambiguous manifest is refused WHEREVER it is consumed.
 
-    Since the v0.1 §7.1 amendment (2026-08-26) an ambiguous TRUSTED manifest is
-    refused whole by `verify()`'s preflight, one layer above the status floor:
-    the receipt is still rejected, with the structural error instead of the
-    compromise one. The floor itself is what still decides for every manifest
-    the preflight does not cover — a chain member, below — so both facts are
-    pinned here.
+    Both halves below are that one rule. The trusted manifest is refused by
+    `verify()`'s preflight, one layer above the status floor, so the receipt
+    dies with the structural error rather than the compromise one; a HELD
+    CHAIN MEMBER is refused on the same terms, because §19.3 items 3a/3b
+    consume it to authenticate the floor and the cutoff.
+
+    An earlier revision of this test asserted the opposite for the chain half
+    — that the floor was left to decide "for every manifest the preflight does
+    not cover" — and pinned it as correct. It was not: reading a status out of
+    an ambiguous held manifest lets ONE duplicated entry marking the declaring
+    signer `compromised` deny the §19 cutoff while its `active` sibling still
+    supplies a valid vouching signer, and every forgery anchored after a key
+    theft then verifies `ok: true`. Leaf `41x` pins the same refusal through
+    the public corpus.
     """
     duplicated = [
         _entry(KID, KP, "active"),
@@ -92,15 +100,15 @@ def test_duplicate_trusted_kid_cannot_hide_compromise_from_status_floor() -> Non
     assert structural.signature == "invalid"
     assert any("duplicate kid" in error for error in structural.errors)
 
-    # The same ambiguity held as evidence rather than as the trust anchor: the
-    # floor must still read EVERY entry for the kid, whatever the order.
+    # The same ambiguity held as evidence rather than as the trust anchor:
+    # refused too, and BEFORE any status is read out of it.
     clean = _manifest([_entry(KID, KP, "active"), _entry(DECLARER_KID, DECLARER_KP, "active")])
     from_chain = verify.verify(
         _wire(_receipt()), _trust(clean, chain=[_manifest(duplicated), clean])
     )
 
     assert from_chain.signature == "invalid"
-    assert any("compromised" in error for error in from_chain.errors)
+    assert any("duplicate kid" in error for error in from_chain.errors)
 
 
 def test_duplicate_claim_kid_cannot_hide_compromise_from_status_floor() -> None:
@@ -375,7 +383,16 @@ def test_a_duplicate_in_the_trusted_list_still_blocks_the_retraction(order: str)
 
 
 @pytest.mark.parametrize("order", ["active_first", "compromised_first"])
-def test_a_duplicate_in_a_chain_manifest_still_establishes_the_retraction(order: str) -> None:
+def test_a_duplicate_in_a_chain_manifest_is_refused_before_any_retraction(order: str) -> None:
+    """An ambiguous chain member establishes NOTHING — not even a retraction.
+
+    v0.1 §7.1 refuses it wherever it is consumed, and §19.3 items 3a/3b
+    consume held chain members, so the refusal lands before any status is read
+    out of it and no retraction is reported in either element order. The claim
+    twin below still reports one: a claim manifest is a different consumption
+    site with its own undecided policy, and the contrast between the two tests
+    is deliberate rather than an inconsistency.
+    """
     pair = [_entry(KID, KP, "active"), _entry(KID, KP, "compromised")]
     if order == "compromised_first":
         pair.reverse()
@@ -385,7 +402,8 @@ def test_a_duplicate_in_a_chain_manifest_still_establishes_the_retraction(order:
     result = verify.verify(_wire(_receipt()), _trust(trusted, chain=[older]))
 
     assert result.signature == "invalid"
-    assert _warns_retracted(result)
+    assert any("duplicate kid" in error for error in result.errors)
+    assert not _warns_retracted(result)
 
 
 @pytest.mark.parametrize("order", ["active_first", "compromised_first"])

@@ -1014,7 +1014,14 @@ def test_verify_compromised_key_receipt_stays_invalid_despite_logged_transparenc
     assert any("compromised" in e for e in result.errors)
     assert result.transparency == transparency.TRANSPARENCY_LOGGED
     assert result.corroboration == transparency.CORROBORATION_LOGGED
-    assert result.warnings == ()
+    # The one warning that IS owed: v0.2 §19.4 row 2 keys
+    # `compromise_rescue_requires_anchored_receipt` on the VERIFIER being
+    # Stage-2-capable and the receipt having no anchored standing, with
+    # `D = any` — it does not ask whether a compromise view was supplied, and
+    # row 1's explicit "no new warning" for non-Stage-2 verifiers proves the
+    # contrast is deliberate. Leaf 28i's oracle pins the same warning; the
+    # TypeScript twin in verifiers/ts/test/transparency.test.ts asserts it too.
+    assert result.warnings == (verify._WARN_COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT,)
 
 
 def test_verify_manifest_v5_without_rotation_chain_caps_corroboration_to_none() -> None:
