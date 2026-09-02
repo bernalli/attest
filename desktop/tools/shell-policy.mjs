@@ -6,12 +6,17 @@
 // thought of is refused for not being on the list rather than accepted for not being on
 // a list of dangers.
 //
-// It reads TOKENS and not a tree on purpose. Tree builders disagree: parse5 still
-// implements the pre-relaxation "in select" insertion mode and drops a <meta>, an <img>
-// or an <a> written inside a <select>, while current engines keep them and act on them.
-// A start-tag token, on the other hand, becomes an element in every tree builder there
-// is, so the token stream is a superset of every tree and the check does not depend on
-// how engines evolve tree construction.
+// The allowlists read TOKENS and not a tree on purpose. Tree builders disagree: parse5
+// still implements the pre-relaxation "in select" insertion mode and drops a <meta>, an
+// <img> or an <a> written inside a <select>, while current engines keep them and act on
+// them. A start-tag token, on the other hand, becomes an element in every tree builder
+// there is, so the token stream is a superset of every tree and the check does not depend
+// on how engines evolve tree construction.
+//
+// One question in this file is not of that kind and the tree is the only thing that
+// answers it: not what the document CONTAINS but where the policy meta LANDED, which is
+// what decides whether its pragma is applied at all. R-META asks the tree, and the case
+// for the exception — with the measurement that it is one — is written above that rule.
 //
 // It reads RESOLVED urls and RAW bytes, never the spelling in between. The HTML parser
 // decodes character references and normalises CR before the URL parser strips tabs,
@@ -57,7 +62,6 @@ export function decodeShell(bytes) {
 export function tokenizeShell(html) {
   const tokens = []
   const endTags = []
-  const characters = []
   const parseErrors = []
   class RecordingParser extends Parser {
     onStartTag(token) {
@@ -76,18 +80,6 @@ export function tokenizeShell(html) {
       endTags.push({ name: token.tagName, location: token.location })
       super.onEndTag(token)
     }
-    // Only the characters that MOVE things. parse5 hands whitespace to a callback of
-    // its own, and whitespace is exactly what the "in head" insertion mode is allowed
-    // to keep in the head — so recording it here would refuse the newline the artifact
-    // already carries between its own metas.
-    onCharacter(token) {
-      characters.push({ location: token.location })
-      super.onCharacter(token)
-    }
-    onNullCharacter(token) {
-      characters.push({ location: token.location })
-      super.onNullCharacter(token)
-    }
   }
   const parser = new RecordingParser({
     sourceCodeLocationInfo: true,
@@ -95,7 +87,7 @@ export function tokenizeShell(html) {
     onParseError: (error) => parseErrors.push({ code: error.code, location: error }),
   })
   parser.tokenizer.write(html, true)
-  return { tokens, endTags, characters, parseErrors, document: parser.document, html }
+  return { tokens, endTags, parseErrors, document: parser.document, html }
 }
 
 /** The text a browser will execute or apply, taken from the tokenizer's own idea of
@@ -206,32 +198,48 @@ const metaShape = (token, ctx) => {
   return null
 }
 
-/** What the "in head" insertion mode may hold without ending the head. Anything else
- *  pops the head and reopens the document in the body, so a policy written after it is
- *  a child of the BODY — where the pragma is not applied at all. Measured 2026-09-02:
- *  with a single `<p>` in front of it, chromium and firefox ran the artifact under no
- *  policy whatever and reported zero violations, byte for byte indistinguishable from
- *  a document that never carried one, while all four textual position checks passed. */
-const HEAD_CONTENT = new Set([
-  'html', 'head', 'base', 'basefont', 'bgsound', 'link', 'meta', 'title',
-  'noscript', 'noframes', 'style', 'script', 'template',
-])
+/** The document's one head element, or undefined when the tree holds none. */
+const headElementOf = (document) =>
+  document.childNodes
+    ?.find((n) => n.tagName === 'html')
+    ?.childNodes?.find((n) => n.tagName === 'head')
 
-/** The first thing between the head and `offset` that a browser reads as the end of the
- *  head, or undefined if the head is still open there. Characters are consulted after
- *  tokens because a bare letter closes the head exactly as a `<p>` does. */
-const headCloser = (ctx, head, offset) => {
-  const token = ctx.tokens.find(
-    (t) =>
-      t.location.startOffset > head.location.startOffset &&
-      t.location.startOffset < offset &&
-      !HEAD_CONTENT.has(t.name),
-  )
-  if (token !== undefined) return { what: `<${token.name}>`, at: token.location.startOffset }
-  const text = ctx.characters.find(
-    (c) => c.location.startOffset > head.location.startOffset && c.location.startOffset < offset,
-  )
-  return text === undefined ? undefined : { what: 'text', at: text.location.startOffset }
+/** The element the tree builder made out of the start-tag token at `offset`, or
+ *  undefined when it made none. A token and a node share exactly one identity — the
+ *  place in the source they both come from — so that is what this matches on.
+ *
+ *  Finding NOTHING is an answer, and it is the fail-closed one: parse5 discards elements
+ *  written inside a `<select>`, so a policy planted there has no node, and a policy the
+ *  tree cannot place is a policy this document may not carry. */
+const elementAt = (document, offset) => {
+  const stack = [document]
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (node.tagName !== undefined && node.sourceCodeLocation?.startOffset === offset) return node
+    for (const child of node.childNodes ?? []) stack.push(child)
+    if (node.content !== undefined) stack.push(node.content)
+  }
+  return undefined
+}
+
+const parentNameOf = (node) => node.parentNode?.tagName ?? node.parentNode?.nodeName ?? 'nothing'
+
+/** Which construct ended the head, for whoever has to read the refusal — DIAGNOSTICS,
+ *  never the verdict. It is derived rather than enumerated: the head demonstrably still
+ *  held its last child, so whatever ended it is written between that child and the
+ *  policy, and quoting that slice names constructs no list of ours had to think of
+ *  first. That is the whole difference from the check this replaced. */
+const closedTheHead = (ctx, headNode, offset) => {
+  if (headNode === undefined) return 'this document has no head element at all'
+  const ends = (headNode.childNodes ?? [])
+    .map((n) => n.sourceCodeLocation?.endOffset)
+    .filter((end) => end !== undefined && end <= offset)
+  const from =
+    ends.length > 0 ? Math.max(...ends) : (headNode.sourceCodeLocation?.startTag?.endOffset ?? 0)
+  const between = ctx.html.slice(from, offset).trim()
+  return between === ''
+    ? `the head holds nothing past byte ${from}`
+    : `${JSON.stringify(between.slice(0, 60))}@${from} closed the head`
 }
 
 /** The canonical spelling of the one link this document may carry: the attribute name in
@@ -445,13 +453,50 @@ export const RULES = [
         return []
       }),
   },
+  /**
+   * THE ONE RULE THAT READS THE TREE, and the only place in this file where that is the
+   * right source. The exception is narrow and it is measured; do not widen it by analogy.
+   *
+   * Everywhere else the question is "what does this document CONTAIN", and the token
+   * stream answers it for every tree builder there is. Here the question is different:
+   * "where did this one element LAND". The pragma of a `<meta http-equiv>` is applied
+   * only while the element is a child of the head, and which element becomes its parent
+   * is decided by the insertion mode — by the tree builder, not by the tokenizer. Asking
+   * the tokens means deducing that from what stands in FRONT of the policy, which is a
+   * list of constructs that close the head, and this file had that list wrong three times
+   * over: a `<p>`, then a bare character, then the end tags `</body>`, `</html>` and
+   * `</br>`, which build no element at all and reach the very same "anything else" branch
+   * of the "in head" insertion mode. An enumeration that has been incomplete three times
+   * is not a list waiting for a fourth entry; it is the wrong shape of question. The tree
+   * answers WHERE the policy is without anyone having to know WHY.
+   *
+   * Why parse5's tree may be believed for this and not for the allowlists: the divergence
+   * that put those on tokens is in the "in select" insertion mode, which builds a subtree
+   * this question never enters. That is an argument, so it was measured rather than
+   * asserted. 2026-09-02, 81 documents — 68 of the smallest shape these rules accept, 13
+   * built on the shipped artifact — each with a different construct written between
+   * `<head>` and the policy: start tags in and out of the head inventory, bare characters,
+   * character references, comments, a doctype, a NUL, `<noscript>`, `<template>`, and
+   * every end tag worth trying. Compared, for each, parse5's parent for the meta against
+   * `meta.parentElement.localName` in chromium and in firefox. 76 agreed exactly. The 5
+   * that differed all differ the safe way — parse5 answered `body`, `noscript`, a template
+   * fragment or nothing where an engine answered `head`, so this rule refuses documents
+   * the engines would have applied the policy to. Not one document had parse5 answering
+   * `head` while an engine answered otherwise. The `<select>` divergence is in that count
+   * and behaves the same way: parse5 keeps no node, and no node is a refusal.
+   *
+   * And "a child of the head" is the whole of the condition, not a proxy for it. Measured
+   * the same day: a policy that reaches the head by an unusual route — written before
+   * `<head>`, or after `</head>`, both of which the four textual checks this replaced
+   * refused — blocks a fetching stylesheet in chromium and firefox exactly as one written
+   * plainly does, while the same document stripped of its policy fetches.
+   */
   {
     id: 'R-META',
     check: (ctx) => {
       const out = []
       const head = first(ctx, 'head')
-      const body = first(ctx, 'body')
-      const headEnd = ctx.endTags.find((t) => t.name === 'head')
+      const headNode = headElementOf(ctx.document)
       const firstAfterHead =
         head === undefined ? undefined : ctx.tokens[ctx.tokens.indexOf(head) + 1]
       for (const token of ctx.tokens) {
@@ -485,15 +530,34 @@ export const RULES = [
         }
         if (shape === 'policy') {
           const start = token.location.startOffset
+          const node = elementAt(ctx.document, start)
           const later = ctx.tokens.filter(
             (t) => (t.name === 'script' || t.name === 'style') && t.location.startOffset < start,
           )
-          if (head === undefined || start < head.location.startOffset)
-            out.push(refusal('R-META', at(token), 'the policy sits outside the head'))
-          else if (body !== undefined && start > body.location.startOffset)
-            out.push(refusal('R-META', at(token), 'the policy sits in the body, where it does not apply'))
-          else if (headEnd !== undefined && start > headEnd.location.startOffset)
-            out.push(refusal('R-META', at(token), 'the policy sits after the head is closed'))
+          // Is the policy applied at all? One question, one answer, from the tree.
+          if (node === undefined)
+            out.push(
+              refusal(
+                'R-META',
+                at(token),
+                'the tree builder kept no element for the policy at all, so it is a child ' +
+                  'of nothing and no engine applies it',
+              ),
+            )
+          else if (headNode === undefined || node.parentNode !== headNode)
+            out.push(
+              refusal(
+                'R-META',
+                at(token),
+                `the policy is a child of <${parentNameOf(node)}> and not of the head, so no ` +
+                  `engine applies it — ${closedTheHead(ctx, headNode, start)}`,
+              ),
+            )
+          // A separate question, and one the tree cannot answer: a policy the browser
+          // installs after the script or stylesheet it should govern governs neither.
+          // Measured 2026-09-02: a policy written after `</head>` and after the style is
+          // a child of the head and live — it blocked the image the stylesheet fetched —
+          // and the stylesheet itself had already been applied without being checked.
           else if (later.length > 0)
             out.push(
               refusal(
@@ -502,21 +566,6 @@ export const RULES = [
                 `the policy sits after the <${later[0].name}> it should govern`,
               ),
             )
-          else {
-            // The four checks above ask WHERE the policy is written. This one asks
-            // whether the head is still open when the browser gets there, which is the
-            // question that decides if the policy is applied at all.
-            const closer = headCloser(ctx, head, start)
-            if (closer !== undefined)
-              out.push(
-                refusal(
-                  'R-META',
-                  at(token),
-                  `${closer.what}@${closer.at} has already closed the head, so the ` +
-                    'policy is a child of the body and no engine applies it',
-                ),
-              )
-          }
         }
       }
       return out

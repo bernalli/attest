@@ -43,10 +43,10 @@ export interface StartTagToken {
 export interface Tokenized {
   tokens: StartTagToken[]
   endTags: Array<{ name: string; location: TokenLocation }>
-  /** Every NON-whitespace character token, in document order. Whitespace is left out
-   *  because it is what the "in head" insertion mode may keep without closing the head. */
-  characters: Array<{ location: Span }>
   parseErrors: Array<{ code: string; location: Span }>
+  /** The tree parse5 built, as a parse5 `Document`. Typed loosely on purpose: exactly one
+   *  rule reads it — R-META, to ask which element the policy meta ended up a child of —
+   *  and giving it a shape here would invite the others to start reading it too. */
   document: unknown
   html: string
 }
