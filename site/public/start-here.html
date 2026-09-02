@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="description" content="A plain-language guide to the receipt a signed purchase gives you: what it does, what it does not protect, and what to do with it.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>Start here — attest</title>
+<style>:root{--bg:#F1F0ED;--fg:#17191D;--bad:#B00020;--accent:#0757BA}
+@media(prefers-color-scheme:dark){:root{--bg:#0D1117;--fg:#E6EDF3;--bad:#F85149;--accent:#58A6FF}}
+body{margin:0 auto;max-width:38rem;padding:2rem 1.25rem 3rem;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{margin:0 0 1rem;font-size:1.7rem;line-height:1.25}
+h2{margin:2rem 0 .5rem;font-size:1.2rem}
+a{color:var(--accent)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;word-break:break-word}
+.warning{margin:1.5rem 0;padding:.2rem 1.1rem 1rem;border:1px solid var(--bad);border-left-width:4px;border-radius:8px}
+.warning h2{color:var(--bad)}
+@media print{:root{--bg:#FFF;--fg:#000;--bad:#000;--accent:#000}
+body{max-width:none;padding:0;font-size:11pt}
+h2{page-break-after:avoid}
+.warning{border-width:2px}}
+.cta{display:inline-block;margin-top:.5rem;padding:.6rem 1.1rem;border:1px solid var(--accent);border-radius:8px;text-decoration:none;font-weight:600}
+footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--fg);opacity:.75;font-size:.9rem}
+</style>
+</head>
+<body>
+<h1>Start here</h1>
+
+<p>You bought a game, a film, an album or a book online. What you actually got is
+permission to use it, kept on the store's computers. If the store closes, or your
+account is shut, or a licensing deal expires, that permission can vanish — and
+with it the thing you paid for.</p>
+
+<p>attest gives you one piece of that purchase to keep. When a store uses it, your
+download comes with a small extra file: a receipt, signed by the seller. "Signed"
+means the seller has stamped it in a way nobody else can imitate and nobody can
+alter afterwards — think of a wax seal only that store can press, which breaks if
+anyone tampers with it. You don't have to understand how the seal works. You only
+have to keep the file.</p>
+
+<h2>What you can do with it</h2>
+<ul>
+<li><strong>Keep it anywhere.</strong> On your disk, in a backup, on a USB stick. It
+doesn't live in an account, so no account can lose it for you.</li>
+<li><strong>Check it whenever you like.</strong> With a free tool, on your own
+computer, with the internet switched off, without asking the store.
+<a href="./">Try it on a sample receipt →</a></li>
+<li><strong>Prove what you bought years from now</strong> — even if the store no
+longer exists.</li>
+</ul>
+
+<h2>What it does not do</h2>
+<ul>
+<li><strong>It is not the game, film or book.</strong> If you never downloaded the
+file and the store is gone, no receipt can bring it back. Download what you buy,
+and keep it next to the receipt.</li>
+<li><strong>It protects you from a store that disappears, not from one that is still
+open and turns on you.</strong> A live seller can declare one of its own signing
+keys compromised, and that cancels every receipt signed with that key — unless
+yours was recorded in a public log first. Where that option exists, use it.</li>
+<li><strong>It doesn't unlock anything</strong> and it doesn't remove copy protection.</li>
+<li><strong>Almost no store issues one yet.</strong> Stores that sell files without copy
+protection can start today. For the closed platforms, it is the same purchase
+confirmation the law already requires them to send you — in the EU, Article 8(7)
+of the Consumer Rights Directive (2011/83/EU) — in a form a machine can check.
+If your store doesn't offer it, that is the thing to ask for.</li>
+</ul>
+
+<h2>One file must stay private</h2>
+<p>If your download also contains a file ending in <code>.private.attest</code>,
+never send it to anyone: it is what proves the purchase is <em>yours</em>. A real
+store or support agent will never need it.</p>
+
+<footer>
+Already have a receipt in hand? <a href="what-is-this.html">What is this file?</a> ·
+Curious how the seal works? See the
+<a href="https://github.com/bernalli/attest/tree/main/docs/spec">attest specification</a>.
+</footer>
+</body>
+</html>

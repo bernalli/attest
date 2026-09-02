@@ -38,7 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 #: make this suite agree with the generator about an empty set: if the list ever
 #: returned nothing, or pointed somewhere else, zero cases would run and the
 #: suite would stay green while nothing was pinned at all.
-EXPECTED_GENERATED = {"site/public/what-is-this.html"}
+EXPECTED_GENERATED = {"site/public/what-is-this.html", "site/public/start-here.html"}
 
 
 def test_the_generator_still_owns_every_page_it_is_supposed_to() -> None:
@@ -483,7 +483,7 @@ def test_both_warning_forms_make_the_same_claims() -> None:
 EXPECTED_RENDER_PAGE_CALL_SITES = {
     "src/attest/bundle.py": 1,
     "bridge/src/attest_bridge/http.py": 2,
-    "tools/gen_buyer_pages.py": 1,
+    "tools/gen_buyer_pages.py": 2,
 }
 
 
