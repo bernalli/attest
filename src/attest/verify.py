@@ -992,6 +992,99 @@ def _held_manifest_marks_signer_compromised_at_or_before(
     return False
 
 
+def _trusted_manifest_vouches_for_member(
+    member: dict[str, Any], trusted_manifest: dict[str, Any]
+) -> bool:
+    """Does the TRUSTED manifest itself stand behind this held chain member?
+
+    v0.2 §19.3 item 3b lets a held manifest DENY the cutoff, and denial is the
+    direction that WIDENS: a receipt §19.1 would have rejected survives. §19's
+    own principle — evidence that can only narrow is admitted under weaker
+    conditions than evidence that can widen it — therefore asks more of a
+    member used this way than the letter of item 3b spells out. This predicate
+    is deliberately STRICTER than that letter; the spec is not amended here,
+    the code is knowingly the tighter of the two.
+
+    What it requires: the member's `manifest_signature` kid resolves IN THE
+    TRUSTED MANIFEST to an entry that is `active` or `retired`, the member's
+    `issued_at` falls inside that entry's validity window, and the signature
+    verifies under THAT entry's material, hybrid AND rule included.
+
+    Why the trusted manifest and not the member's own `keys[]`: a thief
+    holding the stolen key satisfies a self-check by construction — he signs
+    the doctored member with the stolen key and it verifies against the copy
+    of that key he placed inside it. Only the manifest the verifier already
+    trusts can say whether the signing key was still the issuer's to sign
+    with. A predicate checking a member against itself closes the
+    broken-signature case and leaves this one wide open.
+
+    Never raises; every malformed shape fails closed, and the `keys[]` ceiling
+    is checked BEFORE canonicalizing, so a hostile array cannot buy unbounded
+    work here (same order as `verify_key_manifest`).
+    """
+    entries_for_ceiling = member.get("keys")
+    if (
+        isinstance(entries_for_ceiling, list)
+        and len(entries_for_ceiling) > manifests.MAX_MANIFEST_KEYS
+    ):
+        return False
+    sig_block = member.get("manifest_signature")
+    if not isinstance(sig_block, dict):
+        return False
+    signer_kid = sig_block.get("kid")
+    if not isinstance(signer_kid, str):
+        return False
+    issued_at = member.get("issued_at")
+    if not isinstance(issued_at, str):
+        return False
+    signer_entry = manifests.find_key(trusted_manifest, signer_kid)
+    if signer_entry is None:
+        return False
+    if signer_entry.get("status") not in (_STATUS_ACTIVE, _STATUS_RETIRED):
+        return False
+    if not _within_validity(issued_at, signer_entry):
+        return False
+    try:
+        signable = manifests._signable(member)
+    except (TypeError, canon.CanonError):
+        return False
+    return manifests.verify_signature_block(signable, sig_block, signer_entry)
+
+
+def _cutoff_denying_manifests(
+    trusted_manifest: dict[str, Any],
+    chain: list[dict[str, Any]] | None,
+    issuer_id: str,
+) -> list[dict[str, Any]]:
+    """The held manifests allowed to DENY a §19.3 cutoff.
+
+    The trusted manifest is always in: it is the trust anchor, admitted by the
+    store's own provenance (v0.1 §7.4) and already self-authenticated by
+    `verify()`'s preflight, never by a signature check against itself — `41p`
+    and `41r` are the leaves where it legitimately denies the cutoff. Every
+    CHAIN MEMBER has to be vouched for by that anchor instead.
+
+    The scope is deliberately this one clause, and the boundary was measured
+    rather than chosen. The absorbing status floor (v0.1 §7.3), item 3a's
+    vouching set, the retraction warning and the `trust` label all keep
+    reading the UNFILTERED held set: extending this predicate to item 3a
+    flips `41s` from `ok: false` to `ok: true`, because there every member is
+    signed by a key the head marks `compromised`, and without their entries
+    to date the signer the cutoff falls and the forgeries survive. `41l` gets
+    its floor from a discontinuous chain for the same reason. On this
+    perimeter a filter that looks stricter widens who survives.
+    """
+    held = [trusted_manifest]
+    if chain is not None:
+        held.extend(
+            member
+            for member in chain
+            if isinstance(member, dict)
+            and _trusted_manifest_vouches_for_member(member, trusted_manifest)
+        )
+    return [member for member in held if member.get("issuer") == issuer_id]
+
+
 def _claim_has_cutoff_signer(claim: _CompromiseClaim, held_manifests: list[dict[str, Any]]) -> bool:
     declaration_version = claim.manifest.get("manifest_version")
     if not isinstance(declaration_version, int) or isinstance(declaration_version, bool):
@@ -1022,7 +1115,9 @@ def _resolve_compromise_cutoff(
 
     origin = _resolve_log_origin(log_keys)
     transparency_module._validate_policy(anchor_policy)
-    held_manifests = _held_issuer_manifests(trusted_manifest, chain, issuer_id)
+    # Only manifests the TRUSTED manifest vouches for may deny the cutoff
+    # (§19.3 item 3b). Every other consumer of the held set is unchanged.
+    held_manifests = _cutoff_denying_manifests(trusted_manifest, chain, issuer_id)
     best: datetime | None = None
     for claim in authenticated_claims:
         if not _claim_has_cutoff_signer(claim, held_manifests):
@@ -2703,13 +2798,11 @@ def verify(
         if transparency_claim_type != _CLAIM_TYPE_RECEIPT or not transparency_state.startswith(
             _ANCHORED_BEFORE_PREFIX
         ):
-            if compromise_view is not None or authenticated_claims:
-                _append_warning_once(warnings, _WARN_COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT)
+            _append_warning_once(warnings, _WARN_COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT)
             return _invalid(f"key {kid} is compromised")
         receipt_anchor = _parse_iso(transparency_state[len(_ANCHORED_BEFORE_PREFIX) :])
         if receipt_anchor is None:
-            if compromise_view is not None or authenticated_claims:
-                _append_warning_once(warnings, _WARN_COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT)
+            _append_warning_once(warnings, _WARN_COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT)
             return _invalid(f"key {kid} is compromised")
 
         cutoff = _resolve_compromise_cutoff(
@@ -2847,6 +2940,21 @@ def verify(
                 )
 
         chain = trust_store.chains.get(issuer_id)
+        # v0.1 §7.1 (2026-08-26 amendment): an ambiguous key manifest fails its
+        # self-consistency check WHEREVER it is consumed. A held chain member is
+        # consumed — by rotation continuity (§7.3) and by v0.2 §19.3's floor and
+        # cutoff authentication — so it is refused here on the same terms as the
+        # trusted manifest above, before any status or signer is read out of it.
+        if chain:
+            for member in chain:
+                if not isinstance(member, dict):
+                    continue
+                member_dups = manifests.duplicate_kids(member.get("keys"))
+                if member_dups:
+                    return _invalid(
+                        f"issuer manifest chain lists duplicate kid(s): {member_dups}",
+                        schema=_SCHEMA_INVALID,
+                    )
         if chain and (not _chain_continuous(chain) or chain[-1] != issuer_manifest):
             # A chain that does not actually end at the manifest being used proves
             # nothing about it — treat it as a discontinuous rotation (2026-07-13

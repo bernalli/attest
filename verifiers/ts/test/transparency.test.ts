@@ -792,7 +792,11 @@ describe('verify(): Stage 2 integration', () => {
     // Signature verification short-circuits BEFORE step 5 (content
     // warnings) when the key is compromised, so no drm-bound warning here
     // (contrast the other integration tests, whose receipts verify fully).
-    expect(result.warnings).toEqual([])
+    // The one warning that IS owed is §19.4 row 2's: this verifier is
+    // Stage-2-capable and the receipt has no anchored standing, and the row
+    // is keyed on `D = any` — it does not ask whether a compromise view was
+    // supplied. Leaf 28i's own oracle pins the same warning.
+    expect(result.warnings).toEqual(['compromise_rescue_requires_anchored_receipt'])
   })
 
   it('manifest v2 without a rotation chain caps corroboration to none', () => {

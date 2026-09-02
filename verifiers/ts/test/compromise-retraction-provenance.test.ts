@@ -363,14 +363,21 @@ describe('compromise retraction provenance', () => {
     // once more, or the callback receives only the first entry.
     [[entry('active'), entry('compromised')]],
     [[entry('compromised'), entry('active')]],
-  ])('chain duplicate entries are all consulted in both orders', (sourceEntries) => {
+    // An ambiguous chain member is refused, so no entry of it is consulted.
+    // This previously asserted that every duplicated entry WAS consulted, which
+    // is the reading that let one duplicated entry marking the declaring signer
+    // `compromised` deny the §19 cutoff. The claim twin below still consults
+    // every entry — a different site, still undecided. Python parity:
+    // tests/test_compromise_retraction_provenance.py's same pair.
+  ])('chain duplicate entries are refused instead of consulted in both orders', (sourceEntries) => {
     const trusted = manifest(3n, [entry('active')])
     const source = manifest(2n, sourceEntries)
 
     const result = run(trusted, { chain: [source, trusted] })
 
     expect(result.signature).toBe('invalid')
-    expectRetractedOnce(result)
+    expect(result.errors.some((e) => e.includes('duplicate kid'))).toBe(true)
+    expectNotRetracted(result)
   })
 
   it.each([
@@ -469,5 +476,61 @@ describe('compromise retraction provenance', () => {
     // fails first, so no marking exists whose provenance could be reported.
     // Python parity: tests/test_compromise_retraction_provenance.py.
     expectNotRetracted(result)
+  })
+})
+
+// --- v0.2 §19.3 item 3b: who may DENY the cutoff -----------------------------
+//
+// Denying the cutoff WIDENS — a receipt §19.1 would have rejected survives — so
+// a held manifest is admitted to that clause only where the TRUSTED manifest
+// vouches for the key that signed it. Vector `41z` pins the exploitable case
+// end-to-end through the public corpus; the test below pins the SCOPE, which is
+// what a future "let us make this stricter" change would break. Python parity:
+// tests/test_compromise_retraction_provenance.py's same block.
+describe('§19.3 item 3b — an unvouched held manifest is still read everywhere else', () => {
+  const OTHER_KID = `${ISSUER}/keys/2026#ed25519`
+
+  it('an unvouched member still feeds the absorbing floor and the retraction warning', () => {
+    // The member's signer is `compromised` in the trusted manifest, so it may
+    // not deny a cutoff. Everything else must still read it: v0.1 §7.3's floor
+    // kills the receipt and the retraction is still reported. A filter leaking
+    // into these paths would let an issuer retract a compromise marking by
+    // rotating the key that published it.
+    const trusted = manifest(3n, [
+      entry('active'),
+      entry('compromised', { kid: OTHER_KID, signingSeed: SECOND }),
+    ])
+    const member = manifest(
+      2n,
+      [entry('compromised'), entry('active', { kid: OTHER_KID, signingSeed: SECOND })],
+      { signingSeed: SECOND, signingKid: OTHER_KID },
+    )
+
+    const result = run(trusted, { chain: [member, trusted] })
+
+    expect(result.signature).toBe('invalid')
+    expect(result.errors.some((e) => e.includes('compromised'))).toBe(true)
+    expectRetractedOnce(result)
+  })
+
+  it('a member the trusted manifest still stands behind keeps denying the cutoff', () => {
+    // The predicate must not become a blanket ban on chain members: with the
+    // signer `active` in the trusted manifest the member is admitted, so its
+    // `compromised` marking for the signer suppresses the retraction exactly as
+    // before. This is the half that proves the fix did not over-tighten.
+    const trusted = manifest(3n, [
+      entry('active'),
+      entry('active', { kid: OTHER_KID, signingSeed: SECOND }),
+    ])
+    const member = manifest(
+      2n,
+      [entry('compromised'), entry('active', { kid: OTHER_KID, signingSeed: SECOND })],
+      { signingSeed: SECOND, signingKid: OTHER_KID },
+    )
+
+    const result = run(trusted, { chain: [member, trusted] })
+
+    expect(result.signature).toBe('invalid')
+    expectRetractedOnce(result)
   })
 })

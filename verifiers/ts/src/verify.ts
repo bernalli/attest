@@ -730,6 +730,72 @@ function heldManifestMarksSignerCompromisedAtOrBefore(
   return false
 }
 
+// Does the TRUSTED manifest itself stand behind this held chain member?
+//
+// v0.2 §19.3 item 3b lets a held manifest DENY the cutoff, and denial is the
+// direction that WIDENS: a receipt §19.1 would have rejected survives. §19's
+// own principle — evidence that can only narrow is admitted under weaker
+// conditions than evidence that can widen it — therefore asks more of a member
+// used this way than the letter of item 3b spells out. This predicate is
+// deliberately STRICTER than that letter; the spec is not amended here, the
+// code is knowingly the tighter of the two.
+//
+// Why the trusted manifest and not the member's own keys[]: a thief holding
+// the stolen key satisfies a self-check by construction — he signs the
+// doctored member with the stolen key and it verifies against the copy of that
+// key he placed inside it. Only the manifest the verifier already trusts can
+// say whether the signing key was still the issuer's to sign with.
+//
+// Ceiling checked BEFORE canonicalizing, so a hostile keys[] cannot buy
+// unbounded work here. Python parity: verify.py's same predicate.
+function trustedManifestVouchesForMember(member: JsonObject, trustedManifest: JsonObject): boolean {
+  const entriesForCeiling = member['keys']
+  if (Array.isArray(entriesForCeiling) && entriesForCeiling.length > MAX_MANIFEST_KEYS) return false
+  const sigBlock = obj(member['manifest_signature'])
+  if (sigBlock === null || typeof sigBlock['kid'] !== 'string') return false
+  const issuedAt = member['issued_at']
+  if (typeof issuedAt !== 'string') return false
+  const signerEntry = findKey(trustedManifest, sigBlock['kid'])
+  if (signerEntry === null) return false
+  if (signerEntry['status'] !== 'active' && signerEntry['status'] !== 'retired') return false
+  if (!withinValidity(issuedAt, signerEntry)) return false
+  let signable: Uint8Array
+  try {
+    signable = signableManifestBytes(member)
+  } catch {
+    return false
+  }
+  return verifySignatureBlock(signable, sigBlock, signerEntry)
+}
+
+// The held manifests allowed to DENY a §19.3 cutoff.
+//
+// The trusted manifest is always in: it is the trust anchor, admitted by the
+// store's own provenance (v0.1 §7.4) and already self-authenticated by
+// verify()'s preflight, never by a signature check against itself — `41p` and
+// `41r` are the leaves where it legitimately denies the cutoff. Every CHAIN
+// MEMBER has to be vouched for by that anchor instead.
+//
+// The scope is deliberately this one clause, and the boundary was measured
+// rather than chosen. The absorbing status floor (v0.1 §7.3), item 3a's
+// vouching set, the retraction warning and the `trust` label all keep reading
+// the UNFILTERED held set: extending this predicate to item 3a flips `41s`
+// from ok:false to ok:true, because there every member is signed by a key the
+// head marks `compromised`, and without their entries to date the signer the
+// cutoff falls and the forgeries survive. On this perimeter a filter that
+// looks stricter widens who survives.
+function cutoffDenyingManifests(
+  trustedManifest: JsonObject,
+  chain: JsonObject[] | undefined,
+  issuerId: string,
+): JsonObject[] {
+  const held = [
+    trustedManifest,
+    ...(chain ?? []).filter((member) => trustedManifestVouchesForMember(member, trustedManifest)),
+  ]
+  return held.filter((manifest) => manifest['issuer'] === issuerId)
+}
+
 function claimHasCutoffSigner(claim: CompromiseClaim, heldManifests: JsonObject[]): boolean {
   for (const signerEntry of claim.vouchingSigners) {
     if (signerEntry['status'] !== 'active' && signerEntry['status'] !== 'retired') continue
@@ -752,7 +818,9 @@ function resolveCompromiseCutoff(
 
   const origin = resolveLogOrigin(logKeys)
   validateAnchorPolicyOnly(anchorPolicy)
-  const heldManifests = heldIssuerManifests(trustedManifest, chain, issuerId)
+  // Only manifests the TRUSTED manifest vouches for may deny the cutoff
+  // (§19.3 item 3b). Every other consumer of the held set is unchanged.
+  const heldManifests = cutoffDenyingManifests(trustedManifest, chain, issuerId)
   let best: number | null = null
   for (const claim of authenticatedClaims) {
     if (!claimHasCutoffSigner(claim, heldManifests)) continue
@@ -957,9 +1025,7 @@ export function verify(
   ): VerificationResult | null => {
     if (logKeys === null || anchorPolicy === null) return invalid(keyCompromised(kid))
     if (transparencyClaimType !== CLAIM_TYPE_RECEIPT || !transparencyState.startsWith(ANCHORED_BEFORE_PREFIX)) {
-      if (compromiseView !== null || authenticatedClaims.length > 0) {
-        appendWarningOnce(warnings, COMPROMISE_WARN.RESCUE_REQUIRES_ANCHORED_RECEIPT)
-      }
+      appendWarningOnce(warnings, COMPROMISE_WARN.RESCUE_REQUIRES_ANCHORED_RECEIPT)
       return invalid(keyCompromised(kid))
     }
     const receiptAnchorTimestamp = transparencyState.slice(ANCHORED_BEFORE_PREFIX.length)
@@ -969,9 +1035,7 @@ export function verify(
         : null
     )
     if (receiptAnchor === null) {
-      if (compromiseView !== null || authenticatedClaims.length > 0) {
-        appendWarningOnce(warnings, COMPROMISE_WARN.RESCUE_REQUIRES_ANCHORED_RECEIPT)
-      }
+      appendWarningOnce(warnings, COMPROMISE_WARN.RESCUE_REQUIRES_ANCHORED_RECEIPT)
       return invalid(keyCompromised(kid))
     }
 
@@ -1074,6 +1138,18 @@ export function verify(
     }
 
     const chain = trustStore.chains?.[issuerId]
+    // v0.1 §7.1 (2026-08-26 amendment): an ambiguous key manifest fails its
+    // self-consistency check WHEREVER it is consumed. A held chain member is
+    // consumed — by rotation continuity (§7.3) and by v0.2 §19.3's floor and
+    // cutoff authentication — so it is refused here on the same terms as the
+    // trusted manifest above, before any status or signer is read out of it.
+    // Python parity: verify.py's same block.
+    for (const member of chain ?? []) {
+      const memberDups = duplicateKids(member['keys'])
+      if (memberDups.length > 0) {
+        return invalid(manifestDuplicateKids(memberDups), 'invalid')
+      }
+    }
     if (chain && chain.length > 0) {
       // A chain that doesn't end at the manifest being used proves nothing about
       // it — value-compare the tail via its canonical form (2026-07-13 review,

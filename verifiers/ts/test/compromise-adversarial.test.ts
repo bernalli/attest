@@ -445,10 +445,18 @@ describe('v0.1 §7.3 retraction provenance', () => {
       expect(result.warnings).not.toContain(RETRACTED)
     })
 
-    it(`a duplicate in a chain manifest still establishes it (${label})`, () => {
+    // An ambiguous chain member establishes NOTHING — not even a retraction.
+    // v0.1 §7.1 refuses it wherever it is consumed, and §19.3 items 3a/3b
+    // consume held chain members, so the refusal lands before any status is
+    // read out of it. The claim twin below still reports one: a different
+    // consumption site with its own undecided policy. Python parity:
+    // tests/test_compromise_adversarial.py's same pair.
+    it(`a duplicate in a chain manifest is refused before any retraction (${label})`, () => {
       const older = manifestWith([...pair(), declarerActive()], 1)
       const result = verifyWith(store(cleanTrusted(2), { [ISSUER]: [older] }), null)
-      expect(result.warnings).toContain(RETRACTED)
+      expect(result.signature).toBe('invalid')
+      expect(result.errors.some((e) => e.includes('duplicate kid'))).toBe(true)
+      expect(result.warnings).not.toContain(RETRACTED)
     })
 
     it(`a duplicate in a claimed manifest still establishes it (${label})`, () => {

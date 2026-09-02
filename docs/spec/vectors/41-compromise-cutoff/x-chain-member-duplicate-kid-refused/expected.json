@@ -1,17 +1,15 @@
 {
   "binding": "not_checked",
-  "corroboration": "logged",
+  "corroboration": "none",
   "errors_contains": [
-    "compromised"
+    "duplicate kid"
   ],
   "manifest_freshness": "not_checked",
   "ok": false,
   "revocation": "unknown",
-  "schema": "not_checked",
+  "schema": "invalid",
   "signature": "invalid",
-  "transparency": "logged",
+  "transparency": "not_checked",
   "trust": "verified",
-  "warnings": [
-    "compromise_rescue_requires_anchored_receipt"
-  ]
+  "warnings": []
 }
