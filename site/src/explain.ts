@@ -1,4 +1,5 @@
 import type { VerificationResult } from 'attest-verifier'
+import { neutralized } from './untrusted-text.js'
 
 export type Tone = 'good' | 'warn' | 'bad' | 'neutral'
 export interface Explanation {
@@ -363,6 +364,21 @@ const PARAMETRIC: {
   },
 ]
 
+// C-86 at a second sink: everything below this line interpolates a component
+// value into the page's own prose. A parametric argument is spoken in the
+// verifier's voice, so it is composed only when it has the shape the library
+// produces — an iso8601 rendering, a decimal count. Anything else falls to the
+// fallback, which quotes rather than speaks. Reachable arguments are already
+// library-shaped today; this makes that a property of the RENDERING instead of
+// a habit of the current callers.
+const PARAMETRIC_ARG_RE = /^[0-9A-Za-z:+.\-]{1,64}$/
+
+// The fallback quotes in band, with curly quotes, and an in-band quote is only
+// a boundary while the quoted text cannot write the closing character. Both
+// curly quotes are in the hostile class of untrusted-text.ts for exactly this
+// reason, so an operand cannot close what the sentence opened.
+const MAX_QUOTED_VALUE_CHARS = 120
+
 const COMPROMISE_RESCUE_APPLIED = 'compromise_rescue_applied'
 const COMPROMISE_CUTOFF_UNANCHORED = 'compromise_cutoff_unanchored'
 const COMPROMISE_RESCUE_REQUIRES_ANCHORED_RECEIPT = 'compromise_rescue_requires_anchored_receipt'
@@ -370,11 +386,17 @@ const COMPROMISE_RESCUE_RECEIPT_AFTER_CUTOFF = 'compromise_rescue_receipt_after_
 const COMPROMISE_CUTOFF_CLAIM_IGNORED = 'compromise_cutoff_claim_ignored'
 const COMPROMISE_MARKING_RETRACTED = 'compromise_marking_retracted'
 
+// `warnings`/`errors` are typed `string[]`, which is a claim about a
+// well-formed result and not a guarantee about a dropped file: `?.` guards the
+// RESULT being absent and does nothing about the array being absent, and an
+// existing test already supplies a result missing two of the twelve fields. A
+// TypeError raised in here abandons the whole card.
 const hasWarning = (result: VerificationResult | undefined, warning: string): boolean =>
-  result?.warnings.includes(warning) ?? false
+  Array.isArray(result?.warnings) && result.warnings.includes(warning)
 
 const hasCompromisedKeyError = (result: VerificationResult | undefined): boolean =>
-  result?.errors.some((error) => /^key .+ is compromised$/.test(error)) ?? false
+  Array.isArray(result?.errors) &&
+  result.errors.some((error) => typeof error === 'string' && /^key .+ is compromised$/.test(error))
 
 const RETRACTION_CONTEXT =
   'The issuer\u2019s own signed history also establishes that an earlier signed version of its key list declared this key compromised, while the higher-version list this verifier now trusts does not carry that marking. A compromise this verifier has already seen is not taken back by a later key list (spec v0.1 \u00a77.3).'
@@ -452,30 +474,68 @@ function explainTrust(value: string, result: VerificationResult | undefined): Ex
   }
 }
 
+/** The string that stands for a component value on this page.
+ *
+ * A non-string is NAMED, never coerced. Coercing is what the segmenter refuses
+ * to do for the same reason: `String(['valid'])` is `'valid'`, so an array
+ * would hit the catalogue and be answered with the page's affirmative wording
+ * for a value that never was one. And `String()` is not even total — an object
+ * whose `toString` member is not callable (`JSON.parse('{"toString":"x"}')`)
+ * throws `Cannot convert object to primitive value`, so the coercion that was
+ * meant to close a crash opened another one. The parentheses keep every
+ * description out of reach of both the catalogue and the parametric prefixes.
+ */
+export function displayValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value === undefined) return '(no value)'
+  if (value === null) return '(null instead of a value)'
+  if (Array.isArray(value)) return '(an array instead of a value)'
+  return `(a ${typeof value} instead of a value)`
+}
+
 export function explain(
   component: Component,
-  value: string,
+  value: unknown,
   result?: VerificationResult,
 ): Explanation {
+  // `value: string` is a claim about a well-formed result, not a guarantee
+  // about a dropped file: the result reaches this page through JSON, and a row
+  // is rendered for every field the contract names whether or not one arrived.
+  // A TypeError raised in here abandons the whole card and leaves the buyer
+  // with no verdict at all, which is strictly worse than one row saying there
+  // is no wording for what turned up.
+  //
+  // A non-string is named rather than coerced, exactly as diagnostic.ts names
+  // one: see displayValue above.
+  const v = displayValue(value)
   if (component === 'signature') {
-    const signature = explainSignature(value, result)
+    const signature = explainSignature(v, result)
     if (signature) return signature
   }
   if (component === 'trust') {
-    const trust = explainTrust(value, result)
+    const trust = explainTrust(v, result)
     if (trust) return trust
   }
-  const hit = CATALOG[component][value]
+  // `Object.hasOwn`, not `table[v]`: the catalogue is an object literal, so it
+  // inherits Object.prototype and answers a TRUTHY value for `__proto__`,
+  // `constructor`, `toString` and every other member of it. That answer is not
+  // an Explanation — `label`, `text` and `tone` are all undefined — so the row
+  // renders with no wording at all and the fallback that QUOTES never runs.
+  // Less than the reader saw before, which is the one outcome worse than an
+  // ugly warning.
+  const table = CATALOG[component]
+  const hit = Object.hasOwn(table, v) ? table[v] : undefined
   if (hit) return hit
   for (const p of PARAMETRIC) {
-    if (p.component === component && value.startsWith(p.prefix)) {
-      return p.explain(value.slice(p.prefix.length))
+    if (p.component === component && v.startsWith(p.prefix)) {
+      const arg = v.slice(p.prefix.length)
+      if (PARAMETRIC_ARG_RE.test(arg)) return p.explain(arg)
     }
   }
   return {
     label: FALLBACK[component],
     tone: 'neutral',
-    text: `This verifier does not have dedicated wording for “${value}” — see the raw result below and spec §11.1 for the normative meaning.`,
+    text: `This verifier does not have dedicated wording for “${neutralized(v, MAX_QUOTED_VALUE_CHARS)}” — see the raw result below and spec §11.1 for the normative meaning.`,
   }
 }
 
@@ -612,9 +672,14 @@ const PATTERNS: { match: RegExp; component: Component }[] = [
  * evaluation that may never have run. Each of them keeps its place in the flat
  * list, where it makes a claim about the receipt rather than about a row.
  */
-export function attributeWarning(warning: string): Component | null {
-  const exact = EXACT[warning]
-  if (exact) return exact
+export function attributeWarning(warning: unknown): Component | null {
+  if (typeof warning !== 'string') return null
+  // Own properties only, for EXACT's sake as much as the catalogue's: a
+  // warning that spells `__proto__` or `toString` otherwise returns an object
+  // off Object.prototype as if it were a Component, and a bucket keyed by that
+  // object belongs to no row — the warning then appears NOWHERE on the page,
+  // which is precisely what this file promises attribution can never do.
+  if (Object.hasOwn(EXACT, warning)) return EXACT[warning]
   for (const p of PATTERNS) if (p.match.test(warning)) return p.component
   return null
 }
