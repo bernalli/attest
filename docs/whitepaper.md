@@ -38,16 +38,16 @@ Conventions that hold for every section:
 | 1 | **The thesis** (written, Part B) | What is this, in one sentence — and why should I care? | canonical project sentence; `README.md` opening; `docs/faq.md` "What is attest?"; the named limit from `docs/faq.md` "The store that signed my receipts shut down" | 9 paragraphs |
 | 2 | Someone paid, and has nothing | Has this actually happened to people like me? | four verified cases, one per market — Amazon/*1984* (2009), Microsoft ebook store (2019), Sony/StudioCanal on PlayStation (1 September 2026, seller's own notice), Ubisoft/*The Crew* (2023–24); `README.md` opening; the verified case notes of 1 September | 10 paragraphs |
 | 3 | What you actually bought | What exactly is the thing I am missing? | `README.md` "What attest is"; v0.1 §2 "What a receipt is" | 7 paragraphs |
-| 4 | How it works | What does the seller give me, and how does a stranger check it? | `README.md` "How it works, for humans"; `docs/faq.md` "Who validates it?", "Is this centralized?"; v0.1 §7 (keys), §8 (buyer binding), §14 (the two files); `site/index.html` CSP and `site/e2e/site.spec.ts` for the browser verifier | 9 paragraphs + In detail |
+| 4 | How it works | What does the seller give me, and how does a stranger check it? | `README.md` "How it works, for humans"; `docs/faq.md` "Who validates it?", "Is this centralized?"; v0.1 §7 (keys), §8 (buyer binding), §12 (revocation records), §14 (the two files); `site/index.html` CSP and `site/e2e/site.spec.ts` for the browser verifier. Revocation is described as a mechanism the verifier evaluates, never as something a seller can do today: the command-line tool on `main` has no `revoke` verb (its verbs are `keygen`, `issue`, `verify`, `export`, `import`, `inspect`, `disclose`, `check-artifact`, plus `transfer` and `grant` groups), and the bridge has no refund handling | 9 paragraphs + In detail |
 | 5 | The trilemma | If a file can be copied perfectly, how can it be *mine*? | the internal analysis of duplication and the sharing/exclusivity/survival contradiction (research notes of 24 August); v0.2 §17 (issuer-mediated transfer, first-logged-wins); `docs/faq.md` "Is attest a DRM system…" | 8 paragraphs |
 | 6 | **The clock** (written, Part B) | Why is Bitcoin in here, if this is not a blockchain thing? | v0.2 §11.1–§11.3 (anchoring), §19 (the anchored-cutoff rescue); `src/attest/cli.py` (no anchoring flag on `issue`), `src/attest/verify.py` and `verifiers/ts/src/verify.ts` (anchoring off by default), `site/src/trusted-log.ts` (empty header set); `docs/faq.md` "Why not blockchain / NFT?" | 13 paragraphs + In detail |
 | 7 | Two tracks, one standard | Who would ever issue one of these? | `README.md` "What attest is" (both tracks); `docs/faq.md` "Nobody forces a seller…"; Directive 2011/83/EU Article 8(7) and Article 2(10); the European Commission's reply of 16 June 2026 to the *Stop Destroying Videogames* citizens' initiative; California AB 2426 (in force 1 January 2025) | 10 paragraphs + In detail |
 | 8 | **What it does not do** (written, Part B) | Where is the catch? | v0.1 §7.3, §7.4; v0.2 §15, §18.6, §18.7, §19.5, §19.6, §20; `docs/spec/attest-threat-model.md` §6.2, §7, TM-44, TM-68, TM-74; measured behaviour of `demo/store_dies.py`; `docs/faq.md` limits paragraph | 20 paragraphs + In detail |
 | 9 | Copying, piracy, and what this is not for | Is this DRM? Does it stop piracy? Does it help pirates? | v0.1 §2 (out of scope: DRM, hosting, resale); `docs/faq.md` "Is attest a DRM system, a store, or a way to pirate games?"; the evidence review on second-hand markets and piracy in the September paper (hostile studies first, then the applicability limit, then the ceiling, then the unmeasured gap) | 7 paragraphs |
 | 10 | Why it is worth having anyway | What does each party actually gain? | `README.md` seller paragraph; `docs/faq.md` "Nobody forces a seller…"; v0.1 §6.1 (the irrevocable-goods conditional and AB 2426); v0.2 §18 (the preservation pledge as a zero-cost signature) | 7 paragraphs |
-| 11 | After the store is gone | Practically, what do I do with the receipt on the day it matters? | `docs/faq.md` "The store that signed my receipts shut down…"; v0.2 §18 (preservation pledge, activation modes); `demo/README.md`; both demonstrations, run | 8 paragraphs |
+| 11 | After the store is gone | Practically, what do I do with the receipt on the day it matters? | `docs/faq.md` "The store that signed my receipts shut down…"; v0.2 §18 (preservation pledge, activation modes); `demo/README.md`; both demonstrations, run. Every seller-side act named here (revoking, declaring a compromise, re-issuing) is stated with whether a shipped tool performs it — today only issuing and transfer are | 8 paragraphs |
 | 12 | Where this actually is | What exists today, and what is only designed? | `README.md` "Status"; `docs/conformance.md`; the IETF Datatracker entry (individual submission, no standing) | 4 paragraphs |
-| 13 | Open problems | What is still unsolved, with a name? | `docs/spec/attest-threat-model.md` §6.3; TM-68; the adversarial question list of 1 September (long-term custody of block headers; re-attestation with no signer; the domain as a lease) | 7 paragraphs |
+| 13 | Open problems | What is still unsolved, with a name? | `docs/spec/attest-threat-model.md` §6.3; TM-68; the adversarial question list of 1 September (long-term custody of block headers; re-attestation with no signer; the domain as a lease); and the general fact, measured on the command-line tool and the bridge: **the defences exist in the specification and in the verifier; the tools that would let a seller exercise most of them are not shipped** — no revocation command, no packaged compromise declaration, no anchoring flow | 8 paragraphs |
 | 14 | What is needed now, and colophon | What should I do, and on what terms is all this offered? | `README.md` seller and contact paragraphs; `LICENSE`, `LICENSE-docs`; `docs/faq.md` on the patent boundary | 5 paragraphs |
 | 15 | Notes | Where does each external fact come from? | numbered sources for sections 2, 7, 8, 9 only; internal facts link to the live surface instead | as needed |
 
@@ -280,8 +280,9 @@ signing key compromised**.
 
 That declaration is absorbing, by design. A key that has genuinely been stolen must be stoppable in
 a single move, or the theft is unstoppable instead. The price is that the same move invalidates
-every signature the key ever made, the honest ones included, and it is available to the seller
-exactly as easily as to the thief. It is one click, and it reaches backwards. It reaches even the
+every signature *that key* ever made, the honest ones included — not the seller's other keys, if it
+has several — and it is available to the seller exactly as easily as to the thief. It is one click,
+and it reaches backwards. It reaches even the
 class of receipt the standard otherwise allows nobody to revoke: a receipt marked irrevocable is
 immune to every revocation record, and not to this.
 
@@ -317,6 +318,29 @@ made *before* the declaration stops authenticating too, and the receipt reverts 
 before; that is deliberate and specified, because extending the cutoff to transfers would open the
 door to resurrected and doubly-assigned transfers. What is not deliberate is that nothing in the
 result tells the person holding the receipt why it happened.
+
+#### The seller's own levers are specified, not shipped
+
+Several things this document says a seller *can* do are things the specification defines and the
+verifier evaluates — and no shipped tool performs. Say it once, plainly, because it is the
+difference between a protocol and a product.
+
+A seller cannot revoke a receipt today. The specification defines revocation records, the classes
+they act on — a refund window, a stated policy — and exactly how a verifier must treat them, and
+both implementations evaluate them correctly. But the command-line tool on the project's main
+branch has no command that produces one: the only place it writes a revocation record is inside a
+transfer, where the record says "transferred", never "revoked". The merchant bridge, which turns a
+paid order into a signed receipt, has no refund handling at all. So when this document says that an
+irrevocable receipt is immune to every revocation record, it is describing a rule the verifier
+enforces against a document nobody can currently issue.
+
+The same is true of the compromise declaration in the form a verifier needs to compute a cutoff
+(above), and of the whole anchoring flow (section 6). The pattern is general and it is measured, not
+inferred: of the defences the project's own adversarial review classifies as "known design", none
+today has a complete, shipped producer on the seller's side. What is shipped is issuing, verifying,
+transfer, and the preservation-pledge documents. Everything else in this document that begins "the
+seller can" should be read as "the specification lets the seller, and the verifier will honour it,
+once a tool exists".
 
 #### The root of trust is a domain name, and a domain is a lease
 
@@ -543,7 +567,17 @@ scelto.*
 12. **Il nome dell'Internet-Draft non compare**, e non comparirà finché il nome nel repository e
     quello sul Datatracker non coincidono: oggi divergono, e qualunque dei due manderebbe il lettore
     su un errore.
-13. **Collocazione.** Questo giro salva in `docs/whitepaper.md` su un branch dedicato, come
+13. **Vincolo sui produttori mancanti, applicato.** Dopo la prima stesura è arrivata la misura che
+    `attest revoke` non esiste (i verbi della CLI su `main` sono `keygen`, `issue`, `verify`,
+    `export`, `import`, `inspect`, `disclose`, `check-artifact` più i gruppi `transfer` e `grant`;
+    l'unico chiamante di `revocation.build_record` è il ramo `transfer --revocation-out`, che emette
+    `status: "transferred"`; il bridge non gestisce i refund). Riverificato oggi sul codice. La
+    sezione 8 ha ora una sottosezione dedicata («The seller's own levers are specified, not
+    shipped»), la frase sulla marcatura è stretta a «quella chiave», e le righe 4, 11 e 13
+    dell'outline portano il vincolo. **Da confermare**: la frase generale «nessuna delle difese
+    classificate "design noto" ha oggi un produttore completo spedito» è scritta come misura del
+    progetto, senza numeri.
+14. **Collocazione.** Questo giro salva in `docs/whitepaper.md` su un branch dedicato, come
     richiesto; la struttura del 1° settembre prevedeva la bozza in cartella privata e l'atterraggio
     pubblico solo a fine lavoro. Se questo file deve restare privato fino alla ratifica, va detto
     ora, prima che il branch si accumuli.
