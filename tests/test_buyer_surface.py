@@ -77,29 +77,63 @@ def test_the_private_file_warning_is_identical_across_surfaces() -> None:
     in_bundle = _text_of(buyer_surface.private_file_warning_html("mylibrary"))
     on_page = _text_of(buyer_surface.private_file_warning_html())
 
-    # Only the file's name differs; everything a person reads after it matches.
-    assert in_bundle.replace("mylibrary.private.attest", "*.private.attest") == on_page
+    # Only the two filenames differ; everything a person reads around them
+    # matches. Both are replaced, because the warning now names the safe half
+    # as well as the dangerous one.
+    generic = in_bundle.replace("mylibrary.private.attest", "*.private.attest").replace(
+        "mylibrary.attest", "*.attest"
+    )
+    assert generic == on_page
 
 
 def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
     """Whatever else the wording becomes, these three facts have to survive it:
-    the file proves ownership, one file covers the whole library, and there is a
-    safe way to prove a single purchase instead."""
+    the file proves ownership, one file covers the whole library, and there is
+    something safe to send in its place."""
     for rendered in (
         _text_of(buyer_surface.private_file_warning_html("mylibrary")),
         buyer_surface.private_file_warning_text("mylibrary"),
     ):
         assert "proof" in rendered.lower()
         assert "whole library" in rendered.lower()
-        assert "attest disclose" in rendered
+        assert "mylibrary.attest" in rendered
+
+
+@pytest.mark.parametrize(
+    ("bundle_name", "shareable"),
+    [("mylibrary", "mylibrary.attest"), (None, "*.attest")],
+)
+def test_the_safe_alternative_is_a_file_the_buyer_already_holds(
+    bundle_name: str | None, shareable: str
+) -> None:
+    """Whatever the buyer is told to send instead has to be within their reach.
+
+    It used to be `attest disclose <receipt_id>`: a shell command, offered to
+    the one audience that by definition has no shell. The itch claim form is
+    linked from a game page, so it is the first attest surface a buyer ever
+    meets — and telling that reader to run a command is telling them nothing.
+    The real alternative was already in their download all along: the other
+    half of the pair, which shows the same purchases and proves ownership of
+    none of them.
+    """
+    for rendered in (
+        _claims_in_html(buyer_surface.private_file_warning_html(bundle_name)),
+        buyer_surface.private_file_warning_text(bundle_name),
+    ):
+        assert shareable in rendered
+        assert "attest disclose" not in rendered
 
 
 def test_the_plain_text_warning_carries_no_markup() -> None:
     """An email body is rendered by a client this project does not control, so
-    the text form must read correctly with no styling at all."""
+    the text form must read correctly with no styling at all.
+
+    Nothing angle-bracketed is exempt: the warning names files, not commands,
+    so there is no placeholder left for a reader to mistake for a tag.
+    """
     rendered = buyer_surface.private_file_warning_text("mylibrary")
 
-    assert "<" not in rendered.replace("<receipt_id>", "")
+    assert "<" not in rendered
     assert "&" not in rendered
 
 
@@ -244,8 +278,6 @@ def test_no_bundle_name_can_put_markup_in_the_styled_warning() -> None:
         "</h2>",
         "<p>",
         "</p>",
-        "<code>",
-        "</code>",
     }
     for bundle_name in HOSTILE_BUNDLE_NAMES:
         rendered = buyer_surface.private_file_warning_html(bundle_name)
@@ -254,12 +286,15 @@ def test_no_bundle_name_can_put_markup_in_the_styled_warning() -> None:
 
 
 def test_the_warning_templates_use_only_the_fields_the_renderers_supply() -> None:
-    """`{command}` is a hole for TRUSTED markup, and holes need a fence.
+    """Every hole in these templates is filled with an escaped value, never
+    with markup, and that is a property worth a fence of its own.
 
-    Whatever `{command}` holds is spliced into the styled form AFTER escaping,
-    so it renders as markup. That is correct for one module constant and is
-    cross-site scripting the moment a claim interpolates something a merchant
-    controls — and nothing else in this suite would notice, because every
+    Whatever a field holds is spliced into the styled form AFTER the claim has
+    been escaped, so anything markup-shaped in it renders as markup. Both
+    fields here are filenames the renderers escape first, which is what makes
+    the arrangement safe; a claim that interpolated trusted markup instead
+    would be cross-site scripting the day its content stopped being a module
+    constant — and nothing else in this suite would notice, because every
     other test feeds the renderers a bundle name, not a new claim.
     """
     templates = (buyer_surface._WARNING_HEADLINE, *buyer_surface._WARNING_CLAIMS)
@@ -269,7 +304,7 @@ def test_the_warning_templates_use_only_the_fields_the_renderers_supply() -> Non
             field for _, field, _, _ in string.Formatter().parse(template) if field is not None
         }
 
-        assert fields <= {"name", "command"}, template
+        assert fields <= {"name", "shareable"}, template
 
 
 def _claims_in_html(rendered: str) -> str:
@@ -280,10 +315,10 @@ def _claims_in_html(rendered: str) -> str:
 def _claims_in_text(rendered: str) -> str:
     """What a person reads in the plain form: exactly what is there.
 
-    Deliberately NOT tag-stripped. The plain form legitimately contains
-    `<receipt_id>` as literal text, and a comparison that stripped it would
-    quietly demand that the two forms differ — a test enforcing the very
-    drift it exists to forbid.
+    Deliberately NOT tag-stripped. Nothing angle-bracketed belongs in this
+    form today, but stripping here would let one arrive unnoticed on one
+    surface and not the other — a comparison that erases a difference is a
+    test enforcing the very drift it exists to forbid.
     """
     return _collapse(rendered)
 

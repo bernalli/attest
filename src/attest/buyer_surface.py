@@ -122,9 +122,11 @@ def render_page(
 
 # --- The canonical explanation ----------------------------------------------
 
-#: How to name the private file when the concrete name is not known (the
-#: explainer page is reached by people whose bundle this code never saw).
+#: How to name the two files when the concrete name is not known (the explainer
+#: page and the itch claim form are reached by people whose bundle this code
+#: never saw — on the claim form, before any bundle exists at all).
 _GENERIC_PRIVATE_NAME: Final = "*.private.attest"
+_GENERIC_SHAREABLE_NAME: Final = "*.attest"
 
 
 def _private_name(bundle_name: str | None) -> str:
@@ -137,8 +139,15 @@ def _private_name(bundle_name: str | None) -> str:
     return _GENERIC_PRIVATE_NAME if bundle_name is None else f"{bundle_name}.private.attest"
 
 
-#: The command that shares one receipt instead of the whole private file.
-_DISCLOSE_COMMAND: Final = "attest disclose <receipt_id>"
+def _shareable_name(bundle_name: str | None) -> str:
+    """Return the shareable half's name, or the generic pattern, unescaped.
+
+    The warning names it because it is the answer to the question the warning
+    provokes: told never to send one file, a buyer needs to know what they may
+    send. Same escaping rule as :func:`_private_name`.
+    """
+    return _GENERIC_SHAREABLE_NAME if bundle_name is None else f"{bundle_name}.attest"
+
 
 #: The warning, as claims rather than as prose — ONE source, two renderings.
 #:
@@ -153,6 +162,16 @@ _DISCLOSE_COMMAND: Final = "attest disclose <receipt_id>"
 #: Hence claims, not prose: both forms are generated from this tuple, so a
 #: sentence cannot exist on one surface and not the other. Anything a buyer
 #: must be told is added HERE, once.
+#:
+#: The last claim answers the question the headline provokes, and what it
+#: answers with has to be within the reader's reach. It used to be
+#: ``attest disclose <receipt_id>``, which is correct and useless: these words
+#: are read on a claim form linked from a game page, by someone who has never
+#: opened a terminal and never will. The alternative that was always true is
+#: the other half of their own download — same purchases, no proof of
+#: ownership — and it costs them nothing to find, because it is already on
+#: their disk. Per-receipt granularity is a real thing the CLI does and the
+#: spec documents (v0.1 §13); it is not what this paragraph is for.
 _WARNING_HEADLINE: Final = "Never send {name} to anyone."
 
 _WARNING_CLAIMS: Final = (
@@ -163,8 +182,8 @@ _WARNING_CLAIMS: Final = (
     "to show.",
     "A real store or support agent will never need it — they can already see your order.",
     "Keep it private, the way you would keep a paper receipt with your card number on it.",
-    "To prove a single purchase, use {command} instead: it shares that one "
-    "receipt and nothing else.",
+    "If anyone needs to see what you bought, send them {shareable} instead: it "
+    "shows the same purchases and gives no one a way to claim them.",
 )
 
 
@@ -188,9 +207,9 @@ def private_file_warning_html(bundle_name: str | None = None) -> str:
         A ``<div class="warning">`` block.
     """
     name = html.escape(_private_name(bundle_name))
-    command = f"<code>{html.escape(_DISCLOSE_COMMAND)}</code>"
+    shareable = html.escape(_shareable_name(bundle_name))
     paragraphs = "\n".join(
-        f"<p>{html.escape(claim).format(name=name, command=command)}</p>"
+        f"<p>{html.escape(claim).format(name=name, shareable=shareable)}</p>"
         for claim in _WARNING_CLAIMS
     )
     return (
@@ -217,8 +236,9 @@ def private_file_warning_text(bundle_name: str | None = None) -> str:
         Plain text, no markup, one claim per line, no trailing newline.
     """
     name = _private_name(bundle_name)
+    shareable = _shareable_name(bundle_name)
     sentences = [_WARNING_HEADLINE.format(name=name)]
-    sentences += [claim.format(name=name, command=_DISCLOSE_COMMAND) for claim in _WARNING_CLAIMS]
+    sentences += [claim.format(name=name, shareable=shareable) for claim in _WARNING_CLAIMS]
     # One claim per line. The email body around this breaks its own lines on
     # purpose, and the sentence that has to survive a phishing attempt is the
     # third of six: buried mid-paragraph in a single long run, it is present

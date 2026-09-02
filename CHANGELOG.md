@@ -55,6 +55,22 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fixture in this repository already sets `anchors.checkpoint` to the evidence's
   own checkpoint, and no test relied on the old leniency.
 
+- **The warning every buyer reads now points at a file instead of a command.**
+  Told never to send `<name>.private.attest` to anyone, a buyer asks the obvious
+  next question, and the answer was `attest disclose <receipt_id>` — correct,
+  and out of reach for the reader it was written for. The itch claim form is
+  linked from a game page, so for many buyers it is the first attest surface
+  they ever meet, and they meet it in a browser. All four rendered surfaces —
+  the bundle README, the download landing page, `what-is-this.html`, and the
+  claim form — now name the shareable half of the pair the buyer already holds:
+  it shows the same purchases and gives whoever receives it no way to claim
+  them. Per-receipt disclosure is unchanged and still specified (v0.1 §13); it
+  is simply no longer the answer offered to someone who has no shell. Two
+  consequences worth stating: the warning names both files now, so a rendered
+  page grows by roughly the length of the bundle name, and the committed sample
+  bundle under `site/public/sample/` still carries the old sentence until it is
+  regenerated.
+
 ### Fixed
 
 - **`log anchor --help` promised one proof file per Bitcoin path**, which

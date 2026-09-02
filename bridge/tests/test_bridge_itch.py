@@ -1340,3 +1340,9 @@ def test_claim_form_carries_the_private_file_warning(itch_deps: BridgeDeps) -> N
     page = body.decode()
     assert "private.attest" in page
     assert "A real store or support agent will never need it" in page
+
+    # And what it offers instead has to be something this reader can act on.
+    # A buyer who arrived here from a game page has a browser, not a shell:
+    # naming the safe half of their download is help, naming a command is not.
+    assert "*.attest" in page
+    assert "attest disclose" not in page
