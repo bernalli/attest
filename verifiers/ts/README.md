@@ -1,5 +1,14 @@
 # attest-verifier
 
+attest is the durable, portable, user-held layer of ownership for digital content: the seller
+signs a purchase receipt, the buyer holds the file, and anyone can verify it offline after the
+store is gone. "Forever" holds against the store disappearing, not against a live store declaring
+one of its own signing keys compromised: that declaration still destroys the receipts signed with
+that key that were never logged and anchored before it. It works directly for DRM-free sellers and is built for closed platforms
+when law requires a machine-verifiable purchase confirmation. This package is the verifier — it
+reads receipts and never issues them. It is unrelated to `@actions/attest`, the attestation
+library for GitHub Actions.
+
 An independent TypeScript implementation of an attest verifier, covering both published profiles: [v0.1](https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.1.md) (Ed25519) and [v0.2](https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.2.md) (hybrid Ed25519 + ML-DSA-65, plus Stage 2 transparency and anchoring evidence, Stage 3's issuer-mediated transfer, Stage 4's preservation pledge, §19's time-boxed compromise rescue, and §20's publisher authority). It checks a signed attest receipt envelope and reports its signature, schema, trust, revocation, and buyer-binding status — it does not issue, sign, or mutate receipts, manifests, or revocation records. Issuance is the Python reference implementation's job (`attest` package, repo root); this package only ever reads.
 
 ## Independence claim
