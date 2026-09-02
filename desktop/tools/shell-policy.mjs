@@ -265,10 +265,59 @@ const urlRule = (id, reasons) => ({
       ),
 })
 
+/** The five spellings that make a stylesheet fetch. Closed: widening it is an edit. */
+const CSS_FETCHING = ['url(', '@import', 'image-set(', 'image(', 'src(']
+
+/** CSS escapes, undone. `\75 rl(` and `u\rl(` are both `url(` to a browser, and a rule
+ *  that searched the text as written would miss both. A hex escape swallows AT MOST ONE
+ *  trailing whitespace, which is the browser's rule and not a convenience: swallowing
+ *  more would join text a browser keeps apart and invent tokens nobody wrote. */
+const decodeCssEscapes = (css) => {
+  let out = ''
+  for (let i = 0; i < css.length; i += 1) {
+    if (css[i] !== '\\') {
+      out += css[i]
+      continue
+    }
+    const hex = /^[0-9a-fA-F]{1,6}/.exec(css.slice(i + 1))
+    if (hex !== null) {
+      const point = Number.parseInt(hex[0], 16)
+      out +=
+        point === 0 || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff)
+          ? '�'
+          : String.fromCodePoint(point)
+      i += hex[0].length
+      const next = css[i + 1]
+      if (next === '\n' || next === '\t' || next === ' ' || next === '\f') i += 1
+      continue
+    }
+    if (i + 1 < css.length) {
+      out += css[i + 1]
+      i += 1
+      continue
+    }
+    out += css[i]
+  }
+  return out
+}
+
+/** The text of every inline stylesheet, taken from the tokenizer's own idea of where
+ *  each one ends. */
+const styleTexts = (ctx) =>
+  ctx.tokens
+    .filter((t) => t.name === 'style')
+    .flatMap((token) => {
+      const end = ctx.endTags.find(
+        (t) => t.name === 'style' && t.location.startOffset >= token.location.endOffset,
+      )
+      if (end === undefined) return []
+      return [{ token, css: ctx.html.slice(token.location.endOffset, end.location.startOffset) }]
+    })
+
 const first = (ctx, name) => ctx.tokens.find((t) => t.name === name)
 
 export const RULE_IDS = ['R-INPUT', 'R-PARSE', 'R-ELEMENT', 'R-ATTRIBUTE', 'R-VALUE', 'R-META',
-                         'R-COUNT', 'R-URL', 'R-URL-CANONICAL', 'R-REF']
+                         'R-COUNT', 'R-URL', 'R-URL-CANONICAL', 'R-REF', 'R-CSS']
 
 export const RULES = [
   {
@@ -447,6 +496,22 @@ export const RULES = [
         })
       return [...dangling, ...labels]
     },
+  },
+  {
+    id: 'R-CSS',
+    check: (ctx) =>
+      styleTexts(ctx).flatMap(({ token, css }) => {
+        // No comment removal, deliberately. A `/*` inside a CSS STRING does not open a
+        // comment, so stripping `/* ... */` joins text a browser keeps apart and can
+        // hide a real fetch between two strings that only look like comment markers -
+        // measured, and the corpus carries the case. The price is that a genuine
+        // comment containing `url(` is refused too. The stylesheet is ours; it contains
+        // none of these tokens, and the clean artifact proves the rule is a no-op on it.
+        const text = decodeCssEscapes(css).toLowerCase()
+        return CSS_FETCHING.filter((token_) => text.includes(token_)).map((found) =>
+          refusal('R-CSS', at(token), `the stylesheet carries ${found}, which fetches`),
+        )
+      }),
   },
 ]
 

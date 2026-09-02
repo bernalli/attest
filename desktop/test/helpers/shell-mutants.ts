@@ -424,6 +424,34 @@ const ROWS: readonly Row[] = [
   { n: 108, what: 'the allowed host reached through a username', where: 'ANCHOR',
     rules: ['R-URL'], sole: true, markup: 'href="https://someone@attest-receipts.org/"' },
 
+  // The stylesheet, which is text the tokenizer never turns into tags and which can
+  // still fetch. Every row is planted with the policy hash recomputed, or the pin would
+  // refuse it first and the row would be measuring the pin instead of the rule.
+  { n: 77, what: 'a background image', where: 'STYLE', rules: ['R-CSS'], sole: true,
+    markup: 'body{background:url(https://example.invalid/b)}' },
+  { n: 78, what: 'an imported stylesheet', where: 'STYLE', rules: ['R-CSS'], sole: true,
+    markup: '@import url(https://example.invalid/i.css);' },
+  { n: 79, what: 'url spelled with a hex escape', where: 'STYLE', rules: ['R-CSS'], sole: true,
+    markup: 'body{background:\\75 rl(https://example.invalid/b)}' },
+  { n: 80, what: 'url spelled with a character escape', where: 'STYLE', rules: ['R-CSS'],
+    sole: true, markup: 'body{background:u\\rl(https://example.invalid/b)}' },
+  { n: 81, what: 'url in capitals', where: 'STYLE', rules: ['R-CSS'], sole: true,
+    markup: 'body{background:URL(https://example.invalid/b)}' },
+  { n: 82, what: 'import spelled with a hex escape', where: 'STYLE', rules: ['R-CSS'], sole: true,
+    markup: '@\\69 mport "https://example.invalid/i.css";' },
+  { n: 83, what: 'an image set', where: 'STYLE', rules: ['R-CSS'], sole: true,
+    markup: 'body{background:image-set("https://example.invalid/b" 1x)}' },
+  { n: 84, what: 'a fetch hidden between two strings that look like comment markers',
+    where: 'STYLE', rules: ['R-CSS'], sole: true,
+    markup: 'body{--x:"/*"} body::before{content:url(https://example.invalid/c)} body{--y:"*/"}' },
+  { n: 85, what: 'a fetch wrapped in strings that look like a comment', where: 'STYLE',
+    rules: ['R-CSS'], sole: true,
+    markup: 'body::before{content:"/*" url(https://example.invalid/c) "*/"}' },
+  { n: 86, what: 'url with a form feed ending the escape', where: 'STYLE', rules: ['R-CSS'],
+    sole: true, markup: 'body{background:\\75\fRl(https://example.invalid/b)}' },
+  { n: 87, what: 'the image function', where: 'STYLE', rules: ['R-CSS'], sole: true,
+    markup: 'body{background:image(https://example.invalid/b)}' },
+
   // Input the document could not have been decoded from, and parse errors.
   {
     n: 102,

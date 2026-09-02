@@ -448,3 +448,73 @@ describe('a link is what it resolves to, whatever it is spelled like', () => {
       expect(allowed, form).toContain(form)
   })
 })
+
+describe('a stylesheet that fetches is refused however the token is spelled', () => {
+  const refusalsFor = (css: string) => {
+    const grown = plant(artifact().html, 'STYLE', css)
+    return validateShell(Buffer.from(grown.html, 'utf8'), {
+      stage: 'artifact',
+      expectedCsp: grown.csp,
+    })
+  }
+  const TERMINATORS = ['\n', '\t', ' ', '\f']
+
+  /** Every way `url(` can be written that a browser still reads as `url(`. */
+  const spellings = (): string[] => {
+    const token = 'url('
+    const out: string[] = [token, token.toUpperCase(), 'Url(', 'uRL(']
+    for (let i = 0; i < 3; i += 1) {
+      const hex = token.charCodeAt(i).toString(16)
+      for (const end of TERMINATORS)
+        out.push(`${token.slice(0, i)}\\${hex}${end}${token.slice(i + 1)}`)
+      out.push(`${token.slice(0, i)}\\${token[i]}${token.slice(i + 1)}`)
+    }
+    return out
+  }
+
+  test('every spelling of url( in the stylesheet is refused', () => {
+    for (const spelling of spellings()) {
+      const css = `body{background:${spelling}https://example.invalid/b)}`
+      expect(
+        refusalsFor(css).filter((r) => r.rule === 'R-CSS'),
+        JSON.stringify(css),
+      ).not.toHaveLength(0)
+    }
+  })
+
+  test('a fetch hidden between strings that look like comment markers is refused', () => {
+    // Stripping `/* ... */` before searching would join text a browser keeps apart. Each
+    // of these is a real fetch in both engines, and each survived the version of this
+    // rule that removed comments first.
+    const hidden = [
+      'body{--x:"/*"} body::before{content:url(https://example.invalid/c)} body{--y:"*/"}',
+      'body::before{content:"/*" url(https://example.invalid/c) "*/"}',
+      'body{--a:"/*"} body{--b:"*/"} body::after{content:url(https://example.invalid/d)}',
+    ]
+    for (const css of hidden)
+      expect(refusalsFor(css).filter((r) => r.rule === 'R-CSS'), css).not.toHaveLength(0)
+  })
+
+  test('a genuine comment naming url( is refused too, and that is the declared price', () => {
+    // Pinned so nobody "fixes" this back to stripping comments: the over-approximation
+    // is the reason the three rows above are caught at all.
+    expect(refusalsFor('/* url( */').filter((r) => r.rule === 'R-CSS')).not.toHaveLength(0)
+  })
+
+  test('the artifact carries a stylesheet, so the rule is not passing on an empty one', () => {
+    const { tokens, endTags, html } = tokenizeShell(artifact().html)
+    const style = tokens.find((t) => t.name === 'style')
+    const end = endTags.find((t) => t.name === 'style')
+    expect(style).toBeDefined()
+    const css = html.slice(style?.location.endOffset ?? 0, end?.location.startOffset ?? 0)
+    expect(css.length).toBeGreaterThan(1_000)
+  })
+})
+
+test('the rule set is closed, and this is the whole of it', () => {
+  expect([...RULE_IDS]).toEqual([
+    'R-INPUT', 'R-PARSE', 'R-ELEMENT', 'R-ATTRIBUTE', 'R-VALUE', 'R-META', 'R-COUNT',
+    'R-URL', 'R-URL-CANONICAL', 'R-REF', 'R-CSS',
+  ])
+  expect(RULES.map((r) => r.id)).toEqual([...RULE_IDS])
+})
