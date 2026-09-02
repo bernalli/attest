@@ -289,16 +289,27 @@ const pledgedReceipt = (grant: Jsonish): Uint8Array =>
     }),
   )
 
+/**
+ * The wall-clock ceiling is OPT-IN, and the reason is not tidiness.
+ *
+ * A test whose subject is the VERDICT asserts the verdict. Giving it a 250ms
+ * budget it never asked for makes it red under CPU contention for a reason
+ * that has nothing to do with admission — and a suite that reds at random is
+ * a suite that hides regressions, which costs more than the budget was ever
+ * worth. The tests whose subject IS the budget pass it explicitly and build
+ * their evidence OUTSIDE the timed window, so what the ceiling measures is the
+ * code under test and not a manifest's ML-DSA-65 signature.
+ */
 const callReturns = (
   fn: () => Jsonish,
   expected: Partial<Jsonish> & { ok?: boolean },
-  maxMs = 250,
+  maxMs?: number,
 ): { result: Jsonish; elapsedMs: number } => {
   const start = performance.now()
   const result = fn()
   const elapsedMs = performance.now() - start
   const { ok, ...components } = expected
-  expect(elapsedMs).toBeLessThan(maxMs)
+  if (maxMs !== undefined) expect(elapsedMs).toBeLessThan(maxMs)
   expect(result).toMatchObject(components)
   if (ok !== undefined) expect(isOk(result as never)).toBe(ok)
   return { result, elapsedMs }
@@ -577,10 +588,16 @@ describe('blind grant-view admission is per member and getter-free', () => {
 
   test('PERMISSIVA proxy traps deliver whatever verdict the genuine grant they carry deserves', () => {
     const floor = grantDocument()
+    // Count both permitted descriptor reads and actual value deliveries: this
+    // must also catch an ordinary property read added after reconstruction.
+    const descriptorReads = new Map<string, number>()
+    const valueReads = new Map<string, number>()
     const proxy = new Proxy(
       {},
       {
         get(_target, prop) {
+          const name = String(prop)
+          valueReads.set(name, (valueReads.get(name) ?? 0) + 1)
           if (prop === 'grant') return floor
           if (prop === 'declarations') return [declarationDocument()]
           return undefined
@@ -592,6 +609,8 @@ describe('blind grant-view admission is per member and getter-free', () => {
           return ['grant', 'declarations']
         },
         getOwnPropertyDescriptor(_target, prop) {
+          const name = String(prop)
+          descriptorReads.set(name, (descriptorReads.get(name) ?? 0) + 1)
           return { configurable: true, enumerable: true, value: this.get?.(_target, prop, proxy) }
         },
       },
@@ -613,6 +632,71 @@ describe('blind grant-view admission is per member and getter-free', () => {
     expect(result.grant).toBe('activated')
     expect(result.grant_trust).toBe('verified')
     expect(isOk(result as never)).toBe(true)
+    expect(descriptorReads.get('grant')).toBe(1)
+    expect(descriptorReads.get('declarations')).toBe(1)
+    expect(valueReads.get('grant')).toBe(1)
+    expect(valueReads.get('declarations')).toBe(1)
+  })
+
+  test('PERMISSIVA non-enumerable grant_view declaration is absent data and does not activate', () => {
+    const floor = grantDocument()
+    const view = { grant: floor } as Jsonish
+    Object.defineProperty(view, 'declarations', {
+      enumerable: false,
+      configurable: true,
+      writable: true,
+      value: [declarationDocument()],
+    })
+    const result = callReturns(
+      () =>
+        verify(pledgedReceipt(floor), trustStore(activeManifest(true)) as never, null, null, undefined, {
+          grantView: view,
+        } as never) as never,
+      { signature: 'valid', schema: 'valid', grant: 'dormant', grant_trust: 'verified', ok: true },
+    ).result
+    expect(result.grant).toBe('dormant')
+    expect(isOk(result as never)).toBe(true)
+  })
+
+  test('PERMISSIVA a non-enumerable extra member is not own data and the genuine declaration still activates', () => {
+    const floor = grantDocument()
+    const declaration = declarationDocument()
+    Object.defineProperty(declaration, 'smuggled', {
+      enumerable: false,
+      configurable: true,
+      writable: true,
+      value: 'not part of the signed form',
+    })
+    const result = callReturns(
+      () =>
+        verify(pledgedReceipt(floor), trustStore(activeManifest(true)) as never, null, null, undefined, {
+          grantView: { grant: floor, declarations: [declaration] },
+        } as never) as never,
+      { signature: 'valid', schema: 'valid', grant: 'activated', grant_trust: 'verified', ok: true },
+    ).result
+    expect(result.grant).toBe('activated')
+    expect(result.warnings as string[]).not.toContain('grant_declaration_ignored')
+  })
+
+  test('PERMISSIVA a declarations element defined as a getter is not own data and does not activate', () => {
+    const floor = grantDocument()
+    const declarations: unknown[] = []
+    Object.defineProperty(declarations, '0', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return declarationDocument()
+      },
+    })
+    const result = callReturns(
+      () =>
+        verify(pledgedReceipt(floor), trustStore(activeManifest(true)) as never, null, null, undefined, {
+          grantView: { grant: floor, declarations },
+        } as never) as never,
+      { signature: 'valid', schema: 'valid', grant: 'dormant', grant_trust: 'verified', ok: true },
+    ).result
+    expect(result.grant).toBe('dormant')
+    expect(result.warnings as string[]).toContain('grant_declaration_ignored')
   })
 })
 
@@ -628,12 +712,12 @@ describe('blind wall-clock limits for hostile lazy containers', () => {
         throw new Error('lazy grant getter must be confined')
       },
     })
+    const receipt = pledgedReceipt(floor)
+    const store = trustStore(activeManifest(true))
     callReturns(
-      () =>
-        verify(pledgedReceipt(floor), trustStore(activeManifest(true)) as never, null, null, undefined, {
-          grantView: view,
-        } as never) as never,
+      () => verify(receipt, store as never, null, null, undefined, { grantView: view } as never) as never,
       { signature: 'valid', schema: 'valid', grant: 'not_checked', grant_trust: 'not_checked', ok: true },
+      250,
     )
   })
 
@@ -643,10 +727,10 @@ describe('blind wall-clock limits for hostile lazy containers', () => {
     // 12cd568): a non-Array container raises TypeError, matching the Python
     // core exactly — the lied-length wall-clock guarantee below still holds,
     // it just resolves as a rejection instead of a tolerated 'unknown'.
+    const receipt = envelopeBytes(basePayload())
+    const store = trustStore(activeManifest())
     const start = performance.now()
-    expect(() =>
-      verify(envelopeBytes(basePayload()), trustStore(activeManifest()) as never, arrayLike as never),
-    ).toThrow(TypeError)
+    expect(() => verify(receipt, store as never, arrayLike as never)).toThrow(TypeError)
     expect(performance.now() - start).toBeLessThan(250)
   })
 
@@ -660,13 +744,32 @@ describe('blind wall-clock limits for hostile lazy containers', () => {
         throw new Error('iterator must not be consumed as evidence')
       },
     }
+    const receipt = envelopeBytes(basePayload())
+    const store = trustStore(activeManifest())
+    const options = { ...stage2Options(), transparency: iterable }
     callReturns(
-      () =>
-        verify(envelopeBytes(basePayload()), trustStore(activeManifest()) as never, null, null, undefined, {
-          ...stage2Options(),
-          transparency: iterable,
-        } as never) as never,
+      () => verify(receipt, store as never, null, null, undefined, options as never) as never,
       { signature: 'valid', schema: 'valid', transparency: 'not_checked', corroboration: 'none', ok: true },
+      250,
     )
+  })
+
+  test('RESTRITTIVA a declarations array lying about its own length by 2^31 truncates rather than activating', () => {
+    const floor = grantDocument()
+    const lying = new Proxy([declarationDocument()], {
+      getOwnPropertyDescriptor(target, prop) {
+        if (prop === 'length') return { value: 2 ** 31, writable: true, enumerable: false, configurable: false }
+        return Reflect.getOwnPropertyDescriptor(target, prop)
+      },
+    })
+    expect(Array.isArray(lying)).toBe(true)
+    const result = callReturns(
+      () =>
+        verify(pledgedReceipt(floor), trustStore(activeManifest(true)) as never, null, null, undefined, {
+          grantView: { grant: floor, declarations: lying },
+        } as never) as never,
+      { signature: 'valid', schema: 'valid', grant: 'not_checked', grant_trust: 'not_checked', ok: true },
+    ).result
+    expect(result.grant).toBe('not_checked')
   })
 })
