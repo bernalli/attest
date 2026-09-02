@@ -119,6 +119,9 @@ another feature.
 
 Depending on why you landed on this page:
 
+- **Someone sent you a receipt file and you have no idea what it is.** Read
+  [Start here](https://attest-receipts.org/start-here.html). Plain language, no
+  terminal, and it does not assume you have heard of any of this before.
 - **You want to see whether it actually works.** Open the
   [verifier](https://attest-receipts.org/) and drop the built-in sample on it.
   It takes about thirty seconds, installs nothing, and you can disconnect from the
