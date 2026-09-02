@@ -1,40 +1,193 @@
+/* attest — the document. Paper, typewriter ink, one bordeaux accent.
+   Every face is served from this origin: the page's CSP forbids any other host,
+   and that prohibition is the claim the page exists to demonstrate. */
+
+@font-face { font-family: 'Courier Prime'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/courier-prime-400.woff2') format('woff2'); }
+@font-face { font-family: 'Courier Prime'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/courier-prime-700.woff2') format('woff2'); }
+@font-face { font-family: 'Courier Prime'; font-style: italic; font-weight: 400; font-display: swap; src: url('/fonts/courier-prime-400i.woff2') format('woff2'); }
+@font-face { font-family: 'Courier Prime'; font-style: italic; font-weight: 700; font-display: swap; src: url('/fonts/courier-prime-700i.woff2') format('woff2'); }
+
 :root {
-  --bg: #ffffff; --fg: #1a1a1a; --muted: #555; --border: #d0d0d0;
-  --good: #1a7f37; --warn: #9a6700; --bad: #cf222e; --neutral: #57606a;
-  --accent: #0969da;
+  --paper: #f0e6d2;
+  --paper-card: #f8f2e2;
+  --edge: #d3c3a2;
+  --rule: #dccdb0;
+  --ink: #241f18;
+  --ink-2: #4a4132;
+  --ink-3: #5c5241;
+  --ink-label: #8a7a5e;
+  --ink-faint: #a0917a;
+  --bordeaux: #7a2231;
+  --bordeaux-deep: #571620;
+  --bordeaux-tint: #d8b3ad;
+  --stamp: #4a6b45;
+  --stamp-deep: #3c5738;
+  --measure: 64ch;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0d1117; --fg: #e6edf3; --muted: #9da7b1; --border: #30363d;
-    --good: #3fb950; --warn: #d29922; --bad: #f85149; --neutral: #8b949e;
-    --accent: #58a6ff;
-  }
-}
+
 * { box-sizing: border-box; }
+
 body {
-  margin: 0 auto; max-width: 760px; padding: 1rem 1.25rem 3rem;
-  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: var(--bg); color: var(--fg);
+  margin: 0;
+  font-family: 'Courier Prime', 'Courier New', Courier, monospace;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--ink);
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(ellipse 70% 50% at 12% 6%, rgba(196, 170, 128, 0.20), rgba(196, 170, 128, 0) 70%),
+    radial-gradient(ellipse 60% 45% at 88% 94%, rgba(176, 150, 110, 0.18), rgba(176, 150, 110, 0) 70%),
+    radial-gradient(ellipse 40% 30% at 70% 22%, rgba(214, 196, 160, 0.22), rgba(214, 196, 160, 0) 75%),
+    repeating-linear-gradient(94deg, rgba(120, 100, 70, 0.035) 0 1px, rgba(120, 100, 70, 0) 1px 3px),
+    repeating-linear-gradient(4deg, rgba(120, 100, 70, 0.028) 0 1px, rgba(120, 100, 70, 0) 1px 4px);
+  background-attachment: fixed;
 }
-a { color: var(--accent); }
-code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
-.hero { text-align: center; padding: 2rem 0 1rem; }
-.hero h1 { font-size: 2.6rem; margin: 0; letter-spacing: -0.02em; }
-.tagline { font-size: 1.25rem; font-weight: 600; margin: 0.25rem 0 1rem; }
-.hero nav a { margin: 0 0.6rem; }
-h2 { margin-top: 2.2rem; }
+
+a { color: var(--bordeaux); text-decoration: none; border-bottom: 1px solid var(--bordeaux-tint); }
+a:hover, a:focus-visible { color: var(--bordeaux-deep); border-bottom-color: var(--bordeaux); }
+em { font-style: italic; }
+code { font-family: inherit; }
+
+/* --- masthead ------------------------------------------------------------ */
+
+.masthead {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 24px; flex-wrap: wrap;
+  padding: 26px 40px;
+  border-bottom: 1px solid var(--rule);
+}
+.lockup { height: 22px; width: auto; display: block; color: var(--ink); }
+.masthead nav { display: flex; gap: 26px; flex-wrap: wrap; }
+.masthead nav a {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--bordeaux); border-bottom-color: transparent; padding-bottom: 2px;
+}
+.masthead nav a:hover, .masthead nav a:focus-visible { border-bottom-color: var(--bordeaux); }
+
+/* --- the column ---------------------------------------------------------- */
+
+main { max-width: 740px; margin: 0 auto; padding: 48px 24px 60px; display: flex; flex-direction: column; gap: 40px; }
+section { display: flex; flex-direction: column; gap: 16px; }
+h1 { margin: 0; font-size: clamp(26px, 4.6vw, 37px); font-weight: 700; line-height: 1.28; letter-spacing: -0.035em; text-wrap: pretty; }
+h2 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.03em; }
+p { margin: 0; max-width: var(--measure); color: var(--ink-2); text-wrap: pretty; }
+.lead { font-size: 15px; color: var(--ink-2); }
+.label { font-size: 10.5px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-label); }
+hr { border: 0; height: 1px; background: var(--rule); margin: 0; }
+
+/* --- the specimen receipt and its margin --------------------------------- */
+
+.specimen { display: grid; grid-template-columns: minmax(0, 1fr) 182px; gap: 28px; align-items: start; }
+.card {
+  min-width: 0; padding: 28px 32px;
+  background: var(--paper-card); border: 1px solid var(--edge);
+  box-shadow: 0 1px 0 rgba(255, 252, 244, 0.9) inset, 0 10px 26px -20px rgba(60, 48, 28, 0.55);
+  display: flex; flex-direction: column; gap: 18px;
+}
+.card__head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; border-bottom: 1px solid #e2d6bd; padding-bottom: 13px; }
+.card__title { font-size: 22px; font-weight: 700; letter-spacing: -0.025em; }
+.card__sub { font-size: 13.5px; color: var(--ink-3); font-style: italic; }
+.card__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px 28px; font-size: 13.5px; }
+.card__sig { border-top: 1px solid #e2d6bd; padding-top: 14px; font-size: 11px; color: var(--ink-label); line-height: 1.7; word-break: break-all; }
+.margin { min-width: 0; display: flex; flex-direction: column; gap: 14px; padding-top: 8px; }
+.margin p { font-size: 12.5px; line-height: 1.7; color: var(--ink-3); }
+.stamp {
+  border: 2px solid var(--stamp); color: var(--stamp-deep);
+  padding: 11px 10px; text-align: center;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  transform: rotate(-1.6deg);
+}
+
+/* --- the verifier, as a stamped form ------------------------------------- */
+
+.verifier { border: 1.5px solid var(--ink); padding: 24px 28px; gap: 20px; }
+.verifier__head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.verifier__head .note { font-size: 11.5px; color: var(--ink-label); }
 #dropzone {
-  border: 2px dashed var(--border); border-radius: 12px; padding: 2.2rem 1rem;
-  text-align: center; cursor: pointer; display: flex; flex-direction: column; gap: 0.3rem;
+  border: 2px dashed #b8a687; background: rgba(248, 242, 226, 0.5);
+  padding: 30px 22px; text-align: center; cursor: pointer;
+  display: flex; flex-direction: column; gap: 6px;
 }
-#dropzone:hover, #dropzone:focus { border-color: var(--accent); outline: none; }
-#dropzone span { color: var(--muted); }
-.sample-row { color: var(--muted); }
-.sample-row button { cursor: pointer; }
-#manifest-zone { border: 1px solid var(--warn); border-radius: 8px; padding: 0.75rem 1rem; margin-top: 1rem; }
-.binding { margin-top: 1rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 1rem; }
-.binding label { display: block; margin: 0.5rem 0; }
-.binding input, .binding select { width: 100%; max-width: 26rem; padding: 0.35rem 0.5rem; }
+#dropzone:hover, #dropzone:focus-visible, #dropzone.is-over { border-color: var(--bordeaux); background: rgba(248, 242, 226, 0.9); outline: none; }
+#dropzone strong { font-size: 14.5px; }
+#dropzone span { font-size: 12.5px; color: var(--ink-3); }
+.sample-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
+button {
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  background: transparent; color: var(--ink); border: 1px solid var(--ink);
+  padding: 7px 15px; cursor: pointer; white-space: nowrap;
+}
+button:hover, button:focus-visible { background: var(--ink); color: var(--paper); outline: none; }
+#binding-apply { background: var(--ink); color: var(--paper); border-color: var(--ink); padding: 10px 20px; font-size: 12.5px; }
+#binding-apply:hover, #binding-apply:focus-visible { background: var(--bordeaux); border-color: var(--bordeaux); }
+input[type="text"], input:not([type]), select {
+  font-family: inherit; font-size: 12.5px; color: var(--ink);
+  background: var(--paper-card); border: 1px solid var(--edge); padding: 10px 12px; min-width: 0;
+}
+input::placeholder { color: var(--ink-faint); }
+input:focus-visible, select:focus-visible { outline: none; border-color: var(--bordeaux); }
+.binding { display: flex; flex-direction: column; gap: 11px; }
+.binding__row { display: flex; gap: 11px; flex-wrap: wrap; }
+.binding__row label { flex: 1 1 200px; display: flex; flex-direction: column; gap: 5px; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-label); }
+.binding .caveat { font-size: 12px; color: var(--ink-3); line-height: 1.7; font-style: italic; }
+#manifest-zone { display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
+#manifest-zone[hidden] { display: none; }
+
+/* --- the verdict, once a real receipt is loaded -------------------------- */
+
+#results:empty { display: none; }
+#results { display: flex; flex-direction: column; gap: 14px; }
+
+/* --- the register: what attest is not ------------------------------------ */
+
+.register { display: flex; flex-direction: column; gap: 13px; }
+.register > div { display: grid; grid-template-columns: 168px 1fr; gap: 20px; font-size: 13.5px; line-height: 1.75; }
+.register dt, .register .term { font-weight: 700; }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 26px; }
+.steps > div { display: flex; flex-direction: column; gap: 7px; }
+.steps .n { font-size: 12px; font-weight: 700; color: var(--bordeaux); }
+.steps h3 { margin: 0; font-size: 14.5px; font-weight: 700; letter-spacing: -0.02em; }
+.steps p { font-size: 12.5px; line-height: 1.75; color: var(--ink-3); }
+
+.standing { background: rgba(213, 196, 160, 0.42); border-left: 3px solid var(--bordeaux); padding: 20px 24px; gap: 10px; }
+.standing p { font-size: 14px; }
+
+footer {
+  border-top: 1px solid var(--rule); padding: 22px 40px 30px;
+  display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+  font-size: 11.5px; color: var(--ink-3);
+}
+footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
+
+@media (max-width: 720px) {
+  .masthead, footer { padding-left: 20px; padding-right: 20px; }
+  .register > div { grid-template-columns: 1fr; gap: 4px; }
+  .specimen { grid-template-columns: 1fr; }
+}
+
+/* ------------------------------------------------------------------------
+   The verdict, as render.ts builds it.
+   Ported verbatim from the previous stylesheet: this vocabulary is a
+   contract with render.ts, and two of its rules are half of a security
+   defence — `unicode-bidi: isolate` stops an untrusted operand reordering
+   the page's own words around it, and `overflow-wrap: anywhere` stops one
+   unbroken operand pushing the page sideways (C-86, C-91). Only the colour
+   variables are remapped onto the paper palette; not one selector or
+   property is invented here.
+   ------------------------------------------------------------------------ */
+
+:root {
+  --bg: var(--paper-card);
+  --fg: var(--ink);
+  --muted: var(--ink-3);
+  --border: var(--edge);
+  --good: var(--stamp-deep);
+  --warn: #8a6a1f;
+  --bad: var(--bordeaux);
+  --neutral: var(--ink-label);
+  --accent: var(--bordeaux);
+}
+
 .notice { border-left: 4px solid var(--warn); padding-left: 0.8rem; color: var(--muted); }
 .result { border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; margin-top: 1.25rem; }
 .result.rejected { border-color: var(--bad); }
@@ -91,4 +244,12 @@ h2 { margin-top: 2.2rem; }
 .warnings h4, .errors h4 { margin: 0.8rem 0 0.2rem; }
 .errors { color: var(--bad); }
 .raw { overflow-x: auto; background: color-mix(in srgb, var(--fg) 5%, var(--bg)); padding: 0.75rem; border-radius: 8px; }
-footer { margin-top: 3rem; color: var(--muted); text-align: center; }
+
+/* The page's CSP is `style-src 'self'`, which blocks inline style attributes
+   as well as inline <style> blocks. Every value below exists because a
+   `style="..."` attribute would be silently dropped by the browser — measured
+   on the built page, not assumed. Nothing on this page may carry one. */
+.masthead__home { border: 0; }
+.card__id { font-size: 12px; color: var(--ink-label); }
+.label--ink { color: var(--ink); }
+.label--accent { color: var(--bordeaux); }

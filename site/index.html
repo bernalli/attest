@@ -4,136 +4,179 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
-  <meta name="description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Verify one right here in your browser.">
-  <meta property="og:title" content="attest — own what you buy: a receipt you hold, verified offline in your browser">
-  <meta property="og:description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Verify one right here in your browser.">
+        content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Check one right here in your browser.">
+  <meta property="og:title" content="attest — the shop closes, the proof of what you bought does not">
+  <meta property="og:description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Check one right here in your browser.">
   <meta property="og:url" content="https://attest-receipts.org/">
   <meta property="og:type" content="website">
-  <title>attest — own what you buy: a receipt you hold, verified offline in your browser</title>
+  <title>attest — the shop closes, the proof of what you bought does not</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="stylesheet" href="/src/styles.css">
 </head>
 <body>
-<header class="hero">
-  <h1>attest</h1>
-  <p class="tagline">Own what you buy. The seller signs a receipt, you hold the file, anyone can verify it offline — even after the store is gone.</p>
-  <p>attest is the durable, portable, user-held layer of possession for digital content. The
-     seller signs a receipt once at checkout; the buyer keeps the file; anyone can verify it
-     offline afterwards — issuer, license grant, buyer binding — with no surviving service of
-     any kind. It works today wherever files are sold DRM-free, and it is built so a regulator
-     could point closed platforms at it: a format the purchase confirmation the law already
-     mandates could travel in — one a machine can verify and you can carry away.</p>
-  <nav>
+
+<header class="masthead">
+  <a class="masthead__home" href="/" aria-label="attest — home">
+    <svg class="lockup" aria-label="attest" xmlns="http://www.w3.org/2000/svg" viewBox="5.00 2.58 135.23 18.04" fill="currentColor" role="img">
+      <title>attest</title>
+      <path fill-rule="evenodd" d="M5 2.6h14V18l-1.75 2.6L15.5 18l-1.75 2.6L12 18l-1.75 2.6L8.5 18l-1.75 2.6L5 18Zm3 4.1h8v1.7H8Zm0 3.6h5v1.7H8Z"/>
+      <g transform="translate(16.021 20.296) scale(0.014653)"><path d="M779.0 -307.0V-53.0Q779.0 -19.0 740.0 -4.5Q701.0 10.0 614.0 10.0Q527.0 10.0 488.0 -4.5Q449.0 -19.0 449.0 -53.0V-307.0Q449.0 -341.0 488.0 -355.5Q527.0 -370.0 614.0 -370.0Q701.0 -370.0 740.0 -355.5Q779.0 -341.0 779.0 -307.0ZM2247.0 -579.0V-290.0Q2247.0 -250.0 2264.0 -227.5Q2281.0 -205.0 2313.0 -205.0H2344.0Q2368.0 -205.0 2381.0 -196.5Q2394.0 -188.0 2400.5 -166.0Q2407.0 -144.0 2407.0 -102.0Q2407.0 -60.0 2400.5 -38.0Q2394.0 -16.0 2381.0 -8.0Q2368.0 0.0 2344.0 0.0H2232.0Q2170.0 0.0 2122.5 -25.5Q2075.0 -51.0 2050.0 -106.0Q1971.0 -45.0 1883.0 -11.5Q1795.0 22.0 1702.0 22.0Q1589.0 22.0 1507.0 -16.5Q1425.0 -55.0 1381.5 -126.5Q1338.0 -198.0 1338.0 -295.0Q1338.0 -435.0 1437.0 -512.0Q1536.0 -589.0 1714.0 -589.0Q1847.0 -589.0 1997.0 -559.0V-588.0Q1997.0 -655.0 1955.0 -687.0Q1913.0 -719.0 1807.0 -719.0Q1748.0 -719.0 1675.5 -704.5Q1603.0 -690.0 1532.0 -666.0Q1515.0 -661.0 1503.0 -661.0Q1478.0 -661.0 1458.5 -679.5Q1439.0 -698.0 1423.0 -742.0Q1408.0 -786.0 1408.0 -814.0Q1408.0 -865.0 1454.0 -882.0Q1543.0 -914.0 1643.0 -930.0Q1743.0 -946.0 1831.0 -946.0Q2051.0 -946.0 2149.0 -851.0Q2247.0 -756.0 2247.0 -579.0ZM1596.0 -285.0Q1596.0 -238.0 1631.5 -213.5Q1667.0 -189.0 1734.0 -189.0Q1803.0 -189.0 1870.5 -216.5Q1938.0 -244.0 1997.0 -292.0V-356.0Q1865.0 -383.0 1739.0 -383.0Q1669.0 -383.0 1632.5 -358.0Q1596.0 -333.0 1596.0 -285.0ZM3059.0 -1146.0V-864.0H3430.0Q3465.0 -864.0 3479.0 -841.0Q3493.0 -818.0 3493.0 -756.0Q3493.0 -694.0 3479.0 -671.5Q3465.0 -649.0 3430.0 -649.0H3059.0V-371.0Q3059.0 -205.0 3188.0 -205.0Q3234.0 -205.0 3295.5 -225.5Q3357.0 -246.0 3439.0 -283.0Q3461.0 -292.0 3474.0 -292.0Q3495.0 -292.0 3513.0 -274.5Q3531.0 -257.0 3547.0 -217.0Q3565.0 -172.0 3565.0 -144.0Q3565.0 -122.0 3554.5 -107.5Q3544.0 -93.0 3523.0 -82.0Q3317.0 22.0 3166.0 22.0Q2992.0 22.0 2900.5 -75.0Q2809.0 -172.0 2809.0 -358.0V-649.0H2616.0Q2581.0 -649.0 2567.0 -671.5Q2553.0 -694.0 2553.0 -756.0Q2553.0 -818.0 2567.0 -841.0Q2581.0 -864.0 2616.0 -864.0H2809.0V-1146.0Q2809.0 -1180.0 2839.5 -1194.5Q2870.0 -1209.0 2941.0 -1209.0Q2988.0 -1209.0 3013.5 -1202.5Q3039.0 -1196.0 3049.0 -1183.0Q3059.0 -1170.0 3059.0 -1146.0ZM4287.0 -1146.0V-864.0H4658.0Q4693.0 -864.0 4707.0 -841.0Q4721.0 -818.0 4721.0 -756.0Q4721.0 -694.0 4707.0 -671.5Q4693.0 -649.0 4658.0 -649.0H4287.0V-371.0Q4287.0 -205.0 4416.0 -205.0Q4462.0 -205.0 4523.5 -225.5Q4585.0 -246.0 4667.0 -283.0Q4689.0 -292.0 4702.0 -292.0Q4723.0 -292.0 4741.0 -274.5Q4759.0 -257.0 4775.0 -217.0Q4793.0 -172.0 4793.0 -144.0Q4793.0 -122.0 4782.5 -107.5Q4772.0 -93.0 4751.0 -82.0Q4545.0 22.0 4394.0 22.0Q4220.0 22.0 4128.5 -75.0Q4037.0 -172.0 4037.0 -358.0V-649.0H3844.0Q3809.0 -649.0 3795.0 -671.5Q3781.0 -694.0 3781.0 -756.0Q3781.0 -818.0 3795.0 -841.0Q3809.0 -864.0 3844.0 -864.0H4037.0V-1146.0Q4037.0 -1180.0 4067.5 -1194.5Q4098.0 -1209.0 4169.0 -1209.0Q4216.0 -1209.0 4241.5 -1202.5Q4267.0 -1196.0 4277.0 -1183.0Q4287.0 -1170.0 4287.0 -1146.0ZM6015.0 -432.0Q6015.0 -398.0 6000.5 -384.0Q5986.0 -370.0 5952.0 -370.0H5310.0Q5329.0 -290.0 5391.5 -247.5Q5454.0 -205.0 5550.0 -205.0Q5705.0 -205.0 5886.0 -260.0Q5898.0 -264.0 5910.0 -264.0Q5932.0 -264.0 5948.0 -244.0Q5964.0 -224.0 5977.0 -176.0Q5987.0 -139.0 5987.0 -113.0Q5987.0 -87.0 5975.5 -72.5Q5964.0 -58.0 5938.0 -49.0Q5838.0 -16.0 5734.0 3.0Q5630.0 22.0 5530.0 22.0Q5378.0 22.0 5268.0 -40.0Q5158.0 -102.0 5100.5 -211.5Q5043.0 -321.0 5043.0 -462.0Q5043.0 -602.0 5103.0 -712.0Q5163.0 -822.0 5276.0 -884.0Q5389.0 -946.0 5540.0 -946.0Q5692.0 -946.0 5799.0 -880.5Q5906.0 -815.0 5960.5 -698.5Q6015.0 -582.0 6015.0 -432.0ZM5314.0 -565.0H5754.0Q5737.0 -638.0 5681.5 -678.5Q5626.0 -719.0 5540.0 -719.0Q5357.0 -719.0 5314.0 -565.0ZM7164.0 -883.0V-672.0Q7164.0 -638.0 7142.5 -623.5Q7121.0 -609.0 7072.0 -609.0Q7019.0 -609.0 6999.0 -630.0Q6940.0 -693.0 6864.0 -719.5Q6788.0 -746.0 6688.0 -746.0Q6629.0 -746.0 6595.5 -725.0Q6562.0 -704.0 6562.0 -669.0Q6562.0 -627.0 6636.0 -609.0Q6675.0 -599.0 6769.0 -590.0Q6862.0 -579.0 6923.5 -568.0Q6985.0 -557.0 7040.0 -535.0Q7120.0 -502.0 7165.0 -443.0Q7210.0 -384.0 7210.0 -287.0Q7210.0 -192.0 7163.5 -122.5Q7117.0 -53.0 7027.5 -15.5Q6938.0 22.0 6812.0 22.0Q6673.0 22.0 6554.0 -49.0V-41.0Q6554.0 -7.0 6525.0 7.5Q6496.0 22.0 6432.0 22.0Q6368.0 22.0 6341.0 7.5Q6314.0 -7.0 6314.0 -41.0V-264.0Q6314.0 -297.0 6337.5 -312.0Q6361.0 -327.0 6410.0 -327.0Q6471.0 -327.0 6493.0 -299.0Q6543.0 -236.0 6621.0 -207.0Q6699.0 -178.0 6792.0 -178.0Q6952.0 -178.0 6952.0 -261.0Q6952.0 -286.0 6929.5 -301.0Q6907.0 -316.0 6863.0 -326.0Q6838.0 -331.0 6747.0 -344.0Q6646.0 -356.0 6573.5 -371.5Q6501.0 -387.0 6442.0 -420.0Q6304.0 -496.0 6304.0 -660.0Q6304.0 -747.0 6351.0 -812.0Q6398.0 -877.0 6480.5 -911.5Q6563.0 -946.0 6666.0 -946.0Q6817.0 -946.0 6934.0 -873.0V-883.0Q6934.0 -917.0 6958.5 -931.5Q6983.0 -946.0 7046.0 -946.0Q7110.0 -946.0 7137.0 -931.5Q7164.0 -917.0 7164.0 -883.0ZM7971.0 -1146.0V-864.0H8342.0Q8377.0 -864.0 8391.0 -841.0Q8405.0 -818.0 8405.0 -756.0Q8405.0 -694.0 8391.0 -671.5Q8377.0 -649.0 8342.0 -649.0H7971.0V-371.0Q7971.0 -205.0 8100.0 -205.0Q8146.0 -205.0 8207.5 -225.5Q8269.0 -246.0 8351.0 -283.0Q8373.0 -292.0 8386.0 -292.0Q8407.0 -292.0 8425.0 -274.5Q8443.0 -257.0 8459.0 -217.0Q8477.0 -172.0 8477.0 -144.0Q8477.0 -122.0 8466.5 -107.5Q8456.0 -93.0 8435.0 -82.0Q8229.0 22.0 8078.0 22.0Q7904.0 22.0 7812.5 -75.0Q7721.0 -172.0 7721.0 -358.0V-649.0H7528.0Q7493.0 -649.0 7479.0 -671.5Q7465.0 -694.0 7465.0 -756.0Q7465.0 -818.0 7479.0 -841.0Q7493.0 -864.0 7528.0 -864.0H7721.0V-1146.0Q7721.0 -1180.0 7751.5 -1194.5Q7782.0 -1209.0 7853.0 -1209.0Q7900.0 -1209.0 7925.5 -1202.5Q7951.0 -1196.0 7961.0 -1183.0Q7971.0 -1170.0 7971.0 -1146.0Z"/></g>
+    </svg>
+  </a>
+  <nav aria-label="Primary">
     <a href="start-here.html">Start here</a>
-    <a href="https://github.com/bernalli/attest">GitHub</a>
     <a href="https://github.com/bernalli/attest/tree/main/docs/spec">Specification</a>
     <a href="https://github.com/bernalli/attest/blob/main/docs/faq.md">FAQ</a>
+    <a href="https://github.com/bernalli/attest">Source</a>
   </nav>
 </header>
 
 <main>
+
+  <section>
+    <p class="label">A receipt you keep</p>
+    <h1>The shop closes.<br>The proof of what you bought does not.</h1>
+    <p class="lead">The seller signs a receipt once, at checkout. You keep the file. Anyone can verify it
+       afterwards — offline, unchanged, with no surviving service of any kind.</p>
+  </section>
+
+  <hr>
+
+  <section class="specimen">
+    <article class="card">
+      <div class="card__head">
+        <span class="label">Receipt</span>
+        <span class="card__id">01J8QW4K2R7YVN</span>
+      </div>
+      <div>
+        <div class="card__title">Starlight Drifter</div>
+        <div class="card__sub">sold by Nebula Games — a store that no longer exists</div>
+      </div>
+      <div class="card__grid">
+        <div><div class="label">Granted</div>Perpetual, personal use</div>
+        <div><div class="label">Bought</div>14 March 2025</div>
+        <div><div class="label">Terms</div>Bound by hash to this receipt</div>
+        <div><div class="label">Held by</div>A sealed commitment</div>
+      </div>
+      <div class="card__sig">ed25519 &middot; 8f2c41ab9e7d0356c1fa48b27e93d5a0c6b18f4e2d97a350bf6c81e4d2093a7f</div>
+    </article>
+    <aside class="margin">
+      <div class="stamp">Verifies</div>
+      <p>A specimen, shown as a receipt looks. Drop your own below and this page checks it in your
+         browser — nothing leaves the tab.</p>
+      <hr>
+      <p>A verifier reports what it was given. Handed no revocation feed, it answers
+         <em>unknown</em> — which is not the same as <em>no</em>.</p>
+    </aside>
+  </section>
+
   <section class="verifier">
-    <h2>Verify a receipt — right here, in your browser</h2>
-    <p>Everything runs client-side: this page has a Content-Security-Policy that forbids
-       talking to any other host, so your receipt never leaves this tab — you can even cut
-       the network once the page is loaded and verification still works.</p>
+    <div class="verifier__head">
+      <span class="label label--ink">Check one of your own</span>
+      <span class="note">nothing is uploaded — this page cannot reach any other host</span>
+    </div>
+
     <div id="dropzone" role="button" tabindex="0">
-      <strong>Drop a <code>.attest</code> bundle or <code>.attest.json</code> receipt here</strong>
-      <span>or click to pick a file</span>
+      <strong>Drop a <code>.attest</code> bundle here</strong>
+      <span>or a bare <code>.attest.json</code> receipt — click to pick a file</span>
     </div>
     <input id="file-input" type="file" accept=".attest,.json,application/json,application/zip" hidden>
+
     <p class="sample-row">No receipt handy?
-      <button id="load-sample" type="button">Try the sample bundle</button>
-      <a href="sample/demo.attest" download>download it</a> — a receipt from a fictional
-      store, <em>Nebula Games</em>, that no longer exists.</p>
+      <button id="load-sample" type="button">Load the sample</button>
+      <span>or <a href="sample/demo.attest" download>download it</a> and open it anywhere, later, offline.</span>
+    </p>
 
     <div id="manifest-zone" hidden>
-      <p>Drop or pick the issuer’s key-manifest JSON:</p>
+      <span class="label label--ink">Issuer key manifest</span>
+      <span>This receipt did not carry the issuer&rsquo;s key material. Supply the manifest JSON to settle it.</span>
       <input id="manifest-input" type="file" accept=".json,application/json">
     </div>
 
-    <details class="binding">
-      <summary>Prove a receipt is yours (salt disclosure)</summary>
-      <p>A receipt seals a commitment to the buyer’s identifier. Disclosing the salt lets a
-         verifier recompute it — a deliberate, replayable proof: whoever you show it to can
-         replay it, so disclose only to parties you would show the receipt to anyway
-         (spec §8.1). This page stores nothing.</p>
-      <label>Identifier <input id="binding-identifier" autocomplete="off" placeholder="casey@example.com"></label>
-      <label>Type
-        <select id="binding-type">
-          <option value="email">email</option>
-          <option value="issuer-account">issuer-account</option>
-        </select>
-      </label>
-      <label>Salt (base64url) <input id="binding-salt" autocomplete="off" placeholder="from your .private.attest"></label>
-      <button id="binding-apply" type="button">Re-verify with binding proof</button>
-    </details>
+    <hr>
+
+    <div class="binding">
+      <div class="verifier__head">
+        <span class="label label--ink">Prove it is yours</span>
+        <span class="note">optional — a receipt seals a commitment to your identifier</span>
+      </div>
+      <div class="binding__row">
+        <label>Identifier <input id="binding-identifier" type="text" autocomplete="off" placeholder="casey@example.com"></label>
+        <label>Type
+          <select id="binding-type">
+            <option value="email">email</option>
+            <option value="issuer-account">issuer-account</option>
+          </select>
+        </label>
+        <label>Salt (base64url) <input id="binding-salt" type="text" autocomplete="off" placeholder="from your .private.attest"></label>
+      </div>
+      <div class="binding__row">
+        <button id="binding-apply" type="button">Re-verify with binding proof</button>
+      </div>
+      <p class="caveat">Disclosing the salt is replayable: whoever you show it to can replay it, so disclose
+         only to parties you would show the receipt to anyway (spec &sect;8.1). This page stores nothing.</p>
+    </div>
 
     <section id="results" aria-live="polite"></section>
   </section>
 
-  <section class="explainer">
-    <h2>Who this is for</h2>
-    <p>A seller who ships DRM-free files can start signing this afternoon, without asking
-       anyone's permission: every buyer walks away with content plus proof, both in their
-       hands. That is the first track — the proof still verifies when the shop is gone — and
-       it needs nobody's approval to work.</p>
-    <p>The second track is the closed platforms, the ones that will never sign voluntarily.
-       In the EU a trader selling at a distance already has to confirm the contract on a
-       durable medium, carrying the information the law lists — Article 8(7) and Article 6(1)
-       of the Consumer Rights Directive (2011/83/EU, 25 October 2011) — which is why
-       confirmation emails exist. attest is not that confirmation, and the law asks for nothing
-       a machine can verify. It is a format that confirmation could include or travel in: one
-       the buyer keeps, that anyone can check unchanged, still valid when the seller is gone.
-       That gives a regulator a usable format to point at instead of a new obligation to
-       invent.</p>
-    <p>Being honest about where this stands: no store issues attest receipts yet, and no
-       regulator mandates them. The standard, two independent implementations and the
-       conformance suite are done and free to use. What is missing is the first seller who
-       signs.</p>
+  <hr>
 
+  <section>
+    <h2>Why a signed file, and not an account</h2>
+    <p>An account is a promise a company keeps for as long as it exists. A signed receipt is arithmetic:
+       it does not need the seller to be alive, reachable, solvent, or willing. Anyone holding the file
+       and the seller&rsquo;s published key can settle what was bought, on what terms, by whom — a decade
+       from now, on a laptop with no network.</p>
+    <p>It works today wherever files are sold without DRM, and it is built so a regulator could point
+       closed platforms at it: a format the purchase confirmation the law already requires could travel
+       in — one a machine can check and you can carry away.</p>
+  </section>
+
+  <hr>
+
+  <section>
     <h2>How it works</h2>
-    <ol>
-      <li><strong>The store signs.</strong> At checkout, the seller signs a receipt —
-          title, terms, artifact hashes, survivability promises — with its published
-          signing keys.</li>
-      <li><strong>You hold it.</strong> The buyer keeps the <code>.attest</code> bundle
-          anywhere: disk, cloud, USB. No account has to stay alive.</li>
-      <li><strong>Anyone verifies, offline.</strong> Any verifier — this page, the CLI, a
-          marketplace — checks the signature against the issuer’s key material. The store
-          can disappear; the math doesn’t.</li>
-    </ol>
+    <div class="steps">
+      <div><span class="n">01</span><h3>The store signs</h3><p>Once, at checkout, with keys it has published. It never has to do anything again.</p></div>
+      <div><span class="n">02</span><h3>You keep the file</h3><p>Disk, cloud, a USB stick in a drawer. No account has to stay alive.</p></div>
+      <div><span class="n">03</span><h3>Anyone checks it, offline</h3><p>This page, a command-line tool, a marketplace. The store can disappear; the arithmetic does not.</p></div>
+    </div>
+  </section>
 
+  <hr>
+
+  <section>
     <h2>What attest is not</h2>
-    <ul>
-      <li><strong>Not the content.</strong> A receipt is evidence of a license grant — it
-          never hosts, indexes, or unlocks the work itself.</li>
-      <li><strong>Not a DRM tool.</strong> It never strips or bypasses DRM, and a receipt
-          for a DRM-bound purchase says so honestly.</li>
-      <li><strong>Not a blockchain.</strong> A signed receipt needs no consensus, token, or
-          wallet. (v0.2 ships a strictly optional transparency and anchoring layer, and
-          transfers record a chain of title — neither needs one.)</li>
-      <li><strong>Not a resale market.</strong> v0.1 defines no transfer protocol at all;
-          v0.2 §17 adds transfer only where the issuer mediates it, and never a general
-          right to resell.</li>
-      <li><strong>Not a shield against a live seller.</strong> "Forever" holds against the
-          store disappearing, not against a live store declaring one of its own signing keys
-          compromised: that declaration invalidates the receipts signed with that key. v0.2
-          §19 defines a rescue for a receipt proven logged and anchored before the declaration,
-          but no shipped tool logs a receipt yet and this page cannot evaluate that evidence,
-          so today the declaration is final.</li>
-    </ul>
+    <div class="register">
+      <div><span class="term">Not the content</span><span>A receipt is evidence of a licence grant. It never hosts, indexes, or unlocks the work itself.</span></div>
+      <div><span class="term">Not a DRM tool</span><span>It never strips or bypasses DRM, and a receipt for a DRM-bound purchase says so honestly.</span></div>
+      <div><span class="term">Not a blockchain</span><span>A signed receipt needs no consensus, token, or wallet. The optional transparency and anchoring layer needs none either.</span></div>
+      <div><span class="term">Not a resale market</span><span>v0.1 defines no transfer protocol at all; v0.2 &sect;17 adds transfer only where the issuer mediates it, and never a general right to resell.</span></div>
+      <div><span class="term">Not a shield against a live seller</span><span>&ldquo;Forever&rdquo; holds against the store disappearing, not against a live store declaring one of its own signing keys compromised: that declaration invalidates the receipts signed with that key. v0.2 &sect;19 defines a rescue for a receipt proven logged and anchored before the declaration, but no shipped tool logs a receipt yet and this page cannot evaluate that evidence, so today the declaration is final.</span></div>
+    </div>
     <p>Skeptical? Good — read the <a href="https://github.com/bernalli/attest/blob/main/docs/faq.md">FAQ</a>,
        it answers the questions a reasonable person asks.</p>
   </section>
+
+  <section class="standing">
+    <p class="label label--accent">Where this honestly stands</p>
+    <p>No store issues attest receipts yet, and no regulator mandates them. The standard, two independent
+       implementations and the conformance suite are done and free to use. What is missing is the first
+       seller who signs.</p>
+  </section>
+
 </main>
 
 <footer>
-  <p>Code Apache-2.0 · Spec CC BY 4.0 · <a href="https://github.com/bernalli/attest">github.com/bernalli/attest</a>
-     · <a href="https://github.com/bernalli/attest/discussions">Discussions</a></p>
+  <span>Code Apache-2.0 &middot; Spec CC BY 4.0 &middot; Courier Prime under the SIL Open Font License</span>
+  <nav aria-label="Elsewhere">
+    <a href="https://github.com/bernalli/attest">github.com/bernalli/attest</a>
+    <a href="https://github.com/bernalli/attest/discussions">Discussions</a>
+  </nav>
 </footer>
 <script type="module" src="/src/main.ts"></script>
 </body>

@@ -18,7 +18,8 @@ test('salt disclosure proves the sample binding', async ({ page }) => {
   await page.goto('/')
   await page.click('#load-sample')
   await expect(page.locator('.verdict strong')).toHaveText(/Receipt verifies/)
-  await page.click('.binding summary')
+  // The binding form is open on the page: the document shows what it asks for
+  // rather than hiding it behind a disclosure triangle.
   await page.click('#binding-apply') // inputs were prefilled by the sample loader
   await expect(page.locator('.component-value', { hasText: 'proven' })).toBeVisible()
 })
