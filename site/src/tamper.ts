@@ -193,6 +193,16 @@ function locateTurn(
   // No ASCII letter or digit to turn: the target is not offered at all.
   if (k < 0) return null
   for (const start of indexesOfBytes(envelopeBytes, valueBytes)) {
+    // The target's value is a whole JSON string token in the document, so it is
+    // delimited by quotes. A run of the same bytes inside a longer string can
+    // never be it, and re-parsing the envelope for each one costs the page
+    // seconds: measured at 29s on a 91KB receipt whose title is a single common
+    // letter. Nothing is lost — a value containing `"` or `\` is escaped on the
+    // wire and has no byte-for-byte match at all, so the real occurrence is
+    // always the quoted one.
+    if (envelopeBytes[start - 1] !== 0x22 || envelopeBytes[start + valueBytes.length] !== 0x22) {
+      continue
+    }
     const offset = start + k
     const before = envelopeBytes[offset]
     const after = successor(before)

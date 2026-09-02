@@ -134,6 +134,48 @@ describe('the tamper bench refuses what it cannot do honestly', () => {
   })
 })
 
+describe('the tamper bench stays on the page’s own thread', () => {
+  // Proving the landing site means trying occurrences, and each try copies and
+  // re-parses the whole envelope. Without a cheap filter that is quadratic in
+  // the worst case a receipt can actually have: a common single letter as the
+  // title matches everywhere. Measured at 29 SECONDS on the shape below, twice
+  // over — `tamperOptions` runs on drop, before the reader clicks anything.
+  //
+  // The budget is deliberately two orders of magnitude above the fixed
+  // version (tens of milliseconds) so this fails on a return of the defect,
+  // never on a slow machine.
+  const BUDGET_MS = 2000
+
+  it('offers and applies within a blink on a receipt full of matches', () => {
+    const e = loadsStrict(envelope()) as JsonObject
+    const payload = { ...(e.payload as JsonObject) }
+    const work = { ...(payload.work as JsonObject) }
+    work.title = 'a'
+    // A large body of text carrying that letter thousands of times.
+    work.publisher = `Studio ${'a b c '.repeat(4000)}`
+    payload.work = work
+    const bytes = canonicalBytes({ ...e, payload } as JsonObject)
+    expect(bytes.length).toBeGreaterThan(20_000)
+
+    const t0 = performance.now()
+    const ids = tamperOptions(bytes).map((o) => o.id)
+    const offered = performance.now() - t0
+
+    const t1 = performance.now()
+    const applied = ids.includes('title') ? applyTamper('title', bytes, store()) : null
+    const spent = performance.now() - t1
+
+    expect(offered, 'tamperOptions on a receipt with thousands of matches').toBeLessThan(BUDGET_MS)
+    expect(spent, 'applyTamper on the same receipt').toBeLessThan(BUDGET_MS)
+    // And it still edits the right field, which is the whole point of the
+    // work the filter is making cheaper.
+    if (applied) {
+      const p = (loadsStrict(applied.envelopeBytes) as JsonObject).payload as JsonObject
+      expect((p.work as JsonObject).title).toBe(applied.edit!.now)
+    }
+  })
+})
+
 describe('the tamper bench edits the field it names, not one that looks like it', () => {
   const payloadOf = (b: Uint8Array): JsonObject =>
     (loadsStrict(b) as JsonObject).payload as JsonObject

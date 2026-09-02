@@ -10,6 +10,10 @@ export default defineConfig({
     // dev server refuses to serve outside its root unless told, so `npm run
     // dev` would 403 on exactly the files the §19 exhibit is made of.
     // Named rather than `'..'`: the exhibits need one directory, not the repo.
-    fs: { allow: ['../docs/spec/vectors'] },
+    // The root is NOT implied once `allow` is given — Vite appends only its own
+    // client directory — so without '.' the dev server answers 403 to
+    // index.html and to every module under src/. Exercised by test/dev-server.test.ts,
+    // which is the only thing in this repo that runs this configuration at all.
+    fs: { allow: ['.', '../docs/spec/vectors'] },
   },
 })

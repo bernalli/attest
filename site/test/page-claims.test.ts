@@ -95,6 +95,19 @@ describe('the page describes the log this deployment actually pins', () => {
     expect(claims).toBe(!anchored())
   })
 
+  // The other half of the same sentence, and it has now been wrong twice.
+  // "no shipped tool logs a receipt" was false — `attest log append` appends a
+  // `receipt` entry that `tlog.encode_entry` validates, and `tlog.receipt_core_hash`
+  // derives the hash it needs. What is actually missing is a COMMAND that goes
+  // from a receipt to that entry: the CLI never mentions the field.
+  it('names the gap the CLI actually has, not one the library does not', () => {
+    const cli = readFileSync(join(HERE, '..', '..', 'src', 'attest', 'cli.py'), 'utf-8')
+    const claims = sectionOf('What attest is not').includes(
+      'no shipped command turns a receipt into a log entry',
+    )
+    expect(claims, 'the register sentence about §19').toBe(!cli.includes('core_sha256'))
+  })
+
   it('says the same thing in the register, where the reader meets it first', () => {
     // The register entry names the reason §19's rescue is out of reach for a
     // receipt someone holds today. It used to say this page "cannot evaluate

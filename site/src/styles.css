@@ -254,14 +254,16 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
    e2e/contrast.spec.ts: it photographs the paper under every run of text at
    720px across the whole page and holds each one to its WCAG floor. Read them
    there rather than here, because a number written into a comment is a number
-   nothing re-measures. Today the lowest is --ink-label at 4.89:1.
+   nothing re-measures — this comment said 4.89 within a day of the run that
+   said 4.86. The lowest run today is one of --ink-label's; the test holds
+   every run to its WCAG floor and names the one that fails.
 
    Nothing on this page uses --ink-faint except input::placeholder, and that
    sits on an opaque field: a modelled figure for it against the paper answers
    a question no text on this page asks.
    ------------------------------------------------------------------------ */
 
-/* The bench sits inside the verifier's frame, directly under the verdict it
+/* The bench sits inside the verifier's frame, directly above the verdict it
    changes: a control that has to be scrolled to is a control a first-time
    reader never finds. */
 #bench { display: flex; flex-direction: column; gap: 12px; border-top: 1px solid var(--rule); padding-top: 20px; }

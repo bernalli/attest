@@ -225,3 +225,27 @@ describe('reading a colour back out of getComputedStyle', () => {
     expect(parseColour('rgba(101, 87, 62, 1)')).toEqual([101, 87, 62])
   })
 })
+
+describe('reading a pixel that is not in the bitmap', () => {
+  // `pixelAt` is the one function the measurement calls per pixel, and an
+  // out-of-range read used to come back as three `undefined`s: `contrast`
+  // then returns NaN, and `NaN < floor` is FALSE, so a target sampled outside
+  // the screenshot passed the gate in silence. A measurement that fails safe
+  // is worth less than no measurement.
+  const bitmap = { width: 2, height: 2, data: new Uint8Array(2 * 2 * 4).fill(0x80) }
+
+  it.each([
+    ['past the right edge', 2, 0],
+    ['past the bottom edge', 0, 2],
+    ['left of the origin', -1, 0],
+    ['above the origin', 0, -1],
+  ])('refuses a pixel %s', (_why, x, y) => {
+    expect(() => pixelAt(bitmap, x, y)).toThrow(RangeError)
+  })
+
+  it('reads every pixel that IS in the bitmap', () => {
+    for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      expect(pixelAt(bitmap, x, y)).toEqual([0x80, 0x80, 0x80])
+    }
+  })
+})

@@ -104,6 +104,13 @@ export function decodePng(png: Buffer): Bitmap {
 }
 
 export const pixelAt = (bitmap: Bitmap, x: number, y: number): [number, number, number] => {
+  // Out of range must throw, not read past the buffer: the channels would come
+  // back `undefined`, `contrast` would return NaN, and `NaN < floor` is FALSE —
+  // so a target sampled outside the screenshot would pass the contrast gate in
+  // silence. A measurement that fails safe is worth less than none.
+  if (x < 0 || y < 0 || x >= bitmap.width || y >= bitmap.height) {
+    throw new RangeError(`pixel ${x},${y} is outside a ${bitmap.width}x${bitmap.height} bitmap`)
+  }
   const o = (y * bitmap.width + x) * 4
   return [bitmap.data[o], bitmap.data[o + 1], bitmap.data[o + 2]]
 }

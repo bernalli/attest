@@ -186,7 +186,7 @@ export function initApp(doc: Document): AppHandle {
     try {
       salt = b64uDecode(bindingSalt.value.trim())
     } catch {
-      // The verdict stays on screen. Wiping it would leave the bench below
+      // The verdict stays on screen. Wiping it would leave the bench
       // narrating an edit whose consequence is nowhere to be seen — and the
       // bench's own header promises that the verdict below is what moves.
       renderJobs(currentDisclosure)
