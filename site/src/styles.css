@@ -1,11 +1,8 @@
-/* attest — the document. Paper, typewriter ink, one bordeaux accent.
-   Every face is served from this origin: the page's CSP forbids any other host,
-   and that prohibition is the claim the page exists to demonstrate. */
-
-@font-face { font-family: 'Courier Prime'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/courier-prime-400.woff2') format('woff2'); }
-@font-face { font-family: 'Courier Prime'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/courier-prime-700.woff2') format('woff2'); }
-@font-face { font-family: 'Courier Prime'; font-style: italic; font-weight: 400; font-display: swap; src: url('/fonts/courier-prime-400i.woff2') format('woff2'); }
-@font-face { font-family: 'Courier Prime'; font-style: italic; font-weight: 700; font-display: swap; src: url('/fonts/courier-prime-700i.woff2') format('woff2'); }
+/* attest - the document. Paper, typewriter ink, one bordeaux accent.
+   The four Courier Prime faces are declared in fonts.css, which only the site
+   loads. This file is also inlined into the desktop verifier, whose build
+   refuses any stylesheet carrying a fetching function, because an offline
+   verifier must never reach the network. Keep this file free of them. */
 
 :root {
   --paper: #f0e6d2;
