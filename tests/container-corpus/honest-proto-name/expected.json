@@ -1,0 +1,28 @@
+{
+  "caps": {
+    "max_entries": 10000,
+    "max_member_bytes": 67108864,
+    "max_total_bytes": 268435456
+  },
+  "members": [
+    {
+      "method": 0,
+      "name": "__proto__",
+      "sha256": "ec49b0716ff4ed4dd9e21a58088c74e7239ed35af39aadb1bce2f01be5d20244",
+      "size": 15
+    },
+    {
+      "method": 0,
+      "name": "constructor",
+      "sha256": "adc13623f5b22bdf2df05159553591a903799bc1991e3d4ad23764e7c147f854",
+      "size": 17
+    },
+    {
+      "method": 0,
+      "name": "receipts/01JBXYZ0000000000000000000.attest.json",
+      "sha256": "4393d5e5b833a6519cba8f24e3526b3c356024e0bd29a2d9cc39eb718d405a50",
+      "size": 65
+    }
+  ],
+  "verdict": "accept"
+}

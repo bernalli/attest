@@ -1,0 +1,28 @@
+{
+  "caps": {
+    "max_entries": 3,
+    "max_member_bytes": 67108864,
+    "max_total_bytes": 268435456
+  },
+  "members": [
+    {
+      "method": 0,
+      "name": "manifests/h.json",
+      "sha256": "70fbe6ddfd2eefcd92e847866658744e824841aef3a71c550acc33a3f4d5c0b0",
+      "size": 41
+    },
+    {
+      "method": 0,
+      "name": "receipts/01JBXYZ0000000000000000000.attest.json",
+      "sha256": "4393d5e5b833a6519cba8f24e3526b3c356024e0bd29a2d9cc39eb718d405a50",
+      "size": 65
+    },
+    {
+      "method": 0,
+      "name": "legal/eula.txt",
+      "sha256": "51d2361f4faea3bc8f9facdbc7d99abb555596a2e51f7b25fd3b41c93587e616",
+      "size": 5
+    }
+  ],
+  "verdict": "accept"
+}

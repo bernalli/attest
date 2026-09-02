@@ -1,0 +1,10 @@
+{
+  "caps": {
+    "max_entries": 10000,
+    "max_member_bytes": 67108864,
+    "max_total_bytes": 268435456
+  },
+  "code": "duplicate-name",
+  "member": "receipts/01JBXYZ0000000000000000000.attest.json",
+  "verdict": "reject"
+}

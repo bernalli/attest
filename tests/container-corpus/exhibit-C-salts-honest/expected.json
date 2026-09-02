@@ -1,0 +1,22 @@
+{
+  "caps": {
+    "max_entries": 10000,
+    "max_member_bytes": 67108864,
+    "max_total_bytes": 268435456
+  },
+  "members": [
+    {
+      "method": 0,
+      "name": "receipts/01JBXYZ0000000000000000000.attest.json",
+      "sha256": "660795391591f434fe4bbf46ab1a0f15d16061ec0963a1712d5986a5b52e1189",
+      "size": 65
+    },
+    {
+      "method": 0,
+      "name": "salts.json",
+      "sha256": "ee7cea3c694f02bd435e6d8695c7a16577fca81012630ac394a8ab3bd5a7302e",
+      "size": 37
+    }
+  ],
+  "verdict": "accept"
+}

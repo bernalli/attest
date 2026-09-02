@@ -1,0 +1,16 @@
+{
+  "caps": {
+    "max_entries": 10000,
+    "max_member_bytes": 67108864,
+    "max_total_bytes": 268435456
+  },
+  "members": [
+    {
+      "method": 8,
+      "name": "legal/eula.txt",
+      "sha256": "c6697441719867c9bc723208f0c4457f04fa5e1a04e019e8757978482785e179",
+      "size": 2112
+    }
+  ],
+  "verdict": "accept"
+}
