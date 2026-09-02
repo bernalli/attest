@@ -1,0 +1,10 @@
+{
+  "caps": {
+    "max_entries": 10000,
+    "max_member_bytes": 8192,
+    "max_total_bytes": 8192
+  },
+  "code": "member-size-mismatch",
+  "member": "receipts/01JBXYZ0000000000000000000.attest.json",
+  "verdict": "reject"
+}

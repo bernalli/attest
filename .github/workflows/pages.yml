@@ -29,6 +29,12 @@ jobs:
       - run: npm ci --prefix site
       - run: npm test --prefix site
       - run: npm run build --prefix site
+      # The two container readers are judged against each other on archives
+      # nobody chose. A disagreement here is the defect the canonical reader
+      # exists to close — same bytes, two conforming verifiers, two answers —
+      # so it fails the build rather than waiting for a field report. Stdlib
+      # Python plus the site's own esbuild: no extra install.
+      - run: python3 tools/container_differential.py --count 500 --seed 20260902
       - run: cd site && npx playwright install --with-deps chromium
       - run: npm run e2e --prefix site
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'

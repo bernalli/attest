@@ -27,6 +27,10 @@ jobs:
       - run: uv run --frozen ruff format --check .
       - run: uv run --frozen mypy --strict src bridge/src witness/src
       - run: uv run --frozen python tools/check_spec_docs.py
+      # The container corpus is generated, and a corpus edited by hand is a
+      # corpus nobody can regenerate: this fails on any drift between the
+      # committed leaves and what the generator produces today.
+      - run: uv run --frozen python tools/gen_container_corpus.py --check
       # The demos are how the project answers "does this actually run?".
       # The pytest wrappers already assert their outcomes, but running them
       # as scripts is the claim being made — that someone can type this from

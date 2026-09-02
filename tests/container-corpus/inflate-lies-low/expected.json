@@ -1,0 +1,10 @@
+{
+  "caps": {
+    "max_entries": 10000,
+    "max_member_bytes": 4,
+    "max_total_bytes": 8
+  },
+  "code": "member-over-cap",
+  "member": "legal/bomb.txt",
+  "verdict": "reject"
+}
