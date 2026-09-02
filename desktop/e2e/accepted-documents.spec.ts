@@ -204,6 +204,16 @@ const cssFor = (spelling: Spelling, n: number): string =>
  * body is a policy no engine applies — so what matters is not whether these are
  * ALLOWED elements but whether they close the head, which is a different question and
  * the one R-META used not to ask.
+ *
+ * The END TAGS are here because their absence is how this generator missed a defect it
+ * was built to find. It produced start tags and characters — the two shapes named in the
+ * rule it was measuring — so every document it handed the browser was one the rule had
+ * already thought about, and the third shape went unasked. `</body>`, `</html>` and
+ * `</br>` carry no element at all and reach the same "anything else" branch of the "in
+ * head" insertion mode: measured 2026-09-02, each of them put the policy in the body in
+ * both engines while the validator accepted the document. Their harmless neighbours
+ * (`</p>`, an unknown end tag) are here for the same reason the accepted side of every
+ * other family is: a partition with nothing on one side of it measures nothing.
  */
 const splitters = (id: string): ReadonlyArray<readonly [string, string]> => [
   ['a paragraph', '<p id="split-p">x</p>\n'],
@@ -215,6 +225,15 @@ const splitters = (id: string): ReadonlyArray<readonly [string, string]> => [
   ['an anchor', `<a href="#${id}">x</a>\n`],
   ['a bare character', 'x\n'],
   ['a character reference', '&nbsp;\n'],
+  ['a body end tag', '</body>\n'],
+  ['an html end tag', '</html>\n'],
+  ['a br end tag', '</br>\n'],
+  ['a body end tag in capitals', '</BODY>\n'],
+  ['a body end tag carrying an attribute', '</body id="x">\n'],
+  ['a self-closing br end tag', '</br/>\n'],
+  ['a head end tag', '</head>\n'],
+  ['a paragraph end tag', '</p>\n'],
+  ['an end tag for no element at all', '</not-an-element>\n'],
   ['a comment', '<!-- nothing at all -->\n'],
   ['whitespace', '  \n\t\n'],
   ['nothing', ''],
@@ -433,8 +452,39 @@ test.describe('scenario D: what these rules ACCEPT, a real engine is asked about
       expect.arrayContaining(['R-META', 'R-CSS']),
     )
 
+    // The same exploit, with the head closed by something that is not an element. An
+    // end tag builds no node and stands in no inventory of what a document contains, so
+    // a rule that recognised head-closing constructs by name did not see it — and the
+    // "in head" insertion mode treats `</body>` exactly as it treats `<p>`. Measured
+    // 2026-09-02: both engines put the policy in the body and the validator returned an
+    // empty array, which is the shape of a page with no policy at all.
+    const byEndTag = asDoc(
+      'liveness: the head closed by an end tag',
+      'liveness',
+      plant(
+        splitHead(artifactHtml(), '</body>'),
+        'STYLE',
+        `body::before{content:url(${PROBE}/end-tag.png)}`,
+      ),
+    )
+    const dead = await open(page, w, byEndTag)
+    expect(dead.policyParent, 'an end tag no longer closes the head around the policy').toBe('body')
+    expect(dead.violations, 'a policy in the body cannot report a violation').toEqual([])
+    expect(
+      dead.foreign.join(' '),
+      'the end-tag exploit no longer reaches the network, so this page proves nothing',
+    ).toContain('end-tag.png')
+    const namedByEndTag = refusalsFor(byEndTag)
+    expect(namedByEndTag, 'nothing refuses a policy an end tag pushed into the body').toContain(
+      'R-META',
+    )
+
     await info.attach(`liveness-${info.project.name}.json`, {
-      body: JSON.stringify({ blocked, pwned, reach, exploitRefusedBy: named }, null, 1),
+      body: JSON.stringify(
+        { blocked, pwned, dead, reach, exploitRefusedBy: named, endTagRefusedBy: namedByEndTag },
+        null,
+        1,
+      ),
       contentType: 'application/json',
     })
   })
@@ -488,6 +538,7 @@ test.describe('scenario D: what these rules ACCEPT, a real engine is asked about
     // Pinned, so a generator that stops producing changes this number instead of
     // quietly shrinking the set it feeds.
     expect(spellings(), 'the stylesheet generator has changed size').toHaveLength(400)
+    expect(splitters('probe'), 'the head generator has changed size').toHaveLength(21)
 
     // Liveness of the partition. A validator that refused everything would satisfy the
     // loop above with nothing to open, and that is the shape a broken rule set takes.

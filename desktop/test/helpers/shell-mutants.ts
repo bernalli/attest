@@ -399,6 +399,28 @@ const ROWS: readonly Row[] = [
     where: 'FILE', rules: ['R-META'], sole: true,
     whole: (html) => splitHead(html, 'x') },
 
+  // The same position, reached by a construct that is neither a start tag nor a
+  // character. `</body>`, `</html>` and `</br>` carry no element and appear in no
+  // inventory of what a document holds, and the "in head" insertion mode sends all
+  // three down the same "anything else" branch a `<p>` takes: pop the head, switch to
+  // "after head", reprocess. The policy written behind one of them is a child of the
+  // body, exactly as behind a paragraph. Measured 2026-09-02 on the shipped artifact:
+  // with `</body>` in front of the policy, chromium and firefox both report the meta's
+  // parent as `body`, and a rule that asked what stands in FRONT of the policy rather
+  // than where the policy landed returned no refusal at all.
+  { n: 113, what: 'a body end tag in front of the policy, which closes the head carrying no element',
+    where: 'FILE', rules: ['R-META'], sole: true,
+    whole: (html) => splitHead(html, '</body>') },
+  { n: 114, what: 'an html end tag in front of the policy, which closes the head the same way',
+    where: 'FILE', rules: ['R-META'], sole: true,
+    whole: (html) => splitHead(html, '</html>') },
+  { n: 115, what: 'a br end tag in front of the policy, the third the spec sends down that branch',
+    where: 'FILE', rules: ['R-META'], sole: true,
+    whole: (html) => splitHead(html, '</br>') },
+  { n: 116, what: 'a body end tag in capitals, which the tokenizer lowercases',
+    where: 'FILE', rules: ['R-META'], sole: true,
+    whole: (html) => splitHead(html, '</BODY>') },
+
   // The one link the document carries, and every other thing an href could be.
   { n: 47, what: 'a javascript href', where: 'BODY', rules: ['R-URL'], sole: true,
     markup: '<a href="javascript:alert(1)">x</a>' },
