@@ -207,6 +207,16 @@ describe('every rule is load-bearing, and every mutant names the rule that refus
     const named = new Set(mutants().flatMap((m) => m.rules))
     for (const id of RULE_IDS) expect(named, `${id} has no mutant`).toContain(id)
   })
+
+  test('every rule has a construct that only IT refuses', () => {
+    // The stronger form of the same idea. A rule named by rows that other rules also
+    // catch is a rule nobody can watch fail on its own - and a rule nobody can watch
+    // fail is one that could already have stopped working.
+    for (const id of RULE_IDS) {
+      const alone = mutants().filter((m) => m.sole && m.rules.length === 1 && m.rules[0] === id)
+      expect(alone.length, `${id} is never the only rule refusing anything`).toBeGreaterThan(0)
+    }
+  })
 })
 
 describe('what a tree builder drops, the tokens still see', () => {
