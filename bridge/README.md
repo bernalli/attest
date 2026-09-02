@@ -7,8 +7,8 @@ event; a signed attest receipt goes out to the buyer, automatically, at the
 moment of sale. From then on the receipt belongs to the buyer: a plain attest
 file that verifies offline no matter what happens to the bridge, the
 platform, or the store. For a DRM-free seller this is the entire cost of
-giving customers ownership that outlives the shop: run one small service and
-keep a signing key.
+giving customers proof of purchase that outlives the shop: run one small service
+and keep a signing key.
 
 It is NOT a hosted service attest operates on a merchant's behalf, and it
 never holds or transmits a third-party's keys: the merchant's issuer signing

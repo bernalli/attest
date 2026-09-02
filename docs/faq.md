@@ -406,10 +406,10 @@ disappearance changes nothing there, and closes off nothing you had.
 Two limits, both named. Transfers are countersigned by the issuer, so they stop when
 the issuer does; the resale answer above says what is and is not written about that.
 And "forever" holds against the store disappearing, not against a live store
-declaring its own signing key compromised: that declaration still destroys receipts
-that were never logged and anchored before it. A receipt anchored before the
-declaration survives it, and the previous answer says how little anchoring is
-switched on today. So the rule on any DRM-free store is simple and unglamorous:
+declaring its own signing key compromised: that declaration invalidates the receipts
+signed with that key. The standard defines a rescue for a receipt logged and anchored
+before the declaration, but no shipped tool logs a receipt and the verifiers you can
+use today cannot evaluate that evidence, so for now the declaration is final. So the rule on any DRM-free store is simple and unglamorous:
 download what you buy, and keep the file next to the receipt. Content plus proof,
 both in your hands.
 
