@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
-  <meta name="description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Check one right here in your browser.">
+  <meta name="description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Check one right here in your browser, then break it and watch the check notice.">
   <meta property="og:title" content="attest — the shop closes, the proof of what you bought does not">
-  <meta property="og:description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Check one right here in your browser.">
+  <meta property="og:description" content="attest turns a digital purchase into something you hold: the seller signs a receipt, you keep the file, and it stays verifiable offline after the store is gone. Check one right here in your browser, then break it and watch the check notice.">
   <meta property="og:url" content="https://attest-receipts.org/">
   <meta property="og:type" content="website">
   <title>attest — the shop closes, the proof of what you bought does not</title>
@@ -88,7 +88,8 @@
 
     <p class="sample-row">No receipt handy?
       <button id="load-sample" type="button">Load the sample</button>
-      <span>or <a href="sample/demo.attest" download>download it</a> and open it anywhere, later, offline.</span>
+      <span>&mdash; then break it, and watch this page notice. Or
+         <a href="sample/demo.attest" download>download it</a> and open it anywhere, later, offline.</span>
     </p>
 
     <div id="manifest-zone" hidden>
@@ -122,6 +123,20 @@
     </div>
 
     <section id="results" aria-live="polite"></section>
+
+    <div id="bench" hidden>
+      <div class="verifier__head">
+        <span class="label label--ink">Break it</span>
+        <span class="note">the verdict above is what moves</span>
+      </div>
+      <p>Each button alters this receipt for real and runs the same check again. The first ones
+         turn a single byte of the file — one letter, one character — and say which byte, at which
+         offset. The last leaves the file untouched and hides the seller&rsquo;s published keys
+         instead, which is a different failure and reads differently above.</p>
+      <div id="bench-buttons"></div>
+      <div id="bench-state"></div>
+      <p><button id="bench-restore" type="button" hidden>Put it back</button></p>
+    </div>
   </section>
 
   <hr>
@@ -158,10 +173,48 @@
       <div><span class="term">Not a DRM tool</span><span>It never strips or bypasses DRM, and a receipt for a DRM-bound purchase says so honestly.</span></div>
       <div><span class="term">Not a blockchain</span><span>A signed receipt needs no consensus, token, or wallet. The optional transparency and anchoring layer needs none either.</span></div>
       <div><span class="term">Not a resale market</span><span>v0.1 defines no transfer protocol at all; v0.2 &sect;17 adds transfer only where the issuer mediates it, and never a general right to resell.</span></div>
-      <div><span class="term">Not a shield against a live seller</span><span>&ldquo;Forever&rdquo; holds against the store disappearing, not against a live store declaring one of its own signing keys compromised: that declaration invalidates the receipts signed with that key. v0.2 &sect;19 defines a rescue for a receipt proven logged and anchored before the declaration, but no shipped tool logs a receipt yet and this page cannot evaluate that evidence, so today the declaration is final.</span></div>
+      <div><span class="term">Not a shield against a live seller</span><span>&ldquo;Forever&rdquo; holds against the store disappearing, not against a live store declaring one of its own signing keys compromised: that declaration invalidates the receipts signed with that key. v0.2 &sect;19 defines a rescue for a receipt proven logged and anchored before the declaration, but no shipped tool logs a receipt yet and this deployment pins no anchor, so for a receipt you hold today the declaration is final. The rescue itself is not a promise on paper — it is replayed below, in this tab.</span></div>
     </div>
     <p>Skeptical? Good — read the <a href="https://github.com/bernalli/attest/blob/main/docs/faq.md">FAQ</a>,
        it answers the questions a reasonable person asks.</p>
+  </section>
+
+  <hr>
+
+  <section class="exhibits">
+    <h2>When the seller turns on you</h2>
+    <p>A signing key gets stolen, and the seller publishes that fact: from now on, treat everything
+       signed with that key as worthless. What happens to the receipt you already hold? Answering
+       that from good intentions is not possible — somebody has to be able to show which came
+       first, and neither party can be trusted to say.</p>
+    <p>The two receipts below are the <em>same file, byte for byte</em>, signed by the same stolen
+       key, against the same declaration of theft. The only thing that differs is what the public
+       log says about when each was published. One survives. One does not (spec v0.2 &sect;19).</p>
+    <p>They are two of the project&rsquo;s own conformance vectors, compiled into this page and
+       replayed in your browser when you press the button — against <em>the vectors&rsquo; own</em>
+       pinned log keys and pinned block headers, not this site&rsquo;s. That distinction is not
+       decoration: this site&rsquo;s log has no anchor attached to any checkpoint yet, so the rail
+       being shown here cannot be reached with the material this deployment holds. Each run is then
+       compared, field by field, with the result the corpus demands of any conforming
+       implementation, and the comparison is shown whichever way it comes out.</p>
+    <p><button id="run-exhibits" type="button">Replay both receipts</button></p>
+    <div id="exhibits"></div>
+  </section>
+
+  <hr>
+
+  <section class="confinement">
+    <h2>Can this page phone home?</h2>
+    <p>The line above the dropzone — nothing is uploaded, this page cannot reach any other host —
+       is the kind of claim a page should not expect to be taken on trust. So press the button and
+       the page will try to fetch the seller&rsquo;s key material from the seller&rsquo;s own
+       domain, and report what the browser did about it. If the request goes through, the page says
+       that instead.</p>
+    <p><button id="run-probe" type="button">Try to reach another host</button></p>
+    <div id="probe"></div>
+    <p class="footnote">This is evidence, not proof: the page is reporting on itself. The proof is
+       the policy your browser is enforcing — read it in the page source, or watch the request fail
+       in your browser&rsquo;s network panel.</p>
   </section>
 
   <section class="standing">

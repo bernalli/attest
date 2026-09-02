@@ -24,6 +24,7 @@ import { zipSync } from 'fflate'
 import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { VECTORS_ROOT } from './helpers/vectors.js'
+import { pageBody } from './helpers/page.js'
 
 const CONFIG_ERROR = 'log keys must all share one origin'
 
@@ -92,16 +93,9 @@ function twoReceiptBundle(): Uint8Array {
   })
 }
 
-const PAGE = `
-  <div id="dropzone"></div><input id="file-input" type="file">
-  <div id="manifest-zone" hidden></div><input id="manifest-input" type="file">
-  <input id="binding-identifier"><select id="binding-type"><option value="email">email</option></select>
-  <input id="binding-salt"><button id="binding-apply"></button>
-  <button id="load-sample"></button>
-  <section id="results"></section>`
 
 beforeEach(() => {
-  document.body.innerHTML = PAGE
+  document.body.innerHTML = pageBody()
 })
 
 describe('a verifier that cannot run says so about itself', () => {

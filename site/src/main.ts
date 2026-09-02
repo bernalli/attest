@@ -1,16 +1,26 @@
 import type { Disclosure } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes, type VerifyJob } from './intake.js'
 import { runVerify } from './run.js'
-import { renderResult, renderRejection, renderVerifyFailure } from './render.js'
+import {
+  renderResult, renderRejection, renderVerifyFailure,
+  renderTamper, renderExhibit, renderExhibitTally, renderProbe,
+} from './render.js'
 import { LOG_KEYS, ANCHOR_POLICY } from './trusted-log.js'
 import { b64uDecode } from './b64u.js'
 import { loadSample } from './sample.js'
+import { applyTamper, tamperOptions, type TamperId } from './tamper.js'
+import { runExhibits } from './exhibits.js'
+import { probeIsolation, browserProbeDeps, PROBE_URL, type ProbeDeps } from './probe.js'
 
 export interface AppHandle {
   handleBytes(fileName: string, bytes: Uint8Array): void
   handleManifestBytes(bytes: Uint8Array): void
   applyDisclosure(): void
   loadSampleBundle(): Promise<void>
+  applyTamperById(id: TamperId): void
+  restore(): void
+  showExhibits(): void
+  runProbe(deps?: ProbeDeps): Promise<void>
 }
 
 function message(doc: Document, text: string): HTMLElement {
@@ -36,9 +46,24 @@ export function initApp(doc: Document): AppHandle {
   const bindingApply = byId<HTMLButtonElement>('binding-apply')
   const loadSampleBtn = byId<HTMLButtonElement>('load-sample')
   const results = byId<HTMLElement>('results')
+  const bench = byId<HTMLElement>('bench')
+  const benchButtons = byId<HTMLElement>('bench-buttons')
+  const benchState = byId<HTMLElement>('bench-state')
+  const benchRestore = byId<HTMLButtonElement>('bench-restore')
+  const runExhibitsBtn = byId<HTMLButtonElement>('run-exhibits')
+  const exhibitsZone = byId<HTMLElement>('exhibits')
+  const runProbeBtn = byId<HTMLButtonElement>('run-probe')
+  const probeZone = byId<HTMLElement>('probe')
 
+  // `baseJobs` is what the file actually says; `currentJobs` is what is on
+  // screen, which the bench may have altered. Keeping the two apart is what
+  // makes "Put it back" honest — restoring re-renders the original bytes
+  // rather than un-applying an edit, so no sequence of clicks can leave the
+  // page showing a receipt that is neither the original nor the tampered one.
+  let baseJobs: VerifyJob[] = []
   let currentJobs: VerifyJob[] = []
   let currentNotices: string[] = []
+  let currentDisclosure: Disclosure | null = null
   let pendingEnvelope: { bytes: Uint8Array; label: string } | null = null
 
   // Notices are prepended on every render, not written once: `renderJobs` runs
@@ -79,10 +104,45 @@ export function initApp(doc: Document): AppHandle {
     )
   }
 
+  // The bench offers only what THIS receipt can actually have done to it, so
+  // a button is never a promise the page then has to break.
+  function refreshBench(): void {
+    benchState.replaceChildren()
+    benchRestore.hidden = true
+    const base = baseJobs[0]
+    const options = base ? tamperOptions(base.envelopeBytes) : []
+    benchButtons.replaceChildren(
+      ...options.map((option) => {
+        const button = doc.createElement('button')
+        button.type = 'button'
+        button.textContent = option.label
+        button.title = option.what
+        button.dataset.tamper = option.id
+        button.addEventListener('click', () => applyTamperById(option.id))
+        return button
+      }),
+    )
+    bench.hidden = options.length === 0
+  }
+
+  function setJobs(jobs: VerifyJob[]): void {
+    baseJobs = jobs
+    currentJobs = jobs
+    currentDisclosure = null
+    refreshBench()
+    renderJobs(null)
+  }
+
+  function clearJobs(): void {
+    baseJobs = []
+    currentJobs = []
+    refreshBench()
+  }
+
   function handleBytes(fileName: string, bytes: Uint8Array): void {
     const r = intake(fileName, bytes)
     if (r.kind === 'rejected') {
-      currentJobs = []
+      clearJobs()
       currentNotices = []
       manifestZone.hidden = true
       results.replaceChildren(renderRejection(r.reason))
@@ -90,7 +150,7 @@ export function initApp(doc: Document): AppHandle {
     }
     currentNotices = r.notices ?? []
     if (r.kind === 'needs-manifest') {
-      currentJobs = []
+      clearJobs()
       pendingEnvelope = { bytes: r.envelopeBytes, label: r.label }
       manifestZone.hidden = false
       results.replaceChildren(
@@ -101,8 +161,7 @@ export function initApp(doc: Document): AppHandle {
     }
     pendingEnvelope = null
     manifestZone.hidden = true
-    currentJobs = r.jobs
-    renderJobs(null)
+    setJobs(r.jobs)
   }
 
   function handleManifestBytes(bytes: Uint8Array): void {
@@ -115,10 +174,10 @@ export function initApp(doc: Document): AppHandle {
       )
       return
     }
-    currentJobs = [{ label: pendingEnvelope.label, envelopeBytes: pendingEnvelope.bytes, trustStore, transparency: null }]
+    const envelope = pendingEnvelope
     pendingEnvelope = null
     manifestZone.hidden = true
-    renderJobs(null)
+    setJobs([{ label: envelope.label, envelopeBytes: envelope.bytes, trustStore, transparency: null }])
   }
 
   function applyDisclosure(): void {
@@ -133,7 +192,55 @@ export function initApp(doc: Document): AppHandle {
       )
       return
     }
-    renderJobs({ identifier: bindingIdentifier.value.trim(), identifier_type: bindingType.value, salt })
+    currentDisclosure = {
+      identifier: bindingIdentifier.value.trim(),
+      identifier_type: bindingType.value,
+      salt,
+    }
+    renderJobs(currentDisclosure)
+  }
+
+  // The bench alters the FIRST receipt only. A bundle may carry several, and
+  // silently editing all of them would make the offset shown below true of
+  // one file and false of the rest.
+  function applyTamperById(id: TamperId): void {
+    const base = baseJobs[0]
+    if (!base) return
+    const tampered = applyTamper(id, base.envelopeBytes, base.trustStore)
+    if (!tampered) {
+      benchState.replaceChildren(
+        message(doc, 'This receipt has nothing this button could change — nothing was altered.'),
+      )
+      return
+    }
+    // The transparency evidence is deliberately carried over UNCHANGED. It was
+    // issued for the original bytes, so a tampered receipt makes the log proof
+    // stop matching too, and the reader sees that happen on the same screen.
+    currentJobs = [
+      { ...base, envelopeBytes: tampered.envelopeBytes, trustStore: tampered.trustStore },
+      ...baseJobs.slice(1),
+    ]
+    benchState.replaceChildren(renderTamper(tampered))
+    benchRestore.hidden = false
+    renderJobs(currentDisclosure)
+  }
+
+  function restore(): void {
+    currentJobs = baseJobs
+    benchState.replaceChildren()
+    benchRestore.hidden = true
+    renderJobs(currentDisclosure)
+  }
+
+  function showExhibits(): void {
+    const outcomes = runExhibits()
+    exhibitsZone.replaceChildren(renderExhibitTally(outcomes), ...outcomes.map(renderExhibit))
+  }
+
+  async function runProbe(deps: ProbeDeps = browserProbeDeps(doc)): Promise<void> {
+    probeZone.replaceChildren(message(doc, 'Trying…'))
+    const outcome = await probeIsolation(PROBE_URL, deps)
+    probeZone.replaceChildren(renderProbe(outcome))
   }
 
   async function loadSampleBundle(): Promise<void> {
@@ -171,13 +278,34 @@ export function initApp(doc: Document): AppHandle {
     manifestInput.value = ''
   })
   bindingApply.addEventListener('click', applyDisclosure)
+  benchRestore.addEventListener('click', restore)
   loadSampleBtn.addEventListener('click', () => {
     void loadSampleBundle().catch(() => {
+      clearJobs()
       results.replaceChildren(message(doc, 'Could not load the sample bundle from this deployment.'))
     })
   })
+  // Replaying two receipts against a pinned log takes long enough to be felt,
+  // and it is synchronous: without yielding first the button would appear
+  // dead until the whole thing was over.
+  runExhibitsBtn.addEventListener('click', () => {
+    exhibitsZone.replaceChildren(message(doc, 'Replaying…'))
+    setTimeout(showExhibits, 0)
+  })
+  runProbeBtn.addEventListener('click', () => {
+    void runProbe()
+  })
 
-  return { handleBytes, handleManifestBytes, applyDisclosure, loadSampleBundle }
+  // The bench's starting state is decided here, not by the `hidden` attribute
+  // in the markup. Reading it off the page would make every assertion about
+  // "the bench is closed until a receipt is checked" a statement about
+  // index.html rather than about this file — true whatever this file did.
+  refreshBench()
+
+  return {
+    handleBytes, handleManifestBytes, applyDisclosure, loadSampleBundle,
+    applyTamperById, restore, showExhibits, runProbe,
+  }
 }
 
 if (typeof document !== 'undefined' && document.getElementById('dropzone')) initApp(document)

@@ -3,6 +3,9 @@ import type { Component } from './explain.js'
 import { GROUPS, attributeWarning, displayValue, explain, explainVerdict } from './explain.js'
 import { segmentDiagnostic } from './diagnostic.js'
 import { neutralized } from './untrusted-text.js'
+import type { Tampered } from './tamper.js'
+import type { ExhibitRun } from './exhibits.js'
+import type { ProbeOutcome } from './probe.js'
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -209,4 +212,111 @@ export function renderRejection(reason: string): HTMLElement {
   const article = el('article', 'result rejected')
   article.appendChild(el('p', 'verdict tone-bad', reason))
   return article
+}
+
+// --------------------------------------------------------------------------
+// The demonstration surfaces. Each one exists to move a sentence off the page
+// and into something the reader watches happen.
+// --------------------------------------------------------------------------
+
+// The title of the thing that was bought, and the seller's display name, are
+// strings out of a dropped file — untrusted on exactly the footing a
+// diagnostic operand is (C-86), and printed here inside the page's own
+// sentence about what the bench just did. The cap matches the component value
+// beside a row, because this is the same kind of thing shown the same way.
+const MAX_TAMPER_VALUE_CHARS = 120
+
+/** What the bench just did to the receipt, in terms a reader can check. */
+export function renderTamper(tampered: Tampered): HTMLElement {
+  const box = el('div', 'tamper-state')
+  box.appendChild(el('h4', undefined, tampered.option.label))
+  const edit = tampered.edit
+  if (edit === null) {
+    // Nothing was touched, and saying "one byte changed" here would be a
+    // small lie in the one place on the page that must not tell any.
+    box.appendChild(el('p', undefined, `${tampered.option.what} Nothing in the file changed.`))
+    return box
+  }
+  // `path` is this page's own literal, and `before`/`after` are one ASCII
+  // letter or digit each by construction in tamper.ts — the byte it turns is
+  // chosen from that class precisely so the demonstration stays about
+  // signatures. Only the two whole values come from the file.
+  const p = el('p')
+  p.appendChild(document.createTextNode('Changed one byte at offset '))
+  p.appendChild(el('code', undefined, String(edit.offset)))
+  p.appendChild(document.createTextNode(' of the receipt — inside '))
+  p.appendChild(el('code', undefined, edit.path))
+  p.appendChild(document.createTextNode(': '))
+  p.appendChild(el('code', undefined, edit.before))
+  p.appendChild(document.createTextNode(' became '))
+  p.appendChild(el('code', undefined, edit.after))
+  p.appendChild(document.createTextNode('.'))
+  box.appendChild(p)
+  const values = el('p', 'tamper-values')
+  values.appendChild(el('code', 'tamper-value was', neutralized(edit.was, MAX_TAMPER_VALUE_CHARS)))
+  values.appendChild(document.createTextNode(' → '))
+  values.appendChild(el('code', 'tamper-value now', neutralized(edit.now, MAX_TAMPER_VALUE_CHARS)))
+  box.appendChild(values)
+  return box
+}
+
+/** One §19 exhibit: its story, its verdict, and the fixture it is held to. */
+export function renderExhibit(outcome: ExhibitRun): HTMLElement {
+  const section = el('section', `exhibit${outcome.matches ? '' : ' mismatch'}`)
+  section.appendChild(el('h3', undefined, outcome.exhibit.label))
+  section.appendChild(el('p', 'exhibit-story', outcome.exhibit.story))
+
+  // Provenance before verdict: an exhibit whose source a reader cannot go and
+  // read is an assertion with extra steps.
+  const source = el('p', 'exhibit-source')
+  source.appendChild(document.createTextNode('Conformance vector '))
+  source.appendChild(el('code', undefined, outcome.exhibit.id))
+  source.appendChild(document.createTextNode(', replayed in this tab just now.'))
+  section.appendChild(source)
+
+  section.appendChild(renderResult(outcome.exhibit.label, outcome.run))
+
+  const check = el('p', `exhibit-check tone-${outcome.matches ? 'good' : 'bad'}`)
+  check.textContent = outcome.matches
+    ? 'This result matches the vector’s expected.json field for field — the page is being held ' +
+      'to the corpus, not asking to be believed.'
+    : 'This result does NOT match the vector’s expected.json. Something here is wrong, and the ' +
+      'page is saying so rather than hiding it:'
+  section.appendChild(check)
+  const mismatches = list('Mismatches', 'errors', outcome.mismatches)
+  if (mismatches) section.appendChild(mismatches)
+  return section
+}
+
+/** The tally, counted from the runs — never a number written by hand. */
+export function renderExhibitTally(outcomes: ExhibitRun[]): HTMLElement {
+  const matched = outcomes.filter((o) => o.matches).length
+  const good = matched === outcomes.length
+  const p = el('p', `exhibit-tally tone-${good ? 'good' : 'bad'}`)
+  p.textContent =
+    `${outcomes.length} conformance vectors replayed in your browser; ` +
+    `${matched} produced exactly the result the corpus demands` +
+    (good ? '.' : ` — ${outcomes.length - matched} did not, and that is a defect in this page.`)
+  return p
+}
+
+// The detail is the browser's own words — a policy report it composed, or the
+// message it put on the error it threw. Neither is the page's prose, and both
+// are byte-identical through the neutralizer on anything a browser actually
+// produces; running them through it costs nothing and stops this surface from
+// being the one place a composed string reaches the reader unexamined.
+const MAX_PROBE_DETAIL_CHARS = 400
+
+/** Whether this page could reach another host, as the browser reported it. */
+export function renderProbe(outcome: ProbeOutcome): HTMLElement {
+  const box = el('div', `probe tone-${outcome.blocked ? 'good' : 'bad'}`)
+  const p = el('p')
+  p.appendChild(document.createTextNode(outcome.blocked ? 'Tried to reach ' : 'Reached '))
+  p.appendChild(el('code', undefined, outcome.url))
+  p.appendChild(document.createTextNode(outcome.blocked ? ' — and could not.' : '.'))
+  box.appendChild(p)
+  box.appendChild(
+    el('p', 'probe-detail', neutralized(outcome.detail, MAX_PROBE_DETAIL_CHARS)),
+  )
+  return box
 }

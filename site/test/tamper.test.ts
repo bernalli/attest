@@ -1,0 +1,135 @@
+import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { loadsStrict, canonicalBytes } from 'attest-verifier'
+import type { JsonObject } from 'attest-verifier'
+import { applyTamper, tamperOptions, TAMPERS } from '../src/tamper.js'
+import { runVerify } from '../src/run.js'
+import { VECTORS_ROOT, trustStore } from './helpers/vectors.js'
+
+const V01 = join(VECTORS_ROOT, '01-valid-minimal')
+const envelope = (): Uint8Array => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
+const store = () => trustStore(V01)
+
+const differingOffsets = (a: Uint8Array, b: Uint8Array): number[] => {
+  const out: number[] = []
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) if (a[i] !== b[i]) out.push(i)
+  return out
+}
+
+const BYTE_TARGETS = ['title', 'store-name', 'receipt-id', 'signature'] as const
+
+describe('the tamper bench edits exactly what it says it edits', () => {
+  it('offers every byte target this receipt actually carries', () => {
+    const ids = tamperOptions(envelope()).map((o) => o.id)
+    for (const id of BYTE_TARGETS) expect(ids).toContain(id)
+    // The trust target needs nothing from the file, so it is always offered.
+    expect(ids).toContain('drop-manifest')
+  })
+
+  it.each(BYTE_TARGETS)('changes exactly one byte for %s, at the offset it reports', (id) => {
+    const before = envelope()
+    const t = applyTamper(id, before, store())
+    expect(t).not.toBeNull()
+    expect(t!.envelopeBytes).toHaveLength(before.length)
+    const diff = differingOffsets(before, t!.envelopeBytes)
+    expect(diff).toHaveLength(1)
+    expect(diff[0]).toBe(t!.edit!.offset)
+    expect(String.fromCharCode(before[t!.edit!.offset])).toBe(t!.edit!.before)
+    expect(String.fromCharCode(t!.envelopeBytes[t!.edit!.offset])).toBe(t!.edit!.after)
+    expect(t!.edit!.after).not.toBe(t!.edit!.before)
+  })
+
+  it('keeps the replacement in the same character class, so nothing else breaks', () => {
+    // A signature is base64url: swapping in a byte outside that alphabet would
+    // fail at decoding and tell a story about parsing, not about signing.
+    const t = applyTamper('signature', envelope(), store())!
+    expect(t.edit!.after).toMatch(/^[A-Za-z0-9]$/)
+    expect(t.edit!.before).toMatch(/^[A-Za-z0-9]$/)
+  })
+
+  it('shows the value the reader can read, before and after', () => {
+    const t = applyTamper('title', envelope(), store())!
+    expect(t.edit!.was).toBe('Example Game')
+    expect(t.edit!.now).not.toBe('Example Game')
+    expect(t.edit!.now).toHaveLength('Example Game'.length)
+  })
+})
+
+describe('the tamper bench actually flips the verdict', () => {
+  it('verifies before, and does not verify after — for every byte target', () => {
+    const clean = runVerify(envelope(), store())
+    expect(clean.ok).toBe(true)
+    expect(clean.result.signature).toBe('valid')
+
+    for (const id of BYTE_TARGETS) {
+      const t = applyTamper(id, envelope(), store())!
+      const run = runVerify(t.envelopeBytes, t.trustStore)
+      expect(run.ok, id).toBe(false)
+      expect(run.result.signature, id).toBe('invalid')
+      expect(run.result.errors.length, id).toBeGreaterThan(0)
+    }
+  })
+
+  it('leaves the file untouched when it takes the issuer’s published material away', () => {
+    const before = envelope()
+    const t = applyTamper('drop-manifest', before, store())!
+    expect(differingOffsets(before, t.envelopeBytes)).toEqual([])
+    expect(t.edit).toBeNull()
+    expect(Object.keys(t.trustStore.manifests)).toEqual([])
+
+    const run = runVerify(t.envelopeBytes, t.trustStore)
+    expect(run.ok).toBe(false)
+    expect(run.result.signature).toBe('invalid')
+  })
+
+  it('gives a different reason for a broken file than for absent issuer material', () => {
+    const broken = runVerify(
+      applyTamper('title', envelope(), store())!.envelopeBytes,
+      store(),
+    ).result.errors.join(' | ')
+    const t = applyTamper('drop-manifest', envelope(), store())!
+    const stripped = runVerify(t.envelopeBytes, t.trustStore).result.errors.join(' | ')
+    expect(broken).not.toBe(stripped)
+  })
+})
+
+describe('the tamper bench refuses what it cannot do honestly', () => {
+  const withTitle = (title: string): Uint8Array => {
+    const env = loadsStrict(envelope()) as JsonObject
+    const payload = { ...(env.payload as JsonObject) }
+    payload.work = { ...(payload.work as JsonObject), title }
+    return canonicalBytes({ ...env, payload } as JsonObject)
+  }
+
+  it('skips a value with no ASCII letter or digit to turn', () => {
+    // A single-byte edit inside a multi-byte character would produce invalid
+    // UTF-8 and a story about encoding, not about signatures.
+    const ids = tamperOptions(withTitle('日本語')).map((o) => o.id)
+    expect(ids).not.toContain('title')
+    expect(ids).toContain('signature')
+    expect(applyTamper('title', withTitle('日本語'), store())).toBeNull()
+  })
+
+  it('skips a target the receipt does not carry at all', () => {
+    const env = loadsStrict(envelope()) as JsonObject
+    const payload = { ...(env.payload as JsonObject) }
+    const work = { ...(payload.work as JsonObject) }
+    delete work.title
+    payload.work = work
+    const bytes = canonicalBytes({ ...env, payload } as JsonObject)
+    expect(tamperOptions(bytes).map((o) => o.id)).not.toContain('title')
+  })
+
+  it('offers nothing at all for bytes that are not a receipt', () => {
+    expect(tamperOptions(new TextEncoder().encode('not json'))).toEqual([])
+  })
+
+  it('names every tamper it offers, with a line saying what it does', () => {
+    for (const t of TAMPERS) {
+      expect(t.label.length).toBeGreaterThan(0)
+      expect(t.what.length).toBeGreaterThan(0)
+    }
+    expect(new Set(TAMPERS.map((t) => t.id)).size).toBe(TAMPERS.length)
+  })
+})

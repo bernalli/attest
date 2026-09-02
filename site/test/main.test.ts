@@ -7,6 +7,7 @@ import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { initApp, type AppHandle } from '../src/main.js'
 import { VECTORS_ROOT } from './helpers/vectors.js'
+import { pageBody } from './helpers/page.js'
 
 const V01 = join(VECTORS_ROOT, '01-valid-minimal')
 const envelope = () => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
@@ -16,17 +17,10 @@ const manifest = (): JsonObject => {
   return manifests[Object.keys(manifests)[0]] as JsonObject
 }
 
-const PAGE = `
-  <div id="dropzone"></div><input id="file-input" type="file">
-  <div id="manifest-zone" hidden></div><input id="manifest-input" type="file">
-  <input id="binding-identifier"><select id="binding-type"><option value="email">email</option><option value="issuer-account">issuer-account</option></select>
-  <input id="binding-salt"><button id="binding-apply"></button>
-  <button id="load-sample"></button>
-  <section id="results"></section>`
 
 let app: AppHandle
 beforeEach(() => {
-  document.body.innerHTML = PAGE
+  document.body.innerHTML = pageBody()
   app = initApp(document)
 })
 
