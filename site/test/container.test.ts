@@ -103,6 +103,20 @@ describe('canonicalMembers', () => {
     }
   })
 
+  it('keeps a leading U+FEFF in a member name', () => {
+    // `TextDecoder` drops a leading BOM by default, and the reference importer
+    // keeps it: the same archive would hold two members under one name here and
+    // two members under two names there.
+    const raw = storedZip([
+      ['\ufeffa.txt', bytesOf('one')],
+      ['a.txt', bytesOf('two')],
+    ])
+    expect(canonicalMembers(raw, DEFAULT_CONTAINER_CAPS).map((m) => m.name)).toEqual([
+      '\ufeffa.txt',
+      'a.txt',
+    ])
+  })
+
   it('keeps a member named __proto__ as a member', () => {
     // A plain object would lose it to the prototype chain, which is how the
     // same archive can hold a member one reader sees and the other does not.

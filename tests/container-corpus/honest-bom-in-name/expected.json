@@ -1,0 +1,28 @@
+{
+  "caps": {
+    "max_entries": 10000,
+    "max_member_bytes": 67108864,
+    "max_total_bytes": 268435456
+  },
+  "members": [
+    {
+      "method": 0,
+      "name": "\ufeffa.txt",
+      "sha256": "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
+      "size": 3
+    },
+    {
+      "method": 0,
+      "name": "a.txt",
+      "sha256": "3fc4ccfe745870e2c0d99f71f30ff0656c8dedd41cc1d7d3d376b0dbe685e2f3",
+      "size": 3
+    },
+    {
+      "method": 0,
+      "name": "receipts/01JBXYZ0000000000000000000.attest.json",
+      "sha256": "4393d5e5b833a6519cba8f24e3526b3c356024e0bd29a2d9cc39eb718d405a50",
+      "size": 65
+    }
+  ],
+  "verdict": "accept"
+}

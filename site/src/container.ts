@@ -22,6 +22,7 @@
 // this module names.
 
 import { Inflate } from 'fflate'
+import { deflateError } from './deflate.js'
 
 /** Slice of compressed input fed to the decoder at a time. Identical on both
  * sides so the worst burst before a cap fires is the same in both languages. */
@@ -195,7 +196,11 @@ const sameBytes = (bytes: Uint8Array, a: number, b: number, length: number): boo
   return true
 }
 
-const NAME_DECODER = new TextDecoder('utf-8', { fatal: true })
+// ZIP member names are a string of UTF-8 code points, not a text stream to be
+// BOM-sniffed: with the default `ignoreBOM: false` a leading U+FEFF is dropped
+// here and kept by the reference importer, which is two different member lists
+// for one archive — the defect this reader exists to remove.
+const NAME_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 /**
  * The member list of `bytes`, in central-directory order, or a `ContainerError`.
@@ -357,6 +362,19 @@ export function readMember(bytes: Uint8Array, member: Member, budget: ReadBudget
     // other reports nothing at all. Both readers name it here rather than let
     // each library's silence decide (measured 2026-09-02).
     if (member.compressedSize === 0) throw new ContainerError('member-inflate-error', member.name)
+    // The stream is validated here, against the format, rather than by
+    // whichever library is doing the decompressing: the two libraries were
+    // measured refusing different streams (see `./deflate.js`).
+    if (deflateError(bytes.subarray(start, stop), budget.maxMemberBytes) !== null)
+      throw new ContainerError('member-inflate-error', member.name)
+    // A limit measured and left open (2026-09-02): the two decoders do not hand
+    // back the same number of bytes at the same input offset — one returns
+    // everything decoded so far, the other only completed blocks — so a stream
+    // that is BOTH over the cap and invalid can earn `member-over-cap` on one
+    // side and `member-inflate-error` on the other. Both refuse it; the codes
+    // differ. Closing that means deciding the cap on the length the validator
+    // above computes rather than on what each decoder has produced, which is a
+    // change to the shared algorithm and not to this file.
     const chunks: Uint8Array[] = []
     const inflate = new Inflate((chunk) => {
       chunks.push(chunk)

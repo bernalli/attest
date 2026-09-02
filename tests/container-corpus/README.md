@@ -37,7 +37,9 @@ blind spots were.
 
     python3 tools/gen_container_corpus.py --fuzz 500 --seed 20260902 --out /tmp/f
 
-writes archives only — random models carrying random lies, with no expectation
-attached, for `tools/container_differential.py` to feed to both readers and
-compare. The enumerated leaves above are a floor and share their author's blind
-spots; the fuzzer and the in-language property suites exist because of that.
+writes archives only, with no expectation attached, for
+`tools/container_differential.py` to feed to both readers and compare. The
+stream cycles through one diagnostic fault for every S1--S23 target,
+intentional multi-fault precedence probes, and unclassified raw byte mutations.
+The enumerated leaves above are a floor and share their author's blind spots;
+the fuzzer and the in-language property suites exist because of that.

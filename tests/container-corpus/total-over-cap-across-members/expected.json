@@ -1,8 +1,8 @@
 {
   "caps": {
     "max_entries": 10000,
-    "max_member_bytes": 1024,
-    "max_total_bytes": 1500
+    "max_member_bytes": 4,
+    "max_total_bytes": 6
   },
   "code": "total-over-cap",
   "member": "legal/b.txt",

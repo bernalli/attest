@@ -35,6 +35,8 @@ import zlib
 from collections.abc import Buffer
 from dataclasses import dataclass
 
+from attest import deflate
+
 #: Slice of compressed input fed to the decoder at a time. Identical on both
 #: sides so the worst burst before a cap fires is the same in both languages.
 INFLATE_SLICE = 65536
@@ -207,7 +209,17 @@ def canonical_members(
     different order can still disagree about WHICH complaint an archive earns,
     and a corpus that pins codes would then be unshareable between them.
     """
-    view = memoryview(buf).cast("B")
+    # The view is released on every path, exception included: when the buffer
+    # is a memory-mapped file, an export still alive in a traceback frame keeps
+    # the mapping from closing, and the caller's refusal turns into a
+    # BufferError about bookkeeping.
+    with memoryview(buf).cast("B") as view:
+        return _canonical_members(view, max_entries, max_member_bytes, max_total_bytes)
+
+
+def _canonical_members(
+    view: memoryview, max_entries: int, max_member_bytes: int, max_total_bytes: int
+) -> list[Member]:
     length = len(view)
 
     # S1
@@ -366,7 +378,11 @@ def read_member(buf: Buffer, member: Member, budget: ReadBudget) -> bytes:
     catches a header that lies low about a bomb; the CRC-32 is what catches
     bytes that were replaced after the archive was written.
     """
-    view = memoryview(buf).cast("B")
+    with memoryview(buf).cast("B") as view:
+        return _read_member(view, member, budget)
+
+
+def _read_member(view: memoryview, member: Member, budget: ReadBudget) -> bytes:
     got = 0
 
     def count(produced: int) -> None:
@@ -389,6 +405,20 @@ def read_member(buf: Buffer, member: Member, budget: ReadBudget) -> bytes:
         # than let each library's silence decide (measured 2026-09-02).
         if member.compressed_size == 0:
             raise ContainerError("member-inflate-error", member.name)
+        # The stream is validated here, against the format, rather than by
+        # whichever library is doing the decompressing: the two libraries were
+        # measured refusing different streams (see `deflate`).
+        if deflate.deflate_error(view[start:stop], budget.max_member_bytes) is not None:
+            raise ContainerError("member-inflate-error", member.name)
+        # A limit measured and left open (2026-09-02): the two decoders do not
+        # hand back the same number of bytes at the same input offset — one
+        # returns everything decoded so far, the other only completed blocks —
+        # so a stream that is BOTH over the cap and invalid can earn
+        # `member-over-cap` on one side and `member-inflate-error` on the other.
+        # Both refuse it; the codes differ. Closing that means deciding the cap
+        # on the length the validator above computes rather than on what each
+        # decoder has produced, which is a change to the shared algorithm and
+        # not to this file.
         decompressor = zlib.decompressobj(-15)
         chunks: list[bytes] = []
         position = start

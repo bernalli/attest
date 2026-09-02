@@ -33,7 +33,7 @@ import struct
 import sys
 import tempfile
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 LFH_SIG = 0x04034B50
@@ -177,6 +177,12 @@ class Entry:
     local_extra: bytes | None = None
     local_flags: int | None = None
     local_method: int | None = None
+    local_ver_need: int | None = None
+    local_mtime: int | None = None
+    local_mdate: int | None = None
+    local_crc: int | None = None
+    local_csize: int | None = None
+    local_usize: int | None = None
     local_name_len: int | None = None
     local_extra_len: int | None = None
 
@@ -203,9 +209,26 @@ class Archive:
     byte_patches: tuple[tuple[int, int], ...] = ()
 
 
-def _deflate(data: bytes) -> bytes:
+def _real_deflate(data: bytes) -> bytes:
+    """A genuinely compressed stream, for the fuzzer only. The COMMITTED corpus
+    never uses this: its bytes must not depend on which zlib is installed."""
     compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
     return compressor.compress(data) + compressor.flush()
+
+
+def _deflate(data: bytes) -> bytes:
+    """Encode raw DEFLATE using deterministic, uncompressed stored blocks."""
+    blocks = [data[offset : offset + 0xFFFF] for offset in range(0, len(data), 0xFFFF)]
+    if not blocks:
+        blocks = [b""]
+    encoded = bytearray()
+    for index, block in enumerate(blocks):
+        # BTYPE=00 starts on a byte boundary here. The five high bits are the
+        # required alignment padding; only the final block carries BFINAL.
+        encoded.append(1 if index == len(blocks) - 1 else 0)
+        encoded += struct.pack("<HH", len(block), len(block) ^ 0xFFFF)
+        encoded += block
+    return bytes(encoded)
 
 
 def _payload(entry: Entry) -> bytes:
@@ -225,23 +248,29 @@ def _local_header(entry: Entry, payload: bytes) -> bytes:
     extra = b"" if entry.local_extra is None else entry.local_extra
     flags = entry.flags if entry.local_flags is None else entry.local_flags
     method = entry.method if entry.local_method is None else entry.local_method
-    csize = len(payload) if entry.csize is None else entry.csize
-    usize = len(entry.data) if entry.usize is None else entry.usize
+    ver_need = entry.ver_need if entry.local_ver_need is None else entry.local_ver_need
+    mtime = entry.mtime if entry.local_mtime is None else entry.local_mtime
+    mdate = entry.mdate if entry.local_mdate is None else entry.local_mdate
+    crc = _crc(entry) if entry.local_crc is None else entry.local_crc
+    central_csize = len(payload) if entry.csize is None else entry.csize
+    central_usize = len(entry.data) if entry.usize is None else entry.usize
+    csize = central_csize if entry.local_csize is None else entry.local_csize
+    usize = central_usize if entry.local_usize is None else entry.local_usize
     # A data descriptor moves the three size fields out of the local header,
     # which is exactly what a writer that cannot seek does.
-    crc, csize_field, usize_field = (0, 0, 0) if entry.descriptor else (_crc(entry), csize, usize)
+    crc_field, csize_field, usize_field = (0, 0, 0) if entry.descriptor else (crc, csize, usize)
     name_len = len(name) if entry.local_name_len is None else entry.local_name_len
     extra_len = len(extra) if entry.local_extra_len is None else entry.local_extra_len
     return (
         struct.pack(
             "<IHHHHHIIIHH",
             entry.local_sig,
-            entry.ver_need,
+            ver_need,
             flags,
             method,
-            entry.mtime,
-            entry.mdate,
-            crc,
+            mtime,
+            mdate,
+            crc_field,
             csize_field,
             usize_field,
             name_len,
@@ -467,6 +496,52 @@ def _exhibit_d_prefix() -> bytes:
     )
 
 
+def _exhibit_d_prefix_inverse() -> bytes:
+    """The inverse addressing split: ``size_cd`` starts before ``off_cd``.
+
+    A size-based reader sees two adjacent directory records. An offset-and-count
+    reader starts at the second record and sees only that member. The second
+    local header is duplicated at the displacement between those starts so
+    both readers also reach coherent member bytes after applying their own
+    local-header addressing model.
+    """
+    earlier = Entry(name=b"receipts/earlier.attest.json", data=b"size-sees")
+    later = Entry(name=b"receipts/later.attest.json", data=b"offset-sees")
+    earlier_payload = _payload(earlier)
+    later_payload = _payload(later)
+    earlier_block = _local_header(earlier, earlier_payload) + earlier_payload
+    later_block = _local_header(later, later_payload) + later_payload
+
+    earlier_record_size = len(_central_record(earlier, earlier_payload, 0))
+    earlier_lho = 0
+    later_size_lho = len(earlier_block)
+    if len(later_block) > earlier_record_size:
+        raise AssertionError("inverse D-prefix member must fit inside the directory displacement")
+    padding = b"\x00" * (earlier_record_size - len(later_block))
+    later_offset_lho = later_size_lho + earlier_record_size
+
+    member_area = earlier_block + later_block + padding + later_block
+    earlier_cd_offset = len(member_area)
+    earlier_cd = _central_record(
+        replace(earlier, lho=earlier_lho + earlier_record_size), earlier_payload, 0
+    )
+    later_cd_offset = earlier_cd_offset + len(earlier_cd)
+    later_cd = _central_record(replace(later, lho=later_offset_lho), later_payload, 0)
+    directory = earlier_cd + later_cd
+    eocd = struct.pack(
+        "<IHHHHIIH",
+        EOCD_SIG,
+        0,
+        0,
+        1,
+        1,
+        len(directory),
+        later_cd_offset,
+        0,
+    )
+    return member_area + directory + eocd
+
+
 @dataclass(frozen=True)
 class _RawCase:
     """A case whose bytes are assembled outside the `Archive` model."""
@@ -546,6 +621,21 @@ def _accept_cases() -> list[Case]:
             "accept",
         ),
         Case(
+            # A leading U+FEFF is part of the name, not a text-stream marker to
+            # be sniffed off: one decoder used to drop it and the other keep it,
+            # which is two member lists — and, with `salts.json`, two different
+            # answers about whether the archive holds the buyer's secrets.
+            "honest-bom-in-name",
+            Archive(
+                entries=[
+                    Entry(name="\ufeffa.txt".encode(), data=b"one", flags=0x0800),
+                    Entry(name=b"a.txt", data=b"two"),
+                    Entry(name=RECEIPT_NAME, data=_receipt("A")),
+                ]
+            ),
+            "accept",
+        ),
+        Case(
             "honest-proto-name",
             Archive(
                 entries=[
@@ -581,6 +671,85 @@ def _accept_cases() -> list[Case]:
             "accept",
         ),
         Case(
+            "central-ver-made",
+            Archive(entries=[Entry(name=b"legal/ver-made.txt", data=b"x", ver_made=21)]),
+            "accept",
+        ),
+        Case(
+            "central-ver-need",
+            Archive(
+                entries=[
+                    Entry(
+                        name=b"legal/ver-need.txt",
+                        data=b"x",
+                        ver_need=21,
+                        local_ver_need=20,
+                    )
+                ]
+            ),
+            "accept",
+        ),
+        Case(
+            "central-mtime",
+            Archive(entries=[Entry(name=b"legal/mtime.txt", data=b"x", mtime=1, local_mtime=0)]),
+            "accept",
+        ),
+        Case(
+            "central-mdate",
+            Archive(entries=[Entry(name=b"legal/mdate.txt", data=b"x", mdate=34, local_mdate=33)]),
+            "accept",
+        ),
+        Case(
+            "central-int-attr",
+            Archive(entries=[Entry(name=b"legal/int-attr.txt", data=b"x", int_attr=1)]),
+            "accept",
+        ),
+        Case(
+            "central-ext-attr",
+            Archive(entries=[Entry(name=b"legal/ext-attr.txt", data=b"x", ext_attr=1)]),
+            "accept",
+        ),
+        Case(
+            "local-flags",
+            Archive(entries=[Entry(name=b"legal/local-flags.txt", data=b"x", local_flags=8)]),
+            "accept",
+        ),
+        Case(
+            "local-method",
+            Archive(entries=[Entry(name=b"legal/local-method.txt", data=b"x", local_method=8)]),
+            "accept",
+        ),
+        Case(
+            "local-ver-need",
+            Archive(entries=[Entry(name=b"legal/local-ver.txt", data=b"x", local_ver_need=21)]),
+            "accept",
+        ),
+        Case(
+            "local-mtime",
+            Archive(entries=[Entry(name=b"legal/local-mtime.txt", data=b"x", local_mtime=1)]),
+            "accept",
+        ),
+        Case(
+            "local-mdate",
+            Archive(entries=[Entry(name=b"legal/local-mdate.txt", data=b"x", local_mdate=34)]),
+            "accept",
+        ),
+        Case(
+            "local-crc",
+            Archive(entries=[Entry(name=b"legal/local-crc.txt", data=b"x", local_crc=0)]),
+            "accept",
+        ),
+        Case(
+            "local-csize",
+            Archive(entries=[Entry(name=b"legal/local-csize.txt", data=b"x", local_csize=0)]),
+            "accept",
+        ),
+        Case(
+            "local-usize",
+            Archive(entries=[Entry(name=b"legal/local-usize.txt", data=b"x", local_usize=0)]),
+            "accept",
+        ),
+        Case(
             "honest-at-max-entries",
             Archive(
                 entries=[
@@ -601,6 +770,12 @@ def _archive_level_reject_cases() -> list[Case]:
     return [
         Case("too-short", Archive(entries=honest, truncate_at=10), "reject", "too-short"),
         Case(
+            "eocd-sig",
+            Archive(entries=honest, eocd_sig=EOCD_SIG + 1),
+            "reject",
+            "eocd-not-last",
+        ),
+        Case(
             "eocd-trailing-byte", Archive(entries=honest, suffix=b"\x00"), "reject", "eocd-not-last"
         ),
         Case(
@@ -616,6 +791,7 @@ def _archive_level_reject_cases() -> list[Case]:
             "eocd-comment-length",
         ),
         Case("multi-disk", Archive(entries=honest, disk_no=1), "reject", "multi-disk"),
+        Case("eocd-cd-disk", Archive(entries=honest, cd_disk=1), "reject", "multi-disk"),
         Case(
             "zip64-locator-present",
             Archive(entries=honest, zip64_locator=True),
@@ -625,6 +801,15 @@ def _archive_level_reject_cases() -> list[Case]:
         Case(
             "zip64-sentinel-count",
             Archive(entries=honest, n_disk=0xFFFF, n_total=0xFFFF),
+            "reject",
+            "zip64",
+        ),
+        Case(
+            # The pair above sets both counters, so a reader that only looked at
+            # one of them would still pass it: each sentinel needs a leaf of its
+            # own or the check that reads it is never the check that fires.
+            "zip64-sentinel-total-count",
+            Archive(entries=honest, n_total=0xFFFF),
             "reject",
             "zip64",
         ),
@@ -727,6 +912,12 @@ def _record_level_reject_cases() -> list[Case]:
             "directory-record-overrun",
         ),
         Case(
+            "central-extra-len",
+            Archive(entries=[Entry(name=RECEIPT_NAME, data=receipt_data, extra=b"x", extra_len=0)]),
+            "reject",
+            "directory-trailing-bytes",
+        ),
+        Case(
             "record-comment",
             Archive(entries=[manifest, Entry(name=RECEIPT_NAME, data=receipt_data, comment=b"c")]),
             "reject",
@@ -766,6 +957,22 @@ def _record_level_reject_cases() -> list[Case]:
             "record-zip64-lho",
             Archive(entries=[Entry(name=RECEIPT_NAME, data=receipt_data, lho=0xFFFFFFFF)]),
             "reject",
+            "record-zip64",
+        ),
+        Case(
+            "record-zip64-usize",
+            Archive(
+                entries=[
+                    Entry(
+                        name=RECEIPT_NAME,
+                        data=receipt_data,
+                        usize=0xFFFFFFFF,
+                        local_usize=len(receipt_data),
+                    )
+                ]
+            ),
+            "reject",
+            # No member name: the name is decoded at S16, after this check.
             "record-zip64",
         ),
         Case(
@@ -846,6 +1053,37 @@ def _record_level_reject_cases() -> list[Case]:
             member=RECEIPT_NAME.decode(),
         ),
         Case(
+            "local-name-len",
+            Archive(
+                entries=[
+                    Entry(
+                        name=RECEIPT_NAME,
+                        data=receipt_data,
+                        local_name_len=len(RECEIPT_NAME) - 1,
+                    )
+                ]
+            ),
+            "reject",
+            "local-name-mismatch",
+            member=RECEIPT_NAME.decode(),
+        ),
+        Case(
+            "local-extra-len",
+            Archive(
+                entries=[
+                    Entry(
+                        name=RECEIPT_NAME,
+                        data=receipt_data,
+                        local_extra=b"\xff",
+                        local_extra_len=0,
+                    )
+                ]
+            ),
+            "reject",
+            "member-crc-mismatch",
+            member=RECEIPT_NAME.decode(),
+        ),
+        Case(
             "data-runs-into-directory",
             Archive(entries=[Entry(name=RECEIPT_NAME, data=receipt_data, method=8, csize=0x1000)]),
             "reject",
@@ -855,10 +1093,21 @@ def _record_level_reject_cases() -> list[Case]:
     ]
 
 
+def _stored_deflate_block(payload: bytes, *, nlen: int | None = None) -> bytes:
+    """A raw-DEFLATE stream holding one stored block (RFC 1951 §3.2.4). `nlen`
+    overrides the complement field the two decoders disagree about."""
+    length = len(payload)
+    complement = (~length & 0xFFFF) if nlen is None else nlen
+    return (
+        bytes([0b001]) + length.to_bytes(2, "little") + complement.to_bytes(2, "little") + payload
+    )
+
+
 def _read_level_reject_cases() -> list[Case]:
     receipt_data = _receipt("A")
-    big = b"expanded far past the cap. " * 400
-    honest_small = Entry(name=b"legal/a.txt", data=b"x" * 900)
+    over_member_cap = b"12345"
+    first_member = Entry(name=b"legal/a.txt", data=b"1234")
+    second_member = b"5678"
     return [
         Case(
             "declared-member-over-cap",
@@ -885,32 +1134,38 @@ def _read_level_reject_cases() -> list[Case]:
             "inflate-lies-low",
             Archive(
                 entries=[
-                    Entry(name=b"legal/bomb.txt", data=big, method=8, usize=10, crc=zlib.crc32(big))
+                    Entry(
+                        name=b"legal/bomb.txt",
+                        data=over_member_cap,
+                        method=8,
+                        usize=1,
+                        crc=zlib.crc32(over_member_cap),
+                    )
                 ]
             ),
             "reject",
             "member-over-cap",
             member=b"legal/bomb.txt".decode(),
-            caps=_caps(max_member_bytes=1024, max_total_bytes=8192),
+            caps=_caps(max_member_bytes=4, max_total_bytes=8),
         ),
         Case(
             "total-over-cap-across-members",
             Archive(
                 entries=[
-                    honest_small,
+                    first_member,
                     Entry(
                         name=b"legal/b.txt",
-                        data=b"y" * 900,
+                        data=second_member,
                         method=8,
-                        usize=10,
-                        crc=zlib.crc32(b"y" * 900),
+                        usize=1,
+                        crc=zlib.crc32(second_member),
                     ),
                 ]
             ),
             "reject",
             "total-over-cap",
             member=b"legal/b.txt".decode(),
-            caps=_caps(max_member_bytes=1024, max_total_bytes=1500),
+            caps=_caps(max_member_bytes=4, max_total_bytes=6),
         ),
         Case(
             "usize-too-large",
@@ -960,6 +1215,60 @@ def _read_level_reject_cases() -> list[Case]:
             member=b"legal/eula.txt".decode(),
         ),
         Case(
+            # Measured 2026-09-02: of every malformed deflate stream tried, the
+            # two decoders disagree on exactly one — a stored block whose
+            # complement field is wrong. One refuses it, the other never reads
+            # that field. The canonical form refuses it on both sides.
+            "deflate-stored-block-bad-complement",
+            Archive(
+                entries=[
+                    Entry(
+                        name=RECEIPT_NAME,
+                        data=receipt_data,
+                        method=8,
+                        raw_compressed=_stored_deflate_block(receipt_data, nlen=0x1234),
+                    )
+                ]
+            ),
+            "reject",
+            "member-inflate-error",
+            member=RECEIPT_NAME.decode(),
+        ),
+        Case(
+            # Measured 2026-09-02: the browser verifier's decoder gives the
+            # reserved literal codes working bases and produces 261 bytes from
+            # this stream; the reference decoder refuses it. The canonical form
+            # refuses it on both sides.
+            "deflate-reserved-literal-code",
+            Archive(
+                entries=[
+                    Entry(
+                        name=RECEIPT_NAME,
+                        data=b"A" * 261,
+                        method=8,
+                        raw_compressed=bytes.fromhex("731c0300"),
+                    )
+                ]
+            ),
+            "reject",
+            "member-inflate-error",
+            member=RECEIPT_NAME.decode(),
+        ),
+        Case(
+            "deflate-stored-block-honest-complement",
+            Archive(
+                entries=[
+                    Entry(
+                        name=RECEIPT_NAME,
+                        data=receipt_data,
+                        method=8,
+                        raw_compressed=_stored_deflate_block(receipt_data),
+                    )
+                ]
+            ),
+            "accept",
+        ),
+        Case(
             # Measured 2026-09-02: an empty compressed payload is the one input
             # on which the two decoders disagree by default — CPython reports a
             # stream that never reached its final block, fflate reports nothing
@@ -1004,6 +1313,12 @@ def _exhibit_cases() -> list[_RawCase]:
         ),
         _RawCase("exhibit-C2-salts", c2_salts, "reject", "entry-counters-disagree"),
         _RawCase("exhibit-D-prefix", _exhibit_d_prefix(), "reject", "directory-misplaced"),
+        _RawCase(
+            "exhibit-D-prefix-inverse",
+            _exhibit_d_prefix_inverse(),
+            "reject",
+            "directory-misplaced",
+        ),
     ]
 
 
@@ -1061,10 +1376,12 @@ blind spots were.
 
     python3 tools/gen_container_corpus.py --fuzz 500 --seed 20260902 --out /tmp/f
 
-writes archives only — random models carrying random lies, with no expectation
-attached, for `tools/container_differential.py` to feed to both readers and
-compare. The enumerated leaves above are a floor and share their author's blind
-spots; the fuzzer and the in-language property suites exist because of that.
+writes archives only, with no expectation attached, for
+`tools/container_differential.py` to feed to both readers and compare. The
+stream cycles through one diagnostic fault for every S1--S23 target,
+intentional multi-fault precedence probes, and unclassified raw byte mutations.
+The enumerated leaves above are a floor and share their author's blind spots;
+the fuzzer and the in-language property suites exist because of that.
 """
 
 
@@ -1118,106 +1435,240 @@ def check_corpus(out: Path) -> int:
     return 0
 
 
-_FUZZ_NAMES = [
-    b"receipts/01JBXYZ0000000000000000000.attest.json",
-    b"manifests/h.example.json",
-    b"legal/eula.txt",
-    b"proofs/01JBXYZ0000000000000000000.json",
-    b"README.html",
-    b"salts.json",
-    b"__proto__",
-    b"a",
-]
+# A fourth stratum, honest archives, is what makes the differential runner
+# compare the READ path and not only the refusals: a stream of hostile files
+# proves the two readers refuse together, never that they agree on what an
+# acceptable archive holds.
+FUZZ_STRATA = ("single", "precedence", "raw", "honest")
+FUZZ_SINGLE_STEPS = tuple(f"s{step:02d}" for step in range(1, 24))
 
 
-def _fuzz_archive(rng: random.Random) -> bytes:
-    entries: list[Entry] = []
-    for _ in range(rng.randint(0, 4)):
-        data = bytes(rng.getrandbits(8) for _ in range(rng.randint(0, 200)))
-        entry = Entry(
-            name=rng.choice(_FUZZ_NAMES),
-            data=data,
-            method=rng.choice((0, 8)),
-            flags=rng.choice((0, 0, 0, 0x0800, 0x0008)),
-            extra=b"\x99\x99\x02\x00zz" if rng.random() < 0.2 else b"",
-            gap_before=rng.choice((0, 0, 0, 3)),
+#: Names that make the two readers DECODE something, rather than compare ASCII.
+#: An ASCII-only alphabet leaves the whole UTF-8 path unmeasured, and that is
+#: how a leading U+FEFF — dropped by one decoder, kept by the other — survived a
+#: differential run of thousands of archives (measured 2026-09-02).
+_FUZZ_NAME_SHAPES = (
+    "legal/fuzz-{index}.bin",
+    "legal/\ufefffuzz-{index}.bin",
+    "legal/fuzz-{index}\ufeff.bin",
+    "\ufeff",
+    "legal/caf\u00e9-{index}.bin",
+    "legal/\U0001f600-{index}.bin",
+    "legal/\uffff-{index}.bin",
+)
+
+
+def _fuzz_entry(rng: random.Random, *, index: int = 0) -> Entry:
+    data = bytes(rng.getrandbits(8) for _ in range(rng.randint(1, 200)))
+    name = rng.choice(_FUZZ_NAME_SHAPES).format(index=index)
+    non_ascii = any(ord(character) >= 0x80 for character in name)
+    return Entry(
+        name=name.encode(),
+        data=data,
+        method=rng.choice((0, 8)),
+        flags=0x0800 if non_ascii else rng.choice((0, 0, 0x0800, 0x0008)),
+        extra=b"\x99\x99\x02\x00zz" if rng.random() < 0.2 else b"",
+        local_extra=b"\x77\x77\x02\x00yy" if rng.random() < 0.2 else None,
+        gap_before=rng.choice((0, 0, 0, 3)),
+    )
+
+
+def _single_lie_archive(rng: random.Random, target: str) -> bytes:
+    """Build one diagnostic shape whose intended first gate is ``target``."""
+    data = bytes(rng.getrandbits(8) for _ in range(rng.randint(1, 32)))
+    entry = Entry(name=b"legal/fuzz.bin", data=data)
+    archive = Archive(entries=[entry])
+    step = int(target[1:])
+    if step == 1:
+        return build(archive)[: rng.randint(0, 21)]
+    if step == 2:
+        archive = replace(archive, eocd_sig=EOCD_SIG + 1)
+    elif step == 3:
+        archive = replace(archive, eocd_comment_len=1)
+    elif step == 4:
+        archive = replace(archive, cd_disk=1)
+    elif step == 5:
+        archive = replace(archive, zip64_locator=True)
+    elif step == 6:
+        archive = replace(archive, n_disk=0)
+    elif step == 7:
+        archive = Archive(entries=[], n_disk=10_001, n_total=10_001)
+    elif step == 8:
+        archive = replace(archive, size_cd=0)
+    elif step == 9:
+        archive = replace(archive, entries=[replace(entry, central_sig=CD_SIG + 1)])
+    elif step == 10:
+        archive = replace(archive, entries=[replace(entry, comment=b"c")])
+    elif step == 11:
+        archive = replace(archive, entries=[replace(entry, disk_start=1)])
+    elif step == 12:
+        archive = replace(archive, entries=[replace(entry, flags=1, local_flags=0)])
+    elif step == 13:
+        archive = replace(archive, entries=[replace(entry, method=12, local_method=0)])
+    elif step == 14:
+        archive = replace(
+            archive,
+            entries=[replace(entry, csize=0xFFFFFFFF, local_csize=len(data))],
         )
-        # Zero to three independent lies, each on one field, so a divergence
-        # points at one step of the algorithm rather than at a soup.
-        for _ in range(rng.randint(0, 3)):
-            lie = rng.choice(
-                (
-                    "crc",
-                    "csize",
-                    "usize",
-                    "lho",
-                    "method",
-                    "flags",
-                    "disk_start",
-                    "comment",
-                    "name_len",
-                    "extra_len",
-                    "comment_len",
-                    "local_sig",
-                    "local_name",
-                    "local_name_len",
-                    "local_extra",
-                    "central_sig",
-                    "descriptor",
+    elif step == 15:
+        archive = replace(archive, entries=[replace(entry, name=b"")])
+    elif step == 16:
+        archive = replace(archive, entries=[replace(entry, name=b"legal/\xff.bin")])
+    elif step == 17:
+        archive = replace(archive, entries=[entry, replace(entry, data=data[::-1])])
+    elif step == 18:
+        archive = replace(
+            archive,
+            entries=[replace(entry, usize=len(data) + 1, local_usize=len(data))],
+        )
+    elif step == 19:
+        archive = replace(archive, entries=[replace(entry, lho=0x10000)])
+    elif step == 20:
+        archive = replace(archive, entries=[replace(entry, local_sig=LFH_SIG + 1)])
+    elif step == 21:
+        archive = replace(
+            archive,
+            entries=[replace(entry, local_name=b"legal/fuzz.bad")],
+        )
+    elif step == 22:
+        archive = replace(
+            archive,
+            entries=[replace(entry, method=8, csize=len(_deflate(data)) + 0x100)],
+        )
+    elif step == 23:
+        archive = replace(
+            archive,
+            entries=[
+                replace(
+                    entry,
+                    method=8,
+                    usize=DEFAULT_CAPS["max_member_bytes"] + 1,
+                    local_usize=len(data),
                 )
-            )
-            value: object
-            if lie in {"crc", "csize", "usize", "lho"}:
-                value = rng.choice((0, 1, 10, 0xFFFF, 0xFFFFFFFF, rng.randint(0, 1 << 20)))
-            elif lie == "method":
-                value = rng.choice((0, 8, 12, 99))
-            elif lie == "flags":
-                value = rng.choice((0x0001, 0x0040, 0x0800, 0x0008))
-            elif lie in {"disk_start", "name_len", "extra_len", "comment_len", "local_name_len"}:
-                value = rng.choice((0, 1, 2, 0xFFFF, rng.randint(0, 300)))
-            elif lie == "comment":
-                value = b"c" * rng.randint(1, 4)
-            elif lie in {"local_extra"}:
-                value = b"\x77\x77\x02\x00yy"
-            elif lie == "local_name":
-                value = rng.choice(_FUZZ_NAMES)
-            elif lie in {"local_sig", "central_sig"}:
-                value = rng.choice((0, 0x04034B51, 0x02014B51))
-            else:
-                value = True
-            entry = Entry(**{**entry.__dict__, lie: value})
-        entries.append(entry)
-
-    archive = Archive(entries=entries)
-    for _ in range(rng.randint(0, 2)):
-        lie = rng.choice(
-            ("n_disk", "n_total", "size_cd", "off_cd", "eocd_comment_len", "disk_no", "cd_disk")
+            ],
         )
-        value = rng.choice((0, 1, len(entries), len(entries) + 1, 0xFFFF, rng.randint(0, 1 << 16)))
-        archive = Archive(**{**archive.__dict__, lie: value})
-    if rng.random() < 0.15:
-        archive = Archive(**{**archive.__dict__, "zip64_locator": True})
-    if rng.random() < 0.2:
-        archive = Archive(**{**archive.__dict__, "prefix": b"\x00" * rng.randint(1, 32)})
-    if rng.random() < 0.2:
-        archive = Archive(**{**archive.__dict__, "suffix": b"\x00" * rng.randint(1, 8)})
+    else:  # pragma: no cover - FUZZ_SINGLE_STEPS is the closed caller set
+        raise AssertionError(f"unknown fuzz target: {target}")
+    return build(archive)
 
-    raw = bytearray(build(archive))
-    for _ in range(rng.randint(0, 3)):
+
+def _random_entry_lie(rng: random.Random, entry: Entry) -> Entry:
+    """Apply one field-level mutation from the writer's full fixed-field space."""
+    field_name = rng.choice(
+        (
+            "central_sig",
+            "ver_made",
+            "ver_need",
+            "flags",
+            "method",
+            "mtime",
+            "mdate",
+            "crc",
+            "csize",
+            "usize",
+            "name_len",
+            "extra_len",
+            "comment_len",
+            "disk_start",
+            "int_attr",
+            "ext_attr",
+            "lho",
+            "local_sig",
+            "local_ver_need",
+            "local_flags",
+            "local_method",
+            "local_mtime",
+            "local_mdate",
+            "local_crc",
+            "local_csize",
+            "local_usize",
+            "local_name_len",
+            "local_extra_len",
+        )
+    )
+    if field_name in {"central_sig", "local_sig"}:
+        value = rng.choice((0, CD_SIG + 1, LFH_SIG + 1))
+    elif field_name in {
+        "crc",
+        "csize",
+        "usize",
+        "ext_attr",
+        "lho",
+        "local_crc",
+        "local_csize",
+        "local_usize",
+    }:
+        value = rng.choice((0, 1, 0xFFFF, 0xFFFFFFFF, rng.randint(0, 1 << 20)))
+    elif field_name in {"method", "local_method"}:
+        value = rng.choice((0, 8, 12, 99))
+    elif field_name in {"flags", "local_flags"}:
+        value = rng.choice((1, 0x40, 0x800, 8))
+    else:
+        value = rng.choice((0, 1, 2, 0xFFFF, rng.randint(0, 300)))
+    return replace(entry, **{field_name: value})
+
+
+def _precedence_archive(rng: random.Random) -> tuple[str, bytes]:
+    """Combine a known early archive fault with later record/local faults."""
+    entry = replace(_fuzz_entry(rng), local_sig=LFH_SIG + 1)
+    for _ in range(rng.randint(1, 3)):
+        entry = _random_entry_lie(rng, entry)
+    archive = Archive(entries=[entry])
+    early = rng.choice(("s02", "s03", "s04", "s05", "s06", "s08"))
+    if early == "s02":
+        archive = replace(archive, eocd_sig=EOCD_SIG + 1)
+    elif early == "s03":
+        archive = replace(archive, eocd_comment_len=1)
+    elif early == "s04":
+        archive = replace(archive, disk_no=1)
+    elif early == "s05":
+        archive = replace(archive, zip64_locator=True)
+    elif early == "s06":
+        archive = replace(archive, n_disk=0)
+    else:
+        archive = replace(archive, size_cd=0)
+    return early, build(archive)
+
+
+def _raw_mutation_archive(rng: random.Random) -> bytes:
+    """Mutate serialized bytes without classifying the resulting failure."""
+    entries = [_fuzz_entry(rng, index=index) for index in range(rng.randint(0, 4))]
+    raw = bytearray(build(Archive(entries=entries)))
+    for _ in range(rng.randint(1, 4)):
         if raw:
-            raw[rng.randrange(len(raw))] = rng.getrandbits(8)
-    if rng.random() < 0.1 and len(raw) > 4:
+            raw[rng.randrange(len(raw))] ^= rng.randint(1, 0xFF)
+    if rng.random() < 0.25:
+        raw[:0] = b"\x00" * rng.randint(1, 16)
+    if rng.random() < 0.25:
+        raw += b"\x00" * rng.randint(1, 8)
+    if rng.random() < 0.15 and len(raw) > 4:
         del raw[rng.randrange(len(raw)) :]
     return bytes(raw)
 
 
 def write_fuzz(out: Path, count: int, seed: int) -> None:
-    """Write `count` archives with no expectation attached (differential input)."""
+    """Write a balanced, reproducible stream of differential inputs."""
     out.mkdir(parents=True, exist_ok=True)
     # Not a security primitive: a reproducible stream of hostile shapes.
     rng = random.Random(seed)  # noqa: S311
     for index in range(count):
-        (out / f"fuzz-{index:05d}.zip").write_bytes(_fuzz_archive(rng))
+        stratum = FUZZ_STRATA[index % len(FUZZ_STRATA)]
+        if stratum == "single":
+            target = FUZZ_SINGLE_STEPS[(index // len(FUZZ_STRATA)) % len(FUZZ_SINGLE_STEPS)]
+            raw = _single_lie_archive(rng, target)
+            name = f"single-{target}-fuzz-{index:05d}.zip"
+        elif stratum == "precedence":
+            target, raw = _precedence_archive(rng)
+            name = f"precedence-{target}-fuzz-{index:05d}.zip"
+        elif stratum == "raw":
+            raw = _raw_mutation_archive(rng)
+            name = f"raw-fuzz-{index:05d}.zip"
+        else:
+            raw = build(
+                Archive(entries=[_fuzz_entry(rng, index=i) for i in range(rng.randint(0, 4))])
+            )
+            name = f"honest-fuzz-{index:05d}.zip"
+        (out / name).write_bytes(raw)
 
 
 def main(argv: list[str] | None = None) -> int:

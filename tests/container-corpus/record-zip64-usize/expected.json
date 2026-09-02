@@ -1,0 +1,10 @@
+{
+  "caps": {
+    "max_entries": 10000,
+    "max_member_bytes": 67108864,
+    "max_total_bytes": 268435456
+  },
+  "code": "record-zip64",
+  "member": null,
+  "verdict": "reject"
+}
