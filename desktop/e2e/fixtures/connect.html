@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'sha256-tQZSARI+BaZyB2wqHbN00UnKSnKmnprlXwoKdQP2DNs='; style-src 'sha256-Ud/GjEIywzlwvO/Ve2+9j0iaexrYLJCe9yltG8LK0Fc='; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>probe: connect-src</title>
+<style>body{font-family:system-ui,sans-serif;margin:2rem}#marker{font-weight:700}</style>
+</head>
+<body>
+<p>CSP probe: <span id="marker">NOT-RUN</span></p>
+<script type="module">
+const marker = document.getElementById('marker')
+let violated = null
+document.addEventListener('securitypolicyviolation', (e) => { violated = e.violatedDirective })
+try {
+  await fetch('https://example.invalid/x')
+  marker.textContent = 'ALLOWED'
+} catch {
+  await new Promise((r) => setTimeout(r, 0))
+  marker.textContent = violated ? 'BLOCKED-BY-CSP' : 'FAILED-WITHOUT-CSP'
+}
+</script>
+</body>
+</html>

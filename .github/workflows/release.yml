@@ -65,8 +65,51 @@ jobs:
             sbom-npm.cdx.json
             attest-verifier-*.tgz
 
+  desktop:
+    # Its own job, not a step inside `build`: that job reinstalls verifiers/ts with
+    # --omit=dev halfway through, and a build that depends on the leftovers of
+    # someone else's node_modules is a build that breaks on a day nobody touched it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            verifiers/ts/package-lock.json
+            site/package-lock.json
+            desktop/package-lock.json
+      - run: npm ci --prefix verifiers/ts
+      - run: npm run build --prefix verifiers/ts
+      # The desktop build typechecks ../site/src along with its own sources, so the
+      # site's modules have to be installed even though nothing here builds the site.
+      - run: npm ci --prefix site
+      - run: npm ci --prefix desktop
+      - run: npm run build --prefix desktop
+      - name: Write the checksum the artifact's own footer promises
+        # The file tells the reader its SHA-256 is listed beside the download and
+        # that `sha256sum` will confirm it. That sentence is only true if this runs.
+        # The line names the FILE, never the path it was built at: it is checked
+        # next to a download, where `desktop/dist/` does not exist. `-c` here proves
+        # the line we publish is one `sha256sum -c` actually accepts.
+        run: |
+          cd desktop/dist
+          sha256sum attest-verifier.html | tee attest-verifier.html.sha256
+          sha256sum -c attest-verifier.html.sha256
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-verifier
+          path: |
+            desktop/dist/attest-verifier.html
+            desktop/dist/attest-verifier.html.sha256
+
   pypi:
-    needs: build
+    # Also on desktop: publishing to PyPI is irreversible and npm refuses a version
+    # it has already seen, so a verifier that fails validation after the packages are
+    # out leaves a release nobody can complete or re-run. Everything that can refuse
+    # must refuse before anything is published.
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -89,7 +132,7 @@ jobs:
           skip-existing: true
 
   npm:
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -121,7 +164,7 @@ jobs:
           npm publish "./${tarballs[0]}" --provenance
 
   github-release:
-    needs: [pypi, npm]
+    needs: [pypi, npm, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -131,12 +174,22 @@ jobs:
         with:
           name: dist-and-sboms
           path: artifacts
-      - name: Create GitHub Release with SBOMs
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: desktop-verifier
+          path: desktop-verifier
+      - name: Create GitHub Release with SBOMs and the offline verifier
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Re-checked against the bytes about to be uploaded: between the two jobs
+          # the file travelled through upload and download, and a checksum that was
+          # never verified against what is published is a promise nobody kept.
+          (cd desktop-verifier && sha256sum -c attest-verifier.html.sha256)
           gh release create "${GITHUB_REF_NAME}" \
             --title "attest ${GITHUB_REF_NAME}" \
-            --notes "attest-receipts and attest-verifier ${GITHUB_REF_NAME}. See CHANGELOG.md and verifiers/ts/CHANGELOG.md. CycloneDX SBOMs attached." \
+            --notes "attest-receipts and attest-verifier ${GITHUB_REF_NAME}. See CHANGELOG.md and verifiers/ts/CHANGELOG.md. CycloneDX SBOMs attached. attest-verifier.html verifies a receipt offline: download it together with its .sha256, confirm it with \`sha256sum -c attest-verifier.html.sha256\`, and open it by double-click." \
             artifacts/sbom-python.cdx.json \
-            artifacts/sbom-npm.cdx.json
+            artifacts/sbom-npm.cdx.json \
+            desktop-verifier/attest-verifier.html \
+            desktop-verifier/attest-verifier.html.sha256

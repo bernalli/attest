@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'sha256-3dM62oyFeb1616kDL+avoQlcGrSQvtuVmmX8TsXR/sE='; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>css under a policy</title>
+<!--
+  The same stylesheet as css-liveness.html, under a policy of the shape the artifact
+  carries. The hash here is of THIS page's own style and proves nothing whatever about
+  the artifact's: what this page measures is what a policy of that shape does to a
+  stylesheet that tries to fetch, not whether the artifact's policy matches its bytes.
+
+  The style is allowed to apply - the hash matches it - so what has to stop the fetch is
+  default-src 'none', which is the belt being measured.
+-->
+<style>body{--x:"/*"} body::before{content:url(https://css-oracle.invalid/x)} body{--y:"*/"}</style>
+</head>
+<body>
+<p id="marker">styled</p>
+</body>
+</html>

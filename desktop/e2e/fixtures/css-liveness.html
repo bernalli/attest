@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>css collector liveness</title>
+<!--
+  DELIBERATELY carries no content security policy. This page is not the artifact and
+  proves nothing about it: it is the negative self-test for the belt that refuses a
+  stylesheet which fetches. The assertion beside it is that with a policy in force
+  nothing leaves - and that assertion is worth nothing unless the same stylesheet, with
+  no policy, demonstrably DOES leave.
+
+  The stylesheet is written the way the rule's hardest case is written: the url() sits
+  between two strings that spell comment markers. Removing /* ... */ before searching
+  would hide it from a validator while a browser fetches it all the same.
+
+  The host is under the reserved .invalid top-level domain (RFC 2606).
+-->
+<style>body{--x:"/*"} body::before{content:url(https://css-oracle.invalid/x)} body{--y:"*/"}</style>
+</head>
+<body>
+<p id="marker">styled</p>
+</body>
+</html>
