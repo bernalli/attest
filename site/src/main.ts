@@ -186,8 +186,11 @@ export function initApp(doc: Document): AppHandle {
     try {
       salt = b64uDecode(bindingSalt.value.trim())
     } catch {
-      results.replaceChildren(
-        ...currentNotices.map((text) => message(doc, text)),
+      // The verdict stays on screen. Wiping it would leave the bench below
+      // narrating an edit whose consequence is nowhere to be seen — and the
+      // bench's own header promises that the verdict below is what moves.
+      renderJobs(currentDisclosure)
+      results.prepend(
         message(doc, 'That salt is not valid base64url (unpadded). Copy it exactly from your .private.attest sidecar.'),
       )
       return
@@ -208,9 +211,14 @@ export function initApp(doc: Document): AppHandle {
     if (!base) return
     const tampered = applyTamper(id, base.envelopeBytes, base.trustStore)
     if (!tampered) {
+      // Back to the original too: leaving a PREVIOUS tamper on screen under
+      // the words "nothing was altered" is the one reading this must not have.
+      currentJobs = baseJobs
+      benchRestore.hidden = true
       benchState.replaceChildren(
         message(doc, 'This receipt has nothing this button could change — nothing was altered.'),
       )
+      renderJobs(currentDisclosure)
       return
     }
     // The transparency evidence is deliberately carried over UNCHANGED. It was

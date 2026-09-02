@@ -105,18 +105,26 @@ test('a tampered receipt fails loudly', async ({ page }) => {
   await expect(page.locator('.component-value', { hasText: 'invalid' }).first()).toBeVisible()
 })
 
-test('the page never talks to a non-same-origin host', async ({ page }) => {
-  const foreign: string[] = []
-  page.on('request', (req) => {
-    if (!req.url().startsWith('http://127.0.0.1:4173')) foreign.push(req.url())
-  })
+test('the page never talks to a non-same-origin host', async ({ page, baseURL }) => {
+  const requests: string[] = []
+  page.on('request', (req) => requests.push(req.url()))
   await page.goto('/')
   await page.click('#load-sample')
   await expect(page.locator('.verdict strong')).toHaveText(/Receipt verifies/)
+
+  // Counting only FOREIGN requests proved nothing about this claim: the
+  // page's own CSP refuses a cross-origin fetch before it becomes a request
+  // at all, so Playwright never sees one and the list is empty whatever the
+  // page attempts (measured — a fetch to store.nebula.example raises no
+  // request event, while a same-origin fetch raises one). What the section
+  // actually promises is that the exhibits are compiled into the bundle
+  // rather than fetched, and that is a statement about EVERY request.
+  const before = requests.length
   await page.click('#run-exhibits')
   await expect(page.locator('.exhibit')).toHaveCount(2)
-  // The exhibits are compiled into the bundle, not fetched: replaying them
-  // must not put a single request on the wire, or the promise that this page
-  // keeps working with the network cut would be false for the best part of it.
-  expect(foreign).toEqual([])
+  expect(requests.slice(before), 'requests issued while replaying the exhibits').toEqual([])
+  expect(
+    requests.filter((url) => !url.startsWith(baseURL ?? '\u0000')),
+    'requests to a host that is not the one serving this page',
+  ).toEqual([])
 })

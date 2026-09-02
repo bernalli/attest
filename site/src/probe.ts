@@ -20,6 +20,11 @@ export const PROBE_URL = 'https://store.nebula.example/.well-known/attest/keys.j
 export interface ProbeOutcome {
   url: string
   blocked: boolean
+  /** True only when the BROWSER recorded a policy violation for this request.
+   *  The probe URL is under a reserved TLD and never resolves, so a bare
+   *  rejection is what an ordinary DNS failure looks like too — it is not
+   *  evidence of confinement, and must not be shown as if it were. */
+  observed: boolean
   /** The browser's own words — a policy report, or the error it threw. */
   detail: string
 }
@@ -56,8 +61,14 @@ const describeViolation = (event: SecurityPolicyViolationEvent): string =>
 
 export async function probeIsolation(url: string, deps: ProbeDeps): Promise<ProbeOutcome> {
   let violation: SecurityPolicyViolationEvent | null = null
+  // Only THIS request's violation counts. The page can be recording others at
+  // the same moment — a blocked font, an extension's injected resource — and
+  // adopting one of those would print a report about somebody else's request
+  // under a sentence that says "the browser refused the request".
+  const origin = new URL(url).origin
   const off = deps.onViolation((event) => {
-    if (violation === null) violation = event
+    const blocked = event.blockedURI ?? ''
+    if (violation === null && (blocked === url || blocked === origin)) violation = event
   })
   try {
     await deps.fetch(url)
@@ -68,9 +79,12 @@ export async function probeIsolation(url: string, deps: ProbeDeps): Promise<Prob
     return {
       url,
       blocked: true,
+      observed: violation !== null,
       detail: violation
         ? describeViolation(violation)
-        : `The request failed before it could carry anything anywhere — ${reason}.`,
+        : `The request failed before it could carry anything anywhere — ${reason}. ` +
+          'The browser recorded no policy violation, so this run does not by itself ' +
+          'show the policy did it: an unreachable host fails the same way.',
     }
   } finally {
     off()
@@ -80,6 +94,7 @@ export async function probeIsolation(url: string, deps: ProbeDeps): Promise<Prob
   return {
     url,
     blocked: false,
+    observed: false,
     detail:
       'The request was NOT blocked: it reached the network. This page is not confined the way ' +
       'it says it is — treat every claim about isolation on this deployment as unproven, and ' +

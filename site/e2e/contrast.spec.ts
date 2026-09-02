@@ -18,8 +18,30 @@ import { decodePng, pixelAt, contrast, parseColour, luminance } from './helpers/
 // darkest paper pixel each piece of small text actually covers.
 
 const AA_SMALL = 4.5
+const AA_LARGE = 3
 /** WCAG "large text": 18pt (24px), or 14pt (18.66px) at 700. */
 const isLarge = (px: number, weight: number): boolean => px >= 24 || (px >= 18.66 && weight >= 700)
+
+// One place, because three things have to agree: the viewport the page is
+// laid out in, the distance each step scrolls, and the cut-off that decides
+// which rectangles are on screen. Three literal 700s drift apart silently.
+const VIEWPORT = { width: 720, height: 700 }
+
+// Every ink the stylesheet puts on text, by the colour getComputedStyle
+// reports for it. A run that never measured one of these has not answered the
+// question it was written for, however many rows it collected: deleting the
+// line that empties the inputs, or the click that opens the exhibits, drops a
+// whole ink and still leaves ~60 rows behind.
+const INKS: Record<string, string> = {
+  'rgb(36, 31, 24)': '--ink',
+  'rgb(74, 65, 50)': '--ink-2',
+  'rgb(92, 82, 65)': '--ink-3',
+  'rgb(101, 87, 62)': '--ink-label',
+  'rgb(113, 98, 73)': '--ink-faint (input::placeholder)',
+  'rgb(122, 34, 49)': '--bordeaux / --bad',
+  'rgb(60, 87, 56)': '--good',
+  'rgb(107, 75, 18)': '--warn',
+}
 
 interface Target {
   /** A stable name for the rule that put this text on the page. */
@@ -144,7 +166,7 @@ test('every piece of small text clears 4.5:1 on the paper it is actually printed
   // 720px is where the page's own media query rearranges it and the small
   // text packs tightest; the height is deliberately short so a few scroll
   // steps carry every element across a different part of the fixed texture.
-  await page.setViewportSize({ width: 720, height: 700 })
+  await page.setViewportSize(VIEWPORT)
   await page.goto('/')
   await expect(page.locator('.card__title')).toHaveText('Starlight Drifter')
 
@@ -172,13 +194,16 @@ test('every piece of small text clears 4.5:1 on the paper it is actually printed
     for (const input of document.querySelectorAll('input')) input.value = ''
   })
   const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight)
-  const step = 700
-  const worst = new Map<string, { ratio: number; at: string; colour: string; size: number }>()
+  const step = VIEWPORT.height
+  const worst = new Map<string, { ratio: number; at: string; colour: string; size: number; floor: number }>()
 
   for (let scroll = 0; scroll < pageHeight; scroll += step) {
     await page.evaluate((y) => window.scrollTo(0, y), scroll)
+    // Large text is not dropped, only held to its own AA floor of 3:1.
+    // Filtering it out here left eight headings — every h2 and both h1 lines —
+    // measured by nothing at all.
     const targets = (await collectTargets(page)).filter(
-      (t) => t.box.y + t.box.height > 0 && t.box.y < 700 && !isLarge(t.fontSize, t.weight),
+      (t) => t.box.y + t.box.height > 0 && t.box.y < VIEWPORT.height,
     )
     if (targets.length === 0) continue
 
@@ -190,8 +215,13 @@ test('every piece of small text clears 4.5:1 on the paper it is actually printed
       const ink = parseColour(target.colour)
       const x0 = Math.max(0, Math.floor(target.box.x))
       const y0 = Math.max(0, Math.floor(target.box.y))
-      const x1 = Math.min(paper.width - 1, Math.ceil(target.box.x + target.box.width))
-      const y1 = Math.min(paper.height - 1, Math.ceil(target.box.y + target.box.height))
+      // A pixel at index p covers [p, p+1), so the last one the band touches
+      // is ceil(end) - 1. Reading ceil(end) inclusively sampled one row past
+      // the band, which is where a link's own 1px underline sits: it turned up
+      // as "the darkest paper" under the text above it and pulled --bordeaux
+      // to 5.22:1 and --ink-2 to 5.24:1, when the paper there is 6.68 and 6.47.
+      const x1 = Math.min(paper.width - 1, Math.ceil(target.box.x + target.box.width) - 1)
+      const y1 = Math.min(paper.height - 1, Math.ceil(target.box.y + target.box.height) - 1)
       let darkest: [number, number, number] | null = null
       for (let y = y0; y <= y1; y += 1) {
         for (let x = x0; x <= x1; x += 1) {
@@ -209,6 +239,7 @@ test('every piece of small text clears 4.5:1 on the paper it is actually printed
           at: `scroll ${scroll}px, background rgb(${darkest.join(', ')})`,
           colour: target.colour,
           size: target.fontSize,
+          floor: isLarge(target.fontSize, target.weight) ? AA_LARGE : AA_SMALL,
         })
       }
     }
@@ -216,16 +247,39 @@ test('every piece of small text clears 4.5:1 on the paper it is actually printed
 
   const rows = [...worst.entries()].sort((a, b) => a[1].ratio - b[1].ratio)
   const report = rows
-    .map(([key, v]) => `${v.ratio.toFixed(2)}:1  ${key.padEnd(46)} ${v.at}`)
+    .map(([key, v]) => `${v.ratio.toFixed(2)}:1 (needs ${v.floor})  ${key.padEnd(46)} ${v.at}`)
     .join('\n')
   await testInfo.attach('contrast-on-rendered-pixels.txt', { body: report })
   // eslint-disable-next-line no-console
   console.log(`\nmeasured on rendered pixels, 720px viewport:\n${report}\n`)
 
-  const failing = rows.filter(([, v]) => v.ratio < AA_SMALL)
+  const failing = rows.filter(([, v]) => v.ratio < v.floor)
   expect(
-    failing.map(([key, v]) => `${key} — ${v.ratio.toFixed(2)}:1 at ${v.at}`),
-    'small text below 4.5:1 against the darkest paper pixel it covers',
+    failing.map(([key, v]) => `${key} — ${v.ratio.toFixed(2)}:1, needs ${v.floor}:1, at ${v.at}`),
+    'text below its WCAG AA floor against the darkest paper pixel it covers',
   ).toEqual([])
-  expect(rows.length).toBeGreaterThan(20)
+
+  // A row count cannot notice a whole surface going missing: the page yields
+  // ~66 families, so `> 20` still passed with the exhibits, the probe and
+  // every placeholder unmeasured. What has to hold is that each ink actually
+  // got looked at.
+  const measured = new Set([...worst.values()].map((v) => v.colour))
+  expect(
+    Object.entries(INKS)
+      .filter(([colour]) => !measured.has(colour))
+      .map(([colour, name]) => `${name} ${colour}`),
+    'inks the stylesheet puts on text that this run never measured',
+  ).toEqual([])
+
+  // And that each demonstration surface actually put its text on the page.
+  // Losing one costs ~6 rows out of ~77 and leaves every ink still covered by
+  // some other element, so neither the row count nor the ink check above can
+  // see it: dropping the exhibits and the probe together still passed both.
+  const families = new Set([...worst.keys()].map((key) => key.split(' ')[0]))
+  expect(
+    ['input::placeholder', 'p.tamper-values', 'p.exhibit-source', 'p.probe-detail'].filter(
+      (family) => !families.has(family),
+    ),
+    'surfaces whose text never reached the measurement',
+  ).toEqual([])
 })

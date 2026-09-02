@@ -184,6 +184,13 @@ export const EXHIBITS: Exhibit[] = LEAVES.map((leaf) => ({
 
 const LIST_FIELDS = ['errors', 'warnings', 'errors_contains', 'warnings_contains'] as const
 
+/** The three members `tools/conformance_runner.py` compares UNCONDITIONALLY
+ *  (`_VERIFY_REQUIRED_EXACT`). It reads them with `expected.get(field)`, so a
+ *  leaf that states none of them is compared against `null` there and fails.
+ *  Skipping them here would let this page say "matches the vector field for
+ *  field" about a fixture the canonical runner rejects. */
+const REQUIRED: readonly Component[] = ['signature', 'schema', 'trust']
+
 /** Every key of `expected.json` this comparison knows how to read. */
 const COMPARABLE: ReadonlySet<string> = new Set<string>([...COMPONENTS, 'ok', ...LIST_FIELDS])
 
@@ -194,6 +201,11 @@ function compare(result: VerificationResult, ok: boolean, expected: ExpectedResu
   // saying it matched the vector field for field while a field went unread.
   for (const key of Object.keys(expected)) {
     if (!COMPARABLE.has(key)) out.push(`${key}: this page cannot compare that field`)
+  }
+  for (const field of REQUIRED) {
+    if (expected[field] === undefined) {
+      out.push(`${field}: the fixture states none, and the conformance runner requires one`)
+    }
   }
   for (const field of COMPONENTS) {
     const want = expected[field]

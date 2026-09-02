@@ -60,8 +60,15 @@ export function decodePng(png: Buffer): Bitmap {
     throw new Error(`unsupported colour type ${colourType}`)
   }
   const channels = colourType === 6 ? 4 : 3
-  const raw = inflateSync(Buffer.concat(idat))
   const stride = width * channels
+  const raw = inflateSync(Buffer.concat(idat))
+  // A pixel stream shorter than IHDR promises would otherwise read as
+  // `undefined`, land as 0 after the mask, and print pure BLACK into the
+  // darkest-pixel search — a contrast failure invented by the reader rather
+  // than found on the page.
+  if (raw.length !== height * (stride + 1)) {
+    throw new Error(`truncated pixel data: ${raw.length} bytes for ${height} rows of ${stride}`)
+  }
   const out = new Uint8Array(width * height * 4)
   const line = new Uint8Array(stride)
   const prev = new Uint8Array(stride)
@@ -121,5 +128,11 @@ export function parseColour(css: string): [number, number, number] {
   const m = /rgba?\(([^)]+)\)/.exec(css)
   if (!m) throw new Error(`cannot read colour ${css}`)
   const parts = m[1].split(/[,/\s]+/).filter(Boolean).map(Number)
+  // Ink the browser blends with the paper behind it cannot be measured as if
+  // it were opaque: dropping the alpha reports a ratio that is too GOOD, and
+  // too good is the one direction this measurement must never fail in.
+  if (parts.length > 3 && parts[3] !== 1) {
+    throw new Error(`cannot measure a partly transparent ink: ${css}`)
+  }
   return [parts[0], parts[1], parts[2]]
 }

@@ -309,11 +309,25 @@ const MAX_PROBE_DETAIL_CHARS = 400
 
 /** Whether this page could reach another host, as the browser reported it. */
 export function renderProbe(outcome: ProbeOutcome): HTMLElement {
-  const box = el('div', `probe tone-${outcome.blocked ? 'good' : 'bad'}`)
+  // Three states, not two. "good" is reserved for the one the browser itself
+  // witnessed; a bare rejection is "neutral", because this URL is under a
+  // reserved TLD that never resolves and would fail identically on a page
+  // with no policy at all. Painting that green would assert exactly the
+  // confinement the fallback branch failed to observe.
+  const tone = outcome.blocked ? (outcome.observed ? 'good' : 'neutral') : 'bad'
+  const box = el('div', `probe tone-${tone}`)
   const p = el('p')
   p.appendChild(document.createTextNode(outcome.blocked ? 'Tried to reach ' : 'Reached '))
   p.appendChild(el('code', undefined, outcome.url))
-  p.appendChild(document.createTextNode(outcome.blocked ? ' — and could not.' : '.'))
+  p.appendChild(
+    document.createTextNode(
+      outcome.blocked
+        ? outcome.observed
+          ? ' — and the browser refused it under this page’s own policy.'
+          : ' — and could not. Why, this run cannot say.'
+        : '.',
+    ),
+  )
   box.appendChild(p)
   box.appendChild(
     el('p', 'probe-detail', neutralized(outcome.detail, MAX_PROBE_DETAIL_CHARS)),

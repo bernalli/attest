@@ -125,4 +125,46 @@ describe('the comparison covers every field a fixture can state', () => {
     expect(outcome.matches).toBe(false)
     expect(outcome.mismatches.join(' ')).toContain('unknown_future_field')
   })
+
+  // The component sweep above was covered; these five were not, and all five
+  // could be disabled AT ONCE with the whole suite green. They are not dormant
+  // paths: both compiled-in leaves state `ok` and a warnings list, and leaf B
+  // states `errors_contains`.
+  it('compares ok, and reports it when the run disagrees', () => {
+    const expected = { ...EXHIBITS[0].expected, ok: !EXHIBITS[0].expected.ok } as ExpectedResult
+    const outcome = runExhibit({ ...EXHIBITS[0], expected })
+    expect(outcome.matches).toBe(false)
+    expect(outcome.mismatches.join(' ')).toContain('ok:')
+  })
+
+  it.each(['errors', 'warnings'] as const)('compares %s as an exact, ordered list', (field) => {
+    const expected = { ...EXHIBITS[0].expected, [field]: ['no run produces this'] } as ExpectedResult
+    const outcome = runExhibit({ ...EXHIBITS[0], expected })
+    expect(outcome.matches, field).toBe(false)
+    expect(outcome.mismatches.join(' '), field).toContain(`${field}:`)
+  })
+
+  it.each(['errors_contains', 'warnings_contains'] as const)(
+    'requires every %s needle to appear somewhere',
+    (field) => {
+      const expected = { ...EXHIBITS[0].expected, [field]: ['no run ever says this'] } as ExpectedResult
+      const outcome = runExhibit({ ...EXHIBITS[0], expected })
+      expect(outcome.matches, field).toBe(false)
+      expect(outcome.mismatches.join(' '), field).toContain('nothing contains')
+    },
+  )
+
+  // The canonical runner (tools/conformance_runner.py, _VERIFY_REQUIRED_EXACT)
+  // compares these three whether or not the fixture states them. A page that
+  // skipped an absent one would bless a leaf the runner rejects.
+  it.each(['signature', 'schema', 'trust'] as const)(
+    'refuses a fixture that states no %s, as the conformance runner does',
+    (field) => {
+      const expected = { ...EXHIBITS[0].expected }
+      delete expected[field]
+      const outcome = runExhibit({ ...EXHIBITS[0], expected })
+      expect(outcome.matches, field).toBe(false)
+      expect(outcome.mismatches.join(' '), field).toContain(field)
+    },
+  )
 })

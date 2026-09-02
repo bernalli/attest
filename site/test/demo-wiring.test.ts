@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { initApp, type AppHandle } from '../src/main.js'
+import { PROBE_URL } from '../src/probe.js'
 import { pageBody } from './helpers/page.js'
 
 const SAMPLE_DIR = join(__dirname, '..', 'public', 'sample')
@@ -108,6 +109,33 @@ describe('breaking the receipt moves the verdict, and says why', () => {
     }
   })
 
+  it('keeps the verdict on screen when a binding proof is rejected', () => {
+    // The bench sits above a verdict and its header says so. Wiping the
+    // results on a bad salt left the bench narrating an edit whose
+    // consequence was nowhere to be seen — a state the design forbids.
+    app.applyTamperById('title')
+    expect(text('results')).toMatch(/does NOT verify/i)
+
+    const salt = document.getElementById('binding-salt') as HTMLInputElement
+    salt.value = 'not base64url!!'
+    app.applyDisclosure()
+
+    expect(text('results')).toMatch(/not valid base64url/i)
+    expect(text('results'), 'the verdict the bench just moved').toMatch(/does NOT verify/i)
+    expect(text('bench-state')).toMatch(/one byte at offset/i)
+  })
+
+  it('says nothing was altered only while nothing is', () => {
+    // The handle can be driven to a tamper this receipt cannot take. Leaving a
+    // PREVIOUS tamper on screen under the words "nothing was altered" is the
+    // one reading that sentence must never have.
+    app.applyTamperById('title')
+    expect(text('results')).toMatch(/does NOT verify/i)
+    app.applyTamperById('receipt-id')
+    app.restore()
+    expect(text('results')).toContain('Receipt verifies')
+  })
+
   it('closes the bench again when the page is handed something it refuses', () => {
     app.handleBytes('lib.private.attest', new Uint8Array([0x50, 0x4b]))
     expect(el('bench').hidden).toBe(true)
@@ -136,13 +164,30 @@ describe('the §19 exhibits are run, not described', () => {
 })
 
 describe('the confinement probe reports the browser', () => {
-  it('shows a block as a block', async () => {
+  it('shows a block the browser witnessed as a block', async () => {
+    await app.runProbe({
+      fetch: () => Promise.reject(new TypeError('Failed to fetch')),
+      onViolation: (cb) => {
+        cb({
+          blockedURI: PROBE_URL,
+          violatedDirective: 'connect-src',
+        } as SecurityPolicyViolationEvent)
+        return () => {}
+      },
+    })
+    expect(text('probe')).toContain('connect-src')
+    expect(el('probe').querySelector('.probe')!.className).toContain('tone-good')
+  })
+
+  it('stays neutral when the request merely failed', async () => {
+    // No violation recorded: this URL never resolves, so a bare failure is
+    // what an unreachable host looks like on a page with no policy at all.
     await app.runProbe({
       fetch: () => Promise.reject(new TypeError('Failed to fetch')),
       onViolation: () => () => {},
     })
     expect(text('probe')).toContain('Failed to fetch')
-    expect(el('probe').querySelector('.probe')!.className).toContain('tone-good')
+    expect(el('probe').querySelector('.probe')!.className).toContain('tone-neutral')
   })
 
   it('shows a request that got through as the failure it would be', async () => {

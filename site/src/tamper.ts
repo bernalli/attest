@@ -133,14 +133,15 @@ const parse = (bytes: Uint8Array): JsonObject | null => {
   }
 }
 
-/** The first index into `needle` inside `haystack`, or -1. */
-function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
-  if (needle.length === 0 || needle.length > haystack.length) return -1
+/** Every index at which `needle` occurs in `haystack`, in order. */
+function indexesOfBytes(haystack: Uint8Array, needle: Uint8Array): number[] {
+  const out: number[] = []
+  if (needle.length === 0 || needle.length > haystack.length) return out
   outer: for (let i = 0; i <= haystack.length - needle.length; i += 1) {
     for (let j = 0; j < needle.length; j += 1) if (haystack[i + j] !== needle[j]) continue outer
-    return i
+    out.push(i)
   }
-  return -1
+  return out
 }
 
 const isAsciiAlnum = (byte: number): boolean =>
@@ -153,18 +154,55 @@ function successor(byte: number): number {
   return byte === 0x7a ? 0x61 : byte + 1
 }
 
-/** Where a single-byte turn can land inside this value, or null if nowhere. */
-function locate(
+interface Turn {
+  offset: number
+  before: number
+  after: number
+  /** The target's value read back out of the EDITED document. */
+  now: string
+}
+
+/** A single-byte turn that provably lands inside this target's own value.
+ *
+ * The value is still located by its own bytes — the bytes on screen must be
+ * the bytes that were verified — but a string can occur more than once in an
+ * envelope, and `work.title` is very nearly the LAST member JCS orders: a
+ * title that also appears inside `work.publisher`, `work.artifact_series` or
+ * an artifact filename would be edited THERE while the page went on naming
+ * `payload.work.title`. So every occurrence is tried, and one is accepted
+ * only when re-reading the EDITED document through the target's own accessor
+ * shows the change.
+ *
+ * That re-read is also where `now` comes from: deriving it by slicing the
+ * string would use a BYTE index as a UTF-16 index, and fabricate a value for
+ * any string carrying a non-ASCII character in front of the byte that turned.
+ */
+function locateTurn(
   envelopeBytes: Uint8Array,
+  target: ByteTarget,
   value: string,
-): { offset: number; within: number } | null {
+): Turn | null {
   const valueBytes = new TextEncoder().encode(value)
-  // The value is located by its own bytes rather than by re-serialising the
-  // envelope: the bytes on screen must be the bytes that were verified.
-  const start = indexOfBytes(envelopeBytes, valueBytes)
-  if (start < 0) return null
-  for (let k = 0; k < valueBytes.length; k += 1) {
-    if (isAsciiAlnum(valueBytes[k])) return { offset: start + k, within: k }
+  let k = -1
+  for (let i = 0; i < valueBytes.length; i += 1) {
+    if (isAsciiAlnum(valueBytes[i])) {
+      k = i
+      break
+    }
+  }
+  // No ASCII letter or digit to turn: the target is not offered at all.
+  if (k < 0) return null
+  for (const start of indexesOfBytes(envelopeBytes, valueBytes)) {
+    const offset = start + k
+    const before = envelopeBytes[offset]
+    const after = successor(before)
+    const edited = new Uint8Array(envelopeBytes)
+    edited[offset] = after
+    const parsed = parse(edited)
+    if (!parsed) continue
+    const now = target.read(parsed)
+    if (now === null || now === value) continue
+    return { offset, before, after, now }
   }
   return null
 }
@@ -175,7 +213,7 @@ export function tamperOptions(envelopeBytes: Uint8Array): TamperOption[] {
   if (!envelope) return []
   const available = BYTE_TARGETS.filter((target) => {
     const value = target.read(envelope)
-    return value !== null && locate(envelopeBytes, value) !== null
+    return value !== null && locateTurn(envelopeBytes, target, value) !== null
   }).map(({ id, label, what }) => ({ id, label, what }))
   return [...available, DROP_MANIFEST]
 }
@@ -194,14 +232,11 @@ export function applyTamper(
   if (!target) return null
   const value = target.read(envelope)
   if (value === null) return null
-  const spot = locate(envelopeBytes, value)
+  const spot = locateTurn(envelopeBytes, target, value)
   if (spot === null) return null
 
   const bytes = new Uint8Array(envelopeBytes)
-  const before = bytes[spot.offset]
-  const after = successor(before)
-  bytes[spot.offset] = after
-  const now = value.slice(0, spot.within) + String.fromCharCode(after) + value.slice(spot.within + 1)
+  bytes[spot.offset] = spot.after
 
   return {
     option: { id: target.id, label: target.label, what: target.what },
@@ -210,10 +245,10 @@ export function applyTamper(
     edit: {
       path: target.path,
       offset: spot.offset,
-      before: String.fromCharCode(before),
-      after: String.fromCharCode(after),
+      before: String.fromCharCode(spot.before),
+      after: String.fromCharCode(spot.after),
       was: value,
-      now,
+      now: spot.now,
     },
   }
 }

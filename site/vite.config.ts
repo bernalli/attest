@@ -9,6 +9,7 @@ export default defineConfig({
     // docs/spec/vectors. The production build resolves that by itself; the
     // dev server refuses to serve outside its root unless told, so `npm run
     // dev` would 403 on exactly the files the §19 exhibit is made of.
-    fs: { allow: ['..'] },
+    // Named rather than `'..'`: the exhibits need one directory, not the repo.
+    fs: { allow: ['../docs/spec/vectors'] },
   },
 })

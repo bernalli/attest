@@ -27,6 +27,18 @@ export interface AuditRow {
 
 export const AUDITED_COPY: readonly AuditRow[] = [
   {
+    module: 'render',
+    sha256: 'f2b76be9cde727516c43399c6760469421a5e712a32ad97d29dce105e7795d69',
+    excerpt: '… — and could not. Why, this run cannot say.',
+    token: 'run ',
+    claimAbout:
+      'Nothing. It is a REFUSAL to claim: the confinement probe reaches this branch only when the browser recorded no policy violation for its own request, and the probe URL is under a reserved TLD that never resolves, so the failure is not attributable to any policy.',
+    command:
+      'cd site && npx vitest run test/probe.test.ts test/render-demo.test.ts  # the sentence and its neutral tone are reachable only with observed === false; the good tone and "refused it under this page’s own policy" require a securitypolicyviolation whose blockedURI is this request’s',
+    verdict: 'NOT-A-TOOL-CLAIM',
+    audited: '2026-09-02',
+  },
+  {
     module: 'explain',
     sha256: 'ec6dff7daa4e6d7135b2a1f3410af9686886b8337979dd2f53ec96c5f2475f32',
     excerpt: 'What cannot be settled from the receipt alone: … This page consults no live feed and is not handed grant or authorization documents',

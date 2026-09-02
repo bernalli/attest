@@ -165,14 +165,39 @@ describe('renderExhibitTally counts the runs it was given', () => {
 
 describe('renderProbe reports the browser, not the author', () => {
   it('shows the block and the browser’s own words', () => {
-    const el = renderProbe({ url: 'https://x.example/k', blocked: true, detail: 'blocked-uri https://x.example/k' })
+    const el = renderProbe({
+      url: 'https://x.example/k',
+      blocked: true,
+      observed: true,
+      detail: 'blocked-uri https://x.example/k',
+    })
     expect(el.className).toContain('tone-good')
     expect(el.textContent).toContain('https://x.example/k')
     expect(el.textContent).toContain('blocked-uri')
   })
 
+  // Three states, not two. The probe URL never resolves, so a request that
+  // merely failed proves nothing about confinement — and green is a claim.
+  it('does not paint an unobserved failure as observed confinement', () => {
+    const el = renderProbe({
+      url: 'https://x.example/k',
+      blocked: true,
+      observed: false,
+      detail: 'The request failed before it could carry anything anywhere.',
+    })
+    expect(el.className).toContain('tone-neutral')
+    expect(el.className).not.toContain('tone-good')
+    expect(el.textContent).toMatch(/cannot say/i)
+    expect(el.textContent).not.toMatch(/refused it under this page/i)
+  })
+
   it('shows a failure to block as a failure, in the loudest tone it has', () => {
-    const el = renderProbe({ url: 'https://x.example/k', blocked: false, detail: 'It reached the network.' })
+    const el = renderProbe({
+      url: 'https://x.example/k',
+      blocked: false,
+      observed: false,
+      detail: 'It reached the network.',
+    })
     expect(el.className).toContain('tone-bad')
     expect(el.textContent).toContain('reached the network')
   })

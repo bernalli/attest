@@ -29,8 +29,9 @@
   </a>
   <nav aria-label="Primary">
     <a href="start-here.html">Start here</a>
+    <a href="faq.html">FAQ</a>
+    <a href="for-sellers.html">For sellers</a>
     <a href="https://github.com/bernalli/attest/tree/main/docs/spec">Specification</a>
-    <a href="https://github.com/bernalli/attest/blob/main/docs/faq.md">FAQ</a>
     <a href="https://github.com/bernalli/attest">Source</a>
   </nav>
 </header>
@@ -122,21 +123,21 @@
          only to parties you would show the receipt to anyway (spec &sect;8.1). This page stores nothing.</p>
     </div>
 
-    <section id="results" aria-live="polite"></section>
-
     <div id="bench" hidden>
       <div class="verifier__head">
         <span class="label label--ink">Break it</span>
-        <span class="note">the verdict above is what moves</span>
+        <span class="note">the verdict below is what moves</span>
       </div>
       <p>Each button alters this receipt for real and runs the same check again. The first ones
          turn a single byte of the file — one letter, one character — and say which byte, at which
          offset. The last leaves the file untouched and hides the seller&rsquo;s published keys
-         instead, which is a different failure and reads differently above.</p>
+         instead, which is a different failure and reads differently below.</p>
       <div id="bench-buttons"></div>
       <div id="bench-state"></div>
       <p><button id="bench-restore" type="button" hidden>Put it back</button></p>
     </div>
+
+    <section id="results" aria-live="polite"></section>
   </section>
 
   <hr>
@@ -175,7 +176,7 @@
       <div><span class="term">Not a resale market</span><span>v0.1 defines no transfer protocol at all; v0.2 &sect;17 adds transfer only where the issuer mediates it, and never a general right to resell.</span></div>
       <div><span class="term">Not a shield against a live seller</span><span>&ldquo;Forever&rdquo; holds against the store disappearing, not against a live store declaring one of its own signing keys compromised: that declaration invalidates the receipts signed with that key. v0.2 &sect;19 defines a rescue for a receipt proven logged and anchored before the declaration, but no shipped tool logs a receipt yet and this deployment pins no anchor, so for a receipt you hold today the declaration is final. The rescue itself is not a promise on paper — it is replayed below, in this tab.</span></div>
     </div>
-    <p>Skeptical? Good — read the <a href="https://github.com/bernalli/attest/blob/main/docs/faq.md">FAQ</a>,
+    <p>Skeptical? Good — read the <a href="faq.html">FAQ</a>,
        it answers the questions a reasonable person asks.</p>
   </section>
 

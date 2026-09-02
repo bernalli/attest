@@ -133,3 +133,55 @@ describe('the tamper bench refuses what it cannot do honestly', () => {
     expect(new Set(TAMPERS.map((t) => t.id)).size).toBe(TAMPERS.length)
   })
 })
+
+describe('the tamper bench edits the field it names, not one that looks like it', () => {
+  const payloadOf = (b: Uint8Array): JsonObject =>
+    (loadsStrict(b) as JsonObject).payload as JsonObject
+  const rebuilt = (mutate: (p: JsonObject) => JsonObject): Uint8Array => {
+    const e = loadsStrict(envelope()) as JsonObject
+    return canonicalBytes({ ...e, payload: mutate({ ...(e.payload as JsonObject) }) } as JsonObject)
+  }
+
+  // 01-valid-minimal's own title is a prefix of its own issuer display name,
+  // and `issuer` sorts before `work`: searching the envelope for the title's
+  // bytes finds the DISPLAY NAME first. Every other test in this file passed
+  // while the title button edited the seller's name, because none of them
+  // asked what the file said afterwards — only that some byte had moved.
+  it('edits the title of the very vector the rest of this file uses', () => {
+    const t = applyTamper('title', envelope(), store())!
+    const p = payloadOf(t.envelopeBytes)
+    expect((p.work as JsonObject).title).toBe(t.edit!.now)
+    expect((p.issuer as JsonObject).display_name).toBe('Example Games Store')
+  })
+
+  it('edits the title when the title also sits inside the publisher’s name', () => {
+    const bytes = rebuilt((p) => ({
+      ...p,
+      work: { ...(p.work as JsonObject), publisher: 'Starlight Drifter Studios', title: 'Starlight Drifter' },
+    }))
+    const w = payloadOf(applyTamper('title', bytes, store())!.envelopeBytes).work as JsonObject
+    expect(w.publisher).toBe('Starlight Drifter Studios')
+    expect(w.title).not.toBe('Starlight Drifter')
+  })
+
+  it('edits the title when the seller’s display name is the same string', () => {
+    const bytes = rebuilt((p) => ({
+      ...p,
+      issuer: { ...(p.issuer as JsonObject), display_name: 'Starlight Drifter' },
+      work: { ...(p.work as JsonObject), title: 'Starlight Drifter' },
+    }))
+    const p = payloadOf(applyTamper('title', bytes, store())!.envelopeBytes)
+    expect((p.issuer as JsonObject).display_name).toBe('Starlight Drifter')
+    expect((p.work as JsonObject).title).not.toBe('Starlight Drifter')
+  })
+
+  // `now` used to be built by slicing the string at a BYTE index, which is a
+  // UTF-16 index in JavaScript: any character above U+007F before the byte
+  // that turned put the replacement in the wrong place, and the page printed
+  // a value the file does not contain.
+  it('reports the value the file actually holds, not one built by slicing', () => {
+    const bytes = rebuilt((p) => ({ ...p, work: { ...(p.work as JsonObject), title: 'é1abc' } }))
+    const t = applyTamper('title', bytes, store())!
+    expect(t.edit!.now).toBe((payloadOf(t.envelopeBytes).work as JsonObject).title)
+  })
+})
