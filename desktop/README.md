@@ -19,9 +19,10 @@ cd ../../desktop && npm ci && npm run build  # produces dist/attest-verifier.htm
 
 `npm run build` typechecks, bundles, and then inlines the bundle into a single document:
 one `<script>`, one `<style>`, no external references at all. The build refuses to write
-the file if any of that is untrue — two scripts, a leftover `src=`, a stylesheet link, a
-request-making API in the output, or a content security policy whose hashes do not match
-the bytes it is meant to pin.
+the file unless every tag, every attribute and every link in the document — wherever it
+occurs — is one an explicit allowlist names; there is exactly one outbound link, to the
+project site. It also refuses a content security policy whose hashes do not match the
+bytes it pins, and any request-making API in the output.
 
 Two consecutive builds produce a byte-identical file. That is a property the build owes
 you, and the suite checks it.
