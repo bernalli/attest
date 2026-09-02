@@ -1,0 +1,15 @@
+/* The four faces, served from this origin. The page's CSP forbids every other
+   host, and that prohibition is the claim the page exists to demonstrate.
+
+   These live apart from styles.css for a reason that is not cosmetic. The
+   desktop verifier imports styles.css and inlines it into one self-contained
+   HTML file, whose build refuses any stylesheet carrying `url(` — a fetch is
+   exactly what an offline verifier must never make. So the rules that fetch
+   stay in this file, which only the site loads; the desktop falls back to the
+   monospace face the reader's system already has, and stays a single file that
+   asks the network for nothing. */
+
+@font-face { font-family: 'Courier Prime'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/courier-prime-400.woff2') format('woff2'); }
+@font-face { font-family: 'Courier Prime'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/courier-prime-700.woff2') format('woff2'); }
+@font-face { font-family: 'Courier Prime'; font-style: italic; font-weight: 400; font-display: swap; src: url('/fonts/courier-prime-400i.woff2') format('woff2'); }
+@font-face { font-family: 'Courier Prime'; font-style: italic; font-weight: 700; font-display: swap; src: url('/fonts/courier-prime-700i.woff2') format('woff2'); }
