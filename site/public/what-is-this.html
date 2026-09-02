@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="description" content="What the .attest and .private.attest files in your download are, and how to check one is real.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
@@ -22,14 +22,82 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;wor
 body{max-width:none;padding:0;font-size:11pt}
 h2{page-break-after:avoid}
 .warning{border-width:2px}}
-.cta{display:inline-block;margin-top:.5rem;padding:.6rem 1.1rem;border:1px solid var(--accent);border-radius:8px;text-decoration:none;font-weight:600}
-footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--fg);opacity:.75;font-size:.9rem}
+@font-face{font-family:'Courier Prime';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/courier-prime-400.woff2') format('woff2')}
+@font-face{font-family:'Courier Prime';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/courier-prime-700.woff2') format('woff2')}
+@font-face{font-family:'Courier Prime';font-style:italic;font-weight:400;font-display:swap;src:url('fonts/courier-prime-400i.woff2') format('woff2')}
+@font-face{font-family:'Courier Prime';font-style:italic;font-weight:700;font-display:swap;src:url('fonts/courier-prime-700i.woff2') format('woff2')}
+:root{--paper:#f0e6d2;--paper-card:#f8f2e2;--edge:#d3c3a2;--rule:#dccdb0;--ink:#241f18;--ink-2:#4a4132;--ink-3:#5c5241;--ink-label:#65573e;--bordeaux:#7a2231;--bordeaux-deep:#571620;--bordeaux-tint:#d8b3ad;--measure:64ch;--bg:#f0e6d2;--fg:#241f18;--bad:#7a2231;--accent:#7a2231}
+*{box-sizing:border-box}
+body{margin:0;max-width:none;padding:0;background:var(--paper);color:var(--ink);font-family:'Courier Prime','Courier New',Courier,monospace;font-size:15px;line-height:1.8}
+a{color:var(--bordeaux);text-decoration:none;border-bottom:1px solid var(--bordeaux-tint)}
+a:hover,a:focus-visible{color:var(--bordeaux-deep);border-bottom-color:var(--bordeaux)}
+code{font-family:inherit;font-size:1em;word-break:normal;overflow-wrap:anywhere;background:rgba(122,34,49,.07);padding:0 .2em}
+strong{font-weight:700}
+.masthead{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;padding:26px 40px;border-bottom:1px solid var(--rule)}
+.masthead__home{border:0;display:block;line-height:0}
+.lockup{height:22px;width:auto;display:block}
+.masthead nav{display:flex;gap:26px;flex-wrap:wrap}
+.masthead nav a{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--bordeaux);border-bottom-color:transparent;padding-bottom:2px}
+.masthead nav a:hover,.masthead nav a:focus-visible{border-bottom-color:var(--bordeaux)}
+.masthead nav a[aria-current=page]{color:var(--ink);border-bottom-color:var(--ink)}
+main{max-width:740px;margin:0 auto;padding:48px 24px 60px;display:flex;flex-direction:column;gap:34px}
+main>section{display:flex;flex-direction:column;gap:16px}
+h1{margin:0;font-size:clamp(26px,4.6vw,37px);font-weight:700;line-height:1.28;letter-spacing:-.035em;text-wrap:pretty}
+h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.03em;color:var(--ink)}
+h3{margin:0;font-size:14.5px;font-weight:700;letter-spacing:-.02em}
+p{margin:0;max-width:var(--measure);color:var(--ink-2);text-wrap:pretty}
+.lead{font-size:15px}
+.label{font-size:10.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-label)}
+.label--accent{color:var(--bordeaux)}
+hr{border:0;height:1px;background:var(--rule);margin:0}
+ul{margin:0;padding-left:1.4em;max-width:var(--measure);color:var(--ink-2);display:flex;flex-direction:column;gap:11px}
+li{text-wrap:pretty}
+li::marker{color:var(--bordeaux)}
+.cta{display:inline-block;align-self:flex-start;margin:0;padding:10px 20px;border:1px solid var(--ink);border-radius:0;background:var(--ink);color:var(--paper);font-size:12.5px;font-weight:700;border-bottom:1px solid var(--ink)}
+.cta:hover,.cta:focus-visible{background:var(--bordeaux);border-color:var(--bordeaux);color:var(--paper)}
+.warning{margin:0;padding:20px 24px;border:1px solid var(--bordeaux);border-left-width:3px;border-radius:0;background:rgba(216,179,173,.22);display:flex;flex-direction:column;gap:12px}
+.warning h2{margin:0;font-size:16px;color:var(--bordeaux);letter-spacing:-.02em}
+.warning p{color:var(--ink-2);font-size:13.5px;line-height:1.75}
+.register{display:flex;flex-direction:column;gap:13px}
+.register>div{display:grid;grid-template-columns:186px 1fr;gap:20px;font-size:13.5px;line-height:1.75;color:var(--ink-2)}
+.register .term{font-weight:700;color:var(--ink)}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:26px}
+.steps>div{display:flex;flex-direction:column;gap:7px}
+.steps .n{font-size:12px;font-weight:700;color:var(--bordeaux)}
+.steps p{font-size:12.5px;line-height:1.75;color:var(--ink-3)}
+.standing{background:rgba(213,196,160,.42);border-left:3px solid var(--bordeaux);padding:20px 24px;display:flex;flex-direction:column;gap:10px}
+.standing p{font-size:14px}
+.contents{display:flex;flex-direction:column;gap:9px;counter-reset:q}
+.contents a{display:grid;grid-template-columns:34px 1fr;gap:12px;font-size:13.5px;line-height:1.7;border-bottom:0;color:var(--ink-2);align-items:baseline}
+.contents a::before{counter-increment:q;content:counter(q,decimal-leading-zero);font-size:12px;font-weight:700;color:var(--bordeaux)}
+.contents a:hover span,.contents a:focus-visible span{border-bottom:1px solid var(--bordeaux);color:var(--bordeaux-deep)}
+.qa{display:flex;flex-direction:column;gap:14px;scroll-margin-top:24px}
+.qa h2{font-size:19px;line-height:1.4}
+.qa p{font-size:14px}
+.crosslinks{font-size:12.5px;color:var(--ink-3);line-height:1.8}
+footer{border-top:1px solid var(--rule);padding:22px 40px 30px;margin:0;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3);opacity:1}
+footer nav{display:flex;gap:22px;flex-wrap:wrap}
+@media(max-width:720px){.masthead,footer{padding-left:20px;padding-right:20px}.register>div{grid-template-columns:1fr;gap:4px}}
+@media print{body{background:#fff;color:#000;font-size:11pt}.masthead nav,footer nav,.contents{display:none}main{max-width:none;padding:0}a{color:#000;border-bottom:0}h2{page-break-after:avoid}.warning{border-width:2px;background:none}code{background:none}.cta{background:none;color:#000;border:1px solid #000}}
 </style>
 </head>
 <body>
+<header class="masthead">
+<a class="masthead__home" href="./" aria-label="attest — home"><img class="lockup" src="lockup.svg" alt="attest" width="165" height="22"></a>
+<nav aria-label="Primary">
+<a href="start-here.html">Start here</a>
+<a href="faq.html">FAQ</a>
+<a href="for-sellers.html">For sellers</a>
+<a href="https://github.com/bernalli/attest/tree/main/docs/spec">Specification</a>
+<a href="https://github.com/bernalli/attest">Source</a>
+</nav>
+</header>
+<main>
+<section>
+<p class="label">For a reader holding a file</p>
 <h1>What is this file?</h1>
 
-<p>You bought something online, and your download included one or two extra
+<p class="lead">You bought something online, and your download included one or two extra
 files ending in <code>.attest</code> or <code>.private.attest</code>. This page
 explains what they are.</p>
 
@@ -40,7 +108,11 @@ important paper receipt — it doesn't live in any account. It survives the shop
 closing. It does not survive the seller declaring the key that signed it
 compromised: the standard describes a shield against that, but no store tool
 offers it yet and this page cannot check it.</p>
+</section>
 
+<hr>
+
+<section>
 <h2>You can check it yourself, without the store</h2>
 
 <p>You don't need to trust this page, or the store, or take anyone's word for
@@ -48,6 +120,7 @@ it. Anyone can verify the receipt directly — including you, right now, in your
 browser, with the file never leaving your machine.</p>
 
 <p><a class="cta" href="./">Verify a receipt →</a></p>
+</section>
 
 <div class="warning">
 <h2>Never send *.private.attest to anyone.</h2>
@@ -58,6 +131,7 @@ browser, with the file never leaving your machine.</p>
 <p>If anyone needs to see what you bought, send them the other file from your download instead — the one whose name ends in .attest but not in .private.attest. It shows the same purchases and gives no one a way to claim them.</p>
 </div>
 
+<section>
 <h2>What if the store is gone?</h2>
 
 <p>That's the whole point of this format: the receipt still works. It doesn't
@@ -67,12 +141,23 @@ or years later, using nothing but the file itself and the seller's published
 signing key. If a store you bought from shuts down, your receipt still proves
 you bought what it lists — it isn't the thing itself, but it's the part of your
 purchase that survives the store.</p>
+</section>
 
-<footer>
-Never heard of any of this? <a href="https://attest-receipts.org/start-here.html">Start here</a>.
+<hr>
+
+<p class="crosslinks">
+Never heard of any of this? <a href="start-here.html">Start here</a>.
 Curious about the cryptography behind this? See the
 <a href="https://github.com/bernalli/attest/tree/main/docs/spec">attest specification</a>
 and the <a href="https://github.com/bernalli/attest">project on GitHub</a>.
+</p>
+</main>
+<footer>
+<span>Code Apache-2.0 &middot; Spec CC BY 4.0 &middot; Courier Prime under the SIL Open Font License</span>
+<nav aria-label="Elsewhere">
+<a href="https://github.com/bernalli/attest">github.com/bernalli/attest</a>
+<a href="https://github.com/bernalli/attest/discussions">Discussions</a>
+</nav>
 </footer>
 </body>
 </html>

@@ -134,13 +134,20 @@ warning attached. The receipt describes what you were sold. It does not change i
 Nobody forces them, true, and nothing here could. What the protocol offers is
 a single route, open only to sellers who already have a reason to take it.
 
-For a DRM-free seller, the cost is close to zero and the reason is
-commercial. attest-bridge runs as one small self-hosted service next to the
-existing checkout — Stripe, itch.io or Shopify today — and turns every paid
-order into a signed receipt, automatically. What the seller gets for that is
-trust: "what you buy from me stays yours, even if I disappear" is a selling
-argument, the same one GOG built a whole brand on. An independent publisher
-can offer this tomorrow, and nobody can stop them.
+For a DRM-free seller the cost is one small service to run and one signing key to
+keep — this project has not measured it more closely than that, so this page puts no
+figure on it — and the reason is commercial. The service is `attest-bridge`. It runs
+self-hosted next to the existing checkout — Stripe, itch.io or Shopify — and signs a
+receipt when the platform confirms a paid order; the key it signs with stays where
+the seller runs it. It is not published: its package metadata is marked
+`Private :: Do Not Upload`, and its own setup guide says never to run
+`pip install attest-bridge`, because that name could resolve to something unrelated.
+You clone the repository and install from that clone with `pip install ./bridge`; the
+[page for sellers](https://attest-receipts.org/for-sellers.html) walks through the
+rest. What the seller gets for that is trust: "what you buy from me stays yours, even
+if I disappear" is a selling argument, the same one GOG built a whole brand on. Any
+independent publisher can do that today, without asking anyone's permission. None
+has yet.
 
 For everyone who will not sign voluntarily, there is no technical mechanism
 here that compels adoption. Any regulatory route is external to the protocol.
@@ -408,8 +415,17 @@ the issuer does; the resale answer above says what is and is not written about t
 And "forever" holds against the store disappearing, not against a live store
 declaring its own signing key compromised: that declaration invalidates the receipts
 signed with that key. The standard defines a rescue for a receipt logged and anchored
-before the declaration, but no shipped tool logs a receipt and the verifiers you can
-use today cannot evaluate that evidence, so for now the declaration is final. So the rule on any DRM-free store is simple and unglamorous:
+before the declaration, and both implementations evaluate it: shown a receipt with
+that standing, they let it survive; the command line has options for the evidence
+and for the log keys and block headers it is checked against; and the conformance
+corpus carries a rescued receipt to hold them to it. What is missing is the evidence
+itself, and an anchor to check it against. No shipped tool logs a receipt — the
+bridge does not log what it issues, and though the command line can run a log, no
+command turns a receipt into an entry for it — and nothing pins an anchor by
+default: the browser verifier pins no Bitcoin block header, and the command line and
+both libraries run with no anchoring policy at all unless you hand them one, as the
+answer about Bitcoin above spells out. So for a receipt you hold today the
+declaration is final, and the rule on any DRM-free store is simple and unglamorous:
 download what you buy, and keep the file next to the receipt. Content plus proof,
 both in your hands.
 

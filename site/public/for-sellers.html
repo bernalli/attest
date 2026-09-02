@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="description" content="What a seller installs, signs and hands to the buyer in order to issue attest receipts, what is not asked of them, and where this stands: no seller signs yet.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>For sellers — attest</title>
+<style>:root{--bg:#F1F0ED;--fg:#17191D;--bad:#B00020;--accent:#0757BA}
+@media(prefers-color-scheme:dark){:root{--bg:#0D1117;--fg:#E6EDF3;--bad:#F85149;--accent:#58A6FF}}
+body{margin:0 auto;max-width:38rem;padding:2rem 1.25rem 3rem;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{margin:0 0 1rem;font-size:1.7rem;line-height:1.25}
+h2{margin:2rem 0 .5rem;font-size:1.2rem}
+a{color:var(--accent)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;word-break:break-word}
+.warning{margin:1.5rem 0;padding:.2rem 1.1rem 1rem;border:1px solid var(--bad);border-left-width:4px;border-radius:8px}
+.warning h2{color:var(--bad)}
+@media print{:root{--bg:#FFF;--fg:#000;--bad:#000;--accent:#000}
+body{max-width:none;padding:0;font-size:11pt}
+h2{page-break-after:avoid}
+.warning{border-width:2px}}
+@font-face{font-family:'Courier Prime';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/courier-prime-400.woff2') format('woff2')}
+@font-face{font-family:'Courier Prime';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/courier-prime-700.woff2') format('woff2')}
+@font-face{font-family:'Courier Prime';font-style:italic;font-weight:400;font-display:swap;src:url('fonts/courier-prime-400i.woff2') format('woff2')}
+@font-face{font-family:'Courier Prime';font-style:italic;font-weight:700;font-display:swap;src:url('fonts/courier-prime-700i.woff2') format('woff2')}
+:root{--paper:#f0e6d2;--paper-card:#f8f2e2;--edge:#d3c3a2;--rule:#dccdb0;--ink:#241f18;--ink-2:#4a4132;--ink-3:#5c5241;--ink-label:#65573e;--bordeaux:#7a2231;--bordeaux-deep:#571620;--bordeaux-tint:#d8b3ad;--measure:64ch;--bg:#f0e6d2;--fg:#241f18;--bad:#7a2231;--accent:#7a2231}
+*{box-sizing:border-box}
+body{margin:0;max-width:none;padding:0;background:var(--paper);color:var(--ink);font-family:'Courier Prime','Courier New',Courier,monospace;font-size:15px;line-height:1.8}
+a{color:var(--bordeaux);text-decoration:none;border-bottom:1px solid var(--bordeaux-tint)}
+a:hover,a:focus-visible{color:var(--bordeaux-deep);border-bottom-color:var(--bordeaux)}
+code{font-family:inherit;font-size:1em;word-break:normal;overflow-wrap:anywhere;background:rgba(122,34,49,.07);padding:0 .2em}
+strong{font-weight:700}
+.masthead{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;padding:26px 40px;border-bottom:1px solid var(--rule)}
+.masthead__home{border:0;display:block;line-height:0}
+.lockup{height:22px;width:auto;display:block}
+.masthead nav{display:flex;gap:26px;flex-wrap:wrap}
+.masthead nav a{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--bordeaux);border-bottom-color:transparent;padding-bottom:2px}
+.masthead nav a:hover,.masthead nav a:focus-visible{border-bottom-color:var(--bordeaux)}
+.masthead nav a[aria-current=page]{color:var(--ink);border-bottom-color:var(--ink)}
+main{max-width:740px;margin:0 auto;padding:48px 24px 60px;display:flex;flex-direction:column;gap:34px}
+main>section{display:flex;flex-direction:column;gap:16px}
+h1{margin:0;font-size:clamp(26px,4.6vw,37px);font-weight:700;line-height:1.28;letter-spacing:-.035em;text-wrap:pretty}
+h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.03em;color:var(--ink)}
+h3{margin:0;font-size:14.5px;font-weight:700;letter-spacing:-.02em}
+p{margin:0;max-width:var(--measure);color:var(--ink-2);text-wrap:pretty}
+.lead{font-size:15px}
+.label{font-size:10.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-label)}
+.label--accent{color:var(--bordeaux)}
+hr{border:0;height:1px;background:var(--rule);margin:0}
+ul{margin:0;padding-left:1.4em;max-width:var(--measure);color:var(--ink-2);display:flex;flex-direction:column;gap:11px}
+li{text-wrap:pretty}
+li::marker{color:var(--bordeaux)}
+.cta{display:inline-block;align-self:flex-start;margin:0;padding:10px 20px;border:1px solid var(--ink);border-radius:0;background:var(--ink);color:var(--paper);font-size:12.5px;font-weight:700;border-bottom:1px solid var(--ink)}
+.cta:hover,.cta:focus-visible{background:var(--bordeaux);border-color:var(--bordeaux);color:var(--paper)}
+.warning{margin:0;padding:20px 24px;border:1px solid var(--bordeaux);border-left-width:3px;border-radius:0;background:rgba(216,179,173,.22);display:flex;flex-direction:column;gap:12px}
+.warning h2{margin:0;font-size:16px;color:var(--bordeaux);letter-spacing:-.02em}
+.warning p{color:var(--ink-2);font-size:13.5px;line-height:1.75}
+.register{display:flex;flex-direction:column;gap:13px}
+.register>div{display:grid;grid-template-columns:186px 1fr;gap:20px;font-size:13.5px;line-height:1.75;color:var(--ink-2)}
+.register .term{font-weight:700;color:var(--ink)}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:26px}
+.steps>div{display:flex;flex-direction:column;gap:7px}
+.steps .n{font-size:12px;font-weight:700;color:var(--bordeaux)}
+.steps p{font-size:12.5px;line-height:1.75;color:var(--ink-3)}
+.standing{background:rgba(213,196,160,.42);border-left:3px solid var(--bordeaux);padding:20px 24px;display:flex;flex-direction:column;gap:10px}
+.standing p{font-size:14px}
+.contents{display:flex;flex-direction:column;gap:9px;counter-reset:q}
+.contents a{display:grid;grid-template-columns:34px 1fr;gap:12px;font-size:13.5px;line-height:1.7;border-bottom:0;color:var(--ink-2);align-items:baseline}
+.contents a::before{counter-increment:q;content:counter(q,decimal-leading-zero);font-size:12px;font-weight:700;color:var(--bordeaux)}
+.contents a:hover span,.contents a:focus-visible span{border-bottom:1px solid var(--bordeaux);color:var(--bordeaux-deep)}
+.qa{display:flex;flex-direction:column;gap:14px;scroll-margin-top:24px}
+.qa h2{font-size:19px;line-height:1.4}
+.qa p{font-size:14px}
+.crosslinks{font-size:12.5px;color:var(--ink-3);line-height:1.8}
+footer{border-top:1px solid var(--rule);padding:22px 40px 30px;margin:0;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3);opacity:1}
+footer nav{display:flex;gap:22px;flex-wrap:wrap}
+@media(max-width:720px){.masthead,footer{padding-left:20px;padding-right:20px}.register>div{grid-template-columns:1fr;gap:4px}}
+@media print{body{background:#fff;color:#000;font-size:11pt}.masthead nav,footer nav,.contents{display:none}main{max-width:none;padding:0}a{color:#000;border-bottom:0}h2{page-break-after:avoid}.warning{border-width:2px;background:none}code{background:none}.cta{background:none;color:#000;border:1px solid #000}}
+</style>
+</head>
+<body>
+<header class="masthead">
+<a class="masthead__home" href="./" aria-label="attest — home"><img class="lockup" src="lockup.svg" alt="attest" width="165" height="22"></a>
+<nav aria-label="Primary">
+<a href="start-here.html">Start here</a>
+<a href="faq.html">FAQ</a>
+<a href="for-sellers.html" aria-current="page">For sellers</a>
+<a href="https://github.com/bernalli/attest/tree/main/docs/spec">Specification</a>
+<a href="https://github.com/bernalli/attest">Source</a>
+</nav>
+</header>
+<main>
+<section>
+<p class="label">For whoever would sign</p>
+<h1>For sellers</h1>
+<p class="lead">This page is for whoever sells files without DRM — a publisher, a developer on itch.io, a small ebook shop, a musician — and wants to know what signing a receipt would take. It says what you install, what you sign, what your buyer receives, and what is not asked of you. It says the missing part first, because you need it to decide: no seller issues attest receipts today. The standard, two independent implementations and the conformance suite are done and free to use. What is missing is the first seller who signs, and this page is meant to let you work out whether that could be you.</p>
+</section>
+
+<hr>
+
+<section>
+<h2>What you would be signing</h2>
+<p>A receipt is a small JSON document you sign at the moment of sale. It names you by your domain, names the work, points at the licence terms by URI and by the hash of their text, and binds the purchase to the buyer through a salted commitment to their email address rather than the address itself. Your signature is Ed25519; when the bridge signs, it adds an ML-DSA-65 signature beside it, so the same receipt carries a post-quantum leg. Once signed, the receipt does not change. Refunds, revocations and key changes live in separate signed documents, never inside it.</p>
+
+<p>The buyer receives two files. The shareable one, named after your domain and the receipt id and ending in <code>.attest</code>, carries the receipt with its salt stripped, your key manifest exactly as it was when you signed, the licence text the receipt's hash points at, and a generated page explaining how to check the receipt once your store is gone. The other, ending in <code>.private.attest</code>, holds the salt that lets the buyer prove the receipt is theirs; the name is deliberate, because the web verifier refuses that file on sight, and it is the one file they must never send to anyone. Anyone holding the shareable file can verify it offline — on this site, with the <code>attest</code> command, or with the npm package — and none of that needs you, your server or your bridge to still exist.</p>
+</section>
+
+<hr>
+
+<section>
+<h2>What you install</h2>
+<p>Two packages, and only one of them is published. <code>attest-receipts</code> is on PyPI and gives you the <code>attest</code> command: <code>keygen</code>, <code>manifest</code>, <code>issue</code>, <code>export</code>, <code>verify</code>, <code>import</code>, <code>inspect</code>, <code>check-artifact</code> and <code>disclose</code>, plus the <code>transfer</code>, <code>grant</code>, <code>authority</code> and <code>log</code> families for the parts of the standard beyond a plain sale. <code>attest-bridge</code>, the service that turns a paid order into a signed receipt, is not published. Its package metadata is marked <code>Private :: Do Not Upload</code>, and its own setup guide tells you never to run <code>pip install attest-bridge</code>, because that name could resolve to something unrelated. You clone the repository and install from the checkout with <code>pip install ./bridge</code>, which pulls in <code>attest-receipts</code> as a dependency. Both need Python 3.12 or newer.</p>
+
+<p>The bridge runs wherever you can run a container. A Dockerfile builds it from the checkout, and the deployment guide writes out Docker Compose on a machine you own, Fly.io and Render. TLS is not optional on any of them: a webhook body and a downloaded receipt both carry a buyer's binding salt. The bridge keeps a Ledger, an SQLite file recording every receipt it has issued, and runs as one process per Ledger; that file holds each receipt with its salt, so it is a secret, created with owner-only permissions and backed up encrypted or not at all.</p>
+</section>
+
+<hr>
+
+<section>
+<h2>The key and the manifest</h2>
+<p><code>attest keygen --hybrid</code> writes your signing keys — an Ed25519 seed and an ML-DSA-65 key, both secret — and the public half. The bridge refuses to start without the ML-DSA key. <code>attest manifest init</code> then writes your key manifest: a self-signed document naming your domain, your key identifier and the window in which the key is valid. You choose the window, and the bridge refuses to sign outside it. Rotation exists, as <code>attest manifest rotate</code>, and it requires the old key to sign the new manifest. That is the point of it, and it is also why a lost key cannot be rotated out of.</p>
+
+<p>The specification says an issuer should publish that manifest at <code>https://&lt;your-domain&gt;/.well-known/attest.json</code>, and you should. Be clear about what it does today: nothing, for anyone verifying. The specification reserves its strongest trust level, <code>verified</code>, for key material fetched over TLS from the issuer's own domain, and no tool published today performs that fetch. Every receipt you issue carries a copy of your manifest inside it, so every verification anyone can actually run reports <code>unauthenticated_tofu</code>: the arithmetic is checked, and nobody confirms that the key belongs to the domain. Publishing at the well-known path is what would let a future verifier close that gap. Nothing you can hand a buyer closes it now.</p>
+</section>
+
+<hr>
+
+<section>
+<h2>Where the purchase comes from</h2>
+<p>The bridge signs when your payment platform says a purchase is paid, and it takes the platform's word only in the form the platform signs.</p>
+<div class="register">
+<div><span class="term">Stripe</span><span>Stripe sends <code>checkout.session.completed</code> (and its asynchronous-payment sibling) to the bridge, which verifies the <code>Stripe-Signature</code> header with your webhook secret and issues only for a session whose payment status is <code>paid</code>. With your Stripe secret key configured, the bridge reads the session's line items itself to learn which price was bought; without it, you set the product key in the session's metadata yourself. A session with more than one purchasable line item is refused: one receipt per purchase.</span></div>
+<div><span class="term">Shopify</span><span>Shopify sends an <code>orders/paid</code> webhook, checked against <code>X-Shopify-Hmac-Sha256</code>. The order carries its own line items, so there is no API token to configure and no follow-up request. Unpaid or cancelled orders are acknowledged without issuing, and an order with more than one line item is set aside rather than signed.</span></div>
+<div><span class="term">itch.io</span><span>Not a webhook, because itch.io exposes none. The bridge runs a claim queue: a buyer, through a form the bridge serves, or you, from a CSV of past sales, enqueues an email address and a game id, and a poller asks the itch API whether that address bought that game. Only the API's answer issues a receipt; a claim by itself never does. itch receipts are bound to email only and reach the buyer only by email, so this rail requires a mail server.</span></div>
+<div><span class="term">Your own checkout</span><span>If your checkout is code you wrote, the Python library exposes the two calls the bridge itself uses to build and sign a payload, and the <code>attest</code> command can sign a payload you write by hand and package it as the same two files. There is no guide for that path; the setup guides cover the platforms above.</span></div>
+</div>
+</section>
+
+<hr>
+
+<section>
+<h2>What you decide, per product</h2>
+<p>The bridge signs nothing it has not been told about. For every item you sell you write a table in <code>bridge.toml</code>, keyed by the platform's identifier for it — a Stripe price id, a Shopify variant id, an itch game id — with the title, the publisher, an identifier of your own, a URI for the licence terms, the SHA-256 of the licence text and the path to that text. The bridge reads the text at startup, hashes it, and refuses to start if the hash does not match what you declared. A purchase of anything not in the file is refused and set aside rather than issued with guessed terms. The text itself ships inside every buyer's bundle, so the deal travels with the signature.</p>
+
+<p>The defaults are not modest, and you should read them before you accept them: a perpetual grant, DRM-free, irrevocable, with a right to re-download. The specification allows an irrevocable receipt only for a DRM-free sale with a redownload right and a named artifact series or list of files, and it treats such a receipt as evidence that a sale falls under laws like California's AB 2426 or Maryland's HB 208 — evidence, it says, not a compliance determination, and your storefront language stays your own duty. It also means a refund does not take the receipt back: a revocation record aimed at an irrevocable receipt is ignored by every conforming verifier. If you want refunds to reach the receipt, set <code>revocability = "refund_window"</code> with a number of days, and know what that buys you today: no shipped command signs a stand-alone revocation record — the library can, and you would be writing code — and the record then has to reach the buyer as a file, because no shipped tool fetches a revocation feed.</p>
+</section>
+
+<hr>
+
+<section>
+<h2>How the buyer receives it</h2>
+<p>By email or by link, and you choose by configuration. With a <code>[delivery]</code> section the bridge sends the two files as attachments over SMTP, TLS only — there is no code path that sends in clear — with a body that names which file is safe to share and which is not, and a link to a page explaining what the files are. That page is this site's unless you point <code>info_url</code> at your own. Without <code>[delivery]</code>, the download link is the delivery: every receipt has a token link on your bridge, and Stripe's success URL can land the buyer directly on a page offering both files. Delivery is at-least-once — a crash between the mail server accepting and the Ledger recording can send the same email twice — and it never issues twice. On itch.io there is no link path; email is the only delivery.</p>
+
+<p>One consequence for your customers, worth knowing before you sign: the buyer's address is sealed, not encrypted. Whoever holds the private file together with the receipt — the buyer, or anyone they hand both to — can test candidate email addresses against the receipt's commitment offline. Your Ledger holds the same salts, which is one more reason it is a secret.</p>
+</section>
+
+<hr>
+
+<section>
+<h2>What stays with you afterwards</h2>
+<p>The signing key. It lives only where your bridge runs; the bridge reads it to sign and never exports, logs or writes it back. There is no attest portal, no authority and no company holding a copy that can restore it, and that is by design: an authority able to hand your identity back to you could hand it to someone else. Back the seed up where a disk failure on the issuing machine cannot take it, never next to what it signs, and read the incident runbook before you need it. Its two cases differ in a way worth knowing now. A lost key leaves your old receipts valid and leaves a permanent, visible gap in your key history. A stolen key, once you declare it compromised, invalidates every receipt it signed. The standard defines a rescue for receipts logged and anchored before such a declaration, but the bridge does not log what it issues and no shipped command does, so today that declaration is final for every receipt the bridge signs.</p>
+
+<p>The Ledger. It is your memory of which purchases already have a receipt and the source of every download link. Losing it does not touch receipts already delivered, but a redeploy without it can issue a second receipt for a retried webhook.</p>
+
+<p>Uptime, while you sell. Stripe and Shopify retry a webhook that fails transiently, and the bridge answers a transient failure with a 500 precisely so that they do. After the sale, nothing: a receipt in the buyer's hands verifies with no dependency on the bridge, its database or its uptime ever again.</p>
+</section>
+
+<hr>
+
+<section>
+<h2>What is not asked of you</h2>
+<div class="register">
+<div><span class="term">No blockchain</span><span>A conforming implementation must not require blockchain infrastructure to issue or verify a receipt. The bridge issues a signed file.</span></div>
+<div><span class="term">No fee, no licence to buy</span><span>The code is Apache-2.0 and the specification CC BY 4.0; nothing charges a fee to implement attest. The documents say what they cover and stop short of the words "royalty-free".</span></div>
+<div><span class="term">No registration, no certification</span><span>There is no central attest authority. An implementation claims conformance by running the public runner against the corpus and publishing the result.</span></div>
+<div><span class="term">No account with this project, and no traffic to it</span><span>The bridge speaks to your payment platform and to your mail server. Neither verifier contains an HTTP client. The only reference to this site in the bridge is the default link in the receipt email, which you can replace.</span></div>
+<div><span class="term">No change to how you sell</span><span>The bridge sits beside your checkout and reacts to its events. It is not a payment processor, a store, or a source of truth for your orders; on Shopify, the app that delivers the file keeps delivering it, and the bridge only issues the receipt.</span></div>
+<div><span class="term">No copy of what you sell</span><span>A receipt names the work and the terms. It never carries, hosts or indexes the content, and the specification forbids implementations from doing so.</span></div>
+<div><span class="term">No custody handed to anyone</span><span>Your key stays where your bridge runs. No buyer key material passes through the bridge beyond a public key a buyer chooses to bind their receipt to.</span></div>
+<div><span class="term">No DRM, and no promise about it</span><span>A receipt records whether the sale was DRM-free or DRM-bound and never changes which. The standard forbids using attest to strip or bypass DRM.</span></div>
+</div>
+</section>
+
+<section class="standing">
+<h2 class="label label--accent">Where this honestly stands</h2>
+<p>No store issues attest receipts yet, and no regulator mandates them. The standard, two independent implementations and the conformance suite are done and free to use. What is missing is the first seller who signs. On this page that sentence has concrete edges: the bridge is unreleased and installs from a checkout; the manifest you publish at the well-known path is fetched by no shipped tool; the log-and-anchor rescue that would let a receipt outlive a later compromise of your key is not wired into what the bridge issues. None of it stops a receipt signed today from verifying later, offline, with nothing of yours still running. If something on this page would stop you, say so in the project's Discussions. A first seller is worth more to this project than another feature.</p>
+</section>
+
+<hr>
+
+<p class="crosslinks">
+Buying rather than selling? <a href="start-here.html">Start here</a> &middot;
+The questions people ask are in the <a href="faq.html">FAQ</a> &middot;
+The normative text is the <a href="https://github.com/bernalli/attest/tree/main/docs/spec">specification</a>, and the seller-side service lives in
+<a href="https://github.com/bernalli/attest/tree/main/bridge">bridge/</a>.
+</p>
+</main>
+<footer>
+<span>Code Apache-2.0 &middot; Spec CC BY 4.0 &middot; Courier Prime under the SIL Open Font License</span>
+<nav aria-label="Elsewhere">
+<a href="https://github.com/bernalli/attest">github.com/bernalli/attest</a>
+<a href="https://github.com/bernalli/attest/discussions">Discussions</a>
+</nav>
+</footer>
+</body>
+</html>
