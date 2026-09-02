@@ -5,6 +5,10 @@ import { fileURLToPath, URL as NodeURL } from 'node:url'
 import { unzipSync, zipSync } from 'fflate'
 import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import { initDesktopApp } from '../src/app.js'
+import type { RuleId } from '../tools/shell-policy.mjs'
+import { validateShell } from '../tools/shell-policy.mjs'
+import type { Where } from './helpers/shell-mutants.js'
+import { mutantMarkup, plant } from './helpers/shell-mutants.js'
 
 const SAMPLE = fileURLToPath(new NodeURL('../../site/public/sample/demo.attest', import.meta.url))
 const SHELL = fileURLToPath(new NodeURL('../index.html', import.meta.url))
@@ -121,65 +125,38 @@ describe('the page says so when its script never runs', () => {
     expect(document.getElementById('boot-failsafe')).not.toBeNull()
   })
 
-  // One predicate, over the WHOLE document. The earlier version read `shellBody()`,
-  // which strips the head — and the head is exactly where a stylesheet link, a <base>
-  // or a meta refresh would go. Measured 2026-09-01: with the body-only version an
-  // `<img src>` planted in the head passed every assertion.
-  //
-  // `<a href>` is the one carve-out: the footer's provenance line carries the project's
-  // address, and nothing fetches an anchor unless a person clicks it. It is a carve-out
-  // for ANCHORS, not for hrefs — `<image xlink:href>` and `<use xlink:href>` are
-  // parse-time fetches that the previous wording claimed were "already refused" and
-  // were not (measured: both reached the network with no policy in force).
-  const selfFetching = (html: string): string[] => {
-    const shell = html
-      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<!--[\s\S]*?-->/g, '')
-    return [
-      /<meta\b[^>]*http-equiv\s*=\s*["']?\s*refresh/i,
-      /<(iframe|embed|object|frame|frameset|portal|image|use|source|track|audio|video|form|base)\b/i,
-      /\sping\s*=/i,
-      /<a\b[^>]*\shref\s*=\s*["']?\s*javascript:/i,
-      /<(?!a\b)[a-zA-Z-]+\b[^>]*\s(?:[a-zA-Z-]+:)?href\s*=/i,
-      /\s(?:src|srcset|poster|background|action|formaction|data)\s*=/i,
-      /url\(|@import/i,
-      /sample/i,
-    ].flatMap((pattern) => {
-      const hit = shell.match(pattern)
-      return hit ? [hit[0]] : []
-    })
-  }
-
+  // The shell used to be checked by a COPY of the build's markup rules, kept in step
+  // with them by hand. It is checked by the rules themselves now: one policy, two
+  // callers. A replica that drifts is a test that passes about the wrong thing.
   test('the shell fetches nothing while the browser parses it', () => {
-    expect(selfFetching(shellHtml())).toEqual([])
+    expect(validateShell(readFileSync(SHELL), { stage: 'source' })).toEqual([])
   })
 
-  test('the same predicate names each construct when it is present (negative self-test)', () => {
-    // An absence assertion whose predicate has quietly stopped matching passes for ever
-    // while proving nothing — the failure that looks exactly like success. Every mutant
-    // below is a reference a browser resolves by itself; the last case is the carve-out
-    // and must still pass, or this block is satisfied by a rule that refuses everything.
-    const planted = (markup: string) => shellHtml().replace('<main>', `${markup}\n<main>`)
-    for (const markup of [
-      '<link rel="prefetch" href="https://example.invalid/x">',
-      '<img src="https://example.invalid/p.png">',
-      '<iframe src="https://example.invalid/"></iframe>',
-      '<svg><image xlink:href="https://example.invalid/p.png"/></svg>',
-      '<svg><use xlink:href="https://example.invalid/s.svg#i"/></svg>',
-      '<a href="#" ping="https://example.invalid/c">x</a>',
-      '<a href="javascript:alert(1)">x</a>',
-      '<meta http-equiv="refresh" content="0;url=https://example.invalid/">',
-      '<base href="https://example.invalid/">',
-      '<video poster="https://example.invalid/p.png"></video>',
-    ])
-      expect(selfFetching(planted(markup)), `not caught: ${markup}`).not.toEqual([])
-
-    expect(selfFetching(planted('<a href="https://attest-receipts.org/">x</a>'))).toEqual([])
+  test('the same rules name each construct when it is present (negative self-test)', () => {
+    // An absence assertion whose rules have quietly stopped matching passes for ever
+    // while proving nothing — the failure that looks exactly like success.
+    const planted: Array<[string, Where, string, RuleId]> = [
+      ['a meta refresh', 'HEAD', mutantMarkup(1), 'R-META'],
+      ['an image in the head', 'HEAD', mutantMarkup(8), 'R-ELEMENT'],
+      ['a meta refresh inside the select', 'SELECT', mutantMarkup(40), 'R-META'],
+      ['a javascript href', 'BODY', mutantMarkup(47), 'R-URL'],
+      ['the allowed link as a character reference', 'ANCHOR', mutantMarkup(67), 'R-URL-CANONICAL'],
+    ]
+    for (const [what, where, markup, rule] of planted) {
+      const grown = plant(shellHtml(), where, markup)
+      const refusals = validateShell(Buffer.from(grown.html, 'utf8'), { stage: 'source' })
+      expect(refusals.map((r) => r.rule), `not caught: ${what}`).toContain(rule)
+    }
   })
 
   test('the shell does carry the anchor the carve-out exists for', () => {
     expect([...shellHtml().matchAll(/<a\b[^>]*\shref=/gi)].length).toBeGreaterThan(0)
+  })
+
+  test('the shell carries no leftover of the sample receipt', () => {
+    // Kept from the predicate this block replaced: it is not a self-fetching rule, and
+    // dropping it silently with the rest would have lost a kill nobody was watching.
+    expect(shellHtml()).not.toMatch(/sample/i)
   })
 })
 

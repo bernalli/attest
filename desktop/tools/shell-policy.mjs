@@ -18,7 +18,13 @@
 // newlines and control characters and lowercases the scheme — so `java&Tab;script:` and
 // `&#106;avascript:` are the same link to a browser and different strings to a regex.
 
+import { URL } from 'node:url'
+
 import { Parser } from 'parse5'
+
+// `URL` is imported rather than taken from the global scope on purpose: under a DOM
+// test environment the global one is the DOM's implementation, and this module's verdict
+// must not depend on which suite imported it.
 
 /** Any `file:` base works: every relative reference is refused anyway, and pinning one
  *  keeps the resolved form of the artifact's own anchor stable across machines. */

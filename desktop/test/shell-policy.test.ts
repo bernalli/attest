@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { URL as NodeURL, fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
 
 import type { RuleId } from '../tools/shell-policy.mjs'
@@ -34,7 +34,7 @@ import {
  * check no longer depends on which tree builder is asked.
  */
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url))
+const ROOT = fileURLToPath(new NodeURL('..', import.meta.url))
 const POLICY_SOURCE = readFileSync(join(ROOT, 'tools', 'shell-policy.mjs'), 'utf8')
 
 const SELECT_FIXTURE =

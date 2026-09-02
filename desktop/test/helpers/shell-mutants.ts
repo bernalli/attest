@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { URL as NodeURL, fileURLToPath } from 'node:url'
 
 /**
  * The mutant corpus: one entry per construct the shell policy must refuse, planted into
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
  * load-bearing rather than decorative.
  */
 
-const ROOT = fileURLToPath(new URL('../..', import.meta.url))
+const ROOT = fileURLToPath(new NodeURL('../..', import.meta.url))
 const ARTIFACT = join(ROOT, 'dist', 'attest-verifier.html')
 const SOURCE = join(ROOT, 'index.html')
 
@@ -76,10 +76,14 @@ export interface Mutant {
  *  and every current engine does not. */
 export type Where = 'HEAD' | 'HEAD0' | 'BODY' | 'SELECT' | 'STYLE' | 'ANCHOR' | 'FILE'
 
-const CSP_TAG = (html: string): string => {
+/** The last meta of the head: the policy in the artifact, the viewport in the source
+ *  shell, which has no policy until the build computes one. */
+const HEAD_ANCHOR = (html: string): string => {
   const tag = html.match(/<meta http-equiv="Content-Security-Policy" content="[^"]*">/)?.[0]
-  if (tag === undefined) throw new Error('no policy meta to plant against')
-  return tag
+  if (tag !== undefined) return tag
+  const viewport = html.match(/<meta name="viewport"[^>]*>/)?.[0]
+  if (viewport === undefined) throw new Error('no head meta to plant against')
+  return viewport
 }
 
 const ANCHOR_ATTR = 'href="https://attest-receipts.org/"'
@@ -108,7 +112,7 @@ export function plant(html: string, where: Where, what: string): { html: string;
   let out: string
   switch (where) {
     case 'HEAD': {
-      const tag = CSP_TAG(html)
+      const tag = HEAD_ANCHOR(html)
       out = at(tag, `${tag}\n${what}`)
       break
     }
@@ -134,7 +138,7 @@ export function plant(html: string, where: Where, what: string): { html: string;
       out = at(style[0], `<style>${text}</style>`)
       const script = out.match(/<script type="module">([\s\S]*?)<\/script>/)
       if (script === null) throw new Error('no inline module to re-pin')
-      const tag = CSP_TAG(out)
+      const tag = HEAD_ANCHOR(out)
       out = out.replace(
         tag,
         () =>
@@ -540,4 +544,12 @@ export const mutant = (n: number): Mutant => {
   const found = mutants().find((m) => m.n === n)
   if (found === undefined) throw new Error(`no mutant numbered ${n}`)
   return found
+}
+
+/** The markup a numbered row plants, so another suite can plant the same construct
+ *  somewhere else instead of writing a second copy of it. */
+export const mutantMarkup = (n: number): string => {
+  const row = ROWS.find((r) => r.n === n)
+  if (row?.markup === undefined) throw new Error(`row ${n} plants no markup`)
+  return row.markup
 }
