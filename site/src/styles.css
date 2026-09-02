@@ -12,8 +12,8 @@
   --ink: #241f18;
   --ink-2: #4a4132;
   --ink-3: #5c5241;
-  --ink-label: #8a7a5e;
-  --ink-faint: #a0917a;
+  --ink-label: #675940;
+  --ink-faint: #716249;
   --bordeaux: #7a2231;
   --bordeaux-deep: #571620;
   --bordeaux-tint: #d8b3ad;
@@ -179,7 +179,7 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
   --muted: var(--ink-3);
   --border: var(--edge);
   --good: var(--stamp-deep);
-  --warn: #8a6a1f;
+  --warn: #6b4b12;
   --bad: var(--bordeaux);
   --neutral: var(--ink-label);
   --accent: var(--bordeaux);
