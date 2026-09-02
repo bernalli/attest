@@ -4,8 +4,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
 
-import { decodeShell, tokenizeShell, validateShell } from '../tools/shell-policy.mjs'
-import { artifact, mutant, sourceShell } from './helpers/shell-mutants.js'
+import type { RuleId } from '../tools/shell-policy.mjs'
+import { RULE_IDS, RULES, decodeShell, tokenizeShell, validateShell } from '../tools/shell-policy.mjs'
+import type { Mutant } from './helpers/shell-mutants.js'
+import { artifact, mutant, mutants, plant, sourceShell } from './helpers/shell-mutants.js'
 
 /**
  * The shell policy reads TOKENS, not a tree.
@@ -146,5 +148,159 @@ describe('the module is what it claims to be', () => {
     expect(POLICY_SOURCE).toContain('scriptingEnabled: false')
     expect(POLICY_SOURCE).toContain('sourceCodeLocationInfo: true')
     expect(POLICY_SOURCE).not.toContain('jsdom')
+  })
+})
+
+/**
+ * The mutation obligations. A rule nobody can watch fail is a rule nobody knows is
+ * there: for every construct in the corpus the named rule must refuse it, and removing
+ * that rule must let it through. The second half is the one that catches a test which
+ * passes for a reason other than the one it claims.
+ */
+describe('every rule is load-bearing, and every mutant names the rule that refuses it', () => {
+  const implemented = new Set<RuleId>(RULE_IDS)
+  const opts = (m: Mutant) => ({ stage: m.stage, expectedCsp: m.expectedCsp })
+  const live = (m: Mutant) => m.rules.filter((r) => implemented.has(r))
+
+  test('the corpus is closed and numbered without repetition', () => {
+    const numbers = mutants().map((m) => m.n)
+    expect(new Set(numbers).size).toBe(numbers.length)
+  })
+
+  test.each(mutants().filter((m) => live(m).length > 0).map((m) => [m.n, m.what, m] as const))(
+    'row %i (%s) is refused by the rule it names',
+    (_n, _what, m) => {
+      const refusals = validateShell(m.bytes, opts(m))
+      for (const rule of live(m))
+        expect(refusals.filter((r) => r.rule === rule), `${rule} did not fire`).not.toHaveLength(0)
+    },
+  )
+
+  test.each(
+    mutants()
+      .filter((m) => live(m).length > 0 && !m.rules.includes('R-INPUT'))
+      .map((m) => [m.n, m.what, m] as const),
+  )('row %i (%s) passes once its rule is removed', (_n, _what, m) => {
+    const without = RULES.filter((r) => !m.rules.includes(r.id))
+    const refusals = validateShell(m.bytes, opts(m), without)
+    for (const rule of live(m)) expect(refusals.filter((r) => r.rule === rule)).toHaveLength(0)
+    // Where the named rules are the only ones that can catch the construct, removing
+    // them has to let the whole document through. That is the proof they are what
+    // stands between this artifact and the construct — not one belt among several.
+    if (m.sole && m.rules.every((r) => implemented.has(r))) expect(refusals).toEqual([])
+  })
+
+  test('no rule is dead: every implemented rule id is named by some row', () => {
+    const named = new Set(mutants().flatMap((m) => m.rules))
+    for (const id of RULE_IDS) expect(named, `${id} has no mutant`).toContain(id)
+  })
+})
+
+describe('what a tree builder drops, the tokens still see', () => {
+  test.each(
+    mutants()
+      .filter((m) => m.treeDrops !== undefined)
+      .map((m) => [m.n, m.treeDrops as string, m.markup as string] as const),
+  )('row %i: jsdom loses the %s inside the select and keeps it outside', (_n, dropped, markup) => {
+    const walk = (root: { children: HTMLCollection }, out: string[]): string[] => {
+      for (const el of Array.from(root.children)) {
+        out.push(el.localName)
+        if (el.localName === 'template') walk((el as HTMLTemplateElement).content, out)
+        walk(el, out)
+      }
+      return out
+    }
+    const page = (body: string) =>
+      `<!doctype html><html lang="en"><head><title>t</title></head><body>${body}</body></html>`
+    const inSelect = page(`<select id="b">${markup}<option value="e">e</option></select>`)
+    const elsewhere = page(`<div id="z">${markup}</div>`)
+
+    // The tokens see it wherever it is.
+    expect(tokenizeShell(inSelect).tokens.map((t) => t.name)).toContain(dropped)
+
+    // The tree does not — and the carve-out proves the walk can find it at all, so an
+    // assertion that stopped working would fail instead of passing for ever.
+    expect(walk(new JSDOM(inSelect).window.document.body, [])).not.toContain(dropped)
+    expect(walk(new JSDOM(elsewhere).window.document.body, [])).toContain(dropped)
+  })
+})
+
+describe('the rules do not depend on where a construct sits', () => {
+  const ELEMENTS = [
+    'html', 'head', 'body', 'title', 'header', 'h1', 'main', 'section', 'div', 'strong',
+    'span', 'p', 'details', 'summary', 'footer', 'em', 'code', 'meta', 'script', 'style',
+    'input', 'button', 'label', 'select', 'option', 'a',
+  ]
+
+  test('an event handler is refused on every element the allowlist names', () => {
+    const letters = 'abcdefghijklmnopqrstuvwxyz'
+    const names = Array.from({ length: 30 }, (_, i) =>
+      `on${letters[i % 26]}${letters[(i * 7) % 26]}${letters[(i * 13) % 26]}`)
+    for (const element of ELEMENTS)
+      for (const attribute of names) {
+        const grown = plant(artifact().html, 'BODY', `<${element} ${attribute}="x()">t</${element}>`)
+        const refusals = validateShell(Buffer.from(grown.html, 'utf8'), {
+          stage: 'artifact',
+          expectedCsp: grown.csp,
+        })
+        expect(
+          refusals.filter((r) => r.rule === 'R-ATTRIBUTE'),
+          `${element}[${attribute}]`,
+        ).not.toHaveLength(0)
+      }
+  })
+
+  test('every attribute that names a resource is refused on every allowlisted element', () => {
+    const attributes = [
+      'src', 'srcset', 'poster', 'background', 'action', 'formaction', 'data', 'ping',
+      'href', 'style', 'is', 'slot', 'shadowrootmode', 'xlink:href', 'xml:base',
+    ]
+    for (const element of ELEMENTS)
+      for (const attribute of attributes) {
+        if (element === 'a' && attribute === 'href') continue
+        const grown = plant(
+          artifact().html,
+          'BODY',
+          `<${element} ${attribute}="https://example.invalid/x">t</${element}>`,
+        )
+        const refusals = validateShell(Buffer.from(grown.html, 'utf8'), {
+          stage: 'artifact',
+          expectedCsp: grown.csp,
+        })
+        expect(
+          refusals.filter((r) => r.rule === 'R-ATTRIBUTE'),
+          `${element}[${attribute}]`,
+        ).not.toHaveLength(0)
+      }
+  })
+
+  test('a global attribute is accepted whatever its value, including none and a long one', () => {
+    for (const value of ['', '   ', 'x'.repeat(10_240)]) {
+      const grown = plant(artifact().html, 'BODY', `<p id="pad" class="${value}" role="${value}">t</p>`)
+      expect(
+        validateShell(Buffer.from(grown.html, 'utf8'), {
+          stage: 'artifact',
+          expectedCsp: grown.csp,
+        }),
+      ).toEqual([])
+    }
+  })
+
+  test('every element the corpus refuses is still refused inside the select', () => {
+    const rows = mutants().filter(
+      (m) => m.rules.includes('R-ELEMENT') && m.markup !== undefined && m.where !== 'ANCHOR',
+    )
+    expect(rows.length).toBeGreaterThan(10)
+    for (const row of rows) {
+      const grown = plant(artifact().html, 'SELECT', row.markup as string)
+      const refusals = validateShell(Buffer.from(grown.html, 'utf8'), {
+        stage: 'artifact',
+        expectedCsp: grown.csp,
+      })
+      expect(
+        refusals.filter((r) => r.rule === 'R-ELEMENT'),
+        `row ${row.n} inside the select`,
+      ).not.toHaveLength(0)
+    }
   })
 })

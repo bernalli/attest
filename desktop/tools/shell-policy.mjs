@@ -54,7 +54,15 @@ export function tokenizeShell(html) {
   const parseErrors = []
   class RecordingParser extends Parser {
     onStartTag(token) {
-      tokens.push({ name: token.tagName, attrs: token.attrs, location: token.location })
+      // The attributes are COPIED, not referenced. The tree builder adjusts foreign
+      // content in place after this returns — it renames `xlink:href` to `href` on its
+      // way into the SVG namespace — so a recorded reference would hand the rules the
+      // name the tree ended up with instead of the one the document spells.
+      tokens.push({
+        name: token.tagName,
+        attrs: token.attrs.map((attr) => ({ name: attr.name, value: attr.value })),
+        location: token.location,
+      })
       super.onStartTag(token)
     }
     onEndTag(token) {
@@ -91,7 +99,97 @@ export function scriptAndStyleText(tokenized) {
 const refusal = (rule, where, detail) => ({ rule, where, detail })
 const at = (token) => `${token.name}@${token.location.startOffset}`
 
-export const RULE_IDS = ['R-INPUT', 'R-PARSE']
+/** Allowed on every element the list below names, because none of them can carry a URL
+ *  or make the browser fetch anything. */
+const GLOBAL_ATTRIBUTES = ['id', 'class', 'hidden', 'role', 'tabindex', 'lang']
+const isGlobal = (name) => GLOBAL_ATTRIBUTES.includes(name) || name.startsWith('aria-')
+
+/** The inventory of the shell, turned into a list. Everything else — img, link, base,
+ *  iframe, object, embed, form, video, audio, source, track, svg, math, template,
+ *  noscript, custom elements — is refused for not being here, so a construct nobody
+ *  thought of does not need a rule of its own. */
+const ELEMENTS = {
+  html: [], head: [], body: [], title: [], header: [], h1: [], main: [], section: [],
+  div: [], strong: [], span: [], p: [], details: [], summary: [], footer: [], em: [],
+  code: [], select: [],
+  meta: ['charset', 'name', 'content', 'http-equiv'],
+  input: ['type'],
+  button: ['type'],
+  label: ['for'],
+  option: ['value'],
+  a: ['href'],
+  script: ['type'],
+  style: [],
+}
+
+const allowedElement = (name, stage) =>
+  Object.hasOwn(ELEMENTS, name) && !(stage === 'source' && name === 'style')
+
+/** Attributes refused wherever they appear, on an allowlisted element or not: every
+ *  event handler, every namespaced name (xlink:href, xml:base), and the four that turn
+ *  an inert element into something that styles, slots or shadows. */
+const alwaysRefused = (name) =>
+  name.startsWith('on') ||
+  name.includes(':') ||
+  name === 'style' ||
+  name === 'is' ||
+  name === 'slot' ||
+  name === 'shadowrootmode'
+
+const attributesOf = (token) => {
+  const map = new Map()
+  for (const attr of token.attrs) if (!map.has(attr.name)) map.set(attr.name, attr.value)
+  return map
+}
+
+/** Whether an allowlisted element may carry this attribute. The stylesheet may carry
+ *  none at all, not even a global one: `<style media>` is a stylesheet that applies
+ *  conditionally, which this document has no use for. */
+const mayCarry = (element, attribute, stage) => {
+  if (element === 'style') return false
+  if (isGlobal(attribute)) return true
+  if (element === 'script' && stage === 'source' && attribute === 'src') return true
+  return (ELEMENTS[element] ?? []).includes(attribute)
+}
+
+const META_SHAPES = [
+  { id: 'charset', keys: ['charset'], values: { charset: (v) => v.toLowerCase() === 'utf-8' } },
+  {
+    id: 'viewport',
+    keys: ['content', 'name'],
+    values: {
+      name: (v) => v.toLowerCase() === 'viewport',
+      content: (v) => v === 'width=device-width, initial-scale=1',
+    },
+  },
+  {
+    id: 'policy',
+    keys: ['content', 'http-equiv'],
+    artifactOnly: true,
+    values: {
+      'http-equiv': (v) => v.toLowerCase() === 'content-security-policy',
+      content: (v, ctx) => v === ctx.expectedCsp,
+    },
+  },
+]
+
+/** Which of the three shapes a meta token is, or null. The key set must match exactly:
+ *  a meta with one attribute more is a meta this document has no use for. */
+const metaShape = (token, ctx) => {
+  const attrs = attributesOf(token)
+  const keys = [...attrs.keys()].sort()
+  for (const shape of META_SHAPES) {
+    if (shape.artifactOnly === true && ctx.stage !== 'artifact') continue
+    if (keys.length !== shape.keys.length) continue
+    if (!shape.keys.every((k, i) => k === keys[i])) continue
+    if (shape.keys.every((k) => shape.values[k](attrs.get(k), ctx))) return shape.id
+  }
+  return null
+}
+
+const first = (ctx, name) => ctx.tokens.find((t) => t.name === name)
+
+export const RULE_IDS = ['R-INPUT', 'R-PARSE', 'R-ELEMENT', 'R-ATTRIBUTE', 'R-VALUE', 'R-META', 'R-COUNT']
 
 export const RULES = [
   {
@@ -106,6 +204,149 @@ export const RULES = [
       ctx.parseErrors.map((e) =>
         refusal('R-PARSE', `document@${e.location.startOffset}`, `${e.code}@${e.location.startOffset}`),
       ),
+  },
+  {
+    id: 'R-ELEMENT',
+    check: (ctx) =>
+      ctx.tokens
+        .filter((t) => !allowedElement(t.name, ctx.stage))
+        .map((t) => refusal('R-ELEMENT', at(t), `<${t.name}> is not an element this document may contain`)),
+  },
+  {
+    id: 'R-ATTRIBUTE',
+    check: (ctx) =>
+      ctx.tokens.flatMap((token) => {
+        const known = allowedElement(token.name, ctx.stage)
+        return token.attrs
+          .filter(
+            (attr) =>
+              alwaysRefused(attr.name) || (known && !mayCarry(token.name, attr.name, ctx.stage)),
+          )
+          .map((attr) =>
+            refusal(
+              'R-ATTRIBUTE',
+              at(token),
+              `${attr.name} is not an attribute <${token.name}> may carry: ` +
+                `${attr.name}="${attr.value.slice(0, 60)}"`,
+            ),
+          )
+      }),
+  },
+  {
+    id: 'R-VALUE',
+    check: (ctx) =>
+      ctx.tokens.flatMap((token) => {
+        if (!allowedElement(token.name, ctx.stage)) return []
+        const attrs = attributesOf(token)
+        const wrong = (detail) => [refusal('R-VALUE', at(token), detail)]
+        if (token.name === 'input') {
+          const type = attrs.get('type')
+          return type === 'file' || type === 'text'
+            ? []
+            : wrong(`an input may only be of type file or text, not ${type ?? 'none'}`)
+        }
+        if (token.name === 'button') {
+          const type = attrs.get('type')
+          return type === 'button' ? [] : wrong(`a button must declare type=button, not ${type ?? 'none'}`)
+        }
+        if (token.name === 'script') {
+          const type = attrs.get('type')
+          if (type !== 'module') return wrong(`the only script is an inline module, not type=${type ?? 'none'}`)
+          if (ctx.stage === 'source') {
+            const src = attrs.get('src')
+            if (src !== '/src/main.ts')
+              return wrong(`the source shell references its module as /src/main.ts, not ${src ?? 'none'}`)
+          }
+          return []
+        }
+        return []
+      }),
+  },
+  {
+    id: 'R-META',
+    check: (ctx) => {
+      const out = []
+      const head = first(ctx, 'head')
+      const body = first(ctx, 'body')
+      const headEnd = ctx.endTags.find((t) => t.name === 'head')
+      const firstAfterHead =
+        head === undefined ? undefined : ctx.tokens[ctx.tokens.indexOf(head) + 1]
+      for (const token of ctx.tokens) {
+        if (token.name !== 'meta') continue
+        const shape = metaShape(token, ctx)
+        if (shape === null) {
+          out.push(
+            refusal(
+              'R-META',
+              at(token),
+              'a meta this document has no shape for: ' +
+                token.attrs.map((a) => `${a.name}="${a.value.slice(0, 60)}"`).join(' '),
+            ),
+          )
+          continue
+        }
+        // Shape is not enough: a policy the browser reads after the script it should
+        // govern governs nothing, and a charset it reads after deciding the encoding is
+        // a charset it has already ignored.
+        if (shape === 'charset') {
+          if (firstAfterHead !== token)
+            out.push(refusal('R-META', at(token), 'the charset is not the first thing in the head'))
+          else if (token.location.startOffset >= 1024)
+            out.push(
+              refusal(
+                'R-META',
+                at(token),
+                `the charset sits at byte ${token.location.startOffset}, past the window a browser prescans`,
+              ),
+            )
+        }
+        if (shape === 'policy') {
+          const start = token.location.startOffset
+          const later = ctx.tokens.filter(
+            (t) => (t.name === 'script' || t.name === 'style') && t.location.startOffset < start,
+          )
+          if (head === undefined || start < head.location.startOffset)
+            out.push(refusal('R-META', at(token), 'the policy sits outside the head'))
+          else if (body !== undefined && start > body.location.startOffset)
+            out.push(refusal('R-META', at(token), 'the policy sits in the body, where it does not apply'))
+          else if (headEnd !== undefined && start > headEnd.location.startOffset)
+            out.push(refusal('R-META', at(token), 'the policy sits after the head is closed'))
+          else if (later.length > 0)
+            out.push(
+              refusal(
+                'R-META',
+                at(token),
+                `the policy sits after the <${later[0].name}> it should govern`,
+              ),
+            )
+        }
+      }
+      return out
+    },
+  },
+  {
+    id: 'R-COUNT',
+    check: (ctx) => {
+      const seen = (name) => ctx.tokens.filter((t) => t.name === name).length
+      const shapes = ctx.tokens.filter((t) => t.name === 'meta').map((t) => metaShape(t, ctx))
+      const shaped = (id) => shapes.filter((s) => s === id).length
+      const expected = [
+        ['<script>', seen('script'), 1],
+        ['<title>', seen('title'), 1],
+        ['<head>', seen('head'), 1],
+        ['<body>', seen('body'), 1],
+        ['the charset meta', shaped('charset'), 1],
+        ['the viewport meta', shaped('viewport'), 1],
+      ]
+      if (ctx.stage === 'artifact') {
+        expected.push(['<style>', seen('style'), 1], ['the policy meta', shaped('policy'), 1])
+      }
+      return expected
+        .filter(([, found, want]) => found !== want)
+        .map(([what, found, want]) =>
+          refusal('R-COUNT', `document@0`, `${what}: found ${found}, this document carries ${want}`),
+        )
+    },
   },
 ]
 
