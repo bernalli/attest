@@ -1,8 +1,13 @@
 # FAQ
 
-Honest answers to the questions a skeptical first visitor asks. Same register as
-the [README](../README.md): where the answer is "no," this says why, and what the
-real lever is instead.
+Answers to the questions people actually asked, in the order they tend to ask them.
+Same register as the [README](../README.md): where the answer is "no," this says why,
+and what the real lever is instead.
+
+One rule runs through all of it. Every answer below describes what the shipped code
+does today, not what the design permits. Several of them name a gap between the two,
+because a document that describes the design and lets you assume it is the product is
+how this FAQ got things wrong before.
 
 ## What is attest?
 
@@ -15,12 +20,9 @@ shuts down or your account disappears.
 
 Today this works where sellers ship DRM-free files and choose to sign —
 think GOG-style stores, itch.io, publishers selling directly. The longer-term
-aim is that closed platforms hand you one too. In the EU, sellers are
-already required to confirm every purchase on a durable medium — that's the
-receipt email in your inbox. attest is that same confirmation in a format a
-machine can verify and you can take with you. No
-store issues attest receipts yet. The standard, the tools and the test suite
-are done and free to use; what's missing is the first seller who signs.
+aim is that closed platforms hand you one too. No store issues attest receipts
+yet. The standard, the tools and the test suite are done and free to use;
+what's missing is the first seller who signs.
 
 ## How is this different from the receipt I already get by email?
 
@@ -32,18 +34,105 @@ formats it differently, so no machine can rely on it. And if you need to prove
 it's real twenty years from now, you need the store alive to ask — or a human
 willing to weigh the evidence for you.
 
-An attest receipt is signed with the seller's cryptographic key: faking one
-means breaking the signature, not editing a document. It's one standard
-format, so one free verifier works for every store that signs. Anyone can
-check it offline, on their own machine, trusting nobody and contacting nobody.
-It's bound to you: someone who copies your receipt can't prove it's theirs.
-And it carries machine-readable rules for revocation, and for transfer where
-the seller allows it. Same fact attested. Completely different lifespan.
+An attest receipt is signed with a cryptographic key named for the seller: editing
+its signed contents without that key breaks the signature. It uses one standard
+format, so one free verifier works for every store that signs. Anyone can perform
+that check offline, without contacting the seller. The check does not by itself
+authenticate the supplied key as belonging to that seller: every shipped tool
+reports TOFU rather than verified domain provenance, as the offline-verification
+answer below explains. It carries machine-readable rules for revocation, and for
+transfer where the seller allows it. And it is bound to an identifier of yours —
+sealed into the receipt rather than written in the clear — though what that binding
+is worth takes a longer answer, and it is the next one. Same fact attested.
+Completely different lifespan.
+
+## If the receipt is just a file, what stops ten people from using the same one?
+
+Nothing stops ten people from holding the shareable file, and nothing is meant to.
+All ten copies verify identically: buyer binding is reported separately and is not
+a component of `ok`. The receipt is a file you are supposed to copy: back it up,
+mail it to yourself, keep a second copy on another disk. A receipt that resisted
+copying would be DRM again, and would fail for the same reasons DRM fails.
+
+What copying does not hand over is the ability to prove the purchase is *yours*.
+When a store exports your receipts you get two files, and only one of them is meant
+to leave your hands. The shareable one carries the receipts, the store's key
+material and the licence texts, with the binding secret stripped from every receipt
+inside it. The other file carries that secret. Someone who copies the shareable file
+has a receipt that verifies perfectly and, if anyone asks, cannot show it belongs
+to them.
+
+Now the uncomfortable half, because it is the part that decides how much this is
+worth. The secret in the second file is a bearer secret. The specification says so in
+its own words: revealing it is "a replayable bearer proof." Whoever holds it can claim
+to be the buyer, and once you have shown it to someone, that someone can show it to a
+third person and be believed. No cryptography here distinguishes you from a person
+you handed your secret to, and nothing expires the proof after one use. One private
+file covers your whole library, so showing it to prove a single purchase proves every
+purchase in it at once. That is why `attest disclose <receipt_id>` exists: it shares
+one receipt, with its own salt, and nothing else.
+
+And the sharper limit, the one that decides real cases: nothing obliges anyone to ask.
+Whether a receipt verifies and whether it belongs to you are two separate results,
+and the first does not depend on the second. A verifier that never requests the
+binding proof gains nothing from the two files being separate. So a copied receipt,
+presented to somebody who does not ask, looks exactly like the real thing. What
+distinguishes the real buyer is custody of the private file, not mathematics.
+
+There is a stronger path in the standard, and it is implemented: instead of a shared
+secret, a key of yours is signed into the receipt, and you prove ownership by signing
+a challenge the verifier just invented, so a recorded answer is no use to anyone
+later. Two things keep it from being the answer today. It is optional, and the key
+is absent by default: a receipt from a checkout with no client software carries no
+key at all. And it needs software that holds a key on your behalf, which nobody has
+solved for ordinary buyers, this project included. The library also checks only the
+signature on the challenge; making sure each challenge is fresh is the verifier's
+own job. Until that path is the ordinary one, the honest answer to "what stops them"
+is: you do, by not handing the private file over.
+
+## Which file can I safely send to someone?
+
+The one **without** `.private.` in its name. If your bundle exported as
+`casey-library.attest`, that is the shareable file; `casey-library.private.attest` is
+the secret one. A real store or support agent will never need the second — they can
+already see your order.
+
+Do not reach for a wildcard here, and this is the one piece of shell advice in the
+whole page. `*.attest` matches `casey-library.private.attest` as well, because the
+private file's name also ends in `.attest`. A command written to share "all my
+receipts" that way quietly ships the secret with them. Name the file you mean.
+
+## My cousin says this is pointless — anyone can copy the game anyway.
+
+Your cousin is right about the copying, and stopping it was never attest's job.
+attest is content-free by design: it never touches the work, does not host or index
+it, and the specification forbids implementations from being built or marketed as a
+way around DRM. Preventing copying on a computer somebody else controls is a problem
+nobody has solved, and the attempts at it are what produced the mess in the first
+place — the licence server that goes dark, the book that stops opening, the film
+that leaves the library because a deal expired.
+
+attest answers a different question. Not "who can copy this?" but "who bought this,
+and can they still show it once the shop is gone?" DRM's answer to a shutdown is a
+dead server. The receipt's answer is a file that keeps verifying without anybody's
+permission.
+
+The one place the two touch is integrity, not control. A receipt can list the files
+you bought with their sizes and SHA-256 hashes, and `attest check-artifact` hashes a
+file on your disk against that list, so you can tell whether the copy you have is the
+copy the seller sold. That is a snapshot of what existed at the moment of purchase,
+not a live index, and the command says on every run that it has compared hashes only
+and has not verified the receipt's signature. It can tell you the bytes match. It
+cannot stop you sending them to anyone.
+
+Nor does the receipt improve a bad deal. It records whether the work was sold
+DRM-free or DRM-bound, and a receipt for a DRM-bound work verifies normally with a
+warning attached. The receipt describes what you were sold. It does not change it.
 
 ## Nobody forces a seller to adopt this. So what's the point?
 
-Nobody forces them, true. That's why there are two routes, and neither is a
-fantasy.
+Nobody forces them, true, and nothing here could. What the protocol offers is
+a single route, open only to sellers who already have a reason to take it.
 
 For a DRM-free seller, the cost is close to zero and the reason is
 commercial. attest-bridge runs as one small self-hosted service next to the
@@ -53,14 +142,10 @@ trust: "what you buy from me stays yours, even if I disappear" is a selling
 argument, the same one GOG built a whole brand on. An independent publisher
 can offer this tomorrow, and nobody can stop them.
 
-For everyone who won't sign voluntarily, the route is legal, not technical.
-EU law already obliges every online seller to confirm your purchase on a
-durable medium; that's why confirmation emails exist at all. attest is that
-same confirmation in a format a machine can verify and you can carry away. A
-regulator doesn't have to invent a new obligation, only require a usable
-format for one that already exists. The standard is written for exactly that
-moment: published in the open, with two independent implementations, a
-conformance suite and an active IETF draft behind it. The reference code is
+For everyone who will not sign voluntarily, there is no technical mechanism
+here that compels adoption. Any regulatory route is external to the protocol.
+The standard is published in the open, with two independent implementations,
+a conformance suite and an active IETF draft behind it. The reference code is
 Apache-2.0, whose patent grant reaches that code and no further, and the
 specification is CC BY 4.0, which states outright that patent rights are not
 licensed under it. Nothing here charges a fee to implement attest, and nothing
@@ -73,81 +158,159 @@ and no regulator mandates them. If that never changes, attest stays a
 well-tested spec. The work right now is getting the first DRM-free sellers
 signing; everything else follows from there, or not at all.
 
-## The store that signed my receipts shut down years ago. What do I actually do with them?
+## What does "verify offline" actually check, and what can't it tell me?
 
-Two cases, and they're different.
+Verification needs two things, and both travel inside the bundle: the receipt bytes
+and the issuer's key material. Neither implementation contains an HTTP client —
+there is no network code in the Python package or the TypeScript verifier, and the
+browser verifier fetches nothing beyond its own demo sample from its own site. So
+offline is not a mode you switch on. It is the only mode there is.
 
-You have the file, because the store sold DRM-free and you downloaded it.
-Then the content is already yours, and the receipt keeps doing its job: it
-verifies offline against the store's published keys, forever, with nobody's
-permission, and it proves to anyone who needs to know — a successor honoring
-old purchases, an archive authorized to serve them, a buyer if resale was
-authorized — that your copy is legitimate. Two limits, both named. Transfers are
-countersigned by the issuer, so today they stop when the issuer does; making
-them survive the issuer has a name too, transfer-authority succession, and
-it's on the roadmap. And "forever" holds against the store disappearing, not
-against the store declaring its own signing key compromised: that declaration
-still destroys receipts that were never logged and anchored. A receipt whose
-signature was anchored in a public log before the store's own compromise
-declaration was anchored survives it — that one the store cannot take back.
-Anchor what you buy, and the second limit stops applying to you. So the rule on any DRM-free store is simple: download
-what you buy, and keep the file next to the receipt. Content plus proof, both
-in your hands.
+With the same receipt bytes and the same local verification material, the signature
+and schema checks are reproducible. A later trusted manifest can change the signing
+key's status and therefore change the signature verdict, so the result is not
+immutable with respect to every future input. The Python and TypeScript
+implementations were built separately and are both exercised against the same shared
+conformance corpus. Anyone can run the verifier; nobody has to be asked.
 
-You don't have the file. Then the receipt alone doesn't bring it back. It
-proves you bought the thing; it isn't the thing, and no signature can conjure
-a file out of a dead server. What closes this gap is the Preservation Pledge,
-the piece of the standard in design right now: a license term the publisher
-signs at the moment of sale, committing that when they cease distribution the
-content becomes redistributable to valid receipt holders. The pledge
-activates on a signed end-of-life declaration from the publisher or from a
-successor they named, or when a backstop date passes. From that moment, any
-archive holding the content can hand you your copy against your receipt. One
-hole stays open: a publisher that vanishes silently, never having named a
-successor or a date. That case is tracked as an open problem in the threat
-model, and only a witnessed heartbeat scheme will close it.
+Four things offline verification cannot tell you, and they matter.
 
-## Is this centralized?
+**Whether the keys are really that store's.** The specification reserves its strongest
+trust level, `verified`, for key material fetched over TLS from the issuer's own
+domain. No tool published today performs that fetch — not the command line, not the
+browser verifier, not importing a bundle. Every verification you can actually run
+reports `unauthenticated_tofu`: trust on first use. The mathematics is exactly as
+sound either way; what is absent is anybody confirming who published those keys. If a
+stranger sends you a bundle from a shop you have never heard of, a green result is
+not evidence that the shop is real.
 
-No. There is no central attest authority, no registry that must exist, and no
-phone-home. A verifier needs only three things to check a receipt: the receipt
-bytes, the issuer's published key material, and, optionally, a revocation feed.
-None of those requires a server attest itself operates — the issuer publishes its
-own keys, and a future registry layer for replicating verification material is
-explicitly optional (see the roadmap in the README).
+**Whether it has since been revoked.** With no revocation feed in hand the answer is
+`unknown`, and `unknown` does not fail the receipt. A green verdict means "the
+signature is genuine and nothing I was shown says otherwise." That is the honest
+reading, and it is not the same sentence as "this receipt is valid today." The
+browser verifier does not consult a revocation feed at all, so on that page the
+revocation answer is always `unknown`.
 
-## Where is my license / receipt stored?
+**Whether the feed you do have is stale.** A revocation feed two years out of date is
+not flagged as old. The verifier reports the most recent date it found inside the
+feed, never a comparison against today's clock, and deciding that a feed is too old
+to rely on is left to whoever is relying on it.
 
-The buyer holds it. At checkout the store signs a receipt and hands over an
-`.attest` bundle — a small file the buyer keeps anywhere: local disk, cloud
-storage, a USB drive, wherever. It is not locked inside a platform's account
-system, and there is nothing to keep synced or alive for the receipt to still be
-checkable later.
+**Whether the receipt has already been sold on.** A transfer retires the old receipt
+through a record that is honoured only when the countersigned transfer evidence is
+supplied alongside it, and the packaged `attest verify` command has no option for
+supplying that evidence. From the command line, a receipt that has already changed
+hands still reports as valid. Reading that case correctly today means writing code
+against the library rather than running the tool.
 
-## Who validates it?
+## Who can revoke my receipt, and what would I see?
 
-Anyone, offline. Validation is a signature check plus the layered verification
-algorithm in the spec (§11): resolve the issuer's key material, check the
-signature and canonicalization, then layer in trust provenance and any
-revocation status. Two independent implementations — a Python reference
-implementation and a TypeScript verifier, built separately — already agree on
-every conformance vector, which is strong evidence that the algorithm itself is
-unambiguous rather than tied to one codebase's interpretation.
+The store that issued it, and only within limits the receipt itself fixes. Every
+receipt carries a revocability class chosen at the moment of sale and sealed inside
+the signed payload, so it cannot be widened afterwards.
 
-## Does this save my existing Steam / PlayStation / Kindle library?
+`none` means irrevocable, and the verifier enforces it rather than trusting anyone to
+behave: a correctly signed revocation record aimed at a `none` receipt is refused, a
+warning says so, and the receipt stays good. A receipt may only claim `none` if the
+work was sold DRM-free, carried a redownload right, and lists what was delivered.
 
-No. Be clear about why: attest verifies a receipt that a store *chooses to sign*.
-It cannot retroactively produce a valid signed receipt for a past purchase made
-on a platform that never signs anything, and it cannot forge one for a store
-that refuses to participate — that would break the entire cryptographic premise
-the standard is built on. Existing libraries stay exactly as revocable as they
-are today until the store that holds them decides to issue attest receipts for
-them. The lever for an unwilling incumbent isn't a workaround — it's regulation
-and market pressure: disclosure laws already on the books (California's AB 2426,
-Maryland's HB 208) and forums like the EU's end-of-life industry code of conduct
-due by the end of 2026. attest is the technical standard those pressures could
-point an incumbent toward adopting; it is not a way around an incumbent that
-declines.
+`refund_window` means revocable for a fixed number of days after issue. The verifier
+checks the record's own signed timestamp against that window — never your computer's
+clock, which the buyer or the seller could set to anything. A record whose signed
+time falls after the window is ignored with a warning.
+
+`policy` means revocable under whatever terms the receipt points at. Here the verifier
+does not read those terms and cannot judge them; it checks the store's signature and
+reports the receipt as revoked.
+
+What you see is one of a small set of words: `unknown`, `not_revoked_as_of` with a
+date, `revoked`, `transferred`, or `invalid_revocation_ignored` for a record that
+matched your receipt but was refused. Those words describe the revocation component:
+`revoked` and `transferred` directly cap `ok`, but the overall receipt can also fail
+because its signature or schema is invalid, or because verification reported another
+error.
+
+Two things the protocol does not give you. There is no appeal: no dispute step, no
+arbitration, no contest. A revocation record states what happened and never why, and
+the only remedy written down anywhere is that the issuer *should* re-issue — a
+recommendation to them, not a right you can exercise. And revocation does not reach
+your disk. A DRM-free game you already downloaded is byte-for-byte the same file the
+day after its receipt is revoked. What changed is what a verifier will say about the
+licence, not what you are holding.
+
+Revocation is also not the only way a receipt stops verifying. A store declaring its
+own signing key compromised is a different mechanism with a different reach, and the
+answer about Bitcoin below is where that case lives.
+
+## I lost the file. What happens?
+
+Two different losses, and they are not the same size.
+
+**You lost the private file but still have the receipt.** The receipt keeps verifying,
+because proving it is yours was never part of the verdict. What you lose is
+exclusivity: from that point on, anyone else holding a copy of that receipt is no less
+able to present it than you are.
+
+**You lost the receipt itself.** Then nothing in the protocol brings it back. There is
+no backup service, no escrow, no recovery scheme, and the threat model says so in as
+many words: buyer-secret custody after delivery is out of scope, with no backup,
+escrow, rotation or recovery mechanism defined. If the store is still alive you can
+ask them to issue a fresh receipt; the standard has a field for pointing a new
+receipt at the one it replaces, and it names re-issue as the only remedy for a loss.
+It is a recommendation to the store and a commercial favour, not a right, and no
+command performs it: a human at the store decides. If the store is gone, the receipt
+is gone, and the threat model's verdict on that case is two words: out of scope.
+
+Which makes the practical advice dull, and it really is the whole of it. The receipt
+is a small file. Keep more than one copy, in more than one place, the way you would
+with a photograph you cannot take again.
+
+One case deserves its own warning, because there the loss is silent until the moment
+it matters. The preservation pledge — the licence term that lets an archive hand your
+file back after the publisher stops distributing — can only be redeemed by signing a
+fresh challenge with a key named inside the receipt. Disclosing the salt is forbidden
+as redemption proof, as a rule and not a recommendation, and a receipt cannot carry a
+pledge at all unless it names such a key. So a receipt bound only to your email
+address cannot carry a pledge. Whoever inherits a pledge-bearing receipt without its
+corresponding private key cannot redeem the pledge after it activates. The only fix
+is to be re-issued with a key while the issuer is still there to do it.
+
+## Can I sell what I bought, or pass it on?
+
+Sometimes, and never without the seller in the room. Transfer is shipped code and has
+been since version 0.4.0; this page used to say it was reserved and not implemented,
+which was true once and then stopped being true without the page noticing.
+
+The shape of it: you sign an authorization naming the receipt, the new holder's key
+and the moment; the issuer verifies your signature and countersigns a transfer record;
+the old receipt is retired by a record on the revocation feed that is honoured only
+when it is backed by that countersigned transfer and the transfer has been included in
+the issuer's transparency log. Your consent is what makes the retirement legitimate.
+It is the only thing that can retire even an irrevocable receipt, which is why it is
+required rather than polite.
+
+Every one of those steps is somewhere it can stop. The issuer's countersignature is
+structural, not a courtesy: no path in the code completes a transfer without it, there
+is no timeout after which you can finish alone, and there is no successor to ask. An
+issuer may refuse, may charge for it, and an issuer that runs no transparency log
+cannot mediate a transfer at all, because the log is where the evidence has to live.
+When the issuer is gone, transfers stop with them; transfer authority that outlives
+the seller is on the roadmap, as the README says, and is not written. It also only
+works for receipts that name a key of yours: a receipt bound only to an email address
+cannot be transferred whatever its `transferable` flag says, because the key, not the
+flag, is the gate the verifier actually applies.
+
+There is no private, seller-free resale, and that is a decision rather than a
+missing feature. Handing your bundle to somebody is not a transfer: you keep
+exactly the ability to prove the receipt is yours that you had before, so the
+person paying you receives nothing exclusive. The protocol defines an
+issuer-mediated transfer path; it does not create a seller-free resale right.
+
+One thing a receipt does not do is settle the law. It can carry the seller's assertion
+that a particular sale met the conditions for statutory resale in some jurisdiction.
+Neither verifier determines whether that assertion is legally correct: both validate
+`jurisdiction_flags` only as an object whose values are booleans, as part of ordinary
+schema validation.
 
 ## Why not blockchain / NFT?
 
@@ -193,28 +356,122 @@ None of which is load-bearing for the core promise: a receipt verifies offline
 from its bytes and the issuer's key material, with no log reachable, exactly as
 before.
 
-## What happens if the issuer dies?
+## Then why does Bitcoin turn up at all?
 
-The receipt still verifies, straight from the buyer-held bundle — the project's
-own demo deletes a store's entire infrastructure mid-lifecycle and shows the
-receipt verifying anyway. What changes is the trust level reported alongside
-that result: without the issuer's live key material to independently confirm
-provenance over TLS, verification degrades gracefully from `verified` to
-`unauthenticated_tofu` (trust-on-first-use) rather than failing outright or
-silently claiming a trust level it can't back up. A future registry layer could
-replicate verification material to keep more receipts at full `verified` trust
-after an issuer disappears, but nothing in the spec's conformance requirements
-depends on such a registry existing.
+Because of a hole that only a clock can fill, and it takes a paragraph to see it.
+
+Every date inside a receipt is a date the seller typed. A signature proves who wrote
+something; it never proves when. That is harmless right up to the day a store
+announces that its signing key was stolen. The only safe response to a stolen key is
+to stop trusting everything it ever signed, and everything it ever signed includes
+your receipt. You would like to say "mine came before the theft." You cannot, because
+the only record of when it was made is a line the store wrote itself.
+
+What settles that argument is a clock neither side controls and neither side can wind
+back. Bitcoin is used as exactly that, and as nothing else. No money moves, no token
+is created, and nothing about your purchase is published anywhere: a short fingerprint
+of a public log entry is folded, through OpenTimestamps, into the arithmetic of a
+Bitcoin block. Because those blocks are dated and expensive to rewrite, the block
+works as a receipt for "this already existed by then." Your verifier re-does that
+arithmetic against a short list of block summaries it already has on disk. It never
+asks Bitcoin anything; there is no network step, and there is nothing to keep alive.
+
+Now the part that limits it, and it is large. As things ship today, nothing is
+anchored, and not even this project's own verifier has the clock switched on. The
+list of block summaries in the browser verifier is empty. Both libraries default to
+no anchoring policy at all, and with no policy the rescue is off: a key declared
+compromised sinks every receipt it signed, without exception. Issuing a receipt has
+no anchoring option; putting one in a log and anchoring it is a separate sequence of
+commands, with the timestamp itself obtained from tools outside this project. So
+"anchor what you buy" is advice almost nobody can currently follow. The mechanism is
+specified and exercised by the conformance suite. It is not yet a protection real
+buyers have, and until it is, the limit stated in the next answer is the plain truth
+about how far "forever" reaches.
+
+## The store that signed my receipts is gone. What do I actually do with them?
+
+Two cases, and they're different.
+
+You have the file, because the store sold DRM-free and you downloaded it. Then the
+content is already yours, and the receipt keeps doing its job: it verifies offline
+against the store's key material in your bundle, with nobody's permission, and it
+shows anyone who needs to know — a successor honouring old purchases, an archive
+authorised to serve them — that your copy was bought. The project's own demo deletes
+a store's entire infrastructure mid-lifecycle and shows the receipt verifying
+afterwards. The trust level reported alongside that result is `unauthenticated_tofu`,
+the same level every verification you can run today reports while the store is
+alive, since no shipped tool reaches `verified` in the first place; the store's
+disappearance changes nothing there, and closes off nothing you had.
+
+Two limits, both named. Transfers are countersigned by the issuer, so they stop when
+the issuer does; the resale answer above says what is and is not written about that.
+And "forever" holds against the store disappearing, not against a live store
+declaring its own signing key compromised: that declaration still destroys receipts
+that were never logged and anchored before it. A receipt anchored before the
+declaration survives it, and the previous answer says how little anchoring is
+switched on today. So the rule on any DRM-free store is simple and unglamorous:
+download what you buy, and keep the file next to the receipt. Content plus proof,
+both in your hands.
+
+You don't have the file. Then the receipt alone doesn't bring it back. It proves you
+bought the thing; it isn't the thing, and no signature can conjure a file out of a
+dead server. The specified mechanism for addressing this gap is the preservation
+pledge: a licence term the publisher signs at the moment of sale, committing that
+when they cease distribution the content becomes redistributable to valid receipt
+holders. Grant evaluation and redemption verification are implemented in both
+verifier cores; only the Python package exposes `grant` commands. In the default
+`python -m demo.pledge_dies` scenario, the store is deleted, the pledge initially
+stays dormant, the surviving rights holder signs a cessation declaration, and a
+non-normative demo custodian delivers after checking the holder proof. What is
+missing is a production publisher who has signed such a pledge, a production archive
+service, and final licence prose rather than the demo placeholder.
+
+Two holes stay open, and both are worth knowing before you rely on it. A publisher
+that vanishes silently — signing nothing, naming no successor, setting no backstop
+date — leaves the pledge dormant forever; the threat model calls that the largest
+residual risk this feature carries. And the pledge can only be redeemed with a key,
+so a receipt bound only to an email address is outside it entirely, as the answer
+about losing the file explains.
+
+## Is this centralized?
+
+No. There is no central attest authority, no registry that must exist, and no
+phone-home. A verifier needs only three things to check a receipt: the receipt
+bytes, the issuer's published key material, and, optionally, a revocation feed.
+None of those requires a server attest itself operates — the issuer publishes its
+own keys, and a future registry layer for replicating verification material is
+explicitly optional (see the roadmap in the README).
+
+The caveat is about practice rather than protocol. A verifier that wanted stronger
+evidence would need curated pins, and curation is a soft centre even when the
+protocol has no centre. The browser verifier already ships one pinned log key and
+passes it into verification. It ships no pinned Bitcoin block headers and supplies
+no witness policy; the Python and TypeScript library entry points otherwise depend
+on configuration supplied by their caller.
+
+## Does this save my existing Steam / PlayStation / Kindle library?
+
+No. Be clear about why: attest verifies a receipt that a store *chooses to sign*.
+It cannot retroactively produce a valid signed receipt for a past purchase made
+on a platform that never signs anything, and it cannot forge one for a store
+that refuses to participate — that would break the entire cryptographic premise
+the standard is built on. Existing libraries stay exactly as revocable as they
+are today until the store that holds them decides to issue attest receipts for
+them.
+
+The lever for an unwilling incumbent isn't a workaround — it's regulation and
+market pressure. In the United States, the specification names California's
+AB 2426 and Maryland's HB 208 as the kind of law an irrevocable receipt is
+built to be evidence under — evidence, it is careful to say, not a compliance
+determination. attest is the technical standard those pressures could point an
+incumbent toward adopting; it is not a way around an incumbent that declines.
 
 ## Is attest a DRM system, a store, or a way to pirate games?
 
-None of those. attest is content-free: a receipt is evidence that a license was
-granted, and it never touches, wraps, hosts, or indexes the underlying work
-itself. It doesn't strip or bypass DRM, and it isn't a marketplace or
-distribution channel. It does support transfer, but only issuer-mediated: a
-signed transfer moves a receipt to a new holder with the issuer's
-countersignature, and today that stops working once the issuer is gone —
-making the transfer authority survive the issuer is unfinished work
-(transfer-authority succession, tracked on the roadmap). Having a valid attest
-receipt says only that an issuer signed a claim that a license was granted — it
-carries no copy of the work and grants no access to one.
+None of those. attest is content-free: a receipt is evidence that a licence was
+granted, and it never touches, wraps, hosts, or indexes the underlying work. It
+doesn't strip or bypass DRM — the specification forbids that outright, as the answer
+about copying says — and it isn't a marketplace or a distribution channel. It supports
+transfer only where the issuer mediates it, as the resale answer sets out. Holding a
+valid attest receipt says one thing and no more: that an issuer signed a claim that a
+licence was granted. It carries no copy of the work and grants access to none.
