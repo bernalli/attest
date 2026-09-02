@@ -324,6 +324,29 @@ describe('a component value is untrusted text too', () => {
     expect(rowNamed(card, 'Schema').querySelector('dd')!.textContent)
       .toContain('does not have dedicated wording')
   })
+
+  // A Symbol in a component value throws on assignment: `node.textContent = value`
+  // runs the DOM's ToString algorithm, which has no answer for a Symbol. So
+  // displayValue() has to run BEFORE that assignment, and nothing here proved it
+  // does -- every other non-string case in this suite goes through explain(),
+  // which never touches the DOM.
+  it('does not throw when a component value is a bare Symbol', () => {
+    expect(() => renderResult('R', run({ trust: Symbol('s') as unknown as VerificationResult['trust'] })))
+      .not.toThrow()
+  })
+
+  // JSON.stringify throws on a bigint, so the quarantine that exists to survive
+  // hostile input could be the thing that takes the card down. No test put a
+  // bigint anywhere in a result and then rendered the whole card.
+  it('does not let a bigint anywhere in the result take the raw quarantine down', () => {
+    const card = renderResult('R', run({ warnings: [10n as unknown as string] }))
+    const raw = card.querySelector('details pre.raw')!.textContent!
+    // Asserting that the element is non-empty would pass on the catch branch
+    // too, which is the failure this test exists to catch: the quarantine's
+    // fallback string is also truthy. What has to survive is the JSON.
+    expect(raw).not.toContain('cannot be shown as JSON')
+    expect(raw).toContain('"10"')
+  })
 })
 
 describe('attribution never makes a warning disappear', () => {
