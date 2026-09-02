@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "attest-receipts"
 version = "0.9.1"
-description = "attest reference implementation: seller-signed purchase receipts the buyer holds, verifiable offline with no server to keep alive."
+description = "attest reference implementation: durable, portable proof of purchase you hold — the seller signs a receipt, you keep the file, anyone verifies it offline after the store is gone."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Samuele Martinalli" }]

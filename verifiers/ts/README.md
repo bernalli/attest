@@ -1,5 +1,19 @@
 # attest-verifier
 
+attest is the durable, portable, user-held layer of possession for digital content: the seller
+signs a purchase receipt, the buyer holds the file, and anyone can verify it offline after the
+store is gone. "Forever" holds against the store disappearing, not against a live store declaring
+one of its own signing keys compromised: that declaration invalidates the receipts signed with
+that key. This verifier implements the v0.2 §19 rescue for a receipt proven logged and anchored
+before the declaration, but only when its caller supplies that evidence (`compromiseView` plus
+pinned headers); no shipped tool produces it yet and the browser and desktop verifiers pass none,
+so today the declaration is final. It works directly for DRM-free sellers. For closed platforms it
+is built as a format a legally required purchase confirmation could include or travel in — in the
+EU, Article 8(7) of the Consumer Rights Directive (2011/83/EU, 25 October 2011) — not as that
+confirmation itself: the law asks for nothing a machine can verify. This package is the verifier —
+it reads receipts and never issues them. It is unrelated to `@actions/attest`, the attestation
+library for GitHub Actions.
+
 An independent TypeScript implementation of an attest verifier, covering both published profiles: [v0.1](https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.1.md) (Ed25519) and [v0.2](https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.2.md) (hybrid Ed25519 + ML-DSA-65, plus Stage 2 transparency and anchoring evidence, Stage 3's issuer-mediated transfer, Stage 4's preservation pledge, §19's time-boxed compromise rescue, and §20's publisher authority). It checks a signed attest receipt envelope and reports its signature, schema, trust, revocation, and buyer-binding status — it does not issue, sign, or mutate receipts, manifests, or revocation records. Issuance is the Python reference implementation's job (`attest` package, repo root); this package only ever reads.
 
 ## Independence claim

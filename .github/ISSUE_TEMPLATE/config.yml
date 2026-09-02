@@ -2,7 +2,7 @@ blank_issues_enabled: false
 contact_links:
   - name: Question, idea, or "does this concern me?"
     url: https://github.com/bernalli/attest/discussions
-    about: Anything that is not a defect — including the open question at the top of the README about who would operate an entitlement gate. Discussions, not issues.
+    about: Anything that is not a defect — including whether any of this concerns you, and, if you sell digital files, what would stop you from signing. Discussions, not issues.
   - name: Security vulnerability
     url: https://github.com/bernalli/attest/security/policy
     about: Do not open a public issue. Follow the security policy.

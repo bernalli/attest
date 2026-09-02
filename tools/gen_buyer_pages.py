@@ -56,8 +56,10 @@ explains what they are.</p>
 <p>Each file is a small, signed <strong>receipt</strong> from the store you
 bought from. It's yours: proof that you paid for what's listed inside, signed by
 the seller so anyone can check it's genuine. Keep it the way you'd keep an
-important paper receipt — it doesn't live in any account, and nobody can take it
-away with a click.</p>
+important paper receipt — it doesn't live in any account. It survives the shop
+closing. It does not survive the seller declaring the key that signed it
+compromised: the standard describes a shield against that, but no store tool
+offers it yet and this page cannot check it.</p>
 
 <h2>You can check it yourself, without the store</h2>
 
@@ -77,11 +79,12 @@ expire when a shop closes down. A verifier can check it entirely offline, months
 or years later, using nothing but the file itself and the seller's published
 signing key. If a store you bought from shuts down, your receipt still proves
 you bought what it lists — it isn't the thing itself, but it's the part of your
-purchase nobody can take away.</p>
+purchase that survives the store.</p>
 
 <footer>
+Never heard of any of this? <a href="https://attest-receipts.org/start-here.html">Start here</a>.
 Curious about the cryptography behind this? See the
-<a href="https://github.com/bernalli/attest/blob/main/docs/spec/attest-v0.1.md">attest specification</a>
+<a href="https://github.com/bernalli/attest/tree/main/docs/spec">attest specification</a>
 and the <a href="https://github.com/bernalli/attest">project on GitHub</a>.
 </footer>"""
 
@@ -97,9 +100,91 @@ def render_what_is_this() -> str:
     )
 
 
+# Same reach as `_HEAD`: no network, own icons only — this page is meant for a
+# reader who does not have a receipt in hand yet, so its description says so.
+_START_HERE_HEAD = f"""\
+<meta http-equiv="Content-Security-Policy" content="{_CSP}">
+<meta name="description" content="A plain-language guide to the receipt a signed purchase \
+gives you: what it does, what it does not protect, and what to do with it.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">"""
+
+_START_HERE_BODY = """\
+<h1>Start here</h1>
+
+<p>You bought a game, a film, an album or a book online. What you actually got is
+permission to use it, kept on the store's computers. If the store closes, or your
+account is shut, or a licensing deal expires, that permission can vanish — and
+with it the thing you paid for.</p>
+
+<p>attest gives you one piece of that purchase to keep. When a store uses it, your
+download comes with a small extra file: a receipt, signed by the seller. "Signed"
+means the receipt carries a seal made with the seller's signing key. Anyone can
+detect a later change, and only someone holding that key can make a receipt pass
+the check — which is why a stolen or compromised signing key still matters. You
+don't have to understand how the seal works. You only have to keep the file.</p>
+
+<h2>What you can do with it</h2>
+<ul>
+<li><strong>Keep it anywhere.</strong> On your disk, in a backup, on a USB stick. It
+doesn't live in an account, so no account can lose it for you.</li>
+<li><strong>Check it whenever you like.</strong> With a free tool, on your own
+computer, with the internet switched off, without asking the store.
+<a href="./">Try it on a sample receipt →</a></li>
+<li><strong>Prove what you bought years from now</strong> — even if the store no
+longer exists.</li>
+</ul>
+
+<h2>What it does not do</h2>
+<ul>
+<li><strong>It is not the game, film or book.</strong> If you never downloaded the
+file and the store is gone, no receipt can bring it back. Download what you buy,
+and keep it next to the receipt.</li>
+<li><strong>It protects you from a store that disappears, not from one that is still
+open and turns on you.</strong> A live seller can declare one of its own signing
+keys compromised, and that cancels the receipts signed with that key. The standard
+describes a shield against this — a receipt publicly logged and anchored before the
+declaration — but no store offers it yet and no verifier you can use today checks
+it, so for now there is nothing you can do about it.</li>
+<li><strong>It doesn't unlock anything</strong> and it doesn't remove copy protection.</li>
+<li><strong>Almost no store issues one yet.</strong> Stores that sell files without copy
+protection can start today. Closed platforms are a longer road: when you buy from
+them online, the law in the EU already makes them confirm the purchase on something
+you can keep — Article 8(7) of the Consumer Rights Directive (2011/83/EU, 25 October
+2011) — and a receipt like this is one thing that confirmation could come with, not
+a replacement for it. If your store doesn't offer it, that is the thing to ask for.</li>
+</ul>
+
+__PRIVATE_WARNING__
+
+<footer>
+Already have a receipt in hand? <a href="what-is-this.html">What is this file?</a> ·
+Curious how the seal works? See the
+<a href="https://github.com/bernalli/attest/tree/main/docs/spec">attest specification</a>.
+</footer>"""
+
+
+def render_start_here() -> str:
+    """Render the plain-language landing page for a reader with no receipt yet."""
+    body = _START_HERE_BODY.replace(
+        "__PRIVATE_WARNING__",
+        buyer_surface.private_file_warning_html(delivered=False),
+    )
+    return buyer_surface.render_page(
+        "Start here — attest",
+        body,
+        extra_head=_START_HERE_HEAD,
+        extra_css=_PAGE_CSS,
+    )
+
+
 def generated_pages() -> dict[Path, str]:
     """Return every generated page, keyed by the path it belongs at."""
-    return {SITE_PUBLIC / "what-is-this.html": render_what_is_this()}
+    return {
+        SITE_PUBLIC / "what-is-this.html": render_what_is_this(),
+        SITE_PUBLIC / "start-here.html": render_start_here(),
+    }
 
 
 def main() -> int:

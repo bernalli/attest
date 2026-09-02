@@ -1,5 +1,8 @@
 # attest desktop verifier
 
+attest is proof of purchase you hold: the seller signs a receipt, you keep the file, and it
+verifies offline after the store is gone. This is that verifier as a single HTML file.
+
 One HTML file that checks an attest receipt. No install, no account, no network.
 
 Double click it and your browser opens it. Drop a `.attest` file on it and it tells you

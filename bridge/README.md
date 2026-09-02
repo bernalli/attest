@@ -7,8 +7,8 @@ event; a signed attest receipt goes out to the buyer, automatically, at the
 moment of sale. From then on the receipt belongs to the buyer: a plain attest
 file that verifies offline no matter what happens to the bridge, the
 platform, or the store. For a DRM-free seller this is the entire cost of
-giving customers ownership that outlives the shop: run one small service and
-keep a signing key.
+giving customers proof of purchase that outlives the shop: run one small service
+and keep a signing key.
 
 It is NOT a hosted service attest operates on a merchant's behalf, and it
 never holds or transmits a third-party's keys: the merchant's issuer signing
@@ -22,6 +22,12 @@ Every receipt the bridge issues survives the bridge's own death: it is a
 plain attest v0.1/v0.2 envelope, offline-verifiable with nothing but the
 issuer's public key manifest, with no dependency on the bridge process, its
 database, or its uptime ever again.
+
+That is the bridge's promise, not the key's: a receipt survives the bridge disappearing, and
+it does not survive the merchant declaring the key that signed it compromised. The v0.2 §19
+rescue for a receipt logged and anchored before that declaration is specified and evaluated
+by the verifier cores, but the bridge does not log the receipts it issues and no shipped
+command does, so today that declaration is final for every receipt the bridge signs.
 
 Receipt email delivery is at-least-once. If the bridge crashes after SMTP has
 accepted a message but before the Ledger records it as delivered, its retry
