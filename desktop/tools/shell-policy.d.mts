@@ -43,6 +43,9 @@ export interface StartTagToken {
 export interface Tokenized {
   tokens: StartTagToken[]
   endTags: Array<{ name: string; location: TokenLocation }>
+  /** Every NON-whitespace character token, in document order. Whitespace is left out
+   *  because it is what the "in head" insertion mode may keep without closing the head. */
+  characters: Array<{ location: Span }>
   parseErrors: Array<{ code: string; location: Span }>
   document: unknown
   html: string

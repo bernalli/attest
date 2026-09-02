@@ -57,6 +57,7 @@ export function decodeShell(bytes) {
 export function tokenizeShell(html) {
   const tokens = []
   const endTags = []
+  const characters = []
   const parseErrors = []
   class RecordingParser extends Parser {
     onStartTag(token) {
@@ -75,6 +76,18 @@ export function tokenizeShell(html) {
       endTags.push({ name: token.tagName, location: token.location })
       super.onEndTag(token)
     }
+    // Only the characters that MOVE things. parse5 hands whitespace to a callback of
+    // its own, and whitespace is exactly what the "in head" insertion mode is allowed
+    // to keep in the head — so recording it here would refuse the newline the artifact
+    // already carries between its own metas.
+    onCharacter(token) {
+      characters.push({ location: token.location })
+      super.onCharacter(token)
+    }
+    onNullCharacter(token) {
+      characters.push({ location: token.location })
+      super.onNullCharacter(token)
+    }
   }
   const parser = new RecordingParser({
     sourceCodeLocationInfo: true,
@@ -82,7 +95,7 @@ export function tokenizeShell(html) {
     onParseError: (error) => parseErrors.push({ code: error.code, location: error }),
   })
   parser.tokenizer.write(html, true)
-  return { tokens, endTags, parseErrors, document: parser.document, html }
+  return { tokens, endTags, characters, parseErrors, document: parser.document, html }
 }
 
 /** The text a browser will execute or apply, taken from the tokenizer's own idea of
@@ -193,6 +206,34 @@ const metaShape = (token, ctx) => {
   return null
 }
 
+/** What the "in head" insertion mode may hold without ending the head. Anything else
+ *  pops the head and reopens the document in the body, so a policy written after it is
+ *  a child of the BODY — where the pragma is not applied at all. Measured 2026-09-02:
+ *  with a single `<p>` in front of it, chromium and firefox ran the artifact under no
+ *  policy whatever and reported zero violations, byte for byte indistinguishable from
+ *  a document that never carried one, while all four textual position checks passed. */
+const HEAD_CONTENT = new Set([
+  'html', 'head', 'base', 'basefont', 'bgsound', 'link', 'meta', 'title',
+  'noscript', 'noframes', 'style', 'script', 'template',
+])
+
+/** The first thing between the head and `offset` that a browser reads as the end of the
+ *  head, or undefined if the head is still open there. Characters are consulted after
+ *  tokens because a bare letter closes the head exactly as a `<p>` does. */
+const headCloser = (ctx, head, offset) => {
+  const token = ctx.tokens.find(
+    (t) =>
+      t.location.startOffset > head.location.startOffset &&
+      t.location.startOffset < offset &&
+      !HEAD_CONTENT.has(t.name),
+  )
+  if (token !== undefined) return { what: `<${token.name}>`, at: token.location.startOffset }
+  const text = ctx.characters.find(
+    (c) => c.location.startOffset > head.location.startOffset && c.location.startOffset < offset,
+  )
+  return text === undefined ? undefined : { what: 'text', at: text.location.startOffset }
+}
+
 /** The canonical spelling of the one link this document may carry: the attribute name in
  *  any case the parser accepts, then `="` + the URL exactly as the WHATWG parser
  *  serialises it + `"`. Comparing the SOURCE BYTES and not the decoded value is the
@@ -273,6 +314,14 @@ const urlRule = (id, reasons) => ({
 
 /** The five spellings that make a stylesheet fetch. Closed: widening it is an edit. */
 const CSS_FETCHING = ['url(', '@import', 'image-set(', 'image(', 'src(']
+
+/** css-syntax-3 3.3: before the CSS tokenizer reads a byte, the input stream has already
+ *  turned CR, CRLF and FF each into a single LF and NUL into U+FFFD. The slice this rule
+ *  reads comes from the RAW source, where those bytes are still themselves, so the same
+ *  preprocessing has to be redone here or the rule judges text no engine ever sees.
+ *  Measured 2026-09-02: `\75<CR>rl(` fetched in chromium and in firefox while this rule
+ *  refused nothing, because the escape's terminator was a carriage return. */
+const preprocessCss = (css) => css.replace(/\r\n?|\f/g, '\n').replace(/\0/g, '\uFFFD')
 
 /** CSS escapes, undone. `\75 rl(` and `u\rl(` are both `url(` to a browser, and a rule
  *  that searched the text as written would miss both. A hex escape swallows AT MOST ONE
@@ -453,6 +502,21 @@ export const RULES = [
                 `the policy sits after the <${later[0].name}> it should govern`,
               ),
             )
+          else {
+            // The four checks above ask WHERE the policy is written. This one asks
+            // whether the head is still open when the browser gets there, which is the
+            // question that decides if the policy is applied at all.
+            const closer = headCloser(ctx, head, start)
+            if (closer !== undefined)
+              out.push(
+                refusal(
+                  'R-META',
+                  at(token),
+                  `${closer.what}@${closer.at} has already closed the head, so the ` +
+                    'policy is a child of the body and no engine applies it',
+                ),
+              )
+          }
         }
       }
       return out
@@ -513,7 +577,7 @@ export const RULES = [
         // measured, and the corpus carries the case. The price is that a genuine
         // comment containing `url(` is refused too. The stylesheet is ours; it contains
         // none of these tokens, and the clean artifact proves the rule is a no-op on it.
-        const text = decodeCssEscapes(css).toLowerCase()
+        const text = decodeCssEscapes(preprocessCss(css)).toLowerCase()
         return CSS_FETCHING.filter((token_) => text.includes(token_)).map((found) =>
           refusal('R-CSS', at(token), `the stylesheet carries ${found}, which fetches`),
         )

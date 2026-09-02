@@ -175,6 +175,15 @@ const CHARSET = '<meta charset="utf-8">'
 const VIEWPORT = '<meta name="viewport" content="width=device-width, initial-scale=1">'
 const SOURCE_SCRIPT = '<script type="module" src="/src/main.ts"></script>'
 
+/** The document with `what` inserted immediately BEFORE the policy meta. That position
+ *  is not a detail of spelling: whether the head is still OPEN when the browser reaches
+ *  the policy is what decides if the policy applies at all. Shared with the browser
+ *  bench in e2e/accepted-documents.spec.ts so the two cannot drift apart. */
+export const splitHead = (html: string, what: string): string => {
+  if (!CSP_RE.test(html)) throw new Error('no policy meta to split the head in front of')
+  return html.replace(CSP_RE, (tag) => `${what}\n${tag}`)
+}
+
 /** Moves the policy meta out of the head and into the body, where a browser ignores it. */
 const cspInto = (html: string, at: string): string => {
   const tag = html.match(CSP_RE)?.[0]
@@ -365,6 +374,19 @@ const ROWS: readonly Row[] = [
   { n: 101, what: 'the charset is pushed past the window the browser prescans', where: 'HEAD0',
     rules: ['R-META'], sole: true, markup: `<!--${'p'.repeat(1_100)}-->` },
 
+  // Position again, but the position that decides whether the policy is READ, not where
+  // it is written. The "in head" insertion mode pops the head at the first content that
+  // is not head content, so anything below in front of the policy makes it a child of
+  // the BODY, where the pragma is not applied. Measured 2026-09-02: with a `<p>` there,
+  // chromium and firefox run the page under NO policy at all and report zero
+  // violations - byte for byte indistinguishable from an artifact that carries none.
+  { n: 111, what: 'a paragraph in front of the policy, which closes the head around it',
+    where: 'FILE', rules: ['R-META'], sole: true,
+    whole: (html) => splitHead(html, '<p id="head-split">x</p>') },
+  { n: 112, what: 'a bare character in front of the policy, which closes the head just as well',
+    where: 'FILE', rules: ['R-META'], sole: true,
+    whole: (html) => splitHead(html, 'x') },
+
   // The one link the document carries, and every other thing an href could be.
   { n: 47, what: 'a javascript href', where: 'BODY', rules: ['R-URL'], sole: true,
     markup: '<a href="javascript:alert(1)">x</a>' },
@@ -455,6 +477,18 @@ const ROWS: readonly Row[] = [
     sole: true, markup: 'body{background:\\75\fRl(https://example.invalid/b)}' },
   { n: 87, what: 'the image function', where: 'STYLE', rules: ['R-CSS'], sole: true,
     markup: 'body{background:image(https://example.invalid/b)}' },
+
+  // The escape terminator a browser sees and this file does not spell as one. Measured
+  // 2026-09-02: css-syntax-3 3.3 turns CR, CRLF and FF each into a single LF before the
+  // tokenizer reads a byte, so `\\75<CR>rl(` IS `url(` to an engine - and both of these
+  // fetched in chromium and in firefox while R-CSS refused nothing at all, because the
+  // rule read the raw slice, where the carriage return is still a carriage return.
+  { n: 109, what: 'url with a carriage return ending the escape', where: 'STYLE',
+    rules: ['R-CSS'], sole: true,
+    markup: 'body{background:\\75\rrl(https://example.invalid/b)}' },
+  { n: 110, what: 'import with a carriage return ending the escape', where: 'STYLE',
+    rules: ['R-CSS'], sole: true,
+    markup: '@\\69\rmport "https://example.invalid/i.css";' },
 
   // Input the document could not have been decoded from, and parse errors.
   {

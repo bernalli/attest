@@ -467,7 +467,13 @@ describe('a stylesheet that fetches is refused however the token is spelled', ()
       expectedCsp: grown.csp,
     })
   }
-  const TERMINATORS = ['\n', '\t', ' ', '\f']
+  // Where this list comes from is the point: it is the whitespace of the CSS INPUT
+  // STREAM after css-syntax-3 3.3 has preprocessed it - CR, CRLF and FF each collapsed
+  // to a single LF - and not the list of terminators the module happens to check for.
+  // Copying it from the implementation is exactly how a browser-visible `url(` spelled
+  // `\\75<CR>rl(` survived a suite that claims every spelling of url( is refused: the
+  // generator and the rule shared one blind spot, so the rule was verifying itself.
+  const TERMINATORS = ['\n', '\t', ' ', '\f', '\r', '\r\n']
 
   /** Every way `url(` can be written that a browser still reads as `url(`. */
   const spellings = (): string[] => {
