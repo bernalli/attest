@@ -3,6 +3,10 @@
 **Own what you buy.** The seller signs a receipt, you hold the file, anyone can
 verify it offline — even after the store is gone.
 
+> Looking for the CI step that signs build artifacts? That is
+> [`actions/attest`](https://github.com/actions/attest), an unrelated project. This attest is about
+> what you buy, not what you build.
+
 You don't own your movies. Not your games, your music or your ebooks either. You
 clicked "buy", you paid real money, and what you got is a permission slip that
 lives on someone else's server and can be revoked at any moment. The store folds,
@@ -48,10 +52,9 @@ destroys receipts that were never logged and anchored before it. Here's how:
 When you buy something digital, the seller signs a receipt and hands it to you.
 That's the whole mechanism. The receipt is a small file: keep it on a disk, in
 cloud storage, in a backup — anywhere you keep files that matter. Anyone can
-check it's genuine with free
-tools, offline, no account needed. If the store closes tomorrow, the receipt
-still verifies twenty years from now. It's the part of your purchase nobody can
-take away.
+check it's genuine with free tools, offline, no account needed. If the store
+closes tomorrow, the receipt still verifies twenty years from now. It's the part
+of your purchase that survives the store.
 
 This works today wherever files are sold without DRM: GOG-style stores, itch.io,
 independent publishers selling directly. A seller could start signing this
@@ -61,11 +64,13 @@ it yet. The standard, two implementations and the conformance suite exist; the
 first pilot doesn't.
 
 Closed platforms are the second track. In the EU they're already required to
-confirm every purchase on a durable medium; today that's the receipt email in
-your inbox. attest is that same confirmation in a form a machine can verify and
-you can take with you, still valid when the seller is no longer around to ask.
-That gives regulators a concrete format to point to, and the standard is built
-for exactly that.
+confirm every purchase on a durable medium — Article 8(7) of the Consumer Rights
+Directive (2011/83/EU); Article 2(10) defines that medium as one that keeps the
+information accessible for as long as it's needed and reproduces it unchanged.
+Today that's the receipt email in your inbox. attest is that same confirmation
+in a form a machine can verify and you can take with you, still valid when the
+seller is no longer around to ask. That gives regulators a concrete format to
+point to, and the standard is built for exactly that.
 
 Where this goes: receipts you can pass on to someone else where the rights holder
 allows it; transfer authority that can outlive the original seller, the hardest
@@ -126,11 +131,10 @@ Depending on why you landed on this page:
   specification, [`attest-v0.2.md`](docs/spec/attest-v0.2.md) the additive delta,
   and [`docs/spec/vectors/`](docs/spec/vectors/) the conformance corpus every
   implementation is measured against.
-- **You might be the person this was built for** — an archive, a successor, an
-  escrow, anyone who could end up deciding who is entitled to something after the
-  seller is gone. The question at the top of this page is a real one, and
-  [Discussions](https://github.com/bernalli/attest/discussions) is where to answer
-  it.
+- **You'd be on the verifying end** — a marketplace, a successor honouring old
+  purchases, an archive: anyone who will one day have to decide whether a receipt
+  is genuine with no seller left to ask. [Discussions](https://github.com/bernalli/attest/discussions)
+  is where to say what you'd need from the format.
 
 ## How it works, for humans
 
@@ -337,9 +341,9 @@ them could look like, where one exists.
 
 Non-normative, and deliberately undated — these are directions, not commitments:
 
-The authorized preservation escrow described at the top of this page is not
-listed here: it is the case this project is aimed at, not a future direction.
-What follows is genuinely speculative.
+The preservation pledge described under "What attest is" is not listed here: it
+already runs end to end (`python -m demo.pledge_dies`) and is part of the
+standard, not a future direction. What follows is genuinely speculative.
 
 - **Evidence capture for non-cooperating stores.** A research track into
   TLS-session-proof techniques (the zkTLS/TLSNotary class) that could let a buyer
