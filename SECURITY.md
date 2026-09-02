@@ -14,7 +14,7 @@ profile stops being supported only if it is broken, never because it is old.
 | Version | Supported | Status |
 |---------|-----------|--------|
 | 0.2     | ✅        | Published on PyPI and npm. Hybrid Ed25519 + ML-DSA-65 profile, Stage 2 transparency and anchoring evidence, Stage 3 issuer-mediated transfer, Stage 4 preservation pledge, time-boxed key compromise, publisher authority |
-| 0.1     | ✅        | Published on PyPI and npm. v0.1 receipts remain verifiable indefinitely — always readable, not always valid: an issuer's later compromise declaration for a key still invalidates the receipts signed with that key that were not logged and anchored before it |
+| 0.1     | ✅        | Published on PyPI and npm. v0.1 receipts remain verifiable indefinitely — always readable, not always valid: an issuer's later compromise declaration for a key invalidates the receipts signed with that key. The v0.2 §19 rescue for a receipt logged and anchored before the declaration is specified and implemented in both verifier cores, but no shipped tool logs a receipt or produces the declaration evidence yet, so today the declaration is final |
 
 This table names signature profiles, not package releases: the current package
 version is whatever `attest-receipts` and `attest-verifier` show on their

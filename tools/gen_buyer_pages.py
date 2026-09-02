@@ -58,7 +58,8 @@ bought from. It's yours: proof that you paid for what's listed inside, signed by
 the seller so anyone can check it's genuine. Keep it the way you'd keep an
 important paper receipt — it doesn't live in any account. It survives the shop
 closing. It does not survive the seller declaring the key that signed it
-compromised, unless your receipt was logged and anchored first.</p>
+compromised: the standard describes a shield against that, but no store tool
+offers it yet and this page cannot check it.</p>
 
 <h2>You can check it yourself, without the store</h2>
 
@@ -119,10 +120,10 @@ with it the thing you paid for.</p>
 
 <p>attest gives you one piece of that purchase to keep. When a store uses it, your
 download comes with a small extra file: a receipt, signed by the seller. "Signed"
-means the seller has stamped it in a way nobody else can imitate and nobody can
-alter afterwards — think of a wax seal only that store can press, which breaks if
-anyone tampers with it. You don't have to understand how the seal works. You only
-have to keep the file.</p>
+means the receipt carries a seal made with the seller's signing key. Anyone can
+detect a later change, and only someone holding that key can make a receipt pass
+the check — which is why a stolen or compromised signing key still matters. You
+don't have to understand how the seal works. You only have to keep the file.</p>
 
 <h2>What you can do with it</h2>
 <ul>
@@ -142,20 +143,20 @@ file and the store is gone, no receipt can bring it back. Download what you buy,
 and keep it next to the receipt.</li>
 <li><strong>It protects you from a store that disappears, not from one that is still
 open and turns on you.</strong> A live seller can declare one of its own signing
-keys compromised, and that cancels every receipt signed with that key — unless
-yours was recorded in a public log first. Where that option exists, use it.</li>
+keys compromised, and that cancels the receipts signed with that key. The standard
+describes a shield against this — a receipt publicly logged and anchored before the
+declaration — but no store offers it yet and no verifier you can use today checks
+it, so for now there is nothing you can do about it.</li>
 <li><strong>It doesn't unlock anything</strong> and it doesn't remove copy protection.</li>
 <li><strong>Almost no store issues one yet.</strong> Stores that sell files without copy
-protection can start today. For the closed platforms, it is the same purchase
-confirmation the law already requires them to send you — in the EU, Article 8(7)
-of the Consumer Rights Directive (2011/83/EU) — in a form a machine can check.
-If your store doesn't offer it, that is the thing to ask for.</li>
+protection can start today. Closed platforms are a longer road: when you buy from
+them online, the law in the EU already makes them confirm the purchase on something
+you can keep — Article 8(7) of the Consumer Rights Directive (2011/83/EU, 25 October
+2011) — and a receipt like this is one thing that confirmation could come with, not
+a replacement for it. If your store doesn't offer it, that is the thing to ask for.</li>
 </ul>
 
-<h2>One file must stay private</h2>
-<p>If your download also contains a file ending in <code>.private.attest</code>,
-never send it to anyone: it is what proves the purchase is <em>yours</em>. A real
-store or support agent will never need it.</p>
+__PRIVATE_WARNING__
 
 <footer>
 Already have a receipt in hand? <a href="what-is-this.html">What is this file?</a> ·
@@ -166,9 +167,13 @@ Curious how the seal works? See the
 
 def render_start_here() -> str:
     """Render the plain-language landing page for a reader with no receipt yet."""
+    body = _START_HERE_BODY.replace(
+        "__PRIVATE_WARNING__",
+        buyer_surface.private_file_warning_html(delivered=False),
+    )
     return buyer_surface.render_page(
         "Start here — attest",
-        _START_HERE_BODY,
+        body,
         extra_head=_START_HERE_HEAD,
         extra_css=_PAGE_CSS,
     )

@@ -302,6 +302,11 @@ def test_the_generator_is_reproducible() -> None:
     assert first == second
 
 
+def test_start_here_carries_the_canonical_warning_for_a_reader_without_a_receipt() -> None:
+    expected = buyer_surface.private_file_warning_html(delivered=False)
+    assert expected in gen_buyer_pages.render_start_here()
+
+
 def test_the_sample_bundle_carries_the_readme_the_template_produces_today() -> None:
     """The committed sample is what the site hands to anyone trying the
     verifier, and its README is the page a curious visitor opens. It is held

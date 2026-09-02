@@ -44,8 +44,11 @@ nothing can. But it's built so the next purchase doesn't end the same way: every
 future purchase gets the one thing every physical purchase always had, a piece
 that's yours — on your own disk, cryptographically provable, out of reach of
 anyone's click. "Forever" holds against the store disappearing, not against a
-live store declaring its own signing key compromised: that declaration still
-destroys receipts that were never logged and anchored before it. Here's how:
+live store declaring its own signing key compromised: that declaration
+invalidates the receipts signed with that key. v0.2 defines a rescue for a
+receipt logged and anchored before the declaration, but no shipped tool logs a
+receipt yet and the verifiers you can use today cannot evaluate that evidence,
+so for now the declaration is final. Here's how:
 
 ## What attest is
 
@@ -63,14 +66,18 @@ file next to the receipt: content plus proof, both in your hands. No store does
 it yet. The standard, two implementations and the conformance suite exist; the
 first pilot doesn't.
 
-Closed platforms are the second track. In the EU they're already required to
-confirm every purchase on a durable medium — Article 8(7) of the Consumer Rights
-Directive (2011/83/EU); Article 2(10) defines that medium as one that keeps the
-information accessible for as long as it's needed and reproduces it unchanged.
-Today that's the receipt email in your inbox. attest is that same confirmation
-in a form a machine can verify and you can take with you, still valid when the
-seller is no longer around to ask. That gives regulators a concrete format to
-point to, and the standard is built for exactly that.
+Closed platforms are the second track. In the EU a trader selling at a distance
+already has to confirm the contract on a durable medium — Article 8(7) of the
+Consumer Rights Directive (2011/83/EU, 25 October 2011) — and that confirmation
+has to carry the information Article 6(1) lists. Article 2(10) defines the medium
+as one that stores information addressed personally to the consumer, keeps it
+accessible for as long as it's needed, and reproduces it unchanged. Today that's
+the receipt email in your inbox. attest is not that confirmation, and the law
+asks for nothing a machine can verify: a receipt carries only part of what
+Article 6(1) lists, signed. What attest offers is a format that confirmation
+could include or travel in — one you keep, that anyone can check unchanged,
+still valid when the seller is no longer around to ask. That gives regulators a
+concrete format to point to, and the standard is built for exactly that.
 
 Where this goes: receipts you can pass on to someone else where the rights holder
 allows it; transfer authority that can outlive the original seller, the hardest
