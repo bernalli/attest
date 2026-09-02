@@ -38,7 +38,29 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 #: make this suite agree with the generator about an empty set: if the list ever
 #: returned nothing, or pointed somewhere else, zero cases would run and the
 #: suite would stay green while nothing was pinned at all.
-EXPECTED_GENERATED = {"site/public/what-is-this.html", "site/public/start-here.html"}
+EXPECTED_GENERATED = {
+    "site/public/what-is-this.html",
+    "site/public/start-here.html",
+    "site/public/faq.html",
+    "site/public/for-sellers.html",
+    "site/public/lockup.svg",
+}
+
+#: The CSP and the navigation, written out here rather than read from the
+#: generator. A test that iterates the generator's own list agrees with it
+#: about a link that was deleted, and one that greps for a single directive
+#: passes a policy widened with `script-src *`.
+EXPECTED_PAGE_CSP = (
+    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; "
+    "font-src 'self'; base-uri 'none'; form-action 'none'"
+)
+EXPECTED_NAV = (
+    ("start-here.html", "Start here"),
+    ("faq.html", "FAQ"),
+    ("for-sellers.html", "For sellers"),
+    ("https://github.com/bernalli/attest/tree/main/docs/spec", "Specification"),
+    ("https://github.com/bernalli/attest", "Source"),
+)
 
 
 def test_the_generator_still_owns_every_page_it_is_supposed_to() -> None:
@@ -348,6 +370,445 @@ def test_the_generator_runs_as_a_script() -> None:
     assert "what-is-this.html" in result.stdout
 
 
+# --- The FAQ page is derived from docs/faq.md, never transcribed -------------
+
+
+def _reading_text(page: str) -> str:
+    """What a reader sees, with the markup removed and nothing else changed.
+
+    Tags are deleted rather than replaced by a space: an inline `<em>` sits
+    tight against the words around it, so substituting a space would split
+    `yours.` into `yours .` and make a present sentence look absent.
+    """
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", page.split("<body>", 1)[1])))
+
+
+def _fragment_text(fragment: str) -> str:
+    """One rendered element, as a person reads it."""
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", fragment))).strip()
+
+
+def _faq_rendered_blocks(page: str) -> list[str]:
+    """Every prose block the FAQ page renders, in the order it renders them.
+
+    A containment check answers a weaker question than the page has to satisfy:
+    it cannot see a reordering, and it cannot see one lost copy of a paragraph
+    that appears twice. This returns the sequence, so the comparison is on
+    order and multiplicity as well as presence.
+    """
+    intro = re.search(r"<h1>FAQ</h1>\n(.*?)\n</section>", page, re.DOTALL)
+    assert intro is not None
+    rendered = [
+        _fragment_text(value) for value in re.findall(r"<p>(.*?)</p>", intro.group(1), re.DOTALL)
+    ]
+    entries = re.findall(
+        r'<section class="qa" id="[^"]+">\n(.*?)\n</section>',
+        page,
+        re.DOTALL,
+    )
+    for entry in entries:
+        heading = re.search(r"<h2>(.*?)</h2>", entry, re.DOTALL)
+        assert heading is not None
+        rendered.append(_fragment_text(heading.group(1)))
+        rendered.extend(
+            _fragment_text(value) for value in re.findall(r"<p>(.*?)</p>", entry, re.DOTALL)
+        )
+    return rendered
+
+
+def _as_read_in_markdown(block: str) -> str:
+    """One source block, with its inline Markdown syntax stripped.
+
+    The comparison is on what a person reads, because that is what the page
+    has to preserve: `*yours*` and `<em>yours</em>` are the same sentence.
+    """
+    block = re.sub(r"`([^`]+)`", r"\1", block)
+    block = re.sub(r"\*\*(.+?)\*\*", r"\1", block, flags=re.DOTALL)
+    block = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"\1", block, flags=re.DOTALL)
+    block = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", block)
+    return re.sub(r"\s+", " ", block).strip()
+
+
+def test_the_faq_page_carries_the_whole_faq() -> None:
+    """Every question and every paragraph of `docs/faq.md` reaches the page.
+
+    The page exists because a hand-made HTML copy of a document this long
+    would be a second original that the first edit to the Markdown leaves
+    behind. That argument only holds while the derivation is total: a
+    converter that quietly dropped the paragraph it could not parse would give
+    the same false confidence as the transcription it replaced, with nobody
+    reading both to notice.
+    """
+    # Read from the file, NOT through `_faq_sections`. An oracle built out of
+    # the parser under test agrees with it about what it dropped: measured, on
+    # this very test — a parser mutated to discard one paragraph in three left
+    # it green, because both sides of the comparison lost the same paragraphs.
+    source = gen_buyer_pages.FAQ_SOURCE.read_text(encoding="utf-8")
+    blocks = [b.strip() for b in re.split(r"\n[ \t]*\n", source) if b.strip()]
+    blocks = [b.removeprefix("## ") for b in blocks if b != "# FAQ"]
+
+    assert len(blocks) >= 60, "the FAQ source is far shorter than this page's reason to exist"
+    expected = [_as_read_in_markdown(block) for block in blocks]
+    assert _faq_rendered_blocks(gen_buyer_pages.render_faq()) == expected
+
+
+def test_the_faq_page_keeps_the_answer_that_protects_the_private_file() -> None:
+    """One sentence on this page is a safety instruction, not an answer.
+
+    The other generated pages carry the private-file warning as a block; this
+    one carries the same rule as prose, because it is the FAQ's own answer to
+    the question a buyer asks. Pinned rather than assumed: a surface that lost
+    it would still look complete, which is exactly how the itch claim form
+    shipped without it.
+    """
+    page = _reading_text(gen_buyer_pages.render_faq())
+
+    assert "Which file can I safely send to someone?" in page
+    assert "The one without .private. in its name." in page
+    assert "A real store or support agent will never need the second" in page
+    # The second paragraph, and it is the sharper half: the shareable file's
+    # name also ends in `.attest`, so the obvious wildcard ships the secret
+    # with the rest. Pinned separately, because the completeness test cannot
+    # protect it — that test derives what it expects from the same source
+    # file, so a source edit that deletes this paragraph deletes the
+    # expectation with it and the suite stays green.
+    assert "Do not reach for a wildcard here" in page
+    assert "*.attest matches casey-library.private.attest as well" in page
+
+
+def test_markup_in_the_faq_source_reaches_the_page_inert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tag written into the source must be shown, never executed.
+
+    `docs/faq.md` is prose reviewed as prose, and prose acquires angle
+    brackets: the shipped file already contains `<receipt_id>` inside a code
+    span. The byte-for-byte test on the committed page proves the page matches
+    the generator; it cannot tell whether those bytes are safe. This can.
+    """
+    source = tmp_path / "faq.md"
+    source.write_text(
+        "# FAQ\n\n"
+        "Intro with <script>alert(1)</script> and an & ampersand.\n\n"
+        '## A <b onclick="alert(2)">bold</b> question?\n\n'
+        "An answer holding `<receipt_id>`, a raw <img src=x onerror=alert(1)> tag, "
+        'and [**safe <i>label</i>**](https://example.test/x" onmouseover="boom).\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gen_buyer_pages, "FAQ_SOURCE", source)
+
+    page = gen_buyer_pages.render_faq()
+    rendered_body = page.split("<body>", 1)[1]
+
+    assert "<script>" not in rendered_body
+    assert "onerror" not in rendered_body.replace("&lt;img src=x onerror=alert(1)&gt;", "")
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered_body
+    assert '<b onclick="alert(2)">' not in rendered_body
+    assert '&lt;b onclick="alert(2)"&gt;bold&lt;/b&gt;' in rendered_body
+    assert "<i>label</i>" not in rendered_body
+    assert 'href="https://example.test/x&quot; onmouseover=&quot;boom"' in rendered_body
+    assert "<code>&lt;receipt_id&gt;</code>" in rendered_body
+    # And the reader still gets the characters that were written, not entities.
+    assert "<script>alert(1)</script>" in _reading_text(page)
+
+
+@pytest.mark.parametrize(
+    "target",
+    ("threat-model.md", "javascript:alert(1)", "data:text/html,test"),
+)
+def test_a_link_target_the_page_must_not_emit_is_refused(
+    target: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two different failures, refused by one rule.
+
+    A relative target is relative to `docs/`, and the page is not served there:
+    emitted as written it would 404 for every reader, and nothing in the
+    byte-comparison test would notice — the generator and the committed file
+    would agree perfectly about a broken page. A `javascript:` or `data:`
+    target is the other end of the same hole, and the rule that catches the
+    first has to be the rule that catches the second, or it is two rules and
+    one of them will be forgotten.
+    """
+    source = tmp_path / "faq.md"
+    source.write_text(
+        f"# FAQ\n\n## A question?\n\nSee [the target]({target}).\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gen_buyer_pages, "FAQ_SOURCE", source)
+
+    with pytest.raises(ValueError, match=re.escape(target)):
+        gen_buyer_pages.render_faq()
+
+
+@pytest.mark.parametrize(
+    "block",
+    (
+        "- first item\n- second item",
+        "1. first item\n2. second item",
+        "> quotation",
+        "```\ncode\n```",
+        "    indented code",
+        "Intro\n- list beginning on the second line",
+        "## Question and answer share a block\nanswer",
+    ),
+)
+def test_a_block_the_converter_cannot_render_stops_the_generator(
+    block: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Structure the converter cannot render must fail loudly, not flatten.
+
+    The converter implements headings and paragraphs, which is all the FAQ has
+    ever been. Silently running a bulleted list together into one paragraph
+    would keep every word and destroy the structure that made them readable —
+    and the ways a block can do that are a family, not the one bullet list an
+    author happens to think of. Two of these were accepted before this test
+    existed: an indented block, because `strip()` ate the four spaces before
+    the check could see them, and a list opening on a paragraph's second line,
+    because the check only ever looked at the first.
+
+    The message is not asserted: refusing is the property, and these blocks are
+    refused by three different guards that word it three different ways.
+    """
+    source = tmp_path / "faq.md"
+    source.write_text(
+        f"# FAQ\n\nIntro.\n\n## A question?\n\nAnswer.\n\n{block}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gen_buyer_pages, "FAQ_SOURCE", source)
+
+    with pytest.raises(ValueError):
+        gen_buyer_pages.render_faq()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    (
+        "***crossed***",
+        "**unclosed",
+        "`unclosed",
+        "``code containing ` a backtick``",
+        "[use `code`](https://example.test)",
+    ),
+)
+def test_malformed_inline_markdown_is_refused(
+    answer: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Emphasis this grammar does not implement must not reach a browser.
+
+    `***x***` came out as `<strong><em>x</strong></em>`, which no browser
+    parses as written: what a reader gets is whatever that browser's error
+    recovery invents. A long code-span delimiter was split down the middle, and
+    a link whose label held a code span stayed half-converted Markdown on the
+    page. All of them are the same mistake — rendering an input the grammar
+    cannot describe instead of refusing it.
+    """
+    source = tmp_path / "faq.md"
+    source.write_text(f"# FAQ\n\n## A question?\n\n{answer}\n", encoding="utf-8")
+    monkeypatch.setattr(gen_buyer_pages, "FAQ_SOURCE", source)
+
+    with pytest.raises(ValueError, match="malformed inline Markdown"):
+        gen_buyer_pages.render_faq()
+
+
+@pytest.mark.parametrize(
+    "document",
+    (
+        "# FAQ\n\n## Same?\n\nAnswer.\n\n## Same!\n\nAnswer.\n",
+        "# FAQ\n\n## !!!\n\nAnswer.\n",
+        "# FAQ\n\n## No answer?\n",
+        "# FAQ\n\n## No answer?\n\n## Next?\n\nAnswer.\n",
+    ),
+)
+def test_malformed_question_sequences_are_refused(
+    document: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A question is a heading, a fragment id and an answer, or it is nothing.
+
+    Two questions that slug to the same id would give the jump list two entries
+    pointing at one place; a question of punctuation alone yields an empty id
+    and a link to `#`; a question with no answer renders as a heading followed
+    by the next heading. None of those is a page anybody meant to publish.
+    """
+    source = tmp_path / "faq.md"
+    source.write_text(document, encoding="utf-8")
+    monkeypatch.setattr(gen_buyer_pages, "FAQ_SOURCE", source)
+
+    with pytest.raises(ValueError):
+        gen_buyer_pages.render_faq()
+
+
+def test_the_seller_page_states_what_a_seller_would_find_out_too_late() -> None:
+    """Two facts a seller must meet before the install instructions, not after.
+
+    Nobody issues these receipts yet, and the seller-side service is not
+    published: `bridge/pyproject.toml` marks it `Private :: Do Not Upload` and
+    its own setup guide says never to `pip install attest-bridge`, because that
+    name could resolve to something else entirely. A page that reached the
+    install step before saying either would be selling somebody a thing that
+    does not exist on the index — so both are pinned, and both are pinned to
+    appear ahead of the first install instruction.
+    """
+    rendered = gen_buyer_pages.render_for_sellers()
+    page = _reading_text(rendered)
+
+    # The closing block reads as a section: it must be named like one, or the
+    # heading sequence steps over it and the section has no accessible name.
+    assert '<h2 class="label label--accent">Where this honestly stands</h2>' in rendered
+    assert "no seller issues attest receipts today" in page
+    assert "No store issues attest receipts yet" in page
+    assert "is not published" in page
+
+    # Both orderings, not just the package one: a page that said "not
+    # published" early and left adoption to the closing note would pass a test
+    # that only checked the first. The adoption sentence the reader must meet
+    # first is the lead's; the closing block restates it deliberately, at the
+    # end, which is why the assertion names the lead's wording rather than the
+    # closing block's.
+    install = page.index("pip install")
+    assert page.index("no seller issues attest receipts today") < install
+    assert page.index("is not published") < install, (
+        "the page offers an install before saying the package is not published"
+    )
+
+
+def test_the_wordmark_is_the_brand_file_with_only_its_colour_resolved() -> None:
+    """The mark on these pages must be `logo/lockup.svg`, not a fork of it.
+
+    The brand files are single-colour and paint with `currentColor`, so they
+    take the colour of wherever they are placed. An `<img>` places them
+    nowhere, so this one copy has to name a colour — and a hand-made copy with
+    one value changed is a fork nobody notices has drifted. Derived, then, and
+    held here to two things: that nothing but the fill changed, and that the
+    fill is the same ink the stylesheet paints the text in.
+    """
+    brand = gen_buyer_pages.LOCKUP_SOURCE.read_text(encoding="utf-8")
+    rendered = gen_buyer_pages.render_lockup()
+
+    assert rendered == brand.replace('fill="currentColor"', f'fill="{gen_buyer_pages._INK}"')
+    assert 'fill="currentColor"' not in rendered, "an <img> has no colour to inherit"
+    assert f"--ink:{gen_buyer_pages._INK}" in gen_buyer_pages._PAPER_CSS, (
+        "the wordmark and the text are no longer printed in the same ink"
+    )
+
+
+def test_a_brand_file_that_stopped_using_currentcolor_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Silently emitting some other colour is worse than failing to build."""
+    source = tmp_path / "lockup.svg"
+    source.write_text('<svg fill="#123456"><path d="M0 0"/></svg>', encoding="utf-8")
+    monkeypatch.setattr(gen_buyer_pages, "LOCKUP_SOURCE", source)
+
+    with pytest.raises(ValueError, match="currentColor"):
+        gen_buyer_pages.render_lockup()
+
+
+@pytest.mark.parametrize(
+    "path", sorted(p for p in gen_buyer_pages.generated_pages() if p.suffix == ".html")
+)
+def test_every_generated_page_wears_the_same_chrome(path: Path) -> None:
+    """The masthead, the navigation and the footer are shared or they drift.
+
+    Four hand-kept copies of a stylesheet drift the way four hand-kept copies
+    of a paragraph do, and a page that has quietly stopped matching the others
+    is harder to spot than a sentence that has.
+    """
+    page = gen_buyer_pages.generated_pages()[path]
+
+    assert '<header class="masthead">' in page
+    # Held against constants written out above, not against the generator's own
+    # values: iterating `_NAV` would agree with a `_NAV` that had lost a link,
+    # `_FOOTER in page` is true of an empty `_FOOTER`, and grepping for one CSP
+    # directive passes a policy widened with `script-src *`.
+    assert gen_buyer_pages._NAV == EXPECTED_NAV
+    assert (
+        page.count(f'<meta http-equiv="Content-Security-Policy" content="{EXPECTED_PAGE_CSP}">')
+        == 1
+    )
+    primary = re.search(r'<nav aria-label="Primary">\n(.*?)\n</nav>', page, re.DOTALL)
+    assert primary is not None
+    current = path.name if path.name in {href for href, _ in EXPECTED_NAV} else None
+    marker = ' aria-current="page"'
+    expected_links = "\n".join(
+        f'<a href="{href}"{marker if href == current else ""}>{label}</a>'
+        for href, label in EXPECTED_NAV
+    )
+    assert primary.group(1) == expected_links
+    assert gen_buyer_pages._PAPER_CSS in page
+    assert gen_buyer_pages._PAPER_CSS.count("@font-face") == 4
+    assert "font-family:'Courier Prime'" in gen_buyer_pages._PAPER_CSS
+    assert "@media print" in gen_buyer_pages._PAPER_CSS
+    assert (
+        "<span>Code Apache-2.0 &middot; Spec CC BY 4.0 &middot; "
+        "Courier Prime under the SIL Open Font License</span>"
+    ) in page
+    assert '<nav aria-label="Elsewhere">' in page
+
+
+def test_every_paper_text_colour_clears_wcag_aa_on_every_declared_ground() -> None:
+    """The contrast argument is in a comment; this is what holds it up.
+
+    Every ground these pages paint is flat — that is itself the decision, taken
+    because the home page's texture layers make the worst case a thing you have
+    to know the geometry to compute. Flat grounds can be composited exactly, so
+    the claim can be a test rather than a paragraph somebody has to re-derive
+    after changing a hex value.
+    """
+    css = gen_buyer_pages._PAPER_CSS
+
+    def variable(name: str) -> tuple[float, ...]:
+        match = re.search(rf"{re.escape(name)}:#([0-9a-fA-F]{{6}})", css)
+        assert match is not None, name
+        value = match.group(1)
+        return tuple(int(value[index : index + 2], 16) / 255 for index in (0, 2, 4))
+
+    def rgba(selector: str) -> tuple[tuple[float, ...], float]:
+        rule = re.search(rf"{re.escape(selector)}\{{([^}}]+)\}}", css)
+        assert rule is not None, selector
+        value = re.search(r"background:rgba\((\d+),(\d+),(\d+),([.\d]+)\)", rule.group(1))
+        assert value is not None, selector
+        red, green, blue, alpha = value.groups()
+        return (int(red) / 255, int(green) / 255, int(blue) / 255), float(alpha)
+
+    def composite(
+        foreground: tuple[float, ...], background: tuple[float, ...], alpha: float
+    ) -> tuple[float, ...]:
+        return tuple(
+            front * alpha + back * (1 - alpha)
+            for front, back in zip(foreground, background, strict=True)
+        )
+
+    def luminance(colour: tuple[float, ...]) -> float:
+        linear = tuple(
+            channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in colour
+        )
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    def contrast(first: tuple[float, ...], second: tuple[float, ...]) -> float:
+        lighter, darker = sorted((luminance(first), luminance(second)), reverse=True)
+        return (lighter + 0.05) / (darker + 0.05)
+
+    paper = variable("--paper")
+    grounds = [paper]
+    for selector in ("code", ".warning", ".standing"):
+        overlay, alpha = rgba(selector)
+        grounds.append(composite(overlay, paper, alpha))
+
+    text_colours = {
+        name: variable(name)
+        for name in ("--ink", "--ink-2", "--ink-3", "--ink-label", "--bordeaux", "--bordeaux-deep")
+    }
+    for name, foreground in text_colours.items():
+        for ground in grounds:
+            assert contrast(foreground, ground) >= 4.5, name
+
+    # The one place the palette is used inverted: paper on the ink button, and
+    # on the bordeaux it turns when hovered.
+    assert contrast(paper, variable("--ink")) >= 4.5
+    assert contrast(paper, variable("--bordeaux")) >= 4.5
+
+
 def test_no_bundle_name_can_put_markup_in_the_styled_warning() -> None:
     """The styled form escapes the name and then formats — never the reverse.
 
@@ -488,7 +949,9 @@ def test_both_warning_forms_make_the_same_claims() -> None:
 EXPECTED_RENDER_PAGE_CALL_SITES = {
     "src/attest/bundle.py": 1,
     "bridge/src/attest_bridge/http.py": 2,
-    "tools/gen_buyer_pages.py": 2,
+    # One call per page it owns, deliberately not routed through a shared
+    # helper: the count is what makes a fifth page visible here.
+    "tools/gen_buyer_pages.py": 4,
 }
 
 
