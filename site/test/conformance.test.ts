@@ -176,6 +176,13 @@ describe('the §19 copy each group-41 leaf produces through the site adapter', (
     // rescue branches are reached — so this lands on the generic invalid-
     // signature story, with the ceiling diagnostic in the errors it points to.
     'w-oversized-view-does-not-certify': /does not carry a valid signature/,
+    // Same shape as `w`: the ambiguous manifest is refused before any status
+    // resolves, so this lands on the generic invalid-signature story rather
+    // than on §19 wording. The copy does not name the ambiguity — a gap worth
+    // closing on its own terms, not inside a security fix.
+    'x-chain-member-duplicate-kid-refused': /does not carry a valid signature/,
+    'y-stage2-unanchored-receipt-warns-without-view': /no anchored proof/,
+    'z-stolen-key-chain-member-cannot-deny-cutoff': /not anchored strictly before/,
   }
 
   const g41 = leaves.filter((d) => V.vectorId(d).startsWith('41-compromise-cutoff/'))
