@@ -101,7 +101,11 @@ jobs:
             desktop/dist/attest-verifier.html.sha256
 
   pypi:
-    needs: build
+    # Also on desktop: publishing to PyPI is irreversible and npm refuses a version
+    # it has already seen, so a verifier that fails validation after the packages are
+    # out leaves a release nobody can complete or re-run. Everything that can refuse
+    # must refuse before anything is published.
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -124,7 +128,7 @@ jobs:
           skip-existing: true
 
   npm:
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     environment: npm
     permissions:
