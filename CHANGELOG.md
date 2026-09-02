@@ -8,6 +8,34 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The warning every buyer reads now points at something within their reach
+  instead of at a command.** Told never to send `<name>.private.attest` to
+  anyone, a buyer asks the obvious next question, and the answer was
+  `attest disclose <receipt_id>` — correct, and out of reach for the reader it
+  was written for: the itch claim form is linked from a game page, so for many
+  buyers it is the first attest surface they meet, and they meet it in a
+  browser. The warning is one source rendered on four surfaces, and the claims
+  about the risk stay identical on all of them; the only sentence that changes
+  is the answer to "then what may I send?", which now fits what the reader
+  holds at the moment they read it. Where the pair exists and its name is
+  known — the bundle README, the download landing page, the delivery email —
+  the answer names the shareable half, and tests hold that name to the file
+  `export` writes, the file the download route serves and the attachment the
+  email carries, rather than to a string of their own. On `what-is-this.html`,
+  reached by someone holding a download this code never saw, it describes
+  that file by the rule its name follows — ends in `.attest` but not in
+  `.private.attest` — spelled out, never as `*.attest`, because that pattern
+  also matches the private half. On the itch claim form, met before anything
+  has been sent, it says what will arrive instead of pointing at a file that
+  is not on the reader's disk yet. Per-receipt disclosure is unchanged and
+  still specified (v0.1 §13); it is simply no longer the answer offered to
+  someone who has no shell. The committed sample bundle under
+  `site/public/sample/` was two rewrites behind this text without any test
+  noticing: `tools/gen_site_sample.py --refresh-readme` now rewrites only its
+  README member — the signed receipt and its proof are left exactly as they
+  were — and the test that compares the sample with the template compares the
+  README whole.
+
 - **The web verifier put an unsigned string in the heading directly above its
   own verdict.** The label came from the name of the ZIP member, which is
   central-directory metadata no signature covers, so rewriting one entry — and
@@ -54,22 +82,6 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a file with `"anchors": null` was ignored before and is an error now. Every
   fixture in this repository already sets `anchors.checkpoint` to the evidence's
   own checkpoint, and no test relied on the old leniency.
-
-- **The warning every buyer reads now points at a file instead of a command.**
-  Told never to send `<name>.private.attest` to anyone, a buyer asks the obvious
-  next question, and the answer was `attest disclose <receipt_id>` — correct,
-  and out of reach for the reader it was written for. The itch claim form is
-  linked from a game page, so for many buyers it is the first attest surface
-  they ever meet, and they meet it in a browser. All four rendered surfaces —
-  the bundle README, the download landing page, `what-is-this.html`, and the
-  claim form — now name the shareable half of the pair the buyer already holds:
-  it shows the same purchases and gives whoever receives it no way to claim
-  them. Per-receipt disclosure is unchanged and still specified (v0.1 §13); it
-  is simply no longer the answer offered to someone who has no shell. Two
-  consequences worth stating: the warning names both files now, so a rendered
-  page grows by roughly the length of the bundle name, and the committed sample
-  bundle under `site/public/sample/` still carries the old sentence until it is
-  regenerated.
 
 ### Fixed
 

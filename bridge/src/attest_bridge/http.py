@@ -726,9 +726,11 @@ def _handle_itch_claim_form(deps: BridgeDeps, start_response: Any) -> Iterable[b
         "</form>\n"
         # The seller is told to link this page from their game page, so it is
         # met BEFORE any email: the warning about the private half belongs
-        # here, not only in the message that arrives afterwards. Generic form —
-        # there is no bundle name yet at claim time.
-        f"{buyer_surface.private_file_warning_html()}",
+        # here, not only in the message that arrives afterwards. And because
+        # nothing has been sent yet, this is the one surface whose reader
+        # holds no file at all: the pre-delivery form says what will arrive
+        # instead of naming a file as if it were already on their disk.
+        f"{buyer_surface.private_file_warning_html(delivered=False)}",
         extra_css=_CLAIM_FORM_CSS,
     )
     body = page.encode()

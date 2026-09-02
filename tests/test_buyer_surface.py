@@ -17,6 +17,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -71,57 +72,131 @@ def _text_of(html: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html)).strip()
 
 
-def test_the_private_file_warning_is_identical_across_surfaces() -> None:
-    """The held bundle README and the served explainer page must carry the same
-    warning, word for word — not merely the same message."""
-    in_bundle = _text_of(buyer_surface.private_file_warning_html("mylibrary"))
-    on_page = _text_of(buyer_surface.private_file_warning_html())
+#: Where a reader can stand, expressed as the renderers' arguments. Named: the
+#: pair exists and the surface knows its stem (bundle README, download page,
+#: delivery email). Unnamed: the reader has a download this code never saw
+#: (the explainer page). Undelivered: nothing has been sent yet (the itch
+#: claim form), so there is no file on the reader's disk to point at.
+READER_CONTEXTS: dict[str, dict[str, Any]] = {
+    "named": {"bundle_name": "mylibrary"},
+    "unnamed": {"bundle_name": None},
+    "undelivered": {"bundle_name": None, "delivered": False},
+}
 
-    # Only the two filenames differ; everything a person reads around them
-    # matches. Both are replaced, because the warning now names the safe half
-    # as well as the dangerous one.
-    generic = in_bundle.replace("mylibrary.private.attest", "*.private.attest").replace(
-        "mylibrary.attest", "*.attest"
-    )
-    assert generic == on_page
+
+def _headline_and_paragraphs(rendered: str) -> tuple[str, list[str]]:
+    """The warning block as a person reads it: headline, then one paragraph
+    per claim, entities resolved."""
+    headline = re.search(r"<h2>(.*?)</h2>", rendered, re.S)
+    assert headline is not None
+    paragraphs = re.findall(r"<p>(.*?)</p>", rendered, re.S)
+    return html.unescape(headline.group(1)), [html.unescape(p) for p in paragraphs]
+
+
+def _files_named(text: str) -> list[str]:
+    """Every token in `text` that reads as a file name ending in `.attest`.
+
+    A bare suffix such as `.attest` or `.private.attest`, used to DESCRIBE a
+    file by the rule its name follows, is not a file name and is not counted;
+    a glob such as `*.attest` is, because a reader takes it for one.
+    """
+    names = []
+    for token in text.split():
+        token = token.lstrip("(").rstrip(".,:;)")
+        if token.endswith(".attest") and not token.startswith("."):
+            names.append(token)
+    return names
+
+
+def test_the_risk_is_stated_identically_wherever_the_reader_stands() -> None:
+    """The bundle README, the explainer page and the claim form must carry the
+    same warning about the same risk, word for word — the risk does not depend
+    on what the reader holds. Only the private file's name may differ, and only
+    between its concrete and generic forms."""
+    risk: dict[str, list[str]] = {}
+    for context, kwargs in READER_CONTEXTS.items():
+        headline, paragraphs = _headline_and_paragraphs(
+            buyer_surface.private_file_warning_html(**kwargs)
+        )
+        risk[context] = [
+            sentence.replace("mylibrary.private.attest", "*.private.attest")
+            for sentence in (headline, *paragraphs[:-1])
+        ]
+
+    assert risk["named"] == risk["unnamed"] == risk["undelivered"]
+    # Every risk claim, on every surface — a context cannot drop one quietly.
+    assert len(risk["named"]) == 1 + len(buyer_surface._WARNING_CLAIMS)
+
+
+def test_only_the_answer_changes_and_it_changes_with_what_the_reader_holds() -> None:
+    """The last claim answers "then what may I send?", and the honest answer
+    depends on what the reader has when they read it. A surface met before
+    anything is delivered may not point at a file as if it were on the
+    reader's disk; a surface that knows the file names it; a surface that
+    knows there is a file but not its name describes it by the rule its name
+    follows. Three situations, three answers, and no more than that changes.
+    """
+    answers = {
+        context: _headline_and_paragraphs(buyer_surface.private_file_warning_html(**kwargs))[1][-1]
+        for context, kwargs in READER_CONTEXTS.items()
+    }
+
+    assert len(set(answers.values())) == len(READER_CONTEXTS)
+    # Known name: the file, by the same suffix rule `bundle.export` uses.
+    assert _files_named(answers["named"]) == ["mylibrary.attest"]
+    # Unknown name, or no file yet: no file is named — neither a stand-in nor
+    # a pattern — because the reader cannot be handed a name this code never
+    # saw, and must not be told they hold something they do not.
+    assert _files_named(answers["unnamed"]) == []
+    assert _files_named(answers["undelivered"]) == []
 
 
 def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
     """Whatever else the wording becomes, these three facts have to survive it:
     the file proves ownership, one file covers the whole library, and there is
-    something safe to send in its place."""
-    for rendered in (
-        _text_of(buyer_surface.private_file_warning_html("mylibrary")),
-        buyer_surface.private_file_warning_text("mylibrary"),
-    ):
-        assert "proof" in rendered.lower()
-        assert "whole library" in rendered.lower()
-        assert "mylibrary.attest" in rendered
+    something safe to send in its place — named where the name is known,
+    described where it is not."""
+    for context, kwargs in READER_CONTEXTS.items():
+        styled = buyer_surface.private_file_warning_html(**kwargs)
+        plain = buyer_surface.private_file_warning_text(**kwargs)
+        for read, answer in (
+            (_claims_in_html(styled), _headline_and_paragraphs(styled)[1][-1]),
+            (plain, plain.splitlines()[-1]),
+        ):
+            assert "proof" in read.lower(), context
+            assert "whole library" in read.lower(), context
+            if context == "named":
+                assert _files_named(answer) == ["mylibrary.attest"]
+            else:
+                # Described by suffix, and the description has to tell the
+                # two halves apart — `.attest` alone would describe both.
+                assert ".attest" in answer and ".private.attest" in answer, context
+                assert _files_named(answer) == [], context
 
 
-@pytest.mark.parametrize(
-    ("bundle_name", "shareable"),
-    [("mylibrary", "mylibrary.attest"), (None, "*.attest")],
-)
-def test_the_safe_alternative_is_a_file_the_buyer_already_holds(
-    bundle_name: str | None, shareable: str
-) -> None:
-    """Whatever the buyer is told to send instead has to be within their reach.
-
-    It used to be `attest disclose <receipt_id>`: a shell command, offered to
-    the one audience that by definition has no shell. The itch claim form is
-    linked from a game page, so it is the first attest surface a buyer ever
-    meets — and telling that reader to run a command is telling them nothing.
-    The real alternative was already in their download all along: the other
-    half of the pair, which shows the same purchases and proves ownership of
-    none of them.
+@pytest.mark.parametrize("context", sorted(READER_CONTEXTS))
+def test_no_surface_offers_a_pattern_that_also_matches_the_private_half(context: str) -> None:
+    """`*.attest` is not a name for the shareable file: as a pattern it also
+    matches `*.private.attest`, the one file the warning exists to keep at
+    home. A reader who is told to send `*.attest` has been told to send both.
     """
+    kwargs = READER_CONTEXTS[context]
     for rendered in (
-        _claims_in_html(buyer_surface.private_file_warning_html(bundle_name)),
-        buyer_surface.private_file_warning_text(bundle_name),
+        buyer_surface.private_file_warning_html(**kwargs),
+        buyer_surface.private_file_warning_text(**kwargs),
     ):
-        assert shareable in rendered
+        assert "*.attest" not in rendered
         assert "attest disclose" not in rendered
+
+
+def test_a_named_bundle_cannot_be_rendered_as_undelivered() -> None:
+    """A name is the name of a file the surface can hand over. A caller asking
+    for a named pair that has not been delivered is confused about which
+    surface it is, and the renderer refuses rather than guessing."""
+    renderers = (buyer_surface.private_file_warning_html, buyer_surface.private_file_warning_text)
+    for render in renderers:
+        with pytest.raises(ValueError):
+            render("mylibrary", delivered=False)
 
 
 def test_the_plain_text_warning_carries_no_markup() -> None:
@@ -227,11 +302,18 @@ def test_the_generator_is_reproducible() -> None:
     assert first == second
 
 
-def test_the_sample_bundle_matches_the_current_template(tmp_path: Path) -> None:
+def test_the_sample_bundle_carries_the_readme_the_template_produces_today() -> None:
     """The committed sample is what the site hands to anyone trying the
-    verifier. When it drifts from the template, the page shows a receipt that
-    no longer resembles the ones this code produces — which is exactly what had
-    happened before this test existed."""
+    verifier, and its README is the page a curious visitor opens. It is held
+    to the template whole — not to a stylesheet and a byte budget, which is
+    what this test used to check while the sample went on carrying a warning
+    two rewrites old. Rewording the template is allowed; shipping a sample
+    that does not say it is not. The fix is never a hand edit:
+    `.venv/bin/python tools/gen_site_sample.py --refresh-readme` rewrites only
+    that member and leaves the signed receipt and its proof exactly as they are.
+    """
+    from attest import bundle
+
     sample = REPO_ROOT / "site/public/sample/demo.attest"
     if not sample.exists():  # pragma: no cover - the sample is committed
         pytest.skip("sample bundle not present")
@@ -239,11 +321,10 @@ def test_the_sample_bundle_matches_the_current_template(tmp_path: Path) -> None:
     with zipfile.ZipFile(sample) as zf:
         readme = zf.read("README.html").decode("utf-8")
 
-    assert "<style>" in readme, (
-        "the committed sample bundle predates the current README template; "
-        "re-run .venv/bin/python tools/gen_site_sample.py"
+    assert readme == bundle._render_readme("demo"), (
+        "the committed sample's README.html is not what the current template "
+        "renders; re-run .venv/bin/python tools/gen_site_sample.py --refresh-readme"
     )
-    assert buyer_surface.CORE_CSS in readme
     assert len(readme.encode("utf-8")) <= buyer_surface.MAX_HELD_PAGE_BYTES
 
 
@@ -283,6 +364,8 @@ def test_no_bundle_name_can_put_markup_in_the_styled_warning() -> None:
         rendered = buyer_surface.private_file_warning_html(bundle_name)
 
         assert set(re.findall(r"<[^>]*>", rendered)) <= allowed, bundle_name
+    undelivered = buyer_surface.private_file_warning_html(delivered=False)
+    assert set(re.findall(r"<[^>]*>", undelivered)) <= allowed
 
 
 def test_the_warning_templates_use_only_the_fields_the_renderers_supply() -> None:
@@ -297,14 +380,23 @@ def test_the_warning_templates_use_only_the_fields_the_renderers_supply() -> Non
     constant — and nothing else in this suite would notice, because every
     other test feeds the renderers a bundle name, not a new claim.
     """
-    templates = (buyer_surface._WARNING_HEADLINE, *buyer_surface._WARNING_CLAIMS)
 
-    for template in templates:
-        fields = {
-            field for _, field, _, _ in string.Formatter().parse(template) if field is not None
-        }
+    def fields_of(template: str) -> set[str]:
+        return {field for _, field, _, _ in string.Formatter().parse(template) if field is not None}
 
-        assert fields <= {"name", "shareable"}, template
+    for template in (buyer_surface._WARNING_HEADLINE, *buyer_surface._WARNING_CLAIMS):
+        assert fields_of(template) <= {"name"}, template
+    assert fields_of(buyer_surface._ANSWER_NAMED) <= {"name", "shareable"}
+    # Without a name there is nothing to put in a `shareable` hole, and the
+    # renderers supply none: a template that asked for one would raise, and
+    # this pins that the templates never ask.
+    for template in (buyer_surface._ANSWER_UNNAMED, buyer_surface._ANSWER_UNDELIVERED):
+        assert fields_of(template) <= {"name"}, template
+    assert set(buyer_surface._ANSWERS) == {
+        buyer_surface._ANSWER_NAMED,
+        buyer_surface._ANSWER_UNNAMED,
+        buyer_surface._ANSWER_UNDELIVERED,
+    }
 
 
 def _claims_in_html(rendered: str) -> str:
@@ -378,6 +470,10 @@ def test_both_warning_forms_make_the_same_claims() -> None:
         from_text = _claims_in_text(buyer_surface.private_file_warning_text(bundle_name))
 
         assert from_html == from_text, bundle_name
+    # And the one context a name cannot express.
+    from_html = _claims_in_html(buyer_surface.private_file_warning_html(delivered=False))
+    from_text = _claims_in_text(buyer_surface.private_file_warning_text(delivered=False))
+    assert from_html == from_text
 
 
 #: Every place that renders a buyer-facing page, counted from the code rather

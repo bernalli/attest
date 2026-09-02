@@ -23,6 +23,17 @@ in by path — never read from the tree, never present in CI.
 
 Run it from the repo root: `.venv/bin/python tools/gen_site_sample.py`
 (writes to site/public/sample/). Regeneration is manual, never part of CI.
+
+The bundle's `README.html` is the one member no signature covers and the one
+that changes for reasons that have nothing to do with the receipt: it is the
+buyer-facing page rendered by `attest.bundle`, and its wording moves when
+`attest.buyer_surface` does. Re-minting a key and growing the public log to
+follow a sentence would be the wrong trade, so `--refresh-readme` rewrites
+ONLY that member of the committed bundle, from the current template, and
+leaves every other member byte-for-byte as it was — receipt, manifest, legal
+text and proof included, so the page's transparency row keeps saying what it
+said. A test holds the committed README to the template, and this flag is
+how it is brought back into line.
 """
 
 from __future__ import annotations
@@ -35,10 +46,11 @@ import json
 import shutil
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
-from attest import cli, issue, keys, tlog
+from attest import bundle, cli, issue, keys, tlog
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT_DIR = REPO_ROOT / "site" / "public" / "sample"
@@ -197,6 +209,44 @@ def _log_receipt(
         encoding="utf-8",
     )
     return proof_dir, log_keys_path
+
+
+def refresh_readme(attest_path: Path) -> bool:
+    """Rewrite `README.html` inside an existing shareable bundle, nothing else.
+
+    The README is rendered exactly as `attest.bundle.export` renders it, from
+    the bundle's stem, so the result is what a fresh export of the same name
+    would carry. Every other member is copied through with its own metadata
+    and content untouched. Returns True if the member changed, False if the
+    committed README already matched the template.
+
+    Refuses anything that is not a shareable `.attest`: the private half has
+    no README, and rewriting a private archive is never what this is for.
+    """
+    if not attest_path.name.endswith(".attest") or attest_path.name.endswith(".private.attest"):
+        raise RuntimeError(f"not a shareable bundle: {attest_path.name}")
+    name = attest_path.name.removesuffix(".attest")
+    fresh = bundle._render_readme(name)
+
+    with zipfile.ZipFile(attest_path) as zf:
+        members = [(info, zf.read(info)) for info in zf.infolist()]
+    current = [data for info, data in members if info.filename == "README.html"]
+    if len(current) != 1:
+        raise RuntimeError(f"{attest_path.name} carries {len(current)} README.html members, not 1")
+    if current[0].decode("utf-8") == fresh:
+        return False
+
+    # Written beside the original and swapped in whole: a bundle is never left
+    # half-rewritten on disk if this process dies mid-way.
+    replacement = attest_path.with_name(attest_path.name + ".tmp")
+    with zipfile.ZipFile(replacement, "w", zipfile.ZIP_DEFLATED) as zf:
+        for info, data in members:
+            if info.filename == "README.html":
+                zf.writestr(info.filename, fresh)
+            else:
+                zf.writestr(info, data)
+    replacement.replace(attest_path)
+    return True
 
 
 def main(
@@ -467,11 +517,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--log-mldsa-key", type=Path, default=None, help="log signer's ML-DSA-65 key file"
     )
+    p.add_argument(
+        "--refresh-readme",
+        action="store_true",
+        help="rewrite only README.html inside the committed demo.attest from the "
+        "current template; mints no key, touches no log, changes no other member",
+    )
     return p.parse_args(argv)
 
 
 if __name__ == "__main__":
     args = _parse_args()
+    if args.refresh_readme:
+        target = args.out_dir / "demo.attest"
+        changed = refresh_readme(target)
+        print(json.dumps({"attest": str(target), "readme_refreshed": changed}, indent=2))
+        sys.exit(0)
     report = main(
         args.out_dir,
         log_dir=args.log_dir,
