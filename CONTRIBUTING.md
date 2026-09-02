@@ -1,6 +1,6 @@
 # Contributing to attest
 
-attest is the durable, portable, user-held layer of ownership for digital content: the seller
+attest is the durable, portable, user-held layer of possession for digital content: the seller
 signs a purchase receipt, the buyer holds the file, and anyone can verify it offline long after
 the store is gone. It ships as an open standard with a Python reference implementation and an
 independent TypeScript verifier. Contributions are welcome — bug reports, spec clarifications,

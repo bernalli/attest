@@ -1,6 +1,6 @@
 # Security Policy
 
-attest is the durable, portable, user-held layer of ownership for digital content: a buyer holds
+attest is the durable, portable, user-held layer of possession for digital content: a buyer holds
 a signed purchase receipt and anyone can verify it offline, long after the store is gone. A flaw
 in verification, canonicalization, or key handling can let a forged or revoked receipt pass as
 valid. Please treat security issues with care.

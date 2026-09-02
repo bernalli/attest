@@ -1,6 +1,6 @@
 # attest-verifier
 
-attest is the durable, portable, user-held layer of ownership for digital content: the seller
+attest is the durable, portable, user-held layer of possession for digital content: the seller
 signs a purchase receipt, the buyer holds the file, and anyone can verify it offline after the
 store is gone. "Forever" holds against the store disappearing, not against a live store declaring
 one of its own signing keys compromised: that declaration still destroys the receipts signed with
