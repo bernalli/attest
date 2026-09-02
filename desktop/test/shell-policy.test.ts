@@ -15,6 +15,12 @@ import {
 } from '../tools/shell-policy.mjs'
 import type { Mutant } from './helpers/shell-mutants.js'
 import { artifact, mutant, mutants, plant, sourceShell } from './helpers/shell-mutants.js'
+import {
+  ACCEPTED_BASES,
+  REFUSED_BASES,
+  anchorMarkup,
+  variants,
+} from './helpers/href-vectors.js'
 
 /**
  * The shell policy reads TOKENS, not a tree.
@@ -239,22 +245,31 @@ describe('the rules do not depend on where a construct sits', () => {
     'input', 'button', 'label', 'select', 'option', 'a',
   ]
 
+  // The elements are planted carrying EVERY generated attribute at once, and each has
+  // to earn its own refusal naming it. One document per element instead of one per
+  // (element, attribute) pair: the coverage is the same and the suite stays inside the
+  // budget a test nobody waits for does not have.
+  const plantedRefusals = (markup: string) => {
+    const grown = plant(artifact().html, 'BODY', markup)
+    return validateShell(Buffer.from(grown.html, 'utf8'), {
+      stage: 'artifact',
+      expectedCsp: grown.csp,
+    })
+  }
+
   test('an event handler is refused on every element the allowlist names', () => {
     const letters = 'abcdefghijklmnopqrstuvwxyz'
-    const names = Array.from({ length: 30 }, (_, i) =>
-      `on${letters[i % 26]}${letters[(i * 7) % 26]}${letters[(i * 13) % 26]}`)
-    for (const element of ELEMENTS)
-      for (const attribute of names) {
-        const grown = plant(artifact().html, 'BODY', `<${element} ${attribute}="x()">t</${element}>`)
-        const refusals = validateShell(Buffer.from(grown.html, 'utf8'), {
-          stage: 'artifact',
-          expectedCsp: grown.csp,
-        })
-        expect(
-          refusals.filter((r) => r.rule === 'R-ATTRIBUTE'),
-          `${element}[${attribute}]`,
-        ).not.toHaveLength(0)
-      }
+    const names = Array.from(
+      { length: 30 },
+      (_, i) => `on${letters[Math.floor(i / 26)]}${letters[i % 26]}`,
+    )
+    expect(new Set(names).size).toBe(names.length)
+    for (const element of ELEMENTS) {
+      const attributes = names.map((n) => `${n}="x()"`).join(' ')
+      const refusals = plantedRefusals(`<${element} ${attributes}>t</${element}>`)
+      const named = refusals.filter((r) => r.rule === 'R-ATTRIBUTE').map((r) => r.detail).join(' ')
+      for (const name of names) expect(named, `${element}[${name}]`).toContain(name)
+    }
   })
 
   test('every attribute that names a resource is refused on every allowlisted element', () => {
@@ -262,23 +277,13 @@ describe('the rules do not depend on where a construct sits', () => {
       'src', 'srcset', 'poster', 'background', 'action', 'formaction', 'data', 'ping',
       'href', 'style', 'is', 'slot', 'shadowrootmode', 'xlink:href', 'xml:base',
     ]
-    for (const element of ELEMENTS)
-      for (const attribute of attributes) {
-        if (element === 'a' && attribute === 'href') continue
-        const grown = plant(
-          artifact().html,
-          'BODY',
-          `<${element} ${attribute}="https://example.invalid/x">t</${element}>`,
-        )
-        const refusals = validateShell(Buffer.from(grown.html, 'utf8'), {
-          stage: 'artifact',
-          expectedCsp: grown.csp,
-        })
-        expect(
-          refusals.filter((r) => r.rule === 'R-ATTRIBUTE'),
-          `${element}[${attribute}]`,
-        ).not.toHaveLength(0)
-      }
+    for (const element of ELEMENTS) {
+      const wanted = attributes.filter((a) => !(element === 'a' && a === 'href'))
+      const spelled = wanted.map((a) => `${a}="https://example.invalid/x"`).join(' ')
+      const refusals = plantedRefusals(`<${element} ${spelled}>t</${element}>`)
+      const named = refusals.filter((r) => r.rule === 'R-ATTRIBUTE').map((r) => r.detail).join(' ')
+      for (const attribute of wanted) expect(named, `${element}[${attribute}]`).toContain(attribute)
+    }
   })
 
   test('a global attribute is accepted whatever its value, including none and a long one', () => {
@@ -339,5 +344,107 @@ describe('the one link the document carries, and the fragment branch beside it',
       tokens.flatMap((t) => t.attrs.filter((a) => a.name === 'id').map((a) => a.value)),
     )
     expect(classifyUrl(raw, value, ids).accepted).toBe(true)
+  })
+})
+
+/**
+ * The property, over every spelling the generator produces rather than over a list
+ * somebody wrote: a refused link stays refused however it is spelled, and the allowed
+ * link has exactly ONE accepted spelling. The verdicts are computed per anchor from one
+ * document per base, and the whole document is then run through `validateShell` once so
+ * the per-anchor verdicts and the rules that carry them cannot drift apart.
+ */
+describe('a link is what it resolves to, whatever it is spelled like', () => {
+  const RULE_FOR: Record<string, RuleId> = {
+    unparseable: 'R-URL',
+    scheme: 'R-URL',
+    userinfo: 'R-URL',
+    canonical: 'R-URL-CANONICAL',
+    'missing-target': 'R-REF',
+  }
+
+  /** One document holding every variant of a base, planted before the footer so the
+   *  first N anchors in document order are the variants and the last is the real one. */
+  const spread = (base: string) => {
+    const vs = variants(base)
+    const grown = plant(artifact().html, 'BODY', vs.map(anchorMarkup).join('\n'))
+    const { tokens, html } = tokenizeShell(grown.html)
+    const ids = new Set(
+      tokens.flatMap((t) => t.attrs.filter((a) => a.name === 'id').map((a) => a.value)),
+    )
+    const verdicts = tokens
+      .filter((t) => t.name === 'a')
+      .map((token) => {
+        const span = token.location.attrs?.['href']
+        const raw = span === undefined ? '' : html.slice(span.startOffset, span.endOffset)
+        const value = token.attrs.find((a) => a.name === 'href')?.value ?? ''
+        return classifyUrl(raw, value, ids)
+      })
+    return { vs, grown, verdicts: verdicts.slice(0, vs.length), footer: verdicts[vs.length] }
+  }
+
+  test.each(REFUSED_BASES.map((b) => [b === '' ? '(empty)' : b, b] as const))(
+    'no spelling of %s is ever accepted',
+    (_label, base) => {
+      const { vs, verdicts } = spread(base)
+      expect(verdicts).toHaveLength(vs.length)
+      for (const [i, verdict] of verdicts.entries())
+        expect(verdict.accepted, `${vs[i].id}: ${JSON.stringify(vs[i].raw)}`).toBe(false)
+    },
+  )
+
+  test.each(ACCEPTED_BASES.map((b) => [b, b] as const))(
+    '%s is accepted spelled one way and no other',
+    (_label, base) => {
+      const { vs, verdicts, footer } = spread(base)
+      // Liveness first: without this the block is satisfied by a policy that refuses
+      // everything, which is the failure that looks exactly like success.
+      expect(verdicts[0].accepted, 'the identity spelling must be accepted').toBe(true)
+      expect(vs[0].id).toBe('identity')
+      expect(footer.accepted, "the artifact's own anchor must still be accepted").toBe(true)
+      for (const [i, verdict] of verdicts.entries())
+        if (i > 0)
+          expect(verdict.accepted, `${vs[i].id}: ${JSON.stringify(vs[i].raw)}`).toBe(false)
+    },
+  )
+
+  test.each([...REFUSED_BASES, ...ACCEPTED_BASES].map((b) => [b === '' ? '(empty)' : b, b] as const))(
+    'the rules refuse exactly the anchors the verdict refuses, for %s',
+    (_label, base) => {
+      const { grown, verdicts, footer } = spread(base)
+      const refusals = validateShell(Buffer.from(grown.html, 'utf8'), {
+        stage: 'artifact',
+        expectedCsp: grown.csp,
+      }).filter((r) => r.where.startsWith('a@'))
+      const expected = [...verdicts, footer].filter((v) => !v.accepted)
+      expect(refusals).toHaveLength(expected.length)
+      const wanted = new Set(expected.map((v) => RULE_FOR[v.reason]))
+      const fired = new Set(refusals.map((r) => r.rule))
+      expect([...fired].sort()).toEqual([...wanted].sort())
+    },
+  )
+
+  test('the generator produces the spellings this artifact was got around with', () => {
+    const js = variants('javascript:alert(1)')
+    // Pinned from the transform table: 1 identity + 165 singles + 40 capped pairs. A
+    // transform that stops producing anything changes this number instead of quietly
+    // shrinking the corpus.
+    expect(js).toHaveLength(206)
+    const spellings = js.map((v) => v.raw)
+    for (const form of [
+      'java\tscript:alert(1)',
+      '&#106;avascript:alert(1)',
+      '&#x6a;avascript:alert(1)',
+      'javascript&colon;alert(1)',
+      '&Tab;javascript:alert(1)',
+      'JaVaScRiPt:alert(1)',
+    ])
+      expect(spellings, form).toContain(form)
+
+    // The two the previous revision of this design would have accepted: it compared the
+    // DECODED value, and the parser decodes both of these into the allowed link.
+    const allowed = variants('https://attest-receipts.org/').map((v) => v.raw)
+    for (const form of ['&#104;ttps://attest-receipts.org/', 'https&colon;//attest-receipts.org/'])
+      expect(allowed, form).toContain(form)
   })
 })
