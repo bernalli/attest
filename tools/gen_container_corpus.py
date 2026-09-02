@@ -597,6 +597,7 @@ def _accept_cases() -> list[Case]:
 
 def _archive_level_reject_cases() -> list[Case]:
     honest = _pair()
+    honest_size_cd = sum(len(_central_record(entry, _payload(entry), 0)) for entry in honest)
     return [
         Case("too-short", Archive(entries=honest, truncate_at=10), "reject", "too-short"),
         Case(
@@ -662,6 +663,12 @@ def _archive_level_reject_cases() -> list[Case]:
             "directory-trailing-bytes",
         ),
         Case(
+            "counters-both-high",
+            Archive(entries=honest, n_disk=3, n_total=3),
+            "reject",
+            "directory-record-signature",
+        ),
+        Case(
             "too-many-entries",
             Archive(entries=honest),
             "reject",
@@ -676,7 +683,7 @@ def _archive_level_reject_cases() -> list[Case]:
         ),
         Case(
             "size-cd-short",
-            Archive(entries=honest, size_cd=len(build(Archive(entries=honest))) - 22 - 0 - 1),
+            Archive(entries=honest, size_cd=honest_size_cd - 1),
             "reject",
             "directory-misplaced",
         ),
@@ -840,9 +847,7 @@ def _record_level_reject_cases() -> list[Case]:
         ),
         Case(
             "data-runs-into-directory",
-            Archive(
-                entries=[Entry(name=RECEIPT_NAME, data=receipt_data, csize=len(receipt_data) + 64)]
-            ),
+            Archive(entries=[Entry(name=RECEIPT_NAME, data=receipt_data, method=8, csize=0x1000)]),
             "reject",
             "member-data-out-of-range",
             member=RECEIPT_NAME.decode(),
@@ -857,7 +862,7 @@ def _read_level_reject_cases() -> list[Case]:
     return [
         Case(
             "declared-member-over-cap",
-            Archive(entries=[Entry(name=RECEIPT_NAME, data=receipt_data, usize=5000)]),
+            Archive(entries=[Entry(name=RECEIPT_NAME, data=receipt_data, method=8, usize=5000)]),
             "reject",
             "declared-member-over-cap",
             member=RECEIPT_NAME.decode(),
@@ -909,7 +914,7 @@ def _read_level_reject_cases() -> list[Case]:
         ),
         Case(
             "usize-too-large",
-            Archive(entries=[Entry(name=RECEIPT_NAME, data=receipt_data, usize=5000)]),
+            Archive(entries=[Entry(name=RECEIPT_NAME, data=receipt_data, method=8, usize=5000)]),
             "reject",
             "member-size-mismatch",
             member=RECEIPT_NAME.decode(),
