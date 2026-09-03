@@ -88,13 +88,14 @@ jobs:
           GRANT_BINARY_SHA256: 3e669be258a2b79544cd478287c103fce25a763af85b27ab93a02b129e837837
         run: |
           install_pinned() {
-            name="$1"; version="$2"; want="$3"
+            local name="$1" version="$2" want="$3" installer
             installer="$(mktemp)"
             # Downloaded to a file, not piped: a pipe cannot be checksummed
             # before it is executed, which is the whole point of this step.
             curl -sSfL "https://raw.githubusercontent.com/anchore/${name}/${version}/install.sh" -o "$installer"
             echo "${want}  ${installer}" | sha256sum -c -
             sh "$installer" -b "$HOME/.local/bin" "${version}"
+            rm -f "$installer"
           }
           install_pinned syft "$SYFT_VERSION" "$SYFT_INSTALLER_SHA256"
           install_pinned grype "$GRYPE_VERSION" "$GRYPE_INSTALLER_SHA256"
@@ -117,6 +118,7 @@ jobs:
             echo "${GRANT_BINARY_SHA256}  ${HOME}/.local/bin/grant"
           } > "$binary_sums"
           sha256sum -c "$binary_sums"
+          rm -f "$binary_sums"
       - run: uv build
       - name: Assert + scan Python
         run: |
@@ -400,7 +402,9 @@ jobs:
               break
             fi
             echo "attempt ${attempt}/${attempts}: a registry does not serve ${VERSION} yet"
-            sleep "$delay"
+            # No wait after the final attempt: it delays the refusal without
+            # buying another chance for the registries to catch up.
+            test "$attempt" -eq "$attempts" || sleep "$delay"
           done
           test "$served" -eq 1 \
             || { echo "PyPI or npm does not serve ${VERSION} after ${attempts} attempts; not announcing it"; exit 1; }

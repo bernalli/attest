@@ -904,3 +904,59 @@ def test_the_tools_this_bench_needs_are_present() -> None:
         assert shutil.which(tool) is not None, (
             f"{tool} is missing: the negative tests below would pass for the wrong reason"
         )
+
+
+def test_the_retry_does_not_wait_after_its_final_attempt(tmp_path: Path) -> None:
+    """Counted, not timed: a stub `sleep` records each call, so the assertion is
+    about how many waits happen rather than about how long the test took."""
+    _stub_registries(tmp_path, None, None)
+    calls = tmp_path / "sleep-calls"
+    _stub_bin(tmp_path / "stubs", "sleep", f'echo "$1" >> "{calls}"')
+    env = {**_registry_env(tmp_path), "REGISTRY_ATTEMPTS": "3", "REGISTRY_RETRY_SECONDS": "7"}
+    result = _run(_registry_script(), tmp_path, env)
+    assert result.returncode != 0
+    waits = calls.read_text(encoding="utf-8").split() if calls.exists() else []
+    assert waits == ["7", "7"], (
+        f"3 attempts should wait twice, between them, not after the last one: got {waits}"
+    )
+
+
+def test_the_install_step_leaves_no_temporary_files_behind(tmp_path: Path) -> None:
+    """Each installer and the checksum list are fetched through `mktemp`. On a
+    throwaway runner leaking them is harmless; leaving them is still the kind of
+    thing that makes a later reader wonder which file is live."""
+    tmp = tmp_path / "tmp"
+    tmp.mkdir()
+    installer = tmp_path / "installer.sh"
+    installer.write_text(
+        "#!/bin/sh\n"
+        'bindir="$2"\n'
+        'mkdir -p "$bindir"\n'
+        'for t in syft grype grant; do printf "#!/bin/sh\\ntrue\\n" > "$bindir/$t"; '
+        'chmod 755 "$bindir/$t"; done\n',
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(installer.read_bytes()).hexdigest()
+    _stub_bin(
+        tmp_path / "stubs",
+        "curl",
+        'out=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac\n'
+        "done\n"
+        f'cp "{installer}" "$out"',
+    )
+    env = _install_env(
+        tmp_path,
+        SYFT_INSTALLER_SHA256=digest,
+        GRYPE_INSTALLER_SHA256=digest,
+        GRANT_INSTALLER_SHA256=digest,
+    )
+    # The real binaries are not here, so the digest pins would refuse them: this
+    # test is about the temporaries, so it stops after the installers have run.
+    script = str(_install_step()["run"])
+    script = script[: script.index("binary_sums=")]
+    env["TMPDIR"] = str(tmp)
+    result = _run(script, tmp_path, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert list(tmp.iterdir()) == [], f"temporary files left behind: {list(tmp.iterdir())}"
