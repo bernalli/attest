@@ -2745,6 +2745,27 @@ def _build_disclosure(args: argparse.Namespace) -> verify.Disclosure | None:
     )
 
 
+def _read_rail_array(path: Path | None, flag: str) -> list[Any] | None:
+    """Read one of the two array-shaped evidence rails, or nothing.
+
+    No content validation happens here by design: a malformed claim inside a
+    well-formed array is the VERIFIER's to refuse, claim by claim, and
+    pre-filtering here would hide from the operator the very refusal the
+    verifier exists to make. Only the container is this function's business —
+    and an oversized array is forwarded whole, so the verifier reports its own
+    ceiling instead of being silently trimmed.
+    """
+    if path is None:
+        return None
+    value = _read_strict_json(path, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name=flag)
+    if not isinstance(value, list):
+        raise CliUsageError(
+            f"{flag} file {path} must contain a JSON array of claims; a file containing "
+            "`null` is not an opt-out — omit the flag instead"
+        )
+    return value
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     try:
         envelope_bytes = args.envelope.read_bytes()
@@ -2822,6 +2843,51 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             'wrap a lone publisher authorization document as {"authorizations": [<document>]}'
         )
 
+    # The three caller-side rails of v0.2 §17/§19.2. They are read strictly
+    # (`canon.loads_strict`, D11) because they are new surface: a duplicate
+    # member in a claim would otherwise collapse onto whichever copy the
+    # parser kept, and the claim that authenticates would not be the claim the
+    # operator read.
+    #
+    # The guard is on the FLAG, not on the parsed value — the same rule
+    # `--authority-view` above states and for the same reason: a file
+    # containing `null` parses to None, and testing the parsed value would
+    # read a channel the caller DID supply as one they never supplied,
+    # silently opting them out of the check they asked for.
+    if args.revocation_evidence is not None and args.revocations is None:
+        # Checked before the file is touched: evidence proves that one of the
+        # records in --revocations was logged and anchored in time, so with no
+        # records supplied there is nothing for it to be evidence OF — whether
+        # or not that file happens to exist and parse. Reading first would
+        # report "file not found" for a mistake that is not about the file.
+        raise CliUsageError(
+            "--revocation-evidence needs --revocations: it proves that one of those "
+            "records was logged and anchored before the refund-window deadline"
+        )
+
+    transfer_view = _read_rail_array(args.transfer_view, "--transfer-view")
+    compromise_view = _read_rail_array(args.compromise_view, "--compromise-view")
+    revocation_evidence = None
+    if args.revocation_evidence is not None:
+        revocation_evidence = _read_strict_json(
+            args.revocation_evidence,
+            max_bytes=_MAX_STAGE2_INPUT_BYTES["json"],
+            input_name="--revocation-evidence",
+        )
+        if not isinstance(revocation_evidence, dict):
+            raise CliUsageError(
+                f"--revocation-evidence file {args.revocation_evidence} must contain ONE "
+                "JSON object: the log evidence bundle for the refund-window record in "
+                "--revocations; a file containing `null` is not an opt-out — omit the "
+                "flag instead"
+            )
+        if args.log_keys is None or args.anchor_policy is None:
+            print(
+                "warning: --revocation-evidence is only evaluated by a Stage-2-capable "
+                "verifier; pass --log-keys and --anchor-policy for it to be read",
+                file=sys.stderr,
+            )
+
     result = verify.verify(
         envelope_bytes,
         trust_store,
@@ -2830,6 +2896,9 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         transparency=transparency_evidence,
         log_keys=log_keys,
         anchor_policy=anchor_policy,
+        revocation_evidence=revocation_evidence,
+        transfer_view=transfer_view,
+        compromise_view=compromise_view,
         witness_policy=witness_policy,
         grant_view=grant_view,
         authority_view=authority_view,
@@ -3609,6 +3678,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("envelope", type=Path)
     p.add_argument("--trust-dir", required=True, type=Path, help="directory of key manifest files")
     p.add_argument("--revocations", type=Path, default=None, help="JSON file: revocation records")
+    p.add_argument(
+        "--transfer-view",
+        type=Path,
+        default=None,
+        help=(
+            "JSON file: array of v0.2 §17 transfer claims [{record, evidence}], supplied by "
+            "the party running the verifier — never taken from the presenter's bundle"
+        ),
+    )
+    p.add_argument(
+        "--compromise-view",
+        type=Path,
+        default=None,
+        help=(
+            "JSON file: array of v0.2 §19.2 compromise claims [{manifest, evidence}]. "
+            "Without --log-keys and --anchor-policy a compromise view can only RESTRICT "
+            "the verdict: no cutoff can be established, so no receipt can be rescued"
+        ),
+    )
+    p.add_argument(
+        "--revocation-evidence",
+        type=Path,
+        default=None,
+        help=(
+            "JSON file: ONE log evidence bundle {entry, leaf_index, tree_size, "
+            "inclusion_proof, checkpoint[, anchors]} for a refund-window record in "
+            "--revocations. Without it, a Stage-2-capable verifier ignores such a record"
+        ),
+    )
     p.add_argument("--disclose-identifier", default=None)
     p.add_argument("--disclose-type", default=None)
     p.add_argument("--disclose-salt", type=Path, default=None)
