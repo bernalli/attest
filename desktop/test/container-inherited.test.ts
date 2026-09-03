@@ -6,8 +6,13 @@
 // buyer's own single-file verifier, and a claim of inheritance that nobody
 // measures is a claim about an import statement, not about the artifact.
 //
-// Every refusing leaf of the shared corpus is fed through `intake` exactly as
-// the app feeds it, under a `.attest` name.
+// The refusing leaves of the shared corpus are fed through `intake` exactly as
+// the app feeds it, under a `.attest` name — 56 of the 63 that refuse, and the
+// seven left out are left out on purpose and named below: two do not open with
+// the archive signature, so the app routes them elsewhere before the container
+// reader sees them, and five are refused for a cap, which depends on the caps
+// the page sets rather than on the reading. Saying "every refusing leaf" would
+// be an easier sentence and a false one.
 
 import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
