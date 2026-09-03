@@ -25,6 +25,8 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMITTED = REPO_ROOT / "docs" / "spec" / "vectors"
@@ -87,7 +89,9 @@ def test_hand_authored_files_are_still_there(regenerated: dict[str, bytes]) -> N
         assert name not in regenerated, f"{name} is generated after all — stop exempting it"
 
 
-def test_drift_reports_a_leaf_edited_by_hand(tmp_path: Path) -> None:
+def test_drift_reports_a_leaf_edited_by_hand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The gate's own teeth, measured against the committed tree itself so the
     answer does not depend on regeneration agreeing: an edited byte, a missing
     leaf and an invented one must each come back named."""
@@ -110,3 +114,55 @@ def test_drift_reports_a_leaf_edited_by_hand(tmp_path: Path) -> None:
     # A corpus directory that is not there at all is drift the cheap way:
     # `check` says so without minting a second corpus to compare against.
     assert gen_vectors.check(tmp_path / "absent") == 1
+
+    # Exercise the boundary that matters to callers: a non-empty drift must
+    # become a failing process status, not merely a diagnostic on stderr.
+    committed_root = tmp_path / "committed"
+    committed_leaf = committed_root / "01-valid-minimal"
+    committed_leaf.mkdir(parents=True)
+    (committed_root / "README.md").write_text("hand-authored\n", encoding="utf-8")
+    (committed_leaf / "expected.json").write_bytes(b'{"ok":true}\n')
+
+    def generate_different(fresh: Path) -> int:
+        fresh_leaf = fresh / "01-valid-minimal"
+        fresh_leaf.mkdir(parents=True)
+        (fresh_leaf / "expected.json").write_bytes(b'{"ok":false}\n')
+        return 1
+
+    monkeypatch.setattr(gen_vectors, "generate", generate_different)
+    assert gen_vectors.check(committed_root) == 1
+
+
+_TREE = st.dictionaries(
+    keys=st.text(min_size=1, max_size=12),
+    values=st.binary(max_size=24),
+    max_size=8,
+)
+
+
+@given(committed=_TREE, produced=_TREE)
+def test_drift_is_empty_exactly_when_the_trees_are_equal(
+    committed: dict[str, bytes], produced: dict[str, bytes]
+) -> None:
+    assert (gen_vectors.drift(committed, produced) == []) == (committed == produced)
+
+
+def test_tree_refuses_symlinks_even_when_the_target_bytes_match(tmp_path: Path) -> None:
+    """A leaf replaced by a link to another leaf with identical bytes is a
+    different tree, and a comparison that resolves the link says otherwise."""
+    target = tmp_path / "target.json"
+    target.write_bytes(b"{}\n")
+    alias = tmp_path / "alias.json"
+    alias.symlink_to(target.name)
+
+    with pytest.raises(ValueError, match=r"symlink: alias\.json$"):
+        gen_vectors._tree(tmp_path)
+
+
+def test_check_refuses_a_symlinked_vector_root(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "vectors"
+    alias.symlink_to(real, target_is_directory=True)
+
+    assert gen_vectors.check(alias) == 1

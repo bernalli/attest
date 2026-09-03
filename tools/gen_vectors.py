@@ -8910,12 +8910,18 @@ def _tree(root: Path, *, exclude_hand_authored: bool = True) -> dict[str, bytes]
     and every comparison would still be equal, because both sides had dropped
     the name before comparing.
     """
-    return {
-        str(path.relative_to(root)): path.read_bytes()
-        for path in sorted(root.rglob("*"))
-        if path.is_file()
-        and (not exclude_hand_authored or str(path.relative_to(root)) not in HAND_AUTHORED_FILES)
-    }
+    files: dict[str, bytes] = {}
+    for path in sorted(root.rglob("*")):
+        relative = str(path.relative_to(root))
+        # `is_file()` and `read_bytes()` both follow symlinks, so a leaf
+        # replaced by a link to another leaf with the same bytes compares equal
+        # while the tree is structurally different. The entry TYPE is part of
+        # what a corpus is; refuse rather than resolve.
+        if path.is_symlink():
+            raise ValueError(f"vector tree contains symlink: {relative}")
+        if path.is_file() and (not exclude_hand_authored or relative not in HAND_AUTHORED_FILES):
+            files[relative] = path.read_bytes()
+    return files
 
 
 def drift(committed: dict[str, bytes], produced: dict[str, bytes]) -> list[str]:
@@ -8929,15 +8935,19 @@ def drift(committed: dict[str, bytes], produced: dict[str, bytes]) -> list[str]:
 
 def check(out: Path) -> int:
     """Regenerate into a temporary directory and compare byte for byte."""
-    if not out.is_dir():
+    if out.is_symlink() or not out.is_dir():
         print(f"vector directory {out} does not exist", file=sys.stderr)
         return 1
-    committed = _tree(out)
-    missing_by_hand = [name for name in HAND_AUTHORED_FILES if not (out / name).is_file()]
-    with tempfile.TemporaryDirectory() as tmp:
-        fresh = Path(tmp) / "vectors"
-        generate(fresh)
-        produced = _tree(fresh, exclude_hand_authored=False)
+    try:
+        committed = _tree(out)
+        missing_by_hand = [name for name in HAND_AUTHORED_FILES if not (out / name).is_file()]
+        with tempfile.TemporaryDirectory() as tmp:
+            fresh = Path(tmp) / "vectors"
+            generate(fresh)
+            produced = _tree(fresh, exclude_hand_authored=False)
+    except ValueError as exc:
+        print(f"vector drift under {out}:\n  {exc}", file=sys.stderr)
+        return 1
     names = drift(committed, produced)
     if names or missing_by_hand:
         print(f"vector drift under {out}:", file=sys.stderr)

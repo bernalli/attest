@@ -112,28 +112,44 @@ def test_refresh_readme_refuses_anything_but_a_shareable_bundle(tmp_path: Path) 
 # --- the bundle actually published, not a fresh one --------------------------
 
 
-def _site_log_key() -> tlog.LogKey:
-    """The log key the published verifier pins, read from the page's own source.
+def _site_log_keys() -> list[tlog.LogKey]:
+    """Every log key the published verifier pins, read from the page's own source.
 
     A copy written out here would be a second pin that can disagree with the
-    one the browser uses, which is the failure this whole file is about.
+    one the browser uses, which is the failure this whole file is about. But
+    reading has to be exact, and a loose pattern is worse than a copy: a
+    non-anchored search over the whole file will happily start at a string that
+    merely looks like a pin — a comment, an older value left behind — and run on
+    into the fields of the real entry, reconstructing a key that is pinned
+    nowhere. Then the browser consumes one key and this test blesses another.
+
+    So: find the `LOG_KEYS` array, take each object inside it whole, and read
+    the four fields from within that object only. Every entry is returned,
+    because a second pin is a second key the page would accept, not a spare.
     """
     source = TRUSTED_LOG_SOURCE.read_text(encoding="utf-8")
-    match = re.search(
-        r'origin:\s*"([^"]+)",\s*name:\s*"([^"]+)",'
-        r'.*?ed25519Pub:\s*b64uDecode\(\s*"([^"]+)"'
-        r'.*?mldsaPub:\s*b64uDecode\(\s*"([^"]+)"',
+    block = re.search(
+        r"^export const LOG_KEYS\b[^=]*=\s*\[(.*?)^\]",
         source,
-        re.DOTALL,
+        re.DOTALL | re.MULTILINE,
     )
-    assert match is not None, f"cannot read the log key pinned by {TRUSTED_LOG_SOURCE.name}"
-    origin, name, ed25519_pub, mldsa_pub = match.groups()
-    return tlog.LogKey(
-        origin=origin,
-        name=name,
-        ed25519_pub=keys.b64u_decode(ed25519_pub),
-        mldsa_pub=keys.b64u_decode(mldsa_pub),
-    )
+    assert block is not None, f"cannot find the LOG_KEYS array in {TRUSTED_LOG_SOURCE.name}"
+
+    pinned: list[tlog.LogKey] = []
+    for entry in re.findall(r"\{([^{}]*)\}", block.group(1)):
+        fields = dict(re.findall(r'(\w+):\s*(?:b64uDecode\(\s*)?"([^"]+)"', entry))
+        missing = {"origin", "name", "ed25519Pub", "mldsaPub"} - set(fields)
+        assert not missing, f"a LOG_KEYS entry is missing {sorted(missing)}"
+        pinned.append(
+            tlog.LogKey(
+                origin=fields["origin"],
+                name=fields["name"],
+                ed25519_pub=keys.b64u_decode(fields["ed25519Pub"]),
+                mldsa_pub=keys.b64u_decode(fields["mldsaPub"]),
+            )
+        )
+    assert pinned, f"{TRUSTED_LOG_SOURCE.name} pins no log key at all"
+    return pinned
 
 
 def _committed_receipt() -> tuple[bundle.ImportedBundle, dict[str, object]]:
@@ -202,7 +218,7 @@ def test_committed_sample_carries_the_evidence_the_demo_promises() -> None:
         json.dumps(receipt).encode("utf-8"),
         imported.trust_store,
         transparency=evidence,
-        log_keys=[_site_log_key()],
+        log_keys=_site_log_keys(),
         anchor_policy=anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
     )
     assert result.transparency == "logged"
