@@ -4,6 +4,18 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
+if importlib.util.find_spec("dilithium_py") is None:  # pragma: no cover - dev extra present
+    # Importing the generator derives ML-DSA key material at module scope, so
+    # without the dev-only oracle this file is a collection ERROR rather than a
+    # skip — which turns "the gate cannot run here" into "the run is broken".
+    pytest.skip(
+        "the vector generator helpers need the dev-only dilithium-py oracle; "
+        "install the dev extra (uv sync --extra dev) to run them",
+        allow_module_level=True,
+    )
+
 _TOOLS = Path(__file__).resolve().parent.parent / "tools" / "gen_vectors.py"
 _spec = importlib.util.spec_from_file_location("gen_vectors", _TOOLS)
 assert _spec is not None and _spec.loader is not None
