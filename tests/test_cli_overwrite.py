@@ -850,7 +850,16 @@ def _raw_manifest_bundle(
     tmp_path: Path, name: str, manifest_blobs: list[tuple[str, dict[str, object]]]
 ) -> Path:
     bundle_path = tmp_path / f"{name}.attest"
+    receipt_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
     with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # A bundle is its receipts: an archive carrying manifests alone is
+        # refused as not being a bundle at all, before any trust-store path is
+        # built. These fixtures are about the manifests, so they carry the one
+        # receipt that gets them as far as the check they exist to exercise.
+        zf.writestr(
+            f"receipts/{receipt_id}.attest.json",
+            json.dumps({"payload": {"receipt_id": receipt_id}}),
+        )
         for member_name, blob in manifest_blobs:
             zf.writestr(f"manifests/{member_name}.json", json.dumps(blob))
     return bundle_path

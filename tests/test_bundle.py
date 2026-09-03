@@ -14,12 +14,16 @@ import html
 import json
 import os
 import re
+import subprocess
+import sys
 import warnings as warnings_module
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from attest import bundle, buyer_surface, canon, issue, keys, manifests, verify
 from tests.helpers import make_payload
@@ -621,6 +625,15 @@ def _make_raw_zip(tmp_path: Path, members: dict[str, bytes], name: str) -> Path:
     return path
 
 
+def _minimal_receipt_members() -> dict[str, bytes]:
+    receipt_id = "01HZX0000000000000000000AA"
+    return {
+        f"receipts/{receipt_id}.attest.json": canon.canonical_bytes(
+            {"payload": {"receipt_id": receipt_id}}
+        )
+    }
+
+
 def test_import_rejects_member_over_per_member_cap(tmp_path: Path) -> None:
     """A single member that decompresses past max_member_bytes is refused.
     This verifies the per-member cap is enforced from bytes actually
@@ -674,6 +687,68 @@ def test_import_caps_private_salts_json(tmp_path: Path) -> None:
         # 256 KiB cap: comfortably above every legit .attest member, far below the
         # 2 MiB salts bomb, so the failure is the salts file, not the .attest.
         bundle.import_bundle(attest_path, evil_private, max_member_bytes=256 * 1024)
+
+
+def test_the_snapshot_of_a_container_is_bounded(tmp_path: Path) -> None:
+    """The snapshot is a copy, so it is bounded before it is written: an
+    unbounded copy of an attacker-sized file is a new denial of service in
+    place of the old one. The bound speaks with the refusal this repo already
+    has for an archive over the aggregate cap — the snapshot decides before a
+    single byte is inflated, which is where that refusal already lives."""
+    oversized = tmp_path / "oversized.attest"
+    oversized.write_bytes(b"x" * 65)
+
+    with pytest.raises(bundle.BundleError, match="aggregate decompression cap"):
+        with bundle._open_container(oversized, bundle._SnapshotBudget(64)):
+            pass  # pragma: no cover — the bound refuses before the body runs
+
+
+def test_the_snapshot_bound_is_shared_by_a_container_and_its_private_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One import, one bound: a hostile pair cannot spend it twice."""
+    receipt_id = "01HZX0000000000000000000AA"
+    public = _make_raw_zip(tmp_path, _minimal_receipt_members(), "snapshot-budget.attest")
+    private = _make_raw_zip(
+        tmp_path,
+        {"salts.json": canon.canonical_bytes({receipt_id: keys.b64u(SALT_A)})},
+        "snapshot-budget.private.attest",
+    )
+    limit = max(public.stat().st_size, private.stat().st_size)
+    assert public.stat().st_size + private.stat().st_size > limit
+    monkeypatch.setattr(bundle, "_MAX_TOTAL_BYTES", limit)
+
+    with pytest.raises(bundle.BundleError, match="aggregate decompression cap"):
+        bundle.import_bundle(public, private)
+
+
+def test_import_shares_the_aggregate_budget_with_the_private_sibling(
+    tmp_path: Path,
+) -> None:
+    receipt_id = "01HZX0000000000000000000AA"
+    receipt = canon.canonical_bytes({"payload": {"receipt_id": receipt_id}})
+    salts = canon.canonical_bytes({receipt_id: keys.b64u(SALT_A)})
+    limit = max(len(receipt), len(salts))
+    assert len(receipt) + len(salts) > limit
+
+    public = _make_raw_zip(
+        tmp_path,
+        {f"receipts/{receipt_id}.attest.json": receipt},
+        "shared-budget.attest",
+    )
+    private = _make_raw_zip(
+        tmp_path,
+        {"salts.json": salts},
+        "shared-budget.private.attest",
+    )
+
+    with pytest.raises(bundle.BundleError, match="aggregate cap"):
+        bundle.import_bundle(
+            public,
+            private,
+            max_member_bytes=limit,
+            max_total_bytes=limit,
+        )
 
 
 def test_import_happy_path_unaffected_by_default_caps(tmp_path: Path) -> None:
@@ -1019,6 +1094,12 @@ def test_import_refuses_an_empty_file(tmp_path: Path) -> None:
         bundle.import_bundle(empty)
 
 
+def test_import_refuses_a_canonical_bundle_with_zero_receipts(tmp_path: Path) -> None:
+    empty_bundle = _make_raw_zip(tmp_path, {"README.html": b"<p>empty</p>"}, "zero-receipts.attest")
+    with pytest.raises(bundle.BundleError, match="no receipts found"):
+        bundle.import_bundle(empty_bundle)
+
+
 def test_import_still_reads_the_private_sibling_for_salts(tmp_path: Path) -> None:
     """The private archive legitimately carries `salts.json`: the refusal above
     is about the SHAREABLE half, and this is the pair that must keep working."""
@@ -1029,6 +1110,265 @@ def test_import_still_reads_the_private_sibling_for_salts(tmp_path: Path) -> Non
     )
     imported = bundle.import_bundle(attest_path, private_path)
     assert imported.salts[receipt_id] == SALT_A
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        pytest.param(b'{"unfinished":', id="truncated"),
+        pytest.param(b"\xef\xbb\xbf{}", id="bom"),
+        pytest.param(b'{"float":1.5}', id="float"),
+        pytest.param(b'{"duplicate":1,"duplicate":2}', id="duplicate-key"),
+    ],
+)
+@pytest.mark.parametrize(
+    "member_name",
+    [
+        "receipts/01HZX0000000000000000000AA.attest.json",
+        "manifests/store.example.com.json",
+        "proofs/01HZX0000000000000000000AA.json",
+    ],
+    ids=["receipt", "manifest", "proof"],
+)
+def test_import_normalizes_every_noncanonical_json_family(
+    tmp_path: Path, member_name: str, malformed: bytes
+) -> None:
+    members = {} if member_name.startswith("receipts/") else _minimal_receipt_members()
+    members[member_name] = malformed
+    hostile = _make_raw_zip(tmp_path, members, "noncanonical-json.attest")
+
+    with pytest.raises(bundle.BundleError, match="not valid canonical JSON"):
+        bundle.import_bundle(hostile)
+
+
+_JSON_TEXT = st.text(alphabet=st.characters(exclude_categories=("Cs",)), max_size=32)
+_JSON_SCALAR = st.one_of(
+    st.none(),
+    st.booleans(),
+    st.integers(min_value=-(2**53) + 1, max_value=2**53 - 1),
+    _JSON_TEXT,
+)
+_NON_OBJECT_JSON = st.one_of(_JSON_SCALAR, st.lists(_JSON_SCALAR, max_size=4))
+_NON_LIST_JSON = st.one_of(
+    _JSON_SCALAR,
+    st.dictionaries(_JSON_TEXT, _JSON_SCALAR, max_size=4),
+)
+_NON_INTEGER_JSON = st.one_of(
+    st.none(),
+    st.booleans(),
+    _JSON_TEXT,
+    st.lists(_JSON_SCALAR, max_size=4),
+    st.dictionaries(_JSON_TEXT, _JSON_SCALAR, max_size=4),
+)
+
+
+@given(malformed=_NON_OBJECT_JSON)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_skips_every_non_object_manifest_shape(tmp_path: Path, malformed: object) -> None:
+    members = _minimal_receipt_members()
+    members["manifests/store.example.com.json"] = canon.canonical_bytes(malformed)
+    hostile = _make_raw_zip(tmp_path, members, "manifest-top-level.attest")
+
+    imported = bundle.import_bundle(hostile)
+
+    assert imported.trust_store.manifests == {}
+    assert imported.artifact_manifests == {}
+
+
+@given(
+    field_name=st.sampled_from(["key_manifests", "artifact_manifests"]),
+    malformed=_NON_LIST_JSON,
+)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_skips_every_non_array_manifest_collection(
+    tmp_path: Path, field_name: str, malformed: object
+) -> None:
+    members = _minimal_receipt_members()
+    members["manifests/store.example.com.json"] = canon.canonical_bytes(
+        {"issuer": ISSUER, field_name: malformed}
+    )
+    hostile = _make_raw_zip(tmp_path, members, "manifest-collection.attest")
+
+    imported = bundle.import_bundle(hostile)
+
+    assert imported.trust_store.manifests == {}
+    assert imported.artifact_manifests == {}
+
+
+@given(
+    field_name=st.sampled_from(["key_manifests", "artifact_manifests"]),
+    malformed=_NON_OBJECT_JSON,
+)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_filters_every_non_object_manifest_entry(
+    tmp_path: Path, field_name: str, malformed: object
+) -> None:
+    members = _minimal_receipt_members()
+    members["manifests/store.example.com.json"] = canon.canonical_bytes(
+        {"issuer": ISSUER, field_name: [malformed]}
+    )
+    hostile = _make_raw_zip(tmp_path, members, "manifest-entry.attest")
+
+    imported = bundle.import_bundle(hostile)
+
+    assert imported.trust_store.manifests == {}
+    assert imported.artifact_manifests == {}
+
+
+@given(
+    family=st.sampled_from(["key", "artifact"]),
+    malformed_version=_NON_INTEGER_JSON,
+)
+@settings(
+    max_examples=40,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_orders_every_non_integer_manifest_version_below_valid_versions(
+    tmp_path: Path, family: str, malformed_version: object
+) -> None:
+    if family == "key":
+        manifest_blob = {
+            "issuer": ISSUER,
+            "key_manifests": [
+                {"manifest_version": 1, "marker": "valid"},
+                {"manifest_version": malformed_version, "marker": "malformed"},
+            ],
+        }
+    else:
+        manifest_blob = {
+            "issuer": ISSUER,
+            "artifact_manifests": [
+                {"series": "example", "version": 1, "marker": "valid"},
+                {
+                    "series": "example",
+                    "version": malformed_version,
+                    "marker": "malformed",
+                },
+            ],
+        }
+    members = _minimal_receipt_members()
+    members["manifests/store.example.com.json"] = canon.canonical_bytes(manifest_blob)
+    hostile = _make_raw_zip(tmp_path, members, "manifest-version.attest")
+
+    imported = bundle.import_bundle(hostile)
+
+    if family == "key":
+        assert imported.trust_store.manifests[ISSUER]["marker"] == "valid"
+    else:
+        assert imported.artifact_manifests["example"][-1]["marker"] == "valid"
+
+
+def _import_with_raw_salts(tmp_path: Path, raw_salts: bytes) -> bundle.ImportedBundle:
+    public = _make_raw_zip(tmp_path, _minimal_receipt_members(), "salts-public.attest")
+    private = _make_raw_zip(tmp_path, {"salts.json": raw_salts}, "salts-private.private.attest")
+    return bundle.import_bundle(public, private)
+
+
+def test_import_refuses_a_private_bundle_without_salts_json(tmp_path: Path) -> None:
+    public = _make_raw_zip(tmp_path, _minimal_receipt_members(), "missing-salts.attest")
+    private = _make_raw_zip(tmp_path, {"keys/placeholder": b""}, "missing-salts.private.attest")
+
+    with pytest.raises(bundle.BundleError, match=r"missing salts\.json"):
+        bundle.import_bundle(public, private)
+
+
+@given(malformed=_NON_OBJECT_JSON)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_non_object_salts_shape(tmp_path: Path, malformed: object) -> None:
+    with pytest.raises(bundle.BundleError, match="must be an object"):
+        _import_with_raw_salts(tmp_path, canon.canonical_bytes(malformed))
+
+
+@given(
+    receipt_id=_JSON_TEXT.filter(
+        lambda value: re.fullmatch(r"[0-7][0-9A-HJKMNP-TV-Z]{25}", value) is None
+    )
+)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_non_ulid_salts_key(tmp_path: Path, receipt_id: str) -> None:
+    raw_salts = canon.canonical_bytes({receipt_id: keys.b64u(SALT_A)})
+
+    with pytest.raises(bundle.BundleError, match="uppercase ULID"):
+        _import_with_raw_salts(tmp_path, raw_salts)
+
+
+@given(
+    malformed=st.one_of(
+        st.none(),
+        st.booleans(),
+        st.integers(min_value=-(2**53) + 1, max_value=2**53 - 1),
+        st.lists(st.none()),
+    )
+)
+@settings(
+    max_examples=20,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_non_string_salt_value(tmp_path: Path, malformed: object) -> None:
+    raw_salts = canon.canonical_bytes({"01HZX0000000000000000000AA": malformed})
+
+    with pytest.raises(bundle.BundleError, match="base64url strings"):
+        _import_with_raw_salts(tmp_path, raw_salts)
+
+
+@given(raw_salt=st.binary(min_size=0, max_size=64).filter(lambda value: len(value) != 16))
+@settings(
+    max_examples=40,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_canonically_encoded_salt_of_the_wrong_length(
+    tmp_path: Path, raw_salt: bytes
+) -> None:
+    raw_salts = canon.canonical_bytes({"01HZX0000000000000000000AA": keys.b64u(raw_salt)})
+
+    with pytest.raises(bundle.BundleError, match="non-16-byte salt"):
+        _import_with_raw_salts(tmp_path, raw_salts)
+
+
+@given(raw_salt=st.binary(min_size=16, max_size=16), padding=st.sampled_from(["=", "=="]))
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_padded_encoding_of_a_valid_salt(
+    tmp_path: Path, raw_salt: bytes, padding: str
+) -> None:
+    raw_salts = canon.canonical_bytes({"01HZX0000000000000000000AA": keys.b64u(raw_salt) + padding})
+
+    with pytest.raises(bundle.BundleError, match="non-canonical"):
+        _import_with_raw_salts(tmp_path, raw_salts)
+
+
+@pytest.mark.parametrize("encoded", ["!", "***", "é"])
+def test_import_refuses_salt_text_outside_base64url(tmp_path: Path, encoded: str) -> None:
+    raw_salts = canon.canonical_bytes({"01HZX0000000000000000000AA": encoded})
+
+    with pytest.raises(bundle.BundleError, match=r"base64url|non-canonical"):
+        _import_with_raw_salts(tmp_path, raw_salts)
 
 
 def test_import_accepts_an_archive_with_a_gap_between_members(tmp_path: Path) -> None:
@@ -1134,3 +1474,48 @@ def test_a_refusal_survives_the_unmapping_of_the_container() -> None:
         with bundle._open_container(Path(__file__)) as buf:
             held = memoryview(buf)  # noqa: F841 — an export alive at closing time
             raise bundle.BundleError("the refusal the caller asked for")
+
+
+def test_a_concurrent_truncation_cannot_kill_the_import_process(
+    tmp_path: Path,
+) -> None:
+    """The source is truncated by another process after its buffer is ready.
+
+    The subprocess boundary is part of the assertion: mapping the caller's inode
+    makes the access die from SIGBUS, which no in-process pytest assertion could
+    observe safely. A stable snapshot either imports or raises BundleError; this
+    fixture is complete before truncation, so it imports.
+    """
+    source = _make_raw_zip(tmp_path, _minimal_receipt_members(), "mutable.attest")
+    program = """
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+from attest import bundle
+
+source = Path(sys.argv[1])
+original_members = bundle._members
+
+def truncate_source_then_read_snapshot(buf, **kwargs):
+    subprocess.run(
+        [sys.executable, "-c", "import os,sys; os.truncate(sys.argv[1], 0)", str(source)],
+        check=True,
+    )
+    return original_members(buf, **kwargs)
+
+bundle._members = truncate_source_then_read_snapshot
+imported = bundle.import_bundle(source)
+print(f"IMPORTED {len(imported.receipts)}")
+"""
+
+    completed = subprocess.run(  # noqa: S603 - fixed interpreter and local fixture
+        [sys.executable, "-c", program, str(source)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "IMPORTED 1"

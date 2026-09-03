@@ -53,6 +53,7 @@ import mmap
 import os
 import re
 import stat
+import tempfile
 import zipfile
 from collections.abc import Buffer, Iterator
 from dataclasses import dataclass, field
@@ -72,6 +73,7 @@ _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _MAX_MEMBER_BYTES = 64 * 1024 * 1024  # 64 MiB per decompressed member
 _MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # 1 GiB decompressed across one bundle
 _MAX_ENTRIES = 100_000  # central-directory entry count
+_SNAPSHOT_CHUNK = 1024 * 1024  # bytes copied per read while snapshotting a container
 _RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 #: The placeholders `_render_readme` substitutes, matched in a single pass.
@@ -473,16 +475,65 @@ _PRIVATE_MSG = (
 )
 
 
+class _SnapshotBudget:
+    """Bound the bytes copied into stable storage while snapshotting containers.
+
+    A snapshot is a copy, and an unbounded copy of an attacker-sized file would
+    be a denial of service in place of the one the snapshot removes. One import
+    holds one budget, and the `.attest` and its `.private.attest` sibling spend
+    it together — the same rule the decompression budget already follows.
+    """
+
+    __slots__ = ("max_bytes", "spent")
+
+    def __init__(self, max_bytes: int) -> None:
+        self.max_bytes = max_bytes
+        self.spent = 0
+
+
 @contextlib.contextmanager
-def _open_container(path: Path) -> Iterator[Buffer]:
-    """Map a container read-only, so the whole-buffer model the container reader
-    needs costs no copy of a large bundle. An empty file cannot be mapped, and
-    must still earn a verdict about the container rather than an OSError."""
-    with open(path, "rb") as fh:
-        if os.fstat(fh.fileno()).st_size == 0:
+def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterator[Buffer]:
+    """Map a bounded snapshot of a container, so the whole-buffer model the
+    container reader needs costs no copy of a large bundle in memory.
+
+    The snapshot is what makes the map safe. Mapping the caller's own inode
+    hands whoever can write that file a way to end this process: shortening it
+    while a mapped page is read raises SIGBUS, which arrives outside Python's
+    exception boundary, so neither this module nor its caller can turn it back
+    into a refusal. Copying the bytes into a private temporary file first gives
+    the map an inode nobody else holds; a truncation of the source then lands
+    before or during the copy, where it is an ordinary short read and the
+    archive earns an ordinary verdict. The copy goes to a file rather than to
+    memory so that snapshotting cannot be turned into an allocation of the
+    attacker's choosing, and it is bounded besides.
+
+    An empty snapshot cannot be mapped, and must still earn a verdict about the
+    container rather than an OSError.
+    """
+    if budget is None:
+        budget = _SnapshotBudget(_MAX_TOTAL_BYTES)
+    with open(path, "rb") as fh, tempfile.TemporaryFile() as snapshot:
+        while True:
+            remaining = budget.max_bytes - budget.spent
+            # One byte past what is left is all it takes to know the source is
+            # over the bound; nothing beyond it is ever read.
+            chunk = fh.read(min(_SNAPSHOT_CHUNK, remaining + 1))
+            if not chunk:
+                break
+            if len(chunk) > remaining:
+                # The refusal this repo already has for an archive over the
+                # aggregate cap, decided — as that one is — before a single
+                # byte is inflated.
+                raise BundleError(container.MESSAGES["declared-total-over-cap"])
+            snapshot.write(chunk)
+            budget.spent += len(chunk)
+
+        snapshot.flush()
+        length = snapshot.tell()
+        if length == 0:
             yield b""
             return
-        mapped = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+        mapped = mmap.mmap(snapshot.fileno(), length, access=mmap.ACCESS_READ)
         try:
             yield mapped
         except BaseException:
@@ -540,11 +591,32 @@ def _read(buf: Buffer, member: container.Member, budget: container.ReadBudget) -
         raise _as_bundle_error(error) from None
 
 
-def _loads(data: bytes) -> Any:
+def _loads(data: bytes, *, label: str) -> Any:
     """Parse bundle-internal JSON through the strict canonical parser (rejects
     duplicate keys, floats, BOMs) so imported trust material matches what the
-    verifier will accept (2026-07-13 review, finding 9)."""
-    return canon.loads_strict(data)
+    verifier will accept (2026-07-13 review, finding 9).
+
+    Every byte here came out of an attacker-supplied archive, so the parser's
+    own error is a verdict about that archive and must reach the caller as one:
+    a `CanonError` escaping this module tells whoever reads it to go looking in
+    the canonicalizer instead of in the bundle they were handed. `label` names
+    the member, in this module's idiom, since the parser has never seen it."""
+    try:
+        return canon.loads_strict(data)
+    except canon.CanonError as error:
+        raise BundleError(f"{label} is not valid canonical JSON: {error}") from None
+
+
+def _version_key(manifest: dict[str, Any], field_name: str) -> int:
+    """Order manifests by a version field an archive chose, not by whatever type
+    it chose to write it as. Comparing the raw values sorts a list of strings
+    lexicographically and refuses to sort a mixed list at all — a `TypeError`
+    out of `sorted` instead of a verdict. Anything that is not an integer uses
+    zero — it ties a version of zero and orders above a negative one, and the
+    sort being stable leaves the archive's own order between ties — which
+    matches what the browser verifier does with the same archive."""
+    value = manifest.get(field_name, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def import_bundle(
@@ -584,8 +656,23 @@ def import_bundle(
     # salts read so a hostile .attest/.private.attest pair cannot each spend up
     # to max_total_bytes and together decompress 2x the aggregate ceiling.
     budget = container.ReadBudget(max_member_bytes, max_total_bytes)
+    # The snapshot bound is provisional and shares the aggregate constant on
+    # purpose, so whoever settles the acceptance floor moves one number rather
+    # than two. It is a bound on COMPRESSED input standing in for a cap written
+    # for DECOMPRESSED output, and the next hand on this number must not read
+    # the two as one: a file over this bound is NOT necessarily over the
+    # decompression cap. Every byte of framing widens the gap — local and
+    # central headers, member names, extra fields — so an archive whose members
+    # decompress to exactly the cap is already over this bound by its framing
+    # alone, and one carrying long names is over it by much more. In that band
+    # an archive is refused here that the aggregate budget alone would have
+    # accepted, and the refusal borrows a sentence naming the decompression cap
+    # that is, there, not the reason. It is a bound and not a verdict about the
+    # content; the acceptance floor being settled elsewhere is what will give
+    # this quantity a cap and a refusal of its own.
+    snapshot_budget = _SnapshotBudget(_MAX_TOTAL_BYTES)
 
-    with _open_container(attest_path) as buf:
+    with _open_container(attest_path, snapshot_budget) as buf:
         members = _members(
             buf,
             max_entries=max_entries,
@@ -595,19 +682,44 @@ def import_bundle(
         _refuse_private_material(members)
         for filename in sorted(members):
             if filename.startswith("receipts/") and filename.endswith(".attest.json"):
-                envelope = _loads(_read(buf, members[filename], budget))
+                envelope = _loads(
+                    _read(buf, members[filename], budget),
+                    label=f"receipt entry {filename!r}",
+                )
                 receipt_id = _receipt_payload_id(envelope, filename)
                 if receipt_id in seen_receipt_ids:
                     raise BundleError(f"bundle lists receipt_id {receipt_id!r} more than once")
                 seen_receipt_ids.add(receipt_id)
                 receipts.append(envelope)
             elif filename.startswith("manifests/") and filename.endswith(".json"):
-                blob = _loads(_read(buf, members[filename], budget))
+                blob = _loads(
+                    _read(buf, members[filename], budget),
+                    label=f"manifest entry {filename!r}",
+                )
+                # Everything below is shaped by the archive, not by this
+                # repo's exporter: a member that is not an object, a
+                # collection that is not an array, an entry that is not an
+                # object. Each is a bundle this importer has nothing to say
+                # about, so it is skipped exactly as an unreadable issuer
+                # already was — never an AttributeError or a TypeError from
+                # the machinery, which names the wrong culprit.
+                if not isinstance(blob, dict):
+                    continue
                 issuer = blob.get("issuer")
                 if not isinstance(issuer, str):
                     continue
-                key_manifests_by_issuer[issuer] = list(blob.get("key_manifests", []))
-                for am in blob.get("artifact_manifests", []):
+                raw_key_manifests = blob.get("key_manifests")
+                key_manifests_by_issuer[issuer] = (
+                    [item for item in raw_key_manifests if isinstance(item, dict)]
+                    if isinstance(raw_key_manifests, list)
+                    else []
+                )
+                raw_artifact_manifests = blob.get("artifact_manifests")
+                if not isinstance(raw_artifact_manifests, list):
+                    continue
+                for am in raw_artifact_manifests:
+                    if not isinstance(am, dict):
+                        continue
                     series = am.get("series")
                     if isinstance(series, str):
                         artifact_manifests.setdefault(series, []).append(am)
@@ -622,9 +734,19 @@ def import_bundle(
                 legal_texts[digest] = content
             elif filename.startswith("proofs/"):
                 receipt_id = _proof_member_receipt_id(filename)
-                evidence = _loads(_read(buf, members[filename], budget))
+                evidence = _loads(
+                    _read(buf, members[filename], budget),
+                    label=f"proof entry {filename!r}",
+                )
                 if isinstance(evidence, dict):
                     proofs[receipt_id] = evidence
+
+    # A bundle IS its receipts (v0.1 §14.1). An archive that carries none is
+    # not a stripped bundle to be imported empty — it is a file that was never
+    # one, and saying so is the only answer that sends its holder to look at
+    # the right thing.
+    if not receipts:
+        raise BundleError("no receipts found inside this archive — is it really a .attest bundle?")
 
     # Every legal hash referenced by any imported receipt must be present — mirror
     # export's completeness pass so a stripped bundle can't import as if it still
@@ -645,13 +767,13 @@ def import_bundle(
     for issuer, versions in key_manifests_by_issuer.items():
         if not versions:
             continue
-        ordered = sorted(versions, key=lambda m: m.get("manifest_version", 0))
+        ordered = sorted(versions, key=lambda m: _version_key(m, "manifest_version"))
         manifests_map[issuer] = ordered[-1]
         provenance[issuer] = _PROVENANCE_BUNDLE
         chains[issuer] = ordered
 
     for series, versions in artifact_manifests.items():
-        artifact_manifests[series] = sorted(versions, key=lambda m: m.get("version", 0))
+        artifact_manifests[series] = sorted(versions, key=lambda m: _version_key(m, "version"))
 
     trust_store = verify.TrustStore(manifests=manifests_map, provenance=provenance, chains=chains)
 
@@ -659,18 +781,53 @@ def import_bundle(
     if private_path is not None:
         # The private half legitimately carries the salts the shareable half
         # must never hold: same reader, same budget, no private-material refusal.
-        with _open_container(private_path) as private_buf:
+        with _open_container(private_path, snapshot_budget) as private_buf:
             private_members = _members(
                 private_buf,
                 max_entries=max_entries,
                 max_member_bytes=max_member_bytes,
                 max_total_bytes=max_total_bytes,
             )
-            if _PRIVATE_MEMBER in private_members:
-                raw_salts: dict[str, str] = _loads(
-                    _read(private_buf, private_members[_PRIVATE_MEMBER], budget)
+            # v0.1 §14.2: a `.private.attest` MUST contain `salts.json`. A file
+            # given as the private half without it is not a private half, and
+            # importing it as one silently loses every buyer-binding secret the
+            # caller believed they were handing over.
+            if _PRIVATE_MEMBER not in private_members:
+                raise BundleError(
+                    f"private archive is missing {_PRIVATE_MEMBER} — it is not a .private.attest"
                 )
-                salts = {receipt_id: keys.b64u_decode(s) for receipt_id, s in raw_salts.items()}
+            raw_salts = _loads(
+                _read(private_buf, private_members[_PRIVATE_MEMBER], budget),
+                label=_PRIVATE_MEMBER,
+            )
+            if not isinstance(raw_salts, dict):
+                raise BundleError(f"{_PRIVATE_MEMBER} must be an object mapping receipt_id to salt")
+            for salt_id, encoded in raw_salts.items():
+                # v0.1 §14.2 keys this map by `receipt_id`, and §5.1 pins a
+                # receipt_id to the ULID shape `_RECEIPT_ID_RE` already holds —
+                # the same shape an imported receipt must carry, since these
+                # two maps are joined on it.
+                if _RECEIPT_ID_RE.fullmatch(salt_id) is None or not isinstance(encoded, str):
+                    raise BundleError(
+                        f"{_PRIVATE_MEMBER} must map uppercase ULID receipt ids "
+                        "to base64url strings"
+                    )
+                try:
+                    salt = keys.b64u_decode(encoded)
+                except ValueError:
+                    raise BundleError(
+                        f"{_PRIVATE_MEMBER} has invalid base64url for receipt_id {salt_id!r}"
+                    ) from None
+                # v0.1 §8.1: a salt MUST be exactly 16 raw bytes. v0.1 §9.1:
+                # salts MUST be encoded as base64url with the padding stripped,
+                # so re-encoding what a conforming producer wrote returns the
+                # very text it wrote.
+                if len(salt) != 16 or keys.b64u(salt) != encoded:
+                    raise BundleError(
+                        f"{_PRIVATE_MEMBER} has a non-canonical or non-16-byte salt "
+                        f"for receipt_id {salt_id!r}"
+                    )
+                salts[salt_id] = salt
 
     return ImportedBundle(
         receipts=receipts,
