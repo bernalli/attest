@@ -946,17 +946,23 @@ def test_the_install_step_leaves_no_temporary_files_behind(tmp_path: Path) -> No
         "done\n"
         f'cp "{installer}" "$out"',
     )
+    # The three fake binaries are identical, so one digest pins all of them. That
+    # is what lets the step run to COMPLETION here. An earlier version of this
+    # test truncated the script before `binary_sums=` -- and so never executed the
+    # second temporary, the one whose cleanup this test's own docstring claims to
+    # cover. Removing that `rm -f` left the suite green: a test that promised more
+    # than it ran, which is the defect this whole file exists to hunt.
+    binary_digest = hashlib.sha256(b"#!/bin/sh\ntrue\n").hexdigest()
     env = _install_env(
         tmp_path,
         SYFT_INSTALLER_SHA256=digest,
         GRYPE_INSTALLER_SHA256=digest,
         GRANT_INSTALLER_SHA256=digest,
+        SYFT_BINARY_SHA256=binary_digest,
+        GRYPE_BINARY_SHA256=binary_digest,
+        GRANT_BINARY_SHA256=binary_digest,
     )
-    # The real binaries are not here, so the digest pins would refuse them: this
-    # test is about the temporaries, so it stops after the installers have run.
-    script = str(_install_step()["run"])
-    script = script[: script.index("binary_sums=")]
     env["TMPDIR"] = str(tmp)
-    result = _run(script, tmp_path, env)
+    result = _run(str(_install_step()["run"]), tmp_path, env)
     assert result.returncode == 0, result.stdout + result.stderr
     assert list(tmp.iterdir()) == [], f"temporary files left behind: {list(tmp.iterdir())}"
