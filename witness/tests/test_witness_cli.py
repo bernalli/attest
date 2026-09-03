@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import threading
 from pathlib import Path
 from wsgiref.simple_server import make_server
@@ -105,10 +106,13 @@ def test_a_served_witness_answers_a_real_http_submission(
         # body reader to over-read a keep-alive socket.)
         httpd = make_server("127.0.0.1", 0, app, server_class=_ThreadingWSGIServer)
     except PermissionError:  # pragma: no cover - depends on the runner's permissions
-        pytest.skip(
-            "binding a loopback socket is not permitted for this process; the test runs "
-            "wherever it is"
-        )
+        reason = "binding a loopback socket is not permitted for this process"
+        # Same contract as the two cross-implementation gates: where a job
+        # promised the environment, an absent prerequisite is that job's
+        # defect and not a reason for the test to step aside.
+        if os.environ.get("ATTEST_CI_REQUIRED") == "1":
+            pytest.fail(f"{reason}; the required CI gate cannot run")
+        pytest.skip(f"{reason}; the test runs wherever it is")
     with httpd:
         port = httpd.server_address[1]
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)

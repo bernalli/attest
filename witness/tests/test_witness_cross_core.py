@@ -66,11 +66,15 @@ def test_the_lines_this_witness_produces_verify_in_both_cores(
 ) -> None:
     node = shutil.which("node")
     if node is None or not TS_DIST.exists():
-        absent = "needs node and a built verifiers/ts (npm run build --prefix verifiers/ts)"
-        # GitHub Actions sets CI on every runner. There the absence is not a
-        # machine that happens to lack a build, it is a workflow that did not
-        # produce one before running the only cross-core comparison there is.
-        if os.environ.get("CI"):
+        absent = (
+            "needs Node.js >=20.19.0 on PATH and a built verifiers/ts: install Node.js "
+            "if absent, then run `npm ci --prefix verifiers/ts && "
+            "npm run build --prefix verifiers/ts`"
+        )
+        # Set by the one job that installs and builds the other core before
+        # running pytest. The absence is not a machine that happens to lack a
+        # build, it is a workflow that promised one and did not produce it.
+        if os.environ.get("ATTEST_CI_REQUIRED") == "1":
             pytest.fail(absent)
         pytest.skip(absent)
 

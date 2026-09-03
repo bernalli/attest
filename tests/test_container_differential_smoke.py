@@ -28,16 +28,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ESBUILD = REPO_ROOT / "site" / "node_modules" / ".bin" / "esbuild"
 
 _ABSENT = (
-    "site/node_modules is absent: run `npm ci --prefix site` to measure the two readers "
-    "against each other"
+    "the site's esbuild is absent: install Node.js >=20, then run "
+    "`npm ci --prefix site` to measure the two readers against each other"
 )
 
 
 def test_the_two_readers_agree_on_generated_archives() -> None:
     if not ESBUILD.exists():
-        # GitHub Actions sets CI on every runner, and so does every other
-        # hosted runner this project is likely to meet.
-        if os.environ.get("CI"):
+        # The job that promised the dependency is the one that opts in, by
+        # name. A generic `CI` would be the wrong signal in both directions:
+        # `CI=false` and `CI=0` are both truthy read this way, and every other
+        # runner that exports `CI` would inherit an obligation nobody made it.
+        if os.environ.get("ATTEST_CI_REQUIRED") == "1":
             pytest.fail(_ABSENT)
         pytest.skip(_ABSENT)
     assert container_differential.run(count=50, seed=20260902, keep=None) == 0
