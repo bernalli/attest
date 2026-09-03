@@ -153,8 +153,13 @@ changes nothing else in this runbook.
 
 ### Step 7. Reissue the affected receipts.
 
-Every receipt signed with the compromised key now fails verification. Not
-"shows a warning" — fails. This is what a buyer sees after step 6:
+Every receipt signed with the compromised key now fails verification, unless it
+qualifies for the rescue in the previous step: a verifier that checks anchors
+spares a receipt whose own signed core was anchored strictly before your
+compromise declaration was. Nothing in the issuing path puts a receipt in a log,
+so unless you built that evidence yourself, no receipt of yours has it and this
+is every one of them. For the rest it is not "shows a warning" — it fails. This
+is what a buyer sees after step 6:
 
 ```json
 {
@@ -168,8 +173,8 @@ That is the system working correctly. The alternative would be trusting
 signatures that your attacker can also produce, and there is no way to tell the
 two apart from the outside.
 
-So: sign a fresh receipt for every affected purchase, with the new key, and send
-it out.
+So: sign a fresh receipt for every affected purchase whose old receipt does not
+meet that rescue, with the new key, and send it out.
 
 ```sh
 attest issue --payload payload.json --seed new.seed \
@@ -184,7 +189,8 @@ required not to read it that way.
 ### Step 8. Tell your buyers.
 
 Use the theft text in [section 5](#5-what-to-tell-your-buyers). Do it in the
-same working day. Their receipts have stopped verifying and they will notice.
+same working day. Their unrescued receipts have stopped verifying and they will
+notice.
 
 ---
 
@@ -212,14 +218,30 @@ would want.
 
 ### What actually happens to your buyers
 
-**Your old receipts keep verifying** — but only while your old key file stays
-reachable. Nothing has marked the lost key compromised, so the signatures it
-made are still good. What a verifier needs is the key itself, and that lives in
-the old key file. If you replace it with a new one that does not list the old
-key, verification fails with `no key '<kid>' in issuer manifest`.
+**Your old receipts keep verifying.** Nothing has marked the lost key
+compromised, so the signatures it made are still good. What a verifier needs is
+the public half of that key, and where it finds it depends on what the buyer is
+holding.
 
-So: **keep the old key file, and keep serving it.** This is the single most
-useful thing you can do after losing a key.
+If you issue through the bridge, every receipt went out as an `.attest` bundle,
+and the bundle carries a copy of your key file as it was the moment that receipt
+was signed. A verifier that opens the bundle reads your key from that copy. It
+fetches nothing from you: it does not matter what your domain serves now, or
+whether you ever serve anything again. Those buyers keep getting `"ok": true`
+with no help from you. The copy is a snapshot, trusted on first use, so the one
+thing it cannot do is tell a buyer about anything you publish later — a key file
+that marks that key compromised, for instance. It is what keeps a lost-key
+receipt verifying; it is not a substitute for the key file you publish, which is
+what anyone checking your current status needs.
+
+A bare receipt file — hand-issued without a manifest snapshot and never packed
+into a bundle — carries no copy of your key file. The verifier has to be given
+yours separately, and if the file it is given no longer lists the old key,
+verification fails with `no key '<kid>' in issuer manifest`. For those buyers,
+your old key file is the only thing keeping their receipts verifying.
+
+So: **keep the old key file, and keep serving it.** A buyer with a bare receipt
+depends on it, and it is what anyone checking your current status will read.
 
 **Anything new you publish is not connected to the old history.** You can create
 a fresh key file with `attest manifest init` and a new key, but it cannot be
@@ -398,10 +420,11 @@ to be reading a document for the first time.
 
 | Situation | Old receipts | Command | What buyers see |
 | --- | --- | --- | --- |
-| Key stolen — declared compromised | **Stop verifying** | `manifest rotate --compromise-kid` (twice, see §2) | `"ok": false`, `key ... is compromised` |
+| Key stolen — declared compromised | **Stop verifying**, unless anchored before the declaration (§2, step 6) | `manifest rotate --compromise-kid` (twice, see §2) | `"ok": false`, `key ... is compromised` |
 | Key retired normally, end of its period | Stay valid | `manifest rotate --retire-kid` | `"ok": true` with a warning that the key is retired |
-| Key lost, old key file still served | Stay valid | none possible | `"ok": true` |
-| Key lost, old key file taken down | **Stop verifying** | none possible | `no key '<kid>' in issuer manifest` |
+| Key lost, buyer holds the `.attest` bundle (what the bridge sends) | Stay valid | none possible | `"ok": true`, nothing fetched from you |
+| Key lost, bare receipt, old key file still served | Stay valid | none possible | `"ok": true` |
+| Key lost, bare receipt, key file they are given lacks the old key | **Stop verifying** | none possible | `no key '<kid>' in issuer manifest` |
 | New key file with no link to the old one | Unaffected by itself | `manifest init` | `"trust": "unverified_rotation"` |
 
 A key that was retired earlier can still be marked compromised later, if you

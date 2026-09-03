@@ -46,9 +46,13 @@ that's yours — on your own disk, cryptographically provable, out of reach of
 anyone's click. "Forever" holds against the store disappearing, not against a
 live store declaring its own signing key compromised: that declaration
 invalidates the receipts signed with that key. v0.2 defines a rescue for a
-receipt logged and anchored before the declaration, but no shipped tool logs a
-receipt yet and the verifiers you can use today cannot evaluate that evidence,
-so for now the declaration is final. Here's how:
+receipt logged and anchored before the declaration, and both verifier
+implementations evaluate that evidence; what is missing sits upstream of them. A
+verifier looks for it only once it has been given trusted log keys and an anchor
+policy, and nothing in the issuing path puts a receipt in a log — `attest log
+append` will take a receipt entry you build yourself, but no shipped command
+derives one from a receipt. So a receipt issued today carries nothing for the
+rescue to act on, and for now the declaration is final. Here's how:
 
 ## What attest is
 
@@ -116,9 +120,17 @@ release, by design.
 
 **If you sell digital files, this is the part that concerns you:** signing
 receipts costs one small self-hosted service next to your existing checkout, and
-it gives your customers something no competitor offers — proof of purchase that
-outlives your shop. Start with [`bridge/`](bridge/README.md), or tell me what
-would stop you: [GitHub Discussions](https://github.com/bernalli/attest/discussions)
+what your customer ends up holding is a receipt file on their own disk — one
+that verifies offline, with no account and no server, and keeps verifying after
+your shop is gone. Two packages, and only one of them is published:
+`attest-receipts` is on PyPI and gives you the `attest` command;
+`attest-bridge`, the service that turns a paid order into a signed receipt, is
+not published — its package metadata is marked `Private :: Do Not Upload` — so
+never run `pip install attest-bridge`: that name could resolve to something
+unrelated. You clone this repository and install from the checkout with
+`pip install ./bridge`, which pulls in `attest-receipts` as a dependency; both
+need Python 3.12 or newer. Start with [`bridge/`](bridge/README.md), or tell me
+what would stop you: [GitHub Discussions](https://github.com/bernalli/attest/discussions)
 or `bernalli@proton.me`. A first seller is worth more to this project than
 another feature.
 

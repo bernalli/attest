@@ -419,7 +419,7 @@ before the declaration, and both implementations evaluate it: shown a receipt wi
 that standing, they let it survive; the command line has options for the evidence
 and for the log keys and block headers it is checked against; and the conformance
 corpus carries a rescued receipt to hold them to it. What is missing is the evidence
-itself, and an anchor to check it against. No shipped tool logs a receipt — the
+itself, and an anchor to check it against. No shipped tool produces it for you — the
 bridge does not log what it issues, and though the command line can run a log, no
 command turns a receipt into an entry for it — and nothing pins an anchor by
 default: the browser verifier pins no Bitcoin block header, and the command line and

@@ -1407,6 +1407,265 @@ def check_conformance_doc() -> list[str]:
     ]
 
 
+# The self-certification table (docs/conformance.md §7) says of its own rows
+# that they are "a CURRENT claim, not a changelog", re-measured and replaced
+# whenever the corpus changes. Nothing held it to that, and it drifted three
+# stages behind the corpus while the prose above it stayed right: the claim
+# shapes of check_corpus_counts() are built for prose, and a table cell reading
+# `213/213` carries no sentence for them to recognise -- the one shape close to
+# it, `N/N leaves pass`, needs the words the cell does not have. So this reads
+# the rows structurally instead, by column and under their own heading, and
+# holds each to what the disk says now. The revision column is checked with the
+# counts and not after them: a row naming a digest that no longer exists cannot
+# be re-run by anyone, which is the failure §7 names in its own words.
+#
+# Every rule below is fail-closed on SHAPE before it is on content, because the
+# cheap ways to make a stale-claim guard green are all shape: delete a row,
+# duplicate the section, truncate a line, wrap the table in a fence, rename the
+# heading. A guard that skips what it cannot parse reports nothing precisely
+# where a claim has gone wrong, so anything inside the section that is not a
+# well-formed row is an error, never a skip.
+_SELF_CERT_HEADING_RE = re.compile(r"^## 7\. Self-certification table$", re.MULTILINE)
+_ANY_H2_RE = re.compile(r"^## ", re.MULTILINE)
+_SELF_CERT_HEADER_CELLS = (
+    "Implementation",
+    "Subset",
+    "Leaves passed",
+    "Corpus revision",
+    "Date",
+    "Command",
+)
+_SELF_CERT_SEPARATOR_CELL_RE = re.compile(r"^:?-{3,}:?$")
+_SELF_CERT_LEAVES_CELL_RE = re.compile(r"^(\d+)/(\d+)$")
+_SELF_CERT_REVISION_CELL_RE = re.compile(r"^`([0-9a-f]{64})`$")
+_SELF_CERT_SUBSETS = ("v0.1", "v0.2")
+# The rows this repository must always be able to make about itself: both
+# reference implementations, both subsets, at the version the tree declares. A
+# row naming a version that is no longer built here is a claim about software
+# nobody can fetch -- the same defect as a corpus revision that no longer
+# exists, and the one that shipped alongside it (the table said 0.9.0 while
+# both manifests said 0.9.1).
+_SELF_CERT_REFERENCE_ROWS: tuple[tuple[str, Path, str, str], ...] = (
+    ("attest (Python reference)", _PYPROJECT_PATH, "pyproject.toml", "python"),
+    ("attest-verifier (TypeScript)", _TS_PACKAGE_PATH, "verifiers/ts/package.json", "npm"),
+)
+# The characters str.splitlines() breaks on. Blanking a span has to leave every
+# one of them in place, or the line numbers this guard reports drift from the
+# ones an editor shows.
+_LINE_BREAK_CHARS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+
+
+def _blanked(text: str, *patterns: re.Pattern[str]) -> str:
+    """Replace each matched span with spaces, keeping every line break.
+
+    Used to take fenced blocks and HTML comments out of play before the
+    section is located: an example table inside a fence is not a claim, and a
+    commented-out one is not either. Blanking rather than deleting keeps every
+    offset and line number identical to the file on disk.
+    """
+    for pattern in patterns:
+        text = pattern.sub(
+            lambda match: "".join(
+                char if char in _LINE_BREAK_CHARS else " " for char in match.group(0)
+            ),
+            text,
+        )
+    return text
+
+
+def _table_cells(line: str) -> list[str]:
+    """The cells of one markdown table row, outer pipes optional (GFM)."""
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _measured_corpus_revision() -> str:
+    """The digest the runner computes over the corpus as it is on disk."""
+    # Same import route, and for the same reason, as _measured_corpus().
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from conformance_runner import corpus_revision
+
+    return corpus_revision(_REPO_ROOT / "docs/spec/vectors")
+
+
+def _self_cert_table_lines(text: str) -> tuple[list[tuple[int, str]], list[str]]:
+    """The rows of §7's table with their line numbers, or the reasons there are none."""
+    scanned = _blanked(text, _FENCED_BLOCK_RE, _XML_COMMENT_RE)
+    headings = list(_SELF_CERT_HEADING_RE.finditer(scanned))
+    if not headings:
+        return [], ["conformance.md: the '## 7. Self-certification table' section is missing"]
+    if len(headings) > 1:
+        return [], [
+            f"conformance.md: {len(headings)} sections are headed "
+            "'## 7. Self-certification table'; the guard reads one, so a second "
+            "one is a table nothing checks"
+        ]
+
+    heading = headings[0]
+    following = _ANY_H2_RE.search(scanned, heading.end())
+    body = scanned[heading.end() : following.start() if following else len(scanned)]
+    first_line_no = len(scanned[: heading.end()].splitlines())
+
+    lines = body.splitlines()
+    header_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if _table_cells(line) == list(_SELF_CERT_HEADER_CELLS)
+        ),
+        None,
+    )
+    if header_index is None:
+        return [], [
+            "conformance.md: §7 has no table whose header row is exactly "
+            f"{' | '.join(_SELF_CERT_HEADER_CELLS)} -- a renamed or reordered column "
+            "silently changes what every row below it means"
+        ]
+    separator = _table_cells(lines[header_index + 1]) if header_index + 1 < len(lines) else []
+    if len(separator) != len(_SELF_CERT_HEADER_CELLS) or not all(
+        _SELF_CERT_SEPARATOR_CELL_RE.match(cell) for cell in separator
+    ):
+        return [], [
+            f"conformance.md:{first_line_no + header_index + 1}: §7's header row is not "
+            "followed by a separator row of the same width"
+        ]
+
+    rows: list[tuple[int, str]] = []
+    for index in range(header_index + 2, len(lines)):
+        if not lines[index].strip():
+            break
+        rows.append((first_line_no + index, lines[index]))
+    if not rows:
+        return [], ["conformance.md: the self-certification table holds no claim row"]
+    return rows, []
+
+
+def check_conformance_self_certification() -> list[str]:
+    """Hold docs/conformance.md §7's rows to the corpus that is on disk.
+
+    §7 says of its own rows that they are "a CURRENT claim, not a changelog",
+    re-measured and replaced whenever the corpus changes. Nothing held it to
+    that, and it drifted three stages behind the corpus while the prose above
+    it stayed right: the claim shapes of check_corpus_counts() are built for
+    prose, and a table cell reading `213/213` carries no sentence for them to
+    recognise -- the one shape close to it, `N/N leaves pass`, needs the words
+    the cell does not have. So this reads the rows structurally instead, by
+    column and under their own heading, and holds each to what the disk says
+    now. The revision column is checked with the counts and not after them: a
+    row naming a digest that no longer exists cannot be re-run by anyone,
+    which is the failure §7 names in its own words.
+
+    Called directly from main() rather than through collect_errors(), like its
+    sibling check_conformance_doc(): it cross-references the disk, not another
+    document's parsed structure.
+    """
+    if not _CONFORMANCE_DOC_PATH.exists():
+        return ["conformance.md: file is missing"]
+    text = _CONFORMANCE_DOC_PATH.read_text(encoding="utf-8")
+    rows, errors = _self_cert_table_lines(text)
+    if errors:
+        return errors
+
+    measured = _measured_corpus()
+    expected_leaves = {"v0.2": measured.total, "v0.1": measured.subset}
+    expected_revision = _measured_corpus_revision()
+
+    seen: set[tuple[str, str]] = set()
+    for line_no, line in rows:
+        cells = _table_cells(line)
+        where = f"conformance.md:{line_no}: self-certification row {cells[0]!r}"
+        if len(cells) != len(_SELF_CERT_HEADER_CELLS):
+            errors.append(
+                f"{where} has {len(cells)} cells, not {len(_SELF_CERT_HEADER_CELLS)}; a row "
+                "the guard cannot line up with the header is a claim nothing checks"
+            )
+            continue
+
+        subset, leaves_cell, revision_cell = cells[1], cells[2], cells[3]
+        if subset not in _SELF_CERT_SUBSETS:
+            errors.append(f"{where} names subset {subset!r}, not one of {_SELF_CERT_SUBSETS}")
+            continue
+        if (cells[0], subset) in seen:
+            errors.append(
+                f"{where} repeats a claim already made for {subset}; two rows for one "
+                "implementation and subset cannot both be the current one"
+            )
+        seen.add((cells[0], subset))
+
+        leaves = _SELF_CERT_LEAVES_CELL_RE.match(leaves_cell)
+        if leaves is None:
+            errors.append(f"{where} has an unreadable leaves-passed cell {leaves_cell!r}")
+        else:
+            passed, of_total = int(leaves.group(1)), int(leaves.group(2))
+            if passed != of_total:
+                errors.append(
+                    f"{where} claims {passed} of {of_total} leaves passed; a row in this table "
+                    "is a conformance claim, and conformance has no partial credit"
+                )
+            elif of_total != expected_leaves[subset]:
+                errors.append(
+                    f"{where} claims {of_total} {subset} leaves, but the corpus holds "
+                    f"{expected_leaves[subset]}; §7 calls these rows a CURRENT claim, so re-run "
+                    "the row's own command and replace it rather than editing the number"
+                )
+        revision = _SELF_CERT_REVISION_CELL_RE.match(revision_cell)
+        if revision is None:
+            errors.append(f"{where} has an unreadable corpus-revision cell {revision_cell!r}")
+        elif revision.group(1) != expected_revision:
+            errors.append(
+                f"{where} names corpus revision {revision.group(1)[:12]}…, but the corpus on "
+                f"disk digests to {expected_revision[:12]}…; a row naming a revision that no "
+                "longer exists cannot be re-run by anyone"
+            )
+
+    errors += _check_reference_rows(seen)
+    return errors
+
+
+def _reference_implementation_labels() -> tuple[list[tuple[str, str, str]], list[str]]:
+    """`(label, name, manifest)` per reference implementation, plus unreadable manifests.
+
+    The label is the exact implementation cell §7 must carry: the name, and the
+    version this tree declares for it.
+    """
+    labels: list[tuple[str, str, str]] = []
+    errors: list[str] = []
+    for name, manifest_path, manifest_name, ecosystem in _SELF_CERT_REFERENCE_ROWS:
+        version, unreadable = (
+            _declared_version(manifest_path, manifest_name, tomllib.loads, ("project", "version"))
+            if ecosystem == "python"
+            else _declared_version(
+                manifest_path, manifest_name, _json_loads_no_duplicate_keys, ("version",)
+            )
+        )
+        if unreadable is not None:
+            errors.append(unreadable)
+            continue
+        labels.append((f"{name} {version}", name, manifest_name))
+    return labels, errors
+
+
+def _check_reference_rows(seen: set[tuple[str, str]]) -> list[str]:
+    """Both reference implementations must claim both subsets, at this tree's version."""
+    labels, errors = _reference_implementation_labels()
+    for label, name, manifest_name in labels:
+        for subset in _SELF_CERT_SUBSETS:
+            if (label, subset) in seen:
+                continue
+            stale = sorted(
+                cell for cell, other in seen if other == subset and cell.startswith(name)
+            )
+            errors.append(
+                f"conformance.md: §7 has no {subset} row for {label!r}"
+                + (
+                    f"; it has {stale[0]!r}, which names a version {manifest_name} no longer "
+                    "declares"
+                    if stale
+                    else " -- deleting a reference row is not how this table goes current"
+                )
+            )
+    return errors
+
+
 # Every place a document states the size of the conformance corpus, in any of
 # the shapes prose actually uses. The corpus grows whenever a stage ships, and
 # each growth has left at least one of these numbers behind: the 0.8.1 release
@@ -2234,6 +2493,7 @@ def main() -> int:
     errors += check_standards_relationship()
     errors += check_internet_draft_snapshot()
     errors += check_conformance_doc()
+    errors += check_conformance_self_certification()
     errors += check_corpus_counts()
     errors += check_coined_terms()
     errors += check_package_version_lockstep()

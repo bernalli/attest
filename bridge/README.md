@@ -1,5 +1,14 @@
 # attest-bridge
 
+> **Never run `pip install attest-bridge`.** Two packages, and only one of them
+> is published. `attest-receipts` is on PyPI and gives you the `attest` command.
+> `attest-bridge`, the service that turns a paid order into a signed receipt, is
+> not published: its package metadata is marked `Private :: Do Not Upload`, and
+> that name on PyPI could resolve to something unrelated. You clone the
+> repository and install from the checkout with `pip install ./bridge`, which
+> pulls in `attest-receipts` as a dependency. Both need Python 3.12 or newer.
+> The [Stripe guide](docs/setup-stripe.md) begins from exactly that command.
+
 attest-bridge is how a store becomes an issuer without writing code. It's a
 small service the merchant deploys and runs themselves, next to the existing
 checkout — Stripe, itch.io or Shopify. A paid order comes in as a platform
@@ -26,8 +35,9 @@ database, or its uptime ever again.
 That is the bridge's promise, not the key's: a receipt survives the bridge disappearing, and
 it does not survive the merchant declaring the key that signed it compromised. The v0.2 §19
 rescue for a receipt logged and anchored before that declaration is specified and evaluated
-by the verifier cores, but the bridge does not log the receipts it issues and no shipped
-command does, so today that declaration is final for every receipt the bridge signs.
+by the verifier cores, but the bridge does not log the receipts it issues: `attest log append`
+will take a receipt entry you build yourself, and no shipped command derives one from a
+receipt, so today that declaration is final for every receipt the bridge signs.
 
 Receipt email delivery is at-least-once. If the bridge crashes after SMTP has
 accepted a message but before the Ledger records it as delivered, its retry

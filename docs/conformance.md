@@ -124,8 +124,9 @@ either as a worked example of the contract above.
   against `docs/spec/attest-v0.2.md`.
 - **v0.1** — the 63-leaf subset: every leaf whose top-level group directory's
   leading integer is ≤ 25, plus groups `29-limits`,
-  `31-manifest-currency`, `42-publisher-claim`, `44-manifest-duplicate-kid`, and
-  `45-revocation-anchor-status`, plus three pinned leaf ids,
+  `31-manifest-currency`, `42-publisher-claim`, `44-manifest-duplicate-kid`,
+  `45-revocation-anchor-status`, and `46-manifest-unauthenticated`, plus three
+  pinned leaf ids,
   `35-transfer/i-v01-transferable-null-pubkey-ok` (`35i`),
   `37-preservation-pledge/s-v01-negative-control` (`37s`), and
   `41-compromise-cutoff/f-stage1-fail-closed` (`41f`). They are included
@@ -186,19 +187,19 @@ sentence (§5) names.
 
 ## 7. Self-certification table
 
-The first two entries are attest's own reference implementations,
-self-certified through this exact public path (never a special internal
-shortcut). These rows are a CURRENT claim, not a changelog: a corpus revision
+The four rows below cover attest's two reference implementations, one row per
+subset each, self-certified through this exact public path (never a special
+internal shortcut). These rows are a CURRENT claim, not a changelog: a corpus revision
 is a digest over the leaf files, so it changes whenever the corpus grows, and
 a row naming a digest that no longer exists on any branch cannot be re-run by
 anyone. They are re-measured and replaced whenever the corpus changes.
 
 | Implementation | Subset | Leaves passed | Corpus revision | Date | Command |
 | --- | --- | --- | --- | --- | --- |
-| attest (Python reference) 0.9.0 | v0.2 | 213/213 | `1cdec7b8ae453a0c402479a3783a8e542e8e957f79c2193fd67495d1ee84b336` | 2026-09-01 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
-| attest (Python reference) 0.9.0 | v0.1 | 61/61 | `1cdec7b8ae453a0c402479a3783a8e542e8e957f79c2193fd67495d1ee84b336` | 2026-09-01 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
-| attest-verifier (TypeScript) 0.9.0 | v0.2 | 213/213 | `1cdec7b8ae453a0c402479a3783a8e542e8e957f79c2193fd67495d1ee84b336` | 2026-09-01 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
-| attest-verifier (TypeScript) 0.9.0 | v0.1 | 61/61 | `1cdec7b8ae453a0c402479a3783a8e542e8e957f79c2193fd67495d1ee84b336` | 2026-09-01 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
+| attest (Python reference) 0.9.1 | v0.2 | 221/221 | `5b517e9fe2ed0cc8fd945c4b4a3ad9feefa36636391fb4f711cd783d3d1bbf3f` | 2026-09-02 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
+| attest (Python reference) 0.9.1 | v0.1 | 63/63 | `5b517e9fe2ed0cc8fd945c4b4a3ad9feefa36636391fb4f711cd783d3d1bbf3f` | 2026-09-02 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
+| attest-verifier (TypeScript) 0.9.1 | v0.2 | 221/221 | `5b517e9fe2ed0cc8fd945c4b4a3ad9feefa36636391fb4f711cd783d3d1bbf3f` | 2026-09-02 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
+| attest-verifier (TypeScript) 0.9.1 | v0.1 | 63/63 | `5b517e9fe2ed0cc8fd945c4b4a3ad9feefa36636391fb4f711cd783d3d1bbf3f` | 2026-09-02 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
 
 A third-party implementation adds a row here (or in its own repo/README,
 linking back to this process) the same way: run §2's command, record the
