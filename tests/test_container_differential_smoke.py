@@ -27,6 +27,10 @@ from tools import container_differential
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ESBUILD = REPO_ROOT / "site" / "node_modules" / ".bin" / "esbuild"
 
+#: Values that leave the fail-closed contract disarmed. Everything else arms
+#: it, including spellings nobody thought to list.
+_NOT_REQUIRED = frozenset({"", "0", "false", "no"})
+
 _ABSENT = (
     "the site's esbuild is absent: install Node.js >=20, then run "
     "`npm ci --prefix site` to measure the two readers against each other"
@@ -39,7 +43,12 @@ def test_the_two_readers_agree_on_generated_archives() -> None:
         # name. A generic `CI` would be the wrong signal in both directions:
         # `CI=false` and `CI=0` are both truthy read this way, and every other
         # runner that exports `CI` would inherit an obligation nobody made it.
-        if os.environ.get("ATTEST_CI_REQUIRED") == "1":
+        # Any spelling but an explicitly negative one arms the contract:
+        # measured, `ATTEST_CI_REQUIRED=true` silently disarmed an `== "1"`
+        # test, and a job added later would write exactly that. Failing on a
+        # spelling nobody meant as "off" is a loud error; skipping on one
+        # meant as "on" is the silence this whole change exists to remove.
+        if os.environ.get("ATTEST_CI_REQUIRED", "").strip().lower() not in _NOT_REQUIRED:
             pytest.fail(_ABSENT)
         pytest.skip(_ABSENT)
     assert container_differential.run(count=50, seed=20260902, keep=None) == 0

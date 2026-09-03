@@ -47,6 +47,10 @@ TS_BENCH = REPO_ROOT / "verifiers" / "ts" / "tools" / "witness-parity.mjs"
 TS_DIST = REPO_ROOT / "verifiers" / "ts" / "dist" / "index.js"
 PY_BENCH = REPO_ROOT / "tools" / "witness_parity_py.py"
 
+#: Values that leave the fail-closed contract disarmed. Everything else arms
+#: it, including spellings nobody thought to list.
+_NOT_REQUIRED = frozenset({"", "0", "false", "no"})
+
 
 def _run(command: list[str], stdin: bytes) -> dict[str, object]:
     completed = subprocess.run(  # noqa: S603 -- fixed argv, repository-local scripts
@@ -74,7 +78,12 @@ def test_the_lines_this_witness_produces_verify_in_both_cores(
         # Set by the one job that installs and builds the other core before
         # running pytest. The absence is not a machine that happens to lack a
         # build, it is a workflow that promised one and did not produce it.
-        if os.environ.get("ATTEST_CI_REQUIRED") == "1":
+        # Any spelling but an explicitly negative one arms the contract:
+        # measured, `ATTEST_CI_REQUIRED=true` silently disarmed an `== "1"`
+        # test, and a job added later would write exactly that. Failing on a
+        # spelling nobody meant as "off" is a loud error; skipping on one
+        # meant as "on" is the silence this whole change exists to remove.
+        if os.environ.get("ATTEST_CI_REQUIRED", "").strip().lower() not in _NOT_REQUIRED:
             pytest.fail(absent)
         pytest.skip(absent)
 

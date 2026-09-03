@@ -33,6 +33,10 @@ from witness_support import (
 from attest import keys, pq
 
 ORIGIN = "log.example"
+#: Values that leave the fail-closed contract disarmed. Everything else arms
+#: it, including spellings nobody thought to list.
+_NOT_REQUIRED = frozenset({"", "0", "false", "no"})
+
 TIMESTAMP = 1_700_000_000
 
 
@@ -109,8 +113,9 @@ def test_a_served_witness_answers_a_real_http_submission(
         reason = "binding a loopback socket is not permitted for this process"
         # Same contract as the two cross-implementation gates: where a job
         # promised the environment, an absent prerequisite is that job's
-        # defect and not a reason for the test to step aside.
-        if os.environ.get("ATTEST_CI_REQUIRED") == "1":
+        # defect and not a reason for the test to step aside. Any spelling but
+        # an explicitly negative one arms it, for the reason measured there.
+        if os.environ.get("ATTEST_CI_REQUIRED", "").strip().lower() not in _NOT_REQUIRED:
             pytest.fail(f"{reason}; the required CI gate cannot run")
         pytest.skip(f"{reason}; the test runs wherever it is")
     with httpd:
