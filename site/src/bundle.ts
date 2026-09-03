@@ -85,13 +85,21 @@ export const bareStore = <T>(): Record<string, T> => Object.create(null) as Reco
  * the surrogate range — and the two importers would meet a broken member in a
  * different order, and complain about a different one. */
 const byCodePoint = (left: string, right: string): number => {
-  const a = [...left]
-  const b = [...right]
-  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-    const difference = a[index].codePointAt(0)! - b[index].codePointAt(0)!
-    if (difference !== 0) return difference
+  const shared = Math.min(left.length, right.length)
+  for (let index = 0; index < shared; index += 1) {
+    const l = left.codePointAt(index)!
+    const r = right.codePointAt(index)!
+    if (l !== r) return l - r
+    // One code point above the basic plane occupies two UTF-16 units, and its
+    // low surrogate is not a position of its own. Spreading the strings into
+    // arrays said the same thing by allocating one string per code point, on
+    // every comparison — ten seconds of sorting on a 60 MB archive whose
+    // members carry long names, against 44 ms for the UTF-16 sort it replaced.
+    if (l > 0xffff) index += 1
   }
-  return a.length - b.length
+  // Only reached when one name is a proper prefix of the other, where the count
+  // of UTF-16 units and the count of code points have the same sign.
+  return left.length - right.length
 }
 
 // The receipt schema's own ULID grammar (Crockford base32, 26 chars, leading
@@ -137,7 +145,7 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
   // page one set of members and the reference importer another. The reader
   // refuses any archive where the two addressings could disagree, so the list
   // below is the only list that file has.
-  let members
+  let members: Member[]
   try {
     members = canonicalMembers(bytes, caps)
   } catch (e) {
@@ -194,6 +202,19 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
       const raw = blob['key_manifests']
       const kms = Array.isArray(raw) ? raw.map(asObject).filter((m): m is JsonObject => m !== null) : []
       keyManifestsByIssuer.set(issuer, kms)
+    } else if (name.startsWith('legal/') && name.endsWith('.txt')) {
+      // The reference importer READS this family, so a `legal/` member with a
+      // container-level defect — a deflate stream only one decoder accepts, a
+      // CRC that does not match, a member over a cap — earns a refusal there.
+      // Leaving it unread here did not make the two importers agree about which
+      // members exist; it made them disagree about which archives are readable
+      // at all, which is the same defect wearing the other hat. The bytes are
+      // read and dropped on purpose: this page does not yet check that they
+      // hash to the digest in the member name, nor that every hash a receipt
+      // references is present, and keeping them would suggest it did. Reading
+      // also spends the shared budget on this family, as the reference importer
+      // does, so the two agree about which archives are too large as well.
+      read(member)
     } else if (name.startsWith('proofs/')) {
       const receiptId = proofMemberReceiptId(name)
       let evidence: JsonValue

@@ -31,9 +31,12 @@ const storeFor = (issuer: string, manifest: JsonObject, provenance: string): Tru
   return { manifests, provenance: where }
 }
 
+// Frozen because it is a module singleton handed to the verifier and to the
+// tamper exhibit: a store whose whole purpose is to answer nothing should not
+// be able to start answering because someone downstream wrote to it.
 export const EMPTY_TRUST: TrustStore = {
-  manifests: bareStore<JsonObject>(),
-  provenance: bareStore<string>(),
+  manifests: Object.freeze(bareStore<JsonObject>()),
+  provenance: Object.freeze(bareStore<string>()),
 }
 
 const PRIVATE_NAME_MSG =

@@ -7,6 +7,10 @@ import type { JsonObject } from 'attest-verifier'
 import { parseBundle, BundleError, PrivateBundleError, DEFAULT_CAPS } from '../src/bundle.js'
 import { runVerify } from '../src/run.js'
 import { VECTORS_ROOT, logKeys, anchorPolicy } from './helpers/vectors.js'
+// Aliased: this file already defines a local `storedZip` that does NOT set
+// general-purpose bit 11, so a non-ASCII member name written with it is refused
+// as `record-name-encoding` before any test can reason about it.
+import { storedZip as utf8Zip, validEnvelope, VALID_RECEIPT_ID } from './helpers/zip.js'
 
 const V01 = join(VECTORS_ROOT, '01-valid-minimal')
 // The one conformance leaf that ships a receipt AND the §10.2 evidence that
@@ -445,5 +449,95 @@ describe('parseBundle: the trust store answers only for issuers the bundle named
     expect(trustStore.provenance['toString']).toBeUndefined()
     expect(trustStore.chains?.['toString']).toBeUndefined()
     expect(proofs['toString']).toBeUndefined()
+  })
+})
+
+// --- member order, and the families the reference importer reads -------------
+
+describe('parseBundle orders members the way the reference importer does', () => {
+  it('resolves a repeated issuer by Unicode code point, not by UTF-16 code unit', () => {
+    // Two manifests members claim ONE issuer, so the LAST in member order is
+    // the manifest this page will trust. `U+FFFF` sorts BEFORE `U+1F600` by
+    // code point and AFTER it by UTF-16 code unit, so the two orders trust
+    // different keys out of the same archive — which is the whole reason this
+    // file carries its own comparator instead of calling `Array#sort`.
+    const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
+    const issuer = Object.keys(d.manifests as JsonObject)[0]
+    const km = (d.manifests as JsonObject)[issuer] as JsonObject
+    const blob = (version: bigint): Uint8Array =>
+      canonicalBytes({
+        issuer,
+        key_manifests: [{ ...km, manifest_version: version }],
+        artifact_manifests: [],
+      } as JsonObject)
+    const zip = utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      ['manifests/\u{1F600}.json', blob(1n)],
+      ['manifests/￿.json', blob(2n)],
+    ])
+    // Code point order reads the `U+FFFF` member first and the emoji member
+    // last, so version 1 is the one kept. A UTF-16 sort keeps version 2.
+    expect((parseBundle(zip).trustStore.manifests[issuer] as JsonObject)['manifest_version']).toBe(1n)
+  })
+})
+
+describe('parseBundle reads every family the reference importer reads', () => {
+  const corruptOneMember = (members: Record<string, Uint8Array>, marker: Uint8Array): Uint8Array => {
+    const raw = zipSync(members, { level: 0 })
+    const at = raw.findIndex((_, index) => marker.every((byte, offset) => raw[index + offset] === byte))
+    expect(at).toBeGreaterThan(0)
+    raw[at] ^= 0xff
+    return raw
+  }
+  const base = (): Record<string, Uint8Array> => {
+    const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
+    const issuer = Object.keys(d.manifests as JsonObject)[0]
+    const blob: JsonObject = {
+      issuer,
+      key_manifests: [(d.manifests as JsonObject)[issuer]],
+      artifact_manifests: [],
+    }
+    return {
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`]: new Uint8Array(readFileSync(join(V01, 'envelope.json'))),
+      [`manifests/${issuer}.json`]: canonicalBytes(blob),
+    }
+  }
+  const marker = new TextEncoder().encode('CORRUPT-ME-PLEASE-0123456789')
+
+  it('refuses a corrupt legal/ member, which the reference importer reads', () => {
+    const raw = corruptOneMember({ ...base(), ['legal/deadbeef.txt']: marker }, marker)
+    expect(() => parseBundle(raw)).toThrow(BundleError)
+  })
+
+  it('still ignores a corrupt member no family claims', () => {
+    const raw = corruptOneMember({ ...base(), ['unknown.bin']: marker }, marker)
+    expect(parseBundle(raw).receipts).toHaveLength(1)
+  })
+})
+
+describe('parseBundle: a manifests/ member that is not shaped like one', () => {
+  const enc = (text: string): Uint8Array => new TextEncoder().encode(text)
+  const withManifestMember = (body: Uint8Array): Uint8Array =>
+    utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      ['manifests/x.json', body],
+    ])
+
+  it('refuses one that is not canonical JSON', () => {
+    expect(() => parseBundle(withManifestMember(enc('{oops')))).toThrow(/not valid canonical JSON/)
+  })
+
+  it.each([
+    ['an array', '[]'],
+    ['a string', '"x"'],
+    ['an object with no issuer', '{"key_manifests":[]}'],
+    ['an issuer that is not a string', '{"issuer":7,"key_manifests":[]}'],
+    ['key_manifests that is not an array', '{"issuer":"a.example","key_manifests":{"a":1}}'],
+    ['key_manifests holding a non-object', '{"issuer":"a.example","key_manifests":[1]}'],
+    ['no key_manifests at all', '{"issuer":"a.example"}'],
+  ])('trusts no issuer from %s', (_label, body) => {
+    const parsed = parseBundle(withManifestMember(enc(body)))
+    expect(Object.keys(parsed.trustStore.manifests)).toEqual([])
+    expect(Object.keys(parsed.trustStore.provenance)).toEqual([])
   })
 })

@@ -8,6 +8,21 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The browser verifier stopped reading the one member family that carries the
+  deal.** Reading members on demand — only the ones a family claims — is what
+  lets an archive carry something neither importer looks at without one of them
+  calling it fatal. But the two importers claim different families: the
+  reference importer reads `legal/<sha256>.txt`, and the browser verifier has
+  no branch for it. So a `legal/` member with a container-level defect, a
+  deflate stream only one decoder accepts, went from refused on both sides to
+  refused only by the reference importer — the same disagreement the canonical
+  reader exists to close, arriving by the other door. The browser verifier now
+  reads that family too, which also spends the shared decompression budget on
+  it, so the two agree about which archives are too large as well. It still
+  does not check that those bytes hash to the digest in the member name, nor
+  that every hash a receipt references is present; the reference importer does
+  both, and that half of the divergence is open.
+
 - **A bundle could hand the browser verifier a key manifest for an issuer it
   never named.** The trust store the web verifier builds while importing a
   bundle is looked up by issuer, and it was an ordinary JavaScript object. An
