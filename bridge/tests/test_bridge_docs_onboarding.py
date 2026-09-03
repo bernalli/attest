@@ -823,8 +823,8 @@ class TestSummaryMarkers:
 
         Rendered, an unclosed fence swallows the end marker and the prose after
         it as code, so the block the reader sees is not the block compared here.
-        Nothing is searched for: the same two edge positions are read, and EOF
-        stays exempt (see the truncation test).
+        Nothing is searched for: the same two edge positions are read, and a
+        missing end marker is refused earlier, before this check ever runs.
         """
         guide = f"{_SUMMARY_START}\n```\nissuer: a\n{_SUMMARY_END}\n"
         with pytest.raises(ValueError, match="closes none on its last"):
