@@ -60,6 +60,25 @@ const MAX_QUOTED_MEMBER_CHARS = 60
 // correction. This caller's only job is the in-band quoting and the cap.
 const quoted = (name: string): string => `"${neutralized(name, MAX_QUOTED_MEMBER_CHARS)}"`
 
+/** A lookup table with no prototype, for every map this file keys by a name the
+ * archive chose — issuers, receipt ids.
+ *
+ * An ordinary JavaScript object is not a dictionary: it inherits members from
+ * `Object.prototype`, and one of them, `__proto__`, is an accessor. Writing
+ * `store[name] = value` with `name` of `"__proto__"` therefore stores nothing
+ * and replaces the object's own prototype instead, so that issuer disappears
+ * from the store while every manifest inside it becomes the answer to issuers
+ * the archive never named. Reading is the same hazard from the other side: an
+ * issuer of `"toString"` resolves to a function where a key manifest belongs.
+ *
+ * The reference importer holds these in a plain dictionary, where both names
+ * are ordinary keys and nothing is inherited. This is how the two are made to
+ * agree — the same reason the container reader keeps its members in a list and
+ * its seen names in a `Set` rather than in a map built from the file's own
+ * strings.
+ */
+export const bareStore = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
+
 /** Order member names the way the reference importer does: by Unicode code
  * point. JavaScript's default string comparison orders by UTF-16 code unit, so
  * a name outside the basic plane sorts before one whose BMP character is above
@@ -150,7 +169,7 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
 
   const receipts: { receiptId: string; bytes: Uint8Array }[] = []
   const keyManifestsByIssuer = new Map<string, JsonObject[]>()
-  const proofs: Record<string, JsonValue> = {}
+  const proofs: Record<string, JsonValue> = bareStore()
 
   const receiptIds = new Set<string>()
 
@@ -195,9 +214,9 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
 
   const mv = (m: JsonObject): bigint =>
     typeof m['manifest_version'] === 'bigint' ? (m['manifest_version'] as bigint) : 0n
-  const manifests: Record<string, JsonObject> = {}
-  const provenance: Record<string, string> = {}
-  const chains: Record<string, JsonObject[]> = {}
+  const manifests: Record<string, JsonObject> = bareStore()
+  const provenance: Record<string, string> = bareStore()
+  const chains: Record<string, JsonObject[]> = bareStore()
   for (const [issuer, versions] of keyManifestsByIssuer) {
     if (versions.length === 0) continue
     const ordered = [...versions].sort((a, b) => (mv(a) < mv(b) ? -1 : mv(a) > mv(b) ? 1 : 0))

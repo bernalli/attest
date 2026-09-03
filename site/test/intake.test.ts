@@ -207,3 +207,59 @@ describe('intake: the salted-envelope notice', () => {
     if (r.kind === 'rejected') expect(r.reason).toMatch(/private/i)
   })
 })
+
+// A trust store is looked up by a name the file being checked chose, so the
+// store must answer for the issuers it was given and for nothing else. An
+// ordinary JavaScript object answers for `toString` and every other member of
+// `Object.prototype` as well, and hands back a function where a key manifest
+// belongs — the reference importer, whose store is a plain dictionary, answers
+// nothing. Same file, two trust stores.
+describe('the trust stores intake builds answer only for the issuers they were given', () => {
+  const INHERITED = ['toString', 'constructor', 'valueOf', 'hasOwnProperty']
+
+  it('answers nothing for an inherited name, for a bare envelope with its own manifest', () => {
+    const { manifest } = keyManifest()
+    const envelope = loadsStrict(envelopeBytes()) as JsonObject
+    const delivery = { ...((envelope['delivery'] as JsonObject) ?? {}), issuer_manifest: manifest }
+    const withManifest = canonicalBytes({ ...envelope, delivery } as JsonObject)
+    const r = intake('x.attest.json', withManifest)
+    expect(r.kind).toBe('jobs')
+    if (r.kind !== 'jobs') return
+    for (const name of INHERITED) {
+      expect(r.jobs[0].trustStore.manifests[name]).toBeUndefined()
+      expect(r.jobs[0].trustStore.provenance[name]).toBeUndefined()
+    }
+  })
+
+  it('answers nothing for an inherited name, for a user-supplied manifest', () => {
+    const { manifest } = keyManifest()
+    const store = trustStoreFromManifestBytes(canonicalBytes(manifest))
+    expect(store).not.toBeNull()
+    for (const name of INHERITED) {
+      expect(store!.manifests[name]).toBeUndefined()
+      expect(store!.provenance[name]).toBeUndefined()
+    }
+  })
+
+  it('answers nothing for an inherited name, for a file that brought no manifest', () => {
+    const r = intake('x.attest.json', new TextEncoder().encode('not json at all'))
+    expect(r.kind).toBe('jobs')
+    if (r.kind !== 'jobs') return
+    for (const name of INHERITED) {
+      expect(r.jobs[0].trustStore.manifests[name]).toBeUndefined()
+      expect(r.jobs[0].trustStore.provenance[name]).toBeUndefined()
+    }
+  })
+
+  it('keeps an issuer named after an object member, and gives it to the verifier', () => {
+    // The reference importer holds `__proto__` as an ordinary issuer. So does
+    // this one — the entry is here because the name was declared, not in spite
+    // of it.
+    const { manifest } = keyManifest()
+    const named = { ...manifest, issuer: '__proto__' } as JsonObject
+    const store = trustStoreFromManifestBytes(canonicalBytes(named))
+    expect(store).not.toBeNull()
+    expect(Object.keys(store!.manifests)).toEqual(['__proto__'])
+    expect(store!.manifests['__proto__']).toBeDefined()
+  })
+})

@@ -386,3 +386,64 @@ describe('parseBundle reads members on demand', () => {
     expect(parseBundle(raw).receipts).toHaveLength(1)
   })
 })
+
+// --- the trust store is keyed by names the archive chose -----------------------
+//
+// An issuer is a string a bundle picked, and the trust store this parser hands
+// on is looked up by it. Built as an ordinary JavaScript object, a member named
+// `__proto__` is not a member at all: assigning it replaces the object's own
+// prototype, so the issuer vanishes from the store AND everything the archive
+// put in that manifest becomes the answer to every issuer the store was never
+// asked about. The reference importer keeps such a name as an ordinary key and
+// answers nothing for the others — the same bytes, two trust stores, which is
+// the divergence this file exists to keep closed.
+
+describe('parseBundle: the trust store answers only for issuers the bundle named', () => {
+  const protoBundle = (extra: JsonObject = {}): Uint8Array => {
+    const envelope = new Uint8Array(readFileSync(join(V01, 'envelope.json')))
+    const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
+    const real = (d.manifests as JsonObject)['store.example.com'] as JsonObject
+    const blob: JsonObject = {
+      issuer: '__proto__',
+      key_manifests: [{ ...(real as object), issuer: '__proto__', ...extra } as JsonObject],
+      artifact_manifests: [],
+    }
+    return zipSync({
+      ['receipts/01HZX0000000000000000000AA.attest.json']: envelope,
+      ['manifests/attacker.json']: canonicalBytes(blob),
+    })
+  }
+
+  it('keeps an issuer named after an object member as an ordinary key', () => {
+    const { trustStore } = parseBundle(protoBundle())
+    expect(Object.keys(trustStore.manifests)).toEqual(['__proto__'])
+    expect(Object.keys(trustStore.provenance)).toEqual(['__proto__'])
+    expect(Object.keys(trustStore.chains ?? {})).toEqual(['__proto__'])
+  })
+
+  it('does not let one manifest stand for an issuer the bundle never named', () => {
+    // The archive names one issuer, `__proto__`, and hides inside that
+    // manifest a member named after a second one. On an ordinary object the
+    // first assignment makes the manifest the store's prototype, and the
+    // second name is then answered out of it — a key manifest for an issuer
+    // no member of this archive ever declared.
+    const victim = 'store.example.com'
+    const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
+    const real = (d.manifests as JsonObject)[victim] as JsonObject
+    const { trustStore } = parseBundle(protoBundle({ [victim]: real }))
+    expect(trustStore.manifests[victim]).toBeUndefined()
+    expect(trustStore.provenance[victim]).toBeUndefined()
+    expect(trustStore.chains?.[victim]).toBeUndefined()
+  })
+
+  it('answers nothing for a name every JavaScript object carries', () => {
+    // `toString` is on every ordinary object, so a receipt claiming that
+    // issuer used to be handed a function where a manifest belongs.
+    const { zip } = sampleZip()
+    const { trustStore, proofs } = parseBundle(zip)
+    expect(trustStore.manifests['toString']).toBeUndefined()
+    expect(trustStore.provenance['toString']).toBeUndefined()
+    expect(trustStore.chains?.['toString']).toBeUndefined()
+    expect(proofs['toString']).toBeUndefined()
+  })
+})

@@ -1067,3 +1067,70 @@ def test_import_ignores_a_member_no_family_claims_even_when_it_is_corrupt(
 
     imported = bundle.import_bundle(hostile)
     assert len(imported.receipts) == 1
+
+
+def test_import_keeps_an_issuer_named_after_an_object_member(tmp_path: Path) -> None:
+    """An issuer is a string a bundle chose, and this importer holds it as an
+    ordinary key. The browser verifier's trust store is a JavaScript object, and
+    an object member named `__proto__` is not a member there: it is the
+    prototype. That asymmetry is a divergence of the same class as the container
+    one — the same bytes, two lists of issuers — reachable without touching a
+    single offset, so it is pinned on this side too."""
+    attest_path, _private = bundle.export(
+        [_envelope(receipt_id="01J1V5B4M9Z8QWERTY12345691")],
+        [_key_manifest()],
+        [],
+        _legal_texts(),
+        tmp_path,
+        "mylibrary",
+    )
+    hostile = tmp_path / "proto-issuer.attest"
+    blob = canon.dumps({"issuer": "__proto__", "key_manifests": [_key_manifest()]})
+    with zipfile.ZipFile(attest_path) as src, zipfile.ZipFile(hostile, "w") as dst:
+        for info in src.infolist():
+            if info.filename.startswith("manifests/"):
+                continue
+            dst.writestr(info.filename, src.read(info.filename))
+        dst.writestr("manifests/attacker.json", blob)
+
+    imported = bundle.import_bundle(hostile)
+    assert list(imported.trust_store.manifests) == ["__proto__"]
+    # And nothing that issuer wrote reaches an issuer it did not name.
+    assert imported.trust_store.manifests.get(ISSUER) is None
+
+
+def test_import_refuses_every_corpus_archive_with_a_bundle_error(tmp_path: Path) -> None:
+    """Whatever the shared corpus throws at the importer, the caller is told
+    about the archive. An exception from the machinery underneath — the mapping,
+    the decoder, the reader's own bookkeeping — reaching the caller instead
+    sends whoever reads it to look in the wrong place, which is worse than a
+    refusal that says nothing at all."""
+    leaves = sorted(p for p in CONTAINER_CORPUS.iterdir() if p.is_dir())
+    assert len(leaves) > 20
+    for leaf in leaves:
+        path = tmp_path / f"{leaf.name}.attest"
+        path.write_bytes((leaf / "archive.zip").read_bytes())
+        try:
+            bundle.import_bundle(path)
+        except bundle.BundleError:
+            continue
+        except Exception as unexpected:
+            raise AssertionError(
+                f"{leaf.name}: {type(unexpected).__name__} reached the caller "
+                f"instead of a BundleError: {unexpected}"
+            ) from unexpected
+
+
+def test_a_refusal_survives_the_unmapping_of_the_container() -> None:
+    """Unmapping is bookkeeping; the refusal is the answer the caller asked for.
+
+    A memory map cannot be closed while anything still holds a view into it, and
+    a view outlives its scope for as long as the traceback of the exception in
+    flight does. If the close is allowed to raise there, its complaint about
+    exported pointers arrives in place of the sentence explaining why the
+    archive was refused — the caller is told the truth about the wrong thing.
+    """
+    with pytest.raises(bundle.BundleError, match="the refusal the caller asked for"):
+        with bundle._open_container(Path(__file__)) as buf:
+            held = memoryview(buf)  # noqa: F841 — an export alive at closing time
+            raise bundle.BundleError("the refusal the caller asked for")

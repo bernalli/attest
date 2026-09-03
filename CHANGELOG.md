@@ -8,6 +8,26 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A bundle could hand the browser verifier a key manifest for an issuer it
+  never named.** The trust store the web verifier builds while importing a
+  bundle is looked up by issuer, and it was an ordinary JavaScript object. An
+  ordinary object inherits `__proto__`, which is not a member but an accessor:
+  storing a manifest under an issuer of that name replaced the store's own
+  prototype instead of adding an entry, so the issuer vanished from the store
+  and everything inside that manifest became the answer for issuers the archive
+  had never mentioned. One manifest member was enough: naming that issuer and
+  carrying, as an ordinary member of itself, a key manifest for a real store,
+  it made a receipt from that store come back validly signed against a manifest
+  that appeared in no member of the archive and in no listing of the store —
+  while the reference importer, whose store is a plain dictionary, answered
+  `no trusted manifest for issuer 'store.example.com'` on the same bytes. The
+  same inheritance answered for `toString` and the rest of `Object.prototype`
+  and handed back a function where a key manifest belongs. Every trust store
+  the web and offline verifiers build now has no prototype, so it answers for
+  the issuers the file named and for nothing else, exactly as the reference
+  importer does. The offline single-file verifier inherits the change by
+  import, and has its own test saying so.
+
 - **Two conforming verifiers could read one file two different ways, and one
   byte was enough to decide which.** A `.attest` bundle is a ZIP archive, and
   "which members does this archive hold" had more than one answer: the

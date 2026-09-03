@@ -482,8 +482,21 @@ def _open_container(path: Path) -> Iterator[Buffer]:
         if os.fstat(fh.fileno()).st_size == 0:
             yield b""
             return
-        with mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+        mapped = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+        try:
             yield mapped
+        except BaseException:
+            # Unmapping is bookkeeping; the refusal already in flight is the
+            # answer the caller asked for. A map cannot be closed while anything
+            # still holds a view into it, and a view lives for as long as the
+            # traceback that mentions it — so closing here can raise a
+            # BufferError about exported pointers, and that complaint would
+            # arrive in place of the sentence explaining why the archive was
+            # refused. The mapping is released either way when the object goes.
+            with contextlib.suppress(BufferError):
+                mapped.close()
+            raise
+        mapped.close()
 
 
 def _as_bundle_error(error: container.ContainerError) -> BundleError:

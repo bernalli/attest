@@ -1,6 +1,6 @@
 import { loadsStrict } from 'attest-verifier'
 import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
-import { parseBundle, BundleError } from './bundle.js'
+import { parseBundle, BundleError, bareStore } from './bundle.js'
 
 export interface VerifyJob {
   label: string
@@ -17,7 +17,24 @@ export type IntakeResult =
   | { kind: 'needs-manifest'; envelopeBytes: Uint8Array; label: string; notices?: string[] }
   | { kind: 'rejected'; reason: string }
 
-export const EMPTY_TRUST: TrustStore = { manifests: {}, provenance: {} }
+// Every trust store this module hands on is looked up by an issuer name the
+// file being checked chose, so each one is built without a prototype
+// (`bareStore`, and the paragraph above it): an ordinary object answers for
+// `toString` and the rest of `Object.prototype` as well, and hands back a
+// function where a key manifest belongs. The reference importer's store is a
+// plain dictionary that answers nothing for those names.
+const storeFor = (issuer: string, manifest: JsonObject, provenance: string): TrustStore => {
+  const manifests = bareStore<JsonObject>()
+  const where = bareStore<string>()
+  manifests[issuer] = manifest
+  where[issuer] = provenance
+  return { manifests, provenance: where }
+}
+
+export const EMPTY_TRUST: TrustStore = {
+  manifests: bareStore<JsonObject>(),
+  provenance: bareStore<string>(),
+}
 
 const PRIVATE_NAME_MSG =
   'That file is named .private.attest — it holds your binding salts and keys. ' +
@@ -96,9 +113,10 @@ export const labelFor = (bytes: Uint8Array): string => {
   return id !== null && RECEIPT_ID_RE.test(id) ? id : UNIDENTIFIED_LABEL
 }
 
-// The id is attacker-supplied text and `proofs` is a plain object, so an id of
-// "__proto__" would otherwise resolve to Object.prototype and be handed on as
-// if it were evidence.
+// The id is attacker-supplied text, so the lookup is on own members only. The
+// map `parseBundle` builds has no prototype and its keys are ULID-shaped, which
+// closes this twice over; the guard stays because it is this caller's own
+// promise about the id it was handed, and not a bet on where the map came from.
 const proofFor = (proofs: Record<string, JsonValue>, id: string | null): JsonValue | null =>
   id !== null && Object.prototype.hasOwnProperty.call(proofs, id) ? proofs[id] : null
 
@@ -160,7 +178,7 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
       jobs: [{
         label: labelFor(bytes),
         envelopeBytes: bytes,
-        trustStore: { manifests: { [issuer]: embedded }, provenance: { [issuer]: 'embedded' } },
+        trustStore: storeFor(issuer, embedded, 'embedded'),
         transparency: null, // a bare envelope brings no proofs/ member with it
       }],
       ...notices,
@@ -175,7 +193,7 @@ export function trustStoreFromManifestBytes(bytes: Uint8Array): TrustStore | nul
     const m = asObject(loadsStrict(bytes))
     if (m && typeof m['issuer'] === 'string' && Array.isArray(m['keys'])) {
       const issuer = m['issuer']
-      return { manifests: { [issuer]: m }, provenance: { [issuer]: 'user-supplied' } }
+      return storeFor(issuer, m, 'user-supplied')
     }
   } catch {
     /* not canonical JSON → not a manifest */

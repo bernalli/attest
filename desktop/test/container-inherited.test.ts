@@ -103,3 +103,38 @@ describe('the desktop verifier inherits the container reader', () => {
     if (result.kind === 'rejected') expect(result.reason).toMatch(/binding salts and keys/)
   })
 })
+
+// The trust store is the other half of the inheritance. The app hands whatever
+// `intake` built straight to the verifier, so a store that answers for names
+// nobody declared answers for them here too — in an artifact that runs from a
+// file:// URL, offline, years after the store that issued the receipt is gone.
+describe('the desktop verifier inherits the trust store built from own names only', () => {
+  const INHERITED = ['toString', 'constructor', 'valueOf', 'hasOwnProperty']
+
+  it('answers nothing for an inherited name when a bundle brought the manifests', () => {
+    // The bundle the site ships as its own sample: a real archive, read through
+    // the same intake the app uses, so the store under test is the one a person
+    // dropping a `.attest` on this artifact actually gets.
+    const sample = new Uint8Array(
+      readFileSync(join(HERE, '..', '..', 'site', 'public', 'sample', 'demo.attest')),
+    )
+    const result = intake('library.attest', sample)
+    expect(result.kind).toBe('jobs')
+    if (result.kind !== 'jobs') return
+    expect(Object.keys(result.jobs[0].trustStore.manifests).length).toBeGreaterThan(0)
+    for (const name of INHERITED) {
+      expect(result.jobs[0].trustStore.manifests[name]).toBeUndefined()
+      expect(result.jobs[0].trustStore.provenance[name]).toBeUndefined()
+    }
+  })
+
+  it('answers nothing for an inherited name when the file brought no manifest', () => {
+    const result = intake('receipt.attest.json', new TextEncoder().encode('not json'))
+    expect(result.kind).toBe('jobs')
+    if (result.kind !== 'jobs') return
+    for (const name of INHERITED) {
+      expect(result.jobs[0].trustStore.manifests[name]).toBeUndefined()
+      expect(result.jobs[0].trustStore.provenance[name]).toBeUndefined()
+    }
+  })
+})
