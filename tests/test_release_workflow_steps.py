@@ -17,6 +17,8 @@ that the assertions run.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import shutil
@@ -261,10 +263,12 @@ def test_the_move_step_is_gone(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("job", ["build", "desktop"])
-def test_uploads_refuse_to_publish_an_incomplete_artifact(job: str) -> None:
-    """`if-no-files-found` defaults to `warn`: a pattern matching nothing is a
-    warning and the step stays green, so an artifact can travel to the publishing
-    jobs missing a wheel, an SBOM or the verifier."""
+def test_uploads_refuse_a_wholly_empty_artifact(job: str) -> None:
+    """`if-no-files-found` defaults to `warn`, which uploads nothing and stays
+    green. `error` fixes only that, and no more: the key is AGGREGATE over every
+    pattern -- v7.0.1 builds one globber from the whole `path` and tests
+    `filesToUpload.length === 0` -- so it is not what makes an artifact complete.
+    This test asserts the key; the one below asserts the guarantee."""
     uploads = [
         step
         for step in _workflow()["jobs"][job]["steps"]
@@ -273,6 +277,35 @@ def test_uploads_refuse_to_publish_an_incomplete_artifact(job: str) -> None:
     assert uploads, f"{job} uploads nothing"
     for step in uploads:
         assert step["with"]["if-no-files-found"] == "error"
+
+
+def test_build_refuses_to_ship_an_artifact_missing_any_one_of_its_patterns(
+    tmp_path: Path,
+) -> None:
+    """The guarantee the key does not give, asserted where it is actually made.
+
+    Dropping each file in turn is the point: an aggregate check passes every one
+    of these, because in each case four of the five patterns still match.
+    """
+    script = str(_step("build", "Assert the artifact is complete")["run"])
+    complete = [
+        "dist/attest_receipts-9.9.9-py3-none-any.whl",
+        "dist/attest_receipts-9.9.9.tar.gz",
+        "sbom-python.cdx.json",
+        "sbom-npm.cdx.json",
+        "attest-verifier-9.9.9.tgz",
+    ]
+    (tmp_path / "dist").mkdir()
+    for name in complete:
+        (tmp_path / name).write_bytes(b"x")
+    assert _run(script, tmp_path, {}).returncode == 0
+
+    for dropped in complete:
+        (tmp_path / dropped).unlink()
+        result = _run(script, tmp_path, {})
+        assert result.returncode != 0, f"an artifact without {dropped} must not travel"
+        assert "would leave this job without" in result.stdout
+        (tmp_path / dropped).write_bytes(b"x")
 
 
 # --------------------------------------------------------------------------
@@ -500,3 +533,374 @@ def test_registries_are_checked_before_the_release_is_created() -> None:
     check = next(i for i, name in enumerate(names) if "Assert both registries" in name)
     create = next(i for i, name in enumerate(names) if "Create GitHub Release" in name)
     assert check < create
+
+
+# --------------------------------------------------------------------------
+# Identity: the bytes that were gated are the bytes that get published
+# --------------------------------------------------------------------------
+def test_binary_digests_are_pinned_for_every_tool() -> None:
+    env = _install_step()["env"]
+    for tool in ("SYFT", "GRYPE", "GRANT"):
+        d = str(env[f"{tool}_BINARY_SHA256"])
+        assert len(d) == 64 and all(c in "0123456789abcdef" for c in d)
+
+
+def test_install_step_refuses_a_binary_that_is_not_the_pinned_one(tmp_path: Path) -> None:
+    """The link the installer pin does NOT close: the installers verify the binary
+    against the release's own checksums.txt, an unsigned mutable release asset."""
+    installer = tmp_path / "fake.sh"
+    installer.write_text(
+        "#!/bin/sh\n"
+        'while [ "$#" -gt 0 ]; do case "$1" in -b) dir="$2"; shift 2 ;; *) shift ;; esac; done\n'
+        'mkdir -p "$dir"\n'
+        'for t in syft grype grant; do printf tampered > "$dir/$t"; chmod 755 "$dir/$t"; done\n',
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(installer.read_bytes()).hexdigest()
+    _stub_bin(
+        tmp_path / "stubs",
+        "curl",
+        'out=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac\n'
+        "done\n"
+        f'cp "{installer}" "$out"',
+    )
+    env = _install_env(
+        tmp_path,
+        SYFT_INSTALLER_SHA256=digest,
+        GRYPE_INSTALLER_SHA256=digest,
+        GRANT_INSTALLER_SHA256=digest,
+    )
+    result = _run(str(_install_step()["run"]), tmp_path, env)
+    assert result.returncode != 0
+    assert "FAILED" in result.stdout + result.stderr
+
+
+def _npm_script() -> str:
+    return str(_step("npm", "Publish with provenance")["run"])
+
+
+def _seed_npm(tmp_path: Path, names: list[str]) -> None:
+    d = tmp_path / "dist-and-sboms"
+    d.mkdir(exist_ok=True)
+    lines = []
+    for n in names:
+        (d / n).write_bytes(b"tgz")
+        lines.append(f"{hashlib.sha256(b'tgz').hexdigest()}  {n}")
+    (d / "gated-artifacts.sha256").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_npm_publish_refuses_a_tarball_from_another_version(tmp_path: Path) -> None:
+    _seed_npm(tmp_path, ["attest-verifier-9.9.8.tgz"])
+    script = _npm_script().replace("npm publish", "echo WOULD-PUBLISH")
+    result = _run(script, tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert result.returncode != 0, "a stale tarball must not reach an irreversible npm publish"
+    assert "WOULD-PUBLISH" not in result.stdout
+
+
+def test_npm_publish_accepts_this_tag_s_tarball(tmp_path: Path) -> None:
+    _seed_npm(tmp_path, ["attest-verifier-9.9.9.tgz"])
+    script = _npm_script().replace("npm publish", "echo WOULD-PUBLISH")
+    result = _run(script, tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WOULD-PUBLISH" in result.stdout
+
+
+def _identity_script() -> str:
+    return str(_step("github-release", "Assert the registries serve the bytes")["run"])
+
+
+def _seed_identity(
+    tmp_path: Path, *, pypi_wheel_digest: str | None = None, npm_integrity: str | None = None
+) -> None:
+    art = tmp_path / "artifacts"
+    (art / "dist").mkdir(parents=True)
+    wheel = art / "dist" / "attest_receipts-9.9.9-py3-none-any.whl"
+    sdist = art / "dist" / "attest_receipts-9.9.9.tar.gz"
+    tgz = art / "attest-verifier-9.9.9.tgz"
+    wheel.write_bytes(b"W")
+    sdist.write_bytes(b"S")
+    tgz.write_bytes(b"T")
+    sums = (
+        "\n".join(
+            f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(art)}"
+            for p in (wheel, sdist, tgz)
+        )
+        + "\n"
+    )
+    (art / "gated-artifacts.sha256").write_text(sums, encoding="utf-8")
+    wd = pypi_wheel_digest or hashlib.sha256(b"W").hexdigest()
+    (tmp_path / "pypi.json").write_text(
+        json.dumps(
+            {
+                "urls": [
+                    {
+                        "packagetype": "bdist_wheel",
+                        "filename": wheel.name,
+                        "digests": {"sha256": wd},
+                    },
+                    {
+                        "packagetype": "sdist",
+                        "filename": sdist.name,
+                        "digests": {"sha256": hashlib.sha256(b"S").hexdigest()},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    integ = npm_integrity or "sha512-" + base64.b64encode(hashlib.sha512(b"T").digest()).decode()
+    (tmp_path / "npm.json").write_text(
+        json.dumps({"version": "9.9.9", "dist": {"integrity": integ}}), encoding="utf-8"
+    )
+
+
+def test_identity_accepts_registries_serving_the_gated_bytes(tmp_path: Path) -> None:
+    _seed_identity(tmp_path)
+    r = _run(_identity_script(), tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "serve the bytes this run gated" in r.stdout
+
+
+def test_identity_refuses_pypi_serving_other_bytes(tmp_path: Path) -> None:
+    """What `skip-existing: true` makes reachable: the version was already there,
+    the publish step skipped in silence, and presence alone cannot tell."""
+    _seed_identity(tmp_path, pypi_wheel_digest="0" * 64)
+    r = _run(_identity_script(), tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert r.returncode != 0
+    assert "this run gated" in r.stdout
+
+
+def test_identity_refuses_npm_serving_other_bytes(tmp_path: Path) -> None:
+    _seed_identity(tmp_path, npm_integrity="sha512-AAAA")
+    r = _run(_identity_script(), tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert r.returncode != 0
+    assert "npm serves" in r.stdout
+
+
+def test_identity_refuses_an_artifact_altered_in_transit(tmp_path: Path) -> None:
+    _seed_identity(tmp_path)
+    (tmp_path / "artifacts" / "dist" / "attest_receipts-9.9.9-py3-none-any.whl").write_bytes(
+        b"EVIL"
+    )
+    r = _run(_identity_script(), tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert r.returncode != 0
+
+
+def test_pypi_job_verifies_the_gated_digests_before_publishing() -> None:
+    steps = _workflow()["jobs"]["pypi"]["steps"]
+    names = [str(s.get("name", "")) for s in steps]
+    verify = next(i for i, n in enumerate(names) if "bytes the build job gated" in n)
+    publish = next(i for i, s in enumerate(steps) if "pypi-publish" in str(s.get("uses", "")))
+    assert verify < publish
+
+
+# --------------------------------------------------------------------------
+# Not-well-formed input: properties, not the examples the author thought of
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"components": {"a": 1}}',
+        '{"components": "xx"}',
+        '{"components": 7}',
+        '{"components": true}',
+        "TRUNCATED{",
+    ],
+)
+@pytest.mark.parametrize(
+    ("job_step", "sbom_name"),
+    [("Assert + scan Python", "sbom-python.cdx.json"), ("Assert + scan npm", "sbom-npm.cdx.json")],
+)
+def test_sbom_guard_refuses_a_components_field_that_is_not_an_inventory(
+    tmp_path: Path, job_step: str, sbom_name: str, body: str
+) -> None:
+    """`length` answers for objects, strings and numbers too, so before the type
+    check a file that is not a CycloneDX document satisfied "the inventory is not
+    empty" and was then attached to the Release as evidence of a scan."""
+    guard = _continued_lines(str(_step("build", job_step)["run"]), "jq -e '(.components")
+    (tmp_path / sbom_name).write_text(body, encoding="utf-8")
+    result = _run(guard, tmp_path, {})
+    assert result.returncode != 0, f"{body} is not an inventory and must not pass the gate"
+
+
+@pytest.mark.parametrize("job_step", ["Assert + scan Python", "Assert + scan npm"])
+def test_the_sbom_guard_runs_before_the_scans_it_gates(job_step: str) -> None:
+    """`_continued_lines` runs the guard in isolation and cannot see where it
+    sits. The comment claims the scans below would pass on an empty inventory;
+    that sentence is only true while the guard is above them."""
+    lines = str(_step("build", job_step)["run"]).splitlines()
+    guard = next(i for i, line in enumerate(lines) if "jq -e '(.components" in line)
+    for scanner in ("grype sbom:", "grant check"):
+        scan = next(i for i, line in enumerate(lines) if scanner in line)
+        assert guard < scan, f"the emptiness guard must precede {scanner}"
+
+
+@pytest.mark.parametrize(
+    "pypi_body",
+    [
+        "{}",
+        '{"urls": null}',
+        '{"urls": []}',
+        '{"urls": {"a": {"packagetype": "sdist"}}}',
+        '{"urls": [{"packagetype": "sdist"}, {"packagetype": "sdist"}]}',
+        "TRUNCATED{",
+    ],
+)
+def test_release_is_not_announced_on_a_malformed_pypi_answer(
+    tmp_path: Path, pypi_body: str
+) -> None:
+    _stub_registries(tmp_path, None, {"version": "9.9.9"})
+    _stub_bin(
+        tmp_path / "stubs",
+        "curl",
+        'out=""; url=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac\n'
+        "done\n"
+        'case "$url" in\n'
+        f"  *pypi.org*) printf '%s' {pypi_body!r} > \"$out\" ;;\n"
+        '  *registry.npmjs.org*) printf \'{"version":"9.9.9"}\' > "$out" ;;\n'
+        "  *) exit 22 ;;\n"
+        "esac",
+    )
+    result = _run(_registry_script(), tmp_path, _registry_env(tmp_path))
+    assert result.returncode != 0, f"a PyPI answer shaped {pypi_body} must not be announced"
+
+
+@pytest.mark.parametrize(
+    "npm_body",
+    [{}, {"version": 9.9}, {"version": ["9.9.9"]}, {"version": "9.9.9 "}, {"version": None}],
+)
+def test_release_is_not_announced_on_a_malformed_npm_answer(
+    tmp_path: Path, npm_body: dict[str, Any]
+) -> None:
+    _stub_registries(tmp_path, _FULL_PYPI, npm_body)
+    result = _run(_registry_script(), tmp_path, _registry_env(tmp_path))
+    assert result.returncode != 0, f"an npm answer shaped {npm_body} must not be announced"
+
+
+@pytest.mark.parametrize("attempts", ["0", "-1", "abc", "1 ; touch INJECTED-MARKER"])
+def test_no_retry_setting_can_turn_a_missing_package_into_a_release(
+    tmp_path: Path, attempts: str
+) -> None:
+    """The knobs exist so the retry can be exercised without waiting. A value that
+    skipped the loop, or that ran as a command, would announce nothing as success.
+
+    The injection probe leaves a FILE rather than printing: the step echoes the
+    value it was given inside its own failure message, so looking for a marker in
+    stdout would find the echo and call it an execution. A test that cannot tell
+    those apart is the defect it is meant to catch, one level up.
+    """
+    _stub_registries(tmp_path, None, None)
+    env = {**_registry_env(tmp_path), "REGISTRY_ATTEMPTS": attempts}
+    result = _run(_registry_script(), tmp_path, env)
+    assert result.returncode != 0
+    assert not (tmp_path / "INJECTED-MARKER").exists(), "the retry budget was executed as a command"
+
+
+def test_dist_assertion_refuses_a_tag_it_cannot_read(tmp_path: Path) -> None:
+    """An unset GITHUB_REF_NAME must not degrade into "any version will do"."""
+    _seed_dist(
+        tmp_path,
+        ["attest_receipts-9.9.9-py3-none-any.whl", "attest_receipts-9.9.9.tar.gz"],
+    )
+    result = _run(_dist_script(), tmp_path, {})
+    assert result.returncode != 0
+    assert "expected sdist" in result.stdout
+
+
+def test_dist_assertion_refuses_a_directory_among_the_distributions(tmp_path: Path) -> None:
+    _seed_dist(
+        tmp_path,
+        ["attest_receipts-9.9.9-py3-none-any.whl", "attest_receipts-9.9.9.tar.gz"],
+    )
+    (tmp_path / "dist" / "leftover").mkdir()
+    result = _run(_dist_script(), tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert result.returncode != 0
+    assert "nothing else" in result.stdout
+
+
+def test_dist_assertion_refuses_a_hidden_file_among_the_distributions(tmp_path: Path) -> None:
+    """Without dotglob, `dist/*` skips dotfiles and "nothing else" would be a
+    stronger sentence than the glob backing it."""
+    _seed_dist(
+        tmp_path,
+        [
+            "attest_receipts-9.9.9-py3-none-any.whl",
+            "attest_receipts-9.9.9.tar.gz",
+            ".hidden-extra",
+        ],
+    )
+    result = _run(_dist_script(), tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert result.returncode != 0
+    assert "nothing else" in result.stdout
+
+
+# --------------------------------------------------------------------------
+# The gate names WHICH tool is missing, and a broken environment is not a pass
+# --------------------------------------------------------------------------
+
+
+def test_install_step_names_the_single_tool_whose_installer_left_nothing(tmp_path: Path) -> None:
+    """Per-element, not aggregate: the earlier stub made all three installers
+    fail at once, so it could not tell "one is missing" from "all are missing" --
+    the same blindness as an aggregate check, moved from the code into the test.
+    """
+    for broken in ("syft", "grype", "grant"):
+        work = tmp_path / broken
+        (work / "stubs").mkdir(parents=True)
+        digests = {}
+        for tool in ("syft", "grype", "grant"):
+            installer = work / f"{tool}.sh"
+            if tool == broken:
+                installer.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            else:
+                installer.write_text(
+                    "#!/bin/sh\n"
+                    'bindir="$2"\n'
+                    'mkdir -p "$bindir"\n'
+                    f'printf "#!/bin/sh\\necho {tool}\\n" > "$bindir/{tool}"\n'
+                    f'chmod 755 "$bindir/{tool}"\n',
+                    encoding="utf-8",
+                )
+            digests[tool] = hashlib.sha256(installer.read_bytes()).hexdigest()
+        _stub_bin(
+            work / "stubs",
+            "curl",
+            'out=""; url=""\n'
+            'while [ "$#" -gt 0 ]; do\n'
+            '  case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac\n'
+            "done\n"
+            'case "$url" in\n'
+            f'  *anchore/syft*) cp "{work}/syft.sh" "$out" ;;\n'
+            f'  *anchore/grype*) cp "{work}/grype.sh" "$out" ;;\n'
+            f'  *anchore/grant*) cp "{work}/grant.sh" "$out" ;;\n'
+            "  *) exit 22 ;;\n"
+            "esac",
+        )
+        env = _install_env(
+            work,
+            SYFT_INSTALLER_SHA256=digests["syft"],
+            GRYPE_INSTALLER_SHA256=digests["grype"],
+            GRANT_INSTALLER_SHA256=digests["grant"],
+        )
+        env["PATH"] = f"{work / 'stubs'}:/usr/bin:/bin"
+        result = _run(str(_install_step()["run"]), work, env)
+        assert result.returncode != 0, f"a missing {broken} must fail the step"
+        assert broken in result.stdout, f"the failure must name {broken}, not just fail"
+
+
+def test_the_tools_this_bench_needs_are_present() -> None:
+    """A negative test that asserts only an exit code cannot tell a refusal from a
+    broken environment: with `jq` absent, every "must be rejected" case would pass
+    on `command not found` while proving nothing. The positive cases would go red,
+    but only as a side effect. This says it out loud instead.
+    """
+    for tool in ("bash", "jq", "sha256sum", "mktemp", "openssl", "base64"):
+        assert shutil.which(tool) is not None, (
+            f"{tool} is missing: the negative tests below would pass for the wrong reason"
+        )
