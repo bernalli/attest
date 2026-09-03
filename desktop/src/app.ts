@@ -2,7 +2,7 @@ import type { Disclosure } from 'attest-verifier'
 import { loadsStrict } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes, type VerifyJob } from '../../site/src/intake.js'
 import { runVerify } from '../../site/src/run.js'
-import { renderRejection, renderVerifyFailure } from '../../site/src/render.js'
+import { renderRejection, renderDeclined, renderVerifyFailure } from '../../site/src/render.js'
 import { LOG_KEYS, ANCHOR_POLICY } from '../../site/src/trusted-log.js'
 import { b64uDecode } from '../../site/src/b64u.js'
 import { renderDesktopCard } from './card.js'
@@ -184,7 +184,9 @@ export function initDesktopApp(doc: Document): DesktopApp {
       // warning with its verdict.
       pendingEnvelope = null
       manifestZone.hidden = true
-      results.replaceChildren(renderRejection(r.reason))
+      results.replaceChildren(
+        r.declined === true ? renderDeclined(r.reason) : renderRejection(r.reason),
+      )
       return
     }
     currentNotices = r.notices ?? []

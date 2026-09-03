@@ -2,7 +2,7 @@ import type { Disclosure } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes, type VerifyJob } from './intake.js'
 import { runVerify } from './run.js'
 import {
-  renderResult, renderRejection, renderVerifyFailure,
+  renderResult, renderRejection, renderDeclined, renderVerifyFailure,
   renderTamper, renderExhibit, renderExhibitTally, renderProbe,
 } from './render.js'
 import { LOG_KEYS, ANCHOR_POLICY } from './trusted-log.js'
@@ -145,7 +145,9 @@ export function initApp(doc: Document): AppHandle {
       clearJobs()
       currentNotices = []
       manifestZone.hidden = true
-      results.replaceChildren(renderRejection(r.reason))
+      results.replaceChildren(
+        r.declined === true ? renderDeclined(r.reason) : renderRejection(r.reason),
+      )
       return
     }
     currentNotices = r.notices ?? []

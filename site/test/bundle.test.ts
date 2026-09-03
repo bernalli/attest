@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { zipSync } from 'fflate'
 import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
-import { parseBundle, BundleError, PrivateBundleError, DEFAULT_CAPS } from '../src/bundle.js'
+import { parseBundle, BundleError, BundleTooLargeError, PrivateBundleError, DEFAULT_CAPS } from '../src/bundle.js'
 import { runVerify } from '../src/run.js'
 import { VECTORS_ROOT, logKeys, anchorPolicy } from './helpers/vectors.js'
 // Aliased: this file already defines a local `storedZip` that does NOT set
@@ -539,5 +539,41 @@ describe('parseBundle: a manifests/ member that is not shaped like one', () => {
     const parsed = parseBundle(withManifestMember(enc(body)))
     expect(Object.keys(parsed.trustStore.manifests)).toEqual([])
     expect(Object.keys(parsed.trustStore.provenance)).toEqual([])
+  })
+})
+
+// The twin of the reference importer's own outcome-class test
+// (`tests/test_bundle.py::test_a_refusal_to_read_is_a_different_outcome_from_a_refusal_of_the_bytes`).
+// v0.1 §14.4 forbids a surface from presenting an over-floor honest container
+// as invalid, corrupt or tampered with — the parser did not process it, which
+// is a fact about the verifier and not about the bytes. This page's caps ARE
+// the floor, so every resource refusal it makes is above the floor and falls
+// under that sentence: without the distinction an honest archive of one member
+// too many was told it looked like a bomb.
+describe('parseBundle: declining to read is not a verdict about the bytes', () => {
+  const corpusLeaf = (name: string): Uint8Array =>
+    new Uint8Array(
+      readFileSync(join(VECTORS_ROOT, '..', '..', '..', 'tests', 'container-corpus', name, 'archive.zip')),
+    )
+
+  it('refuses a malformed container without calling it a resource refusal', () => {
+    // Read, and found to be addressable two ways. No budget makes it readable.
+    let caught: unknown
+    try {
+      parseBundle(corpusLeaf('exhibit-D-prefix'))
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(BundleError)
+    expect(caught).not.toBeInstanceOf(BundleTooLargeError)
+  })
+
+  it('marks a refusal that is only about the caps', () => {
+    const { zip } = sampleZip()
+    expect(() => parseBundle(zip, { ...DEFAULT_CAPS, maxEntries: 1 })).toThrow(BundleTooLargeError)
+  })
+
+  it('leaves a caller who does not care catching what it always caught', () => {
+    expect(BundleTooLargeError.prototype).toBeInstanceOf(BundleError)
   })
 })

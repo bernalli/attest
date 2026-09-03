@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // The offline verifier inherits the canonical container reader, or it does not.
 //
 // `desktop/src/app.ts` imports `intake` from the site, so the desktop artifact
@@ -19,6 +20,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, URL as NodeURL } from 'node:url'
 import { intake } from '../../site/src/intake.js'
+import { renderDeclined } from '../../site/src/render.js'
 
 const HERE = fileURLToPath(new NodeURL('.', import.meta.url))
 const CORPUS = join(HERE, '..', '..', 'tests', 'container-corpus')
@@ -141,5 +143,21 @@ describe('the desktop verifier inherits the trust store built from own names onl
       expect(result.jobs[0].trustStore.manifests[name]).toBeUndefined()
       expect(result.jobs[0].trustStore.provenance[name]).toBeUndefined()
     }
+  })
+})
+
+// The register is inherited too, and it is the half of §14.4 that a holder can
+// actually see. The offline verifier imports `renderDeclined` from the site by
+// the same relative path `desktop/src/app.ts` uses, so this asserts the artifact
+// obeys the MUST rather than that an import statement exists: an over-floor
+// honest container must not be shown as invalid, corrupt or tampered with,
+// because nobody looked at it.
+describe('the desktop verifier inherits the register for a container it did not read', () => {
+  it('renders the neutral register, never the bad one', () => {
+    const article = renderDeclined('bundle declares over 10000 entries — refusing a possible zip bomb')
+    const classes = [...article.querySelectorAll('*')].map((node) => node.className)
+    expect(classes).toContain('verdict tone-neutral')
+    expect(classes).not.toContain('verdict tone-bad')
+    expect(article.textContent ?? '').not.toMatch(/invalid|corrupt|tampered/i)
   })
 })

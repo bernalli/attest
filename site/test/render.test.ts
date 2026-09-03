@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
 import type { VerificationResult } from 'attest-verifier'
-import { renderResult, renderRejection } from '../src/render.js'
+import { renderResult, renderRejection, renderDeclined } from '../src/render.js'
 import type { VerifyRun } from '../src/run.js'
 
 // The zero-evidence result: what every caller that supplies nothing already
@@ -150,5 +150,36 @@ describe('renderRejection', () => {
     const el = renderRejection('never share a .private.attest')
     expect(el.textContent).toContain('never share')
     expect(el.classList.contains('rejected')).toBe(true)
+  })
+})
+
+// v0.1 §14.4: "A conforming surface MUST NOT present an over-floor honest
+// container as invalid, corrupt, or tampered with: it did not process the
+// container, which is a fact about the verifier, not about the bytes." This
+// page's caps ARE the floor, so every resource refusal it makes is above the
+// floor and governed by that sentence. The register is the whole requirement —
+// a distinction that exists in the exception hierarchy and not on the screen
+// is a distinction only someone reading the source can see.
+describe('a container this page declined to read is not shown as a bad file', () => {
+  it('renders the neutral register and never the bad one', () => {
+    const article = renderDeclined('bundle declares over 10000 entries — refusing a possible zip bomb')
+    const classes = [...article.querySelectorAll('*')].map((n) => n.className)
+    expect(classes).toContain('verdict tone-neutral')
+    expect(classes).not.toContain('verdict tone-bad')
+    expect(article.className).not.toContain('rejected')
+  })
+
+  it('says the file was not examined rather than that it is wrong', () => {
+    const text = renderDeclined('over the cap').textContent ?? ''
+    expect(text).toMatch(/did not check/)
+    expect(text).toMatch(/limit of the verifier and not a judgement on your file/)
+    expect(text).not.toMatch(/invalid|corrupt|tampered/i)
+  })
+
+  it('keeps a real rejection in the bad register, so the two are told apart', () => {
+    const classes = [...renderRejection('not a readable zip archive').querySelectorAll('*')].map(
+      (n) => n.className,
+    )
+    expect(classes).toContain('verdict tone-bad')
   })
 })

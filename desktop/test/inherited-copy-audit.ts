@@ -28,6 +28,18 @@ export interface AuditRow {
 export const AUDITED_COPY: readonly AuditRow[] = [
   {
     module: 'render',
+    sha256: '2eaf85fcf652aa21db20235522114f94987d1364c651c29d7547b7d3390db999',
+    excerpt: 'This page did not check this bundle — it is larger than this page will read, ',
+    token: 'will ',
+    claimAbout:
+      "None, and deliberately: v0.1 §14.4 wants this refusal to assert nothing about the bytes, so the sentence names a PROPERTY — a verifier with different limits — and never a product. An earlier draft ended 'Try the attest CLI, which reads more', which is FALSE on the axis this change introduced: the reference importer bounds the container as stored at 1 GiB and this page bounds nothing there, so above that bound the CLI reads LESS. What the sentence does state is this page's own limit, which this page itself enforces.",
+    command:
+      "cd site && npx vitest run test/render.test.ts test/bundle.test.ts  # the branch is reachable only through BundleTooLargeError, and the assertions pin the neutral register; grep -n 'maxEntries\\|maxTotalBytes' src/container.ts shows the limit the sentence refers to is this page's own",
+    verdict: 'NOT-A-TOOL-CLAIM',
+    audited: '2026-09-03',
+  },
+  {
+    module: 'render',
     sha256: 'f2b76be9cde727516c43399c6760469421a5e712a32ad97d29dce105e7795d69',
     excerpt: '… — and could not. Why, this run cannot say.',
     token: 'run ',

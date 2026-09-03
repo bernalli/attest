@@ -1,11 +1,40 @@
 import { loadsStrict } from 'attest-verifier'
 import { canonicalMembers, readMember, ReadBudget, ContainerError } from './container.js'
-import type { Member } from './container.js'
+import type { Member, ContainerCode } from './container.js'
 import { neutralized } from './untrusted-text.js'
 import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
 
 export class BundleError extends Error {}
 export class PrivateBundleError extends BundleError {}
+
+/** The importer declined to read the container, and found nothing wrong with it.
+ *
+ * v0.1 §14.4 asks for this as an outcome of its own, apart from every refusal
+ * that says the container is malformed, and the reason is what a holder does
+ * next: a refusal of this kind may succeed on a surface that reads more, while
+ * a malformed container never will however much budget it is given. Reporting
+ * an unread container as corrupt states something about bytes nobody looked at.
+ *
+ * Mirrors the reference importer's `BundleTooLargeError`, and derives from
+ * `BundleError` so a caller who does not care catches what it always caught.
+ */
+export class BundleTooLargeError extends BundleError {}
+
+/** The container codes that say the importer DECLINED TO READ rather than that
+ * it read and found something wrong. v0.1 §14.4 names exactly these five, and
+ * the reference importer holds the same set in `_RESOURCE_CODES`. */
+const RESOURCE_CODES: ReadonlySet<ContainerCode> = new Set<ContainerCode>([
+  'too-many-entries',
+  'declared-member-over-cap',
+  'declared-total-over-cap',
+  'member-over-cap',
+  'total-over-cap',
+])
+
+/** Carry a container refusal across the boundary in this module's own voice,
+ * keeping the outcome class the code already decided. */
+const asBundleError = (e: ContainerError): BundleError =>
+  RESOURCE_CODES.has(e.code) ? new BundleTooLargeError(e.message) : new BundleError(e.message)
 
 export type { ContainerCaps as Caps } from './container.js'
 import type { ContainerCaps as Caps } from './container.js'
@@ -149,7 +178,7 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
   try {
     members = canonicalMembers(bytes, caps)
   } catch (e) {
-    if (e instanceof ContainerError) throw new BundleError(e.message)
+    if (e instanceof ContainerError) throw asBundleError(e)
     throw new BundleError('not a readable zip archive — expected a .attest bundle or a .attest.json receipt')
   }
 
@@ -170,7 +199,7 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
     try {
       return readMember(bytes, member, budget)
     } catch (e) {
-      if (e instanceof ContainerError) throw new BundleError(e.message)
+      if (e instanceof ContainerError) throw asBundleError(e)
       throw e
     }
   }
@@ -213,7 +242,9 @@ export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): Parse
       // hash to the digest in the member name, nor that every hash a receipt
       // references is present, and keeping them would suggest it did. Reading
       // also spends the shared budget on this family, as the reference importer
-      // does, so the two agree about which archives are too large as well.
+      // does, so the two agree on the aggregate decompression axis about which
+      // archives are too large as well. Not on the container as stored: this
+      // parser bounds nothing there, deliberately (v0.1 §14.4).
       read(member)
     } else if (name.startsWith('proofs/')) {
       const receiptId = proofMemberReceiptId(name)

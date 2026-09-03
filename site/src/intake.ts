@@ -1,6 +1,6 @@
 import { loadsStrict } from 'attest-verifier'
 import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
-import { parseBundle, BundleError, bareStore } from './bundle.js'
+import { parseBundle, BundleError, BundleTooLargeError, bareStore } from './bundle.js'
 
 export interface VerifyJob {
   label: string
@@ -15,7 +15,11 @@ export interface VerifyJob {
 export type IntakeResult =
   | { kind: 'jobs'; jobs: VerifyJob[]; notices?: string[] }
   | { kind: 'needs-manifest'; envelopeBytes: Uint8Array; label: string; notices?: string[] }
-  | { kind: 'rejected'; reason: string }
+  // `declined` marks the one refusal that says nothing about the bytes: the
+  // container was not read because it is larger than this surface admits
+  // (v0.1 §14.4). A surface MUST NOT show it as invalidity, so it cannot be
+  // rendered like every other rejection.
+  | { kind: 'rejected'; reason: string; declined?: true }
 
 // Every trust store this module hands on is looked up by an issuer name the
 // file being checked chose, so each one is built without a prototype
@@ -150,7 +154,11 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
         ...(notices.length > 0 ? { notices } : {}),
       }
     } catch (e) {
-      if (e instanceof BundleError) return { kind: 'rejected', reason: e.message } // includes PrivateBundleError
+      // includes PrivateBundleError; BundleTooLargeError is separated because
+      // v0.1 §14.4 forbids showing an unread container as invalid.
+      if (e instanceof BundleTooLargeError)
+        return { kind: 'rejected', reason: e.message, declined: true }
+      if (e instanceof BundleError) return { kind: 'rejected', reason: e.message }
       throw e
     }
   }
