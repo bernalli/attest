@@ -17,17 +17,24 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import zipfile
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-from attest import bundle, keys, verify
+from attest import anchor, bundle, keys, tlog, verify
 
 SAMPLE_DIR = Path(__file__).resolve().parent.parent / "site" / "public" / "sample"
 SAMPLE_BUNDLE = SAMPLE_DIR / "demo.attest"
 SAMPLE_BINDING = SAMPLE_DIR / "demo-binding.json"
+#: The log keys the published page pins are compiled into the site rather than
+#: served next to the log, deliberately (v0.2 §7.3: a verifier may not take log
+#: keys from the material it is checking). That module is therefore the only
+#: place they exist, and reading them is what lets this side evaluate the same
+#: evidence the browser evaluates, against the same trusted configuration.
+TRUSTED_LOG_SOURCE = SAMPLE_DIR.parent.parent / "src" / "trusted-log.ts"
 
 
 def _load_generator() -> ModuleType:
@@ -105,6 +112,30 @@ def test_refresh_readme_refuses_anything_but_a_shareable_bundle(tmp_path: Path) 
 # --- the bundle actually published, not a fresh one --------------------------
 
 
+def _site_log_key() -> tlog.LogKey:
+    """The log key the published verifier pins, read from the page's own source.
+
+    A copy written out here would be a second pin that can disagree with the
+    one the browser uses, which is the failure this whole file is about.
+    """
+    source = TRUSTED_LOG_SOURCE.read_text(encoding="utf-8")
+    match = re.search(
+        r'origin:\s*"([^"]+)",\s*name:\s*"([^"]+)",'
+        r'.*?ed25519Pub:\s*b64uDecode\(\s*"([^"]+)"'
+        r'.*?mldsaPub:\s*b64uDecode\(\s*"([^"]+)"',
+        source,
+        re.DOTALL,
+    )
+    assert match is not None, f"cannot read the log key pinned by {TRUSTED_LOG_SOURCE.name}"
+    origin, name, ed25519_pub, mldsa_pub = match.groups()
+    return tlog.LogKey(
+        origin=origin,
+        name=name,
+        ed25519_pub=keys.b64u_decode(ed25519_pub),
+        mldsa_pub=keys.b64u_decode(mldsa_pub),
+    )
+
+
 def _committed_receipt() -> tuple[bundle.ImportedBundle, dict[str, object]]:
     imported = bundle.import_bundle(SAMPLE_BUNDLE)
     assert len(imported.receipts) == 1, "the sample is meant to hold one receipt"
@@ -145,15 +176,34 @@ def test_committed_sample_binding_sidecar_proves_the_buyer_commitment() -> None:
 
 
 def test_committed_sample_carries_the_evidence_the_demo_promises() -> None:
-    """The published bundle ships a legal text for every hash its terms bind,
-    and a transparency proof for its receipt. Both are members a re-export can
-    drop without the signature noticing — the receipt stays valid while the
-    demo quietly stops demonstrating anything."""
+    """The published bundle ships the legal text its licence binds, and a
+    transparency proof for its receipt that actually proves something. Both are
+    members a re-export can drop without the signature noticing — the receipt
+    stays valid while the demo quietly stops demonstrating anything.
+
+    The proof is EVALUATED, not counted. Asserting that the member is present
+    accepts an empty object: the importer takes any JSON there, so a proof
+    emptied to `{}` would leave the receipt verifying, the member in place, and
+    the claim the demo makes — that this receipt is in a public log — unbacked.
+    """
     imported, receipt = _committed_receipt()
     payload = receipt["payload"]
     assert isinstance(payload, dict)
     receipt_id = payload["receipt_id"]
     assert isinstance(receipt_id, str)
-    assert set(bundle._referenced_legal_hashes(payload)) <= set(imported.legal_texts)
-    assert imported.legal_texts, "the sample must carry the licence text it binds"
-    assert receipt_id in imported.proofs
+
+    licence = payload["license"]
+    assert isinstance(licence, dict)
+    assert licence["legal_text_sha256"] in imported.legal_texts
+
+    evidence = imported.proofs.get(receipt_id)
+    assert evidence is not None, "the sample must carry the proof for its own receipt"
+    result = verify.verify(
+        json.dumps(receipt).encode("utf-8"),
+        imported.trust_store,
+        transparency=evidence,
+        log_keys=[_site_log_key()],
+        anchor_policy=anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
+    )
+    assert result.transparency == "logged"
+    assert result.corroboration == "logged"

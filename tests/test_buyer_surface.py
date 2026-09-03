@@ -219,10 +219,21 @@ def test_the_sentence_a_buyer_needs_is_on_every_surface_word_for_word(claim: str
     decision gets made: changing either sentence means changing it here too,
     with a reason, rather than watching a parity test go on passing over a
     warning that has quietly lost a claim."""
+    from attest import bundle
+
     for context, kwargs in READER_CONTEXTS.items():
         _, paragraphs = _headline_and_paragraphs(buyer_surface.private_file_warning_html(**kwargs))
         assert claim in paragraphs, context
         assert claim in buyer_surface.private_file_warning_text(**kwargs).splitlines(), context
+
+    # The README that travels INSIDE every bundle is a fourth surface, and it
+    # reaches the warning through `bundle._render_readme` rather than through
+    # the renderers above. Without this line a sentence could be dropped from
+    # that path alone — from the page a buyer opens out of their own zip — and
+    # nothing would go red, because the sample is compared against the same
+    # renderer that would have lost it.
+    _, readme_paragraphs = _headline_and_paragraphs(bundle._render_readme("demo"))
+    assert claim in readme_paragraphs, "bundle README"
 
 
 @pytest.mark.parametrize("claim", ANCHORED_CLAIMS)
@@ -425,18 +436,41 @@ def test_the_largest_page_actually_shipped_fits_under_the_recorded_ceiling() -> 
 
 
 def test_the_generator_runs_as_a_script() -> None:
-    """It is documented as a command, so it has to work as one."""
+    """It is documented as a command, so it has to work as one.
+
+    Running it writes the committed pages in place, which makes this the one
+    test in the file with a side effect on the repository — and the pages it
+    rewrites are what the anchors above read. Left alone it can repair the very
+    evidence another test exists to measure: with the source mutated, the
+    anchors pass or fail depending on whether they ran before or after this
+    line. So the pages are restored either way, and a run that changed them at
+    all is itself a failure: the committed output is meant to be current.
+    """
+    generated = tuple(gen_buyer_pages.generated_pages())
+    before = {path: path.read_bytes() if path.exists() else None for path in generated}
+
     # Fixed argv: this interpreter and a path inside the repo, no external input.
-    result = subprocess.run(  # noqa: S603
-        [sys.executable, str(REPO_ROOT / "tools/gen_buyer_pages.py")],
-        capture_output=True,
-        text=True,
-        cwd=REPO_ROOT,
-        check=False,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, str(REPO_ROOT / "tools/gen_buyer_pages.py")],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            check=False,
+        )
+        after = {path: path.read_bytes() if path.exists() else None for path in generated}
+    finally:
+        for path, contents in before.items():
+            if (path.read_bytes() if path.exists() else None) == contents:
+                continue
+            if contents is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(contents)
 
     assert result.returncode == 0, result.stderr
     assert "what-is-this.html" in result.stdout
+    assert after == before, "running the generator rewrote committed pages"
 
 
 # --- The FAQ page is derived from docs/faq.md, never transcribed -------------
