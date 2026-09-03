@@ -7,15 +7,20 @@ fed to `verifiers/ts/tools/witness-parity.mjs`, the same bench the two cores
 are held to, and both verdicts must agree.
 
 This is the only test in the suite that shells out. It needs `node` and a
-built `verifiers/ts/dist`, so it skips when they are absent rather than
-failing on a machine that has not run `npm run build` — but it is never
-skipped in the task's own gate, which runs the TypeScript build anyway.
+built `verifiers/ts/dist`, so on a developer's machine it skips rather than
+failing on someone who has not run `npm run build`. In CI it fails instead:
+the workflow either builds the other core before pytest or it does not, and
+if it does not, this comparison is the one thing nobody is doing — no other
+job runs it, because the jobs that build `dist` never run pytest and the job
+that runs pytest did not build `dist`. A skip there would be the whole gate
+disappearing into a total that still reads green.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -61,7 +66,13 @@ def test_the_lines_this_witness_produces_verify_in_both_cores(
 ) -> None:
     node = shutil.which("node")
     if node is None or not TS_DIST.exists():
-        pytest.skip("needs node and a built verifiers/ts (npm run build --prefix verifiers/ts)")
+        absent = "needs node and a built verifiers/ts (npm run build --prefix verifiers/ts)"
+        # GitHub Actions sets CI on every runner. There the absence is not a
+        # machine that happens to lack a build, it is a workflow that did not
+        # produce one before running the only cross-core comparison there is.
+        if os.environ.get("CI"):
+            pytest.fail(absent)
+        pytest.skip(absent)
 
     log = FakeLog(ORIGIN, log_keys)
     log.append(4)

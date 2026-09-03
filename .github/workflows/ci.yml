@@ -16,6 +16,25 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.21"
+      # Two gates in this suite compare this implementation with the other one,
+      # and both need the TypeScript side on disk: the container differential
+      # (bundled with the site's own esbuild) and the witness cross-core bench
+      # (a built verifiers/ts). Until these steps existed neither one failed
+      # here — they SKIPPED, and one skip in a total of four thousand passes is
+      # indistinguishable from a test that ran. The jobs that do build the
+      # TypeScript side never run pytest, so this is the only place either
+      # comparison can happen at all.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            verifiers/ts/package-lock.json
+            site/package-lock.json
+      - run: npm ci --prefix verifiers/ts
+      # The site depends on verifiers/ts by relative path, so it is built first.
+      - run: npm run build --prefix verifiers/ts
+      - run: npm ci --prefix site
       # `dev` is a PEP 621 optional-dependency extra, not a PEP 735 group:
       # bare `uv sync --locked` installs runtime deps only. Use --extra dev
       # to get pytest/ruff/mypy.
