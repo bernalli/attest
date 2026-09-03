@@ -7,6 +7,17 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # Without this key a `run:` step executes as `bash -e {0}`: -e, but NO
+    # pipefail, so a pipeline reports the exit status of its LAST command only.
+    # That is not a detail here. It is what let `curl … | sh` install nothing and
+    # stay green (sh on empty stdin exits 0), and what let `sha256sum missing |
+    # tee f` write an empty checksum file without failing. `shell: bash` is
+    # `bash --noprofile --norc -eo pipefail {0}`, and every assertion below
+    # assumes a failing command in a pipe fails the step.
+    shell: bash
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,22 +38,59 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: verifiers/ts/package-lock.json
-      - name: Install syft, grype, grant (pinned)
+      - name: Install syft, grype, grant (pinned by installer digest)
+        # These three binaries ARE the SBOM, vulnerability and license gate of the
+        # release: everything downstream trusts them to refuse. They were fetched
+        # by piping a URL into a shell, which means the gate itself arrived over
+        # the least verified path in the file.
+        #
+        # Each installer verifies the checksum of the binary it fetches against
+        # the release's own checksums file, so the one unverified link left was
+        # the installer: a git tag can be repointed at other bytes while the
+        # version string stays the same -- the exact shape of the 2026-03 supply
+        # chain compromise that is the reason this project does not use Trivy.
+        # Pinning the installer's SHA-256 closes it. Update these digests in the
+        # same commit that moves a version, and say so in the message.
         env:
           SYFT_VERSION: v1.46.0
           GRYPE_VERSION: v0.115.0
           GRANT_VERSION: v0.6.8
+          SYFT_INSTALLER_SHA256: 8a277b4b4dc21809ecd9a0e4926f4d7319affc6451a607fdeb3e5e1fbd9bc573
+          GRYPE_INSTALLER_SHA256: 8646f06a90b10ca64992c1809b4aa00c44e30b4f551f63c309b0b0ab66873556
+          GRANT_INSTALLER_SHA256: 084c7de5bb7a28b79b37cd19ade5839a38dc0b93b291958b2ae113b2ab3de642
         run: |
-          curl -sSfL "https://raw.githubusercontent.com/anchore/syft/${SYFT_VERSION}/install.sh"  | sh -s -- -b "$HOME/.local/bin" "${SYFT_VERSION}"
-          curl -sSfL "https://raw.githubusercontent.com/anchore/grype/${GRYPE_VERSION}/install.sh" | sh -s -- -b "$HOME/.local/bin" "${GRYPE_VERSION}"
-          curl -sSfL "https://raw.githubusercontent.com/anchore/grant/${GRANT_VERSION}/install.sh" | sh -s -- -b "$HOME/.local/bin" "${GRANT_VERSION}"
+          install_pinned() {
+            name="$1"; version="$2"; want="$3"
+            installer="$(mktemp)"
+            # Downloaded to a file, not piped: a pipe cannot be checksummed
+            # before it is executed, which is the whole point of this step.
+            curl -sSfL "https://raw.githubusercontent.com/anchore/${name}/${version}/install.sh" -o "$installer"
+            echo "${want}  ${installer}" | sha256sum -c -
+            sh "$installer" -b "$HOME/.local/bin" "${version}"
+          }
+          install_pinned syft "$SYFT_VERSION" "$SYFT_INSTALLER_SHA256"
+          install_pinned grype "$GRYPE_VERSION" "$GRYPE_INSTALLER_SHA256"
+          install_pinned grant "$GRANT_VERSION" "$GRANT_INSTALLER_SHA256"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # $GITHUB_PATH only applies to LATER steps, so this step checks by path.
+          # An installer that exits 0 without leaving a binary would otherwise be
+          # discovered by the scan step, as a "command not found" that reads like
+          # a different failure.
+          for tool in syft grype grant; do
+            test -x "$HOME/.local/bin/$tool" || { echo "installer for $tool exited 0 but left no executable"; exit 1; }
+          done
       - run: uv build
       - name: Assert + scan Python
         run: |
           uv run --frozen python tools/assert_artifacts.py --wheel dist/*.whl --sdist dist/*.tar.gz
           uv sync --locked
           syft dir:.venv -o cyclonedx-json=sbom-python.cdx.json
+          # An SBOM with no components passes every scan below -- grype finds no
+          # vulnerabilities in nothing and grant finds no forbidden licence in
+          # nothing -- and is then attached to the GitHub Release as evidence.
+          # The gate has to refuse an empty inventory before it can mean anything.
+          jq -e '(.components // []) | length > 0' sbom-python.cdx.json > /dev/null \
+            || { echo "sbom-python.cdx.json lists no components: the scans below would pass on an empty inventory"; exit 1; }
           grype sbom:sbom-python.cdx.json --fail-on high
           grant check -c .grant.yaml sbom-python.cdx.json
       - name: Assert + scan npm
@@ -54,11 +102,19 @@ jobs:
           cp verifiers/ts/attest-verifier-*.tgz .
           (cd verifiers/ts && npm ci --omit=dev)
           syft dir:verifiers/ts -o cyclonedx-json=sbom-npm.cdx.json
+          jq -e '(.components // []) | length > 0' sbom-npm.cdx.json > /dev/null \
+            || { echo "sbom-npm.cdx.json lists no components: the scans below would pass on an empty inventory"; exit 1; }
           grype sbom:sbom-npm.cdx.json --fail-on high
           grant check -c .grant.yaml sbom-npm.cdx.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-and-sboms
+          # Default is `warn`: a pattern that matches nothing is a warning and the
+          # step stays green, so an artifact could leave here MISSING the wheel,
+          # an SBOM or the verifier tarball, and the first job to notice would be
+          # the one that publishes. Everything downstream reads this artifact as
+          # the gated output of this job; it has to be complete or it has to fail.
+          if-no-files-found: error
           path: |
             dist/*
             sbom-python.cdx.json
@@ -100,6 +156,9 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-verifier
+          # Same reason as the build job: an artifact missing the verifier or its
+          # checksum must not travel to the release job as if it were whole.
+          if-no-files-found: error
           path: |
             desktop/dist/attest-verifier.html
             desktop/dist/attest-verifier.html.sha256
@@ -119,11 +178,37 @@ jobs:
         with:
           name: dist-and-sboms
           path: .
-      - name: Move distributions into dist/
+      - name: Assert dist/ holds exactly this tag's two distributions
+        # This replaces a `mkdir -p dist` / `mv … 2>/dev/null || true` / `ls dist/`
+        # which could not fail -- and which, it turns out, never moved anything.
+        # The build job uploads several path patterns, so the artifact's root is
+        # the workspace and the distributions arrive already under `dist/`. The
+        # `mv` looked for them in the root, where they have never been: it failed
+        # on every release, said nothing, and `ls` then listed what the download
+        # had already put in place. A step that works for a reason other than the
+        # one it states is a step nobody can reason about.
+        #
+        # What must hold before the next step publishes irreversibly: one wheel
+        # and one sdist, both carrying THIS tag's version, and nothing else. The
+        # old step's worst case was not an empty dist/ (twine refuses that) but a
+        # half-populated one: rename the wheel by a single character upstream and
+        # the sdist alone would go to PyPI, with every job green.
         run: |
-          mkdir -p dist
-          mv attest_receipts-*.whl attest_receipts-*.tar.gz dist/ 2>/dev/null || true
-          ls dist/
+          shopt -s nullglob
+          VERSION="${GITHUB_REF_NAME#v}"
+          everything=(dist/*)
+          sdist="dist/attest_receipts-${VERSION}.tar.gz"
+          # `test -f`, not an array: a pattern with no wildcard is not a glob, so
+          # nullglob leaves it as its own literal text and an array would count a
+          # file that does not exist as one match.
+          wheels=(dist/attest_receipts-"${VERSION}"-*.whl)
+          test -f "$sdist" \
+            || { echo "expected sdist ${sdist}; dist/ holds ${#everything[@]}: ${everything[*]}"; exit 1; }
+          test "${#wheels[@]}" -eq 1 \
+            || { echo "expected exactly 1 wheel for ${VERSION}, found ${#wheels[@]}: ${wheels[*]}"; exit 1; }
+          test "${#everything[@]}" -eq 2 \
+            || { echo "dist/ must hold the wheel and the sdist and nothing else, found ${#everything[@]}: ${everything[*]}"; exit 1; }
+          echo "publishing ${wheels[0]} and ${sdist}"
       - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
         # Trusted Publishing (OIDC) + PEP 740 attestations are on by default.
         with:
@@ -178,6 +263,42 @@ jobs:
         with:
           name: desktop-verifier
           path: desktop-verifier
+      - name: Assert both registries serve what this release is about to announce
+        # The notes below name attest-receipts and attest-verifier at this
+        # version, and a GitHub Release is the public face of the whole run.
+        # Nothing checked that the registries had actually received them: a pypi
+        # job that published a partial dist/ still exits green, and this job would
+        # announce the version anyway. This is the last step that can refuse, and
+        # the only one that sees both registries.
+        #
+        # It runs BEFORE `gh release create`, so a registry that never catches up
+        # leaves no half-made release for the re-run to trip over. The two knobs
+        # exist so the retry can be exercised without waiting; neither can turn a
+        # missing package into a pass.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          attempts="${REGISTRY_ATTEMPTS:-10}"
+          delay="${REGISTRY_RETRY_SECONDS:-15}"
+          pypi_url="https://pypi.org/pypi/attest-receipts/${VERSION}/json"
+          npm_url="https://registry.npmjs.org/attest-verifier/${VERSION}"
+          served=0
+          for attempt in $(seq 1 "$attempts"); do
+            if curl -sSfL "$pypi_url" -o pypi.json && curl -sSfL "$npm_url" -o npm.json; then
+              served=1
+              break
+            fi
+            echo "attempt ${attempt}/${attempts}: a registry does not serve ${VERSION} yet"
+            sleep "$delay"
+          done
+          test "$served" -eq 1 \
+            || { echo "PyPI or npm does not serve ${VERSION} after ${attempts} attempts; not announcing it"; exit 1; }
+          # Present is not enough: the release claims a wheel AND an sdist, which
+          # is exactly the pair a half-populated dist/ would have broken.
+          jq -e '[.urls[].packagetype] | (index("bdist_wheel") != null) and (index("sdist") != null)' pypi.json > /dev/null \
+            || { echo "PyPI serves ${VERSION} without both a wheel and an sdist: $(jq -c '[.urls[].filename]' pypi.json)"; exit 1; }
+          jq -e --arg v "$VERSION" '.version == $v' npm.json > /dev/null \
+            || { echo "npm does not serve attest-verifier ${VERSION}"; exit 1; }
+          echo "registries serve ${VERSION}: announcing it"
       - name: Create GitHub Release with SBOMs and the offline verifier
         env:
           GH_TOKEN: ${{ github.token }}
