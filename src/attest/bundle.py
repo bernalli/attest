@@ -55,10 +55,10 @@ import re
 import stat
 import tempfile
 import zipfile
-from collections.abc import Buffer, Iterator
+from collections.abc import Buffer, Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from attest import buyer_surface, canon, container, keys, manifests, verify
 
@@ -491,6 +491,63 @@ class _SnapshotBudget:
         self.spent = 0
 
 
+#: The three moves of taking a snapshot, named so a refusal can say which one
+#: failed. They are facts about this machine, never about the archive.
+_COPY_READ_FAILED = "could not read the container in order to copy it"
+_COPY_WRITE_FAILED = (
+    "could not copy the container into the private temporary file this importer reads it from"
+)
+_COPY_MAP_FAILED = "could not map the copy this importer reads the container from"
+
+#: What was opened, named for a refusal that must describe the path and not the
+#: content — nothing has been read at the point this is used. A socket is absent
+#: because it never reaches here: opening one fails in the kernel with ENXIO.
+_PATH_KINDS: tuple[tuple[Callable[[int], bool], str], ...] = (
+    (stat.S_ISDIR, "a directory"),
+    (stat.S_ISFIFO, "a named pipe"),
+    (stat.S_ISCHR, "a character device"),
+    (stat.S_ISBLK, "a block device"),
+)
+
+
+def _path_kind(mode: int) -> str:
+    """Name what a mode word describes, in words a bundle's holder can act on."""
+    for is_kind, name in _PATH_KINDS:
+        if is_kind(mode):
+            return name
+    return "not a regular file"
+
+
+def _snapshot_failed(error: OSError, doing: str) -> BundleError:
+    """Refuse a container whose snapshot could not be taken, naming the step.
+
+    Taking the copy is three moves — read the source, write the temporary file,
+    map it — and each can fail for reasons the archive knows nothing about: a
+    source that returns an I/O error, a temporary filesystem that is full or
+    quota-limited, a map this host has no room for. None of that is a verdict on
+    the bytes, most of which have not been read; but an OSError leaving this
+    module is worse than an imprecise verdict, because this module's promise is
+    that whatever the input the caller is told in this module's own error type.
+    So the refusal is one of ours and says which move failed, so its reader
+    looks at their machine and not at their bundle.
+    """
+    return BundleError(f"{doing}: {error.strerror or error}")
+
+
+def _new_snapshot() -> IO[bytes]:
+    """The private temporary file a container is copied into.
+
+    Creating it is the first move of the copy and the first that can fail: a
+    temporary directory that does not exist, is read-only, or is out of inodes
+    refuses here, before a byte of the archive is touched. Refusing in this
+    module's own error type is the same promise the write below keeps.
+    """
+    try:
+        return tempfile.TemporaryFile()
+    except OSError as error:
+        raise _snapshot_failed(error, _COPY_WRITE_FAILED) from error
+
+
 @contextlib.contextmanager
 def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterator[Buffer]:
     """Map a bounded snapshot of a container, so the whole-buffer model the
@@ -503,37 +560,94 @@ def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterat
     into a refusal. Copying the bytes into a private temporary file first gives
     the map an inode nobody else holds; a truncation of the source then lands
     before or during the copy, where it is an ordinary short read and the
-    archive earns an ordinary verdict. The copy goes to a file rather than to
-    memory so that snapshotting cannot be turned into an allocation of the
-    attacker's choosing, and it is bounded besides.
+    archive earns an ordinary verdict.
+
+    What keeps snapshotting from becoming an allocation of the attacker's
+    choosing is the bound, and only the bound. The copy is not bounded away from
+    memory: it goes wherever this platform puts temporary files, and where that
+    directory is memory-backed — a tmpfs `/tmp`, which is the ordinary
+    arrangement on Linux — the file IS memory and the bound is a bound on RAM.
+    Whoever sets that bound is therefore choosing, on such a host, how much
+    memory one import may occupy, and the lever is the caller's:
+    `import_bundle(max_total_bytes=...)` sets it, and a host with less room than
+    the default should say so there. Nothing here picks the directory — the
+    platform's temporary location does — so no promise is made about what backs
+    it, none being keepable everywhere this runs.
 
     An empty snapshot cannot be mapped, and must still earn a verdict about the
     container rather than an OSError.
     """
     if budget is None:
         budget = _SnapshotBudget(_MAX_TOTAL_BYTES)
-    with open(path, "rb") as fh, tempfile.TemporaryFile() as snapshot:
+    # What the path names is settled before a byte is read from it, and the
+    # handle is taken without blocking so that it can be settled at all: opening
+    # a FIFO waits for a writer who may never arrive, so `open(path, "rb")` is
+    # itself where a named pipe stops this importer for good. A device would not
+    # block; it would feed the copy until the bound. O_NONBLOCK changes nothing
+    # for the regular file this expects, and asking the open handle rather than
+    # the name leaves no window in which the two could differ.
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            raise BundleError(
+                f"container path is {_path_kind(mode)}, not a regular file — refusing to read it"
+            )
+        source = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with source as fh, _new_snapshot() as snapshot:
         while True:
             remaining = budget.max_bytes - budget.spent
             # One byte past what is left is all it takes to know the source is
             # over the bound; nothing beyond it is ever read.
-            chunk = fh.read(min(_SNAPSHOT_CHUNK, remaining + 1))
+            try:
+                chunk = fh.read(min(_SNAPSHOT_CHUNK, remaining + 1))
+            except OSError as error:
+                # A regular file can still refuse to be read — a failing disk, a
+                # network mount that went away, a kernel file whose bytes are not
+                # bytes. That is not a short read and there is no verdict in it.
+                raise _snapshot_failed(error, _COPY_READ_FAILED) from error
             if not chunk:
                 break
             if len(chunk) > remaining:
-                # The refusal this repo already has for an archive over the
-                # aggregate cap, decided — as that one is — before a single
-                # byte is inflated.
-                raise BundleError(container.MESSAGES["declared-total-over-cap"])
-            snapshot.write(chunk)
+                # Says what this bound measures and nothing else: the size of
+                # the file, not of anything inside it. Borrowing the aggregate
+                # cap's sentence here read well and was false — an archive is
+                # over this bound as soon as its FRAMING is, so one whose
+                # members inflate to a few hundred bytes can cross it, and
+                # telling its holder the bundle is over a decompression cap
+                # sends them to look at the wrong thing entirely.
+                raise BundleError(
+                    f"container is over the {budget.max_bytes}-byte limit this importer "
+                    "will copy in order to read it — refusing to snapshot an archive "
+                    "that large"
+                )
+            try:
+                snapshot.write(chunk)
+            except OSError as error:
+                raise _snapshot_failed(error, _COPY_WRITE_FAILED) from error
             budget.spent += len(chunk)
 
-        snapshot.flush()
+        try:
+            # A buffered write is not a write until it is flushed: a temporary
+            # filesystem that has just filled up refuses the tail of the copy
+            # here and nowhere else.
+            snapshot.flush()
+        except OSError as error:
+            raise _snapshot_failed(error, _COPY_WRITE_FAILED) from error
         length = snapshot.tell()
         if length == 0:
             yield b""
             return
-        mapped = mmap.mmap(snapshot.fileno(), length, access=mmap.ACCESS_READ)
+        try:
+            mapped = mmap.mmap(snapshot.fileno(), length, access=mmap.ACCESS_READ)
+        except OSError as error:
+            # The copy exists and is within its bound; this host still may not
+            # have the address space to map it. That is this machine's answer,
+            # not the archive's.
+            raise _snapshot_failed(error, _COPY_MAP_FAILED) from error
         try:
             yield mapped
         except BaseException:
@@ -641,7 +755,10 @@ def import_bundle(
     member read during this call (`.attest` and, when given, `.private.attest`
     share one budget), and a cap on the central directory's entry count.
     Exceeding any of them raises `BundleError` rather than importing a
-    possible bomb.
+    possible bomb. `max_total_bytes` bounds one quantity more: the bytes this
+    importer will copy in order to read a container at all (see
+    `_open_container`), so an embedder who tightens the cap tightens the copy
+    with it rather than leaving it at the module default.
     """
     receipts: list[dict[str, Any]] = []
     seen_receipt_ids: set[str] = set()
@@ -656,9 +773,13 @@ def import_bundle(
     # salts read so a hostile .attest/.private.attest pair cannot each spend up
     # to max_total_bytes and together decompress 2x the aggregate ceiling.
     budget = container.ReadBudget(max_member_bytes, max_total_bytes)
-    # The snapshot bound is provisional and shares the aggregate constant on
-    # purpose, so whoever settles the acceptance floor moves one number rather
-    # than two. It is a bound on COMPRESSED input standing in for a cap written
+    # The snapshot bound is provisional and shares the aggregate cap on purpose,
+    # so whoever settles the acceptance floor moves one number rather than two.
+    # It is the caller's cap and not the module constant behind it: an embedder
+    # who tightens `max_total_bytes` is tightening what this importer will read,
+    # and a bound that ignored the argument would leave the copy at a gigabyte
+    # while the documented ceiling said otherwise.
+    # It is a bound on COMPRESSED input standing in for a cap written
     # for DECOMPRESSED output, and the next hand on this number must not read
     # the two as one: a file over this bound is NOT necessarily over the
     # decompression cap. Every byte of framing widens the gap — local and
@@ -670,7 +791,7 @@ def import_bundle(
     # that is, there, not the reason. It is a bound and not a verdict about the
     # content; the acceptance floor being settled elsewhere is what will give
     # this quantity a cap and a refusal of its own.
-    snapshot_budget = _SnapshotBudget(_MAX_TOTAL_BYTES)
+    snapshot_budget = _SnapshotBudget(max_total_bytes)
 
     with _open_container(attest_path, snapshot_budget) as buf:
         members = _members(

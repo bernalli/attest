@@ -9,13 +9,16 @@ single-receipt sharing unit for the email-attachment integration path.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import html
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import tempfile
 import warnings as warnings_module
 import zipfile
 from pathlib import Path
@@ -25,7 +28,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from attest import bundle, buyer_surface, canon, issue, keys, manifests, verify
+from attest import bundle, buyer_surface, canon, container, issue, keys, manifests, verify
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -692,19 +695,19 @@ def test_import_caps_private_salts_json(tmp_path: Path) -> None:
 def test_the_snapshot_of_a_container_is_bounded(tmp_path: Path) -> None:
     """The snapshot is a copy, so it is bounded before it is written: an
     unbounded copy of an attacker-sized file is a new denial of service in
-    place of the old one. The bound speaks with the refusal this repo already
-    has for an archive over the aggregate cap — the snapshot decides before a
-    single byte is inflated, which is where that refusal already lives."""
+    place of the old one. The refusal names the size of the FILE, which is what
+    the bound measures — see the test below for why borrowing another cap's
+    sentence here was false."""
     oversized = tmp_path / "oversized.attest"
     oversized.write_bytes(b"x" * 65)
 
-    with pytest.raises(bundle.BundleError, match="aggregate decompression cap"):
+    with pytest.raises(bundle.BundleError, match="limit this importer will copy"):
         with bundle._open_container(oversized, bundle._SnapshotBudget(64)):
             pass  # pragma: no cover — the bound refuses before the body runs
 
 
 def test_the_snapshot_bound_is_shared_by_a_container_and_its_private_sibling(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """One import, one bound: a hostile pair cannot spend it twice."""
     receipt_id = "01HZX0000000000000000000AA"
@@ -716,17 +719,26 @@ def test_the_snapshot_bound_is_shared_by_a_container_and_its_private_sibling(
     )
     limit = max(public.stat().st_size, private.stat().st_size)
     assert public.stat().st_size + private.stat().st_size > limit
-    monkeypatch.setattr(bundle, "_MAX_TOTAL_BYTES", limit)
 
-    with pytest.raises(bundle.BundleError, match="aggregate decompression cap"):
-        bundle.import_bundle(public, private)
+    with pytest.raises(bundle.BundleError, match="limit this importer will copy"):
+        bundle.import_bundle(public, private, max_total_bytes=limit)
 
 
 def test_import_shares_the_aggregate_budget_with_the_private_sibling(
     tmp_path: Path,
 ) -> None:
+    """One import, one aggregate cap, spent by both halves of a hostile pair.
+
+    The receipt is padded with something that compresses, and that is not
+    decoration: `max_total_bytes` bounds two different quantities — the bytes
+    members inflate to, which is what this test is about, and the bytes copied
+    to read a container at all. A cap below the archives' own size would be
+    refused by the second before the first was ever spent, and this test would
+    silently stop measuring what it names. Padding that inflates puts the pair
+    comfortably inside the copy bound while the aggregate is what runs out.
+    """
     receipt_id = "01HZX0000000000000000000AA"
-    receipt = canon.canonical_bytes({"payload": {"receipt_id": receipt_id}})
+    receipt = canon.canonical_bytes({"payload": {"receipt_id": receipt_id, "note": "a" * 20_000}})
     salts = canon.canonical_bytes({receipt_id: keys.b64u(SALT_A)})
     limit = max(len(receipt), len(salts))
     assert len(receipt) + len(salts) > limit
@@ -740,6 +752,9 @@ def test_import_shares_the_aggregate_budget_with_the_private_sibling(
         tmp_path,
         {"salts.json": salts},
         "shared-budget.private.attest",
+    )
+    assert public.stat().st_size + private.stat().st_size < limit, (
+        "the pair must fit inside the copy bound, so only the aggregate cap can refuse"
     )
 
     with pytest.raises(bundle.BundleError, match="aggregate cap"):
@@ -1519,3 +1534,256 @@ print(f"IMPORTED {len(imported.receipts)}")
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "IMPORTED 1"
+
+
+def test_the_snapshot_bound_says_what_it_measures_and_not_what_it_does_not(
+    tmp_path: Path,
+) -> None:
+    """An archive can cross the snapshot bound on FRAMING alone.
+
+    The bound is on the bytes of the file; the aggregate cap is on the bytes
+    members inflate to. Those are not the same quantity and they do not even
+    stay close: a central directory holds a record per member and a member name
+    may run to 65 535 bytes, none of which ever inflates. So an archive whose
+    members inflate to a few hundred bytes — a fraction of a percent of the cap
+    — can be a hundred times over the bound, and a refusal that named the
+    aggregate cap there would be telling its holder to look at a quantity that
+    is nowhere near its limit. It is measured here rather than argued, so the
+    wording of that refusal cannot drift back.
+
+    The bound is the cap the caller passed, so the cap is lowered for the test
+    instead of putting a gigabyte on disk; the geometry is what is under test,
+    and it does not depend on the scale.
+    """
+    cap = 64 * 1024
+    hostile = tmp_path / "framing.attest"
+    with zipfile.ZipFile(hostile, "w", zipfile.ZIP_STORED) as zf:
+        for name, blob in _minimal_receipt_members().items():
+            zf.writestr(name, blob)
+        for index in range(60):
+            zf.writestr(f"pad/{index:04d}{'n' * 1200}.bin", b"x")
+
+    members = container.canonical_members(
+        hostile.read_bytes(), max_entries=100_000, max_member_bytes=cap, max_total_bytes=cap
+    )
+    inflated = sum(member.uncompressed_size for member in members)
+    assert inflated * 100 < cap, "the members must be far inside the aggregate cap"
+    assert hostile.stat().st_size > cap, "and the file must be over the snapshot bound"
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(hostile, max_member_bytes=cap, max_total_bytes=cap)
+    message = str(refusal.value)
+    assert "will copy in order to read it" in message
+    # The refusal must not name a quantity this archive is nowhere near.
+    assert "decompression" not in message
+    assert "inflated" not in message
+
+
+class _FullTemporaryFile:
+    """A temporary file on a filesystem with no room left for the copy.
+
+    A full or quota-limited temporary filesystem is not something a test can
+    arrange on the host it runs on, so the condition is arranged at the one
+    place it is felt: the write.
+    """
+
+    def __enter__(self) -> _FullTemporaryFile:
+        return self
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+    def write(self, chunk: bytes) -> int:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    def flush(self) -> None:
+        return None
+
+    def tell(self) -> int:  # pragma: no cover — the write refuses first
+        return 0
+
+
+def test_a_snapshot_that_cannot_be_written_is_refused_as_a_copy_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A copy that cannot be taken is a fact about this machine, not the archive.
+
+    The importer reads a container by copying it into a private temporary file
+    first, and that write can fail for reasons the archive knows nothing about:
+    a temporary filesystem that is full, a quota, a size limit on the process.
+    An OSError escaping from there would break the promise this module keeps
+    everywhere else — whatever the input, the caller is told in this module's
+    own error type — and, worse, would name an errno where a holder expects a
+    verdict on their bundle. So the refusal says what actually happened, and
+    says nothing about bytes it never read.
+    """
+    source = _make_raw_zip(tmp_path, _minimal_receipt_members(), "unwritable.attest")
+    monkeypatch.setattr(bundle.tempfile, "TemporaryFile", _FullTemporaryFile)
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(source)
+
+    message = str(refusal.value)
+    assert "could not copy the container" in message
+    assert "No space left on device" in message
+    # The archive was never read, so nothing in the refusal may describe it.
+    assert "over the" not in message
+    assert isinstance(refusal.value.__cause__, OSError)
+
+
+def test_a_snapshot_that_cannot_be_created_is_refused_in_the_same_voice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy can fail before it starts, and it fails the same way.
+
+    A temporary directory that is read-only, absent or out of inodes refuses at
+    creation rather than at the write. It is the same fact — this importer could
+    not take a copy — and a caller who gets an OSError here instead of there
+    learns nothing except that the module's promise holds only sometimes.
+    """
+    source = _make_raw_zip(tmp_path, _minimal_receipt_members(), "uncreatable.attest")
+
+    def _read_only(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(bundle.tempfile, "TemporaryFile", _read_only)
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(source)
+
+    message = str(refusal.value)
+    assert "could not copy the container" in message
+    assert "Read-only file system" in message
+    assert isinstance(refusal.value.__cause__, OSError)
+
+
+def test_the_snapshot_promises_a_bound_and_not_a_flight_from_memory() -> None:
+    """The copy is bounded; it is not bounded away from memory, and saying so
+    would be false on an ordinary Linux host.
+
+    `tempfile` puts the snapshot in the platform's temporary directory, and that
+    directory is routinely a tmpfs — where the file IS memory and the bound is a
+    bound on RAM. A docstring promising the copy avoids an allocation of the
+    attacker's choosing would tell a reader that the bound may be set as high as
+    the disk is large. It may not, on such a host, and the reader deciding the
+    number is exactly who must know that.
+    """
+    doc = bundle._open_container.__doc__ or ""
+    assert "rather than to memory" not in doc
+    assert "memory-backed" in doc
+    # And the arrangement the docstring describes is the one that is measured:
+    # nothing here chooses a directory, so the copy lands wherever tempfile does.
+    assert Path(tempfile.gettempdir()).is_dir()
+
+
+def test_the_snapshot_bound_honours_the_cap_its_caller_gave(tmp_path: Path) -> None:
+    """An embedder who tightens `max_total_bytes` tightens the copy with it.
+
+    The parameter is documented as the aggregate cap and defaults to the module
+    constant; a snapshot bound built from that constant instead of from the
+    argument leaves an embedder who asked for a few kilobytes copying up to a
+    gigabyte, and reading the refusal for something else entirely — here, a
+    verdict on a receipt inside an archive they never wanted read that far.
+    """
+    cap = 4096
+    hostile = tmp_path / "over-the-callers-cap.attest"
+    with zipfile.ZipFile(hostile, "w", zipfile.ZIP_STORED) as zf:
+        for name, blob in _minimal_receipt_members().items():
+            zf.writestr(name, blob)
+        for index in range(40):
+            zf.writestr(f"pad/{index:04d}{'n' * 1200}.bin", b"x")
+    assert hostile.stat().st_size > cap
+    assert hostile.stat().st_size < bundle._MAX_TOTAL_BYTES, (
+        "and comfortably inside the module default, so only the argument can refuse it"
+    )
+
+    # Under the default the archive is fine, which is what makes the refusal
+    # below attributable to the argument and to nothing else about the file.
+    assert len(bundle.import_bundle(hostile).receipts) == 1
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(hostile, max_member_bytes=cap, max_total_bytes=cap)
+
+    # The number in the sentence is the caller's, which is how it is known the
+    # caller's cap and not the module constant did the refusing.
+    assert f"{cap}-byte limit this importer will copy" in str(refusal.value)
+
+
+def test_a_container_path_that_is_not_a_regular_file_is_refused(tmp_path: Path) -> None:
+    """A path is not a file, and this one names what it found before reading.
+
+    Opening a FIFO waits for a writer who need never arrive: the import stops
+    there for as long as the process lives, with no exception to catch and no
+    verdict to return. A character device is the same trap taken from the other
+    side — it never ends either, and it would feed the copy up to the bound
+    first. Neither is a fact about an archive, so the check is on what the
+    handle IS, made before a byte is read and answered in this module's own
+    error type.
+
+    The alarm is the assertion that the check happens BEFORE the read: without
+    it, a regression does not fail this test, it hangs it forever.
+    """
+    fifo = tmp_path / "pipe.attest"
+    os.mkfifo(fifo)
+
+    def _still_blocked(_signum: int, _frame: object) -> None:
+        raise AssertionError("opening the container blocked: the FIFO was read, not refused")
+
+    previous = signal.signal(signal.SIGALRM, _still_blocked)
+    signal.setitimer(signal.ITIMER_REAL, 5.0)
+    try:
+        with pytest.raises(bundle.BundleError) as refusal:
+            bundle.import_bundle(fifo)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous)
+
+    message = str(refusal.value)
+    assert "a named pipe, not a regular file" in message
+    # It says what was found, never what the bytes held: none were read.
+    assert "receipt" not in message
+
+
+@pytest.mark.skipif(not Path("/proc/self/mem").exists(), reason="needs Linux procfs")
+def test_a_container_that_cannot_be_read_is_refused_as_a_read_failure() -> None:
+    """A regular file can still refuse to be read, and that is not a verdict.
+
+    `/proc/self/mem` passes every check a container path can be given — it is a
+    regular file, it is not over any bound — and its first read returns EIO. It
+    stands here for the failing disk and the network mount that went away: the
+    copy cannot be taken, nothing has been parsed, and an OSError leaving the
+    module would name the wrong culprit as surely as one from the write does.
+    """
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(Path("/proc/self/mem"))
+
+    message = str(refusal.value)
+    assert "could not read the container in order to copy it" in message
+    assert "Input/output error" in message
+    assert isinstance(refusal.value.__cause__, OSError)
+
+
+def test_a_copy_that_cannot_be_mapped_is_refused_as_a_mapping_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last move of the copy can fail too, and on the tightest hosts it will.
+
+    The snapshot is inside its bound and written; mapping it still asks this
+    machine for address space it may not have. The refusal is this module's,
+    because a caller handed an ENOMEM has no way to tell it from a verdict on
+    the archive — and the archive, at that point, has still not been read.
+    """
+    source = _make_raw_zip(tmp_path, _minimal_receipt_members(), "unmappable.attest")
+
+    def _no_room(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.ENOMEM, "Cannot allocate memory")
+
+    monkeypatch.setattr(bundle.mmap, "mmap", _no_room)
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(source)
+
+    message = str(refusal.value)
+    assert "could not map the copy" in message
+    assert "Cannot allocate memory" in message
+    assert isinstance(refusal.value.__cause__, OSError)
