@@ -29,6 +29,18 @@ ESBUILD = REPO_ROOT / "site" / "node_modules" / ".bin" / "esbuild"
 
 #: Values that leave the fail-closed contract disarmed. Everything else arms
 #: it, including spellings nobody thought to list.
+#:
+#: Refusing an unrecognised spelling outright — rather than reading it as
+#: "armed" — was considered and deliberately not done here, and the reason is
+#: worth leaving for whoever revisits this. Such a refusal would have to happen
+#: ONCE, when the pytest session starts. Put where this test would naturally
+#: put it, inside the branch that runs when a prerequisite is missing, it would
+#: never fire on a complete machine: a job setting `ATTEST_CI_REQUIRED=trueish`
+#: would sail through every green run and only reveal the typo on the day
+#: something was already broken. That is a check which exists only in the
+#: degraded case — precisely the defect this whole contract removes, rebuilt
+#: one level down. Whoever adds a second writer for this variable should add
+#: the session-wide refusal at the same time, not the branch-local one.
 _NOT_REQUIRED = frozenset({"", "0", "false", "no"})
 
 _ABSENT = (
