@@ -57,6 +57,7 @@ from attest import (
     revocation,
     tlog,
     transfer,
+    validate,
     verify,
     witness,
 )
@@ -338,6 +339,32 @@ def _read_json(path: Path, *, max_bytes: int | None = None, input_name: str = "J
         return json.loads(text)
     except json.JSONDecodeError as exc:
         raise CliUsageError(f"invalid JSON in {path}: {exc}") from exc
+
+
+def _loads_strict(data: bytes, path: Path, input_name: str) -> Any:
+    """Parse CLI input bytes with the canonical strict parser.
+
+    `_read_json` above uses `json.loads`, where a duplicate object member
+    collapses onto the last one and a float parses fine — behavior published
+    for the flags that already had it, and not changed here. Inputs introduced
+    with the revocation rail read through this function instead: a file whose
+    meaning depends on which duplicate a parser happens to keep is refused,
+    not resolved by position (`canon.loads_strict`, same reader the verifier's
+    own admission path uses).
+    """
+    try:
+        return canon.loads_strict(data)
+    except canon.CanonError as exc:
+        raise CliUsageError(f"cannot read {input_name} {path}: {exc}") from exc
+
+
+def _read_strict_json(path: Path, *, max_bytes: int, input_name: str) -> Any:
+    """`_read_bounded_bytes` followed by `_loads_strict`, for a NEW CLI input."""
+    return _loads_strict(
+        _read_bounded_bytes(path, max_bytes=max_bytes, input_name=input_name),
+        path,
+        input_name,
+    )
 
 
 def _json_text(obj: Any) -> str:
@@ -1272,6 +1299,158 @@ def _cmd_transfer_authorize(args: argparse.Namespace) -> int:
     # security concern.
     _write_json_file(args.out, {"sig": keys.b64u(sig)})
     _print_json({"out": str(args.out), "receipt_id": receipt_id})
+    return EXIT_OK
+
+
+# v0.1 §12.2: only these two classes can be revoked at all. A `none` receipt
+# is irrevocable by construction, so a record naming one is an artifact every
+# conforming verifier ignores — this producer refuses to write one.
+_REVOCABLE_CLASSES = ("refund_window", "policy")
+
+
+def _cmd_revoke(args: argparse.Namespace) -> int:
+    for label, path in (
+        ("--receipt", args.receipt),
+        ("--manifest", args.manifest),
+        ("--seed", args.seed),
+    ):
+        if _same_file_target(path, args.out):
+            raise CliUsageError(f"{label} and --out must be different paths")
+    if args.mldsa_seed is not None and _same_file_target(args.mldsa_seed, args.out):
+        raise CliUsageError("--mldsa-seed and --out must be different paths")
+
+    # Bounded by the ceiling the VERIFIER applies to an envelope, not by the
+    # wider Stage-2 input ceiling the other JSON inputs use: the closing
+    # predicate below hands these very bytes to `verify.verify`, which refuses
+    # anything above `validate.MAX_ENVELOPE_BYTES`. A wider bound here would
+    # only buy the same refusal one step later, with a worse message.
+    envelope_bytes = _read_bounded_bytes(
+        args.receipt, max_bytes=validate.MAX_ENVELOPE_BYTES, input_name="--receipt"
+    )
+    envelope = _loads_strict(envelope_bytes, args.receipt, "--receipt")
+    if not isinstance(envelope, dict):
+        raise CliUsageError(f"{args.receipt} must contain a JSON object")
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict):
+        raise CliUsageError(f"{args.receipt} is missing object member 'payload'")
+    receipt_id = payload.get("receipt_id")
+    if not isinstance(receipt_id, str) or revocation.RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+        raise CliUsageError(f"{args.receipt} payload member 'receipt_id' must be a ULID")
+    issuer_block = payload.get("issuer")
+    issuer_id = issuer_block.get("id") if isinstance(issuer_block, dict) else None
+    if not isinstance(issuer_id, str):
+        raise CliUsageError(f"{args.receipt} payload is missing string 'issuer.id'")
+
+    license_block = payload.get("license")
+    revocability = license_block.get("revocability") if isinstance(license_block, dict) else None
+    if not isinstance(revocability, str):
+        raise CliUsageError(f"{args.receipt} payload is missing string 'license.revocability'")
+    if revocability not in _REVOCABLE_CLASSES:
+        raise CliUsageError(
+            f"license.revocability is {revocability!r}: v0.1 §12.2 makes such a receipt "
+            "irrevocable, and a record naming it would be ignored by every verifier "
+            f"(revocable classes: {', '.join(_REVOCABLE_CLASSES)})"
+        )
+
+    # `strptime` alone accepts unpadded components (`2025-8-1T0:0:0Z`) and would
+    # sign a spelling no verifier re-serializes the same way; the round trip is
+    # what pins the byte form the signature commits to.
+    try:
+        revoked_at = datetime.datetime.strptime(args.revoked_at, revocation._DATE_FMT)
+    except ValueError as exc:
+        raise CliUsageError(
+            f"--revoked-at must be an ISO-8601 UTC instant spelled YYYY-MM-DDTHH:MM:SSZ: {exc}"
+        ) from exc
+    canonical_revoked_at = revoked_at.strftime(revocation._DATE_FMT)
+    if canonical_revoked_at != args.revoked_at:
+        raise CliUsageError(
+            f"--revoked-at {args.revoked_at!r} is not the canonical spelling of that "
+            f"instant: write it exactly as {canonical_revoked_at!r}"
+        )
+
+    manifest = _read_strict_json(
+        args.manifest, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--manifest"
+    )
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("keys"), list):
+        raise CliUsageError(f"{args.manifest} must contain a key manifest with a 'keys' array")
+    if manifest.get("issuer") != issuer_id:
+        raise CliUsageError(
+            f"{args.manifest} is issued by {manifest.get('issuer')!r}, not by the receipt's "
+            f"issuer {issuer_id!r}"
+        )
+    if not manifests.verify_key_manifest(manifest):
+        raise CliUsageError(f"{args.manifest} does not verify against its own listed keys")
+
+    # Hybrid detection reads the manifest ENTRY, exactly as `manifest rotate`
+    # does: the key material decides which legs a signature owes, never a flag.
+    entry = manifests.find_key(manifest, args.kid)
+    if entry is None:
+        raise CliUsageError(f"--kid {args.kid!r} is not present in {args.manifest}")
+    is_hybrid = "pub_ml_dsa_65" in entry
+    if is_hybrid and args.mldsa_seed is None:
+        raise CliUsageError(f"signing key {args.kid!r} is hybrid; --mldsa-seed is required")
+    if not is_hybrid and args.mldsa_seed is not None:
+        raise CliUsageError(
+            f"signing key {args.kid!r} is Ed25519-only; --mldsa-seed is not allowed"
+        )
+    mldsa_kp: pq.MLDSAKeyPair | None = None
+    if is_hybrid and args.mldsa_seed is not None:
+        mldsa_kp = _load_mldsa_kp(args.mldsa_seed)
+        try:
+            entry_mldsa_pub = keys.b64u_decode(entry["pub_ml_dsa_65"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CliUsageError(
+                f"{args.manifest} has a malformed pub_ml_dsa_65 for {args.kid!r}: {exc}"
+            ) from exc
+        if mldsa_kp.pub != entry_mldsa_pub:
+            raise CliUsageError(
+                "--mldsa-seed does not match the signing key's ML-DSA-65 public key in the manifest"
+            )
+
+    ed_signing_kp = _load_seed_kp(args.seed)
+    signing_kp: keys.SigningKeyPair | pq.HybridSigningKeys = ed_signing_kp
+    if mldsa_kp is not None:
+        signing_kp = pq.HybridSigningKeys(ed=ed_signing_kp, mldsa=mldsa_kp)
+
+    record = revocation.build_record(receipt_id, "revoked", args.revoked_at, signing_kp, args.kid)
+
+    # `revocation.build_record` signs whatever it is handed: the module has no
+    # opinion on whether a record is EFFECTIVE against a given receipt, because
+    # answering that needs the receipt payload too. So the only honest test of
+    # effectiveness is to run the shipped verifier over the receipt with this
+    # record in hand, before anything reaches disk. It covers, without a second
+    # copy of the rule: a signer that is not `active`, a signer whose validity
+    # window does not cover `revoked_at`, a `revoked_at` past the refund window,
+    # and a receipt that does not verify against the manifest given.
+    result = verify.verify(
+        envelope_bytes,
+        verify.TrustStore(manifests={issuer_id: manifest}, provenance={issuer_id: "bundle"}),
+        [record],
+    )
+    if result.revocation != "revoked":
+        raise CliUsageError(
+            "the verifier would not honor this record: "
+            f"revocation={result.revocation!r}, warnings={result.warnings!r}, "
+            f"errors={result.errors!r}"
+        )
+
+    _write_guarded_json(args.out, record, label="--out", force=args.force)
+    if revocability == "refund_window":
+        print(
+            "warning: refund_window records are ignored by Stage-2 verifiers unless logged "
+            "and anchored before the deadline (v0.2 §8/§15, G5): run attest log entry "
+            "--type revocation-record and log the record",
+            file=sys.stderr,
+        )
+    _print_json(
+        {
+            "out": str(args.out),
+            "receipt_id": receipt_id,
+            "revocability": revocability,
+            "revoked_at": args.revoked_at,
+            "record_sha256": revocation.record_hash(record),
+        }
+    )
     return EXIT_OK
 
 
@@ -3097,6 +3276,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, type=Path, help="output envelope JSON path")
     _add_force_flag(p)
     p.set_defaults(func=_cmd_issue)
+
+    p = sub.add_parser(
+        "revoke",
+        help="Sign a revocation record for a refund_window or policy receipt (v0.1 §12)",
+    )
+    p.add_argument("--receipt", required=True, type=Path, help="receipt envelope JSON to revoke")
+    p.add_argument("--manifest", required=True, type=Path, help="issuer key manifest listing --kid")
+    p.add_argument(
+        "--revoked-at",
+        required=True,
+        help="signed UTC instant, spelled exactly YYYY-MM-DDTHH:MM:SSZ",
+    )
+    p.add_argument("--seed", required=True, type=Path, help="issuer signing key seed")
+    p.add_argument("--kid", required=True, help="key id to sign with; must be active in --manifest")
+    p.add_argument(
+        "--mldsa-seed",
+        type=Path,
+        default=None,
+        help="ML-DSA-65 leg of the signing key; required exactly for a hybrid key entry",
+    )
+    p.add_argument("--out", required=True, type=Path, help="output revocation record JSON path")
+    _add_force_flag(p)
+    p.set_defaults(func=_cmd_revoke)
 
     p_transfer = sub.add_parser("transfer", help="Issuer-mediated transfer operations (v0.2 §17)")
     transfer_sub = p_transfer.add_subparsers(dest="transfer_command", required=True)

@@ -41,7 +41,12 @@ _ACTIVE = "active"
 # keeps, deliberately restated rather than imported: `revocation` sits below
 # `bundle` (bundle -> verify -> revocation), so importing it would close an
 # import cycle. Any change to the shape belongs to both.
-_RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+#
+# Public for the same reason as `MAX_REVOCATION_RECORDS` above: a producer of
+# records has to refuse a receipt id this module would later refuse to
+# authenticate, and a predicate restated at the call site is a predicate that
+# will drift from the one that decides.
+RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 
 def _parse_date(value: str) -> datetime:
@@ -136,7 +141,7 @@ def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]
         sig_block = dict.get(record, "signature")
         if (
             not isinstance(receipt_id, str)
-            or _RECEIPT_ID_RE.fullmatch(str.__str__(receipt_id)) is None
+            or RECEIPT_ID_RE.fullmatch(str.__str__(receipt_id)) is None
             or not isinstance(revoked_at_value, str)
             or not isinstance(sig_block, dict)
         ):
