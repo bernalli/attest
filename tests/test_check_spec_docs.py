@@ -1100,6 +1100,363 @@ class TestConformanceDoc:
         assert main() == 1
 
 
+# --- check_conformance_self_certification -------------------------------------
+#
+# The table these tests guard shipped three stages stale -- `213/213` and
+# `61/61` against a corpus of 221 and 63 -- while the prose two paragraphs
+# above it was right and the gate was green. Every case below is written as a
+# cell shape, not as a sentence: the reason the drift was invisible is that a
+# table cell has no sentence in it, so a guard that goes back to matching prose
+# here would pass all of these and still miss the next one.
+#
+# The second half of the class exists because the first version of this guard
+# was rejected in review with ten reproduced false greens, all of them SHAPE
+# rather than content: one row instead of four, a duplicated row, a truncated
+# one, a row without its leading pipe, a decoy section in a code fence, the
+# real one inside an HTML comment, the header's columns swapped. A stale-claim
+# guard that can be silenced by deleting a row is not a guard, so each of those
+# is pinned here by the shape that silenced it.
+
+_SELF_CERT_DOC = """# fixture
+
+## 6. Before
+
+Prose that must stay outside the section.
+{decoy}
+## 7. Self-certification table
+
+Rows are a CURRENT claim, not a changelog.
+
+| Implementation | Subset | Leaves passed | Corpus revision | Date | Command |
+| --- | --- | --- | --- | --- | --- |
+{rows}
+
+## 8. After
+
+| impl | v0.2 | 999/999 | `{zeros}` | 2026-01-01 | cmd |
+"""
+
+_SELF_CERT_ZEROS = "0" * 64
+
+
+def _self_cert_document(rows: str, *, decoy: str = "") -> str:
+    return _SELF_CERT_DOC.format(rows=rows, zeros=_SELF_CERT_ZEROS, decoy=decoy)
+
+
+def _self_cert_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[check_spec_docs._CorpusMeasurement, str]:
+    """Point the guard at a three-leaf corpus and hand back what it measures.
+
+    Nothing like the real numbers, so a check that hardcoded 221 or 63 could
+    not pass by accident; and the two figures differ, so a check that conflated
+    the corpus with its v0.1 subset could not either.
+    """
+    vectors = tmp_path / "docs" / "spec" / "vectors"
+    for group, leaf in (("01-a", "a"), ("01-a", "b"), ("26-b", "a")):
+        (vectors / group / leaf).mkdir(parents=True, exist_ok=True)
+        (vectors / group / leaf / "expected.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    return check_spec_docs._measured_corpus(), check_spec_docs._measured_corpus_revision()
+
+
+def _self_cert_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, document: str) -> list[str]:
+    monkeypatch.setattr(
+        check_spec_docs, "_CONFORMANCE_DOC_PATH", _write(tmp_path, "c.md", document)
+    )
+    return check_spec_docs.check_conformance_self_certification()
+
+
+def _self_cert_row(
+    implementation: str, subset: str, passed: int, of_total: int, revision: str
+) -> str:
+    return (
+        f"| {implementation} | {subset} | {passed}/{of_total} | `{revision}` | 2026-01-01 | cmd |"
+    )
+
+
+def _reference_rows(measured: check_spec_docs._CorpusMeasurement, revision: str) -> list[str]:
+    """The four rows a correct §7 table carries, built from the live manifests."""
+    labels, errors = check_spec_docs._reference_implementation_labels()
+    assert errors == [], errors
+    counts = {"v0.2": measured.total, "v0.1": measured.subset}
+    return [
+        _self_cert_row(label, subset, counts[subset], counts[subset], revision)
+        for label, _name, _manifest in labels
+        for subset in ("v0.2", "v0.1")
+    ]
+
+
+class TestConformanceSelfCertification:
+    def test_checker_is_clean_on_the_real_doc(self) -> None:
+        assert check_spec_docs.check_conformance_self_certification() == []
+
+    def test_the_four_correct_rows_are_clean(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Without this the drift cases below would all pass on a guard that
+        # simply rejects every row it is shown.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        errors = _self_cert_errors(
+            tmp_path,
+            monkeypatch,
+            _self_cert_document("\n".join(_reference_rows(measured, revision))),
+        )
+        assert errors == []
+
+    def test_a_stale_leaf_count_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The exact shape that shipped: a whole-corpus row three stages behind.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        rows = _reference_rows(measured, revision)
+        rows[0] = rows[0].replace(f"| {measured.total}/{measured.total} |", "| 213/213 |")
+        errors = _self_cert_errors(tmp_path, monkeypatch, _self_cert_document("\n".join(rows)))
+        assert any("213" in e and str(measured.total) in e for e in errors)
+
+    def test_a_v01_row_is_measured_against_the_subset_not_the_whole_corpus(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A guard that checked both columns against one number would call this
+        # clean, and the v0.1 row is where the stale 61 lived.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        assert measured.subset != measured.total, "fixture must keep the two figures apart"
+        rows = _reference_rows(measured, revision)
+        rows[1] = rows[1].replace(
+            f"| {measured.subset}/{measured.subset} |", f"| {measured.total}/{measured.total} |"
+        )
+        errors = _self_cert_errors(tmp_path, monkeypatch, _self_cert_document("\n".join(rows)))
+        assert any("v0.1" in e and str(measured.subset) in e for e in errors)
+
+    def test_a_row_that_did_not_fully_pass_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # §1: no partial credit. A row saying otherwise is not a claim.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        rows = _reference_rows(measured, revision)
+        rows[0] = rows[0].replace(
+            f"| {measured.total}/{measured.total} |", f"| {measured.total - 1}/{measured.total} |"
+        )
+        errors = _self_cert_errors(tmp_path, monkeypatch, _self_cert_document("\n".join(rows)))
+        assert any("partial credit" in e for e in errors)
+
+    def test_a_stale_corpus_revision_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A row can name the right count and still be unrunnable: the digest is
+        # what makes the claim falsifiable, so it goes stale on its own.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        rows = _reference_rows(measured, revision)
+        rows[0] = rows[0].replace(revision, _SELF_CERT_ZEROS)
+        errors = _self_cert_errors(tmp_path, monkeypatch, _self_cert_document("\n".join(rows)))
+        assert any("revision" in e for e in errors)
+
+    def test_a_corpus_revision_is_compared_whole_not_by_its_prefix(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The runner prints the digest abbreviated and so does this guard's own
+        # error text, which makes comparing the abbreviation the natural
+        # shortcut. A digest is a claim about every leaf file, so it is either
+        # compared whole or it is not compared.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        near_miss = revision[:12] + ("f" * 52 if revision[12:] != "f" * 52 else "0" * 52)
+        assert near_miss != revision and near_miss[:12] == revision[:12]
+        rows = _reference_rows(measured, revision)
+        rows[0] = rows[0].replace(revision, near_miss)
+        errors = _self_cert_errors(tmp_path, monkeypatch, _self_cert_document("\n".join(rows)))
+        assert any("revision" in e for e in errors)
+
+    def test_a_stale_implementation_version_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The drift that shipped WITH the stale counts: the rows named 0.9.0
+        # while both package manifests said 0.9.1. A claim about a version this
+        # tree no longer builds is a claim nobody can reproduce.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        labels, _ = check_spec_docs._reference_implementation_labels()
+        rows = [
+            row.replace(labels[0][0], f"{labels[0][1]} 0.0.1")
+            for row in _reference_rows(measured, revision)
+        ]
+        errors = _self_cert_errors(tmp_path, monkeypatch, _self_cert_document("\n".join(rows)))
+        assert any("0.0.1" in e and "no longer" in e for e in errors)
+
+    def test_a_deleted_reference_row_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Deleting a row is the cheapest way to silence a guard that only
+        # judges the rows it is shown.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        rows = _reference_rows(measured, revision)[:-1]
+        errors = _self_cert_errors(tmp_path, monkeypatch, _self_cert_document("\n".join(rows)))
+        assert any("has no v0.1 row" in e for e in errors)
+
+    def test_a_duplicated_row_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Two rows for one implementation and subset cannot both be current,
+        # and a stale duplicate beside a fresh row reads as certification.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        rows = _reference_rows(measured, revision)
+        errors = _self_cert_errors(
+            tmp_path, monkeypatch, _self_cert_document("\n".join([*rows, rows[0]]))
+        )
+        assert any("repeats a claim" in e for e in errors)
+
+    @pytest.mark.parametrize(
+        ("row", "needle"),
+        [
+            (f"| impl | v0.3 | 3/3 | `{_SELF_CERT_ZEROS}` | d | cmd |", "subset"),
+            (f"| impl | v0.2 | all of them | `{_SELF_CERT_ZEROS}` | d | cmd |", "leaves-passed"),
+            ("| impl | v0.2 | 3/3 | `1cdec7b8` | d | cmd |", "corpus-revision"),
+            ("| impl | v0.2 | 3/3 | see the report | d | cmd |", "corpus-revision"),
+            ("| impl | v0.2 | 3/3 |", "cells"),
+            (f"| impl | v0.2 | 3/3 | `{_SELF_CERT_ZEROS}` | d | cmd | extra |", "cells"),
+            (f"impl | v0.2 | 213/213 | `{_SELF_CERT_ZEROS}` | d | cmd", "213"),
+        ],
+    )
+    def test_a_row_the_guard_cannot_line_up_is_reported_not_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, row: str, needle: str
+    ) -> None:
+        # Every one of these was a reproduced false green: a cell that does not
+        # parse, a truncated row, an extra column, a GFM row with no leading
+        # pipe. Skipping any of them is how a stale claim survives the guard
+        # that exists to find it.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        rows = [*_reference_rows(measured, revision), row]
+        errors = _self_cert_errors(tmp_path, monkeypatch, _self_cert_document("\n".join(rows)))
+        assert any(needle in e for e in errors)
+
+    def test_a_missing_section_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        errors = _self_cert_errors(tmp_path, monkeypatch, "# fixture\n\n## 7. Something else\n")
+        assert any("Self-certification table" in e for e in errors)
+
+    def test_a_second_section_with_the_same_heading_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The guard reads one section. A second one is a table nothing checks,
+        # and the stale copy is the one a reader would find first or last.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        document = _self_cert_document("\n".join(_reference_rows(measured, revision)))
+        errors = _self_cert_errors(
+            tmp_path, monkeypatch, document + "\n## 7. Self-certification table\n\nstale\n"
+        )
+        assert any("sections are headed" in e for e in errors)
+
+    def test_a_renamed_or_reordered_column_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # With Date and Leaves passed swapped in the header, every cell the
+        # guard reads means something else; it must refuse rather than compare.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        document = _self_cert_document("\n".join(_reference_rows(measured, revision))).replace(
+            "| Implementation | Subset | Leaves passed | Corpus revision | Date | Command |",
+            "| Implementation | Subset | Date | Corpus revision | Leaves passed | Command |",
+        )
+        errors = _self_cert_errors(tmp_path, monkeypatch, document)
+        assert any("header row" in e for e in errors)
+
+    def test_a_separator_row_must_be_a_separator_and_not_just_the_right_width(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Checking the separator's width and not its content is the cheap half
+        # of the check, and it leaves the guard reading whatever follows a
+        # six-celled line as though a table had been declared there.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        document = _self_cert_document("\n".join(_reference_rows(measured, revision))).replace(
+            "| --- | --- | --- | --- | --- | --- |",
+            "| === | === | === | === | === | === |",
+        )
+        errors = _self_cert_errors(tmp_path, monkeypatch, document)
+        assert any("separator row" in e for e in errors)
+
+    def test_a_table_with_no_claim_row_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An emptied table must fail, not pass vacuously.
+        _self_cert_corpus(tmp_path, monkeypatch)
+        errors = _self_cert_errors(tmp_path, monkeypatch, _self_cert_document(""))
+        assert any("no claim row" in e for e in errors)
+
+    def test_the_real_table_commented_out_is_not_a_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Commenting the table out removes the claims; it must not remove the
+        # guard with them.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        document = _self_cert_document("\n".join(_reference_rows(measured, revision)))
+        head, table = document.split("Rows are a CURRENT claim, not a changelog.\n", 1)
+        errors = _self_cert_errors(tmp_path, monkeypatch, f"{head}<!--\n{table}\n-->\n")
+        assert errors != []
+
+    def test_a_decoy_section_in_a_code_fence_is_not_the_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A fenced example of the table is documentation, not a claim: it must
+        # neither be read as the section nor make the real one ambiguous.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        decoy = (
+            "\n```\n## 7. Self-certification table\n\n"
+            "| Implementation | Subset | Leaves passed | Corpus revision | Date | Command |\n"
+            "| --- | --- | --- | --- | --- | --- |\n"
+            f"| impl | v0.2 | 213/213 | `{_SELF_CERT_ZEROS}` | d | cmd |\n```\n"
+        )
+        errors = _self_cert_errors(
+            tmp_path,
+            monkeypatch,
+            _self_cert_document("\n".join(_reference_rows(measured, revision)), decoy=decoy),
+        )
+        assert errors == []
+
+    def test_rows_below_the_next_heading_are_outside_the_section(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The fixture doc carries a 999/999 row under "## 8. After". The guard
+        # reads one section, so that row must never be reported -- otherwise
+        # every markdown table in the file becomes a conformance claim.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        errors = _self_cert_errors(
+            tmp_path,
+            monkeypatch,
+            _self_cert_document("\n".join(_reference_rows(measured, revision))),
+        )
+        assert not any("999" in e for e in errors)
+
+    def test_the_reported_line_counts_every_separator_splitlines_counts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Counting "\n" and splitting with splitlines() disagree on U+2028 and
+        # friends, and the error would then point at the wrong line -- the one
+        # thing a drift report has to get right for the reader to act on it.
+        measured, revision = _self_cert_corpus(tmp_path, monkeypatch)
+        rows = _reference_rows(measured, revision)
+        rows[0] = rows[0].replace(f"| {measured.total}/{measured.total} |", "| 213/213 |")
+        separator = chr(0x2028)  # a line break splitlines() sees and str.count("\n") does not
+        document = _self_cert_document("\n".join(rows)).replace(
+            "# fixture", f"# first{separator}second"
+        )
+        expected_line = next(
+            number for number, line in enumerate(document.splitlines(), 1) if "213/213" in line
+        )
+        errors = _self_cert_errors(tmp_path, monkeypatch, document)
+        assert any(f"conformance.md:{expected_line}:" in e for e in errors)
+
+    def test_main_exits_nonzero_when_a_row_is_stale(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Pins the main() wiring, same reasoning as the sibling guard above:
+        # a check only exercised directly stays green if main() drops it.
+        real_doc = (REPO_ROOT / "docs" / "conformance.md").read_text(encoding="utf-8")
+        drifted = real_doc.replace("| 221/221 |", "| 213/213 |")
+        assert drifted != real_doc, "the real table no longer has the row this test drifts"
+        monkeypatch.setattr(
+            check_spec_docs, "_CONFORMANCE_DOC_PATH", _write(tmp_path, "c.md", drifted)
+        )
+        assert main() == 1
+
+
 def test_versioning_doc_missing_heading_is_flagged_by_collect_errors() -> None:
     docs = _base_docs()
     docs["versioning"] = _minimal_versioning().replace("## 4. Algorithm lifecycle\n\n", "")
