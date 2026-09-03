@@ -37,6 +37,8 @@ from typing import Any
 import pytest
 from attest_bridge import cli
 from conftest import ISSUER
+from hypothesis import given
+from hypothesis import strategies as st
 
 from attest import keys, pq
 
@@ -513,16 +515,15 @@ def _sample_summary_lines(guide_text: str) -> list[str] | None:
     the tool. A sentence opening with a field name is prose unless it is
     marked, and no rule about its shape is needed to say so.
 
-    EOF closes the block, so a guide truncated mid-summary reports the fields
-    it still shows instead of reporting none: a truncation must be able to
-    fail the comparison, never to skip it.
+    Both boundary markers are required. A truncated document therefore fails
+    as malformed instead of letting EOF become an inferred boundary.
 
     Three refusals are properties of the summary rather than of the reader,
     and survive from the designs this replaces: a guide holding two candidate
     summaries contradicts itself and must not be read by taking the first in
     silence; a summary repeating a field is not a summary of anything the tool
     prints; and a fence opened at the block's first line must be closed at its
-    last (EOF excepted), because an unclosed fence makes the reader see a
+    last, because an unclosed fence makes the reader see a
     different block from the one compared. Nothing else about fences is
     checked anywhere in this repository for these guides.
     """
@@ -548,14 +549,15 @@ def _sample_summary_lines(guide_text: str) -> list[str] | None:
             f"{len(ends)} {_SUMMARY_END} markers in one guide: only one block is "
             "delimited, so every end but the first closes nothing"
         )
+    if not ends:
+        raise ValueError(f"{_SUMMARY_START} with no {_SUMMARY_END}: the summary block has no end")
 
     start = starts[0]
-    if ends and ends[0] < start:
+    if ends[0] < start:
         raise ValueError(
             f"{_SUMMARY_END} precedes {_SUMMARY_START}: the markers do not delimit a block"
         )
-    # No end marker is a truncated document, not a malformed one: EOF closes.
-    stop = ends[0] if ends else len(lines)
+    stop = ends[0]
 
     body = lines[start + 1 : stop]
     # Blank lines hugging the markers are spacing, not the block's edges: the
@@ -577,16 +579,14 @@ def _sample_summary_lines(guide_text: str) -> list[str] | None:
         body = body[:-1]
     # A fence at one edge and not the other is not this format: either the
     # fence never closes — and the reader sees the end marker and the prose
-    # after it as code — or a marker does not hug the block. EOF is exempt: a
-    # truncated document closes its fence the way it closes its block, by
-    # ending.
-    if ends and opened and not closed:
+    # after it as code — or a marker does not hug the block.
+    if opened and not closed:
         raise ValueError(
             "check-config summary opens a code fence on its first line and closes none on "
             "its last: the fence is unclosed, or the end marker does not sit directly after "
             "the block"
         )
-    if ends and closed and not opened:
+    if closed and not opened:
         raise ValueError(
             "check-config summary closes a code fence on its last line and opened none on "
             "its first: the start marker does not sit directly before the block"
@@ -658,6 +658,9 @@ def test_sample_check_config_output_matches_what_the_cli_prints(
 
 
 _GUIDES_THAT_MUST_SHOW_THE_SUMMARY = frozenset({"setup-stripe.md"})
+_GUIDES_THAT_MUST_NOT_SHOW_THE_SUMMARY = frozenset(
+    {"deploy.md", "setup-itch.md", "setup-shopify.md"}
+)
 
 
 def test_the_guides_that_show_the_summary_are_exactly_the_declared_ones() -> None:
@@ -674,22 +677,31 @@ def test_the_guides_that_show_the_summary_are_exactly_the_declared_ones() -> Non
     starts carrying a marked summary must be declared here, and from then on
     cannot lose it in silence.
     """
+    documents = {path.name for path in _DOCS.glob("*.md")}
+    must_show = set(_GUIDES_THAT_MUST_SHOW_THE_SUMMARY)
+    must_not_show = set(_GUIDES_THAT_MUST_NOT_SHOW_THE_SUMMARY)
+
+    assert must_show.isdisjoint(must_not_show), (
+        "a document cannot be declared both with and without a summary: "
+        f"{sorted(must_show & must_not_show)}"
+    )
+    classified = must_show | must_not_show
+    assert documents == classified, (
+        "every bridge Markdown document must explicitly declare whether it "
+        "shows the check-config summary; "
+        f"unclassified={sorted(documents - classified)}, "
+        f"missing={sorted(classified - documents)}"
+    )
+
     carrying = {
         path.name
         for path in sorted(_DOCS.glob("*.md"))
         if _sample_summary_lines(path.read_text(encoding="utf-8")) is not None
     }
-    declared = set(_GUIDES_THAT_MUST_SHOW_THE_SUMMARY)
-    assert carrying >= declared, (
-        f"{sorted(declared - carrying)} no longer carry a marked check-config summary. If "
-        "the block was removed on purpose, drop the name from "
-        "_GUIDES_THAT_MUST_SHOW_THE_SUMMARY in the same change; leaving it there is what "
-        "keeps the comparison from being skipped into silence."
-    )
-    assert carrying <= declared, (
-        f"{sorted(carrying - declared)} carry a marked check-config summary but are not "
-        "declared in _GUIDES_THAT_MUST_SHOW_THE_SUMMARY: declare them, so that losing the "
-        "block later is red rather than a skip."
+    assert carrying == must_show, (
+        "check-config summary declaration drift: "
+        f"missing={sorted(must_show - carrying)}, "
+        f"unexpected={sorted(carrying - must_show)}"
     )
 
 
@@ -848,22 +860,18 @@ class TestSummaryMarkers:
         found = _sample_summary_lines(_marked(body))
         assert found == ["issuer: a", "delivery: on", "this line is not a field"]
 
-    @pytest.mark.parametrize("kept", range(1, 8))
-    def test_a_truncated_document_reports_the_fields_it_still_shows(self, kept: int) -> None:
-        """EOF closes the block, at every truncation point.
-
-        Truncation must be able to FAIL the comparison, never to skip it: a
-        helper returning None here would make a guide that stops mid-summary
-        indistinguishable from one that shows no summary, and the test would
-        pass by not running. Parametrised over every prefix because a single
-        truncation point pins one arithmetic, not the behaviour — the earlier
-        test kept every field and dropped only the closing fence, so it never
-        exercised a document that ends mid-block at all.
-        """
-        fields = _SEVEN_FIELDS.split("\n")[:kept]
-        guide = f"prose\n\n{_SUMMARY_START}\n```\n" + "\n".join(fields)
-        found = _sample_summary_lines(guide)
-        assert found == fields, f"truncated after {kept} field(s)"
+    @given(
+        st.lists(
+            st.text(alphabet="abc :_-`~>", max_size=80),
+            max_size=20,
+        )
+    )
+    def test_an_opening_marker_without_a_closing_marker_is_refused(
+        self, body_lines: list[str]
+    ) -> None:
+        guide = "\n".join([_SUMMARY_START, *body_lines])
+        with pytest.raises(ValueError, match="has no end"):
+            _sample_summary_lines(guide)
 
     def test_a_guide_showing_only_some_printed_fields_cannot_match(
         self,
