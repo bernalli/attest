@@ -8901,12 +8901,20 @@ def _generate_all(out: Path) -> int:
 HAND_AUTHORED_FILES = ("README.md",)
 
 
-def _tree(root: Path) -> dict[str, bytes]:
-    """Every file under `root` that the generator is answerable for."""
+def _tree(root: Path, *, exclude_hand_authored: bool = True) -> dict[str, bytes]:
+    """Files under `root`, by default without the names declared hand-authored.
+
+    The exclusion belongs to the COMMITTED side only. Applying it to freshly
+    generated output too would hide the case it exists for: a generator that
+    started writing `README.md` would overwrite a hand-authored file in place
+    and every comparison would still be equal, because both sides had dropped
+    the name before comparing.
+    """
     return {
         str(path.relative_to(root)): path.read_bytes()
         for path in sorted(root.rglob("*"))
-        if path.is_file() and str(path.relative_to(root)) not in HAND_AUTHORED_FILES
+        if path.is_file()
+        and (not exclude_hand_authored or str(path.relative_to(root)) not in HAND_AUTHORED_FILES)
     }
 
 
@@ -8929,7 +8937,7 @@ def check(out: Path) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         fresh = Path(tmp) / "vectors"
         generate(fresh)
-        produced = _tree(fresh)
+        produced = _tree(fresh, exclude_hand_authored=False)
     names = drift(committed, produced)
     if names or missing_by_hand:
         print(f"vector drift under {out}:", file=sys.stderr)

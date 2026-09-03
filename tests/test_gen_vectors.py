@@ -67,7 +67,9 @@ def regenerated(tmp_path_factory: pytest.TempPathFactory) -> dict[str, bytes]:
     out = tmp_path_factory.mktemp("vectors") / "vectors"
     leaf_count = gen_vectors.generate(out)
     assert leaf_count > 0, "the generator wrote no leaves at all"
-    return gen_vectors._tree(out)
+    # Everything the generator wrote, hand-authored names included: excluding
+    # them here would make the test below unable to notice one being produced.
+    return gen_vectors._tree(out, exclude_hand_authored=False)
 
 
 def test_committed_corpus_is_what_the_generator_produces(regenerated: dict[str, bytes]) -> None:
