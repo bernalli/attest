@@ -242,6 +242,79 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
 .errors { color: var(--bad); }
 .raw { overflow-x: auto; background: color-mix(in srgb, var(--fg) 5%, var(--bg)); padding: 0.75rem; border-radius: 8px; }
 
+/* ------------------------------------------------------------------------
+   The demonstration surfaces: the bench that breaks the receipt, the §19
+   exhibits, and the confinement probe.
+
+   Every colour here is one of the paper palette's existing inks. That is not
+   tidiness: the paper is a fixed texture that scrolls under the type, and a
+   colour is only legible if it clears 4.5:1 against the darkest pixel a glyph
+   actually covers — which is not the darkest pixel of the texture, and not
+   the flat --paper either. Those numbers are MEASURED, on rendered pixels, by
+   e2e/contrast.spec.ts: it photographs the paper under every run of text at
+   720px across the whole page and holds each one to its WCAG floor. Read them
+   there rather than here, because a number written into a comment is a number
+   nothing re-measures — this comment said 4.89 within a day of the run that
+   said 4.86. The lowest run today is one of --ink-label's; the test holds
+   every run to its WCAG floor and names the one that fails.
+
+   Nothing on this page uses --ink-faint except input::placeholder, and that
+   sits on an opaque field: a modelled figure for it against the paper answers
+   a question no text on this page asks.
+   ------------------------------------------------------------------------ */
+
+/* The bench sits inside the verifier's frame, directly above the verdict it
+   changes: a control that has to be scrolled to is a control a first-time
+   reader never finds. */
+#bench { display: flex; flex-direction: column; gap: 12px; border-top: 1px solid var(--rule); padding-top: 20px; }
+#bench[hidden] { display: none; }
+#bench p { font-size: 12.5px; color: var(--ink-3); }
+#bench-buttons { display: flex; flex-wrap: wrap; gap: 9px; }
+#bench-buttons button { white-space: normal; text-align: left; }
+#bench-state:empty { display: none; }
+
+.tamper-state { border-left: 3px solid var(--bad); padding-left: 14px; display: flex; flex-direction: column; gap: 5px; }
+.tamper-state h4 { margin: 0; font-size: 13.5px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.tamper-state p { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+/* Old value struck through, new value in the failure colour: a reader should
+   see WHAT changed without reading a word. */
+.tamper-values { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+/* The two values come out of the dropped file, so they carry the same half of
+   the defence a diagnostic operand does: neutralization in render.ts handles
+   the format characters, and only these two declarations stop RTL letters —
+   which are not format characters — from reordering the page's own words, or
+   one unbroken value from pushing the page sideways (C-86, C-91). */
+.tamper-value { unicode-bidi: isolate; overflow-wrap: anywhere; }
+.tamper-values .was { text-decoration: line-through; color: var(--ink-3); }
+.tamper-values .now { color: var(--bad); font-weight: 700; }
+
+/* An exhibit is a document inside the document: paper stock, not a panel. */
+.exhibit { background: var(--paper-card); border: 1px solid var(--edge); padding: 22px 26px; display: flex; flex-direction: column; gap: 10px; }
+.exhibit.mismatch { border-color: var(--bad); border-width: 2px; }
+.exhibit h3 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.025em; }
+.exhibit-story { font-size: 13px; color: var(--ink-2); }
+.exhibit-source { font-size: 12px; color: var(--ink-label); overflow-wrap: anywhere; }
+/* The verdict card is already framed by the exhibit around it. */
+.exhibit .result { border: 0; border-top: 1px solid var(--edge); border-radius: 0; padding: 0; padding-top: 16px; margin-top: 6px; }
+/* The self-check, and the tally over it, are the page's own report card: the
+   only numbers in this section, and both come from runs that just happened. */
+.exhibit-check { margin: 0; font-size: 12.5px; }
+.exhibit-check.tone-good, .exhibit-tally.tone-good { color: var(--good); }
+.exhibit-check.tone-bad, .exhibit-tally.tone-bad { color: var(--bad); font-weight: 700; }
+.exhibit-tally { margin: 0; font-weight: 700; }
+#exhibits { display: flex; flex-direction: column; gap: 16px; }
+#exhibits:empty { display: none; }
+
+.probe { border-left: 3px solid var(--tone, var(--neutral)); padding-left: 14px; display: flex; flex-direction: column; gap: 4px; }
+.probe p { margin: 0; font-size: 13px; }
+.probe.tone-good > p:first-child { color: var(--good); }
+.probe.tone-bad > p:first-child { color: var(--bad); font-weight: 700; }
+/* The browser's own words, but composed text on the page's surface all the
+   same: same residual as .diag-operand and .tamper-value (C-91). */
+.probe-detail { font-size: 12px; color: var(--ink-3); unicode-bidi: isolate; overflow-wrap: anywhere; }
+#probe:empty { display: none; }
+.footnote { font-size: 12px; color: var(--ink-3); font-style: italic; }
+
 /* The page's CSP is `style-src 'self'`, which blocks inline style attributes
    as well as inline <style> blocks. Every value below exists because a
    `style="..."` attribute would be silently dropped by the browser — measured

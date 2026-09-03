@@ -150,8 +150,9 @@ different things about the project's own level of trust.
 | `e54412ea9a54` | `intake.ts` | `can ` | … the file itself is bearer proof: anyone who holds it can claim this | None. States a property of the file format, not something a tool does. | `n/a — no capability asserted` | **NOT-A-TOOL-CLAIM** | 2026-09-01 |
 | `49e795697b5a` | `render.ts` | `CLI` | … it was never examined. Try the attest CLI, or a copy of this page | The attest CLI: that it exists and verifies receipts. | `grep -c 'add_parser("verify"' src/attest/cli.py  # 1` | **TRUE** | 2026-09-01 |
 | `885480988eb3` | `explain.ts` | `fetch` | The issuer’s key manifest was fetched over TLS from the issuer’s own domain — the strongest provenance attest v0.1 defines (spec §7.4) | None. It states what `trust: "verified"` means when it occurs, and this app cannot reach that value: the three provenance paths it can produce are bundle, embedded and user-supplied — never tls. | `cd desktop && npx vitest run provenance-characterization  # 4 tests, one per reachable provenance path` | **NOT-A-TOOL-CLAIM** | 2026-09-01 |
+| `f2b76be9cde7` | `render.ts` | `run ` | … — and could not. Why, this run cannot say. | Nothing. It is a REFUSAL to claim: the confinement probe reaches this branch only when the browser recorded no policy violation for its own request, and the probe URL is under a reserved TLD that never resolves, so the failure is not attributable to any policy. | `cd site && npx vitest run test/probe.test.ts test/render-demo.test.ts  # the sentence and its neutral tone are reachable only with observed === false` | **NOT-A-TOOL-CLAIM** | 2026-09-02 |
 
-Result of the audit run on 2026-09-01: 8 NOT-A-TOOL-CLAIM, 10 TRUE. No row reads FALSE, so the build is not blocked.
+Result of the audit run on 2026-09-01: 8 NOT-A-TOOL-CLAIM, 10 TRUE. One row was added on 2026-09-02, when the site gained a confinement probe whose report has to distinguish a block the browser witnessed from a request that merely failed: 9 NOT-A-TOOL-CLAIM, 10 TRUE. No row reads FALSE, so the build is not blocked.
 
 ## Manual QA before release
 
