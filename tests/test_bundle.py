@@ -1787,3 +1787,43 @@ def test_a_copy_that_cannot_be_mapped_is_refused_as_a_mapping_failure(
     assert "could not map the copy" in message
     assert "Cannot allocate memory" in message
     assert isinstance(refusal.value.__cause__, OSError)
+
+
+def test_a_refusal_to_read_is_a_different_outcome_from_a_refusal_of_the_bytes(
+    tmp_path: Path,
+) -> None:
+    """v0.1 §14.4: declining to read is not a verdict about the container.
+
+    The two have opposite remedies — a container refused for its size may be
+    readable on a machine with more room, one refused for its shape never will
+    be — so a caller that cannot tell them apart either retries what can never
+    succeed or gives up on what would. Reporting an unread container as corrupt
+    says something about bytes nobody looked at.
+    """
+    corpus = CONTAINER_CORPUS
+
+    # Refused for its shape: the reader looked and found the file could be
+    # addressed two ways. Never a resource refusal, however much budget it gets.
+    malformed = tmp_path / "two-directories.attest"
+    malformed.write_bytes((corpus / "exhibit-D-prefix" / "archive.zip").read_bytes())
+    with pytest.raises(bundle.BundleError) as shape:
+        bundle.import_bundle(malformed)
+    assert not isinstance(shape.value, bundle.BundleTooLargeError)
+
+    # Refused for its size, by each of the two bounds that can say so: the
+    # reader's own caps, and the copy this importer takes before reading.
+    over_caps = _make_raw_zip(
+        tmp_path,
+        {**_minimal_receipt_members(), "extra.bin": b"x"},
+        "too-many.attest",
+    )
+    with pytest.raises(bundle.BundleTooLargeError):
+        bundle.import_bundle(over_caps, max_entries=1)
+
+    oversized = tmp_path / "oversized.attest"
+    oversized.write_bytes(b"x" * 65)
+    with pytest.raises(bundle.BundleTooLargeError):
+        bundle.import_bundle(oversized, max_total_bytes=64)
+
+    # And a caller who does not care about the distinction is unaffected.
+    assert issubclass(bundle.BundleTooLargeError, bundle.BundleError)

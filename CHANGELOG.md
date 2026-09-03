@@ -6,6 +6,20 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`BundleTooLargeError`, so a caller can tell "I did not read this" from "this
+  is broken".** `import_bundle` refuses an archive for two unrelated reasons and
+  used to report both as `BundleError`: either it read the container and found
+  something wrong with it, or it declined to read because a count or size passed
+  a bound it applies. The two have opposite remedies — the second may succeed
+  with a larger budget on a machine with more room, the first never will — and
+  reporting an unread container the same way as a corrupt one states something
+  about bytes nobody looked at. The new exception is raised for the entry-count,
+  per-member and aggregate bounds, and for the size of the container as stored;
+  it derives from `BundleError`, so a caller who does not care about the
+  distinction catches exactly what it caught before.
+
 ### Fixed
 
 - **The browser verifier stopped reading the one member family that carries the

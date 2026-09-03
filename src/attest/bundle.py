@@ -143,6 +143,22 @@ class BundleError(Exception):
     """A bundle cannot be produced without breaking the deal it claims to preserve (§9)."""
 
 
+class BundleTooLargeError(BundleError):
+    """The importer declined to read the container, and found nothing wrong with it.
+
+    v0.1 §14.4 asks for this as an outcome of its own, apart from every refusal
+    that says the container is malformed, and the reason is what a caller does
+    next: a refusal of this kind may succeed with a larger budget on a machine
+    with more room, while a malformed container will never be readable however
+    much budget it is given. Reporting an unread container as corrupt states
+    something about bytes nobody looked at.
+
+    It is a `BundleError`, so a caller who does not care keeps catching one
+    exception; a caller who does can tell the two apart without reading the
+    sentence.
+    """
+
+
 def _proof_member_receipt_id(filename: str) -> str:
     """Return the receipt id in a strictly-shaped ``proofs/`` member.
 
@@ -619,7 +635,7 @@ def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterat
                 # members inflate to a few hundred bytes can cross it, and
                 # telling its holder the bundle is over a decompression cap
                 # sends them to look at the wrong thing entirely.
-                raise BundleError(
+                raise BundleTooLargeError(
                     f"container is over the {budget.max_bytes}-byte limit this importer "
                     "will copy in order to read it — refusing to snapshot an archive "
                     "that large"
@@ -664,13 +680,29 @@ def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterat
         mapped.close()
 
 
+#: The container codes that say the importer DECLINED TO READ, rather than that
+#: it read and found something wrong (v0.1 §14.4). The distinction is the
+#: caller's to act on and the two have opposite remedies: a refusal in this set
+#: may succeed with a larger budget, and one outside it never will.
+_RESOURCE_CODES = frozenset(
+    {
+        "too-many-entries",
+        "declared-member-over-cap",
+        "declared-total-over-cap",
+        "member-over-cap",
+        "total-over-cap",
+    }
+)
+
+
 def _as_bundle_error(error: container.ContainerError) -> BundleError:
     """Carry a container refusal across the boundary in this module's own voice.
     The member name is appended here, in this language's idiom, and never
     interpolated by the reader itself."""
+    kind = BundleTooLargeError if error.code in _RESOURCE_CODES else BundleError
     if error.member is not None and error.code in {"duplicate-name", "record-stored-size"}:
-        return BundleError(f"{error}: {error.member!r}")
-    return BundleError(str(error))
+        return kind(f"{error}: {error.member!r}")
+    return kind(str(error))
 
 
 def _members(
