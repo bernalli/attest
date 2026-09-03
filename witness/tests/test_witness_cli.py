@@ -30,6 +30,7 @@ from witness_support import (
 )
 
 from attest import keys, pq
+from tools.ci_required import ci_prerequisites_required
 
 ORIGIN = "log.example"
 TIMESTAMP = 1_700_000_000
@@ -105,10 +106,14 @@ def test_a_served_witness_answers_a_real_http_submission(
         # body reader to over-read a keep-alive socket.)
         httpd = make_server("127.0.0.1", 0, app, server_class=_ThreadingWSGIServer)
     except PermissionError:  # pragma: no cover - depends on the runner's permissions
-        pytest.skip(
-            "binding a loopback socket is not permitted for this process; the test runs "
-            "wherever it is"
-        )
+        reason = "binding a loopback socket is not permitted for this process"
+        # Same contract as the two cross-implementation gates: where a job
+        # promised the environment, an absent prerequisite is that job's
+        # defect and not a reason for the test to step aside. Any spelling but
+        # an explicitly negative one arms it, for the reason measured there.
+        if ci_prerequisites_required():
+            pytest.fail(f"{reason}; the required CI gate cannot run")
+        pytest.skip(f"{reason}; the test runs wherever it is")
     with httpd:
         port = httpd.server_address[1]
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)

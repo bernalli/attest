@@ -10,17 +10,62 @@ permissions:
 
 jobs:
   python:
+    # BEFORE CHANGING HOW THIS JOB RUNS — a `container:`, a self-hosted runner,
+    # a different image — read this. Thirteen tests in the suite skip on
+    # properties of the machine that nothing here declares: one needs the
+    # process NOT to be root (root bypasses the file permissions it checks),
+    # and twelve need a filesystem with hardlinks and symlinks. A hosted
+    # ubuntu-latest runner gives both. A container image runs as root by
+    # default, which alone removes the first; an overlay or a restricted mount
+    # removes the other twelve. None of them turns red when that happens —
+    # the suite's total simply drops. So measure the number of skips before
+    # and after any such change, and do not read the green as unchanged
+    # coverage. These are not the prerequisites `ATTEST_CI_REQUIRED` covers:
+    # those a job can install, these it cannot.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.21"
+      # Two gates in this suite compare this implementation with the other one,
+      # and both need the TypeScript side on disk: the container differential
+      # (bundled with the site's own esbuild) and the witness cross-core bench
+      # (a built verifiers/ts). Until these steps existed neither one failed
+      # here — they SKIPPED, and one skip in a total of four thousand passes is
+      # indistinguishable from a test that ran. The jobs that build the
+      # TypeScript side never run pytest, so without these steps pytest can
+      # perform neither comparison. The witness comparison has no other
+      # caller; the site workflow separately runs the container differential.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            verifiers/ts/package-lock.json
+            site/package-lock.json
+      - run: npm ci --prefix verifiers/ts
+      # The site depends on verifiers/ts by relative path, so it is built first.
+      - run: npm run build --prefix verifiers/ts
+      # The site install is deliberate redundancy, not new coverage: the site
+      # workflow already runs the differential at 500 archives with this seed,
+      # and pytest's 50 are that run's prefix. What it buys is that `pytest`
+      # measures on its own — a suite whose gate is satisfied by a different
+      # workflow is a suite that reports a verdict it did not reach. It costs
+      # one npm install and a third of a second.
+      - run: npm ci --prefix site
       # `dev` is a PEP 621 optional-dependency extra, not a PEP 735 group:
       # bare `uv sync --locked` installs runtime deps only. Use --extra dev
       # to get pytest/ruff/mypy.
       - run: uv sync --locked --extra dev --all-packages
+      # This job installed the other core above, so it is the job entitled to
+      # demand it: the variable is the promise, and the tests that would
+      # otherwise skip for a missing prerequisite fail here instead. A generic
+      # `CI` would be the wrong signal — every runner exports it, so any of
+      # them would inherit an obligation this workflow alone made.
       - run: uv run --frozen pytest -q
+        env:
+          ATTEST_CI_REQUIRED: "1"
       - run: uv run --frozen ruff check .
       # Formatting is a gate, not a courtesy: without this check the tree
       # drifts silently, and it had — four files had never been formatted.
