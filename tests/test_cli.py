@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from attest import anchor, cli, keys, pq, revocation, tlog, transfer, verify
+from attest import anchor, canon, cli, keys, manifests, pq, revocation, tlog, transfer, verify
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -321,6 +321,418 @@ def test_verify_revocations_bare_object_exits_2_not_ok_true(tmp_path: Path, caps
     assert captured.err != ""
     # Critically: it must NOT have printed a passing verdict for a revoked receipt.
     assert '"ok": true' not in captured.out
+
+
+# --- revoke: shipped producer for authenticated revocation records ----------
+
+
+def _revoke_argv(
+    receipt: Path,
+    manifest: Path,
+    seed: Path,
+    out: Path,
+    *,
+    revoked_at: str = "2026-07-03T00:00:00Z",
+    kid: str = KID,
+    mldsa_seed: Path | None = None,
+) -> list[str]:
+    argv = [
+        "revoke",
+        "--receipt",
+        str(receipt),
+        "--manifest",
+        str(manifest),
+        "--revoked-at",
+        revoked_at,
+        "--seed",
+        str(seed),
+        "--kid",
+        kid,
+        "--out",
+        str(out),
+    ]
+    if mldsa_seed is not None:
+        argv += ["--mldsa-seed", str(mldsa_seed)]
+    return argv
+
+
+def _revoke_setup(
+    tmp_path: Path,
+    *,
+    license_block: dict[str, Any],
+    payload_overrides: dict[str, Any] | None = None,
+) -> tuple[Path, Path, Path]:
+    seed, _pub = _keygen(tmp_path, "revoke-issuer")
+    manifest = _manifest_init(tmp_path, seed, "revoke-manifest.json")
+    overrides = dict(payload_overrides or {})
+    overrides["license"] = license_block
+    payload = _write_payload(tmp_path, "revoke-payload.json", **overrides)
+    receipt = _issue(tmp_path, seed, payload, "revoke-envelope.json")
+    return seed, manifest, receipt
+
+
+def test_revoke_help_exists(capsys: CapSys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["revoke", "--help"])
+
+    assert exc_info.value.code == 0
+    assert "--receipt" in capsys.readouterr().out
+
+
+@pytest.mark.xfail(strict=True, reason="needs attest revocation-view, T4")
+def test_revoke_policy_receipt_end_to_end(tmp_path: Path, capsys: CapSys) -> None:
+    seed, manifest, receipt = _revoke_setup(
+        tmp_path, license_block={"revocability": "policy"}
+    )
+    record = tmp_path / "record.json"
+    assert cli.main(_revoke_argv(receipt, manifest, seed, record)) == cli.EXIT_OK
+
+    view = tmp_path / "view.json"
+    assert (
+        cli.main(
+            [
+                "revocation-view",
+                "--record",
+                str(record),
+                "--out",
+                str(view),
+            ]
+        )
+        == cli.EXIT_OK
+    )
+    trust_dir = _trust_dir(tmp_path, manifest, "revoke-trust")
+    capsys.readouterr()
+    rc = cli.main(
+        ["verify", str(receipt), "--trust-dir", str(trust_dir), "--revocations", str(view)]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert rc == cli.EXIT_VERIFICATION_FAILED
+    assert result["revocation"] == "revoked"
+
+
+@pytest.mark.parametrize(
+    ("license_block", "revoked_at", "error_fragment"),
+    [
+        pytest.param({"revocability": "none"}, "2026-07-03T00:00:00Z", "12.2", id="none"),
+        pytest.param(
+            {"revocability": "refund_window", "revocation_window_days": 30},
+            "2026-08-01T14:30:01Z",
+            "would not honor",
+            id="refund-window-one-second-late",
+        ),
+        pytest.param(
+            {"revocability": "policy"},
+            "2026-07-03T00:00:00",
+            "--revoked-at",
+            id="missing-z",
+        ),
+        pytest.param(
+            {"revocability": "policy"},
+            "2026-7-3T0:0:0Z",
+            "--revoked-at",
+            id="non-padded",
+        ),
+    ],
+)
+def test_revoke_rejects_invalid_class_window_and_timestamp_without_output(
+    tmp_path: Path,
+    capsys: CapSys,
+    license_block: dict[str, Any],
+    revoked_at: str,
+    error_fragment: str,
+) -> None:
+    seed, manifest, receipt = _revoke_setup(tmp_path, license_block=license_block)
+    out = tmp_path / "rejected-record.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        _revoke_argv(receipt, manifest, seed, out, revoked_at=revoked_at)
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert error_fragment in captured.err
+    assert "Traceback" not in captured.err
+    assert not out.exists()
+
+
+def test_revoke_refund_window_exact_boundary_is_honored(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    seed, manifest_path, receipt = _revoke_setup(
+        tmp_path,
+        license_block={"revocability": "refund_window", "revocation_window_days": 30},
+    )
+    out = tmp_path / "boundary-record.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        _revoke_argv(
+            receipt,
+            manifest_path,
+            seed,
+            out,
+            revoked_at="2026-08-01T14:30:00Z",
+        )
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_OK
+    assert "refund_window records are ignored by Stage-2 verifiers" in captured.err
+    record = json.loads(out.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert revocation.verify_record(record, manifest)
+
+
+def test_revoke_rejects_kid_absent_from_manifest_without_output(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    seed, manifest, receipt = _revoke_setup(
+        tmp_path, license_block={"revocability": "policy"}
+    )
+    out = tmp_path / "unknown-kid-record.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        _revoke_argv(receipt, manifest, seed, out, kid=f"{ISSUER}/keys/missing#ed25519-1")
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "not present" in captured.err
+    assert not out.exists()
+
+
+def test_revoke_rejects_retired_signer_without_output(tmp_path: Path, capsys: CapSys) -> None:
+    seed, _manifest, receipt = _revoke_setup(
+        tmp_path, license_block={"revocability": "policy"}
+    )
+    kp = keys.from_seed(keys.b64u_decode(seed.read_text(encoding="utf-8").strip()))
+    retired_entry = manifests.key_entry(
+        KID, kp.pub, VALID_FROM, status="retired"
+    )
+    retired = manifests.build_key_manifest(
+        ISSUER, 1, VALID_FROM, [retired_entry], kp, KID
+    )
+    retired_path = tmp_path / "retired-manifest.json"
+    retired_path.write_text(json.dumps(retired), encoding="utf-8")
+    out = tmp_path / "retired-record.json"
+
+    capsys.readouterr()
+    rc = cli.main(_revoke_argv(receipt, retired_path, seed, out))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "would not honor" in captured.err
+    assert not out.exists()
+
+
+def test_revoke_rejects_receipt_signed_by_kid_absent_from_manifest(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    seed, manifest, _receipt = _revoke_setup(
+        tmp_path, license_block={"revocability": "policy"}
+    )
+    other_seed, _other_pub = _keygen(tmp_path, "other-receipt-signer")
+    other_kid = f"{ISSUER}/keys/other#ed25519-1"
+    payload = _write_payload(
+        tmp_path, "other-signer-payload.json", license={"revocability": "policy"}
+    )
+    receipt = tmp_path / "other-signer-envelope.json"
+    assert (
+        cli.main(
+            [
+                "issue",
+                "--payload",
+                str(payload),
+                "--seed",
+                str(other_seed),
+                "--kid",
+                other_kid,
+                "--out",
+                str(receipt),
+            ]
+        )
+        == cli.EXIT_OK
+    )
+    out = tmp_path / "mismatched-receipt-record.json"
+
+    capsys.readouterr()
+    rc = cli.main(_revoke_argv(receipt, manifest, seed, out))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "would not honor" in captured.err
+    assert not out.exists()
+
+
+def _hybrid_revoke_setup(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    seed, _pub, mldsa_seed = _keygen_hybrid(tmp_path, "hybrid-revoke-issuer")
+    manifest = _manifest_init_hybrid(
+        tmp_path, seed, mldsa_seed, "hybrid-revoke-manifest.json"
+    )
+    payload = _write_payload(
+        tmp_path,
+        "hybrid-revoke-payload.json",
+        attest_version="0.2",
+        license={"revocability": "policy"},
+    )
+    receipt = tmp_path / "hybrid-revoke-envelope.json"
+    assert (
+        cli.main(
+            [
+                "issue",
+                "--payload",
+                str(payload),
+                "--seed",
+                str(seed),
+                "--kid",
+                KID,
+                "--attest-version",
+                "0.2",
+                "--mldsa-key",
+                str(mldsa_seed),
+                "--out",
+                str(receipt),
+            ]
+        )
+        == cli.EXIT_OK
+    )
+    return seed, mldsa_seed, manifest, receipt
+
+
+def test_revoke_hybrid_manifest_requires_mldsa_seed(tmp_path: Path, capsys: CapSys) -> None:
+    seed, _mldsa_seed, manifest, receipt = _hybrid_revoke_setup(tmp_path)
+    out = tmp_path / "hybrid-missing-leg.json"
+
+    capsys.readouterr()
+    rc = cli.main(_revoke_argv(receipt, manifest, seed, out))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "hybrid" in captured.err and "--mldsa-seed is required" in captured.err
+    assert not out.exists()
+
+
+def test_revoke_ed_manifest_rejects_mldsa_seed(tmp_path: Path, capsys: CapSys) -> None:
+    seed, manifest, receipt = _revoke_setup(
+        tmp_path, license_block={"revocability": "policy"}
+    )
+    _hybrid_seed, _hybrid_pub, mldsa_seed = _keygen_hybrid(tmp_path, "unneeded-hybrid")
+    out = tmp_path / "ed-with-pq-leg.json"
+
+    capsys.readouterr()
+    rc = cli.main(_revoke_argv(receipt, manifest, seed, out, mldsa_seed=mldsa_seed))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "Ed25519-only" in captured.err and "--mldsa-seed is not allowed" in captured.err
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("aliased_input", ["receipt", "manifest", "seed"])
+def test_revoke_rejects_output_aliases_without_clobbering_inputs(
+    tmp_path: Path, capsys: CapSys, aliased_input: str
+) -> None:
+    seed, manifest, receipt = _revoke_setup(
+        tmp_path, license_block={"revocability": "policy"}
+    )
+    paths = {"receipt": receipt, "manifest": manifest, "seed": seed}
+    out = paths[aliased_input]
+    before = out.read_bytes()
+
+    capsys.readouterr()
+    rc = cli.main(_revoke_argv(receipt, manifest, seed, out))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "different paths" in captured.err
+    assert out.read_bytes() == before
+
+
+def test_revoke_rejects_mldsa_output_alias_without_clobbering_input(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    seed, mldsa_seed, manifest, receipt = _hybrid_revoke_setup(tmp_path)
+    before = mldsa_seed.read_bytes()
+
+    capsys.readouterr()
+    rc = cli.main(
+        _revoke_argv(receipt, manifest, seed, mldsa_seed, mldsa_seed=mldsa_seed)
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "different paths" in captured.err
+    assert mldsa_seed.read_bytes() == before
+
+
+def test_revoke_rejects_duplicate_receipt_member_without_output(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    seed, manifest, receipt = _revoke_setup(
+        tmp_path, license_block={"revocability": "policy"}
+    )
+    original = receipt.read_text(encoding="utf-8")
+    receipt.write_text('{"payload":null,' + original[1:], encoding="utf-8")
+    out = tmp_path / "duplicate-receipt-record.json"
+
+    capsys.readouterr()
+    rc = cli.main(_revoke_argv(receipt, manifest, seed, out))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "duplicate object key" in captured.err
+    assert not out.exists()
+
+
+def test_revoke_rejects_float_in_manifest_without_output(tmp_path: Path, capsys: CapSys) -> None:
+    seed, manifest, receipt = _revoke_setup(
+        tmp_path, license_block={"revocability": "policy"}
+    )
+    text = manifest.read_text(encoding="utf-8")
+    manifest.write_text(text.replace('"manifest_version": 1', '"manifest_version": 1.0'), encoding="utf-8")
+    out = tmp_path / "float-manifest-record.json"
+
+    capsys.readouterr()
+    rc = cli.main(_revoke_argv(receipt, manifest, seed, out))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "floats are not allowed" in captured.err
+    assert not out.exists()
+
+
+def test_revoke_reproduces_revoked_policy_corpus_record(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    vector = Path("docs/spec/vectors/15-revoked-policy")
+    manifests_bundle = json.loads((vector / "manifests.json").read_text(encoding="utf-8"))
+    manifest_path = tmp_path / "corpus-manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifests_bundle["manifests"][ISSUER]), encoding="utf-8"
+    )
+    seed = tmp_path / "corpus.seed"
+    seed.write_text(keys.b64u(bytes([1]) * 32), encoding="utf-8")
+    out = tmp_path / "corpus-record.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        _revoke_argv(
+            vector / "envelope.json",
+            manifest_path,
+            seed,
+            out,
+            revoked_at="2025-08-01T00:00:00Z",
+            kid="store.example.com/keys/2025-01#ed25519-1",
+        )
+    )
+
+    assert rc == cli.EXIT_OK, capsys.readouterr().err
+    produced = json.loads(out.read_text(encoding="utf-8"))
+    expected = json.loads((vector / "revocation.json").read_text(encoding="utf-8"))
+    assert canon.canonical_bytes(produced) == canon.canonical_bytes(expected)
 
 
 # --- check-artifact ------------------------------------------------------------
