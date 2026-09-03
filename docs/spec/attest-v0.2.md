@@ -1099,7 +1099,7 @@ The ten warning literals (verbatim):
 | `grant_pledge_type_unknown` | `license.preservation_pledge.pledge` names a profile this verifier does not recognize (§18.2); accompanies `grant: "not_checked"`, and the receipt stays valid — an unrecognized profile is never a schema error. |
 | `grant_legal_text_changed` | an effective later grant version carries a `legal_text_uri`, `legal_text_sha256` or `jurisdiction` differing from the floor's (§18.3); the structural members of the later version govern, the floor's prose remains the binding text. |
 
-**Per D6, Stage 4 takes no exception.** Unlike Stage 2 (§10, two scoped exceptions) and Stage 3 (`revocation: "transferred"`, §17.3), neither `grant` nor `grant_trust` ever affects `signature`, `schema`, `revocation`, `binding`, `trust`, or `ok` — a grant is a permission that becomes exercisable, never a validity property of the receipt.
+**Per D6, Stage 4 takes no exception.** Unlike Stage 2 and Stage 3 (§10, three scoped exceptions, one of them `revocation: "transferred"`, §17.3), neither `grant` nor `grant_trust` ever affects `signature`, `schema`, `revocation`, `binding`, `trust`, or `ok` — a grant is a permission that becomes exercisable, never a validity property of the receipt.
 
 ### 18.6 Holder binding conditional (D5)
 

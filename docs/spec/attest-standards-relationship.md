@@ -325,10 +325,11 @@ its own acceptance path. A receipt's `ok` verdict turns on `signature`,
 `schema`, non-`revoked` status, and the absence of errors (v0.1 §11.1), and
 its `trust: "verified"` value comes from TLS-rooted key provenance (§7.4) —
 neither reads the log. Stage 2's `transparency`/`corroboration` components are
-additive corroboration that affect `ok` only in the two narrowly scoped cases
+additive corroboration that affect `ok` only in the three narrowly scoped cases
 v0.2 §10 calls out (a `refund_window` revocation record's effectiveness under
-Stage-2 evidence, and an honored `transferred`-class record under Stage 3),
-never as a general gate. That is the true difference in trust models — not
+Stage-2 evidence, an honored `transferred`-class record under Stage 3, and the
+§19 anchored-cutoff rescue of a receipt signed before its key was declared
+compromised), never as a general gate. That is the true difference in trust models — not
 that attest inverts SCITT's registration-centric design, but that attest
 centers no transparency receipt in its own acceptance path the way SCITT's
 architecture centers one — and it is not a claim that SCITT's model is the
