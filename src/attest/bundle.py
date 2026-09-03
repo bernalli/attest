@@ -564,6 +564,24 @@ def _new_snapshot() -> IO[bytes]:
         raise _snapshot_failed(error, _COPY_WRITE_FAILED) from error
 
 
+def _over_snapshot_bound(budget: _SnapshotBudget) -> BundleTooLargeError:
+    """The refusal for a container over the bytes this importer will copy.
+
+    Says what this bound measures and nothing else: the size of the file, not
+    of anything inside it. Borrowing the aggregate cap's sentence here read well
+    and was false — an archive is over this bound as soon as its FRAMING is, so
+    one whose members inflate to a few hundred bytes can cross it, and telling
+    its holder the bundle is over a decompression cap sends them to look at the
+    wrong thing entirely. One function, so the two places that raise it cannot
+    drift into two sentences.
+    """
+    return BundleTooLargeError(
+        f"container is over the {budget.max_bytes}-byte limit this importer "
+        "will copy in order to read it — refusing to snapshot an archive "
+        "that large"
+    )
+
+
 @contextlib.contextmanager
 def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterator[Buffer]:
     """Map a bounded snapshot of a container, so the whole-buffer model the
@@ -604,11 +622,23 @@ def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterat
     # the name leaves no window in which the two could differ.
     fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     try:
-        mode = os.fstat(fd).st_mode
-        if not stat.S_ISREG(mode):
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
             raise BundleError(
-                f"container path is {_path_kind(mode)}, not a regular file — refusing to read it"
+                f"container path is {_path_kind(info.st_mode)}, "
+                "not a regular file — refusing to read it"
             )
+        # The same bound, applied before the spend instead of during it. The
+        # size a regular file reports is metadata, not content: asking for it
+        # costs nothing, trusts nothing the archive says, and never maps the
+        # caller's inode, so it is not the hazard the snapshot exists to remove.
+        # The loop below stays the authority — a file that grows after this
+        # point is still refused there — and this only spares the copy for one
+        # that is already over the bound, which without it costs a full
+        # `max_bytes` of temporary storage (memory, where that directory is a
+        # tmpfs) to reach a refusal the metadata had already settled.
+        if info.st_size > budget.max_bytes:
+            raise _over_snapshot_bound(budget)
         source = os.fdopen(fd, "rb")
     except BaseException:
         os.close(fd)
@@ -628,18 +658,7 @@ def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterat
             if not chunk:
                 break
             if len(chunk) > remaining:
-                # Says what this bound measures and nothing else: the size of
-                # the file, not of anything inside it. Borrowing the aggregate
-                # cap's sentence here read well and was false — an archive is
-                # over this bound as soon as its FRAMING is, so one whose
-                # members inflate to a few hundred bytes can cross it, and
-                # telling its holder the bundle is over a decompression cap
-                # sends them to look at the wrong thing entirely.
-                raise BundleTooLargeError(
-                    f"container is over the {budget.max_bytes}-byte limit this importer "
-                    "will copy in order to read it — refusing to snapshot an archive "
-                    "that large"
-                )
+                raise _over_snapshot_bound(budget)
             try:
                 snapshot.write(chunk)
             except OSError as error:

@@ -1827,3 +1827,28 @@ def test_a_refusal_to_read_is_a_different_outcome_from_a_refusal_of_the_bytes(
 
     # And a caller who does not care about the distinction is unaffected.
     assert issubclass(bundle.BundleTooLargeError, bundle.BundleError)
+
+
+def test_a_container_over_the_bound_is_refused_without_being_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The metadata already settles it, so the copy never starts.
+
+    Without this, a file over the bound costs a full `max_bytes` of temporary
+    storage — memory, where that directory is a tmpfs — to reach a refusal its
+    own size had already decided. The loop stays the authority for a file that
+    grows after this point; this only spares the copy for one that is over the
+    bound before it begins.
+
+    Asserted by making the copy impossible: if a temporary file is opened at
+    all, the test fails rather than passing for the wrong reason.
+    """
+    oversized = tmp_path / "oversized.attest"
+    oversized.write_bytes(b"x" * 4096)
+
+    def no_copies(*args: object, **kwargs: object) -> object:
+        raise AssertionError("the snapshot was started for a file already over the bound")
+
+    monkeypatch.setattr(bundle.tempfile, "TemporaryFile", no_copies)
+    with pytest.raises(bundle.BundleTooLargeError, match="will copy in order to read it"):
+        bundle.import_bundle(oversized, max_total_bytes=1024)
