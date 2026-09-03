@@ -486,22 +486,147 @@ def test_guide_instructions_alone_reach_a_clean_check_config(
     assert f"{rail}: configured" in capsys.readouterr().out
 
 
+_SUMMARY_START = "<!-- @check-config-summary-start -->"
+_SUMMARY_END = "<!-- @check-config-summary-end -->"
+
+# A line that is nothing but a code fence, optionally with an info string.
+# Matched only at the two positions where this format allows one — the first
+# and last line inside the markers — never searched for across the document:
+# finding fences is what the designs this one replaces did.
+_CODE_FENCE = re.compile(r"^\s*(?:`{3,}|~{3,})[^`~]*$")
+
+
 def _sample_summary_lines(guide_text: str) -> list[str] | None:
-    """The fenced `check-config` summary a guide shows, if it shows one.
+    """The `check-config` summary a guide shows, if it shows one.
 
-    Splits on the fence marker rather than matching a fenced block with a
-    regex: an alternating split cannot mistake a closing fence for an opening
-    one, which is exactly the confusion that would make this helper report
-    "no sample here" for a guide that has one.
+    The block is delimited by markers the document carries, not inferred from
+    the document's shape. Three earlier designs read the boundary out of
+    something this repository does not own — first CommonMark's fence grammar,
+    then the shape of an English sentence — and each failed the same way: a
+    sentence that looks like a field was read as one, a fence that looked
+    closed was treated as closed. Every fix widened a rule, which is the
+    signal that the boundary was still being guessed: the set of cases to
+    cover belonged to CommonMark, or to English, and neither is ours.
+
+    Markers move that set back to us. Whatever sits outside them is prose and
+    is never examined; whatever sits inside is the claim the guide makes about
+    the tool. A sentence opening with a field name is prose unless it is
+    marked, and no rule about its shape is needed to say so.
+
+    EOF closes the block, so a guide truncated mid-summary reports the fields
+    it still shows instead of reporting none: a truncation must be able to
+    fail the comparison, never to skip it.
+
+    Three refusals are properties of the summary rather than of the reader,
+    and survive from the designs this replaces: a guide holding two candidate
+    summaries contradicts itself and must not be read by taking the first in
+    silence; a summary repeating a field is not a summary of anything the tool
+    prints; and a fence opened at the block's first line must be closed at its
+    last (EOF excepted), because an unclosed fence makes the reader see a
+    different block from the one compared. Nothing else about fences is
+    checked anywhere in this repository for these guides.
     """
-    for block in guide_text.split("```")[1::2]:
-        lines = [line for line in block.splitlines() if line.strip()]
-        if lines and lines[0].startswith("issuer: "):
-            return lines
-    return None
+    lines = guide_text.splitlines()
+    starts = [i for i, line in enumerate(lines) if line.strip() == _SUMMARY_START]
+    ends = [i for i, line in enumerate(lines) if line.strip() == _SUMMARY_END]
+
+    if not starts:
+        if ends:
+            raise ValueError(
+                f"{_SUMMARY_END} with no {_SUMMARY_START}: the summary block has no "
+                "beginning, and reading from the top of the document would invent one"
+            )
+        return None
+    if len(starts) > 1:
+        raise ValueError(
+            f"{len(starts)} {_SUMMARY_START} markers in one guide: the document shows "
+            "two candidate summaries and contradicts itself; reading the first would "
+            "hide the second"
+        )
+    if len(ends) > 1:
+        raise ValueError(
+            f"{len(ends)} {_SUMMARY_END} markers in one guide: only one block is "
+            "delimited, so every end but the first closes nothing"
+        )
+
+    start = starts[0]
+    if ends and ends[0] < start:
+        raise ValueError(
+            f"{_SUMMARY_END} precedes {_SUMMARY_START}: the markers do not delimit a block"
+        )
+    # No end marker is a truncated document, not a malformed one: EOF closes.
+    stop = ends[0] if ends else len(lines)
+
+    body = lines[start + 1 : stop]
+    # Blank lines hugging the markers are spacing, not the block's edges: the
+    # field lines below ignore blank lines, and the two edge positions must
+    # see the same document those lines see.
+    while body and not body[0].strip():
+        body = body[1:]
+    while body and not body[-1].strip():
+        body = body[:-1]
+    # The markers sit outside the code fence, because a comment inside a fenced
+    # block would render as text and this must stay invisible to the reader.
+    # Dropping the fence is therefore part of reading this format, not an
+    # attempt to parse the document: only these two positions are considered.
+    opened = bool(body) and _CODE_FENCE.match(body[0]) is not None
+    if opened:
+        body = body[1:]
+    closed = bool(body) and _CODE_FENCE.match(body[-1]) is not None
+    if closed:
+        body = body[:-1]
+    # A fence at one edge and not the other is not this format: either the
+    # fence never closes — and the reader sees the end marker and the prose
+    # after it as code — or a marker does not hug the block. EOF is exempt: a
+    # truncated document closes its fence the way it closes its block, by
+    # ending.
+    if ends and opened and not closed:
+        raise ValueError(
+            "check-config summary opens a code fence on its first line and closes none on "
+            "its last: the fence is unclosed, or the end marker does not sit directly after "
+            "the block"
+        )
+    if ends and closed and not opened:
+        raise ValueError(
+            "check-config summary closes a code fence on its last line and opened none on "
+            "its first: the start marker does not sit directly before the block"
+        )
+
+    fields = [line for line in body if line.strip()]
+    if not fields:
+        raise ValueError(
+            "check-config summary markers delimit no lines: the guide declares a "
+            "summary and shows none"
+        )
+
+    names = [line.split(":")[0].strip() for line in fields]
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if repeated:
+        raise ValueError(
+            f"check-config summary repeats {', '.join(repr(n) for n in repeated)}: "
+            "the tool prints each field once, so a repeated field is a claim about "
+            "an output that does not exist"
+        )
+    return fields
 
 
-@pytest.mark.parametrize("guide_name", sorted(_GUIDES.values()))
+def _field_names(lines: list[str]) -> list[str]:
+    return [line.split(":")[0] for line in lines]
+
+
+def _assert_summary_matches_printed(guide_name: str, sample: list[str], printed: list[str]) -> None:
+    """The guide's field list IS the CLI's: same names, same order, same count.
+
+    The single place the comparison is written, so that a test can hold it to
+    being an equality. Loosening it here — to a containment, to a set — is what
+    `test_a_guide_showing_only_some_printed_fields_cannot_match` fails on.
+    """
+    assert _field_names(sample) == _field_names(printed), (
+        f"{guide_name} shows a check-config summary that the CLI does not print"
+    )
+
+
+@pytest.mark.parametrize("guide_name", sorted(path.name for path in _DOCS.glob("*.md")))
 def test_sample_check_config_output_matches_what_the_cli_prints(
     guide_name: str,
     tmp_path: Path,
@@ -529,9 +654,249 @@ def test_sample_check_config_output_matches_what_the_cli_prints(
     assert cli.main(["check-config", "--config", str(config_path)]) == 0
     printed = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
 
-    assert [line.split(":")[0] for line in sample] == [line.split(":")[0] for line in printed], (
-        f"{guide_name} shows a check-config summary that the CLI does not print"
+    _assert_summary_matches_printed(guide_name, sample, printed)
+
+
+_GUIDES_THAT_MUST_SHOW_THE_SUMMARY = frozenset({"setup-stripe.md"})
+
+
+def test_the_guides_that_show_the_summary_are_exactly_the_declared_ones() -> None:
+    """Losing the markers must be red, not quiet — for every document, not one.
+
+    The comparison above skips a document that shows no summary, which is right
+    for one that never showed a summary and wrong for one that stops: removing
+    the markers — or mistyping one — turns the check off and leaves the suite
+    green, and the skip line reads the same either way. A one-way list ("stripe
+    must show it") covers only the guides someone remembered to list: a guide
+    that gains a summary later and then loses it is never noticed. So the set
+    is held in both directions, over every markdown file in the docs directory
+    rather than over the guides the other tests know about: a document that
+    starts carrying a marked summary must be declared here, and from then on
+    cannot lose it in silence.
+    """
+    carrying = {
+        path.name
+        for path in sorted(_DOCS.glob("*.md"))
+        if _sample_summary_lines(path.read_text(encoding="utf-8")) is not None
+    }
+    declared = set(_GUIDES_THAT_MUST_SHOW_THE_SUMMARY)
+    assert carrying >= declared, (
+        f"{sorted(declared - carrying)} no longer carry a marked check-config summary. If "
+        "the block was removed on purpose, drop the name from "
+        "_GUIDES_THAT_MUST_SHOW_THE_SUMMARY in the same change; leaving it there is what "
+        "keeps the comparison from being skipped into silence."
     )
+    assert carrying <= declared, (
+        f"{sorted(carrying - declared)} carry a marked check-config summary but are not "
+        "declared in _GUIDES_THAT_MUST_SHOW_THE_SUMMARY: declare them, so that losing the "
+        "block later is red rather than a skip."
+    )
+
+
+def _marked(body: str) -> str:
+    """A guide fragment whose summary carries the markers."""
+    return f"prose before\n\n{_SUMMARY_START}\n{body}\n{_SUMMARY_END}\n\nprose after\n"
+
+
+_SEVEN_FIELDS = (
+    "issuer: store.example.com\n"
+    "public_base_url: https://receipts.example.com\n"
+    "products: price_1PxYzEXAMPLE\n"
+    "stripe: configured\n"
+    "shopify: not configured\n"
+    "itch: not configured\n"
+    "delivery: download-link-only"
+)
+
+
+class TestSummaryMarkers:
+    """The boundary of the summary block is declared, not inferred.
+
+    Three earlier designs inferred it — from CommonMark's fence grammar, then
+    from the shape of an English sentence — and each needed a new rule for
+    each hostile case found. Needing a rule per case is the signal that the
+    boundary is still a guess: the set of cases belonged to a grammar this
+    repository does not define. These tests pin the opposite property, which
+    is why the hostile cases below are grouped by WHY they fail rather than
+    by what they look like.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "fence_open", "fence_close"),
+        [
+            ("plain fence", "```", "```"),
+            ("longer fence with info string", "````text", "````"),
+            ("tilde fence", "~~~", "~~~"),
+            ("no fence at all", "", ""),
+        ],
+    )
+    def test_the_summary_is_found_whatever_encloses_it(
+        self, label: str, fence_open: str, fence_close: str
+    ) -> None:
+        """The enclosing syntax is not consulted, so it cannot mislead.
+
+        Under the fence-splitting design each of these was a separate case to
+        get right, and the tilde form was simply not recognised. Here they are
+        one case: the markers say where the block is, and what sits between
+        them is read.
+        """
+        body = "\n".join(part for part in (fence_open, _SEVEN_FIELDS, fence_close) if part)
+        found = _sample_summary_lines(_marked(body))
+        assert found is not None, f"{label}: the marked summary was not found"
+        assert [line.split(":")[0] for line in found] == [
+            "issuer",
+            "public_base_url",
+            "products",
+            "stripe",
+            "shopify",
+            "itch",
+            "delivery",
+        ], label
+
+    def test_prose_that_opens_with_a_field_name_is_not_a_summary(self) -> None:
+        """Outside the markers nothing is examined, so nothing can imitate.
+
+        `issuer: choose the merchant domain shown above.` is a sentence, and
+        under the design that recognised the block by the shape of its first
+        line it was read as data. No rule about sentences is needed to reject
+        it: it is not marked.
+        """
+        guide = "issuer: choose the merchant domain shown above.\n\nmore prose\n"
+        assert _sample_summary_lines(guide) is None
+
+    def test_a_second_marked_summary_is_refused(self) -> None:
+        """A guide that shows two summaries contradicts itself.
+
+        Reading the first in silence is the failure mode of a duplicated key:
+        the document says two things and the reader picks one.
+        """
+        guide = _marked(f"```\n{_SEVEN_FIELDS}\n```") + _marked("```\nissuer: other.example\n```")
+        with pytest.raises(ValueError, match="two candidate summaries"):
+            _sample_summary_lines(guide)
+
+    @pytest.mark.parametrize(
+        ("label", "guide", "cause"),
+        [
+            ("end with no start", f"prose\n{_SUMMARY_END}\nprose\n", "has no beginning"),
+            ("end before start", f"{_SUMMARY_END}\nissuer: a\n{_SUMMARY_START}\n", "precedes"),
+            (
+                "two ends",
+                f"{_SUMMARY_START}\nissuer: a\n{_SUMMARY_END}\n{_SUMMARY_END}\n",
+                "every end but the first closes nothing",
+            ),
+            ("markers around nothing", f"{_SUMMARY_START}\n{_SUMMARY_END}\n", "delimit no lines"),
+        ],
+    )
+    def test_markers_that_do_not_delimit_a_block_are_refused(
+        self, label: str, guide: str, cause: str
+    ) -> None:
+        """A declared boundary that is not a boundary fails loudly, naming why.
+
+        The alternative is reading from the top of the document, or to its
+        end, and calling the result a summary — inventing the block the
+        markers failed to delimit. Each case pins its own cause: a refusal
+        that fires for the wrong reason is a refusal that will stop firing
+        when that reason is fixed.
+        """
+        with pytest.raises(ValueError, match=cause):
+            _sample_summary_lines(guide)
+
+    def test_blank_lines_hugging_the_markers_are_spacing(self) -> None:
+        """A blank line between a marker and the fence is not part of the block."""
+        guide = f"{_SUMMARY_START}\n\n```\nissuer: a\n```\n\n{_SUMMARY_END}\n"
+        assert _sample_summary_lines(guide) == ["issuer: a"]
+
+    def test_a_fence_opened_and_not_closed_before_the_end_marker_is_refused(self) -> None:
+        """The one refusal about the enclosure: a fence that opens must close.
+
+        Rendered, an unclosed fence swallows the end marker and the prose after
+        it as code, so the block the reader sees is not the block compared here.
+        Nothing is searched for: the same two edge positions are read, and EOF
+        stays exempt (see the truncation test).
+        """
+        guide = f"{_SUMMARY_START}\n```\nissuer: a\n{_SUMMARY_END}\n"
+        with pytest.raises(ValueError, match="closes none on its last"):
+            _sample_summary_lines(guide)
+
+    def test_a_fence_closed_and_never_opened_is_refused(self) -> None:
+        guide = f"{_SUMMARY_START}\nissuer: a\n```\n{_SUMMARY_END}\n"
+        with pytest.raises(ValueError, match="opened none on its first"):
+            _sample_summary_lines(guide)
+
+    def test_a_repeated_field_is_refused_even_across_a_blank_line(self) -> None:
+        """The refusal is over the block, not over adjacent lines.
+
+        This is the case that passed green under the previous design: its
+        duplicate check compared each line with the one before it, so a blank
+        line between the two occurrences hid the repeat. Reading the whole
+        marked block leaves nowhere for the second occurrence to hide.
+        """
+        body = "```\nissuer: a\npublic_base_url: b\nproducts: c\n\nproducts: duplicated\n```"
+        with pytest.raises(ValueError, match="repeats 'products'"):
+            _sample_summary_lines(_marked(body))
+
+    def test_a_line_that_is_not_a_field_stays_in_the_block(self) -> None:
+        """A malformed trailing line is reported, not silently dropped.
+
+        Nothing here judges whether a line looks like a field: the line is
+        inside the markers, so it is part of what the guide claims the tool
+        prints, and the comparison against the CLI is what fails. Dropping it
+        for not matching a shape is how the previous design let a guide show
+        a line the tool never prints and stay green.
+        """
+        body = "```\nissuer: a\ndelivery: on\nthis line is not a field\n```"
+        found = _sample_summary_lines(_marked(body))
+        assert found == ["issuer: a", "delivery: on", "this line is not a field"]
+
+    @pytest.mark.parametrize("kept", range(1, 8))
+    def test_a_truncated_document_reports_the_fields_it_still_shows(self, kept: int) -> None:
+        """EOF closes the block, at every truncation point.
+
+        Truncation must be able to FAIL the comparison, never to skip it: a
+        helper returning None here would make a guide that stops mid-summary
+        indistinguishable from one that shows no summary, and the test would
+        pass by not running. Parametrised over every prefix because a single
+        truncation point pins one arithmetic, not the behaviour — the earlier
+        test kept every field and dropped only the closing fence, so it never
+        exercised a document that ends mid-block at all.
+        """
+        fields = _SEVEN_FIELDS.split("\n")[:kept]
+        guide = f"prose\n\n{_SUMMARY_START}\n```\n" + "\n".join(fields)
+        found = _sample_summary_lines(guide)
+        assert found == fields, f"truncated after {kept} field(s)"
+
+    def test_a_guide_showing_only_some_printed_fields_cannot_match(
+        self,
+        tmp_path: Path,
+        hybrid_keys: pq.HybridSigningKeys,
+        key_manifest: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The comparison is an EQUALITY, and this is where that is written.
+
+        Today a guide showing a subset fails only as a side effect of `==`
+        between lists counting elements as well as naming them. Someone
+        loosening the comparison to tolerate a field the CLI newly prints
+        would turn it into a containment and reopen the case with nothing in
+        the file to say what was given up — a guide could then drop half its
+        summary and stay green.
+        """
+        full = _sample_summary_lines((_DOCS / _GUIDES["stripe"]).read_text(encoding="utf-8"))
+        assert full is not None and len(full) > 2
+
+        config_text = _localize(
+            _EXAMPLE_CONFIG.read_text(encoding="utf-8"), tmp_path, hybrid_keys, key_manifest
+        )
+        _export_referenced_env_vars(config_text, monkeypatch)
+        config_path = tmp_path / "bridge.toml"
+        config_path.write_text(config_text, encoding="utf-8")
+        assert cli.main(["check-config", "--config", str(config_path)]) == 0
+        printed = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+
+        subset = full[:-2]
+        with pytest.raises(AssertionError, match="the CLI does not print"):
+            _assert_summary_matches_printed(_GUIDES["stripe"], subset, printed)
 
 
 def test_every_endpoint_the_docs_name_is_routed_by_the_app() -> None:

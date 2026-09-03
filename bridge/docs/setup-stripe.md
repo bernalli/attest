@@ -220,6 +220,7 @@ attest-bridge check-config --config bridge.local.toml
 
 A clean config prints a short summary and exits `0`:
 
+<!-- @check-config-summary-start -->
 ```
 issuer: store.example.com (kid=store.example.com/keys/2026-07#hybrid-1)
 public_base_url: https://receipts.example.com
@@ -229,6 +230,7 @@ shopify: not configured
 itch: not configured
 delivery: download-link-only
 ```
+<!-- @check-config-summary-end -->
 
 The last line reflects what you kept: `delivery: smtp` if the `[delivery]`
 table is still there, `download-link-only` if you dropped it.
