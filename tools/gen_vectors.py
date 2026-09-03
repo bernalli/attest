@@ -4,9 +4,20 @@ Fase 1 vectors 1-11 plus Fase 2 lifecycle/policy vectors 12-18).
 Deterministic by construction: every keypair, salt, timestamp and ULID
 randomness source below is a FIXED constant — no wall-clock reads
 (`datetime.now`), no CSPRNG reads (`os.urandom`). Running this script twice
-must produce byte-identical output under `docs/spec/vectors/`
-(`git diff --exit-code docs/spec/vectors` after a second run is the
-determinism gate — see the Task 10 report for the recorded check).
+must produce byte-identical output under `docs/spec/vectors/`.
+
+    python3 tools/gen_vectors.py                      # regenerate in place
+    python3 tools/gen_vectors.py --out /tmp/vectors   # regenerate elsewhere
+    python3 tools/gen_vectors.py --check              # exits 1 on any drift
+
+`--check` regenerates into a temporary directory and compares the committed
+tree byte for byte, and it is wired into CI and into `tests/test_gen_vectors.py`
+— not because the committed files are expected to rot on their own, but
+because the asserts this generator makes while building a vector (that a
+revocation record authenticates, that a payload validates against the schema,
+that a depth-boundary leaf sits exactly on the boundary) run ONLY while the
+tree is being built. Replaying the committed leaves never re-runs them; a
+generator nothing executes is a set of promises nothing keeps.
 
 Each vector directory ("leaf", identified by containing `expected.json`)
 holds:
@@ -59,11 +70,14 @@ above, following the same fixed-input determinism discipline:
 
 from __future__ import annotations
 
+import argparse
 import base64
 import copy
 import hashlib
 import json
 import shutil
+import sys
+import tempfile
 import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
@@ -93,7 +107,10 @@ from attest import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VECTORS_DIR = REPO_ROOT / "docs" / "spec" / "vectors"
+DEFAULT_VECTORS_DIR = REPO_ROOT / "docs" / "spec" / "vectors"
+#: Where the `write_*` helpers put a leaf. `generate()` retargets it for the
+#: duration of one run and puts it back, so the default survives `--check`.
+VECTORS_DIR = DEFAULT_VECTORS_DIR
 
 # --- fixed, deterministic inputs (never wall-clock, never os.urandom) -----
 
@@ -8808,9 +8825,25 @@ def gen_47_oversized_view_transfer() -> None:
     )
 
 
-def main() -> None:
-    _clear_leaf_dirs(VECTORS_DIR)
-    VECTORS_DIR.mkdir(parents=True, exist_ok=True)
+def generate(out: Path) -> int:
+    """Write the whole corpus under `out`, returning the leaf count.
+
+    Reassigns the module-level `VECTORS_DIR` because every `write_*` helper
+    below resolves its destination through it; `--out` exists so `--check` can
+    build a second tree without disturbing the committed one.
+    """
+    global VECTORS_DIR
+    previous = VECTORS_DIR
+    VECTORS_DIR = out
+    try:
+        return _generate_all(out)
+    finally:
+        VECTORS_DIR = previous
+
+
+def _generate_all(out: Path) -> int:
+    _clear_leaf_dirs(out)
+    out.mkdir(parents=True, exist_ok=True)
     gen_01_valid_minimal()
     gen_02_valid_full()
     gen_03_tampered_payload()
@@ -8858,9 +8891,70 @@ def main() -> None:
     gen_45_revocation_anchor_status()
     gen_46_manifest_unauthenticated()
     gen_47_oversized_view_transfer()
-    leaf_count = sum(1 for _ in VECTORS_DIR.rglob("expected.json"))
-    print(f"generated {leaf_count} vector cases under {VECTORS_DIR}")
+    return sum(1 for _ in out.rglob("expected.json"))
 
 
-if __name__ == "__main__":
-    main()
+#: Files the generator does NOT write and `_clear_leaf_dirs` deliberately
+#: preserves. `--check` compares generated content only, so it asserts these
+#: exist rather than reporting them as drift — an absent one is still drift,
+#: just of the kind a diff of generated output cannot see.
+HAND_AUTHORED_FILES = ("README.md",)
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    """Every file under `root` that the generator is answerable for."""
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and str(path.relative_to(root)) not in HAND_AUTHORED_FILES
+    }
+
+
+def drift(committed: dict[str, bytes], produced: dict[str, bytes]) -> list[str]:
+    """Names present on one side only, plus names whose bytes disagree."""
+    names = sorted(set(committed) ^ set(produced))
+    names += sorted(
+        name for name in set(committed) & set(produced) if committed[name] != produced[name]
+    )
+    return names
+
+
+def check(out: Path) -> int:
+    """Regenerate into a temporary directory and compare byte for byte."""
+    if not out.is_dir():
+        print(f"vector directory {out} does not exist", file=sys.stderr)
+        return 1
+    committed = _tree(out)
+    missing_by_hand = [name for name in HAND_AUTHORED_FILES if not (out / name).is_file()]
+    with tempfile.TemporaryDirectory() as tmp:
+        fresh = Path(tmp) / "vectors"
+        generate(fresh)
+        produced = _tree(fresh)
+    names = drift(committed, produced)
+    if names or missing_by_hand:
+        print(f"vector drift under {out}:", file=sys.stderr)
+        for name in names:
+            print(f"  {name}", file=sys.stderr)
+        for name in missing_by_hand:
+            print(f"  {name} (hand-authored, missing)", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate the attest conformance vectors.",
+    )
+    parser.add_argument("--out", type=Path, default=DEFAULT_VECTORS_DIR)
+    parser.add_argument("--check", action="store_true", help="fail on any drift from --out")
+    args = parser.parse_args(argv)
+
+    if args.check:
+        return check(args.out)
+    leaf_count = generate(args.out)
+    print(f"generated {leaf_count} vector cases under {args.out}")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(main())
