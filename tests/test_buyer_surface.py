@@ -196,6 +196,58 @@ def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
                 assert _files_named(answer) == [], context
 
 
+#: The two sentences that have to survive a rewording, written out HERE rather
+#: than read from `_WARNING_CLAIMS` — the source they exist to anchor. Every
+#: other test in this section compares one rendering with another, so all of
+#: them stay green when a sentence is deleted from the source: both renderings
+#: lose it together. These are the ones whose absence a reader would pay for.
+#:
+#: The first is what makes a phishing request look wrong, and it was asserted
+#: only in the bridge's itch-claim-form test — a different surface, and green
+#: only because `bridge/tests` happens to be inside `testpaths`. The second is
+#: the only sentence that gives the reader a concrete picture of the risk
+#: instead of a description of it, and nothing anywhere held it.
+ANCHORED_CLAIMS = (
+    "A real store or support agent will never need it — they can already see your order.",
+    "Keep it private, the way you would keep a paper receipt with your card number on it.",
+)
+
+
+@pytest.mark.parametrize("claim", ANCHORED_CLAIMS)
+def test_the_sentence_a_buyer_needs_is_on_every_surface_word_for_word(claim: str) -> None:
+    """Reworded on purpose is a decision; gone is an accident. This is where the
+    decision gets made: changing either sentence means changing it here too,
+    with a reason, rather than watching a parity test go on passing over a
+    warning that has quietly lost a claim."""
+    from attest import bundle
+
+    for context, kwargs in READER_CONTEXTS.items():
+        _, paragraphs = _headline_and_paragraphs(buyer_surface.private_file_warning_html(**kwargs))
+        assert claim in paragraphs, context
+        assert claim in buyer_surface.private_file_warning_text(**kwargs).splitlines(), context
+
+    # The README that travels INSIDE every bundle is a fourth surface, and it
+    # reaches the warning through `bundle._render_readme` rather than through
+    # the renderers above. Without this line a sentence could be dropped from
+    # that path alone — from the page a buyer opens out of their own zip — and
+    # nothing would go red, because the sample is compared against the same
+    # renderer that would have lost it.
+    _, readme_paragraphs = _headline_and_paragraphs(bundle._render_readme("demo"))
+    assert claim in readme_paragraphs, "bundle README"
+
+
+@pytest.mark.parametrize("claim", ANCHORED_CLAIMS)
+@pytest.mark.parametrize("page", ("site/public/start-here.html", "site/public/what-is-this.html"))
+def test_the_published_page_a_buyer_lands_on_still_carries_the_sentence(
+    claim: str, page: str
+) -> None:
+    """The rendered surfaces, not just the renderer. These two pages are what a
+    reader reaches from a search or a link, and they are committed files: they
+    can be stale, or regenerated from a source that lost the sentence, and the
+    parity tests above would not notice either."""
+    assert claim in (REPO_ROOT / page).read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("context", sorted(READER_CONTEXTS))
 def test_no_surface_offers_a_pattern_that_also_matches_the_private_half(context: str) -> None:
     """`*.attest` is not a name for the shareable file: as a pattern it also
@@ -355,19 +407,70 @@ def test_the_sample_bundle_carries_the_readme_the_template_produces_today() -> N
     assert len(readme.encode("utf-8")) <= buyer_surface.MAX_HELD_PAGE_BYTES
 
 
+#: The held-page ceiling, in bytes, written out here rather than imported.
+#: `MAX_HELD_PAGE_BYTES` is compared against page lengths all over this suite,
+#: and every one of those comparisons is against the constant itself — so
+#: raising the ceiling to fit a page that outgrew it breaks nothing, which is
+#: the opposite of what a budget is for. The number is the decision; this is
+#: where it is recorded.
+EXPECTED_MAX_HELD_PAGE_BYTES = 5000
+
+
+def test_the_held_page_ceiling_is_the_number_it_was_decided_to_be() -> None:
+    """Its own docstring says the headroom is "enough to add a sentence, not
+    enough to add a section without deciding to". Deciding to is raising this
+    number, in a commit that says why — not discovering that the pages grew."""
+    assert buyer_surface.MAX_HELD_PAGE_BYTES == EXPECTED_MAX_HELD_PAGE_BYTES
+
+
+def test_the_largest_page_actually_shipped_fits_under_the_recorded_ceiling() -> None:
+    """The ceiling anchored above is worth nothing on its own: it has to be the
+    number the real pages are measured against. The sample bundle's README is
+    the largest held page the project ships, and it is checked here against the
+    literal, so a rewording that outgrows the budget cannot be absolved by
+    editing the constant."""
+    from attest import bundle
+
+    readme = bundle._render_readme("demo")
+    assert len(readme.encode("utf-8")) <= EXPECTED_MAX_HELD_PAGE_BYTES
+
+
 def test_the_generator_runs_as_a_script() -> None:
-    """It is documented as a command, so it has to work as one."""
+    """It is documented as a command, so it has to work as one.
+
+    Running it writes the committed pages in place, which makes this the one
+    test in the file with a side effect on the repository — and the pages it
+    rewrites are what the anchors above read. Left alone it can repair the very
+    evidence another test exists to measure: with the source mutated, the
+    anchors pass or fail depending on whether they ran before or after this
+    line. So the pages are restored either way, and a run that changed them at
+    all is itself a failure: the committed output is meant to be current.
+    """
+    generated = tuple(gen_buyer_pages.generated_pages())
+    before = {path: path.read_bytes() if path.exists() else None for path in generated}
+
     # Fixed argv: this interpreter and a path inside the repo, no external input.
-    result = subprocess.run(  # noqa: S603
-        [sys.executable, str(REPO_ROOT / "tools/gen_buyer_pages.py")],
-        capture_output=True,
-        text=True,
-        cwd=REPO_ROOT,
-        check=False,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, str(REPO_ROOT / "tools/gen_buyer_pages.py")],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            check=False,
+        )
+        after = {path: path.read_bytes() if path.exists() else None for path in generated}
+    finally:
+        for path, contents in before.items():
+            if (path.read_bytes() if path.exists() else None) == contents:
+                continue
+            if contents is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(contents)
 
     assert result.returncode == 0, result.stderr
     assert "what-is-this.html" in result.stdout
+    assert after == before, "running the generator rewrote committed pages"
 
 
 # --- The FAQ page is derived from docs/faq.md, never transcribed -------------

@@ -4,19 +4,37 @@ Loads tools/gen_site_sample.py by file path (tools/ is not a package) and
 checks that a fresh generation produces a bundle that imports, verifies ok
 at TOFU trust, proves its binding with the sidecar salt, and never leaks a
 .private.attest into the output directory.
+
+The second half of the file asks the same questions of the file actually
+published — `site/public/sample/demo.attest`. A fresh generation says nothing
+about the committed bytes: the sample is the artifact a first-time visitor
+drops into the web verifier, so if it stops verifying, the demo lies. Until
+these tests existed, only the TypeScript suite ever opened the committed
+bundle, and only for its transparency evidence.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import zipfile
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-from attest import bundle
+from attest import anchor, bundle, keys, tlog, verify
+
+SAMPLE_DIR = Path(__file__).resolve().parent.parent / "site" / "public" / "sample"
+SAMPLE_BUNDLE = SAMPLE_DIR / "demo.attest"
+SAMPLE_BINDING = SAMPLE_DIR / "demo-binding.json"
+#: The log keys the published page pins are compiled into the site rather than
+#: served next to the log, deliberately (v0.2 §7.3: a verifier may not take log
+#: keys from the material it is checking). That module is therefore the only
+#: place they exist, and reading them is what lets this side evaluate the same
+#: evidence the browser evaluates, against the same trusted configuration.
+TRUSTED_LOG_SOURCE = SAMPLE_DIR.parent.parent / "src" / "trusted-log.ts"
 
 
 def _load_generator() -> ModuleType:
@@ -89,3 +107,119 @@ def test_refresh_readme_refuses_anything_but_a_shareable_bundle(tmp_path: Path) 
         path.write_bytes(b"")
         with pytest.raises(RuntimeError):
             gen.refresh_readme(path)
+
+
+# --- the bundle actually published, not a fresh one --------------------------
+
+
+def _site_log_keys() -> list[tlog.LogKey]:
+    """Every log key the published verifier pins, read from the page's own source.
+
+    A copy written out here would be a second pin that can disagree with the
+    one the browser uses, which is the failure this whole file is about. But
+    reading has to be exact, and a loose pattern is worse than a copy: a
+    non-anchored search over the whole file will happily start at a string that
+    merely looks like a pin — a comment, an older value left behind — and run on
+    into the fields of the real entry, reconstructing a key that is pinned
+    nowhere. Then the browser consumes one key and this test blesses another.
+
+    So: find the `LOG_KEYS` array, take each object inside it whole, and read
+    the four fields from within that object only. Every entry is returned,
+    because a second pin is a second key the page would accept, not a spare.
+    """
+    source = TRUSTED_LOG_SOURCE.read_text(encoding="utf-8")
+    block = re.search(
+        r"^export const LOG_KEYS\b[^=]*=\s*\[(.*?)^\]",
+        source,
+        re.DOTALL | re.MULTILINE,
+    )
+    assert block is not None, f"cannot find the LOG_KEYS array in {TRUSTED_LOG_SOURCE.name}"
+
+    pinned: list[tlog.LogKey] = []
+    for entry in re.findall(r"\{([^{}]*)\}", block.group(1)):
+        fields = dict(re.findall(r'(\w+):\s*(?:b64uDecode\(\s*)?"([^"]+)"', entry))
+        missing = {"origin", "name", "ed25519Pub", "mldsaPub"} - set(fields)
+        assert not missing, f"a LOG_KEYS entry is missing {sorted(missing)}"
+        pinned.append(
+            tlog.LogKey(
+                origin=fields["origin"],
+                name=fields["name"],
+                ed25519_pub=keys.b64u_decode(fields["ed25519Pub"]),
+                mldsa_pub=keys.b64u_decode(fields["mldsaPub"]),
+            )
+        )
+    assert pinned, f"{TRUSTED_LOG_SOURCE.name} pins no log key at all"
+    return pinned
+
+
+def _committed_receipt() -> tuple[bundle.ImportedBundle, dict[str, object]]:
+    imported = bundle.import_bundle(SAMPLE_BUNDLE)
+    assert len(imported.receipts) == 1, "the sample is meant to hold one receipt"
+    return imported, imported.receipts[0]
+
+
+def test_committed_sample_bundle_still_verifies() -> None:
+    """The signature over the published receipt still checks out against the
+    trust material published beside it, and the whole envelope still satisfies
+    the schema. A README refresh, a re-zip, a stray editor save: any of those
+    can leave a bundle that opens and no longer verifies."""
+    imported, receipt = _committed_receipt()
+    result = verify.verify(json.dumps(receipt).encode("utf-8"), imported.trust_store)
+    assert result.signature == "valid"
+    assert result.schema == "valid"
+    assert result.ok is True
+    # Offline-imported manifests are TOFU by construction (design §5); a sample
+    # that ever reported "verified" would be advertising trust it cannot have.
+    assert result.trust == "unauthenticated_tofu"
+
+
+def test_committed_sample_binding_sidecar_proves_the_buyer_commitment() -> None:
+    """`demo-binding.json` is published so a visitor can reproduce the buyer
+    binding, which is the step that shows the receipt is about a person and not
+    just well-formed. Salt and commitment must still agree."""
+    imported, receipt = _committed_receipt()
+    sidecar = json.loads(SAMPLE_BINDING.read_text(encoding="utf-8"))
+    disclosure = verify.Disclosure(
+        identifier=sidecar["identifier"],
+        identifier_type=sidecar["identifier_type"],
+        salt=keys.b64u_decode(sidecar["salt_b64u"]),
+    )
+    result = verify.verify(
+        json.dumps(receipt).encode("utf-8"), imported.trust_store, disclosure=disclosure
+    )
+    assert result.binding == "proven"
+    assert result.ok is True
+
+
+def test_committed_sample_carries_the_evidence_the_demo_promises() -> None:
+    """The published bundle ships the legal text its licence binds, and a
+    transparency proof for its receipt that actually proves something. Both are
+    members a re-export can drop without the signature noticing — the receipt
+    stays valid while the demo quietly stops demonstrating anything.
+
+    The proof is EVALUATED, not counted. Asserting that the member is present
+    accepts an empty object: the importer takes any JSON there, so a proof
+    emptied to `{}` would leave the receipt verifying, the member in place, and
+    the claim the demo makes — that this receipt is in a public log — unbacked.
+    """
+    imported, receipt = _committed_receipt()
+    payload = receipt["payload"]
+    assert isinstance(payload, dict)
+    receipt_id = payload["receipt_id"]
+    assert isinstance(receipt_id, str)
+
+    licence = payload["license"]
+    assert isinstance(licence, dict)
+    assert licence["legal_text_sha256"] in imported.legal_texts
+
+    evidence = imported.proofs.get(receipt_id)
+    assert evidence is not None, "the sample must carry the proof for its own receipt"
+    result = verify.verify(
+        json.dumps(receipt).encode("utf-8"),
+        imported.trust_store,
+        transparency=evidence,
+        log_keys=_site_log_keys(),
+        anchor_policy=anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
+    )
+    assert result.transparency == "logged"
+    assert result.corroboration == "logged"
