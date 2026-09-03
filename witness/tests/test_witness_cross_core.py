@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -39,6 +38,7 @@ from witness_support import (
 )
 
 from attest import pq, tlog
+from tools.ci_required import ci_prerequisites_required
 
 ORIGIN = "log.example"
 TIMESTAMP = 1_700_000_000
@@ -46,10 +46,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TS_BENCH = REPO_ROOT / "verifiers" / "ts" / "tools" / "witness-parity.mjs"
 TS_DIST = REPO_ROOT / "verifiers" / "ts" / "dist" / "index.js"
 PY_BENCH = REPO_ROOT / "tools" / "witness_parity_py.py"
-
-#: Values that leave the fail-closed contract disarmed. Everything else arms
-#: it, including spellings nobody thought to list.
-_NOT_REQUIRED = frozenset({"", "0", "false", "no"})
 
 
 def _run(command: list[str], stdin: bytes) -> dict[str, object]:
@@ -83,7 +79,7 @@ def test_the_lines_this_witness_produces_verify_in_both_cores(
         # test, and a job added later would write exactly that. Failing on a
         # spelling nobody meant as "off" is a loud error; skipping on one
         # meant as "on" is the silence this whole change exists to remove.
-        if os.environ.get("ATTEST_CI_REQUIRED", "").strip().lower() not in _NOT_REQUIRED:
+        if ci_prerequisites_required():
             pytest.fail(absent)
         pytest.skip(absent)
 

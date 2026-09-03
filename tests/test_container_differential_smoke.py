@@ -17,31 +17,15 @@ failure in the other.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
 from tools import container_differential
+from tools.ci_required import ci_prerequisites_required
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ESBUILD = REPO_ROOT / "site" / "node_modules" / ".bin" / "esbuild"
-
-#: Values that leave the fail-closed contract disarmed. Everything else arms
-#: it, including spellings nobody thought to list.
-#:
-#: Refusing an unrecognised spelling outright — rather than reading it as
-#: "armed" — was considered and deliberately not done here, and the reason is
-#: worth leaving for whoever revisits this. Such a refusal would have to happen
-#: ONCE, when the pytest session starts. Put where this test would naturally
-#: put it, inside the branch that runs when a prerequisite is missing, it would
-#: never fire on a complete machine: a job setting `ATTEST_CI_REQUIRED=trueish`
-#: would sail through every green run and only reveal the typo on the day
-#: something was already broken. That is a check which exists only in the
-#: degraded case — precisely the defect this whole contract removes, rebuilt
-#: one level down. Whoever adds a second writer for this variable should add
-#: the session-wide refusal at the same time, not the branch-local one.
-_NOT_REQUIRED = frozenset({"", "0", "false", "no"})
 
 _ABSENT = (
     "the site's esbuild is absent: install Node.js >=20, then run "
@@ -60,7 +44,7 @@ def test_the_two_readers_agree_on_generated_archives() -> None:
         # test, and a job added later would write exactly that. Failing on a
         # spelling nobody meant as "off" is a loud error; skipping on one
         # meant as "on" is the silence this whole change exists to remove.
-        if os.environ.get("ATTEST_CI_REQUIRED", "").strip().lower() not in _NOT_REQUIRED:
+        if ci_prerequisites_required():
             pytest.fail(_ABSENT)
         pytest.skip(_ABSENT)
     assert container_differential.run(count=50, seed=20260902, keep=None) == 0

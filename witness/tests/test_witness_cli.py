@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import http.client
 import json
-import os
 import threading
 from pathlib import Path
 from wsgiref.simple_server import make_server
@@ -31,12 +30,9 @@ from witness_support import (
 )
 
 from attest import keys, pq
+from tools.ci_required import ci_prerequisites_required
 
 ORIGIN = "log.example"
-#: Values that leave the fail-closed contract disarmed. Everything else arms
-#: it, including spellings nobody thought to list.
-_NOT_REQUIRED = frozenset({"", "0", "false", "no"})
-
 TIMESTAMP = 1_700_000_000
 
 
@@ -115,7 +111,7 @@ def test_a_served_witness_answers_a_real_http_submission(
         # promised the environment, an absent prerequisite is that job's
         # defect and not a reason for the test to step aside. Any spelling but
         # an explicitly negative one arms it, for the reason measured there.
-        if os.environ.get("ATTEST_CI_REQUIRED", "").strip().lower() not in _NOT_REQUIRED:
+        if ci_prerequisites_required():
             pytest.fail(f"{reason}; the required CI gate cannot run")
         pytest.skip(f"{reason}; the test runs wherever it is")
     with httpd:

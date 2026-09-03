@@ -97,6 +97,14 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "bridge/tests", "witness/tests"]
+# The repository root, so `tools/` imports resolve from every test tree rather
+# than from one of them by accident. `tests/` is a package, so collecting it
+# put the root on sys.path and everything else inherited that — which held
+# only as long as the whole suite ran in one invocation and `tests/` came
+# first. `uv run pytest witness/tests/...` alone then failed at collection
+# with "No module named 'tools'", and a CI split into per-tree jobs would fail
+# the same way. Stated here it no longer depends on the order.
+pythonpath = ["."]
 
 [tool.uv.workspace]
 members = ["bridge", "witness"]

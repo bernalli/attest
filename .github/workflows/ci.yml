@@ -33,9 +33,10 @@ jobs:
       # (bundled with the site's own esbuild) and the witness cross-core bench
       # (a built verifiers/ts). Until these steps existed neither one failed
       # here — they SKIPPED, and one skip in a total of four thousand passes is
-      # indistinguishable from a test that ran. The jobs that do build the
-      # TypeScript side never run pytest, so this is the only place either
-      # comparison can happen at all.
+      # indistinguishable from a test that ran. The jobs that build the
+      # TypeScript side never run pytest, so without these steps pytest can
+      # perform neither comparison. The witness comparison has no other
+      # caller; the site workflow separately runs the container differential.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
