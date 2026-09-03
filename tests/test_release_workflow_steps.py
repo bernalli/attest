@@ -52,7 +52,11 @@ def _shell_argv() -> list[str]:
     is what let a failing command inside a pipe pass unnoticed. The workflow now
     sets `shell: bash`, which is `bash --noprofile --norc -eo pipefail {0}`. This
     function refuses to guess: if that default is ever removed, every test that
-    runs a script fails here rather than silently testing a weaker shell.
+    runs a script fails here rather than silently testing a weaker shell. It
+    reads the WORKFLOW-level key only, and a job-level `defaults.run.shell`
+    overrides that without touching it -- which is why
+    `test_run_steps_default_to_a_shell_that_fails_on_a_broken_pipe` checks the
+    jobs too, and not as a formality: without it that override is invisible here.
     """
     shell = _workflow().get("defaults", {}).get("run", {}).get("shell")
     assert shell == "bash", (
@@ -116,6 +120,13 @@ def test_run_steps_default_to_a_shell_that_fails_on_a_broken_pipe() -> None:
     workflow = _workflow()
     assert workflow["defaults"]["run"]["shell"] == "bash"
     for job_name, job in workflow["jobs"].items():
+        job_shell = job.get("defaults", {}).get("run", {}).get("shell")
+        assert job_shell in (None, "bash"), (
+            f"{job_name} sets `defaults.run.shell: {job_shell!r}`, which WINS over the "
+            "workflow default: every step in this job would run without pipefail while "
+            "the workflow-level key still reads `bash` -- so `_shell_argv` stays happy "
+            "and this suite goes on testing a stronger shell than the one CI uses"
+        )
         for step in job["steps"]:
             if "run" not in step:
                 continue
@@ -288,6 +299,7 @@ def test_build_refuses_to_ship_an_artifact_missing_any_one_of_its_patterns(
     of these, because in each case four of the five patterns still match.
     """
     script = str(_step("build", "Assert the artifact is complete")["run"])
+    tag = {"GITHUB_REF_NAME": "v9.9.9"}
     complete = [
         "dist/attest_receipts-9.9.9-py3-none-any.whl",
         "dist/attest_receipts-9.9.9.tar.gz",
@@ -298,14 +310,68 @@ def test_build_refuses_to_ship_an_artifact_missing_any_one_of_its_patterns(
     (tmp_path / "dist").mkdir()
     for name in complete:
         (tmp_path / name).write_bytes(b"x")
-    assert _run(script, tmp_path, {}).returncode == 0
+    assert _run(script, tmp_path, tag).returncode == 0
 
     for dropped in complete:
         (tmp_path / dropped).unlink()
-        result = _run(script, tmp_path, {})
+        result = _run(script, tmp_path, tag)
         assert result.returncode != 0, f"an artifact without {dropped} must not travel"
         assert "would leave this job without" in result.stdout
         (tmp_path / dropped).write_bytes(b"x")
+
+
+def test_build_refuses_a_verifier_tarball_from_another_version(tmp_path: Path) -> None:
+    """The npm job checks this too, but it runs concurrently with the PyPI
+    publish: a refusal there cannot stop a half release. Here it can."""
+    (tmp_path / "dist").mkdir()
+    for name in (
+        "dist/attest_receipts-9.9.9-py3-none-any.whl",
+        "dist/attest_receipts-9.9.9.tar.gz",
+        "sbom-python.cdx.json",
+        "sbom-npm.cdx.json",
+        "attest-verifier-9.9.8.tgz",
+    ):
+        (tmp_path / name).write_bytes(b"x")
+    script = str(_step("build", "Assert the artifact is complete")["run"])
+    result = _run(script, tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert result.returncode != 0, "a stale verifier tarball must not leave the build job"
+    assert "attest-verifier-9.9.9.tgz" in result.stdout
+
+
+def test_build_refuses_a_second_verifier_tarball(tmp_path: Path) -> None:
+    """`sha256sum ... attest-verifier-*.tgz` globs, so two tarballs would both be
+    recorded and both travel, with the wrong one still named in the manifest."""
+    (tmp_path / "dist").mkdir()
+    for name in (
+        "dist/attest_receipts-9.9.9-py3-none-any.whl",
+        "dist/attest_receipts-9.9.9.tar.gz",
+        "sbom-python.cdx.json",
+        "sbom-npm.cdx.json",
+        "attest-verifier-9.9.9.tgz",
+        "attest-verifier-9.9.8.tgz",
+    ):
+        (tmp_path / name).write_bytes(b"x")
+    script = str(_step("build", "Assert the artifact is complete")["run"])
+    result = _run(script, tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert result.returncode != 0
+    assert "expected exactly 1 verifier tarball" in result.stdout
+
+
+def test_build_completeness_refuses_a_tag_it_cannot_read(tmp_path: Path) -> None:
+    """An unset GITHUB_REF_NAME must not degrade into "any verifier will do"."""
+    (tmp_path / "dist").mkdir()
+    for name in (
+        "dist/attest_receipts-9.9.9-py3-none-any.whl",
+        "dist/attest_receipts-9.9.9.tar.gz",
+        "sbom-python.cdx.json",
+        "sbom-npm.cdx.json",
+        "attest-verifier-9.9.9.tgz",
+    ):
+        (tmp_path / name).write_bytes(b"x")
+    script = str(_step("build", "Assert the artifact is complete")["run"])
+    result = _run(script, tmp_path, {})
+    assert result.returncode != 0
+    assert "would leave this job without" in result.stdout
 
 
 # --------------------------------------------------------------------------
@@ -394,6 +460,57 @@ def test_install_step_fails_when_an_installer_leaves_no_binary(tmp_path: Path) -
     result = _run(str(_install_step()["run"]), tmp_path, env)
     assert result.returncode != 0
     assert "left no executable" in result.stdout
+
+
+def test_the_pinned_installer_is_not_allowed_to_re_fetch_itself(tmp_path: Path) -> None:
+    """The digest covers the script this step downloads, and nothing more.
+
+    All three anchore installers default DOWNLOAD_TAG_INSTALL_SCRIPT to true,
+    and under that default their first act is to fetch install.sh again from
+    get.anchore.io -- an origin no digest here covers -- pipe it into `sh` and
+    exit with its status, so the bytes that ran would not be the bytes checked.
+    Asserted by running the real step against an installer that records the
+    value it was handed: the environment is what has to carry it, so reading it
+    out of the environment is the assertion, not a paraphrase of the script.
+    """
+    seen = tmp_path / "seen"
+    installer = tmp_path / "installer.sh"
+    installer.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "${{DOWNLOAD_TAG_INSTALL_SCRIPT-<unset>}}" >> "{seen}"\n'
+        'bindir="$2"\n'
+        'mkdir -p "$bindir"\n'
+        'for t in syft grype grant; do printf "#!/bin/sh\\ntrue\\n" > "$bindir/$t"; '
+        'chmod 755 "$bindir/$t"; done\n',
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(installer.read_bytes()).hexdigest()
+    _stub_bin(
+        tmp_path / "stubs",
+        "curl",
+        'out=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac\n'
+        "done\n"
+        f'cp "{installer}" "$out"',
+    )
+    binary_digest = hashlib.sha256(b"#!/bin/sh\ntrue\n").hexdigest()
+    env = _install_env(
+        tmp_path,
+        SYFT_INSTALLER_SHA256=digest,
+        GRYPE_INSTALLER_SHA256=digest,
+        GRANT_INSTALLER_SHA256=digest,
+        SYFT_BINARY_SHA256=binary_digest,
+        GRYPE_BINARY_SHA256=binary_digest,
+        GRANT_BINARY_SHA256=binary_digest,
+    )
+    result = _run(str(_install_step()["run"]), tmp_path, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    recorded = seen.read_text(encoding="utf-8").split() if seen.exists() else []
+    assert recorded == ["false", "false", "false"], (
+        "every installer must be run with DOWNLOAD_TAG_INSTALL_SCRIPT=false, or the "
+        f"script whose digest was just checked re-fetches itself unpinned: {recorded}"
+    )
 
 
 # --------------------------------------------------------------------------

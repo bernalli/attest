@@ -1,6 +1,19 @@
 # .github/workflows/release.yml
 name: release
 on:
+  # A tag push runs the workflow AS IT EXISTS AT THE PUSHED REF, not as it
+  # exists on main. So none of the assertions below are a property of the
+  # repository: they are a property of the commit someone chose to tag. Whoever
+  # can push a tag can tag a commit whose release.yml has none of them, and this
+  # file cannot defend against that -- the defence is branch/tag protection plus
+  # a required review on this path, configured outside the repository. Read
+  # every "must refuse" comment below with that scope in mind.
+  #
+  # It also means a defect found DURING a release cannot be fixed by editing
+  # this file and re-running: the re-run replays the tagged commit. The registry
+  # checks in `github-release` are placed before `gh release create` so that a
+  # failure there leaves nothing half-made, but a false refusal at that point
+  # has to be finished by hand.
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
@@ -94,7 +107,20 @@ jobs:
             # before it is executed, which is the whole point of this step.
             curl -sSfL "https://raw.githubusercontent.com/anchore/${name}/${version}/install.sh" -o "$installer"
             echo "${want}  ${installer}" | sha256sum -c -
-            sh "$installer" -b "$HOME/.local/bin" "${version}"
+            # DOWNLOAD_TAG_INSTALL_SCRIPT defaults to true in all three
+            # installers, and under that default the pin above buys nothing:
+            # the verified script's FIRST act is to fetch install.sh again from
+            # https://get.anchore.io/<tool>/<tag>/install.sh -- a
+            # Cloudflare-fronted origin that is not GitHub and that no digest
+            # here covers -- pipe it into `sh`, and exit with its status. The
+            # bytes that would actually run are whatever that host served, so
+            # the checksum would have verified a script that never did the
+            # work, and `curl | sh` would be back one level down. Setting it
+            # false makes the script we fetched at the tag and checksummed do
+            # the install itself; the installer's own reason for re-fetching
+            # ("use the install.sh associated with the tagged release") is
+            # already satisfied, because that is exactly the file above.
+            DOWNLOAD_TAG_INSTALL_SCRIPT=false sh "$installer" -b "$HOME/.local/bin" "${version}"
             rm -f "$installer"
           }
           install_pinned syft "$SYFT_VERSION" "$SYFT_INSTALLER_SHA256"
@@ -131,6 +157,17 @@ jobs:
           # The gate has to refuse an empty inventory before it can mean anything.
           jq -e '(.components | type) == "array" and (.components | length) > 0' sbom-python.cdx.json > /dev/null \
             || { echo "sbom-python.cdx.json lists no components: the scans below would pass on an empty inventory"; exit 1; }
+          # grype is only a gate while it has a current vulnerability database,
+          # and nothing here asserts that it does: the property is bought
+          # entirely by grype's own defaults (auto-update true, validate-age
+          # true, max-allowed-built-age 120h), which make it ERROR rather than
+          # report zero findings on a stale or absent database -- a fresh runner
+          # has no cache, so it must download or fail. That is fail-closed, but
+          # it is upstream's default, not this file's assertion: setting
+          # GRYPE_DB_AUTO_UPDATE=false or GRYPE_DB_VALIDATE_AGE=false anywhere
+          # in this workflow turns the vulnerability gate into a step that
+          # passes on everything. Do not set them. Unmeasured here: what grype
+          # reports when the database is present but stale within 120h.
           grype sbom:sbom-python.cdx.json --fail-on high
           grant check -c .grant.yaml sbom-python.cdx.json
       - name: Assert + scan npm
@@ -167,9 +204,10 @@ jobs:
         # and the tarball that goes to npm, the irreversible ones, had nothing.
         run: |
           shopt -s nullglob dotglob
+          VERSION="${GITHUB_REF_NAME#v}"
           missing=()
           for pattern in "dist/*.whl" "dist/*.tar.gz" "sbom-python.cdx.json" \
-                         "sbom-npm.cdx.json" "attest-verifier-*.tgz"; do
+                         "sbom-npm.cdx.json" "attest-verifier-${VERSION}.tgz"; do
             # A pattern without a wildcard is not a glob: nullglob leaves it as
             # its own literal text, so the array is never empty and `test -e` is
             # what decides. Same trap the dist/ assertion documents.
@@ -178,6 +216,14 @@ jobs:
           done
           test "${#missing[@]}" -eq 0 \
             || { echo "the artifact would leave this job without: ${missing[*]}"; exit 1; }
+          # The verifier tarball's VERSION is otherwise bound only in the npm
+          # job -- which runs CONCURRENTLY with the irreversible PyPI publish,
+          # so a refusal there arrives after PyPI has the release. This job is
+          # the last one that runs before anything is published: bind it here.
+          # The count matters too, because the checksum line below globs.
+          verifiers=(attest-verifier-*.tgz)
+          test "${#verifiers[@]}" -eq 1 \
+            || { echo "expected exactly 1 verifier tarball, found ${#verifiers[@]}: ${verifiers[*]}"; exit 1; }
           sha256sum dist/* sbom-python.cdx.json sbom-npm.cdx.json attest-verifier-*.tgz \
             | tee gated-artifacts.sha256
           # Same idiom as the desktop job: prove the file we ship is one that
