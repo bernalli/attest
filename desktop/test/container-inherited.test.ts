@@ -8,12 +8,17 @@
 // measures is a claim about an import statement, not about the artifact.
 //
 // The refusing leaves of the shared corpus are fed through `intake` exactly as
-// the app feeds it, under a `.attest` name — 56 of the 63 that refuse, and the
-// seven left out are left out on purpose and named below: two do not open with
-// the archive signature, so the app routes them elsewhere before the container
-// reader sees them, and five are refused for a cap, which depends on the caps
-// the page sets rather than on the reading. Saying "every refusing leaf" would
-// be an easier sentence and a false one.
+// the app feeds it, under a `.attest` name — 58 of the 63 that refuse, and the
+// five left out are left out on purpose: they are refused for a cap, which
+// depends on the caps the page sets rather than on the reading. Saying "every
+// refusing leaf" would be an easier sentence and a false one.
+//
+// Two more leaves used to be excluded here, and the exclusion was the defect
+// rather than a property: `prefix-honest` and `local-header-signature` do not
+// open with the archive signature, so a file named `.attest` carrying those
+// bytes went to the receipt path and came back with a job while the reference
+// importer refused it. The container route is decided by the CONTRACT — the
+// extension — so those two are now ordinary members of the list below.
 
 import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -51,28 +56,22 @@ const CAP_CODES = new Set([
   'total-over-cap',
 ])
 
-// `intake` decides a file is an archive from its first two bytes, so a corpus
-// leaf that does not start with the ZIP signature never reaches the container
-// reader at all: it is routed to the receipt path and fails there instead. Two
-// leaves are in that position by construction — one begins with a stub before
-// the archive, the other has its first local header signature altered — and
-// they are listed rather than silently filtered, because the routing is a real
-// property of the app and not an accident of this test.
-const looksLikeAnArchive = (bytes: Uint8Array): boolean =>
-  bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b
-
 describe('the desktop verifier inherits the container reader', () => {
   const refusing = leaves.filter((leaf) => {
     const expected = expectationOf(leaf)
-    return (
-      expected.verdict === 'reject' &&
-      !CAP_CODES.has(expected.code ?? '') &&
-      looksLikeAnArchive(archiveOf(leaf))
-    )
+    return expected.verdict === 'reject' && !CAP_CODES.has(expected.code ?? '')
   })
 
   it('has refusing leaves to inherit', () => {
     expect(refusing.length).toBeGreaterThan(20)
+  })
+
+  it('walks the two leaves that do not open with the archive signature', () => {
+    // Named rather than counted: these are the two the routing used to hand to
+    // the receipt path, and a filter that quietly dropped them again would
+    // leave every other assertion in this file passing.
+    expect(refusing).toContain('prefix-honest')
+    expect(refusing).toContain('local-header-signature')
   })
 
   for (const leaf of refusing) {
@@ -88,19 +87,15 @@ describe('the desktop verifier inherits the container reader', () => {
     if (result.kind === 'rejected') expect(result.reason).toMatch(/canonical form/)
   })
 
-  it('routes a file that does not open with the archive signature to the receipt path', () => {
-    // Not a refusal by the container reader, and not a receipt either: the file
-    // is handed to the verifier, which is where a file that is not an archive
-    // belongs. Nothing green comes out of it.
+  it('refuses a file that does not open with the archive signature, rather than routing it away', () => {
+    // The two leaves the old routing let through. A `.attest` is a container by
+    // contract, so a job coming back from one of these is the divergence itself:
+    // the reference importer refuses both from their central directory.
     for (const leaf of ['prefix-honest', 'local-header-signature']) {
       const bytes = archiveOf(leaf)
-      expect(looksLikeAnArchive(bytes)).toBe(false)
+      expect(bytes[0] === 0x50 && bytes[1] === 0x4b).toBe(false)
       const result = intake('library.attest', bytes)
-      expect(result.kind).not.toBe('needs-manifest')
-      if (result.kind === 'jobs') {
-        expect(result.jobs).toHaveLength(1)
-        expect(result.jobs[0].trustStore.manifests).toEqual({})
-      }
+      expect(result.kind).toBe('rejected')
     }
   })
 

@@ -160,7 +160,21 @@ export function declinedForSize(storedBytes: number): Refusal | null {
 export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
   if (fileName.endsWith('.private.attest')) return { kind: 'rejected', reason: PRIVATE_NAME_MSG }
 
-  const isZip = bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b
+  // A `.attest` is a container by CONTRACT (v0.1 §14.1), so the extension routes
+  // it — and the archive signature keeps its say for a bundle saved under some
+  // other name. Deciding on the first two bytes ALONE let a file opt out of the
+  // canonical container reader by simply not opening with them: the reference
+  // importer refused such a file from its central directory, while this page sent
+  // it to the receipt path, where it earned a job. Same bytes, two answers, which
+  // is the divergence the canonical reader exists to remove — and the one shape
+  // where it mattered most, since a file that reaches a buyer is named `.attest`.
+  //
+  // A `.attest` that is not an archive is refused BY the container reader now,
+  // which is where a file claiming to be a container belongs; the private-file
+  // branch above still wins, because `.private.attest` ends in `.attest` too.
+  const isZip =
+    fileName.endsWith('.attest') ||
+    (bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b)
   if (isZip) {
     try {
       const parsed = parseBundle(bytes)

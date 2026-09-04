@@ -7,6 +7,8 @@ import type { JsonObject } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes } from '../src/intake.js'
 import { runVerify } from '../src/run.js'
 import { VECTORS_ROOT } from './helpers/vectors.js'
+import { CORPUS_ROOT } from './helpers/container-corpus.js'
+import { LEGAL_TEXT, LEGAL_DIGEST } from './helpers/zip.js'
 
 const V01 = join(VECTORS_ROOT, '01-valid-minimal')
 const envelopeBytes = () => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
@@ -119,6 +121,70 @@ describe('intake', () => {
     const run = runVerify(r.jobs[0].envelopeBytes, r.jobs[0].trustStore)
     expect(run.result.signature).toBe('invalid')
     expect(run.ok).toBe(false)
+  })
+})
+
+// A `.attest` is a container by CONTRACT (v0.1 §14.1), and the contract is the
+// extension. Deciding from the first two bytes instead let a file opt OUT of the
+// canonical container reader by not opening with the archive signature: the
+// reference importer refused such a file and this page handed it to the receipt
+// path, where it earned a job — the same bytes, two answers, which is exactly
+// the divergence the canonical reader exists to remove.
+describe('a file named .attest is read as a container, whatever it starts with', () => {
+  const corpusArchive = (leaf: string): Uint8Array =>
+    new Uint8Array(readFileSync(join(CORPUS_ROOT, leaf, 'archive.zip')))
+
+  // Both leaves refuse in the reference importer and neither opens with `PK`.
+  for (const leaf of ['prefix-honest', 'local-header-signature']) {
+    it(`refuses ${leaf} instead of routing it to the receipt path`, () => {
+      const r = intake('library.attest', corpusArchive(leaf))
+      expect(r.kind).toBe('rejected')
+    })
+  }
+
+  it('refuses a .attest that is not an archive at all, without throwing', () => {
+    const r = intake('library.attest', new TextEncoder().encode('this is a note, not an archive'))
+    expect(r.kind).toBe('rejected')
+    if (r.kind === 'rejected') {
+      // The container reader's own complaint, which is the one the reference
+      // importer makes about the same bytes.
+      expect(r.reason).toMatch(/container|zip/i)
+      // It IS a judgement about the bytes — they were read — so it is not the
+      // neutral register §14.4 reserves for a container nobody opened.
+      expect(r.declined).toBeUndefined()
+    }
+  })
+
+  it('refuses an empty .attest without throwing', () => {
+    const r = intake('library.attest', new Uint8Array(0))
+    expect(r.kind).toBe('rejected')
+  })
+
+  it('still refuses .private.attest by name, which also ends in .attest', () => {
+    // The private-file refusal is about what the file HOLDS, and it must keep
+    // winning over the container route now that both branches match the name.
+    const r = intake('library.private.attest', new TextEncoder().encode('not an archive'))
+    expect(r.kind).toBe('rejected')
+    if (r.kind === 'rejected') expect(r.reason).toMatch(/binding salts and keys/)
+  })
+
+  it('leaves a receipt that is not named .attest on the receipt path', () => {
+    // The extension is what routes; the bare envelope keeps working.
+    const r = intake('receipt.attest.json', envelopeBytes())
+    expect(r.kind).toBe('needs-manifest')
+  })
+
+  it('still reads an archive that is not named .attest', () => {
+    // The signature keeps its say: a bundle saved under another name is still
+    // read as one, exactly as before.
+    const { issuer, manifest } = keyManifest()
+    const blob: JsonObject = { issuer, key_manifests: [manifest], artifact_manifests: [] }
+    const zip = zipSync({
+      ['receipts/R1.attest.json']: envelopeBytes(),
+      [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
+    })
+    expect(intake('library.zip', zip).kind).toBe('jobs')
   })
 })
 
