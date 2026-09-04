@@ -12,6 +12,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import html
+import inspect
 import json
 import os
 import re
@@ -691,6 +692,21 @@ def test_import_defaults_match_the_section_14_4_floor(tmp_path: Path) -> None:
     assert bundle._MAX_MEMBER_BYTES == 64 * 1024 * 1024
     assert bundle._MAX_TOTAL_BYTES == 256 * 1024 * 1024
     assert bundle._MAX_CONTAINER_BYTES == 1024 * 1024 * 1024
+
+    # The equalities above prove only that the module DECLARES the floor. They
+    # say nothing about whether `import_bundle`'s own defaults are still wired
+    # to those constants, and a default is resolved once, when the function is
+    # defined: a signature that hardcoded a matching literal instead of naming
+    # the constant would leave every assertion above green while the wiring
+    # rotted underneath it. Only the entry count is reachable behaviourally
+    # here — the other three bounds would each cost hundreds of megabytes to
+    # cross — so the remaining three are tied to the signature instead of being
+    # asserted twice against the same literal.
+    defaults = inspect.signature(bundle.import_bundle).parameters
+    assert defaults["max_entries"].default == bundle._MAX_ENTRIES
+    assert defaults["max_member_bytes"].default == bundle._MAX_MEMBER_BYTES
+    assert defaults["max_total_bytes"].default == bundle._MAX_TOTAL_BYTES
+    assert defaults["max_container_bytes"].default == bundle._MAX_CONTAINER_BYTES
 
 
 def test_import_caps_private_salts_json(tmp_path: Path) -> None:
