@@ -44,33 +44,37 @@ verifier.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import hashlib
 import html
 import json
+import mmap
 import os
 import re
 import stat
+import tempfile
 import zipfile
-from collections import Counter
+from collections.abc import Buffer, Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
-from attest import buyer_surface, canon, keys, manifests, verify
+from attest import buyer_surface, canon, container, keys, manifests, verify
 
 _PROVENANCE_BUNDLE = "bundle"
 _SECRET_FILE_MODE = 0o600  # disclose output carries delivery.salt (a bearer secret)
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
-# Decompression caps for import_bundle (zip-bomb hardening). A .attest is
-# attacker-supplied — it is meant to survive peer-to-peer — so every member is
-# read under a bound. Defaults are generous for real libraries (JSON + legal
-# text) and still stop a bomb by orders of magnitude.
+# Import ceilings adopt the floor in specification section 14.4 as this
+# importer's own ceiling. Section 14.4 explicitly permits implementations to
+# make that choice, with the resulting difference in accepted containers being
+# observable to callers.
 _MAX_MEMBER_BYTES = 64 * 1024 * 1024  # 64 MiB per decompressed member
-_MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # 1 GiB decompressed across one bundle
-_MAX_ENTRIES = 100_000  # central-directory entry count
-_READ_CHUNK = 1024 * 1024  # 1 MiB streaming read granularity
+_MAX_TOTAL_BYTES = 256 * 1024 * 1024  # 256 MiB decompressed across one import
+_MAX_ENTRIES = 10_000  # central-directory entry count
+_MAX_CONTAINER_BYTES = 1024 * 1024 * 1024  # 1 GiB stored per container
+_SNAPSHOT_CHUNK = 1024 * 1024  # bytes copied per read while snapshotting a container
 _RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 #: The placeholders `_render_readme` substitutes, matched in a single pass.
@@ -138,6 +142,22 @@ confirmation over the network that couldn't be re-checked just now.</p>"""
 
 class BundleError(Exception):
     """A bundle cannot be produced without breaking the deal it claims to preserve (§9)."""
+
+
+class BundleTooLargeError(BundleError):
+    """The importer declined to read the container, and found nothing wrong with it.
+
+    v0.1 §14.4 asks for this as an outcome of its own, apart from every refusal
+    that says the container is malformed, and the reason is what a caller does
+    next: a refusal of this kind may succeed with a larger budget on a machine
+    with more room, while a malformed container will never be readable however
+    much budget it is given. Reporting an unread container as corrupt states
+    something about bytes nobody looked at.
+
+    It is a `BundleError`, so a caller who does not care keeps catching one
+    exception; a caller who does can tell the two apart without reading the
+    sentence.
+    """
 
 
 def _proof_member_receipt_id(filename: str) -> str:
@@ -459,81 +479,304 @@ def export(
     return attest_path, private_path
 
 
-class _SizeBudget:
-    """Reads zip members under a per-member cap and a shared aggregate cap,
-    streaming so a member is never fully decompressed into memory before its
-    size is known. The streamed byte count — not the (spoofable)
-    `ZipInfo.file_size` header — is authoritative, which is what catches a
-    bomb whose header lies low."""
-
-    def __init__(self, max_member_bytes: int, max_total_bytes: int) -> None:
-        self._max_member = max_member_bytes
-        self._max_total = max_total_bytes
-        self._spent = 0
-
-    def read(self, zf: zipfile.ZipFile, name: str) -> bytes:
-        cap = min(self._max_member, self._max_total - self._spent)
-        chunks: list[bytes] = []
-        got = 0
-        with zf.open(name) as member:
-            while True:
-                chunk = member.read(_READ_CHUNK)
-                if not chunk:
-                    break
-                got += len(chunk)
-                if got > cap:
-                    raise BundleError(
-                        f"member {name!r} exceeds the decompression size cap "
-                        f"(max {self._max_member} bytes/member, {self._max_total} "
-                        "bytes/bundle) — refusing to import a possible zip bomb"
-                    )
-                chunks.append(chunk)
-        self._spent += got
-        return b"".join(chunks)
+#: Members a shareable bundle must never carry: they are the buyer's own
+#: binding secrets, and a file holding them is a `.private.attest` under the
+#: wrong name. The browser verifier has always refused such an archive; this
+#: importer refuses it too, so the two agree on what a shareable bundle IS and
+#: not only on what it contains (v0.1 §9).
+_PRIVATE_MEMBER = "salts.json"
+_PRIVATE_PREFIX = "keys/"
+_PRIVATE_MSG = (
+    "this looks like a .private.attest — it holds buyer-binding salts and keys; "
+    "refusing to import it as a shareable bundle"
+)
 
 
-def _guard_zip(zf: zipfile.ZipFile, max_entries: int, max_total_bytes: int) -> None:
-    """Zero-cost pre-read gates: reject a central directory with too many
-    entries, or one whose DECLARED uncompressed total already exceeds the
-    aggregate cap (catches an honest-but-huge bundle, and a header lying high,
-    before a single byte is decompressed)."""
-    infos = zf.infolist()
-    if len(infos) > max_entries:
-        raise BundleError(
-            f"bundle declares {len(infos)} entries, over the {max_entries} cap "
-            "— refusing to import a possible zip bomb"
+class _SnapshotBudget:
+    """Bound one container's stored bytes while taking its stable snapshot."""
+
+    __slots__ = ("max_bytes", "spent")
+
+    def __init__(self, max_bytes: int) -> None:
+        self.max_bytes = max_bytes
+        self.spent = 0
+
+
+#: The three moves of taking a snapshot, named so a refusal can say which one
+#: failed. They are facts about this machine, never about the archive.
+_COPY_READ_FAILED = "could not read the container in order to copy it"
+_COPY_WRITE_FAILED = (
+    "could not copy the container into the private temporary file this importer reads it from"
+)
+_COPY_MAP_FAILED = "could not map the copy this importer reads the container from"
+
+#: What was opened, named for a refusal that must describe the path and not the
+#: content — nothing has been read at the point this is used. A socket is absent
+#: because it never reaches here: opening one fails in the kernel with ENXIO.
+_PATH_KINDS: tuple[tuple[Callable[[int], bool], str], ...] = (
+    (stat.S_ISDIR, "a directory"),
+    (stat.S_ISFIFO, "a named pipe"),
+    (stat.S_ISCHR, "a character device"),
+    (stat.S_ISBLK, "a block device"),
+)
+
+
+def _path_kind(mode: int) -> str:
+    """Name what a mode word describes, in words a bundle's holder can act on."""
+    for is_kind, name in _PATH_KINDS:
+        if is_kind(mode):
+            return name
+    return "not a regular file"
+
+
+def _snapshot_failed(error: OSError, doing: str) -> BundleError:
+    """Refuse a container whose snapshot could not be taken, naming the step.
+
+    Taking the copy is three moves — read the source, write the temporary file,
+    map it — and each can fail for reasons the archive knows nothing about: a
+    source that returns an I/O error, a temporary filesystem that is full or
+    quota-limited, a map this host has no room for. None of that is a verdict on
+    the bytes, most of which have not been read; but an OSError leaving this
+    module is worse than an imprecise verdict, because this module's promise is
+    that whatever the input the caller is told in this module's own error type.
+    So the refusal is one of ours and says which move failed, so its reader
+    looks at their machine and not at their bundle.
+    """
+    return BundleError(f"{doing}: {error.strerror or error}")
+
+
+def _new_snapshot() -> IO[bytes]:
+    """The private temporary file a container is copied into.
+
+    Creating it is the first move of the copy and the first that can fail: a
+    temporary directory that does not exist, is read-only, or is out of inodes
+    refuses here, before a byte of the archive is touched. Refusing in this
+    module's own error type is the same promise the write below keeps.
+    """
+    try:
+        return tempfile.TemporaryFile()
+    except OSError as error:
+        raise _snapshot_failed(error, _COPY_WRITE_FAILED) from error
+
+
+def _over_snapshot_bound(budget: _SnapshotBudget) -> BundleTooLargeError:
+    """The refusal for a container over the bytes this importer will copy.
+
+    Says what this bound measures and nothing else: the size of the file, not
+    of anything inside it. Borrowing the aggregate cap's sentence here read well
+    and was false — an archive is over this bound as soon as its FRAMING is, so
+    one whose members inflate to a few hundred bytes can cross it, and telling
+    its holder the bundle is over a decompression cap sends them to look at the
+    wrong thing entirely. One function, so the two places that raise it cannot
+    drift into two sentences.
+    """
+    return BundleTooLargeError(
+        f"container is over the {budget.max_bytes}-byte limit this importer "
+        "will copy in order to read it — refusing to snapshot an archive "
+        "that large"
+    )
+
+
+@contextlib.contextmanager
+def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterator[Buffer]:
+    """Map a bounded snapshot of a container, so the whole-buffer model the
+    container reader needs costs no copy of a large bundle in memory.
+
+    The snapshot is what makes the map safe. Mapping the caller's own inode
+    hands whoever can write that file a way to end this process: shortening it
+    while a mapped page is read raises SIGBUS, which arrives outside Python's
+    exception boundary, so neither this module nor its caller can turn it back
+    into a refusal. Copying the bytes into a private temporary file first gives
+    the map an inode nobody else holds; a truncation of the source then lands
+    before or during the copy, where it is an ordinary short read and the
+    archive earns an ordinary verdict.
+
+    What keeps snapshotting from becoming an allocation of the attacker's
+    choosing is the bound, and only the bound. The copy is not bounded away from
+    memory: it goes wherever this platform puts temporary files, and where that
+    directory is memory-backed — a tmpfs `/tmp`, which is the ordinary
+    arrangement on Linux — the file IS memory and the bound is a bound on RAM.
+    Whoever sets that bound is therefore choosing, on such a host, how much
+    memory one import may occupy, and the lever is the caller's:
+    `import_bundle(max_container_bytes=...)` sets it, and a host with less room
+    than the default should say so there. Nothing here picks the directory — the
+    platform's temporary location does — so no promise is made about what backs
+    it, none being keepable everywhere this runs.
+
+    An empty snapshot cannot be mapped, and must still earn a verdict about the
+    container rather than an OSError.
+    """
+    if budget is None:
+        budget = _SnapshotBudget(_MAX_CONTAINER_BYTES)
+    # What the path names is settled before a byte is read from it, and the
+    # handle is taken without blocking so that it can be settled at all: opening
+    # a FIFO waits for a writer who may never arrive, so `open(path, "rb")` is
+    # itself where a named pipe stops this importer for good. A device would not
+    # block; it would feed the copy until the bound. O_NONBLOCK changes nothing
+    # for the regular file this expects, and asking the open handle rather than
+    # the name leaves no window in which the two could differ.
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise BundleError(
+                f"container path is {_path_kind(info.st_mode)}, "
+                "not a regular file — refusing to read it"
+            )
+        # The same bound, applied before the spend instead of during it. The
+        # size a regular file reports is metadata, not content: asking for it
+        # costs nothing, trusts nothing the archive says, and never maps the
+        # caller's inode, so it is not the hazard the snapshot exists to remove.
+        # The loop below stays the authority — a file that grows after this
+        # point is still refused there — and this only spares the copy for one
+        # that is already over the bound, which without it costs a full
+        # `max_bytes` of temporary storage (memory, where that directory is a
+        # tmpfs) to reach a refusal the metadata had already settled.
+        if info.st_size > budget.max_bytes:
+            raise _over_snapshot_bound(budget)
+        source = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with source as fh, _new_snapshot() as snapshot:
+        while True:
+            remaining = budget.max_bytes - budget.spent
+            # One byte past what is left is all it takes to know the source is
+            # over the bound; nothing beyond it is ever read.
+            try:
+                chunk = fh.read(min(_SNAPSHOT_CHUNK, remaining + 1))
+            except OSError as error:
+                # A regular file can still refuse to be read — a failing disk, a
+                # network mount that went away, a kernel file whose bytes are not
+                # bytes. That is not a short read and there is no verdict in it.
+                raise _snapshot_failed(error, _COPY_READ_FAILED) from error
+            if not chunk:
+                break
+            if len(chunk) > remaining:
+                raise _over_snapshot_bound(budget)
+            try:
+                snapshot.write(chunk)
+            except OSError as error:
+                raise _snapshot_failed(error, _COPY_WRITE_FAILED) from error
+            budget.spent += len(chunk)
+
+        try:
+            # A buffered write is not a write until it is flushed: a temporary
+            # filesystem that has just filled up refuses the tail of the copy
+            # here and nowhere else.
+            snapshot.flush()
+        except OSError as error:
+            raise _snapshot_failed(error, _COPY_WRITE_FAILED) from error
+        length = snapshot.tell()
+        if length == 0:
+            yield b""
+            return
+        try:
+            mapped = mmap.mmap(snapshot.fileno(), length, access=mmap.ACCESS_READ)
+        except OSError as error:
+            # The copy exists and is within its bound; this host still may not
+            # have the address space to map it. That is this machine's answer,
+            # not the archive's.
+            raise _snapshot_failed(error, _COPY_MAP_FAILED) from error
+        try:
+            yield mapped
+        except BaseException:
+            # Unmapping is bookkeeping; the refusal already in flight is the
+            # answer the caller asked for. A map cannot be closed while anything
+            # still holds a view into it, and a view lives for as long as the
+            # traceback that mentions it — so closing here can raise a
+            # BufferError about exported pointers, and that complaint would
+            # arrive in place of the sentence explaining why the archive was
+            # refused. The mapping is released either way when the object goes.
+            with contextlib.suppress(BufferError):
+                mapped.close()
+            raise
+        mapped.close()
+
+
+#: The container codes that say the importer DECLINED TO READ, rather than that
+#: it read and found something wrong (v0.1 §14.4). The distinction is the
+#: caller's to act on and the two have opposite remedies: a refusal in this set
+#: may succeed with a larger budget, and one outside it never will.
+_RESOURCE_CODES = frozenset(
+    {
+        "too-many-entries",
+        "declared-member-over-cap",
+        "declared-total-over-cap",
+        "member-over-cap",
+        "total-over-cap",
+    }
+)
+
+
+def _as_bundle_error(error: container.ContainerError) -> BundleError:
+    """Carry a container refusal across the boundary in this module's own voice.
+    The member name is appended here, in this language's idiom, and never
+    interpolated by the reader itself."""
+    kind = BundleTooLargeError if error.code in _RESOURCE_CODES else BundleError
+    if error.member is not None and error.code in {"duplicate-name", "record-stored-size"}:
+        return kind(f"{error}: {error.member!r}")
+    return kind(str(error))
+
+
+def _members(
+    buf: Buffer, *, max_entries: int, max_member_bytes: int, max_total_bytes: int
+) -> dict[str, container.Member]:
+    """The member list, keyed by name. The mapping is only safe because the
+    reader has already refused a directory that repeats a name: building a
+    name-keyed map from attacker-supplied names without that guarantee is how a
+    duplicated member silently shadows its sibling."""
+    try:
+        members = container.canonical_members(
+            buf,
+            max_entries=max_entries,
+            max_member_bytes=max_member_bytes,
+            max_total_bytes=max_total_bytes,
         )
-    declared_total = sum(info.file_size for info in infos)
-    if declared_total > max_total_bytes:
-        raise BundleError(
-            f"bundle declares {declared_total} uncompressed bytes, over the "
-            f"{max_total_bytes} cap — refusing to import a possible zip bomb"
-        )
+    except container.ContainerError as error:
+        raise _as_bundle_error(error) from None
+    return {member.name: member for member in members}
 
 
-def _reject_duplicate_member_names(zf: zipfile.ZipFile) -> None:
-    """v0.1 §14.1 (2026-08-26 amendment): a central directory repeating a member
-    name is rejected whole. Name-based reads (`zf.open(<str>)`) resolve EVERY
-    duplicate to one entry, so a duplicated member silently shadows its sibling
-    — while both entries remain physically present in the file. Import must
-    never guess; recovery of an already-circulating duplicated bundle is an
-    operator action (extract by entry, re-export a clean bundle)."""
-    counts = Counter(zf.namelist())
-    duplicates = sorted(name for name, n in counts.items() if n > 1)
-    if duplicates:
-        raise BundleError(
-            f"bundle central directory repeats member name(s): {duplicates} — "
-            "refusing to import: duplicated members shadow each other on name-based "
-            "reads. Both entries are still physically present in this file; extract "
-            "them with a tool that reads by entry, then re-export a clean bundle"
-        )
+def _refuse_private_material(members: dict[str, container.Member]) -> None:
+    """Decided on the member LIST, before a single member is read."""
+    if any(name == _PRIVATE_MEMBER or name.startswith(_PRIVATE_PREFIX) for name in members):
+        raise BundleError(_PRIVATE_MSG)
 
 
-def _loads(data: bytes) -> Any:
+def _read(buf: Buffer, member: container.Member, budget: container.ReadBudget) -> bytes:
+    try:
+        return container.read_member(buf, member, budget)
+    except container.ContainerError as error:
+        raise _as_bundle_error(error) from None
+
+
+def _loads(data: bytes, *, label: str) -> Any:
     """Parse bundle-internal JSON through the strict canonical parser (rejects
     duplicate keys, floats, BOMs) so imported trust material matches what the
-    verifier will accept (2026-07-13 review, finding 9)."""
-    return canon.loads_strict(data)
+    verifier will accept (2026-07-13 review, finding 9).
+
+    Every byte here came out of an attacker-supplied archive, so the parser's
+    own error is a verdict about that archive and must reach the caller as one:
+    a `CanonError` escaping this module tells whoever reads it to go looking in
+    the canonicalizer instead of in the bundle they were handed. `label` names
+    the member, in this module's idiom, since the parser has never seen it."""
+    try:
+        return canon.loads_strict(data)
+    except canon.CanonError as error:
+        raise BundleError(f"{label} is not valid canonical JSON: {error}") from None
+
+
+def _version_key(manifest: dict[str, Any], field_name: str) -> int:
+    """Order manifests by a version field an archive chose, not by whatever type
+    it chose to write it as. Comparing the raw values sorts a list of strings
+    lexicographically and refuses to sort a mixed list at all — a `TypeError`
+    out of `sorted` instead of a verdict. Anything that is not an integer uses
+    zero — it ties a version of zero and orders above a negative one, and the
+    sort being stable leaves the archive's own order between ties — which
+    matches what the browser verifier does with the same archive."""
+    value = manifest.get(field_name, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def import_bundle(
@@ -543,6 +786,7 @@ def import_bundle(
     max_member_bytes: int = _MAX_MEMBER_BYTES,
     max_total_bytes: int = _MAX_TOTAL_BYTES,
     max_entries: int = _MAX_ENTRIES,
+    max_container_bytes: int = _MAX_CONTAINER_BYTES,
 ) -> ImportedBundle:
     """Reconstruct receipts, a working `verify.TrustStore`, artifact
     manifests and legal texts from a `.attest` (and, if given, its
@@ -552,13 +796,17 @@ def import_bundle(
     upgraded to `"verified"`.
 
     `max_member_bytes`, `max_total_bytes` and `max_entries` are keyword-only
-    zip-bomb decompression caps (§2.1), each defaulting to its module
-    constant: a per-member cap on bytes actually streamed out of one zip
-    entry, an aggregate cap on the running total decompressed across every
-    member read during this call (`.attest` and, when given, `.private.attest`
-    share one budget), and a cap on the central directory's entry count.
-    Exceeding any of them raises `BundleError` rather than importing a
-    possible bomb.
+    zip-bomb decompression caps (§2.1), each defaulting to its module constant:
+    a per-member cap on bytes actually streamed out of one zip entry, an
+    aggregate cap on the running total decompressed across every member read
+    during this call (`.attest` and, when given, `.private.attest` share one
+    budget), and a cap on each central directory's entry count. Exceeding any
+    of them raises `BundleError` rather than importing a possible bomb.
+
+    `max_container_bytes` is the separate stored-size ceiling for the stable
+    snapshot copied before a container is read (see `_open_container`). It is
+    applied independently to the `.attest` and its `.private.attest` sibling,
+    so a pair is accepted when each container is within this ceiling.
     """
     receipts: list[dict[str, Any]] = []
     seen_receipt_ids: set[str] = set()
@@ -572,32 +820,66 @@ def import_bundle(
     # import_bundle call, not per-zip) — reused below for the .private.attest
     # salts read so a hostile .attest/.private.attest pair cannot each spend up
     # to max_total_bytes and together decompress 2x the aggregate ceiling.
-    budget = _SizeBudget(max_member_bytes, max_total_bytes)
-
-    with zipfile.ZipFile(attest_path, "r") as zf:
-        _guard_zip(zf, max_entries, max_total_bytes)
-        _reject_duplicate_member_names(zf)
-        for filename in sorted(zf.namelist()):
+    budget = container.ReadBudget(max_member_bytes, max_total_bytes)
+    # Stored size and inflated size are independent quantities. The inflated
+    # budget above is shared across both halves of the import, while each
+    # container gets the full stored-size ceiling required by section 14.4.
+    with _open_container(attest_path, _SnapshotBudget(max_container_bytes)) as buf:
+        members = _members(
+            buf,
+            max_entries=max_entries,
+            max_member_bytes=max_member_bytes,
+            max_total_bytes=max_total_bytes,
+        )
+        _refuse_private_material(members)
+        for filename in sorted(members):
             if filename.startswith("receipts/") and filename.endswith(".attest.json"):
-                envelope = _loads(budget.read(zf, filename))
+                envelope = _loads(
+                    _read(buf, members[filename], budget),
+                    label=f"receipt entry {filename!r}",
+                )
                 receipt_id = _receipt_payload_id(envelope, filename)
                 if receipt_id in seen_receipt_ids:
                     raise BundleError(f"bundle lists receipt_id {receipt_id!r} more than once")
                 seen_receipt_ids.add(receipt_id)
                 receipts.append(envelope)
             elif filename.startswith("manifests/") and filename.endswith(".json"):
-                blob = _loads(budget.read(zf, filename))
+                blob = _loads(
+                    _read(buf, members[filename], budget),
+                    label=f"manifest entry {filename!r}",
+                )
+                # Everything below is shaped by the archive, not by this
+                # repo's exporter: a member that is not an object, a
+                # collection that is not an array, an entry that is not an
+                # object. Each is a bundle this importer has nothing to say
+                # about, so it is skipped exactly as an unreadable issuer
+                # already was — never an AttributeError or a TypeError from
+                # the machinery, which names the wrong culprit.
+                if not isinstance(blob, dict):
+                    continue
                 issuer = blob.get("issuer")
                 if not isinstance(issuer, str):
                     continue
-                key_manifests_by_issuer[issuer] = list(blob.get("key_manifests", []))
-                for am in blob.get("artifact_manifests", []):
+                if issuer in key_manifests_by_issuer:
+                    raise BundleError("bundle lists one issuer in more than one manifest member")
+                raw_key_manifests = blob.get("key_manifests")
+                key_manifests_by_issuer[issuer] = (
+                    [item for item in raw_key_manifests if isinstance(item, dict)]
+                    if isinstance(raw_key_manifests, list)
+                    else []
+                )
+                raw_artifact_manifests = blob.get("artifact_manifests")
+                if not isinstance(raw_artifact_manifests, list):
+                    continue
+                for am in raw_artifact_manifests:
+                    if not isinstance(am, dict):
+                        continue
                     series = am.get("series")
                     if isinstance(series, str):
                         artifact_manifests.setdefault(series, []).append(am)
             elif filename.startswith("legal/") and filename.endswith(".txt"):
                 digest = filename[len("legal/") : -len(".txt")]
-                content = budget.read(zf, filename)
+                content = _read(buf, members[filename], budget)
                 if hashlib.sha256(content).hexdigest() != digest:
                     raise BundleError(
                         f"legal text {digest!r} failed its own integrity check on import "
@@ -606,9 +888,19 @@ def import_bundle(
                 legal_texts[digest] = content
             elif filename.startswith("proofs/"):
                 receipt_id = _proof_member_receipt_id(filename)
-                evidence = _loads(budget.read(zf, filename))
+                evidence = _loads(
+                    _read(buf, members[filename], budget),
+                    label=f"proof entry {filename!r}",
+                )
                 if isinstance(evidence, dict):
                     proofs[receipt_id] = evidence
+
+    # A bundle IS its receipts (v0.1 §14.1). An archive that carries none is
+    # not a stripped bundle to be imported empty — it is a file that was never
+    # one, and saying so is the only answer that sends its holder to look at
+    # the right thing.
+    if not receipts:
+        raise BundleError("no receipts found inside this archive — is it really a .attest bundle?")
 
     # Every legal hash referenced by any imported receipt must be present — mirror
     # export's completeness pass so a stripped bundle can't import as if it still
@@ -629,24 +921,68 @@ def import_bundle(
     for issuer, versions in key_manifests_by_issuer.items():
         if not versions:
             continue
-        ordered = sorted(versions, key=lambda m: m.get("manifest_version", 0))
+        ordered = sorted(versions, key=lambda m: _version_key(m, "manifest_version"))
         manifests_map[issuer] = ordered[-1]
         provenance[issuer] = _PROVENANCE_BUNDLE
         chains[issuer] = ordered
 
     for series, versions in artifact_manifests.items():
-        artifact_manifests[series] = sorted(versions, key=lambda m: m.get("version", 0))
+        artifact_manifests[series] = sorted(versions, key=lambda m: _version_key(m, "version"))
 
     trust_store = verify.TrustStore(manifests=manifests_map, provenance=provenance, chains=chains)
 
     salts: dict[str, bytes] = {}
     if private_path is not None:
-        with zipfile.ZipFile(private_path, "r") as zf:
-            _guard_zip(zf, max_entries, max_total_bytes)
-            _reject_duplicate_member_names(zf)
-            if "salts.json" in zf.namelist():
-                raw_salts: dict[str, str] = _loads(budget.read(zf, "salts.json"))
-                salts = {receipt_id: keys.b64u_decode(s) for receipt_id, s in raw_salts.items()}
+        # The private half legitimately carries the salts the shareable half
+        # must never hold: same reader, same decompression budget, no
+        # private-material refusal.
+        with _open_container(private_path, _SnapshotBudget(max_container_bytes)) as private_buf:
+            private_members = _members(
+                private_buf,
+                max_entries=max_entries,
+                max_member_bytes=max_member_bytes,
+                max_total_bytes=max_total_bytes,
+            )
+            # v0.1 §14.2: a `.private.attest` MUST contain `salts.json`. A file
+            # given as the private half without it is not a private half, and
+            # importing it as one silently loses every buyer-binding secret the
+            # caller believed they were handing over.
+            if _PRIVATE_MEMBER not in private_members:
+                raise BundleError(
+                    f"private archive is missing {_PRIVATE_MEMBER} — it is not a .private.attest"
+                )
+            raw_salts = _loads(
+                _read(private_buf, private_members[_PRIVATE_MEMBER], budget),
+                label=_PRIVATE_MEMBER,
+            )
+            if not isinstance(raw_salts, dict):
+                raise BundleError(f"{_PRIVATE_MEMBER} must be an object mapping receipt_id to salt")
+            for salt_id, encoded in raw_salts.items():
+                # v0.1 §14.2 keys this map by `receipt_id`, and §5.1 pins a
+                # receipt_id to the ULID shape `_RECEIPT_ID_RE` already holds —
+                # the same shape an imported receipt must carry, since these
+                # two maps are joined on it.
+                if _RECEIPT_ID_RE.fullmatch(salt_id) is None or not isinstance(encoded, str):
+                    raise BundleError(
+                        f"{_PRIVATE_MEMBER} must map uppercase ULID receipt ids "
+                        "to base64url strings"
+                    )
+                try:
+                    salt = keys.b64u_decode(encoded)
+                except ValueError:
+                    raise BundleError(
+                        f"{_PRIVATE_MEMBER} has invalid base64url for receipt_id {salt_id!r}"
+                    ) from None
+                # v0.1 §8.1: a salt MUST be exactly 16 raw bytes. v0.1 §9.1:
+                # salts MUST be encoded as base64url with the padding stripped,
+                # so re-encoding what a conforming producer wrote returns the
+                # very text it wrote.
+                if len(salt) != 16 or keys.b64u(salt) != encoded:
+                    raise BundleError(
+                        f"{_PRIVATE_MEMBER} has a non-canonical or non-16-byte salt "
+                        f"for receipt_id {salt_id!r}"
+                    )
+                salts[salt_id] = salt
 
     return ImportedBundle(
         receipts=receipts,

@@ -214,6 +214,39 @@ export function renderRejection(reason: string): HTMLElement {
   return article
 }
 
+/** The container was not read, because it is larger than this page admits — a
+ * fact about the verifier and not about the file (v0.1 §14.4). Nothing here may
+ * suggest the archive is invalid, corrupt or tampered with: nobody looked at
+ * it. Same register as `renderVerifyFailure`, and deliberately not `tone-bad`;
+ * the technical reason follows in its own line, as it does there.
+ *
+ * It names a PROPERTY — a verifier with different limits — and never a product.
+ * An earlier draft said to try the CLI, "which reads more", and that was false
+ * on more than one axis: both importers now bound the container as stored at
+ * the same §14.4 floor, so above that bound neither reads the file at all, and
+ * the browser's decompression caps are tighter than the reference importer's
+ * only on some inputs. A sentence frozen into an offline artifact has nobody to
+ * correct it later, and §14.4 wants this refusal to assert nothing about the
+ * bytes — pointing at a named tool puts an assertion back where the section
+ * removed one.
+ */
+export function renderDeclined(reason: string): HTMLElement {
+  const article = el('article', 'result unverifiable')
+  article.appendChild(
+    el(
+      'p',
+      'verdict tone-neutral',
+      'This page did not check this bundle — it is larger than this page will read, ' +
+        'which is a limit of the verifier and not a judgement on your file. Nothing here ' +
+        'says whether the receipts inside are genuine: they were never examined. Another ' +
+        'verifier with different limits may read it; the line below says which limit ' +
+        'stopped this one.',
+    ),
+  )
+  article.appendChild(el('p', 'unverifiable-reason', reason))
+  return article
+}
+
 // --------------------------------------------------------------------------
 // The demonstration surfaces. Each one exists to move a sentence off the page
 // and into something the reader watches happen.

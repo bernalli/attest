@@ -7,6 +7,8 @@ import type { JsonObject } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes } from '../src/intake.js'
 import { runVerify } from '../src/run.js'
 import { VECTORS_ROOT } from './helpers/vectors.js'
+import { CORPUS_ROOT } from './helpers/container-corpus.js'
+import { LEGAL_TEXT, LEGAL_DIGEST } from './helpers/zip.js'
 
 const V01 = join(VECTORS_ROOT, '01-valid-minimal')
 const envelopeBytes = () => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
@@ -29,6 +31,7 @@ describe('intake', () => {
     const zip = zipSync({
       ['receipts/R1.attest.json']: envelopeBytes(),
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     })
     const r = intake('library.attest', zip)
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
@@ -57,6 +60,7 @@ describe('intake', () => {
       // Named by an id it does not carry, and holding a different receipt.
       [`receipts/${proven}-copy.attest.json`]: otherEnvelope,
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
       [`proofs/${proven}.json`]: new TextEncoder().encode('{"leaf_index":0}'),
     })
     const r = intake('library.attest', zip)
@@ -122,6 +126,70 @@ describe('intake', () => {
   })
 })
 
+// A `.attest` is a container by CONTRACT (v0.1 §14.1), and the contract is the
+// extension. Deciding from the first two bytes instead let a file opt OUT of the
+// canonical container reader by not opening with the archive signature: the
+// reference importer refused such a file and this page handed it to the receipt
+// path, where it earned a job — the same bytes, two answers, which is exactly
+// the divergence the canonical reader exists to remove.
+describe('a file named .attest is read as a container, whatever it starts with', () => {
+  const corpusArchive = (leaf: string): Uint8Array =>
+    new Uint8Array(readFileSync(join(CORPUS_ROOT, leaf, 'archive.zip')))
+
+  // Both leaves refuse in the reference importer and neither opens with `PK`.
+  for (const leaf of ['prefix-honest', 'local-header-signature']) {
+    it(`refuses ${leaf} instead of routing it to the receipt path`, () => {
+      const r = intake('library.attest', corpusArchive(leaf))
+      expect(r.kind).toBe('rejected')
+    })
+  }
+
+  it('refuses a .attest that is not an archive at all, without throwing', () => {
+    const r = intake('library.attest', new TextEncoder().encode('this is a note, not an archive'))
+    expect(r.kind).toBe('rejected')
+    if (r.kind === 'rejected') {
+      // The container reader's own complaint, which is the one the reference
+      // importer makes about the same bytes.
+      expect(r.reason).toMatch(/container|zip/i)
+      // It IS a judgement about the bytes — they were read — so it is not the
+      // neutral register §14.4 reserves for a container nobody opened.
+      expect(r.declined).toBeUndefined()
+    }
+  })
+
+  it('refuses an empty .attest without throwing', () => {
+    const r = intake('library.attest', new Uint8Array(0))
+    expect(r.kind).toBe('rejected')
+  })
+
+  it('still refuses .private.attest by name, which also ends in .attest', () => {
+    // The private-file refusal is about what the file HOLDS, and it must keep
+    // winning over the container route now that both branches match the name.
+    const r = intake('library.private.attest', new TextEncoder().encode('not an archive'))
+    expect(r.kind).toBe('rejected')
+    if (r.kind === 'rejected') expect(r.reason).toMatch(/binding salts and keys/)
+  })
+
+  it('leaves a receipt that is not named .attest on the receipt path', () => {
+    // The extension is what routes; the bare envelope keeps working.
+    const r = intake('receipt.attest.json', envelopeBytes())
+    expect(r.kind).toBe('needs-manifest')
+  })
+
+  it('still reads an archive that is not named .attest', () => {
+    // The signature keeps its say: a bundle saved under another name is still
+    // read as one, exactly as before.
+    const { issuer, manifest } = keyManifest()
+    const blob: JsonObject = { issuer, key_manifests: [manifest], artifact_manifests: [] }
+    const zip = zipSync({
+      ['receipts/R1.attest.json']: envelopeBytes(),
+      [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
+    })
+    expect(intake('library.zip', zip).kind).toBe('jobs')
+  })
+})
+
 describe('trustStoreFromManifestBytes', () => {
   it('builds a user-supplied trust store from a key manifest', () => {
     const { issuer, manifest } = keyManifest()
@@ -178,6 +246,7 @@ describe('intake: the salted-envelope notice', () => {
     const zip = zipSync({
       ['receipts/R1.attest.json']: salted(false),
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     })
     const r = intake('library.attest', zip)
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
@@ -205,5 +274,61 @@ describe('intake: the salted-envelope notice', () => {
     const r = intake('x.attest', priv)
     expect(r.kind).toBe('rejected')
     if (r.kind === 'rejected') expect(r.reason).toMatch(/private/i)
+  })
+})
+
+// A trust store is looked up by a name the file being checked chose, so the
+// store must answer for the issuers it was given and for nothing else. An
+// ordinary JavaScript object answers for `toString` and every other member of
+// `Object.prototype` as well, and hands back a function where a key manifest
+// belongs — the reference importer, whose store is a plain dictionary, answers
+// nothing. Same file, two trust stores.
+describe('the trust stores intake builds answer only for the issuers they were given', () => {
+  const INHERITED = ['toString', 'constructor', 'valueOf', 'hasOwnProperty']
+
+  it('answers nothing for an inherited name, for a bare envelope with its own manifest', () => {
+    const { manifest } = keyManifest()
+    const envelope = loadsStrict(envelopeBytes()) as JsonObject
+    const delivery = { ...((envelope['delivery'] as JsonObject) ?? {}), issuer_manifest: manifest }
+    const withManifest = canonicalBytes({ ...envelope, delivery } as JsonObject)
+    const r = intake('x.attest.json', withManifest)
+    expect(r.kind).toBe('jobs')
+    if (r.kind !== 'jobs') return
+    for (const name of INHERITED) {
+      expect(r.jobs[0].trustStore.manifests[name]).toBeUndefined()
+      expect(r.jobs[0].trustStore.provenance[name]).toBeUndefined()
+    }
+  })
+
+  it('answers nothing for an inherited name, for a user-supplied manifest', () => {
+    const { manifest } = keyManifest()
+    const store = trustStoreFromManifestBytes(canonicalBytes(manifest))
+    expect(store).not.toBeNull()
+    for (const name of INHERITED) {
+      expect(store!.manifests[name]).toBeUndefined()
+      expect(store!.provenance[name]).toBeUndefined()
+    }
+  })
+
+  it('answers nothing for an inherited name, for a file that brought no manifest', () => {
+    const r = intake('x.attest.json', new TextEncoder().encode('not json at all'))
+    expect(r.kind).toBe('jobs')
+    if (r.kind !== 'jobs') return
+    for (const name of INHERITED) {
+      expect(r.jobs[0].trustStore.manifests[name]).toBeUndefined()
+      expect(r.jobs[0].trustStore.provenance[name]).toBeUndefined()
+    }
+  })
+
+  it('keeps an issuer named after an object member, and gives it to the verifier', () => {
+    // The reference importer holds `__proto__` as an ordinary issuer. So does
+    // this one — the entry is here because the name was declared, not in spite
+    // of it.
+    const { manifest } = keyManifest()
+    const named = { ...manifest, issuer: '__proto__' } as JsonObject
+    const store = trustStoreFromManifestBytes(canonicalBytes(named))
+    expect(store).not.toBeNull()
+    expect(Object.keys(store!.manifests)).toEqual(['__proto__'])
+    expect(store!.manifests['__proto__']).toBeDefined()
   })
 })

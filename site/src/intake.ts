@@ -1,6 +1,7 @@
 import { loadsStrict } from 'attest-verifier'
 import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
-import { parseBundle, BundleError } from './bundle.js'
+import { parseBundle, BundleError, BundleTooLargeError, bareStore, storedLimitMessage } from './bundle.js'
+import { MAX_STORED_BYTES } from './container.js'
 
 export interface VerifyJob {
   label: string
@@ -15,9 +16,37 @@ export interface VerifyJob {
 export type IntakeResult =
   | { kind: 'jobs'; jobs: VerifyJob[]; notices?: string[] }
   | { kind: 'needs-manifest'; envelopeBytes: Uint8Array; label: string; notices?: string[] }
-  | { kind: 'rejected'; reason: string }
+  // `declined` marks the one refusal that says nothing about the bytes: the
+  // container was not read because it is larger than this surface admits
+  // (v0.1 §14.4). A surface MUST NOT show it as invalidity, so it cannot be
+  // rendered like every other rejection.
+  | { kind: 'rejected'; reason: string; declined?: true }
 
-export const EMPTY_TRUST: TrustStore = { manifests: {}, provenance: {} }
+/** The refusal arm of `IntakeResult`, named so a surface can be handed one
+ * without narrowing a union it never built. */
+export type Refusal = Extract<IntakeResult, { kind: 'rejected' }>
+
+// Every trust store this module hands on is looked up by an issuer name the
+// file being checked chose, so each one is built without a prototype
+// (`bareStore`, and the paragraph above it): an ordinary object answers for
+// `toString` and the rest of `Object.prototype` as well, and hands back a
+// function where a key manifest belongs. The reference importer's store is a
+// plain dictionary that answers nothing for those names.
+const storeFor = (issuer: string, manifest: JsonObject, provenance: string): TrustStore => {
+  const manifests = bareStore<JsonObject>()
+  const where = bareStore<string>()
+  manifests[issuer] = manifest
+  where[issuer] = provenance
+  return { manifests, provenance: where }
+}
+
+// Frozen because it is a module singleton handed to the verifier and to the
+// tamper exhibit: a store whose whole purpose is to answer nothing should not
+// be able to start answering because someone downstream wrote to it.
+export const EMPTY_TRUST: TrustStore = {
+  manifests: Object.freeze(bareStore<JsonObject>()),
+  provenance: Object.freeze(bareStore<string>()),
+}
 
 const PRIVATE_NAME_MSG =
   'That file is named .private.attest — it holds your binding salts and keys. ' +
@@ -96,16 +125,56 @@ export const labelFor = (bytes: Uint8Array): string => {
   return id !== null && RECEIPT_ID_RE.test(id) ? id : UNIDENTIFIED_LABEL
 }
 
-// The id is attacker-supplied text and `proofs` is a plain object, so an id of
-// "__proto__" would otherwise resolve to Object.prototype and be handed on as
-// if it were evidence.
+// The id is attacker-supplied text, so the lookup is on own members only. The
+// map `parseBundle` builds has no prototype and its keys are ULID-shaped, which
+// closes this twice over; the guard stays because it is this caller's own
+// promise about the id it was handed, and not a bet on where the map came from.
 const proofFor = (proofs: Record<string, JsonValue>, id: string | null): JsonValue | null =>
   id !== null && Object.prototype.hasOwnProperty.call(proofs, id) ? proofs[id] : null
+
+/**
+ * What a surface answers for a file it has NOT read, decided from the size
+ * alone — or `null` when the file is within the floor and its bytes may be
+ * materialised.
+ *
+ * This is the admission boundary v0.1 §14.4 asks for: the spend is bounded
+ * BEFORE the container is analysed, and a size is metadata, so consulting it
+ * reads no byte of the file. Every surface that turns a file into bytes calls
+ * this first — the drop targets on both apps, and the sample fetch through its
+ * own declared length — because a refusal issued after the copy has already
+ * paid for exactly what the floor exists to protect.
+ *
+ * The outcome is `declined` and never an ordinary rejection. Nobody looked at
+ * these bytes, and §14.4 forbids showing an unread container as invalid.
+ *
+ * A size this boundary cannot make sense of — a `File` that reports none — is
+ * not a container over the floor: it is a file this boundary knows nothing
+ * about, and it is admitted so the reader downstream can give it a verdict.
+ * The parser's own front door bounds the bytes that actually arrive.
+ */
+export function declinedForSize(storedBytes: number): Refusal | null {
+  if (!(storedBytes > MAX_STORED_BYTES)) return null
+  return { kind: 'rejected', reason: storedLimitMessage(storedBytes), declined: true }
+}
 
 export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
   if (fileName.endsWith('.private.attest')) return { kind: 'rejected', reason: PRIVATE_NAME_MSG }
 
-  const isZip = bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b
+  // A `.attest` is a container by CONTRACT (v0.1 §14.1), so the extension routes
+  // it — and the archive signature keeps its say for a bundle saved under some
+  // other name. Deciding on the first two bytes ALONE let a file opt out of the
+  // canonical container reader by simply not opening with them: the reference
+  // importer refused such a file from its central directory, while this page sent
+  // it to the receipt path, where it earned a job. Same bytes, two answers, which
+  // is the divergence the canonical reader exists to remove — and the one shape
+  // where it mattered most, since a file that reaches a buyer is named `.attest`.
+  //
+  // A `.attest` that is not an archive is refused BY the container reader now,
+  // which is where a file claiming to be a container belongs; the private-file
+  // branch above still wins, because `.private.attest` ends in `.attest` too.
+  const isZip =
+    fileName.endsWith('.attest') ||
+    (bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b)
   if (isZip) {
     try {
       const parsed = parseBundle(bytes)
@@ -129,7 +198,11 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
         ...(notices.length > 0 ? { notices } : {}),
       }
     } catch (e) {
-      if (e instanceof BundleError) return { kind: 'rejected', reason: e.message } // includes PrivateBundleError
+      // includes PrivateBundleError; BundleTooLargeError is separated because
+      // v0.1 §14.4 forbids showing an unread container as invalid.
+      if (e instanceof BundleTooLargeError)
+        return { kind: 'rejected', reason: e.message, declined: true }
+      if (e instanceof BundleError) return { kind: 'rejected', reason: e.message }
       throw e
     }
   }
@@ -160,7 +233,7 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
       jobs: [{
         label: labelFor(bytes),
         envelopeBytes: bytes,
-        trustStore: { manifests: { [issuer]: embedded }, provenance: { [issuer]: 'embedded' } },
+        trustStore: storeFor(issuer, embedded, 'embedded'),
         transparency: null, // a bare envelope brings no proofs/ member with it
       }],
       ...notices,
@@ -175,7 +248,7 @@ export function trustStoreFromManifestBytes(bytes: Uint8Array): TrustStore | nul
     const m = asObject(loadsStrict(bytes))
     if (m && typeof m['issuer'] === 'string' && Array.isArray(m['keys'])) {
       const issuer = m['issuer']
-      return { manifests: { [issuer]: m }, provenance: { [issuer]: 'user-supplied' } }
+      return storeFor(issuer, m, 'user-supplied')
     }
   } catch {
     /* not canonical JSON → not a manifest */

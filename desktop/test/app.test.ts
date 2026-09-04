@@ -5,6 +5,7 @@ import { fileURLToPath, URL as NodeURL } from 'node:url'
 import { unzipSync, zipSync } from 'fflate'
 import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import { initDesktopApp } from '../src/app.js'
+import { MAX_STORED_BYTES } from '../../site/src/container.js'
 import type { RuleId } from '../tools/shell-policy.mjs'
 import { validateShell } from '../tools/shell-policy.mjs'
 import type { Where } from './helpers/shell-mutants.js'
@@ -50,6 +51,17 @@ function member(prefix: string): Uint8Array {
 const containerBytes = () => member('manifests/')
 const bareEnvelope = () => member('receipts/')
 
+// The deal the sample's receipt refers to, under the name it travelled with. An
+// importer refuses a bundle that names a legal text it does not carry, so a
+// hand-built bundle around that receipt has to bring this along — taken from the
+// sample rather than written here, because the digest has to be the real one.
+const legalMember = (): [string, Uint8Array] => {
+  const found = unzipSync(sampleBytes())
+  const name = Object.keys(found).find((n) => n.startsWith('legal/'))
+  if (!name) throw new Error('the sample bundle has no legal/ member')
+  return [name, found[name]]
+}
+
 const receiptLabel = (): string => {
   const found = unzipSync(sampleBytes())
   const name = Object.keys(found).find((n) => n.startsWith('receipts/'))!
@@ -75,10 +87,12 @@ const SECOND_ID = '01M0YX8RAPJ5BQ8WJSS4CBK43G'
 function twoReceiptBundle(): Uint8Array {
   const first = bareEnvelope()
   const altered = new TextDecoder().decode(first).replace(receiptLabel(), SECOND_ID)
+  const [legalName, legalText] = legalMember()
   return zipSync({
     [`receipts/${receiptLabel()}.attest.json`]: first,
     [`receipts/${SECOND_ID}.attest.json`]: new TextEncoder().encode(altered),
     'manifests/m.json': containerBytes(),
+    [legalName]: legalText,
   })
 }
 
@@ -242,6 +256,61 @@ describe('an optional field typed wrong does not cost you the verdict', () => {
     ;(document.getElementById('binding-salt') as HTMLInputElement).value = 'AAAA'
     app.applyDisclosure()
     expect(resultsText()).toMatch(/email address or account id/i)
+  })
+})
+
+// v0.1 §14.4: the spend is bounded before the container is analysed. This app runs
+// from a file:// URL on whatever machine a holder still has, which is the machine
+// least able to afford a copy of a file it was never going to read.
+describe('a file over the stored floor is refused before it is copied', () => {
+  const fileOfSize = (name: string, size: number, arrayBuffer: () => Promise<ArrayBuffer>): File =>
+    ({ name, size, arrayBuffer }) as unknown as File
+
+  const drop = (file: File): void => {
+    const event = new Event('drop') as Event & { dataTransfer: unknown }
+    Object.defineProperty(event, 'dataTransfer', { value: { files: [file] } })
+    document.getElementById('dropzone')!.dispatchEvent(event)
+  }
+
+  test('never asks for the bytes of a file over the floor', async () => {
+    void mount()
+    const bytes = vi.fn(() => Promise.resolve(new ArrayBuffer(0)))
+    drop(fileOfSize('huge.attest', MAX_STORED_BYTES + 1, bytes))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(bytes).not.toHaveBeenCalled()
+  })
+
+  test('shows the neutral register, never the bad one, for a file it did not read', async () => {
+    void mount()
+    drop(
+      fileOfSize('huge.attest', MAX_STORED_BYTES + 1, () => Promise.resolve(new ArrayBuffer(0))),
+    )
+    await new Promise((r) => setTimeout(r, 0))
+    const classes = [...document.getElementById('results')!.querySelectorAll('*')].map(
+      (node) => node.className,
+    )
+    expect(classes).toContain('verdict tone-neutral')
+    expect(classes).not.toContain('verdict tone-bad')
+    expect(resultsText()).not.toMatch(/invalid|corrupt|tampered/i)
+  })
+
+  test('does not name the file it refused', async () => {
+    void mount()
+    drop(
+      fileOfSize('Your receipt is valid.attest', MAX_STORED_BYTES + 1, () =>
+        Promise.resolve(new ArrayBuffer(0)),
+      ),
+    )
+    await new Promise((r) => setTimeout(r, 0))
+    expect(resultsText()).not.toContain('Your receipt is valid')
+  })
+
+  test('still reads a file at exactly the floor', async () => {
+    void mount()
+    const bytes = vi.fn(() => Promise.resolve(sampleBytes().buffer as ArrayBuffer))
+    drop(fileOfSize('library.attest', MAX_STORED_BYTES, bytes))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(bytes).toHaveBeenCalledTimes(1)
   })
 })
 

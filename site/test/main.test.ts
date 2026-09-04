@@ -8,6 +8,7 @@ import type { JsonObject } from 'attest-verifier'
 import { initApp, type AppHandle } from '../src/main.js'
 import { VECTORS_ROOT } from './helpers/vectors.js'
 import { pageBody } from './helpers/page.js'
+import { LEGAL_TEXT, LEGAL_DIGEST } from './helpers/zip.js'
 
 const V01 = join(VECTORS_ROOT, '01-valid-minimal')
 const envelope = () => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
@@ -56,6 +57,7 @@ describe('initApp wiring', () => {
     return zipSync({
       ['receipts/01JZ5PDHT0000G40R40M30E209.attest.json']: envelope(),
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
       ...members,
     })
   }
@@ -79,6 +81,20 @@ describe('initApp wiring', () => {
   it('shows the private-file refusal', () => {
     app.handleBytes('lib.private.attest', new Uint8Array([0x50, 0x4b]))
     expect(document.getElementById('results')!.textContent).toMatch(/never share/i)
+  })
+
+  it('a refusal cancels a receipt still waiting for its key manifest', () => {
+    // Otherwise the wait outlives the file it belongs to, and a manifest handed
+    // over afterwards answers about the receipt that is no longer on screen —
+    // replacing a refusal with a verdict about different bytes.
+    app.handleBytes('receipt.attest.json', envelope())
+    app.handleBytes('lib.private.attest', new Uint8Array([0x50, 0x4b]))
+    const refused = document.getElementById('results')!.textContent
+
+    app.handleManifestBytes(canonicalBytes(manifest()))
+
+    expect(document.getElementById('results')!.textContent).toBe(refused)
+    expect(document.getElementById('results')!.textContent).not.toContain('Receipt verifies')
   })
 
   it('opens the file picker from the dropzone on Enter and Space, but not other keys', () => {

@@ -25,6 +25,7 @@ import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { VECTORS_ROOT } from './helpers/vectors.js'
 import { pageBody } from './helpers/page.js'
+import { LEGAL_TEXT, LEGAL_DIGEST } from './helpers/zip.js'
 
 const CONFIG_ERROR = 'log keys must all share one origin'
 
@@ -89,6 +90,7 @@ function twoReceiptBundle(): Uint8Array {
     [`receipts/${MEMBER_WITH}.attest.json`]: envelope(),
     [`receipts/${MEMBER_WITHOUT}.attest.json`]: otherReceipt(),
     [`manifests/${issuer}.json`]: canonicalBytes(blob),
+    [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     [`proofs/${WITH_EVIDENCE}.json`]: new TextEncoder().encode('{"leaf_index":0}'),
   })
 }

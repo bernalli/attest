@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { unzipSync, zipSync } from 'fflate'
-import { canonicalBytes, loadsStrict } from 'attest-verifier'
+import { canonicalBytes, loadsStrict, sha256Hex } from 'attest-verifier'
 
 /**
  * The artifact, opened the way a buyer opens it: a `file://` URL, no server anywhere.
@@ -129,6 +129,38 @@ function saltedBareEnvelope(): Uint8Array {
   return canonicalBytes(loadsStrict(new TextEncoder().encode(JSON.stringify(envelope))))
 }
 
+/** The deal every conformance vector's receipt is bound to.
+ *
+ * `tools/gen_vectors.py` hashes exactly these bytes into each generated payload's
+ * `license.legal_text_sha256`, so a bundle assembled around one of those envelopes
+ * has to carry the text under its digest: an importer refuses a bundle that names a
+ * legal text it does not carry, because a receipt whose terms are gone is a receipt
+ * for nothing anyone can read.
+ */
+const VECTOR_LEGAL_TEXT = new TextEncoder().encode('attest-vectors-legal-text-v1')
+
+const asObject = (value: unknown): Record<string, unknown> | null =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+
+/** Every hash-bound legal document a payload's terms depend on, read the way both
+ *  importers read it: the schema-required licence text, plus the two survivability
+ *  hashes when they are present and are strings. */
+function referencedLegalHashes(payload: Record<string, unknown>): string[] {
+  const hashes: string[] = []
+  const license = asObject(payload['license'])
+  const legalText = license === null ? undefined : license['legal_text_sha256']
+  if (typeof legalText === 'string') hashes.push(legalText)
+  const survivability = asObject(payload['survivability'])
+  if (survivability !== null)
+    for (const field of ['mirror_policy_sha256', 'eol_commitment_sha256']) {
+      const hash = survivability[field]
+      if (typeof hash === 'string') hashes.push(hash)
+    }
+  return hashes
+}
+
 function vectorBundle(name: string): Uint8Array {
   const dir = join(REPO, 'docs', 'spec', 'vectors', name)
   const envelope = new Uint8Array(readFileSync(join(dir, 'envelope.json')))
@@ -141,11 +173,46 @@ function vectorBundle(name: string): Uint8Array {
       ),
     ),
   )
-  return zipSync({ 'receipts/r.attest.json': envelope, 'manifests/m.json': container })
+  // The member NAME is the digest of the bytes put inside it, computed here rather
+  // than written down: a name and a content that disagree are the tampering the
+  // importer exists to catch, so a fixture that carried one would be exercising the
+  // refusal instead of the verdict each of these tests is about.
+  const legalDigest = sha256Hex(VECTOR_LEGAL_TEXT)
+  const payload = asObject(
+    (JSON.parse(new TextDecoder().decode(envelope)) as Record<string, unknown>)['payload'],
+  )
+  // Every referenced digest, not just the first: a vector that bound its receipt to a
+  // second text would otherwise produce a bundle the importers refuse, and the test
+  // above would report that refusal as the verdict it was looking for.
+  const unavailable = referencedLegalHashes(payload ?? {}).filter((d) => d !== legalDigest)
+  if (unavailable.length > 0)
+    throw new Error(
+      `vector ${name} binds its receipt to legal texts this fixture cannot supply: ` +
+        unavailable.join(', '),
+    )
+  return zipSync({
+    'receipts/r.attest.json': envelope,
+    'manifests/m.json': container,
+    [`legal/${legalDigest}.txt`]: VECTOR_LEGAL_TEXT,
+  })
+}
+
+/** The sample's members with one `legal/` text filed under a name that is NOT the
+ *  digest of its bytes — a structurally perfect archive, honest CRC, valid signature,
+ *  and terms nobody can bind to the deal the receipt refers to. */
+function bundleWithUnboundLegalText(): Uint8Array {
+  const found = unzipSync(sampleBytes())
+  return zipSync({ ...found, 'legal/terms.txt': new TextEncoder().encode('You own nothing.') })
 }
 
 /** Three bundles carrying the SAME signed receipt bytes and differing only in members
- *  and names the signature does not cover. */
+ *  and names the signature does not cover.
+ *
+ *  Every member here has to be one an importer ACCEPTS, or the test would be
+ *  comparing refusals rather than verdicts. A `legal/` member used to stand in this
+ *  list, and it stopped qualifying the day both importers began checking a legal text
+ *  against the digest in its name: such a member is not uncovered metadata, it is a
+ *  malformed one, and it earns a refusal in its own test below. */
 function tamperedContainers(): Uint8Array[] {
   const found = unzipSync(sampleBytes())
   const receiptName = Object.keys(found).find((n) => n.startsWith('receipts/'))!
@@ -158,7 +225,7 @@ function tamperedContainers(): Uint8Array[] {
 
   return [
     withReceipt(receiptName, { 'README.html': enc('<h1>Refund policy: none</h1>') }),
-    withReceipt(receiptName, { 'legal/terms.txt': enc('You own nothing.') }),
+    withReceipt(receiptName, { 'refund-policy.txt': enc('You own nothing.') }),
     withReceipt('receipts/VERIFIED by Steam - Official Purchase - Genuine.attest.json', {}),
   ]
 }
@@ -275,7 +342,11 @@ test.describe('verdicts', () => {
   })
 
   test('a receipt that still carries its salt is checked, and the risk is named', async ({ page }) => {
-    await drop(page, 'mine.attest', saltedBareEnvelope())
+    // Dropped under the extension a bare receipt actually has. `.attest` is the
+    // CONTAINER extension, so a lone envelope carrying that name is a misnamed file
+    // and is read as the archive it claims to be — which is a question about routing,
+    // and this test is about the salt.
+    await drop(page, 'mine.attest.json', saltedBareEnvelope())
 
     await expect(results(page)).toContainText(/bearer proof/i)
   })
@@ -309,6 +380,21 @@ test.describe('nothing outside the signature reaches the reader as a claim', () 
 
     expect(rendered[1]).toEqual(rendered[0])
     expect(rendered[2]).toEqual(rendered[0])
+  })
+
+  test('a legal text filed under a name that is not its digest is refused', async ({ page }) => {
+    // The other side of the test above, and the reason a `legal/` member no longer
+    // belongs in it: this family is content-addressed, so the name is a claim about
+    // the bytes and the archive is refused when the two disagree. Nothing in the
+    // container reader can see it — the zip is well formed, the CRC is honest and the
+    // signature still verifies — so if it is not caught here it is not caught at all.
+    await page.goto(url(ARTIFACT))
+    await drop(page, 'purchase.attest', bundleWithUnboundLegalText())
+
+    await expect(results(page).locator('.result.rejected')).toHaveCount(1)
+    await expect(results(page)).toContainText(/integrity check/i)
+    await expect(results(page)).not.toContainText('Receipt verifies')
+    await expect(results(page)).not.toContainText('offline check can go')
   })
 
   test('a hostile file name is text, never markup', async ({ page }) => {

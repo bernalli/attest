@@ -3,9 +3,20 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { zipSync } from 'fflate'
+import { sha256Hex } from 'attest-verifier'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const VECTORS = join(HERE, '..', '..', 'docs', 'spec', 'vectors')
+
+/** The legal text every vector receipt refers to, and the member name it is
+ *  filed under. The name is COMPUTED from the bytes and never written by hand:
+ *  the family is content-addressed, so a hand-copied digest is a fixture that
+ *  claims something about bytes it was not derived from — which is how this
+ *  file came to build bundles no importer accepts. */
+const VECTOR_LEGAL_TEXT = new TextEncoder().encode('attest-vectors-legal-text-v1')
+const legalMember = (): Record<string, Uint8Array> => ({
+  [`legal/${sha256Hex(VECTOR_LEGAL_TEXT)}.txt`]: VECTOR_LEGAL_TEXT,
+})
 
 const VERDICT = '.verdict strong'
 
@@ -94,6 +105,11 @@ test('a tampered receipt fails loudly', async ({ page }) => {
     ['receipts/tampered.attest.json']: new Uint8Array(readFileSync(join(dir, 'envelope.json'))),
     // No manifests entry on purpose: signature must already be invalid; an
     // empty trust store also exercises the no-manifest error path honestly.
+    // The legal member IS required, though: this receipt names a legal text by
+    // digest, and a bundle that does not carry it is refused on import — so
+    // without it the page never reaches a verdict to be loud about, and this
+    // test would be asserting on a file the reference importer also rejects.
+    ...legalMember(),
   })
   await page.goto('/')
   await page.setInputFiles('#file-input', {

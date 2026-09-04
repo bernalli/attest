@@ -9,19 +9,28 @@ single-receipt sharing unit for the email-attachment integration path.
 
 from __future__ import annotations
 
+import ast
+import errno
 import hashlib
 import html
+import inspect
 import json
 import os
 import re
+import signal
+import subprocess
+import sys
+import tempfile
 import warnings as warnings_module
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
-from attest import bundle, buyer_surface, canon, issue, keys, manifests, verify
+from attest import bundle, buyer_surface, canon, container, issue, keys, manifests, verify
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -621,6 +630,15 @@ def _make_raw_zip(tmp_path: Path, members: dict[str, bytes], name: str) -> Path:
     return path
 
 
+def _minimal_receipt_members() -> dict[str, bytes]:
+    receipt_id = "01HZX0000000000000000000AA"
+    return {
+        f"receipts/{receipt_id}.attest.json": canon.canonical_bytes(
+            {"payload": {"receipt_id": receipt_id}}
+        )
+    }
+
+
 def test_import_rejects_member_over_per_member_cap(tmp_path: Path) -> None:
     """A single member that decompresses past max_member_bytes is refused.
     This verifies the per-member cap is enforced from bytes actually
@@ -660,6 +678,71 @@ def test_import_rejects_too_many_entries(tmp_path: Path) -> None:
         bundle.import_bundle(z, max_entries=10)
 
 
+def test_import_defaults_match_the_section_14_4_floor(tmp_path: Path) -> None:
+    """The reference importer adopts the interoperable container floor."""
+    members = {
+        **_minimal_receipt_members(),
+        **{f"unused/{index:05d}.bin": b"" for index in range(10_000)},
+    }
+    over_floor = _make_raw_zip(tmp_path, members, "over-floor.attest")
+
+    with pytest.raises(bundle.BundleError, match="over 10000 entries"):
+        bundle.import_bundle(over_floor)
+
+    assert bundle._MAX_ENTRIES == 10_000
+    assert bundle._MAX_MEMBER_BYTES == 64 * 1024 * 1024
+    assert bundle._MAX_TOTAL_BYTES == 256 * 1024 * 1024
+    assert bundle._MAX_CONTAINER_BYTES == 1024 * 1024 * 1024
+
+    # The equalities above prove only that the module DECLARES the floor. They
+    # say nothing about whether `import_bundle`'s own defaults are still wired
+    # to those constants, and a default is resolved once, when the function is
+    # defined: a signature that hardcoded a matching literal instead of naming
+    # the constant would leave every assertion above green while the wiring
+    # rotted underneath it. Only the entry count is reachable behaviourally
+    # here — crossing the other three costs hundreds of megabytes apiece — so
+    # the remaining three are tied to the signature instead.
+    #
+    # Read from the SOURCE and not from the evaluated signature, which is the
+    # distinction this test exists on: `inspect.signature` hands back the value
+    # a default evaluated to, so a counterfeit signature carrying the same four
+    # numbers as literals satisfies every comparison against the constants and
+    # proves nothing. What has to hold is that the default NAMES the constant,
+    # and only the syntax says that.
+    definition = ast.parse(inspect.getsource(bundle.import_bundle)).body[0]
+    assert isinstance(definition, ast.FunctionDef)
+
+    positional = [*definition.args.posonlyargs, *definition.args.args]
+    default_nodes: dict[str, ast.expr] = {
+        parameter.arg: default
+        for parameter, default in zip(
+            positional[len(positional) - len(definition.args.defaults) :],
+            definition.args.defaults,
+            strict=True,
+        )
+    }
+    default_nodes.update(
+        {
+            parameter.arg: default
+            for parameter, default in zip(
+                definition.args.kwonlyargs,
+                definition.args.kw_defaults,
+                strict=True,
+            )
+            if default is not None
+        }
+    )
+    for parameter, constant_name in {
+        "max_entries": "_MAX_ENTRIES",
+        "max_member_bytes": "_MAX_MEMBER_BYTES",
+        "max_total_bytes": "_MAX_TOTAL_BYTES",
+        "max_container_bytes": "_MAX_CONTAINER_BYTES",
+    }.items():
+        default = default_nodes[parameter]
+        assert isinstance(default, ast.Name), parameter
+        assert default.id == constant_name
+
+
 def test_import_caps_private_salts_json(tmp_path: Path) -> None:
     """The .private.attest salts.json read is capped too — a valid .attest paired
     with a bomb private file is refused."""
@@ -674,6 +757,77 @@ def test_import_caps_private_salts_json(tmp_path: Path) -> None:
         # 256 KiB cap: comfortably above every legit .attest member, far below the
         # 2 MiB salts bomb, so the failure is the salts file, not the .attest.
         bundle.import_bundle(attest_path, evil_private, max_member_bytes=256 * 1024)
+
+
+def test_the_snapshot_of_a_container_is_bounded(tmp_path: Path) -> None:
+    """The snapshot is a copy, so it is bounded before it is written: an
+    unbounded copy of an attacker-sized file is a new denial of service in
+    place of the old one. The refusal names the size of the FILE, which is what
+    the bound measures — see the test below for why borrowing another cap's
+    sentence here was false."""
+    oversized = tmp_path / "oversized.attest"
+    oversized.write_bytes(b"x" * 65)
+
+    with pytest.raises(bundle.BundleError, match="limit this importer will copy"):
+        with bundle._open_container(oversized, bundle._SnapshotBudget(64)):
+            pass  # pragma: no cover — the bound refuses before the body runs
+
+
+def test_the_snapshot_bound_is_applied_to_each_container(
+    tmp_path: Path,
+) -> None:
+    """Each container may independently reach the stored-size floor."""
+    receipt_id = "01HZX0000000000000000000AA"
+    public = _make_raw_zip(tmp_path, _minimal_receipt_members(), "snapshot-budget.attest")
+    private = _make_raw_zip(
+        tmp_path,
+        {"salts.json": canon.canonical_bytes({receipt_id: keys.b64u(SALT_A)})},
+        "snapshot-budget.private.attest",
+    )
+    limit = max(public.stat().st_size, private.stat().st_size)
+    assert public.stat().st_size + private.stat().st_size > limit
+
+    imported = bundle.import_bundle(public, private, max_container_bytes=limit)
+    assert imported.salts[receipt_id] == SALT_A
+
+
+def test_import_shares_the_aggregate_budget_with_the_private_sibling(
+    tmp_path: Path,
+) -> None:
+    """One import, one aggregate cap, spent by both halves of a hostile pair.
+
+    The receipt is padded with compressible content so the pair's stored bytes
+    remain below the aggregate number while its inflated bytes cross that
+    number. The stored-size ceiling is separate; this test measures only the
+    decompression budget shared across both containers.
+    """
+    receipt_id = "01HZX0000000000000000000AA"
+    receipt = canon.canonical_bytes({"payload": {"receipt_id": receipt_id, "note": "a" * 20_000}})
+    salts = canon.canonical_bytes({receipt_id: keys.b64u(SALT_A)})
+    limit = max(len(receipt), len(salts))
+    assert len(receipt) + len(salts) > limit
+
+    public = _make_raw_zip(
+        tmp_path,
+        {f"receipts/{receipt_id}.attest.json": receipt},
+        "shared-budget.attest",
+    )
+    private = _make_raw_zip(
+        tmp_path,
+        {"salts.json": salts},
+        "shared-budget.private.attest",
+    )
+    assert public.stat().st_size + private.stat().st_size < limit, (
+        "stored bytes must stay below the number used for the aggregate cap"
+    )
+
+    with pytest.raises(bundle.BundleError, match="aggregate cap"):
+        bundle.import_bundle(
+            public,
+            private,
+            max_member_bytes=limit,
+            max_total_bytes=limit,
+        )
 
 
 def test_import_happy_path_unaffected_by_default_caps(tmp_path: Path) -> None:
@@ -812,6 +966,24 @@ def test_import_rejects_a_duplicate_in_any_member_family(tmp_path: Path) -> None
         bundle.import_bundle(hostile)
 
 
+def test_import_refuses_two_manifest_members_for_one_issuer(tmp_path: Path) -> None:
+    manifest = canon.canonical_bytes(
+        {"issuer": ISSUER, "key_manifests": [], "artifact_manifests": []}
+    )
+    hostile = _make_raw_zip(
+        tmp_path,
+        {
+            **_minimal_receipt_members(),
+            "manifests/a.json": manifest,
+            "manifests/b.json": manifest,
+        },
+        "duplicate-issuer.attest",
+    )
+
+    with pytest.raises(bundle.BundleError, match="one issuer in more than one"):
+        bundle.import_bundle(hostile)
+
+
 def test_import_rejects_a_duplicate_whose_two_entries_are_byte_identical(tmp_path: Path) -> None:
     """Identical bytes are still an ambiguous central directory: refuse, never guess."""
     receipt_id = "01HZX0000000000000000000AA"
@@ -930,3 +1102,834 @@ def test_import_refuses_two_members_carrying_the_same_payload_receipt_id(
 
     with pytest.raises(bundle.BundleError, match="more than once"):
         bundle.import_bundle(hostile)
+
+
+# --- import: the container is read canonically (v0.1 §14.1) -------------------
+
+CONTAINER_CORPUS = Path(__file__).resolve().parents[1] / "tests" / "container-corpus"
+
+
+def _corpus_bundle(tmp_path: Path, leaf: str, name: str) -> Path:
+    """Copy a corpus archive under a `.attest` name, so the importer sees the
+    exact bytes the shared corpus pins."""
+    path = tmp_path / name
+    path.write_bytes((CONTAINER_CORPUS / leaf / "archive.zip").read_bytes())
+    return path
+
+
+def test_import_refuses_an_archive_with_two_central_directories(tmp_path: Path) -> None:
+    """The case no counter check can see: one file, two internally consistent
+    directories, and two readers that each find a different receipt. Nothing
+    inside either directory is a lie — the file is."""
+    hostile = _corpus_bundle(tmp_path, "exhibit-D-prefix", "two-directories.attest")
+    with pytest.raises(bundle.BundleError, match="canonical form"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_an_archive_whose_entry_counters_disagree(tmp_path: Path) -> None:
+    """One byte in the end record used to decide which members a verifier sees."""
+    hostile = _corpus_bundle(tmp_path, "exhibit-B2-counter", "counter.attest")
+    with pytest.raises(bundle.BundleError, match="counters disagree"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_a_shareable_bundle_that_carries_private_material(
+    tmp_path: Path,
+) -> None:
+    """A `.attest` listing `salts.json` is a `.private.attest` under the wrong
+    name: it holds the buyer's binding secrets, and importing it as a shareable
+    bundle is exactly the mistake the file naming exists to prevent. The browser
+    verifier has always refused it; this importer now refuses it too."""
+    hostile = _corpus_bundle(tmp_path, "exhibit-C-salts-honest", "with-salts.attest")
+    with pytest.raises(bundle.BundleError, match=r"\.private\.attest"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_a_shareable_bundle_that_carries_a_key(tmp_path: Path) -> None:
+    """`keys/` is the other half of the same refusal."""
+    hostile = tmp_path / "with-keys.attest"
+    with zipfile.ZipFile(hostile, "w") as zf:
+        zf.writestr("receipts/01HZX0000000000000000000AA.attest.json", b"{}")
+        zf.writestr("keys/signing.json", b"{}")
+    with pytest.raises(bundle.BundleError, match=r"\.private\.attest"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_private_material_before_reading_any_member(tmp_path: Path) -> None:
+    """The refusal is decided on the member LIST, so nothing beside the secrets
+    is ever decompressed: the check now happens where the browser verifier's
+    comment always claimed it did.
+
+    The other member's deflate stream is deliberately corrupt. Reading members
+    first would produce a complaint about that stream; refusing the list first
+    produces the complaint about the secrets, which is the ordering under test.
+    """
+    hostile = tmp_path / "salts-and-garbage.attest"
+    corrupt = (CONTAINER_CORPUS / "deflate-garbage" / "archive.zip").read_bytes()
+    with zipfile.ZipFile(hostile, "w") as zf:
+        zf.writestr("receipts/01HZX0000000000000000000AA.attest.json", corrupt)
+        zf.writestr("salts.json", b"{}")
+    with pytest.raises(bundle.BundleError, match=r"\.private\.attest"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_a_member_only_one_decoder_would_accept(tmp_path: Path) -> None:
+    """A stored deflate block whose length fields do not agree: this importer's
+    decoder refuses it and the browser's never reads that field, so the verdict
+    is made by shared code rather than by whichever library is running."""
+    hostile = _corpus_bundle(tmp_path, "deflate-stored-block-bad-complement", "bad-deflate.attest")
+    with pytest.raises(bundle.BundleError, match="not a valid deflate stream"):
+        bundle.import_bundle(hostile)
+
+
+def test_import_refuses_an_empty_file(tmp_path: Path) -> None:
+    """An empty file cannot be memory-mapped; the verdict must still be a
+    refusal about the container, not an OSError about the mapping."""
+    empty = tmp_path / "empty.attest"
+    empty.write_bytes(b"")
+    with pytest.raises(bundle.BundleError, match="not a readable zip archive"):
+        bundle.import_bundle(empty)
+
+
+def test_import_refuses_a_canonical_bundle_with_zero_receipts(tmp_path: Path) -> None:
+    empty_bundle = _make_raw_zip(tmp_path, {"README.html": b"<p>empty</p>"}, "zero-receipts.attest")
+    with pytest.raises(bundle.BundleError, match="no receipts found"):
+        bundle.import_bundle(empty_bundle)
+
+
+def test_import_still_reads_the_private_sibling_for_salts(tmp_path: Path) -> None:
+    """The private archive legitimately carries `salts.json`: the refusal above
+    is about the SHAREABLE half, and this is the pair that must keep working."""
+    receipt_id = "01J1V5B4M9Z8QWERTY12345699"
+    envelope = _envelope(receipt_id=receipt_id)
+    attest_path, private_path = bundle.export(
+        [envelope], [_key_manifest()], [], _legal_texts(), tmp_path, "mylibrary"
+    )
+    imported = bundle.import_bundle(attest_path, private_path)
+    assert imported.salts[receipt_id] == SALT_A
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        pytest.param(b'{"unfinished":', id="truncated"),
+        pytest.param(b"\xef\xbb\xbf{}", id="bom"),
+        pytest.param(b'{"float":1.5}', id="float"),
+        pytest.param(b'{"duplicate":1,"duplicate":2}', id="duplicate-key"),
+    ],
+)
+@pytest.mark.parametrize(
+    "member_name",
+    [
+        "receipts/01HZX0000000000000000000AA.attest.json",
+        "manifests/store.example.com.json",
+        "proofs/01HZX0000000000000000000AA.json",
+    ],
+    ids=["receipt", "manifest", "proof"],
+)
+def test_import_normalizes_every_noncanonical_json_family(
+    tmp_path: Path, member_name: str, malformed: bytes
+) -> None:
+    members = {} if member_name.startswith("receipts/") else _minimal_receipt_members()
+    members[member_name] = malformed
+    hostile = _make_raw_zip(tmp_path, members, "noncanonical-json.attest")
+
+    with pytest.raises(bundle.BundleError, match="not valid canonical JSON"):
+        bundle.import_bundle(hostile)
+
+
+_JSON_TEXT = st.text(alphabet=st.characters(exclude_categories=("Cs",)), max_size=32)
+_JSON_SCALAR = st.one_of(
+    st.none(),
+    st.booleans(),
+    st.integers(min_value=-(2**53) + 1, max_value=2**53 - 1),
+    _JSON_TEXT,
+)
+_NON_OBJECT_JSON = st.one_of(_JSON_SCALAR, st.lists(_JSON_SCALAR, max_size=4))
+_NON_LIST_JSON = st.one_of(
+    _JSON_SCALAR,
+    st.dictionaries(_JSON_TEXT, _JSON_SCALAR, max_size=4),
+)
+_NON_INTEGER_JSON = st.one_of(
+    st.none(),
+    st.booleans(),
+    _JSON_TEXT,
+    st.lists(_JSON_SCALAR, max_size=4),
+    st.dictionaries(_JSON_TEXT, _JSON_SCALAR, max_size=4),
+)
+
+
+@given(malformed=_NON_OBJECT_JSON)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_skips_every_non_object_manifest_shape(tmp_path: Path, malformed: object) -> None:
+    members = _minimal_receipt_members()
+    members["manifests/store.example.com.json"] = canon.canonical_bytes(malformed)
+    hostile = _make_raw_zip(tmp_path, members, "manifest-top-level.attest")
+
+    imported = bundle.import_bundle(hostile)
+
+    assert imported.trust_store.manifests == {}
+    assert imported.artifact_manifests == {}
+
+
+@given(
+    field_name=st.sampled_from(["key_manifests", "artifact_manifests"]),
+    malformed=_NON_LIST_JSON,
+)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_skips_every_non_array_manifest_collection(
+    tmp_path: Path, field_name: str, malformed: object
+) -> None:
+    members = _minimal_receipt_members()
+    members["manifests/store.example.com.json"] = canon.canonical_bytes(
+        {"issuer": ISSUER, field_name: malformed}
+    )
+    hostile = _make_raw_zip(tmp_path, members, "manifest-collection.attest")
+
+    imported = bundle.import_bundle(hostile)
+
+    assert imported.trust_store.manifests == {}
+    assert imported.artifact_manifests == {}
+
+
+@given(
+    field_name=st.sampled_from(["key_manifests", "artifact_manifests"]),
+    malformed=_NON_OBJECT_JSON,
+)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_filters_every_non_object_manifest_entry(
+    tmp_path: Path, field_name: str, malformed: object
+) -> None:
+    members = _minimal_receipt_members()
+    members["manifests/store.example.com.json"] = canon.canonical_bytes(
+        {"issuer": ISSUER, field_name: [malformed]}
+    )
+    hostile = _make_raw_zip(tmp_path, members, "manifest-entry.attest")
+
+    imported = bundle.import_bundle(hostile)
+
+    assert imported.trust_store.manifests == {}
+    assert imported.artifact_manifests == {}
+
+
+@given(
+    family=st.sampled_from(["key", "artifact"]),
+    malformed_version=_NON_INTEGER_JSON,
+)
+@settings(
+    max_examples=40,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_orders_every_non_integer_manifest_version_below_valid_versions(
+    tmp_path: Path, family: str, malformed_version: object
+) -> None:
+    if family == "key":
+        manifest_blob = {
+            "issuer": ISSUER,
+            "key_manifests": [
+                {"manifest_version": 1, "marker": "valid"},
+                {"manifest_version": malformed_version, "marker": "malformed"},
+            ],
+        }
+    else:
+        manifest_blob = {
+            "issuer": ISSUER,
+            "artifact_manifests": [
+                {"series": "example", "version": 1, "marker": "valid"},
+                {
+                    "series": "example",
+                    "version": malformed_version,
+                    "marker": "malformed",
+                },
+            ],
+        }
+    members = _minimal_receipt_members()
+    members["manifests/store.example.com.json"] = canon.canonical_bytes(manifest_blob)
+    hostile = _make_raw_zip(tmp_path, members, "manifest-version.attest")
+
+    imported = bundle.import_bundle(hostile)
+
+    if family == "key":
+        assert imported.trust_store.manifests[ISSUER]["marker"] == "valid"
+    else:
+        assert imported.artifact_manifests["example"][-1]["marker"] == "valid"
+
+
+def _import_with_raw_salts(tmp_path: Path, raw_salts: bytes) -> bundle.ImportedBundle:
+    public = _make_raw_zip(tmp_path, _minimal_receipt_members(), "salts-public.attest")
+    private = _make_raw_zip(tmp_path, {"salts.json": raw_salts}, "salts-private.private.attest")
+    return bundle.import_bundle(public, private)
+
+
+def test_import_refuses_a_private_bundle_without_salts_json(tmp_path: Path) -> None:
+    public = _make_raw_zip(tmp_path, _minimal_receipt_members(), "missing-salts.attest")
+    private = _make_raw_zip(tmp_path, {"keys/placeholder": b""}, "missing-salts.private.attest")
+
+    with pytest.raises(bundle.BundleError, match=r"missing salts\.json"):
+        bundle.import_bundle(public, private)
+
+
+@given(malformed=_NON_OBJECT_JSON)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_non_object_salts_shape(tmp_path: Path, malformed: object) -> None:
+    with pytest.raises(bundle.BundleError, match="must be an object"):
+        _import_with_raw_salts(tmp_path, canon.canonical_bytes(malformed))
+
+
+@given(
+    receipt_id=_JSON_TEXT.filter(
+        lambda value: re.fullmatch(r"[0-7][0-9A-HJKMNP-TV-Z]{25}", value) is None
+    )
+)
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_non_ulid_salts_key(tmp_path: Path, receipt_id: str) -> None:
+    raw_salts = canon.canonical_bytes({receipt_id: keys.b64u(SALT_A)})
+
+    with pytest.raises(bundle.BundleError, match="uppercase ULID"):
+        _import_with_raw_salts(tmp_path, raw_salts)
+
+
+@given(
+    malformed=st.one_of(
+        st.none(),
+        st.booleans(),
+        st.integers(min_value=-(2**53) + 1, max_value=2**53 - 1),
+        st.lists(st.none()),
+    )
+)
+@settings(
+    max_examples=20,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_non_string_salt_value(tmp_path: Path, malformed: object) -> None:
+    raw_salts = canon.canonical_bytes({"01HZX0000000000000000000AA": malformed})
+
+    with pytest.raises(bundle.BundleError, match="base64url strings"):
+        _import_with_raw_salts(tmp_path, raw_salts)
+
+
+@given(raw_salt=st.binary(min_size=0, max_size=64).filter(lambda value: len(value) != 16))
+@settings(
+    max_examples=40,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_canonically_encoded_salt_of_the_wrong_length(
+    tmp_path: Path, raw_salt: bytes
+) -> None:
+    raw_salts = canon.canonical_bytes({"01HZX0000000000000000000AA": keys.b64u(raw_salt)})
+
+    with pytest.raises(bundle.BundleError, match="non-16-byte salt"):
+        _import_with_raw_salts(tmp_path, raw_salts)
+
+
+@given(raw_salt=st.binary(min_size=16, max_size=16), padding=st.sampled_from(["=", "=="]))
+@settings(
+    max_examples=30,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_import_refuses_every_padded_encoding_of_a_valid_salt(
+    tmp_path: Path, raw_salt: bytes, padding: str
+) -> None:
+    raw_salts = canon.canonical_bytes({"01HZX0000000000000000000AA": keys.b64u(raw_salt) + padding})
+
+    with pytest.raises(bundle.BundleError, match="non-canonical"):
+        _import_with_raw_salts(tmp_path, raw_salts)
+
+
+@pytest.mark.parametrize("encoded", ["!", "***", "é"])
+def test_import_refuses_salt_text_outside_base64url(tmp_path: Path, encoded: str) -> None:
+    raw_salts = canon.canonical_bytes({"01HZX0000000000000000000AA": encoded})
+
+    with pytest.raises(bundle.BundleError, match=r"base64url|non-canonical"):
+        _import_with_raw_salts(tmp_path, raw_salts)
+
+
+def test_import_accepts_an_archive_with_a_gap_between_members(tmp_path: Path) -> None:
+    """The canonical form does not require members to tile the archive: a gap
+    between two members is not a second reading of the file, and refusing one
+    would tighten the rule past what the divergence needs."""
+    honest = _corpus_bundle(tmp_path, "honest-gap-between-members", "gap.attest")
+    imported = bundle.import_bundle(honest)
+    assert len(imported.receipts) == 1
+
+
+def test_import_ignores_a_member_no_family_claims_even_when_it_is_corrupt(
+    tmp_path: Path,
+) -> None:
+    """Members are read on demand, and an archive can carry something neither
+    importer looks at. Reading every member eagerly would make such a file fatal
+    on one side and invisible on the other — same bytes, two verdicts, which is
+    the defect this whole change closes. The browser verifier has the twin of
+    this test.
+    """
+    receipt_id = "01J1V5B4M9Z8QWERTY12345697"
+    attest_path, _private = bundle.export(
+        [_envelope(receipt_id=receipt_id)], [_key_manifest()], [], _legal_texts(), tmp_path, "lib"
+    )
+    marker = b"CORRUPT-ME-PLEASE-0123456789"
+    hostile = tmp_path / "with-unknown.attest"
+    with zipfile.ZipFile(attest_path) as src, zipfile.ZipFile(hostile, "w") as dst:
+        for info in src.infolist():
+            dst.writestr(info.filename, src.read(info.filename))
+        dst.writestr("unknown.bin", marker)
+    raw = bytearray(hostile.read_bytes())
+    # Flip a byte of the member's DATA, leaving its CRC-32 record untouched: the
+    # member is now unreadable, and nothing reads it.
+    raw[raw.index(marker)] ^= 0xFF
+    hostile.write_bytes(bytes(raw))
+
+    imported = bundle.import_bundle(hostile)
+    assert len(imported.receipts) == 1
+
+
+def test_import_keeps_an_issuer_named_after_an_object_member(tmp_path: Path) -> None:
+    """An issuer is a string a bundle chose, and this importer holds it as an
+    ordinary key. The browser verifier's trust store is a JavaScript object, and
+    an object member named `__proto__` is not a member there: it is the
+    prototype. That asymmetry is a divergence of the same class as the container
+    one — the same bytes, two lists of issuers — reachable without touching a
+    single offset, so it is pinned on this side too."""
+    attest_path, _private = bundle.export(
+        [_envelope(receipt_id="01J1V5B4M9Z8QWERTY12345691")],
+        [_key_manifest()],
+        [],
+        _legal_texts(),
+        tmp_path,
+        "mylibrary",
+    )
+    hostile = tmp_path / "proto-issuer.attest"
+    blob = canon.dumps({"issuer": "__proto__", "key_manifests": [_key_manifest()]})
+    with zipfile.ZipFile(attest_path) as src, zipfile.ZipFile(hostile, "w") as dst:
+        for info in src.infolist():
+            if info.filename.startswith("manifests/"):
+                continue
+            dst.writestr(info.filename, src.read(info.filename))
+        dst.writestr("manifests/attacker.json", blob)
+
+    imported = bundle.import_bundle(hostile)
+    assert list(imported.trust_store.manifests) == ["__proto__"]
+    # And nothing that issuer wrote reaches an issuer it did not name.
+    assert imported.trust_store.manifests.get(ISSUER) is None
+
+
+def test_import_refuses_every_corpus_archive_with_a_bundle_error(tmp_path: Path) -> None:
+    """Whatever the shared corpus throws at the importer, the caller is told
+    about the archive. An exception from the machinery underneath — the mapping,
+    the decoder, the reader's own bookkeeping — reaching the caller instead
+    sends whoever reads it to look in the wrong place, which is worse than a
+    refusal that says nothing at all."""
+    leaves = sorted(p for p in CONTAINER_CORPUS.iterdir() if p.is_dir())
+    assert len(leaves) > 20
+    for leaf in leaves:
+        path = tmp_path / f"{leaf.name}.attest"
+        path.write_bytes((leaf / "archive.zip").read_bytes())
+        try:
+            bundle.import_bundle(path)
+        except bundle.BundleError:
+            continue
+        except Exception as unexpected:
+            raise AssertionError(
+                f"{leaf.name}: {type(unexpected).__name__} reached the caller "
+                f"instead of a BundleError: {unexpected}"
+            ) from unexpected
+
+
+def test_a_refusal_survives_the_unmapping_of_the_container() -> None:
+    """Unmapping is bookkeeping; the refusal is the answer the caller asked for.
+
+    A memory map cannot be closed while anything still holds a view into it, and
+    a view outlives its scope for as long as the traceback of the exception in
+    flight does. If the close is allowed to raise there, its complaint about
+    exported pointers arrives in place of the sentence explaining why the
+    archive was refused — the caller is told the truth about the wrong thing.
+    """
+    with pytest.raises(bundle.BundleError, match="the refusal the caller asked for"):
+        with bundle._open_container(Path(__file__)) as buf:
+            held = memoryview(buf)  # noqa: F841 — an export alive at closing time
+            raise bundle.BundleError("the refusal the caller asked for")
+
+
+def test_a_concurrent_truncation_cannot_kill_the_import_process(
+    tmp_path: Path,
+) -> None:
+    """The source is truncated by another process after its buffer is ready.
+
+    The subprocess boundary is part of the assertion: mapping the caller's inode
+    makes the access die from SIGBUS, which no in-process pytest assertion could
+    observe safely. A stable snapshot either imports or raises BundleError; this
+    fixture is complete before truncation, so it imports.
+    """
+    source = _make_raw_zip(tmp_path, _minimal_receipt_members(), "mutable.attest")
+    program = """
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+from attest import bundle
+
+source = Path(sys.argv[1])
+original_members = bundle._members
+
+def truncate_source_then_read_snapshot(buf, **kwargs):
+    subprocess.run(
+        [sys.executable, "-c", "import os,sys; os.truncate(sys.argv[1], 0)", str(source)],
+        check=True,
+    )
+    return original_members(buf, **kwargs)
+
+bundle._members = truncate_source_then_read_snapshot
+imported = bundle.import_bundle(source)
+print(f"IMPORTED {len(imported.receipts)}")
+"""
+
+    completed = subprocess.run(  # noqa: S603 - fixed interpreter and local fixture
+        [sys.executable, "-c", program, str(source)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "IMPORTED 1"
+
+
+def test_the_snapshot_bound_says_what_it_measures_and_not_what_it_does_not(
+    tmp_path: Path,
+) -> None:
+    """An archive can cross the snapshot bound on FRAMING alone.
+
+    The bound is on the bytes of the file; the aggregate cap is on the bytes
+    members inflate to. Those are not the same quantity and they do not even
+    stay close: a central directory holds a record per member and a member name
+    may run to 65 535 bytes, none of which ever inflates. So an archive whose
+    members inflate to a few hundred bytes — a fraction of a percent of the cap
+    — can be a hundred times over the bound, and a refusal that named the
+    aggregate cap there would be telling its holder to look at a quantity that
+    is nowhere near its limit. It is measured here rather than argued, so the
+    wording of that refusal cannot drift back.
+
+    The bound is the cap the caller passed, so the cap is lowered for the test
+    instead of putting a gigabyte on disk; the geometry is what is under test,
+    and it does not depend on the scale.
+    """
+    cap = 64 * 1024
+    hostile = tmp_path / "framing.attest"
+    with zipfile.ZipFile(hostile, "w", zipfile.ZIP_STORED) as zf:
+        for name, blob in _minimal_receipt_members().items():
+            zf.writestr(name, blob)
+        for index in range(60):
+            zf.writestr(f"pad/{index:04d}{'n' * 1200}.bin", b"x")
+
+    members = container.canonical_members(
+        hostile.read_bytes(), max_entries=100_000, max_member_bytes=cap, max_total_bytes=cap
+    )
+    inflated = sum(member.uncompressed_size for member in members)
+    assert inflated * 100 < cap, "the members must be far inside the aggregate cap"
+    assert hostile.stat().st_size > cap, "and the file must be over the snapshot bound"
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(hostile, max_container_bytes=cap)
+    message = str(refusal.value)
+    assert "will copy in order to read it" in message
+    # The refusal must not name a quantity this archive is nowhere near.
+    assert "decompression" not in message
+    assert "inflated" not in message
+
+
+class _FullTemporaryFile:
+    """A temporary file on a filesystem with no room left for the copy.
+
+    A full or quota-limited temporary filesystem is not something a test can
+    arrange on the host it runs on, so the condition is arranged at the one
+    place it is felt: the write.
+    """
+
+    def __enter__(self) -> _FullTemporaryFile:
+        return self
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+    def write(self, chunk: bytes) -> int:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    def flush(self) -> None:
+        return None
+
+    def tell(self) -> int:  # pragma: no cover — the write refuses first
+        return 0
+
+
+def test_a_snapshot_that_cannot_be_written_is_refused_as_a_copy_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A copy that cannot be taken is a fact about this machine, not the archive.
+
+    The importer reads a container by copying it into a private temporary file
+    first, and that write can fail for reasons the archive knows nothing about:
+    a temporary filesystem that is full, a quota, a size limit on the process.
+    An OSError escaping from there would break the promise this module keeps
+    everywhere else — whatever the input, the caller is told in this module's
+    own error type — and, worse, would name an errno where a holder expects a
+    verdict on their bundle. So the refusal says what actually happened, and
+    says nothing about bytes it never read.
+    """
+    source = _make_raw_zip(tmp_path, _minimal_receipt_members(), "unwritable.attest")
+    monkeypatch.setattr(bundle.tempfile, "TemporaryFile", _FullTemporaryFile)
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(source)
+
+    message = str(refusal.value)
+    assert "could not copy the container" in message
+    assert "No space left on device" in message
+    # The archive was never read, so nothing in the refusal may describe it.
+    assert "over the" not in message
+    assert isinstance(refusal.value.__cause__, OSError)
+
+
+def test_a_snapshot_that_cannot_be_created_is_refused_in_the_same_voice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy can fail before it starts, and it fails the same way.
+
+    A temporary directory that is read-only, absent or out of inodes refuses at
+    creation rather than at the write. It is the same fact — this importer could
+    not take a copy — and a caller who gets an OSError here instead of there
+    learns nothing except that the module's promise holds only sometimes.
+    """
+    source = _make_raw_zip(tmp_path, _minimal_receipt_members(), "uncreatable.attest")
+
+    def _read_only(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(bundle.tempfile, "TemporaryFile", _read_only)
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(source)
+
+    message = str(refusal.value)
+    assert "could not copy the container" in message
+    assert "Read-only file system" in message
+    assert isinstance(refusal.value.__cause__, OSError)
+
+
+def test_the_snapshot_promises_a_bound_and_not_a_flight_from_memory() -> None:
+    """The copy is bounded; it is not bounded away from memory, and saying so
+    would be false on an ordinary Linux host.
+
+    `tempfile` puts the snapshot in the platform's temporary directory, and that
+    directory is routinely a tmpfs — where the file IS memory and the bound is a
+    bound on RAM. A docstring promising the copy avoids an allocation of the
+    attacker's choosing would tell a reader that the bound may be set as high as
+    the disk is large. It may not, on such a host, and the reader deciding the
+    number is exactly who must know that.
+    """
+    doc = bundle._open_container.__doc__ or ""
+    assert "rather than to memory" not in doc
+    assert "memory-backed" in doc
+    # And the arrangement the docstring describes is the one that is measured:
+    # nothing here chooses a directory, so the copy lands wherever tempfile does.
+    assert Path(tempfile.gettempdir()).is_dir()
+
+
+def test_the_snapshot_bound_honours_the_cap_its_caller_gave(tmp_path: Path) -> None:
+    """An embedder who tightens `max_container_bytes` tightens the copy with it.
+
+    A snapshot bound built from the module constant instead of from the
+    argument leaves an embedder who asked for a few kilobytes copying up to a
+    gigabyte, and reading the refusal for something else entirely — here, a
+    verdict on a receipt inside an archive they never wanted read that far.
+    """
+    cap = 4096
+    hostile = tmp_path / "over-the-callers-cap.attest"
+    with zipfile.ZipFile(hostile, "w", zipfile.ZIP_STORED) as zf:
+        for name, blob in _minimal_receipt_members().items():
+            zf.writestr(name, blob)
+        for index in range(40):
+            zf.writestr(f"pad/{index:04d}{'n' * 1200}.bin", b"x")
+    assert hostile.stat().st_size > cap
+    assert hostile.stat().st_size < bundle._MAX_CONTAINER_BYTES, (
+        "and comfortably inside the module default, so only the argument can refuse it"
+    )
+
+    # Under the default the archive is fine, which is what makes the refusal
+    # below attributable to the argument and to nothing else about the file.
+    assert len(bundle.import_bundle(hostile).receipts) == 1
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(hostile, max_container_bytes=cap)
+
+    # The number in the sentence is the caller's, which is how it is known the
+    # caller's cap and not the module constant did the refusing.
+    assert f"{cap}-byte limit this importer will copy" in str(refusal.value)
+
+
+def test_a_container_path_that_is_not_a_regular_file_is_refused(tmp_path: Path) -> None:
+    """A path is not a file, and this one names what it found before reading.
+
+    Opening a FIFO waits for a writer who need never arrive: the import stops
+    there for as long as the process lives, with no exception to catch and no
+    verdict to return. A character device is the same trap taken from the other
+    side — it never ends either, and it would feed the copy up to the bound
+    first. Neither is a fact about an archive, so the check is on what the
+    handle IS, made before a byte is read and answered in this module's own
+    error type.
+
+    The alarm is the assertion that the check happens BEFORE the read: without
+    it, a regression does not fail this test, it hangs it forever.
+    """
+    fifo = tmp_path / "pipe.attest"
+    os.mkfifo(fifo)
+
+    def _still_blocked(_signum: int, _frame: object) -> None:
+        raise AssertionError("opening the container blocked: the FIFO was read, not refused")
+
+    previous = signal.signal(signal.SIGALRM, _still_blocked)
+    signal.setitimer(signal.ITIMER_REAL, 5.0)
+    try:
+        with pytest.raises(bundle.BundleError) as refusal:
+            bundle.import_bundle(fifo)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous)
+
+    message = str(refusal.value)
+    assert "a named pipe, not a regular file" in message
+    # It says what was found, never what the bytes held: none were read.
+    assert "receipt" not in message
+
+
+@pytest.mark.skipif(not Path("/proc/self/mem").exists(), reason="needs Linux procfs")
+def test_a_container_that_cannot_be_read_is_refused_as_a_read_failure() -> None:
+    """A regular file can still refuse to be read, and that is not a verdict.
+
+    `/proc/self/mem` passes every check a container path can be given — it is a
+    regular file, it is not over any bound — and its first read returns EIO. It
+    stands here for the failing disk and the network mount that went away: the
+    copy cannot be taken, nothing has been parsed, and an OSError leaving the
+    module would name the wrong culprit as surely as one from the write does.
+    """
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(Path("/proc/self/mem"))
+
+    message = str(refusal.value)
+    assert "could not read the container in order to copy it" in message
+    assert "Input/output error" in message
+    assert isinstance(refusal.value.__cause__, OSError)
+
+
+def test_a_copy_that_cannot_be_mapped_is_refused_as_a_mapping_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last move of the copy can fail too, and on the tightest hosts it will.
+
+    The snapshot is inside its bound and written; mapping it still asks this
+    machine for address space it may not have. The refusal is this module's,
+    because a caller handed an ENOMEM has no way to tell it from a verdict on
+    the archive — and the archive, at that point, has still not been read.
+    """
+    source = _make_raw_zip(tmp_path, _minimal_receipt_members(), "unmappable.attest")
+
+    def _no_room(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.ENOMEM, "Cannot allocate memory")
+
+    monkeypatch.setattr(bundle.mmap, "mmap", _no_room)
+
+    with pytest.raises(bundle.BundleError) as refusal:
+        bundle.import_bundle(source)
+
+    message = str(refusal.value)
+    assert "could not map the copy" in message
+    assert "Cannot allocate memory" in message
+    assert isinstance(refusal.value.__cause__, OSError)
+
+
+def test_a_refusal_to_read_is_a_different_outcome_from_a_refusal_of_the_bytes(
+    tmp_path: Path,
+) -> None:
+    """v0.1 §14.4: declining to read is not a verdict about the container.
+
+    The two have opposite remedies — a container refused for its size may be
+    readable on a machine with more room, one refused for its shape never will
+    be — so a caller that cannot tell them apart either retries what can never
+    succeed or gives up on what would. Reporting an unread container as corrupt
+    says something about bytes nobody looked at.
+    """
+    corpus = CONTAINER_CORPUS
+
+    # Refused for its shape: the reader looked and found the file could be
+    # addressed two ways. Never a resource refusal, however much budget it gets.
+    malformed = tmp_path / "two-directories.attest"
+    malformed.write_bytes((corpus / "exhibit-D-prefix" / "archive.zip").read_bytes())
+    with pytest.raises(bundle.BundleError) as shape:
+        bundle.import_bundle(malformed)
+    assert not isinstance(shape.value, bundle.BundleTooLargeError)
+
+    # Refused for its size, by each of the two bounds that can say so: the
+    # reader's own caps, and the copy this importer takes before reading.
+    over_caps = _make_raw_zip(
+        tmp_path,
+        {**_minimal_receipt_members(), "extra.bin": b"x"},
+        "too-many.attest",
+    )
+    with pytest.raises(bundle.BundleTooLargeError):
+        bundle.import_bundle(over_caps, max_entries=1)
+
+    oversized = tmp_path / "oversized.attest"
+    oversized.write_bytes(b"x" * 65)
+    with pytest.raises(bundle.BundleTooLargeError):
+        bundle.import_bundle(oversized, max_container_bytes=64)
+
+    # And a caller who does not care about the distinction is unaffected.
+    assert issubclass(bundle.BundleTooLargeError, bundle.BundleError)
+
+
+def test_a_container_over_the_bound_is_refused_without_being_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The metadata already settles it, so the copy never starts.
+
+    Without this, a file over the bound costs a full `max_bytes` of temporary
+    storage — memory, where that directory is a tmpfs — to reach a refusal its
+    own size had already decided. The loop stays the authority for a file that
+    grows after this point; this only spares the copy for one that is over the
+    bound before it begins.
+
+    Asserted by making the copy impossible: if a temporary file is opened at
+    all, the test fails rather than passing for the wrong reason.
+    """
+    oversized = tmp_path / "oversized.attest"
+    oversized.write_bytes(b"x" * 4096)
+
+    def no_copies(*args: object, **kwargs: object) -> object:
+        raise AssertionError("the snapshot was started for a file already over the bound")
+
+    monkeypatch.setattr(bundle.tempfile, "TemporaryFile", no_copies)
+    with pytest.raises(bundle.BundleTooLargeError, match="will copy in order to read it"):
+        bundle.import_bundle(oversized, max_container_bytes=1024)
