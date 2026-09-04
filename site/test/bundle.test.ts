@@ -756,6 +756,50 @@ describe('parseBundle checks a legal text against the name it travelled under', 
     expect(Object.keys(parsed.legalTexts).sort()).toEqual([LEGAL_DIGEST, secondDigest].sort())
   })
 
+  // The examples above are the cases whoever wrote them thought of. The binding
+  // is a PROPERTY — no single-byte change to a text still hashes to its name —
+  // and the loop below asserts it over a seeded stream of mutations, so a
+  // failure is a reproducible failure and not a story about a Tuesday. Seeded
+  // rather than random, and hand-rolled rather than pulled in: a property
+  // library would open the supply-chain gate on a package this project ships.
+  it('P1 refuses every single-byte change to the text the digest binds', () => {
+    let state = 20260904
+    const next = (): number => {
+      state ^= state << 13
+      state >>>= 0
+      state ^= state >>> 17
+      state ^= state << 5
+      state >>>= 0
+      return state
+    }
+    let refused = 0
+    for (let round = 0; round < 200; round += 1) {
+      const mutated = new Uint8Array(LEGAL_TEXT)
+      const at = next() % mutated.length
+      mutated[at] = (mutated[at] + 1 + (next() % 255)) & 0xff
+      expect(() => parseBundle(withLegal([[`legal/${LEGAL_DIGEST}.txt`, mutated]]))).toThrow(
+        BundleError,
+      )
+      refused += 1
+    }
+    expect(refused).toBe(200)
+  })
+
+  it('P2 refuses every single-character change to the name the text is filed under', () => {
+    // The mirror of P1: the digest is a two-sided binding, and a member filed
+    // under a name one character off is the same tampering seen from the other
+    // end — the archive keeps the deal and renames it out of reach.
+    const digits = '0123456789abcdef'
+    let refused = 0
+    for (let at = 0; at < LEGAL_DIGEST.length; at += 1) {
+      const replacement = digits[(digits.indexOf(LEGAL_DIGEST[at]) + 1) % digits.length]
+      const name = LEGAL_DIGEST.slice(0, at) + replacement + LEGAL_DIGEST.slice(at + 1)
+      expect(() => parseBundle(withLegal([[`legal/${name}.txt`, LEGAL_TEXT]]))).toThrow(BundleError)
+      refused += 1
+    }
+    expect(refused).toBe(64)
+  })
+
   it('keeps the legal store free of inherited names', () => {
     // Keyed by a digest the archive chose, so the same rule as every other map
     // in this file: `__proto__` is an ordinary key and `toString` answers
