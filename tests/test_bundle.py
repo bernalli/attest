@@ -676,6 +676,23 @@ def test_import_rejects_too_many_entries(tmp_path: Path) -> None:
         bundle.import_bundle(z, max_entries=10)
 
 
+def test_import_defaults_match_the_section_14_4_floor(tmp_path: Path) -> None:
+    """The reference importer adopts the interoperable container floor."""
+    members = {
+        **_minimal_receipt_members(),
+        **{f"unused/{index:05d}.bin": b"" for index in range(10_000)},
+    }
+    over_floor = _make_raw_zip(tmp_path, members, "over-floor.attest")
+
+    with pytest.raises(bundle.BundleError, match="over 10000 entries"):
+        bundle.import_bundle(over_floor)
+
+    assert bundle._MAX_ENTRIES == 10_000
+    assert bundle._MAX_MEMBER_BYTES == 64 * 1024 * 1024
+    assert bundle._MAX_TOTAL_BYTES == 256 * 1024 * 1024
+    assert bundle._MAX_CONTAINER_BYTES == 1024 * 1024 * 1024
+
+
 def test_import_caps_private_salts_json(tmp_path: Path) -> None:
     """The .private.attest salts.json read is capped too — a valid .attest paired
     with a bomb private file is refused."""

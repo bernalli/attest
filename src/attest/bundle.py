@@ -66,13 +66,14 @@ _PROVENANCE_BUNDLE = "bundle"
 _SECRET_FILE_MODE = 0o600  # disclose output carries delivery.salt (a bearer secret)
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
-# Decompression caps for import_bundle (zip-bomb hardening). A .attest is
-# attacker-supplied — it is meant to survive peer-to-peer — so every member is
-# read under a bound. Defaults are generous for real libraries (JSON + legal
-# text) and still stop a bomb by orders of magnitude.
+# Import ceilings adopt the floor in specification section 14.4 as this
+# importer's own ceiling. Section 14.4 explicitly permits implementations to
+# make that choice, with the resulting difference in accepted containers being
+# observable to callers.
 _MAX_MEMBER_BYTES = 64 * 1024 * 1024  # 64 MiB per decompressed member
-_MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # 1 GiB decompressed across one bundle
-_MAX_ENTRIES = 100_000  # central-directory entry count
+_MAX_TOTAL_BYTES = 256 * 1024 * 1024  # 256 MiB decompressed across one import
+_MAX_ENTRIES = 10_000  # central-directory entry count
+_MAX_CONTAINER_BYTES = 1024 * 1024 * 1024  # 1 GiB stored per container
 _SNAPSHOT_CHUNK = 1024 * 1024  # bytes copied per read while snapshotting a container
 _RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
