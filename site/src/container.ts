@@ -132,6 +132,25 @@ export const DEFAULT_CONTAINER_CAPS: ContainerCaps = {
   maxTotalBytes: 256 * 1024 * 1024,
 }
 
+/**
+ * The largest container this project reads AS STORED — the size of the file
+ * itself, before a member of it is looked at.
+ *
+ * v0.1 §14.4 fixes this floor, and both reference importers sit on it: it is
+ * the normative number and not a tuning decision made here, which is why it is
+ * written as the gibibyte the section names rather than derived from the caps
+ * above. It is a different axis from all three of those — an archive can be
+ * far under every decompression cap and still be a gigabyte on disk, and the
+ * bytes it costs to hold that gigabyte are spent before any cap can fire.
+ *
+ * Not part of `ContainerCaps` on purpose: the reader below never sees a whole
+ * file it did not already have in hand, so bounding the file is the business
+ * of whoever ADMITS it — the drop target, the network fetch, the parser's own
+ * front door — and putting it in the caps would suggest the reader enforces
+ * something it cannot.
+ */
+export const MAX_STORED_BYTES = 1024 * 1024 * 1024
+
 /** One member, as the central directory declares it. Nothing else from the
  * record is kept; `extra` is skipped by length and never parsed. */
 export interface Member {

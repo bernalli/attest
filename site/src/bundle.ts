@@ -1,5 +1,5 @@
 import { loadsStrict } from 'attest-verifier'
-import { canonicalMembers, readMember, ReadBudget, ContainerError } from './container.js'
+import { canonicalMembers, readMember, ReadBudget, ContainerError, MAX_STORED_BYTES } from './container.js'
 import type { Member, ContainerCode } from './container.js'
 import { neutralized } from './untrusted-text.js'
 import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
@@ -35,6 +35,27 @@ const RESOURCE_CODES: ReadonlySet<ContainerCode> = new Set<ContainerCode>([
  * keeping the outcome class the code already decided. */
 const asBundleError = (e: ContainerError): BundleError =>
   RESOURCE_CODES.has(e.code) ? new BundleTooLargeError(e.message) : new BundleError(e.message)
+
+/** What a surface says about a container it did NOT read because of its size
+ * as stored (v0.1 §14.4).
+ *
+ * One sentence, in one place, because three surfaces refuse on this axis — the
+ * drop target, the sample fetch and the parser's own front door — and three
+ * sentences for one limit would let a holder think they had met three limits.
+ * It mirrors the reference importer's `_over_snapshot_bound`: what this bound
+ * measures is the size of the FILE and never of anything inside it, so it
+ * borrows no wording from the decompression caps, which would send its holder
+ * to look at the wrong thing.
+ *
+ * It names both numbers — how large the container is, and how large this
+ * verifier reads — because that difference is the only thing a holder can act
+ * on. It never names the file: a file name is text whoever sent the file
+ * chose, on the same footing as a ZIP member name (see `quoted` below), and
+ * this refusal needs none.
+ */
+export const storedLimitMessage = (storedBytes: number, limit: number = MAX_STORED_BYTES): string =>
+  `container is ${storedBytes} bytes, over the ${limit}-byte limit this verifier reads ` +
+  'in order to open it — refusing to read an archive that large'
 
 export type { ContainerCaps as Caps } from './container.js'
 import type { ContainerCaps as Caps } from './container.js'
@@ -167,7 +188,24 @@ function proofMemberReceiptId(name: string): string {
   return receiptId
 }
 
-export function parseBundle(bytes: Uint8Array, caps: Caps = DEFAULT_CAPS): ParsedBundle {
+export function parseBundle(
+  bytes: Uint8Array,
+  caps: Caps = DEFAULT_CAPS,
+  maxStoredBytes: number = MAX_STORED_BYTES,
+): ParsedBundle {
+  // v0.1 §14.4 bounds the spend BEFORE the members are analysed, and the
+  // container as stored is the first quantity a caller can be over. The
+  // surfaces admit a file on its size before they ever materialise it, which
+  // is where the copy is actually spared; this is the same bound at the
+  // parser's own front door, for the callers that arrive with bytes already in
+  // hand — `parseBundle` is public, and not every caller passed a `File`.
+  //
+  // The limit is an argument for the same reason the reference importer's is:
+  // an embedder who reads less should be able to say so, and a bound nobody
+  // can move is a bound nobody can test at its edge either.
+  if (bytes.byteLength > maxStoredBytes)
+    throw new BundleTooLargeError(storedLimitMessage(bytes.byteLength, maxStoredBytes))
+
   // The member list comes from the canonical container reader, not from a ZIP
   // library's own reading of the archive: two readers address the central
   // directory differently, and an archive that exploits that used to show this

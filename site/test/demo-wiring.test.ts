@@ -18,13 +18,23 @@ const SAMPLE_DIR = join(__dirname, '..', 'public', 'sample')
 const sampleBytes = (): Uint8Array => new Uint8Array(readFileSync(join(SAMPLE_DIR, 'demo.attest')))
 const sampleBinding = () => JSON.parse(readFileSync(join(SAMPLE_DIR, 'demo-binding.json'), 'utf-8'))
 
-/** Serve the committed sample the way the deployment does, without a server. */
+/** Serve the committed sample the way the deployment does, without a server.
+ *
+ * The response carries `headers` because the loader reads one: v0.1 §14.4's
+ * floor is checked against the DECLARED length before the body is asked for,
+ * and a stub without headers would model a Response no server sends. This one
+ * declares nothing, which is the ordinary case for a file served from disk,
+ * and leaves the delivered bytes as the thing actually measured. */
 const servingSample = (): void => {
   vi.stubGlobal('fetch', (url: string) =>
     Promise.resolve(
       url.endsWith('demo.attest')
-        ? { ok: true, arrayBuffer: () => Promise.resolve(sampleBytes().buffer) }
-        : { ok: true, json: () => Promise.resolve(sampleBinding()) },
+        ? {
+            ok: true,
+            headers: { get: () => null },
+            arrayBuffer: () => Promise.resolve(sampleBytes().buffer),
+          }
+        : { ok: true, headers: { get: () => null }, json: () => Promise.resolve(sampleBinding()) },
     ),
   )
 }

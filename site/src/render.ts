@@ -221,10 +221,11 @@ export function renderRejection(reason: string): HTMLElement {
  * the technical reason follows in its own line, as it does there.
  *
  * It names a PROPERTY — a verifier with different limits — and never a product.
- * An earlier draft said to try the CLI, "which reads more", and that is false on
- * the axis this very change introduced: the reference importer bounds the
- * container as stored and this page bounds nothing there, so above that bound
- * the CLI reads LESS. A sentence frozen into an offline artifact has nobody to
+ * An earlier draft said to try the CLI, "which reads more", and that was false
+ * on more than one axis: both importers now bound the container as stored at
+ * the same §14.4 floor, so above that bound neither reads the file at all, and
+ * the browser's decompression caps are tighter than the reference importer's
+ * only on some inputs. A sentence frozen into an offline artifact has nobody to
  * correct it later, and §14.4 wants this refusal to assert nothing about the
  * bytes — pointing at a named tool puts an assertion back where the section
  * removed one.

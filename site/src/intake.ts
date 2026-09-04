@@ -1,6 +1,7 @@
 import { loadsStrict } from 'attest-verifier'
 import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
-import { parseBundle, BundleError, BundleTooLargeError, bareStore } from './bundle.js'
+import { parseBundle, BundleError, BundleTooLargeError, bareStore, storedLimitMessage } from './bundle.js'
+import { MAX_STORED_BYTES } from './container.js'
 
 export interface VerifyJob {
   label: string
@@ -20,6 +21,10 @@ export type IntakeResult =
   // (v0.1 §14.4). A surface MUST NOT show it as invalidity, so it cannot be
   // rendered like every other rejection.
   | { kind: 'rejected'; reason: string; declined?: true }
+
+/** The refusal arm of `IntakeResult`, named so a surface can be handed one
+ * without narrowing a union it never built. */
+export type Refusal = Extract<IntakeResult, { kind: 'rejected' }>
 
 // Every trust store this module hands on is looked up by an issuer name the
 // file being checked chose, so each one is built without a prototype
@@ -126,6 +131,31 @@ export const labelFor = (bytes: Uint8Array): string => {
 // promise about the id it was handed, and not a bet on where the map came from.
 const proofFor = (proofs: Record<string, JsonValue>, id: string | null): JsonValue | null =>
   id !== null && Object.prototype.hasOwnProperty.call(proofs, id) ? proofs[id] : null
+
+/**
+ * What a surface answers for a file it has NOT read, decided from the size
+ * alone — or `null` when the file is within the floor and its bytes may be
+ * materialised.
+ *
+ * This is the admission boundary v0.1 §14.4 asks for: the spend is bounded
+ * BEFORE the container is analysed, and a size is metadata, so consulting it
+ * reads no byte of the file. Every surface that turns a file into bytes calls
+ * this first — the drop targets on both apps, and the sample fetch through its
+ * own declared length — because a refusal issued after the copy has already
+ * paid for exactly what the floor exists to protect.
+ *
+ * The outcome is `declined` and never an ordinary rejection. Nobody looked at
+ * these bytes, and §14.4 forbids showing an unread container as invalid.
+ *
+ * A size this boundary cannot make sense of — a `File` that reports none — is
+ * not a container over the floor: it is a file this boundary knows nothing
+ * about, and it is admitted so the reader downstream can give it a verdict.
+ * The parser's own front door bounds the bytes that actually arrive.
+ */
+export function declinedForSize(storedBytes: number): Refusal | null {
+  if (!(storedBytes > MAX_STORED_BYTES)) return null
+  return { kind: 'rejected', reason: storedLimitMessage(storedBytes), declined: true }
+}
 
 export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
   if (fileName.endsWith('.private.attest')) return { kind: 'rejected', reason: PRIVATE_NAME_MSG }

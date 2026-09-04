@@ -1,6 +1,9 @@
 import type { Disclosure } from 'attest-verifier'
 import { loadsStrict } from 'attest-verifier'
-import { intake, trustStoreFromManifestBytes, type VerifyJob } from '../../site/src/intake.js'
+import {
+  intake, declinedForSize, trustStoreFromManifestBytes,
+  type Refusal, type VerifyJob,
+} from '../../site/src/intake.js'
 import { runVerify } from '../../site/src/run.js'
 import { renderRejection, renderDeclined, renderVerifyFailure } from '../../site/src/render.js'
 import { LOG_KEYS, ANCHOR_POLICY } from '../../site/src/trusted-log.js'
@@ -173,20 +176,27 @@ export function initDesktopApp(doc: Document): DesktopApp {
     )
   }
 
+  /** One refusal, one register — for the reader below and for the admission
+   * boundary at the drop target alike. A container this app DECLINED to read
+   * gets §14.4's neutral register; everything else gets the rejection. */
+  function showRefusal(r: Refusal): void {
+    currentJobs = []
+    currentNotices = []
+    // Cleared here too, or a half-finished handover survives its own refusal: measured,
+    // a later manifest resurrected the earlier receipt and replaced the bearer-file
+    // warning with its verdict.
+    pendingEnvelope = null
+    manifestZone.hidden = true
+    results.replaceChildren(
+      r.declined === true ? renderDeclined(r.reason) : renderRejection(r.reason),
+    )
+  }
+
   function handleBytes(fileName: string, bytes: Uint8Array): void {
     droppedFileName = fileName
     const r = intake(fileName, bytes)
     if (r.kind === 'rejected') {
-      currentJobs = []
-      currentNotices = []
-      // Cleared here too, or a half-finished handover survives its own refusal: measured,
-      // a later manifest resurrected the earlier receipt and replaced the bearer-file
-      // warning with its verdict.
-      pendingEnvelope = null
-      manifestZone.hidden = true
-      results.replaceChildren(
-        r.declined === true ? renderDeclined(r.reason) : renderRejection(r.reason),
-      )
+      showRefusal(r)
       return
     }
     currentNotices = r.notices ?? []
@@ -267,6 +277,16 @@ export function initDesktopApp(doc: Document): DesktopApp {
   }
 
   const readFile = (file: File, sink: (name: string, bytes: Uint8Array) => void): void => {
+    // The size is metadata: asking for it reads no byte of the file, so a container
+    // over §14.4's floor is refused before `arrayBuffer()` brings a copy of it into
+    // this process. This artifact runs from a file:// URL on whatever machine a
+    // holder still has years from now, which is the machine least able to afford a
+    // copy it was never going to read.
+    const refusal = declinedForSize(file.size)
+    if (refusal !== null) {
+      showRefusal(refusal)
+      return
+    }
     void file
       .arrayBuffer()
       .then((buf) => sink(file.name, new Uint8Array(buf)))

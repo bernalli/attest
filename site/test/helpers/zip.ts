@@ -119,6 +119,25 @@ export function embeddedManifest(): Record<string, unknown> {
   return manifests[issuer] as Record<string, unknown>
 }
 
+/** The legal text the conformance vectors bind their receipts to.
+ *
+ * `tools/gen_vectors.py` hashes exactly these bytes into every generated
+ * payload's `license.legal_text_sha256`, so a bundle assembled around one of
+ * those envelopes has to carry THIS text under THIS member name to preserve
+ * the deal its receipt refers to. Without it the reference importer refuses
+ * the archive, and a fixture the two importers disagree about proves nothing
+ * about either of them.
+ *
+ * The digest is written out rather than computed so that a test can hold the
+ * text and its name apart — one of them being wrong is exactly the tampering
+ * the `legal/` family is checked for.
+ */
+export const LEGAL_TEXT: Uint8Array = encoder.encode('attest-vectors-legal-text-v1')
+export const LEGAL_DIGEST = 'a9e875fe29704222a432410b0c160f5a2e5ef48effa8b51a5017c640e21c109c'
+
+/** That text as the member a conforming bundle carries it in. */
+export const legalEntry = (): StoredEntry => [`legal/${LEGAL_DIGEST}.txt`, LEGAL_TEXT]
+
 export function validEntries(): StoredEntry[] {
   const document = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
   const manifests = document.manifests as JsonObject

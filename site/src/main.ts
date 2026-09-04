@@ -1,5 +1,6 @@
 import type { Disclosure } from 'attest-verifier'
-import { intake, trustStoreFromManifestBytes, type VerifyJob } from './intake.js'
+import { intake, declinedForSize, trustStoreFromManifestBytes, type Refusal, type VerifyJob } from './intake.js'
+import { BundleTooLargeError } from './bundle.js'
 import { runVerify } from './run.js'
 import {
   renderResult, renderRejection, renderDeclined, renderVerifyFailure,
@@ -139,15 +140,23 @@ export function initApp(doc: Document): AppHandle {
     refreshBench()
   }
 
+  /** One refusal, one register. A container the page DECLINED to read gets the
+   * neutral one; everything else gets the rejection. Both the reader below and
+   * the admission boundary at the drop target arrive here, so the register can
+   * never depend on which of them refused. */
+  function showRefusal(r: Refusal): void {
+    clearJobs()
+    currentNotices = []
+    manifestZone.hidden = true
+    results.replaceChildren(
+      r.declined === true ? renderDeclined(r.reason) : renderRejection(r.reason),
+    )
+  }
+
   function handleBytes(fileName: string, bytes: Uint8Array): void {
     const r = intake(fileName, bytes)
     if (r.kind === 'rejected') {
-      clearJobs()
-      currentNotices = []
-      manifestZone.hidden = true
-      results.replaceChildren(
-        r.declined === true ? renderDeclined(r.reason) : renderRejection(r.reason),
-      )
+      showRefusal(r)
       return
     }
     currentNotices = r.notices ?? []
@@ -262,6 +271,15 @@ export function initApp(doc: Document): AppHandle {
   }
 
   const readFile = (file: File, sink: (name: string, bytes: Uint8Array) => void): void => {
+    // The size is metadata: asking for it reads no byte of the file, so a
+    // container over §14.4's floor is refused here — before `arrayBuffer()`
+    // brings a copy of it into this tab. Refusing after the copy would spend
+    // exactly what the floor exists to protect and then report a limit.
+    const refusal = declinedForSize(file.size)
+    if (refusal !== null) {
+      showRefusal(refusal)
+      return
+    }
     void file.arrayBuffer().then((buf) => sink(file.name, new Uint8Array(buf)))
   }
   dropzone.addEventListener('click', () => fileInput.click())
@@ -290,7 +308,14 @@ export function initApp(doc: Document): AppHandle {
   bindingApply.addEventListener('click', applyDisclosure)
   benchRestore.addEventListener('click', restore)
   loadSampleBtn.addEventListener('click', () => {
-    void loadSampleBundle().catch(() => {
+    void loadSampleBundle().catch((error: unknown) => {
+      // A sample over the floor is not a deployment that lost its assets: it
+      // is a container this page declined to read, and it earns §14.4's
+      // neutral register like any other.
+      if (error instanceof BundleTooLargeError) {
+        showRefusal({ kind: 'rejected', reason: error.message, declined: true })
+        return
+      }
       clearJobs()
       results.replaceChildren(message(doc, 'Could not load the sample bundle from this deployment.'))
     })
