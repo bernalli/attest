@@ -266,6 +266,14 @@ export function parseBundle(
       }
       const issuer = blob?.['issuer']
       if (blob === null || typeof issuer !== 'string') continue // mirror the reference importer: skip unshaped blobs
+      // Duplicate member NAMES are refused by the container reader. Two DISTINCT
+      // members declaring ONE issuer are the same attack a level up, and keeping
+      // the last of them made the key list a receipt is checked against depend on
+      // member order rather than on anything the bundle states. A chain of
+      // versions for one issuer belongs INSIDE a member, under `key_manifests`,
+      // which is the shape the store below is built from.
+      if (keyManifestsByIssuer.has(issuer))
+        throw new BundleError('bundle lists one issuer in more than one manifest member')
       const raw = blob['key_manifests']
       const kms = Array.isArray(raw) ? raw.map(asObject).filter((m): m is JsonObject => m !== null) : []
       keyManifestsByIssuer.set(issuer, kms)

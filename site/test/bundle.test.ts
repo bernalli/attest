@@ -10,7 +10,7 @@ import { VECTORS_ROOT, logKeys, anchorPolicy } from './helpers/vectors.js'
 // Aliased: this file already defines a local `storedZip` that does NOT set
 // general-purpose bit 11, so a non-ASCII member name written with it is refused
 // as `record-name-encoding` before any test can reason about it.
-import { storedZip as utf8Zip, validEnvelope, VALID_RECEIPT_ID } from './helpers/zip.js'
+import { storedZip as utf8Zip, validEnvelope, VALID_RECEIPT_ID, legalEntry } from './helpers/zip.js'
 
 const V01 = join(VECTORS_ROOT, '01-valid-minimal')
 // The one conformance leaf that ships a receipt AND the §10.2 evidence that
@@ -455,29 +455,111 @@ describe('parseBundle: the trust store answers only for issuers the bundle named
 // --- member order, and the families the reference importer reads -------------
 
 describe('parseBundle orders members the way the reference importer does', () => {
-  it('resolves a repeated issuer by Unicode code point, not by UTF-16 code unit', () => {
-    // Two manifests members claim ONE issuer, so the LAST in member order is
-    // the manifest this page will trust. `U+FFFF` sorts BEFORE `U+1F600` by
-    // code point and AFTER it by UTF-16 code unit, so the two orders trust
-    // different keys out of the same archive — which is the whole reason this
-    // file carries its own comparator instead of calling `Array#sort`.
+  it('meets a broken member in Unicode code point order, not UTF-16 code unit order', () => {
+    // `U+FFFF` sorts BEFORE `U+1F600` by code point and AFTER it by UTF-16 code
+    // unit, so the two orders meet a different member first — and complain
+    // about a different one. That is the whole reason this file carries its own
+    // comparator instead of calling `Array#sort`.
+    //
+    // Both members are unreadable, so the NAME in the refusal is what the order
+    // decides; each carries an ASCII tag so the assertion does not depend on how
+    // an exotic character survives being quoted into a message.
+    const junk = new TextEncoder().encode('{')
+    const zip = utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      ['manifests/\u{1F600}-emoji.json', junk],
+      ['manifests/￿-ffff.json', junk],
+    ])
+    try {
+      parseBundle(zip)
+      throw new Error('expected parseBundle to refuse an unreadable manifest member')
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleError)
+      // Code point order meets `U+FFFF` first. A UTF-16 sort names the emoji.
+      expect((error as BundleError).message).toContain('-ffff')
+      expect((error as BundleError).message).not.toContain('-emoji')
+    }
+  })
+})
+
+// Duplicate member NAMES are already refused by the container reader. Two
+// DISTINCT members that declare one issuer are the same attack a level up: the
+// archive names an issuer twice and the importer keeps whichever it happened to
+// read last, so the key list a receipt is checked against depends on member
+// order rather than on anything the bundle states. The reference importer makes
+// the same refusal, in the same words.
+describe('parseBundle refuses semantic manifest duplicates', () => {
+  const manifestFor = (issuer: string, version: bigint): Uint8Array => {
+    const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
+    const real = Object.keys(d.manifests as JsonObject)[0]
+    const km = (d.manifests as JsonObject)[real] as JsonObject
+    return canonicalBytes({
+      issuer,
+      key_manifests: [{ ...km, issuer, manifest_version: version }],
+      artifact_manifests: [],
+    } as JsonObject)
+  }
+
+  it('refuses two different manifest members that claim one issuer', () => {
+    const issuer = 'store.example.com'
+    const zip = utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      ['manifests/a.json', manifestFor(issuer, 1n)],
+      ['manifests/b.json', manifestFor(issuer, 2n)],
+      legalEntry(),
+    ])
+    expect(() => parseBundle(zip)).toThrow(/one issuer in more than one manifest member/)
+  })
+
+  it('still accepts two manifest members that claim different issuers', () => {
+    // The refusal above must be a limit and not a ban: a bundle carrying two
+    // sellers' key lists is the ordinary shape of a library.
+    const zip = utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      ['manifests/a.json', manifestFor('store.example.com', 1n)],
+      ['manifests/b.json', manifestFor('other.example.com', 1n)],
+      legalEntry(),
+    ])
+    const { trustStore } = parseBundle(zip)
+    expect(Object.keys(trustStore.manifests).sort()).toEqual([
+      'other.example.com',
+      'store.example.com',
+    ])
+  })
+
+  it('lets one member carry an issuer twice in its own key_manifests', () => {
+    // The chain of a single issuer's manifest versions lives INSIDE one member,
+    // and that is the shape the trust store is built from. Refusing it would
+    // break the rotation the chain exists to record.
     const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
     const issuer = Object.keys(d.manifests as JsonObject)[0]
     const km = (d.manifests as JsonObject)[issuer] as JsonObject
-    const blob = (version: bigint): Uint8Array =>
-      canonicalBytes({
-        issuer,
-        key_manifests: [{ ...km, manifest_version: version }],
-        artifact_manifests: [],
-      } as JsonObject)
+    const blob = canonicalBytes({
+      issuer,
+      key_manifests: [{ ...km, manifest_version: 1n }, { ...km, manifest_version: 2n }],
+      artifact_manifests: [],
+    } as JsonObject)
     const zip = utf8Zip([
       [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
-      ['manifests/\u{1F600}.json', blob(1n)],
-      ['manifests/￿.json', blob(2n)],
+      ['manifests/only.json', blob],
+      legalEntry(),
     ])
-    // Code point order reads the `U+FFFF` member first and the emoji member
-    // last, so version 1 is the one kept. A UTF-16 sort keeps version 2.
-    expect((parseBundle(zip).trustStore.manifests[issuer] as JsonObject)['manifest_version']).toBe(1n)
+    const { trustStore } = parseBundle(zip)
+    expect((trustStore.manifests[issuer] as JsonObject)['manifest_version']).toBe(2n)
+    expect(trustStore.chains?.[issuer]).toHaveLength(2)
+  })
+
+  it('does not count a member it skips as a claim on an issuer', () => {
+    // An unshaped blob contributes no issuer at all — the reference importer
+    // skips it — so it cannot collide with the member that does.
+    const issuer = 'store.example.com'
+    const zip = utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      ['manifests/unshaped.json', canonicalBytes({ issuer: 1n } as unknown as JsonObject)],
+      ['manifests/real.json', manifestFor(issuer, 1n)],
+      legalEntry(),
+    ])
+    expect(Object.keys(parseBundle(zip).trustStore.manifests)).toEqual([issuer])
   })
 })
 
