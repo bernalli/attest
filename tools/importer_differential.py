@@ -19,6 +19,14 @@ evidence each one produced. It asks the browser side twice: once at
 take. A container that never reaches the parser is invisible to a differential
 that only asks the parser.
 
+Both browser entry points are reached THROUGH the admission boundary the two
+shipped surfaces put in front of them: a container is refused on the size it
+declares before any copy of it is made. That order is what §14.4 asks for, and
+a runner that materialises the bytes and then consults the bound has already
+spent what the bound exists to protect — so it cannot tell an importer that
+holds the order from one that lost it. The stored-floor family is where the
+difference is visible: the file declares a gigabyte and carries a hole.
+
 Every bound, refusal class and member family below is written out from the
 specification, never imported from either implementation. A generator that
 takes its expectations from the code it is meant to judge cannot find the place
@@ -42,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import random
 import re
@@ -170,6 +179,11 @@ class Vector:
     #: A `.private.attest` sibling, for the one property §14.4 states about a
     #: pair rather than about a container.
     private: bytes | None = None
+    #: When set, the file on disk is extended to this length with a hole after
+    #: `attest` has been written. What it costs is a few kilobytes; what it
+    #: DECLARES is this size, which is the quantity §14.4's stored bound is
+    #: measured on and the only one a surface may consult before it copies.
+    sparse_to: int | None = None
     #: True when the archive exceeds a §14.4 floor on some axis. Above the
     #: floor the specification permits one importer to report `resource-limit`
     #: where another reads on, so a divergence there is recorded and marked
@@ -504,18 +518,16 @@ def family_central_order() -> list[Vector]:
     """The directory need not list members in the order they were laid out.
     One example proves nothing here — a reader can be right about one
     permutation and wrong about the next — so every permutation of the sound
-    bundle's records is fed through."""
+    bundle's records is fed through.
+
+    Enumerated rather than listed: a hand-written table of orderings is a
+    sample that calls itself exhaustive, and this one was, covering a quarter
+    of the orderings of four records under a docstring claiming all of them.
+    `itertools.permutations` cannot drift from the member count, so the claim
+    holds as the sound bundle grows.
+    """
     vectors: list[Vector] = []
-    size = len(sound_entries())
-    permutations = [
-        [size - 1 - index for index in range(size)],
-        [1, 0, 3, 2],
-        [3, 0, 1, 2],
-        [0, 2, 1, 3],
-        [2, 3, 0, 1],
-        [1, 2, 3, 0],
-    ]
-    for order in permutations:
+    for order in itertools.permutations(range(len(sound_entries()))):
         rank = {position: place for place, position in enumerate(order)}
         vectors.append(
             _vector(
@@ -836,6 +848,36 @@ def family_cap_boundary() -> list[Vector]:
     return vectors
 
 
+def family_stored_floor() -> list[Vector]:
+    """§14.4's stored bound, on a container that DECLARES more than the floor.
+
+    The floor is a gigabyte, and no run can afford a gigabyte of content per
+    archive on both sides. It can afford the DECLARATION. A file whose length
+    is one byte past the floor and whose tail is a hole costs a few kilobytes
+    on disk and still reports the size a surface has to refuse it on, because
+    the size of a regular file is metadata and asking for it reads none of it.
+
+    That is what makes this vector a measurement of the order rather than of
+    the answer. Both importers refuse it — the reference one from `os.fstat`
+    before it takes its snapshot, the browser one from the size the file
+    declares before it materialises anything — so the outcome class alone
+    cannot tell an importer that consults the size from one that copies a
+    gigabyte and then reports a limit. What separates them is the spend, and
+    an implementation that spends it is not merely slow here: it has already
+    paid exactly what the bound exists to protect.
+    """
+    return [
+        Vector(
+            family="stored-floor",
+            name="declares-one-past-the-floor",
+            attest=build(Archive(entries=sound_entries())),
+            sparse_to=FLOOR_STORED_BYTES + 1,
+            above_floor=True,
+            note="refused on the size it declares, before a byte of it is read",
+        )
+    ]
+
+
 def family_intake_route() -> list[Vector]:
     """§14.1 makes a `.attest` a container. Every vector here IS one; what
     varies is whether the leading bytes announce it. An importer that decides
@@ -930,6 +972,7 @@ DETERMINISTIC_FAMILIES: dict[str, Callable[[], list[Vector]]] = {
     "semantic-duplicates": family_semantic_duplicates,
     "legal-hash": family_legal_hash,
     "cap-boundary": family_cap_boundary,
+    "stored-floor": family_stored_floor,
     "intake-route": family_intake_route,
     "not-a-container": family_not_a_container,
     "no-receipts": family_no_receipts,
@@ -1205,7 +1248,15 @@ def python_projection(attest: Path, private: Path | None = None, **caps: int) ->
             {"id": receipt_id, "sha256": _canonical_digest(imported.proofs[receipt_id])}
             for receipt_id in sorted(imported.proofs)
         ],
-        "legal": sorted(imported.legal_texts),
+        # The member set AND the binding each member stands on: the digest the
+        # member was named by, beside the digest of the bytes kept under that
+        # name. §14.1 makes the two the same value; comparing the pair is how
+        # an importer that admitted the right name over the wrong bytes shows
+        # up as a divergence rather than as an equal-looking list of names.
+        "legal": [
+            {"digest": digest, "sha256": hashlib.sha256(imported.legal_texts[digest]).hexdigest()}
+            for digest in sorted(imported.legal_texts)
+        ],
     }
 
 
@@ -1261,19 +1312,22 @@ def ts_projections(bundle: Path, requests: list[dict[str, Any]]) -> list[dict[st
 # Comparison
 # ---------------------------------------------------------------------------
 
-#: Fields the projection carries but does not compare, with the reason. The
-#: browser importer reads the `legal/` family and keeps none of it, so it has
-#: no answer to hold against the reference importer's. The BEHAVIOUR that
-#: difference produces is compared in full — a legal member whose name lies
-#: about its content changes the outcome class, and the class is compared — so
-#: nothing is hidden by leaving the retained texts out of the field-by-field
-#: comparison; what would be hidden is the opposite, a standing difference
-#: reported once per archive.
-UNCOMPARED_FIELDS: dict[str, str] = {
-    "legal": "the browser importer retains no legal text, so it has no value to compare",
+#: Fields narrowed out of BOTH sides on the intake road, with the reason. What
+#: that door hands a caller is one verify job per receipt; a job carries an
+#: envelope, a trust store and the evidence keyed to that receipt, and nothing
+#: else. Comparing a field the door's contract does not carry would report the
+#: shape of the interface once per archive rather than a disagreement about the
+#: archive — and a standing difference reported every time is how a runner
+#: teaches its reader to stop looking. The parser road, where both importers do
+#: hold the value, compares it in full.
+NARROWED_ON_THE_INTAKE_ROAD: dict[str, str] = {
+    "legal": (
+        "a verify job carries an envelope, a trust store and its evidence — the bundle's "
+        "legal members are not part of what the door hands back, on either side"
+    ),
 }
 
-COMPARED_FIELDS = ("receipts", "issuers", "proofs")
+COMPARED_FIELDS = ("receipts", "issuers", "proofs", "legal")
 
 
 def matched_proofs_only(projection: dict[str, Any]) -> dict[str, Any]:
@@ -1292,6 +1346,22 @@ def matched_proofs_only(projection: dict[str, Any]) -> dict[str, Any]:
     ids = {entry["id"] for entry in projection.get("receipts", [])}
     narrowed = dict(projection)
     narrowed["proofs"] = [entry for entry in projection.get("proofs", []) if entry["id"] in ids]
+    return narrowed
+
+
+def door_contract_only(projection: dict[str, Any]) -> dict[str, Any]:
+    """The projection with the fields the application door does not carry
+    removed entirely — not emptied.
+
+    Removed, because an empty list is an answer: it says the importer kept
+    nothing. The door kept nothing and said nothing, and a comparison that
+    cannot tell those apart would read one side's silence as the other side's
+    inventory. Applied to both sides, so nothing either of them can see is
+    dropped from only one.
+    """
+    narrowed = dict(projection)
+    for name in NARROWED_ON_THE_INTAKE_ROAD:
+        narrowed.pop(name, None)
     return narrowed
 
 
@@ -1419,11 +1489,12 @@ def run_pair_family(work: Path, keep: Path | None) -> list[Divergence]:
 #: Axes of §14.4 this runner does not reach, and why. Printed on every run, so
 #: a green result is never read as coverage it does not have.
 UNREACHED: dict[str, str] = {
-    "stored size of the container": (
-        f"the floor is {FLOOR_STORED_BYTES} bytes, and reaching it means writing a container "
-        "of that size and handing it whole to both sides. The pair family exercises the "
-        "bound's shape at a declared, scaled value instead; the floor's own value is not "
-        "measured here."
+    "stored size of the container, as content": (
+        f"the floor is {FLOOR_STORED_BYTES} bytes. The DECLARED reading of that axis is "
+        "reached by the stored-floor family, on a container whose length is one byte past "
+        "the floor and whose tail is a hole; a container carrying that much CONTENT would "
+        "have to be written and handed whole to both sides, which is not affordable here. "
+        "The pair family exercises the bound's shape across a pair at a scaled value."
     ),
     "decompressed size produced by the whole container": (
         "the declared reading of that axis is exercised at the floor and one byte past it; "
@@ -1441,7 +1512,15 @@ def _describe(projection: dict[str, Any]) -> str:
     receipts = ",".join(entry["id"] for entry in projection.get("receipts", []))
     issuers = ",".join(entry["issuer"] for entry in projection.get("issuers", []))
     proofs = ",".join(entry["id"] for entry in projection.get("proofs", []))
-    return f"accept receipts=[{receipts}] issuers=[{issuers}] proofs=[{proofs}]"
+    # `None` and an empty list are different answers here — a side that cannot
+    # say, and a side that kept nothing — so they read differently.
+    kept = projection.get("legal")
+    legal = (
+        "(not carried on this road)"
+        if kept is None
+        else "[" + ",".join(f"{entry['digest']}->{entry['sha256']}" for entry in kept) + "]"
+    )
+    return f"accept receipts=[{receipts}] issuers=[{issuers}] proofs=[{proofs}] legal={legal}"
 
 
 def report(
@@ -1479,8 +1558,8 @@ def report(
         print(f"  {divergence.family}/{divergence.vector} on {', '.join(divergence.fields)}")
 
     print("canonical projection — compared: outcome class, then " + ", ".join(COMPARED_FIELDS))
-    for name, reason in UNCOMPARED_FIELDS.items():
-        print(f"  not compared: {name} — {reason}")
+    for name, reason in NARROWED_ON_THE_INTAKE_ROAD.items():
+        print(f"  compared on the parser road only: {name} — {reason}")
     print("§14.4 axes this run does not reach:")
     for axis, reason in UNREACHED.items():
         print(f"  {axis} — {reason}")
@@ -1499,6 +1578,22 @@ def collect(families: list[str], count: int, seed: int) -> list[Vector]:
         elif family == MUTATION_FAMILY:
             vectors.extend(family_mutation(count, seed))
     return vectors
+
+
+def _materialise(path: Path, vector: Vector) -> None:
+    """Write a vector's file, hole and all.
+
+    A vector that declares more than it carries is written and then extended:
+    `truncate` past the end of a file leaves a hole, so what the filesystem
+    reports as the length is the declared size while what it spends is the few
+    kilobytes actually written. Reproducing the vector this way rather than
+    copying it is also why a kept divergence stays small — a copy would read
+    the hole back as zeroes and write every one of them out.
+    """
+    path.write_bytes(vector.attest)
+    if vector.sparse_to is not None:
+        with path.open("r+b") as handle:
+            handle.truncate(vector.sparse_to)
 
 
 def _tally(outcomes: dict[str, dict[str, int]], side: str, projection: dict[str, Any]) -> None:
@@ -1520,7 +1615,7 @@ def run(families: list[str], count: int, seed: int, keep: Path | None) -> int:
         requests: list[dict[str, Any]] = []
         for index, vector in enumerate(vectors):
             path = work / f"{index:06d}.attest"
-            path.write_bytes(vector.attest)
+            _materialise(path, vector)
             paths.append(path)
             requests.append({"path": str(path), "fileName": INTAKE_FILE_NAME, "op": "parse"})
             requests.append({"path": str(path), "fileName": INTAKE_FILE_NAME, "op": "intake"})
@@ -1536,8 +1631,8 @@ def run(families: list[str], count: int, seed: int, keep: Path | None) -> int:
                 ("browser parseBundle", reference, parsed),
                 (
                     f"browser intake({INTAKE_FILE_NAME})",
-                    matched_proofs_only(reference),
-                    matched_proofs_only(intook),
+                    door_contract_only(matched_proofs_only(reference)),
+                    door_contract_only(matched_proofs_only(intook)),
                 ),
             ):
                 fields = compare(mine, other)
@@ -1573,7 +1668,7 @@ def run(families: list[str], count: int, seed: int, keep: Path | None) -> int:
                 if keep is not None:
                     keep.mkdir(parents=True, exist_ok=True)
                     stem = f"{vector.family}--{vector.name}"
-                    shutil.copy2(paths[index], keep / f"{stem}.attest")
+                    _materialise(keep / f"{stem}.attest", vector)
                     (keep / f"{stem}.json").write_text(
                         json.dumps(
                             {
