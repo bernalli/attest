@@ -493,13 +493,7 @@ _PRIVATE_MSG = (
 
 
 class _SnapshotBudget:
-    """Bound the bytes copied into stable storage while snapshotting containers.
-
-    A snapshot is a copy, and an unbounded copy of an attacker-sized file would
-    be a denial of service in place of the one the snapshot removes. One import
-    holds one budget, and the `.attest` and its `.private.attest` sibling spend
-    it together — the same rule the decompression budget already follows.
-    """
+    """Bound one container's stored bytes while taking its stable snapshot."""
 
     __slots__ = ("max_bytes", "spent")
 
@@ -604,8 +598,8 @@ def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterat
     arrangement on Linux — the file IS memory and the bound is a bound on RAM.
     Whoever sets that bound is therefore choosing, on such a host, how much
     memory one import may occupy, and the lever is the caller's:
-    `import_bundle(max_total_bytes=...)` sets it, and a host with less room than
-    the default should say so there. Nothing here picks the directory — the
+    `import_bundle(max_container_bytes=...)` sets it, and a host with less room
+    than the default should say so there. Nothing here picks the directory — the
     platform's temporary location does — so no promise is made about what backs
     it, none being keepable everywhere this runs.
 
@@ -613,7 +607,7 @@ def _open_container(path: Path, budget: _SnapshotBudget | None = None) -> Iterat
     container rather than an OSError.
     """
     if budget is None:
-        budget = _SnapshotBudget(_MAX_TOTAL_BYTES)
+        budget = _SnapshotBudget(_MAX_CONTAINER_BYTES)
     # What the path names is settled before a byte is read from it, and the
     # handle is taken without blocking so that it can be settled at all: opening
     # a FIFO waits for a writer who may never arrive, so `open(path, "rb")` is
@@ -792,6 +786,7 @@ def import_bundle(
     max_member_bytes: int = _MAX_MEMBER_BYTES,
     max_total_bytes: int = _MAX_TOTAL_BYTES,
     max_entries: int = _MAX_ENTRIES,
+    max_container_bytes: int = _MAX_CONTAINER_BYTES,
 ) -> ImportedBundle:
     """Reconstruct receipts, a working `verify.TrustStore`, artifact
     manifests and legal texts from a `.attest` (and, if given, its
@@ -801,16 +796,17 @@ def import_bundle(
     upgraded to `"verified"`.
 
     `max_member_bytes`, `max_total_bytes` and `max_entries` are keyword-only
-    zip-bomb decompression caps (§2.1), each defaulting to its module
-    constant: a per-member cap on bytes actually streamed out of one zip
-    entry, an aggregate cap on the running total decompressed across every
-    member read during this call (`.attest` and, when given, `.private.attest`
-    share one budget), and a cap on the central directory's entry count.
-    Exceeding any of them raises `BundleError` rather than importing a
-    possible bomb. `max_total_bytes` bounds one quantity more: the bytes this
-    importer will copy in order to read a container at all (see
-    `_open_container`), so an embedder who tightens the cap tightens the copy
-    with it rather than leaving it at the module default.
+    zip-bomb decompression caps (§2.1), each defaulting to its module constant:
+    a per-member cap on bytes actually streamed out of one zip entry, an
+    aggregate cap on the running total decompressed across every member read
+    during this call (`.attest` and, when given, `.private.attest` share one
+    budget), and a cap on each central directory's entry count. Exceeding any
+    of them raises `BundleError` rather than importing a possible bomb.
+
+    `max_container_bytes` is the separate stored-size ceiling for the stable
+    snapshot copied before a container is read (see `_open_container`). It is
+    applied independently to the `.attest` and its `.private.attest` sibling,
+    so a pair is accepted when each container is within this ceiling.
     """
     receipts: list[dict[str, Any]] = []
     seen_receipt_ids: set[str] = set()
@@ -825,27 +821,10 @@ def import_bundle(
     # salts read so a hostile .attest/.private.attest pair cannot each spend up
     # to max_total_bytes and together decompress 2x the aggregate ceiling.
     budget = container.ReadBudget(max_member_bytes, max_total_bytes)
-    # The snapshot bound is provisional and shares the aggregate cap on purpose,
-    # so whoever settles the acceptance floor moves one number rather than two.
-    # It is the caller's cap and not the module constant behind it: an embedder
-    # who tightens `max_total_bytes` is tightening what this importer will read,
-    # and a bound that ignored the argument would leave the copy at a gigabyte
-    # while the documented ceiling said otherwise.
-    # It is a bound on COMPRESSED input standing in for a cap written
-    # for DECOMPRESSED output, and the next hand on this number must not read
-    # the two as one: a file over this bound is NOT necessarily over the
-    # decompression cap. Every byte of framing widens the gap — local and
-    # central headers, member names, extra fields — so an archive whose members
-    # decompress to exactly the cap is already over this bound by its framing
-    # alone, and one carrying long names is over it by much more. In that band
-    # an archive is refused here that the aggregate budget alone would have
-    # accepted, and the refusal borrows a sentence naming the decompression cap
-    # that is, there, not the reason. It is a bound and not a verdict about the
-    # content; the acceptance floor being settled elsewhere is what will give
-    # this quantity a cap and a refusal of its own.
-    snapshot_budget = _SnapshotBudget(max_total_bytes)
-
-    with _open_container(attest_path, snapshot_budget) as buf:
+    # Stored size and inflated size are independent quantities. The inflated
+    # budget above is shared across both halves of the import, while each
+    # container gets the full stored-size ceiling required by section 14.4.
+    with _open_container(attest_path, _SnapshotBudget(max_container_bytes)) as buf:
         members = _members(
             buf,
             max_entries=max_entries,
@@ -953,8 +932,9 @@ def import_bundle(
     salts: dict[str, bytes] = {}
     if private_path is not None:
         # The private half legitimately carries the salts the shareable half
-        # must never hold: same reader, same budget, no private-material refusal.
-        with _open_container(private_path, snapshot_budget) as private_buf:
+        # must never hold: same reader, same decompression budget, no
+        # private-material refusal.
+        with _open_container(private_path, _SnapshotBudget(max_container_bytes)) as private_buf:
             private_members = _members(
                 private_buf,
                 max_entries=max_entries,

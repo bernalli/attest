@@ -723,10 +723,10 @@ def test_the_snapshot_of_a_container_is_bounded(tmp_path: Path) -> None:
             pass  # pragma: no cover — the bound refuses before the body runs
 
 
-def test_the_snapshot_bound_is_shared_by_a_container_and_its_private_sibling(
+def test_the_snapshot_bound_is_applied_to_each_container(
     tmp_path: Path,
 ) -> None:
-    """One import, one bound: a hostile pair cannot spend it twice."""
+    """Each container may independently reach the stored-size floor."""
     receipt_id = "01HZX0000000000000000000AA"
     public = _make_raw_zip(tmp_path, _minimal_receipt_members(), "snapshot-budget.attest")
     private = _make_raw_zip(
@@ -737,8 +737,8 @@ def test_the_snapshot_bound_is_shared_by_a_container_and_its_private_sibling(
     limit = max(public.stat().st_size, private.stat().st_size)
     assert public.stat().st_size + private.stat().st_size > limit
 
-    with pytest.raises(bundle.BundleError, match="limit this importer will copy"):
-        bundle.import_bundle(public, private, max_total_bytes=limit)
+    imported = bundle.import_bundle(public, private, max_container_bytes=limit)
+    assert imported.salts[receipt_id] == SALT_A
 
 
 def test_import_shares_the_aggregate_budget_with_the_private_sibling(
@@ -746,13 +746,10 @@ def test_import_shares_the_aggregate_budget_with_the_private_sibling(
 ) -> None:
     """One import, one aggregate cap, spent by both halves of a hostile pair.
 
-    The receipt is padded with something that compresses, and that is not
-    decoration: `max_total_bytes` bounds two different quantities — the bytes
-    members inflate to, which is what this test is about, and the bytes copied
-    to read a container at all. A cap below the archives' own size would be
-    refused by the second before the first was ever spent, and this test would
-    silently stop measuring what it names. Padding that inflates puts the pair
-    comfortably inside the copy bound while the aggregate is what runs out.
+    The receipt is padded with compressible content so the pair's stored bytes
+    remain below the aggregate number while its inflated bytes cross that
+    number. The stored-size ceiling is separate; this test measures only the
+    decompression budget shared across both containers.
     """
     receipt_id = "01HZX0000000000000000000AA"
     receipt = canon.canonical_bytes({"payload": {"receipt_id": receipt_id, "note": "a" * 20_000}})
@@ -771,7 +768,7 @@ def test_import_shares_the_aggregate_budget_with_the_private_sibling(
         "shared-budget.private.attest",
     )
     assert public.stat().st_size + private.stat().st_size < limit, (
-        "the pair must fit inside the copy bound, so only the aggregate cap can refuse"
+        "stored bytes must stay below the number used for the aggregate cap"
     )
 
     with pytest.raises(bundle.BundleError, match="aggregate cap"):
@@ -1588,7 +1585,7 @@ def test_the_snapshot_bound_says_what_it_measures_and_not_what_it_does_not(
     assert hostile.stat().st_size > cap, "and the file must be over the snapshot bound"
 
     with pytest.raises(bundle.BundleError) as refusal:
-        bundle.import_bundle(hostile, max_member_bytes=cap, max_total_bytes=cap)
+        bundle.import_bundle(hostile, max_container_bytes=cap)
     message = str(refusal.value)
     assert "will copy in order to read it" in message
     # The refusal must not name a quantity this archive is nowhere near.
@@ -1694,10 +1691,9 @@ def test_the_snapshot_promises_a_bound_and_not_a_flight_from_memory() -> None:
 
 
 def test_the_snapshot_bound_honours_the_cap_its_caller_gave(tmp_path: Path) -> None:
-    """An embedder who tightens `max_total_bytes` tightens the copy with it.
+    """An embedder who tightens `max_container_bytes` tightens the copy with it.
 
-    The parameter is documented as the aggregate cap and defaults to the module
-    constant; a snapshot bound built from that constant instead of from the
+    A snapshot bound built from the module constant instead of from the
     argument leaves an embedder who asked for a few kilobytes copying up to a
     gigabyte, and reading the refusal for something else entirely — here, a
     verdict on a receipt inside an archive they never wanted read that far.
@@ -1710,7 +1706,7 @@ def test_the_snapshot_bound_honours_the_cap_its_caller_gave(tmp_path: Path) -> N
         for index in range(40):
             zf.writestr(f"pad/{index:04d}{'n' * 1200}.bin", b"x")
     assert hostile.stat().st_size > cap
-    assert hostile.stat().st_size < bundle._MAX_TOTAL_BYTES, (
+    assert hostile.stat().st_size < bundle._MAX_CONTAINER_BYTES, (
         "and comfortably inside the module default, so only the argument can refuse it"
     )
 
@@ -1719,7 +1715,7 @@ def test_the_snapshot_bound_honours_the_cap_its_caller_gave(tmp_path: Path) -> N
     assert len(bundle.import_bundle(hostile).receipts) == 1
 
     with pytest.raises(bundle.BundleError) as refusal:
-        bundle.import_bundle(hostile, max_member_bytes=cap, max_total_bytes=cap)
+        bundle.import_bundle(hostile, max_container_bytes=cap)
 
     # The number in the sentence is the caller's, which is how it is known the
     # caller's cap and not the module constant did the refusing.
@@ -1840,7 +1836,7 @@ def test_a_refusal_to_read_is_a_different_outcome_from_a_refusal_of_the_bytes(
     oversized = tmp_path / "oversized.attest"
     oversized.write_bytes(b"x" * 65)
     with pytest.raises(bundle.BundleTooLargeError):
-        bundle.import_bundle(oversized, max_total_bytes=64)
+        bundle.import_bundle(oversized, max_container_bytes=64)
 
     # And a caller who does not care about the distinction is unaffected.
     assert issubclass(bundle.BundleTooLargeError, bundle.BundleError)
@@ -1868,4 +1864,4 @@ def test_a_container_over_the_bound_is_refused_without_being_copied(
 
     monkeypatch.setattr(bundle.tempfile, "TemporaryFile", no_copies)
     with pytest.raises(bundle.BundleTooLargeError, match="will copy in order to read it"):
-        bundle.import_bundle(oversized, max_total_bytes=1024)
+        bundle.import_bundle(oversized, max_container_bytes=1024)
