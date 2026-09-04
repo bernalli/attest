@@ -4,6 +4,22 @@ All notable changes to `attest-verifier` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`sha256Hex`, the hash this package already computes, now exported.** A
+  caller that reads an attest bundle has to check one thing this package did
+  not expose: that a `legal/<sha256>.txt` member is the text its name claims.
+  Doing that needs a SHA-256 the caller can run without waiting — the bundle
+  parser is synchronous, and the browser's own digest is not — so the choice
+  was between making a whole parsing path asynchronous and publishing the
+  function this package has been using internally for every other digest it
+  checks. It is the second: `sha256Hex(bytes)` returns the lowercase hex digest,
+  from the same audited dependency and the same call the revocation, anchor,
+  transfer and authority paths already make. Purely additive; nothing else
+  changes.
+
 ## [0.9.1] — 2026-09-01
 
 ### Changed

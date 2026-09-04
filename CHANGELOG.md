@@ -6,6 +6,43 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`import_bundle` now refuses containers it used to accept: the reference
+  importer stops where the interoperable floor stops.** The entry-count ceiling
+  falls from 100,000 members to 10,000, and the aggregate decompression ceiling
+  from 1 GiB to 256 MiB — the two values the specification's container resource
+  floor names, and the two the browser verifier already applied. Until now the
+  two reference importers disagreed about which files exist: an honest archive
+  of 20,000 empty members, a couple of megabytes, was imported by this package
+  and refused in the browser. The specification permits that disagreement above
+  the floor and says so, but it also says that two conforming verifiers
+  reaching two verdicts on one file is the proposition it exists to deny, so
+  the disagreement was worth more than the capacity. The floor was already the
+  browser profile, and the browser cannot be raised to meet this package: it
+  runs on the buyer's phone, where a gigabyte of decompression is an
+  out-of-memory crash instead of a clean refusal. **This is a narrowing of
+  accepted input on a published CLI.** `attest import` refuses an archive above
+  either new ceiling that it would have imported before, with
+  `BundleTooLargeError` and the `resource-limit` sense that says the container
+  was not read rather than that it is bad. An embedder who needs the old
+  capacity still has it: `max_entries` and `max_total_bytes` remain arguments,
+  and only their defaults moved. No bundle above the floor is known to exist,
+  and none can be issued by this package, so the regression is reachable only
+  by a caller who builds one.
+
+- **A bundle that names one issuer in two manifest members is refused, in both
+  importers, instead of one of the two silently winning.** Duplicate ZIP member
+  names were already refused, but two differently-named members — `manifests/a.json`
+  and `manifests/b.json` — each declaring the same `issuer` were reduced by
+  assignment, so the member that sorted last replaced the other and the archive
+  was imported as though the first had never been there. Which one won was
+  decided by the member name, which is a string the sender chose, and nothing
+  reported that a choice had been made at all. Both importers now refuse the
+  archive with the same sentence, `bundle lists one issuer in more than one
+  manifest member`. A bundle carrying one manifest per issuer, which is what
+  this package writes, is unaffected.
+
 ### Added
 
 - **`BundleTooLargeError`, so a caller can tell "I did not read this" from "this
@@ -20,7 +57,73 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it derives from `BundleError`, so a caller who does not care about the
   distinction catches exactly what it caught before.
 
+- **`import_bundle(max_container_bytes=...)`, so the size of a container as
+  stored has a lever of its own.** The bytes this importer copies in order to
+  read a container at all used to be bounded by `max_total_bytes`, a cap
+  written for decompressed output: an embedder who tightened one tightened the
+  other, and a file over the copy bound earned a refusal that named the
+  decompression cap, which was not the reason. Stored size and inflated size
+  are now two arguments because they are two quantities, and the new one
+  defaults to the 1 GiB the specification's floor names.
+
+- **The browser verifier bounds the container as stored, and bounds it before
+  it copies anything.** It applied the three decompression bounds and nothing
+  to the size of the file itself, while the page and the offline verifier read
+  the whole file into memory before the importer was asked anything — so a
+  refusal, when it came, came after the spending it exists to prevent. The
+  bound is now checked on the file's declared size at every door a file can
+  arrive through (drop, file picker, and the sample the demo fetches, which is
+  checked on `Content-Length` before its body is read), with a second check on
+  the bytes themselves for callers who arrive with a buffer already in hand. An
+  over-sized container is reported as declined — not read — and never as
+  invalid.
+
+- **The browser verifier checks that the legal texts a bundle carries are the
+  texts it names.** It read the `legal/<sha256>.txt` family and threw the bytes
+  away, so an archive whose legal member had a false name — a licence nobody
+  agreed to, under the digest of the licence they did — was imported here and
+  refused by the reference importer. It now recomputes the digest, refuses a
+  member whose name is not its own hash, and refuses a bundle that references a
+  hash no member supplies, in the same order and with the same sentences the
+  reference importer uses. `attest-verifier` gains one export for it,
+  `sha256Hex`, which is the hash function the package already used internally
+  for every other digest it checks.
+
+- **`tools/importer_differential.py`, an oracle that compares the two importers
+  as callers use them.** The container differential compares the two container
+  readers with the same bounds injected into both, which is why it stayed green
+  through every disagreement above: the readers agreed, and the importers
+  around them did not. The new oracle feeds one file to both packages at their
+  real defaults, through the same doors an application uses, and compares the
+  outcome class, the members, the receipts, the trust store and the
+  transparency proofs. It reproduces every disagreement listed in this release
+  and reports, on every run, the two axes it cannot reach on an ordinary
+  machine.
+
 ### Fixed
+
+- **A `.attest` and its `.private.attest` sibling, each within the stored-size
+  floor, were refused when imported together.** One import held one copy budget
+  and the two containers spent it between them, so a pair of 600 MiB files —
+  each of them well inside the ceiling, each importable on its own — failed at
+  the second file, reporting that a bound had been passed which neither of them
+  passed. The specification allows an importer to budget a pair together only
+  on the condition that such a pair stays accepted, which is the condition this
+  broke. Each container is now measured against the full ceiling on its own.
+  The decompression budget is still shared across the pair, deliberately: that
+  one is a bound on what the import produces, and a hostile pair could
+  otherwise inflate twice the aggregate ceiling between them.
+
+- **A `.attest` could reach the browser verifier without passing the container
+  reader at all.** The page decided whether a dropped file was an archive by
+  looking at its first two bytes, so a file named `.attest` that did not begin
+  with the ZIP signature was routed to the single-receipt path instead — where
+  it was parsed as a bare envelope, and could come back as a receipt job with
+  an empty trust store rather than as the refusal the reference importer gives
+  it. Two files in the shared container corpus do exactly that, and the desktop
+  verifier's own test for inheriting the container reader excluded them by the
+  same rule. The extension decides now: a file named `.attest` is a container,
+  and if it is not a readable one it is refused as a container.
 
 - **The browser verifier stopped reading the one member family that carries the
   deal.** Reading members on demand — only the ones a family claims — is what
@@ -32,10 +135,11 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   refused only by the reference importer — the same disagreement the canonical
   reader exists to close, arriving by the other door. The browser verifier now
   reads that family too, which also spends the shared decompression budget on
-  it, so the two agree about which archives are too large as well. It still
-  does not check that those bytes hash to the digest in the member name, nor
-  that every hash a receipt references is present; the reference importer does
-  both, and that half of the divergence is open.
+  it, so the two agree about which archives are too large as well. It now also
+  checks that those bytes hash to the digest in the member name, and that every
+  hash a receipt references is present — the other half of the same divergence,
+  closed above in this release rather than left open as this entry first
+  reported it.
 
 - **A bundle could hand the browser verifier a key manifest for an issuer it
   never named.** The trust store the web verifier builds while importing a
