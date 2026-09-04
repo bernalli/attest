@@ -33,9 +33,21 @@ export async function loadSample(
     fetch(`${baseUrl}demo-binding.json`),
   ])
   if (!bundleRes.ok || !bindingRes.ok) throw new Error('sample assets are missing from this deployment')
-  const declared = Number(bundleRes.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > maxStoredBytes)
-    throw new BundleTooLargeError(storedLimitMessage(declared, maxStoredBytes))
+  // Parsed as a decimal integer and compared as one, never through `Number`.
+  // A header of four hundred digits is a syntactically valid claim, and
+  // `Number` turns it into `Infinity` — which is not finite, so a guard written
+  // around `Number.isFinite` skips the refusal and fetches the body. The larger
+  // the lie, the more certainly it got through. `BigInt` has no such ceiling,
+  // and a header that is not a run of digits is not a claim this reads: it is a
+  // response that is not the one asked for.
+  const declaredText = bundleRes.headers.get('content-length')
+  if (declaredText !== null) {
+    if (!/^[0-9]+$/.test(declaredText))
+      throw new Error('sample bundle returned an invalid Content-Length')
+    const declared = BigInt(declaredText)
+    if (declared > BigInt(maxStoredBytes))
+      throw new BundleTooLargeError(storedLimitMessage(declared, maxStoredBytes))
+  }
   const bytes = new Uint8Array(await bundleRes.arrayBuffer())
   if (bytes.byteLength > maxStoredBytes)
     throw new BundleTooLargeError(storedLimitMessage(bytes.byteLength, maxStoredBytes))

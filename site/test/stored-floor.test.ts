@@ -222,6 +222,24 @@ describe('the sample is bounded at the network edge too', () => {
     expect(seen).toEqual([])
   })
 
+  it('refuses a declared decimal length too large for Number, before the body', async () => {
+    // The case a `Number`-based guard lets through, and it lets through the
+    // worst one: four hundred digits parse to Infinity, which is not finite, so
+    // a check for finiteness treats the largest possible claim as no claim at
+    // all and asks for the body anyway.
+    const seen: string[] = []
+    serving('9'.repeat(400), () => new Uint8Array(0), seen)
+    await expect(loadSample()).rejects.toThrow(BundleTooLargeError)
+    expect(seen).toEqual([])
+  })
+
+  it('refuses a Content-Length that is not a run of digits, without reading', async () => {
+    const seen: string[] = []
+    serving('not-a-number', () => new Uint8Array(0), seen)
+    await expect(loadSample()).rejects.toThrow(/invalid Content-Length/)
+    expect(seen).toEqual([])
+  })
+
   it('refuses a body over the limit even when the response declared nothing', async () => {
     const seen: string[] = []
     serving(null, () => new Uint8Array(64), seen)

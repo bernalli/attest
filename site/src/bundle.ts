@@ -53,7 +53,10 @@ const asBundleError = (e: ContainerError): BundleError =>
  * chose, on the same footing as a ZIP member name (see `quoted` below), and
  * this refusal needs none.
  */
-export const storedLimitMessage = (storedBytes: number, limit: number = MAX_STORED_BYTES): string =>
+export const storedLimitMessage = (
+  storedBytes: number | bigint,
+  limit: number = MAX_STORED_BYTES,
+): string =>
   `container is ${storedBytes} bytes, over the ${limit}-byte limit this verifier reads ` +
   'in order to open it — refusing to read an archive that large'
 
