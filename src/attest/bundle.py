@@ -860,6 +860,8 @@ def import_bundle(
                 issuer = blob.get("issuer")
                 if not isinstance(issuer, str):
                     continue
+                if issuer in key_manifests_by_issuer:
+                    raise BundleError("bundle lists one issuer in more than one manifest member")
                 raw_key_manifests = blob.get("key_manifests")
                 key_manifests_by_issuer[issuer] = (
                     [item for item in raw_key_manifests if isinstance(item, dict)]

@@ -916,6 +916,24 @@ def test_import_rejects_a_duplicate_in_any_member_family(tmp_path: Path) -> None
         bundle.import_bundle(hostile)
 
 
+def test_import_refuses_two_manifest_members_for_one_issuer(tmp_path: Path) -> None:
+    manifest = canon.canonical_bytes(
+        {"issuer": ISSUER, "key_manifests": [], "artifact_manifests": []}
+    )
+    hostile = _make_raw_zip(
+        tmp_path,
+        {
+            **_minimal_receipt_members(),
+            "manifests/a.json": manifest,
+            "manifests/b.json": manifest,
+        },
+        "duplicate-issuer.attest",
+    )
+
+    with pytest.raises(bundle.BundleError, match="one issuer in more than one"):
+        bundle.import_bundle(hostile)
+
+
 def test_import_rejects_a_duplicate_whose_two_entries_are_byte_identical(tmp_path: Path) -> None:
     """Identical bytes are still an ambiguous central directory: refuse, never guess."""
     receipt_id = "01HZX0000000000000000000AA"
