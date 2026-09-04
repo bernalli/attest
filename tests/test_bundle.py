@@ -9,6 +9,7 @@ single-receipt sharing unit for the email-attachment integration path.
 
 from __future__ import annotations
 
+import ast
 import errno
 import hashlib
 import html
@@ -699,14 +700,47 @@ def test_import_defaults_match_the_section_14_4_floor(tmp_path: Path) -> None:
     # defined: a signature that hardcoded a matching literal instead of naming
     # the constant would leave every assertion above green while the wiring
     # rotted underneath it. Only the entry count is reachable behaviourally
-    # here — the other three bounds would each cost hundreds of megabytes to
-    # cross — so the remaining three are tied to the signature instead of being
-    # asserted twice against the same literal.
-    defaults = inspect.signature(bundle.import_bundle).parameters
-    assert defaults["max_entries"].default == bundle._MAX_ENTRIES
-    assert defaults["max_member_bytes"].default == bundle._MAX_MEMBER_BYTES
-    assert defaults["max_total_bytes"].default == bundle._MAX_TOTAL_BYTES
-    assert defaults["max_container_bytes"].default == bundle._MAX_CONTAINER_BYTES
+    # here — crossing the other three costs hundreds of megabytes apiece — so
+    # the remaining three are tied to the signature instead.
+    #
+    # Read from the SOURCE and not from the evaluated signature, which is the
+    # distinction this test exists on: `inspect.signature` hands back the value
+    # a default evaluated to, so a counterfeit signature carrying the same four
+    # numbers as literals satisfies every comparison against the constants and
+    # proves nothing. What has to hold is that the default NAMES the constant,
+    # and only the syntax says that.
+    definition = ast.parse(inspect.getsource(bundle.import_bundle)).body[0]
+    assert isinstance(definition, ast.FunctionDef)
+
+    positional = [*definition.args.posonlyargs, *definition.args.args]
+    default_nodes: dict[str, ast.expr] = {
+        parameter.arg: default
+        for parameter, default in zip(
+            positional[len(positional) - len(definition.args.defaults) :],
+            definition.args.defaults,
+            strict=True,
+        )
+    }
+    default_nodes.update(
+        {
+            parameter.arg: default
+            for parameter, default in zip(
+                definition.args.kwonlyargs,
+                definition.args.kw_defaults,
+                strict=True,
+            )
+            if default is not None
+        }
+    )
+    for parameter, constant_name in {
+        "max_entries": "_MAX_ENTRIES",
+        "max_member_bytes": "_MAX_MEMBER_BYTES",
+        "max_total_bytes": "_MAX_TOTAL_BYTES",
+        "max_container_bytes": "_MAX_CONTAINER_BYTES",
+    }.items():
+        default = default_nodes[parameter]
+        assert isinstance(default, ast.Name), parameter
+        assert default.id == constant_name
 
 
 def test_import_caps_private_salts_json(tmp_path: Path) -> None:
