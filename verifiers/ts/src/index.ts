@@ -1,3 +1,6 @@
+import { sha256 } from '@noble/hashes/sha2'
+import { bytesToHex } from '@noble/curves/utils.js'
+
 export const ATTEST_VERSION = '0.1'
 export const SUPPORTED_ATTEST_VERSIONS = ['0.1', '0.2'] as const
 export { MAX_REVOCATION_RECORDS } from './revocation.js'
@@ -6,6 +9,25 @@ export type { VerificationResult, Disclosure, VerifyTransparencyOptions } from '
 export { loadsStrict, canonicalBytes, CanonError } from './canon.js'
 export type { JsonValue, JsonObject } from './canon.js'
 export type { TrustStore, KeyManifest, KeyEntry } from './manifests.js'
+
+/**
+ * SHA-256 over raw bytes, hex-encoded.
+ *
+ * Every other digest on this surface — `receiptCoreHash`, `grantHash`,
+ * `authorizationHash` — is taken over CANONICAL JSON, which is a question
+ * about a document. This one is about bytes exactly as they sit in a file,
+ * which is what a content-addressed member asks: v0.1 §14.1 names a legal text
+ * `legal/<sha256>.txt`, and an importer checks the name against the content it
+ * travelled with. The reference importer answers it with `hashlib.sha256`
+ * inline; an importer written against this package had no way to ask at all,
+ * so it skipped the check — and skipping it is a divergence about files both
+ * implementations must judge the same way.
+ *
+ * Synchronous, because the importers that ask are: WebCrypto's digest returns
+ * a promise, and reaching it would turn a whole chain of synchronous callers
+ * asynchronous for a hash this package already depends on.
+ */
+export const sha256Hex = (bytes: Uint8Array): string => bytesToHex(sha256(bytes))
 
 // Stage 2 (design doc "transparency/corroboration layer"): RFC 6962
 // Merkle-tree verification + closed transparency-log entry schemas + C2SP

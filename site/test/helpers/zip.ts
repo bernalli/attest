@@ -146,6 +146,11 @@ export function validEntries(): StoredEntry[] {
   return [
     [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
     [`manifests/${issuer}.json`, canonicalBytes(manifest)],
+    // The deal the receipt above refers to. An importer refuses a bundle that
+    // names a legal text it does not carry, so a set of entries called VALID
+    // has to carry it — without this the helper described an archive no
+    // exporter writes and no importer accepts.
+    legalEntry(),
     ['README.html', encoder.encode('<p>bundle readme</p>')],
   ]
 }

@@ -1,4 +1,4 @@
-import { loadsStrict } from 'attest-verifier'
+import { loadsStrict, sha256Hex } from 'attest-verifier'
 import { canonicalMembers, readMember, ReadBudget, ContainerError, MAX_STORED_BYTES } from './container.js'
 import type { Member, ContainerCode } from './container.js'
 import { neutralized } from './untrusted-text.js'
@@ -77,6 +77,13 @@ export interface ParsedBundle {
   // evidence is worth are the verifier's own configuration and never travel
   // in a bundle, which is the whole point of keeping the two apart.
   proofs: Record<string, JsonValue>
+  // The hash-bound legal texts the bundle carries, keyed by the digest each one
+  // hashes to (v0.1 §14.1's `legal/<sha256>.txt`). Kept rather than dropped for
+  // the reason the family exists: §9's promise is that the bundle preserves the
+  // DEAL, and a parser that verified the texts and then threw them away would
+  // leave every caller unable to show the terms it just proved intact. Keyed by
+  // a name the archive chose, so the store has no prototype (`bareStore`).
+  legalTexts: Record<string, Uint8Array>
 }
 
 const PRIVATE_MSG =
@@ -109,6 +116,19 @@ const MAX_QUOTED_MEMBER_CHARS = 60
 // diagnostic renderer: one rule, so the two cannot drift apart at the first
 // correction. This caller's only job is the in-band quoting and the cap.
 const quoted = (name: string): string => `"${neutralized(name, MAX_QUOTED_MEMBER_CHARS)}"`
+
+/** A content-address as it may appear in a message a person reads.
+ *
+ * A sha256 in hex is 64 characters of `[0-9a-f]`, which is four more than the
+ * cap above: quoting one would truncate the very string a holder needs whole to
+ * find the file that was tampered with. A value of that shape can neither end a
+ * quote nor write a sentence, so it is shown bare — the same reasoning that
+ * lets `receipt_id` be interpolated bare after it has been matched against its
+ * own grammar. Anything else claiming to be a digest is a member name like any
+ * other, and is quoted and neutralised as one.
+ */
+const HEX64_RE = /^[0-9a-f]{64}$/
+const digestLabel = (value: string): string => (HEX64_RE.test(value) ? value : quoted(value))
 
 /** A lookup table with no prototype, for every map this file keys by a name the
  * archive chose — issuers, receipt ids.
@@ -166,7 +186,7 @@ const RECEIPT_ID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
 // reference importer's `_receipt_payload_id`. A bundle is attacker-supplied and
 // the id is used as an identity, so accept only the ULID shape, never a
 // traversal component or a case/normalization variant of a sibling.
-function receiptPayloadId(name: string, bytes: Uint8Array): string {
+function receiptPayload(name: string, bytes: Uint8Array): { receiptId: string; payload: JsonObject | null } {
   let envelope: JsonObject | null
   try {
     envelope = asObject(loadsStrict(bytes))
@@ -177,7 +197,38 @@ function receiptPayloadId(name: string, bytes: Uint8Array): string {
   const receiptId = payload?.['receipt_id']
   if (typeof receiptId !== 'string' || !RECEIPT_ID_RE.test(receiptId))
     throw new BundleError(`receipt entry ${quoted(name)} has invalid receipt_id; expected uppercase ULID`)
-  return receiptId
+  // The payload travels with the id because the completeness pass below needs
+  // it, and parsing the envelope a second time to ask a second question would
+  // be two readings of one attacker-supplied document.
+  return { receiptId, payload }
+}
+
+/** Every hash-bound legal document this payload's terms depend on.
+ *
+ * Mirrors the reference importer's `_referenced_legal_hashes`, field for field:
+ * `license.legal_text_sha256`, which the schema requires, plus
+ * `survivability.mirror_policy_sha256` and `survivability.eol_commitment_sha256`
+ * when they are present and are strings. A malformed or missing block
+ * contributes no hashes rather than raising — deciding whether a payload is
+ * well-formed is the verifier's job, and this function only says which texts a
+ * well-formed one requires.
+ */
+function referencedLegalHashes(payload: JsonObject | null): string[] {
+  const hashes: string[] = []
+  if (payload === null) return hashes
+
+  const license = asObject(payload['license'])
+  const legalText = license?.['legal_text_sha256']
+  if (typeof legalText === 'string') hashes.push(legalText)
+
+  const survivability = asObject(payload['survivability'])
+  if (survivability !== null)
+    for (const field of ['mirror_policy_sha256', 'eol_commitment_sha256'] as const) {
+      const hash = survivability[field]
+      if (typeof hash === 'string') hashes.push(hash)
+    }
+
+  return hashes
 }
 
 function proofMemberReceiptId(name: string): string {
@@ -243,8 +294,10 @@ export function parseBundle(
   }
 
   const receipts: { receiptId: string; bytes: Uint8Array }[] = []
+  const payloads: (JsonObject | null)[] = []
   const keyManifestsByIssuer = new Map<string, JsonObject[]>()
   const proofs: Record<string, JsonValue> = bareStore()
+  const legalTexts: Record<string, Uint8Array> = bareStore()
 
   const receiptIds = new Set<string>()
 
@@ -252,11 +305,12 @@ export function parseBundle(
     const name = member.name
     if (name.startsWith('receipts/') && name.endsWith('.attest.json')) {
       const memberBytes = read(member)
-      const receiptId = receiptPayloadId(name, memberBytes)
+      const { receiptId, payload } = receiptPayload(name, memberBytes)
       if (receiptIds.has(receiptId))
         throw new BundleError(`bundle lists receipt_id ${receiptId} more than once`)
       receiptIds.add(receiptId)
       receipts.push({ receiptId, bytes: memberBytes })
+      payloads.push(payload)
     } else if (name.startsWith('manifests/') && name.endsWith('.json')) {
       let blob: JsonObject | null
       try {
@@ -278,20 +332,25 @@ export function parseBundle(
       const kms = Array.isArray(raw) ? raw.map(asObject).filter((m): m is JsonObject => m !== null) : []
       keyManifestsByIssuer.set(issuer, kms)
     } else if (name.startsWith('legal/') && name.endsWith('.txt')) {
-      // The reference importer READS this family, so a `legal/` member with a
-      // container-level defect — a deflate stream only one decoder accepts, a
-      // CRC that does not match, a member over a cap — earns a refusal there.
-      // Leaving it unread here did not make the two importers agree about which
-      // members exist; it made them disagree about which archives are readable
-      // at all, which is the same defect wearing the other hat. The bytes are
-      // read and dropped on purpose: this page does not yet check that they
-      // hash to the digest in the member name, nor that every hash a receipt
-      // references is present, and keeping them would suggest it did. Reading
-      // also spends the shared budget on this family, as the reference importer
-      // does, so the two agree on the aggregate decompression axis about which
-      // archives are too large as well. Not on the container as stored: this
-      // parser bounds nothing there, deliberately (v0.1 §14.4).
-      read(member)
+      // A legal text is named by the digest of its own bytes (v0.1 §14.1), and
+      // §9 is why: the bundle's promise is that it preserves the DEAL, so a
+      // text nobody can bind to its name preserves nothing. The reference
+      // importer hashes the member and refuses the archive when the two
+      // disagree — a structurally perfect zip with an honest CRC and one word
+      // of the terms changed is invisible to the container reader and caught
+      // here, which is the only place it can be caught.
+      //
+      // Reading also spends the shared budget on this family, as the reference
+      // importer does, so the two agree on the aggregate decompression axis
+      // about which archives are too large as well.
+      const digest = name.slice('legal/'.length, -'.txt'.length)
+      const content = read(member)
+      if (sha256Hex(content) !== digest)
+        throw new BundleError(
+          `legal text ${digestLabel(digest)} failed its own integrity check on import ` +
+            '— bundle is corrupt or tampered',
+        )
+      legalTexts[digest] = content
     } else if (name.startsWith('proofs/')) {
       const receiptId = proofMemberReceiptId(name)
       let evidence: JsonValue
@@ -310,6 +369,19 @@ export function parseBundle(
   if (receipts.length === 0)
     throw new BundleError('no receipts found inside this archive — is it really a .attest bundle?')
 
+  // Every legal hash referenced by any imported receipt must be present. The
+  // reference importer mirrors its own exporter's completeness pass here, so a
+  // stripped bundle cannot import as though it still preserved the deal — an
+  // archive can be shorn of its terms without touching a signature, and a
+  // receipt whose terms are gone is a receipt for nothing anyone can read.
+  for (const payload of payloads)
+    for (const digest of referencedLegalHashes(payload))
+      if (!Object.prototype.hasOwnProperty.call(legalTexts, digest))
+        throw new BundleError(
+          `bundle is missing legal text for referenced hash ${digestLabel(digest)} ` +
+            '— it cannot preserve the deal this receipt refers to',
+        )
+
   const mv = (m: JsonObject): bigint =>
     typeof m['manifest_version'] === 'bigint' ? (m['manifest_version'] as bigint) : 0n
   const manifests: Record<string, JsonObject> = bareStore()
@@ -323,5 +395,5 @@ export function parseBundle(
     chains[issuer] = ordered
   }
 
-  return { receipts, trustStore: { manifests, provenance, chains }, proofs }
+  return { receipts, trustStore: { manifests, provenance, chains }, proofs, legalTexts }
 }

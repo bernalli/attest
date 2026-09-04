@@ -8,6 +8,7 @@ import type { JsonObject } from 'attest-verifier'
 import { initApp, type AppHandle } from '../src/main.js'
 import { VECTORS_ROOT } from './helpers/vectors.js'
 import { pageBody } from './helpers/page.js'
+import { LEGAL_TEXT, LEGAL_DIGEST } from './helpers/zip.js'
 
 const V01 = join(VECTORS_ROOT, '01-valid-minimal')
 const envelope = () => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
@@ -56,6 +57,7 @@ describe('initApp wiring', () => {
     return zipSync({
       ['receipts/01JZ5PDHT0000G40R40M30E209.attest.json']: envelope(),
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
       ...members,
     })
   }

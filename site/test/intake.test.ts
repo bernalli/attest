@@ -31,6 +31,7 @@ describe('intake', () => {
     const zip = zipSync({
       ['receipts/R1.attest.json']: envelopeBytes(),
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     })
     const r = intake('library.attest', zip)
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
@@ -59,6 +60,7 @@ describe('intake', () => {
       // Named by an id it does not carry, and holding a different receipt.
       [`receipts/${proven}-copy.attest.json`]: otherEnvelope,
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
       [`proofs/${proven}.json`]: new TextEncoder().encode('{"leaf_index":0}'),
     })
     const r = intake('library.attest', zip)
@@ -244,6 +246,7 @@ describe('intake: the salted-envelope notice', () => {
     const zip = zipSync({
       ['receipts/R1.attest.json']: salted(false),
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     })
     const r = intake('library.attest', zip)
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)

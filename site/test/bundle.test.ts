@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { zipSync } from 'fflate'
-import { loadsStrict, canonicalBytes } from 'attest-verifier'
+import { loadsStrict, canonicalBytes, sha256Hex } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { parseBundle, BundleError, BundleTooLargeError, PrivateBundleError, DEFAULT_CAPS } from '../src/bundle.js'
 import { runVerify } from '../src/run.js'
@@ -10,7 +10,10 @@ import { VECTORS_ROOT, logKeys, anchorPolicy } from './helpers/vectors.js'
 // Aliased: this file already defines a local `storedZip` that does NOT set
 // general-purpose bit 11, so a non-ASCII member name written with it is refused
 // as `record-name-encoding` before any test can reason about it.
-import { storedZip as utf8Zip, validEnvelope, VALID_RECEIPT_ID, legalEntry } from './helpers/zip.js'
+import {
+  storedZip as utf8Zip, validEnvelope, VALID_RECEIPT_ID,
+  legalEntry, LEGAL_TEXT, LEGAL_DIGEST, type StoredEntry,
+} from './helpers/zip.js'
 
 const V01 = join(VECTORS_ROOT, '01-valid-minimal')
 // The one conformance leaf that ships a receipt AND the §10.2 evidence that
@@ -31,6 +34,7 @@ function sampleZip(): { zip: Uint8Array; issuer: string } {
   const zip = zipSync({
     ['receipts/01HZX0000000000000000000AA.attest.json']: envelope,
     [`manifests/${issuer}.json`]: canonicalBytes(blob),
+    [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     ['README.html']: new TextEncoder().encode('<p>bundle readme</p>'),
   })
   return { zip, issuer }
@@ -62,6 +66,7 @@ describe('parseBundle', () => {
     const zip = zipSync({
       ['receipts/X.attest.json']: new Uint8Array(readFileSync(join(V01, 'envelope.json'))),
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     })
     const parsed = parseBundle(zip)
     expect((parsed.trustStore.manifests[issuer] as JsonObject).manifest_version).toBe(2n)
@@ -120,6 +125,7 @@ function bundleWithMembers(extra: Record<string, Uint8Array>): Uint8Array {
   return zipSync({
     [`receipts/${V28_RECEIPT_ID}.attest.json`]: new Uint8Array(readFileSync(join(V28, 'envelope.json'))),
     [`manifests/${issuer}.json`]: canonicalBytes(blob),
+    [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     ...extra,
   })
 }
@@ -236,11 +242,15 @@ function storedZip(entries: [string, Uint8Array][]): Uint8Array {
 describe('parseBundle: duplicate member names', () => {
   const NAME = 'receipts/01HZX0000000000000000000AA.attest.json'
   const env = () => new Uint8Array(readFileSync(join(V01, 'envelope.json')))
+  // The archives that must be ACCEPTED carry the deal their receipt refers to,
+  // as an exporter writes them; the ones that must be refused are refused on
+  // the directory, long before any family is read.
+  const LEGAL: [string, Uint8Array] = [`legal/${LEGAL_DIGEST}.txt`, LEGAL_TEXT]
 
   // The writer itself is verified first: a throw on the duplicated archive
   // proves nothing unless the non-duplicated one round-trips.
   it('round-trips a hand-built zip without duplicates', () => {
-    const parsed = parseBundle(storedZip([[NAME, env()]]))
+    const parsed = parseBundle(storedZip([[NAME, env()], LEGAL]))
     expect(parsed.receipts).toHaveLength(1)
   })
 
@@ -279,7 +289,7 @@ describe('parseBundle: duplicate member names', () => {
     const envelope = JSON.parse(new TextDecoder().decode(env()))
     envelope.payload.receipt_id = '01HZX0000000000000000000AB'
     const secondBytes = new TextEncoder().encode(JSON.stringify(envelope))
-    const parsed = parseBundle(storedZip([[NAME, env()], [second, secondBytes]]))
+    const parsed = parseBundle(storedZip([[NAME, env()], [second, secondBytes], LEGAL]))
     expect(parsed.receipts).toHaveLength(2)
   })
 })
@@ -376,6 +386,7 @@ describe('parseBundle reads members on demand', () => {
       {
         ['receipts/01HZX0000000000000000000AA.attest.json']: envelope,
         [`manifests/${issuer}.json`]: canonicalBytes(blob),
+        [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
         ['unknown.bin']: marker,
       },
       { level: 0 },
@@ -415,6 +426,7 @@ describe('parseBundle: the trust store answers only for issuers the bundle named
     return zipSync({
       ['receipts/01HZX0000000000000000000AA.attest.json']: envelope,
       ['manifests/attacker.json']: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     })
   }
 
@@ -582,6 +594,7 @@ describe('parseBundle reads every family the reference importer reads', () => {
     return {
       [`receipts/${VALID_RECEIPT_ID}.attest.json`]: new Uint8Array(readFileSync(join(V01, 'envelope.json'))),
       [`manifests/${issuer}.json`]: canonicalBytes(blob),
+      [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     }
   }
   const marker = new TextEncoder().encode('CORRUPT-ME-PLEASE-0123456789')
@@ -597,12 +610,169 @@ describe('parseBundle reads every family the reference importer reads', () => {
   })
 })
 
+// v0.1 §14.1 names a legal text by the digest of its own bytes, and §9 is why:
+// the bundle exists to preserve the DEAL, and a text nobody can bind to its
+// name preserves nothing. The reference importer hashes every `legal/` member
+// and refuses the archive when the two disagree, then refuses again when a
+// receipt refers to a text the bundle never carried. Reading those bytes and
+// dropping them left this page accepting an archive the reference importer
+// refuses — under every cap, on a file both are supposed to judge alike.
+describe('parseBundle checks a legal text against the name it travelled under', () => {
+  const enc = (text: string): Uint8Array => new TextEncoder().encode(text)
+
+  const withLegal = (entries: StoredEntry[]): Uint8Array => {
+    const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
+    const issuer = Object.keys(d.manifests as JsonObject)[0]
+    const blob: JsonObject = {
+      issuer,
+      key_manifests: [(d.manifests as JsonObject)[issuer]],
+      artifact_manifests: [],
+    }
+    return utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      [`manifests/${issuer}.json`, canonicalBytes(blob)],
+      ...entries,
+    ])
+  }
+
+  it('is the text the conformance vectors actually bind their receipts to', () => {
+    // The fixture is only a fixture if the digest, the text and the receipt all
+    // agree; otherwise every test below would be about an archive no exporter
+    // produces.
+    expect(sha256Hex(LEGAL_TEXT)).toBe(LEGAL_DIGEST)
+    const payload = (loadsStrict(validEnvelope()) as JsonObject)['payload'] as JsonObject
+    expect((payload['license'] as JsonObject)['legal_text_sha256']).toBe(LEGAL_DIGEST)
+  })
+
+  it('accepts a legal text that hashes to its own member name', () => {
+    const parsed = parseBundle(withLegal([legalEntry()]))
+    expect(parsed.receipts).toHaveLength(1)
+  })
+
+  it('keeps the text the digest binds, instead of dropping it', () => {
+    const parsed = parseBundle(withLegal([legalEntry()]))
+    expect(parsed.legalTexts[LEGAL_DIGEST]).toEqual(LEGAL_TEXT)
+  })
+
+  it('refuses a legal text that does not hash to its member name', () => {
+    // Structurally perfect archive, honest CRC, and one byte of the deal
+    // changed: the container reader has nothing to say about it, which is
+    // exactly why the digest is checked here.
+    const tampered = enc('attest-vectors-legal-text-v2')
+    expect(() => parseBundle(withLegal([[`legal/${LEGAL_DIGEST}.txt`, tampered]]))).toThrow(
+      /failed its own integrity check on import/,
+    )
+  })
+
+  it('refuses a legal member whose name is not a digest at all', () => {
+    expect(() => parseBundle(withLegal([['legal/eula.txt', LEGAL_TEXT]]))).toThrow(
+      /failed its own integrity check on import/,
+    )
+  })
+
+  it('shows a real digest whole, so the file that was tampered with can be found', () => {
+    // 64 hex characters is four more than the quoting cap, so a quoted digest
+    // would be a truncated one. A value of that shape can neither end a quote
+    // nor write a sentence, which is why it is shown bare.
+    try {
+      parseBundle(withLegal([[`legal/${LEGAL_DIGEST}.txt`, new TextEncoder().encode('other')]]))
+      throw new Error('expected parseBundle to refuse a legal member that fails its digest')
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleError)
+      expect((error as BundleError).message).toContain(LEGAL_DIGEST)
+    }
+  })
+
+  it('does not let a member name that is no digest write the sentence', () => {
+    // Anything that is not 64 hex characters is a member name like any other:
+    // attacker-supplied text that reaches a buyer's screen, so it is quoted and
+    // neutralised, and above all it cannot END the quote it sits in.
+    const hostile = 'x" is genuine. Email refunds@evil.example "'
+    try {
+      parseBundle(withLegal([[`legal/${hostile}.txt`, LEGAL_TEXT]]))
+      throw new Error('expected parseBundle to refuse a legal member with a false name')
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleError)
+      const message = (error as BundleError).message
+      expect(message).toMatch(/failed its own integrity check on import/)
+      // Exactly the two delimiters this file wrote: the name contributes none.
+      expect(message.split('"')).toHaveLength(3)
+    }
+  })
+
+  it('refuses a bundle whose receipt refers to a legal text it does not carry', () => {
+    expect(() => parseBundle(withLegal([]))).toThrow(
+      /missing legal text for referenced hash/,
+    )
+  })
+
+  it('refuses when the missing text is one the survivability block refers to', () => {
+    // `license.legal_text_sha256` is schema-required and always referenced; the
+    // survivability hashes are optional, and an importer that only looked at
+    // the required one would carry a bundle missing the terms that say what
+    // happens when the seller stops trading.
+    const envelope = loadsStrict(validEnvelope()) as JsonObject
+    const payload = envelope['payload'] as JsonObject
+    const missing = 'b'.repeat(64)
+    const altered = canonicalBytes({
+      ...envelope,
+      payload: {
+        ...payload,
+        survivability: {
+          ...(payload['survivability'] as JsonObject),
+          eol_commitment_sha256: missing,
+        },
+      },
+    } as JsonObject)
+    const zip = utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, altered],
+      legalEntry(),
+    ])
+    expect(() => parseBundle(zip)).toThrow(new RegExp(missing))
+  })
+
+  it('accepts the same bundle once every referenced text is present', () => {
+    // The refusals above are limits, not a ban on bundles that carry terms.
+    const envelope = loadsStrict(validEnvelope()) as JsonObject
+    const payload = envelope['payload'] as JsonObject
+    const second = new TextEncoder().encode('the terms that outlive the seller')
+    const secondDigest = sha256Hex(second)
+    const altered = canonicalBytes({
+      ...envelope,
+      payload: {
+        ...payload,
+        survivability: {
+          ...(payload['survivability'] as JsonObject),
+          eol_commitment_sha256: secondDigest,
+        },
+      },
+    } as JsonObject)
+    const zip = utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, altered],
+      legalEntry(),
+      [`legal/${secondDigest}.txt`, second],
+    ])
+    const parsed = parseBundle(zip)
+    expect(Object.keys(parsed.legalTexts).sort()).toEqual([LEGAL_DIGEST, secondDigest].sort())
+  })
+
+  it('keeps the legal store free of inherited names', () => {
+    // Keyed by a digest the archive chose, so the same rule as every other map
+    // in this file: `__proto__` is an ordinary key and `toString` answers
+    // nothing.
+    const parsed = parseBundle(withLegal([legalEntry()]))
+    expect(parsed.legalTexts['toString']).toBeUndefined()
+    expect(Object.getPrototypeOf(parsed.legalTexts)).toBeNull()
+  })
+})
+
 describe('parseBundle: a manifests/ member that is not shaped like one', () => {
   const enc = (text: string): Uint8Array => new TextEncoder().encode(text)
   const withManifestMember = (body: Uint8Array): Uint8Array =>
     utf8Zip([
       [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
       ['manifests/x.json', body],
+      legalEntry(),
     ])
 
   it('refuses one that is not canonical JSON', () => {

@@ -51,6 +51,17 @@ function member(prefix: string): Uint8Array {
 const containerBytes = () => member('manifests/')
 const bareEnvelope = () => member('receipts/')
 
+// The deal the sample's receipt refers to, under the name it travelled with. An
+// importer refuses a bundle that names a legal text it does not carry, so a
+// hand-built bundle around that receipt has to bring this along — taken from the
+// sample rather than written here, because the digest has to be the real one.
+const legalMember = (): [string, Uint8Array] => {
+  const found = unzipSync(sampleBytes())
+  const name = Object.keys(found).find((n) => n.startsWith('legal/'))
+  if (!name) throw new Error('the sample bundle has no legal/ member')
+  return [name, found[name]]
+}
+
 const receiptLabel = (): string => {
   const found = unzipSync(sampleBytes())
   const name = Object.keys(found).find((n) => n.startsWith('receipts/'))!
@@ -76,10 +87,12 @@ const SECOND_ID = '01M0YX8RAPJ5BQ8WJSS4CBK43G'
 function twoReceiptBundle(): Uint8Array {
   const first = bareEnvelope()
   const altered = new TextDecoder().decode(first).replace(receiptLabel(), SECOND_ID)
+  const [legalName, legalText] = legalMember()
   return zipSync({
     [`receipts/${receiptLabel()}.attest.json`]: first,
     [`receipts/${SECOND_ID}.attest.json`]: new TextEncoder().encode(altered),
     'manifests/m.json': containerBytes(),
+    [legalName]: legalText,
   })
 }
 
