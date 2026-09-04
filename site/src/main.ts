@@ -147,6 +147,12 @@ export function initApp(doc: Document): AppHandle {
   function showRefusal(r: Refusal): void {
     clearJobs()
     currentNotices = []
+    // A receipt waiting for its key manifest is state about a file that is no
+    // longer on screen, and hiding the manifest zone does not retract it: a
+    // handover that arrives afterwards would find the wait still standing and
+    // replace this refusal with a verdict about the PREVIOUS file. The offline
+    // verifier already drops it here; this one did not.
+    pendingEnvelope = null
     manifestZone.hidden = true
     results.replaceChildren(
       r.declined === true ? renderDeclined(r.reason) : renderRejection(r.reason),

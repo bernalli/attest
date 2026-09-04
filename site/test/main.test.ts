@@ -83,6 +83,20 @@ describe('initApp wiring', () => {
     expect(document.getElementById('results')!.textContent).toMatch(/never share/i)
   })
 
+  it('a refusal cancels a receipt still waiting for its key manifest', () => {
+    // Otherwise the wait outlives the file it belongs to, and a manifest handed
+    // over afterwards answers about the receipt that is no longer on screen —
+    // replacing a refusal with a verdict about different bytes.
+    app.handleBytes('receipt.attest.json', envelope())
+    app.handleBytes('lib.private.attest', new Uint8Array([0x50, 0x4b]))
+    const refused = document.getElementById('results')!.textContent
+
+    app.handleManifestBytes(canonicalBytes(manifest()))
+
+    expect(document.getElementById('results')!.textContent).toBe(refused)
+    expect(document.getElementById('results')!.textContent).not.toContain('Receipt verifies')
+  })
+
   it('opens the file picker from the dropzone on Enter and Space, but not other keys', () => {
     const fileInput = document.getElementById('file-input') as HTMLInputElement
     const spy = vi.fn()
