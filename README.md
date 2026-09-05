@@ -401,8 +401,9 @@ standard, not a future direction. What follows is genuinely speculative.
 **License.** Code is licensed [Apache-2.0](LICENSE); the specification and other
 documentation are licensed [CC BY 4.0](LICENSE-docs) — reuse and derivatives of
 the spec must credit the original author, since attribution is a condition of
-that license, not a courtesy. [`NOTICE`](NOTICE) and [`AUTHORS`](AUTHORS) carry
-the required attribution.
+that license, not a courtesy. [`PATENTS.md`](PATENTS.md) — a royalty-free
+patent non-assertion covenant covering implementations of the specification.
+[`NOTICE`](NOTICE) and [`AUTHORS`](AUTHORS) carry the required attribution.
 
 **Naming.** The name *attest* identifies this project and implementations that
 actually conform to it; forks are welcome to use the technology but not the name

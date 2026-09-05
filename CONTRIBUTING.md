@@ -11,6 +11,13 @@ new conformance vectors, and additional independent implementations.
 - Code is licensed Apache-2.0; documentation and the specification are licensed
   CC BY 4.0 (see `LICENSE` and `LICENSE-docs`). By contributing you agree your
   contribution is offered under those licenses.
+- Patents: by contributing to the specification or to any other document in this repository, you
+  irrevocably promise not to assert, against anyone implementing the attest specification, any
+  patent claim you own or control that is infringed by implementing the part of the specification
+  your contribution describes in detail. This mirrors the commitment the project's author makes in
+  `PATENTS.md`, and exists because CC BY 4.0 — the license on the specification — grants no patent
+  rights at all. Contributions of code remain covered by the patent grant in Section 3 of the
+  Apache License 2.0.
 - Be precise about security: this is a crypto project. If a change could affect
   verification, canonicalization, key handling, or revocation, say so explicitly.
 
