@@ -261,9 +261,10 @@ answer about Bitcoin below is where that case lives.
 Two different losses, and they are not the same size.
 
 **You lost the private file but still have the receipt.** The receipt keeps verifying,
-because proving it is yours was never part of the verdict. What you lose is
-exclusivity: from that point on, anyone else holding a copy of that receipt is no less
-able to present it than you are.
+because the binding check is independent of the verification verdict. Losing the
+private file removes that copy of the binding secret; if no other copy or usable
+binding private key remains, you can no longer produce the binding proof. That proof
+establishes possession of a secret, never who made the purchase.
 
 **You lost the receipt itself.** Then nothing in the protocol brings it back. There is
 no backup service, no escrow, no recovery scheme, and the threat model says so in as

@@ -97,23 +97,29 @@ def enumerate_occurrences(sources: dict[str, str]) -> list[tuple[str, str, str]]
     """
     found: list[tuple[str, str, str]] = []
     for path, text in sorted(sources.items()):
-        flat = " ".join(text.split())
-        # One occurrence, one row. The retired NAME contains a `consent` word,
-        # so both patterns match the same text at different spans; hashing each
-        # span separately would ask a reader to register the same sentence
-        # twice, with two verdicts that cannot disagree. Spans are taken in
-        # pattern order — the name first, since it is the more specific — and a
-        # later match overlapping one already taken is the same occurrence.
-        spans: list[tuple[int, int]] = []
-        for pattern in PATTERNS:
-            for match in pattern.finditer(flat):
-                if any(match.start() < end and start < match.end() for start, end in spans):
-                    continue
-                spans.append((match.start(), match.end()))
-        for start, end in sorted(spans):
-            excerpt = _excerpt(flat, start, end)
-            found.append((path, hashlib.sha256(excerpt.encode("utf-8")).hexdigest(), excerpt))
-    return found
+        views = [text]
+        if Path(path).suffix.lower() in {".html", ".xml"}:
+            from tests.rendered_text import visible_text
+
+            views.append(visible_text(text))
+        for view in dict.fromkeys(views):
+            flat = " ".join(view.split())
+            # One occurrence, one row. The retired NAME contains a `consent` word,
+            # so both patterns match the same text at different spans; hashing each
+            # span separately would ask a reader to register the same sentence
+            # twice, with two verdicts that cannot disagree. Spans are taken in
+            # pattern order — the name first, since it is the more specific — and a
+            # later match overlapping one already taken is the same occurrence.
+            spans: list[tuple[int, int]] = []
+            for pattern in PATTERNS:
+                for match in pattern.finditer(flat):
+                    if any(match.start() < end and start < match.end() for start, end in spans):
+                        continue
+                    spans.append((match.start(), match.end()))
+            for start, end in sorted(spans):
+                excerpt = _excerpt(flat, start, end)
+                found.append((path, hashlib.sha256(excerpt.encode("utf-8")).hexdigest(), excerpt))
+    return list(dict.fromkeys(found))
 
 
 def _tree_sources() -> dict[str, str]:
@@ -124,9 +130,24 @@ def _tree_sources() -> dict[str, str]:
             continue
         try:
             sources[name] = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):  # pragma: no cover
-            continue
+        except (OSError, UnicodeDecodeError) as exc:
+            pytest.fail(f"cannot audit tracked text file {name}: {exc}")
     return sources
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_unreadable_tracked_text_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: bool
+) -> None:
+    source = tmp_path / "annex.md"
+    if not missing:
+        source.write_bytes(b"The consent gate applies.\n\xff")
+    monkeypatch.setattr(__import__(__name__, fromlist=["REPO_ROOT"]), "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        __import__(__name__, fromlist=["_tracked_files"]), "_tracked_files", lambda: ["annex.md"]
+    )
+    with pytest.raises(pytest.fail.Exception, match=r"annex\.md"):
+        _tree_sources()
 
 
 def test_every_occurrence_of_a_retired_term_is_audited() -> None:
@@ -180,6 +201,21 @@ def test_the_guard_names_a_planted_occurrence(tmp_path: Path) -> None:
 
     assert [path for path, _, _ in found] == ["annex.md"]
     assert "consent gate" in found[0][2]
+
+
+def test_retired_term_survives_inline_markup_and_entities() -> None:
+    term = "consent gate"
+    for suffix in ("html", "xml"):
+        path = f"annex.{suffix}"
+        for offset in range(len(term)):
+            forms = [term[:offset] + f"&#{ord(term[offset])};" + term[offset + 1 :]]
+            for tag in ("em", "strong", "span", "tt"):
+                forms.append(term[:offset] + f"<{tag}>" + term[offset:] + f"</{tag}>")
+            for form in forms:
+                assert any(
+                    "consent gate" in excerpt
+                    for _, _, excerpt in enumerate_occurrences({path: form})
+                )
 
 
 def test_every_audited_row_carries_a_verdict_from_the_closed_list() -> None:
