@@ -1,17 +1,19 @@
+<!-- @whitepaper-sync v0.1-rev=17 v0.2-rev=12 package=0.9.1 -->
 # Own what you buy
 
-*A whitepaper on durable digital ownership: the seller signs a receipt, you hold the file, anyone
+*A whitepaper on durable digital possession: the seller signs a receipt, you hold the file, anyone
 can verify it offline — even after the store is gone.*
 
-> **Status: draft, third round (September 2026).** This file contains three things: the outline of
-> the finished document (Part A); seven of its sections written in full — the thesis, what you
-> actually bought, how it works, the trilemma, the clock, the two tracks, and what it does not do —
-> so that the register can be judged before the rest is written (Part B); and a short note listing
-> the decisions the author had to take and wants confirmed or overturned (Part C, to be removed
-> before publication). Every factual claim in Part B was checked against the specification, the code
-> and the running demonstrations on the day of writing, and every claim about a law or a regulator's
-> act against the text of that act; the sources are named inline or in the outline. Nothing in this
-> document is a promise the repository cannot keep.
+> **Status: complete draft, fourth round (September 2026).** Every section of the outline in
+> Part A is written in full in Part B. Part C is a short note for the project's owner, listing
+> the decisions that remain genuinely theirs, each with the text chosen in the meantime; it is
+> removed before publication. Every factual claim in Part B was checked against the specification,
+> the code and the running demonstrations on the day of writing, and every claim about a law or a
+> regulator's act against the published text of that act; sources are named inline, in the notes
+> of section 15, or in the outline. Nothing in this document is a promise the repository cannot
+> keep. The comment at the top of this file names the specification revisions and the package
+> version the text describes; a test in the repository fails when they move, so the document
+> cannot fall behind what it describes without someone noticing.
 
 ---
 
@@ -21,7 +23,13 @@ Conventions that hold for every section:
 
 - **Lexicon.** "Two tracks, one standard." The word is *track*, never *rail*. "Durable, portable,
   user-held" is the fixed description of what attest is. "Eternal verifiability" never appears
-  without the gloss *always readable, not always valid*.
+  without the gloss *always readable, not always valid*. What attest gives a buyer is
+  *possession* of evidence, never "ownership" of a work: the specification says a receipt is not
+  a claim of ownership, and the document uses the word only in its argumentative sense (what
+  standing gives you). A binding result of `proven` means that the presenter holds a secret that
+  reproduces a value the seller wrote into the receipt — a salt or a key — and the document never
+  renders it as the buyer's participation or identity, because every input to that proof is the
+  seller's. One image for what a receipt opens: *a key to a door, never to a file*.
 - **Numbers.** No package versions, test counts or corpus sizes in the body: those live in the
   repository and on the registries, where they cannot go stale. External facts (dates, court
   cases, statutes) are allowed because they carry their own date.
@@ -37,35 +45,55 @@ Conventions that hold for every section:
 | # | Section | The reader's question it answers | Where the facts come from | Length |
 |---|---|---|---|---|
 | 0 | Front matter | How do I read this, and how long is it? | this outline | 2 paragraphs |
-| 1 | **The thesis** (written, Part B) | What is this, in one sentence — and why should I care? | canonical project sentence; `README.md` opening; `docs/faq.md` "What is attest?"; the named limit from `docs/faq.md` "The store that signed my receipts shut down" | 9 paragraphs |
+| 1 | **The thesis** | What is this, in one sentence — and why should I care? | canonical project sentence; `README.md` opening; `docs/faq.md` "What is attest?"; the named limit from `docs/faq.md` "The store that signed my receipts shut down" | 9 paragraphs |
 | 2 | Someone paid, and has nothing | Has this actually happened to people like me? | four verified cases, one per market — Amazon/*1984* (2009), Microsoft ebook store (2019), Sony/StudioCanal on PlayStation (1 September 2026, seller's own notice), Ubisoft/*The Crew* (2023–24); `README.md` opening; the verified case notes of 1 September | 10 paragraphs |
-| 3 | **What you actually bought** (written, Part B) | What exactly is the thing I am missing? | `README.md` "What attest is"; v0.1 §2 "What a receipt is" (quoted), §4–§6 (the envelope, the fields, immutability and the irrevocability conditional), §8.1 (the commitment), §14 (the two files) | 7 paragraphs |
-| 4 | **How it works** (written, Part B) | What does the seller give me, and how does a stranger check it? | `README.md` "How it works, for humans"; `docs/faq.md` "What does 'verify offline' actually check, and what can't it tell me?", "Who can revoke my receipt, and what would I see?", "Is this centralized?"; v0.1 §7 (keys), §8 (buyer binding), §11 (the algorithm and its vocabulary), §12 (revocation records), §13–§14 (disclose and the two files); `site/index.html` CSP and `site/e2e/site.spec.ts` for the browser verifier, `desktop/README.md` for the downloadable one. Revocation is described as a mechanism the verifier evaluates, never as something a seller can do today: the command-line tool on `main` has no `revoke` verb at any level (its top-level verbs, read from the tool's own definition, are `authority`, `check-artifact`, `disclose`, `export`, `grant`, `import`, `inspect`, `issue`, `keygen`, `log`, `manifest`, `transfer`, `verify`), the bridge has no refund handling, and the web and downloadable verifiers consult no revocation feed and pin no block headers. Every input `verify` accepts is listed with its producer, or the absence of one (`src/attest/cli.py`, `src/attest/verify.py`, `site/src/trusted-log.ts`) | 13 paragraphs + In detail |
-| 5 | **The trilemma** (written, Part B) | If a file can be copied perfectly, how can it be *mine*? | the internal analysis of duplication and the sharing/exclusivity/survival contradiction (research notes of 24 August); v0.1 §8 (the two bindings); v0.2 §17 (issuer-mediated transfer, log-required honouring, earliest-logged-wins, holder binding); `docs/faq.md` "Is attest a DRM system…"; `src/attest/cli.py` on `main` for which side of each mechanism has a shipped command (transfer and pledge redemption do; the ordinary binding challenge does not) | 10 paragraphs + In detail |
-| 6 | **The clock** (written, Part B) | Why is Bitcoin in here, if this is not a blockchain thing? | v0.2 §11.1–§11.3 (anchoring), §19 (the anchored-cutoff rescue); `src/attest/cli.py` (no anchoring flag on `issue`), `src/attest/verify.py` and `verifiers/ts/src/verify.ts` (anchoring off by default), `site/src/trusted-log.ts` (empty header set); `docs/faq.md` "Why not blockchain / NFT?" | 13 paragraphs + In detail |
-| 7 | **Two tracks, one standard** (written, Part B) | Who would ever issue one of these? | `README.md` "What attest is" (both tracks); `docs/faq.md` "Nobody forces a seller…"; `bridge/src/attest_bridge/` (the three checkout adapters; refunded orders skipped); Directive 2011/83/EU of 25 October 2011, Article 8(7) and Article 2(10), read on the published text; the European Commission's reply of 16 June 2026 to the *Stop Destroying Videogames* citizens' initiative, read on press release IP/26/1369; California AB 2426 (Chapter 513, Statutes of 2024; in force 1 January 2025), Business and Professions Code §17500.6 read on the codified text | 12 paragraphs + In detail |
-| 8 | **What it does not do** (written, Part B) | Where is the catch? | v0.1 §7.3, §7.4; v0.2 §15, §18.6, §18.7, §19.5, §19.6, §20; `docs/spec/attest-threat-model.md` §6.2, §7, TM-44, TM-68, TM-74; measured behaviour of `demo/store_dies.py`; `docs/faq.md` limits paragraph | 20 paragraphs + In detail |
+| 3 | **What you actually bought** | What exactly is the thing I am missing? | `README.md` "What attest is"; v0.1 §2 "What a receipt is" (quoted), §4–§6 (the envelope, the fields, immutability and the irrevocability conditional), §8.1 (the commitment), §14 (the two files) | 7 paragraphs |
+| 4 | **How it works** | What does the seller give me, and how does a stranger check it? | `README.md` "How it works, for humans"; `docs/faq.md` "What does 'verify offline' actually check, and what can't it tell me?", "Who can revoke my receipt, and what would I see?", "Is this centralized?"; v0.1 §7 (keys), §8 (buyer binding), §11 (the algorithm and its vocabulary), §12 (revocation records), §13–§14 (disclose and the two files); `site/index.html` CSP and `site/e2e/site.spec.ts` for the browser verifier, `desktop/README.md` for the downloadable one. Revocation is described as a mechanism the verifier evaluates, never as something a seller can do today: the command-line tool on `main` has no `revoke` verb at any level (its top-level verbs, read from the tool's own definition, are `authority`, `check-artifact`, `disclose`, `export`, `grant`, `import`, `inspect`, `issue`, `keygen`, `log`, `manifest`, `transfer`, `verify`), the bridge has no refund handling, and the web and downloadable verifiers consult no revocation feed and pin no block headers. Every input `verify` accepts is listed with its producer, or the absence of one (`src/attest/cli.py`, `src/attest/verify.py`, `site/src/trusted-log.ts`) | 13 paragraphs + In detail |
+| 5 | **The trilemma** | If a file can be copied perfectly, how can it be *mine*? | the internal analysis of duplication and the free-copying/exclusivity/survival contradiction (research notes of 24 August, formalised in the research record of 5 September: the three poles named precisely, the two arguments for why the triple fails, the verdict "not resolvable as stated, declare the perimeter, no specification change"); v0.1 §8 (the two bindings); v0.2 §17 (issuer-mediated transfer, log-required honouring, earliest-logged-wins, holder binding); `docs/faq.md` "Is attest a DRM system…"; `src/attest/cli.py` on `main` for which side of each mechanism has a shipped command (the holder's transfer authorization, the issuer's transfer record and pledge redemption do; the ordinary binding challenge does not); the two measured limits on transfer — a record authenticates only while its key is `active`, and `license.transferable` is not read on the honouring path — stated as limits, not guarantees | 12 paragraphs + In detail |
+| 6 | **The clock** | Why is Bitcoin in here, if this is not a blockchain thing? | v0.2 §11.1–§11.3 (anchoring), §19 (the anchored-cutoff rescue); `src/attest/cli.py` (no anchoring flag on `issue`), `src/attest/verify.py` and `verifiers/ts/src/verify.ts` (anchoring off by default), `site/src/trusted-log.ts` (empty header set); `docs/faq.md` "Why not blockchain / NFT?" | 13 paragraphs + In detail |
+| 7 | **Two tracks, one standard** | Who would ever issue one of these? | `README.md` "What attest is" (both tracks); `docs/faq.md` "Nobody forces a seller…"; `bridge/src/attest_bridge/` (the three checkout adapters; refunded orders skipped); Directive 2011/83/EU of 25 October 2011, Article 8(7) and Article 2(10), read on the published text; the European Commission's reply of 16 June 2026 to the *Stop Destroying Videogames* citizens' initiative, read on press release IP/26/1369; California AB 2426 (Chapter 513, Statutes of 2024; in force 1 January 2025), Business and Professions Code section 17500.6 read on the codified text | 12 paragraphs + In detail |
+| 8 | **What it does not do** | Where is the catch? | v0.1 §7.3, §7.4; v0.2 §15, §18.6, §18.7, §19.5, §19.6, §20; `docs/spec/attest-threat-model.md` §6.2, §7, TM-44, TM-68, TM-74; measured behaviour of `demo/store_dies.py`; `docs/faq.md` limits paragraph | 20 paragraphs + In detail |
 | 9 | Copying, piracy, and what this is not for | Is this DRM? Does it stop piracy? Does it help pirates? | v0.1 §2 (out of scope: DRM, hosting, resale); `docs/faq.md` "Is attest a DRM system, a store, or a way to pirate games?"; the evidence review on second-hand markets and piracy in the September paper (hostile studies first, then the applicability limit, then the ceiling, then the unmeasured gap) | 7 paragraphs |
 | 10 | Why it is worth having anyway | What does each party actually gain? | `README.md` seller paragraph; `docs/faq.md` "Nobody forces a seller…"; v0.1 §6.1 (the irrevocable-goods conditional and AB 2426); v0.2 §18 (the preservation pledge as a zero-cost signature) | 7 paragraphs |
 | 11 | After the store is gone | Practically, what do I do with the receipt on the day it matters? | `docs/faq.md` "The store that signed my receipts shut down…"; v0.2 §18 (preservation pledge, activation modes); `demo/README.md`; both demonstrations, run. Every seller-side act named here (revoking, declaring a compromise, re-issuing) is stated with whether a shipped tool performs it — today only issuing and transfer are | 8 paragraphs |
-| 12 | Where this actually is | What exists today, and what is only designed? | `README.md` "Status"; `docs/conformance.md`; the IETF Datatracker entry (individual submission, no standing) | 4 paragraphs |
-| 13 | Open problems | What is still unsolved, with a name? | `docs/spec/attest-threat-model.md` §6.3; TM-68; the adversarial question list of 1 September (long-term custody of block headers; re-attestation with no signer; the domain as a lease); and the general fact, measured on the command-line tool and the bridge: **the defences exist in the specification and in the verifier; the tools that would let a seller exercise most of them are not shipped** — no revocation command, no packaged compromise declaration, no anchoring flow | 8 paragraphs |
+| 12 | Where this actually is | What exists today, and what is only designed? | `README.md` "Status"; `docs/conformance.md`; the IETF Datatracker entry for `draft-martinalli-open-purchase-receipts-00` (individual submission, Informational, no standing), read on the Datatracker; the name is given because the repository's `ietf/` source and the Datatracker now carry the same one | 4 paragraphs |
+| 13 | Open problems | What is still unsolved, with a name? | `docs/spec/attest-threat-model.md` §6.3; TM-68; the adversarial question list of 1 September (long-term custody of block headers; re-attestation with no signer; the domain as a lease); the provenance of the buyer's key (research record of 5 September); the two measured transfer limits; and the general fact, measured on the command-line tool and the bridge: **the defences exist in the specification and in the verifier; the tools that would let a seller exercise most of them are not shipped** — no revocation command, no receipt log entry, no packaged compromise declaration, no anchoring flow | 9 paragraphs |
 | 14 | What is needed now, and colophon | What should I do, and on what terms is all this offered? | `README.md` seller and contact paragraphs; `LICENSE`, `LICENSE-docs`; `docs/faq.md` on the patent boundary | 5 paragraphs |
-| 15 | Notes | Where does each external fact come from? | numbered sources for sections 2, 7, 8, 9 only; internal facts link to the live surface instead | as needed |
+| 15 | Notes | Where does each external fact come from? | numbered sources for the external facts of sections 2, 5, 6, 7, 8, 9, 10 and 11; internal facts link to the live surface instead | as needed |
 
-Order of writing after this round: 2 next (the opening case is gated on the decision recorded in
-Part C, point 2); then 9–14; the front matter last, when the body is stable. Sections 5 and 7 were
-written in the second round, because they were the two remaining places where the document could
-lose a hostile reader; sections 3 and 4 in the third, because they are where every term the later
-sections rely on is first explained.
+Every section is written. Section 0 is the front matter and section 15 the notes; the order in
+which the sections were drafted no longer matters, and each round's verification lives in the
+project's research record, not in this file.
 
 ---
 
 ## Part B — Sections written in full
 
+### 0. How to read this
+
+This document is written for someone who buys digital content and has never heard of a
+cryptographic signature. It explains each technical term by what it does, in the sentence where
+it first appears, and puts the technical detail in boxes headed "In detail" that can be skipped
+without losing the argument. Sections 1 to 4 say what attest is and how it works. Sections 5 to 7
+answer the three objections that decide whether the idea is worth anything: a file copies, a
+signature cannot tell the time, and nobody is obliged to sign. Section 8 is the list of what it
+does not do, and it comes before section 10, the case for having it anyway, on purpose. Section 9
+answers the three questions about copying and piracy that arrive together. Sections 11 to 14 are
+practical: what to do on the day the store is gone, what exists today, what is unsolved, and what
+you can do. Section 15 holds the sources for every external fact.
+
+Two conventions hold throughout. No package version, test count or corpus size appears in the
+body: those numbers live in the repository and on the registries, where they cannot go stale in a
+document, while a dated external fact is allowed because it carries its own date. And every limit
+is stated next to the promise it limits, in the section where the promise is made, and then
+gathered once more, in full, in section 8. Read whole, the document is meant to leave no question
+that needs another document; read in part, each section says which of the others it leans on.
+
+---
+
 ### 1. The thesis
 
-attest is the durable, portable, user-held layer of ownership for digital content. When you buy a
+attest is the durable, portable, user-held layer of possession for digital content. When you buy a
 game, a film, an album or a book, the seller signs a receipt and hands it to you as a small file.
 You keep it — on a disk, in a backup, anywhere you keep files that matter. Anyone can check that it
 is genuine without asking the seller, offline, on their own machine. And it keeps working after the
@@ -81,7 +109,8 @@ day the store is gone is the day you need it.
 Notice what the receipt is and is not. It is not the film. It does not contain it, lock it, or make
 it harder to copy. It is the piece of a purchase that every physical purchase always had and every
 digital purchase so far has lacked: durable evidence, in your possession, that this seller granted
-this licence for this work on this date, and that it was granted to you. A deed, not a lock.
+this licence for this work on this date, and to whom the seller says it granted it. A key to a
+door, never to a file; section 5 says why it can be nothing else.
 
 Two things are true today and this document will keep saying both. First: this works right now
 wherever files are sold without digital locks — the DRM-free catalogues, the marketplaces that hand
@@ -97,9 +126,10 @@ and you keep a permission — are the second track, and it does not run on persu
 European Union a trader is already required to confirm every distance contract on a *durable
 medium* (Directive 2011/83/EU, Article 8(7)); a durable medium is defined as something that lets you
 store the information, keep it accessible for as long as you need it, and reproduce it unchanged
-(Article 2(10)). That obligation is why confirmation emails exist. attest is that same confirmation
-in a form a machine can check and you can carry away. What a regulator would be asked for is not a
-new obligation but a usable format for one that already exists. No regulator has asked for it. Two
+(Article 2(10)). That obligation is why confirmation emails exist. attest is not that confirmation
+— a receipt carries the purchase, not everything a trader must confirm — but it is a format that
+confirmation could travel in: one a machine can check and you can carry away. What a regulator
+would be asked for is not a new obligation but a usable format for one that already exists. No regulator has asked for it. Two
 tracks, one standard.
 
 One limit belongs in the first page rather than the last, because it qualifies the promise most
@@ -125,6 +155,96 @@ purpose.
 
 ---
 
+### 2. Someone paid, and has nothing
+
+In July 2009, Amazon reached into Kindles that people owned and deleted books those people had
+bought. The books were *1984* and *Animal Farm*.
+
+Nobody behaved badly. The copies had been uploaded to Amazon's self-service publishing platform
+by a company that did not hold the rights to them. The rights holder noticed and said so. Amazon
+did what a lawful marketplace is supposed to do when it discovers it has been selling something
+it had no right to sell: it pulled the listings, removed the copies, and refunded every buyer. An
+authorised edition of *1984* stayed on sale throughout. In the narrow sense that matters to a
+lawyer, the system worked.
+
+In the sense that matters to the person who had paid, something else happened. A book they had
+bought disappeared from a device in their house, overnight, without their being asked. A student
+who had been annotating one of them for a summer assignment woke up to a book that was no longer
+there and notes that pointed at nothing. Amazon's spokesman described the mechanism plainly:
+"When we were notified of this by the rights holder, we removed the illegal copies from our
+systems and from customers' devices, and refunded customers." Six days later the company's
+founder wrote, on Amazon's own forum, that the company's solution to the problem had been
+"stupid, thoughtless, and painfully out of line with our principles". The apology was real, and
+so was what followed: the student's lawsuit was settled for $150,000, and Amazon undertook not to
+delete purchased books from devices again except with the customer's consent, on refund, under a
+court order, or to remove malware.
+
+Seventeen years later nothing about the underlying arrangement has changed. Only the companies
+and the file formats have. The same sentence has since been said in four different markets, and
+it is worth hearing it four times, because the point is not any one case.
+
+**Books, again, ten years on.** Microsoft closed the Books category of its store in April 2019.
+Its email to customers did not dress it up: "Unfortunately, this means you will no longer have
+access to your current ebooks as of July 2019, but you'll get a full refund if you paid for your
+ebook download." The refund was real and generous by the standards of the industry: the full
+purchase price, automatically, on the original payment method, regardless of how much of the
+book anyone had read, plus $25 in store credit for customers who had left notes in the margins.
+In early July 2019 the books stopped opening. Microsoft never published a technical explanation
+of why a purchased file becomes unreadable when a store closes; the trade press attributed it to
+licence validation, and that attribution is theirs, not the company's. Look at what the refund
+settled and what it did not. Money returned: one hundred per cent. Books returned: none.
+Annotations returned: none — a flat $25, spendable in the shop that was closing. Money is
+fungible. The note you wrote in the margin of a particular book is not.
+
+**Film, this year.** From 1 September 2026, Sony's own legal page for PlayStation video content
+in the United Kingdom tells customers: "From September 1, 2026, due to our content licensing
+agreements, you will no longer be able to access your previously purchased content from Studio
+Canal, and it will be removed from your video library." The page lists the affected titles by
+name; there are 551 of them, counted from the rows of the table the seller published rather than
+estimated — an automated reading of the same page returns a different and larger number, because
+it counts series seasons and page furniture along with the titles. The notice does not mention a
+refund. This document says what the notice says: whether anyone is compensated in the end is a
+different question, and it does not have the answer. Sony had removed purchased StudioCanal
+content once before, in August 2022, on the same grounds, and that removal was never reversed
+either. Every other case in this section has a second half that softens it. This one, so far, has
+none.
+
+**Software, and one step further.** Ubisoft delisted the racing game *The Crew* on 14 December
+2023 and said, in its own words: "The game will remain playable until March 31st, 2024, for all
+The Crew 1 owners. After this date, the servers will be shut down." In April 2024 something
+further happened, and it deserves to be separated from the first two events because the evidence
+for it is of a different kind. Buyers found the game gone from their libraries entirely, moved to
+a section labelled inactive, no longer installable. For the delisting and the shutdown there is a
+dated announcement in the seller's own words. For the revocation of the licences there is a short
+message inside the client, photographed by the people it happened to, and no public statement. A
+class action followed in California and settled: a fund of two million dollars, seven dollars in
+cash or fifteen in store credit per claimant, no admission of wrongdoing, the final approval
+hearing set for November 2026. So it is not true that nobody was compensated. It is true that the
+compensation took two years and a lawsuit, and arrives at roughly the price of a sandwich. One
+thing this paragraph does not say, because its own organisers have said the opposite on the
+record: that the European citizens' initiative on the end of life of video games, launched in the
+months after that shutdown, would have protected these buyers. It targets games yet to be
+developed, not those already sold. Section 7 returns to it on its own terms.
+
+Four markets: books, books again, film, software. Four companies with four different reasons,
+some of them good ones. One outcome, repeated: the thing you bought was in someone else's custody
+the whole time, and you found out when it left.
+
+That is not a story about video games, or about a bad company, or about digital rights
+management. It is a story about a missing object. Every one of those purchases produced an entry
+in someone else's database and, at most, an email in your inbox. None of them produced anything
+you held. A refund is what a seller offers when the buyer was never holding anything that worked
+on its own; it is the remedy for a rental, and most of the people who paid believed they were
+buying.
+
+There is one more thing the four cases have in common, and it is the reason the rest of this
+document exists. In each of them the buyer's remedy — refund, reversal, settlement — depended on
+the seller still being there to grant it, or on a court being able to reach it. The one party
+never in a position to establish anything on its own was the person who had paid. What follows
+is a way of putting a small, durable piece of evidence in that person's hands.
+
+---
+
 ### 3. What you actually bought
 
 When you buy a book in a shop you leave with two things, and rarely notice the second. The first is
@@ -141,7 +261,7 @@ What attest gives you is the second thing, made durable and put in your hands. T
 defines it in one sentence: a receipt "is evidence of a license grant and its terms, signed by the
 issuer identified in the receipt". In plain words, it is a small file in which the seller states, in
 a form that cannot be altered without the alteration showing, that on this date it granted this
-licence, for this work, on these terms, to the person this receipt is bound to. *Signed* means
+licence, for this work, on these terms, and sealed into it a secret it handed to the buyer. *Signed* means
 exactly that: the seller has applied to the file a mark that only the seller can make and that
 anyone can check, so that changing a single character inside the file breaks the mark. How the mark
 is made and how a stranger checks it is the next section. This section is about what the file says.
@@ -193,13 +313,14 @@ The field that names the buyer names nobody. Instead of your email address or ac
 receipt carries a *commitment*: a fingerprint computed over that identifier together with a secret
 the seller generates for that one receipt and hands to you separately. From the fingerprint alone
 nobody can recover who you are — the computation is deliberately slow, so that guessing email
-addresses against it is not practical — and yet you, holding the secret, can show anyone that the
-receipt was issued to you. That is why the receipt can be shown to a stranger, posted on a forum or
+addresses against it is not practical — and yet you, holding the secret, can show anyone that you
+hold the secret the receipt was sealed with, which is what "proven" means and all it means, as
+the next section says. That is why the receipt can be shown to a stranger, posted on a forum or
 handed to an archive without exposing you: the shareable file says *someone* bought this; the
-secret, kept in a second file, is what says it was you. A receipt may also carry a public key of
-yours, for a stronger proof; today, wherever a purchase happens without an app on the buyer's side,
-that field is empty by design. What proving it is yours costs, and what it does not prove, is in the
-next section.
+secret, kept in a second file, is what says that the holder of that secret is at the door. A
+receipt may also carry a public key the seller writes in as yours, for a stronger proof; today,
+wherever a purchase happens without an app on the buyer's side, that field is empty by design.
+What proving it is yours costs, and what it does not prove, is in the next section.
 
 So what you actually bought, on any store that signs, is two things again, both in your hands. Where
 files are sold without locks: the file and the receipt, content plus proof. Where the platform keeps
@@ -234,7 +355,9 @@ Keys are meant to change. A seller retires a key and adds a new one by publishin
 numbered one higher than the last, and a verifier that trusted the old manifest accepts the new one
 only if it was signed by a key that was in use in the old one — an unbroken chain, so that a
 stranger cannot slip in a manifest of their own. A retired key keeps every receipt it ever signed
-valid. A key declared **compromised** — stolen — does the opposite: every signature it ever made is
+valid. It does not keep valid the smaller documents it signed beside them — a withdrawal, a
+transfer record — which a verifier honours only from a key still in use; section 5 says what that
+costs a transfer. A key declared **compromised** — stolen — does the opposite: every signature it ever made is
 rejected from then on, and the marking, once seen by a verifier, cannot be unseen or reversed.
 Declaring one is a shipped command (`attest manifest rotate --compromise-kid`), and it is the
 seller's one lever that reaches backwards; sections 6 and 8 say how far it reaches, and why the
@@ -271,7 +394,8 @@ different kinds of fact and collapsing them is how a green tick lies. *Is the si
 Did the seller's key, and no other, sign exactly these bytes. *Is the receipt well-formed?* Does it
 carry every field the standard requires, in the form it requires. *Has it been withdrawn?* As far as
 the verifier has been shown: shown nothing, it answers "unknown", and unknown does not fail the
-receipt. *Has anyone proved it is theirs?* Only if someone tried; otherwise "not checked". *Where
+receipt. *Has anyone proved they hold the secret it was sealed with?* Only if someone tried;
+otherwise "not checked". *Where
 did the keys come from?* The question that decides how much the first answer is worth. From those
 the verifier states one summary word, `ok`, which means: signature genuine, receipt well-formed,
 nothing shown says it was withdrawn or passed on, and no error. Binding and key provenance are
@@ -313,28 +437,47 @@ confirming who published those keys — so if a stranger sends you a bundle from
 heard of, a green result is evidence that the file is consistent with itself, not evidence that the
 shop is real. The page says as much beside every result, and section 8 returns to it.
 
-#### Proving it is yours
+#### Proving it is yours, and what "proven" proves
 
-A copy of the shareable file verifies exactly as the original does, and it is meant to. What a copy
-cannot do is answer the question *is this yours?*, and the standard defines two ways to answer it.
-The everyday way uses the secret from the private file: you disclose your identifier and that
-receipt's salt, the verifier recomputes the commitment and compares it with the one sealed in the
-receipt, and the answer is "proven" or "not proven". It works with the shipped tools — the
-command-line verifier takes it as options, the browser page has a panel for it, and the project's
-own sample demonstrates it. It is also, in the standard's words, "a replayable bearer proof":
-whoever you show it to can show it to someone else and be believed, and it hands over your
-identifier. Per-receipt salts keep the damage to one receipt, and a verifier is required to treat
-the disclosed identifier as personal data not to be kept. The strong way needs a key of yours signed
-into the receipt at the time of sale: a verifier invents a fresh challenge, you sign it with the
-private half of your key, and the signed answer proves you hold that key without revealing anything
-and without being reusable, because the next challenge will be different. Both implementations know
-how to check such an answer, and the command-line verifier even has inputs for the challenge and the
-response. No shipped tool produces the answer: the buyer's side of that exchange exists only as a
-library call, and the key it needs is empty by default on every receipt issued without an app on the
-buyer's side — which today is every receipt. So the proof a buyer can actually perform with what
-ships is the disclosure, and the stronger one is specified, checked and not yet in anyone's hands.
-Nothing obliges a verifier to ask for either; one that never asks sees a copy and an original as the
-same file.
+A copy of the shareable file verifies exactly as the original does, and it is meant to. What a
+copy cannot do is answer the question *is this yours?*, and the standard defines two ways to
+answer it. The everyday way uses the secret from the private file: you disclose your identifier
+and that receipt's salt, the verifier recomputes the commitment and compares it with the one
+sealed in the receipt, and the answer is "proven" or "not proven". It works with the shipped
+tools — the command-line verifier takes it as options, the browser page has a panel for it, and
+the project's own sample demonstrates it. It is also, in the standard's words, "a replayable
+bearer proof": whoever you show it to can show it to someone else and be believed, and it hands
+over your identifier. Per-receipt salts keep the damage to one receipt, and a verifier is
+required to treat the disclosed identifier as personal data not to be kept. The strong way needs
+a key signed into the receipt at the time of sale: a verifier invents a fresh challenge, you sign
+it with the private half of that key, and the signed answer proves you hold the key without
+revealing anything and without being reusable, because the next challenge will be different.
+Both implementations know how to check such an answer, and the command-line verifier has inputs
+for the challenge and the response. No shipped tool produces the answer: the buyer's side of that
+exchange exists only as a library call, and the key it needs is empty by default on every receipt
+issued without an app on the buyer's side — which today is every receipt. So the proof a buyer
+can actually perform with what ships is the disclosure, and the stronger one is specified,
+checked and not yet in anyone's hands. Nothing obliges a verifier to ask for either; one that
+never asks sees a copy and an original as the same file.
+
+Now the sentence this document is careful about everywhere, because it is the one a green result
+invites you to misread. "Proven" means that whoever is presenting the receipt holds a secret that
+reproduces a value the seller wrote into it — the salt, or the private half of the key. It does
+not mean that the person the receipt names took part in the purchase. Every input to both proofs
+is chosen by the seller: the seller generated the salt, received the identifier, and wrote the
+public key into the receipt it then signed. A seller that wanted to say "this person bought this"
+could mint a key of its own, write it in as the buyer's, and later hand any verifier a disclosure
+that reads "proven"; the mathematics would be flawless and the statement false. The specification
+places a dishonest seller outside its scope — attest proves what a seller signed, not that the
+seller is honest — and it already forbids a verifier from treating the same key on two receipts
+as proof that the same person bought both. What this document adds is the plain reading: a
+binding proof establishes possession of a secret, and the seller's word is what connects that
+secret to a person. The standard is being amended to say exactly that in its own text. A further
+addition is planned and not yet specified: a buyer's own signature over the terms of the offer,
+carried inside the receipt, so that a seller whose key was stolen, or who was coerced, could not
+issue a receipt in a buyer's name without that buyer's key having agreed to the deal. No receipt
+carries it today, it would remain optional, and section 13 says what it would and would not
+close.
 
 #### Withdrawing a receipt
 
@@ -380,7 +523,9 @@ protects any receipt today. The gap is in tooling, it is known, and it is listed
 problems rather than left for a reader to discover.
 
 What can and cannot be done today, in one place. A buyer can receive a receipt, keep it, verify it
-offline at trust on first use, prove it theirs by disclosure, and share one receipt safely. A seller
+offline at trust on first use, show they hold its binding secret by disclosure, sign the
+authorization that starts a transfer where the receipt names a key of theirs, and share one
+receipt safely. A seller
 can generate keys, publish and rotate a manifest, declare a key stolen, issue receipts by hand or
 from a checkout, export bundles, counter-sign a transfer, and sign a preservation pledge. Neither
 can, with what ships: withdraw a receipt, enter one in a log, package a compromise declaration so
@@ -398,22 +543,22 @@ rest of this document keeps the two lists apart.
 > to one that can), `issued_at` lies inside the key's validity window, and a `retired` key continues
 > with a warning; (4) the Ed25519 signature over the canonical payload; (5) the JSON Schema; (6)
 > revocation, only if a view was supplied; (7) binding, only if a disclosure was supplied. The
-> result is five components with fixed literals (§11.1): `signature` valid/invalid; `schema`
+> result is five components with fixed literals (v0.1 §11.1): `signature` valid/invalid; `schema`
 > valid/invalid/not_checked; `revocation` unknown, `not_revoked_as_of:<T>`, revoked,
 > invalid_revocation_ignored, and, under v0.2 §17.3, transferred; `binding`
 > proven/not_proven/not_checked; `trust` verified/unauthenticated_tofu/unverified_rotation. `ok` is
 > signature valid *and* schema valid *and* revocation neither revoked nor transferred *and* no
 > errors; `trust` is resolved as soon as the issuer can be read and is never reset by a later
 > failure, and it is `verified` only when the trust store's provenance for that issuer is `"tls"`. A
-> key manifest (§7.1) carries `issuer`, a monotonically increasing `manifest_version`, `issued_at`,
+> key manifest (v0.1 §7.1) carries `issuer`, a monotonically increasing `manifest_version`, `issued_at`,
 > the `keys[]` entries — `kid` of the form `<domain>/keys/<label>#<name>`, `pub`, `valid_from`,
 > `valid_to`, `status` in active/retired/compromised — and a `manifest_signature` over the rest;
 > continuity (§7.3) requires manifest N+1 to be signed by a key active in N, and `compromised` is
-> absorbing. The `.attest` bundle (§14.1) holds `receipts/*.attest.json` with `delivery.salt`
+> absorbing. The `.attest` bundle (v0.1 §14.1) holds `receipts/*.attest.json` with `delivery.salt`
 > stripped, `manifests/<issuer>.json`, `legal/<sha256>.txt` verified against each receipt's hash
 > bindings at export, an optional `proofs/` member (v0.2 §14), and `README.html`; the
-> `.private.attest` sibling (§14.2) holds `salts.json` and, if used, `keys/`. A receipt's `delivery`
-> member (§4.2) is unsigned, may carry the salt and a manifest snapshot, and cannot forge or
+> `.private.attest` sibling (v0.1 §14.2) holds `salts.json` and, if used, `keys/`. A receipt's `delivery`
+> member (v0.1 §4.2) is unsigned, may carry the salt and a manifest snapshot, and cannot forge or
 > invalidate anything. Now the completeness check this document applies to every defence: for each
 > input the shipped `attest verify` accepts, who produces it. `--trust-dir`: manifests from
 > `manifest init`/`rotate` or an imported bundle — shipped, and the tool records their provenance as
@@ -453,55 +598,84 @@ place at a time; handing it to someone means no longer having it. Nobody enforce
 simply what objects are like. Digital goods have no such property, and every attempt to give it to
 them has been an attempt to build the scarcity back in by force.
 
-To see what such an attempt costs, name the three things people mean when they say they *own*
-something they bought. They can **pass it on**: lend it, sell it, leave it to someone. It is
-**theirs and not everyone's**: one buyer, one copy in use, which is what makes paying for it
-sensible. And it **outlives the shop**: the bookshop closing does not empty the shelf at home.
-Sharing, exclusivity, survival. A physical purchase gives all three without trying. A digital
+To see what such an attempt costs, name the three things people want at once from a digital
+purchase — precisely, because loose names are how this argument slides. **It copies freely**: the
+file and the proof are plain data, copying them is no offence against anything, checking them
+needs nobody's permission, and no lock sits on the work. **It is theirs and not everyone's**: one
+buyer, one copy in use, which is what makes paying for it sensible. **It outlives the shop**: the
+bookshop closing does not empty the shelf at home — and in the strict sense this project has
+always used, it outlives the log, the network, and the people who wrote the standard too. Free
+copying, exclusivity, survival. A physical purchase gives all three without trying. A digital
 purchase cannot give all three at full strength, and the reason is not a missing piece of
-engineering.
+engineering. Notice that the first property is not "you can pass it on". Passing something on is
+an exclusive handover, in which one holder loses what another gains, and a design can be
+perfectly transferable and still be a lock — that is what the market in enterprise licence
+transfers is. The property in question here is that the proof duplicates without loss.
 
-Here is the reason, in one sentence. To enforce "one user at a time" for something that copies
-freely, someone alive has to know, at the moment of use, who the current holder is — a server, a
-network, a chip — and has to be consulted. To survive the death of every platform, nothing alive
-can be required. Those two demands point in opposite directions, and a design has to choose which
-of them gives way.
+Any two of the three are easy, and each pair has a shipped example. Free copying and survival,
+without exclusivity, is attest today: a signed file, no lock, no arbiter. Exclusivity and
+survival, without free copying, is the encrypted work whose key travels with the licence; it runs,
+in content-addressed stores and in the ebook trade, and the price is that the work is locked.
+Free copying and exclusivity, without survival, is the live arbiter — a server that answers "may
+this run now" — which is how the only concurrency control ever shipped at scale works, and it
+dies with its operator. The triple fails, and it fails for two reasons that no better signature
+scheme, no better log and no different substrate changes.
 
-Every existing answer is such a choice, and each one is visible in the market. Digital rights
-management chooses exclusivity: the file is locked, and the store's server is the arbiter that
-decides whether your copy may open. Exclusivity holds exactly as long as the arbiter does; when the
-store closes, so does the file, which is the story of every case in section 2. The plain DRM-free
-download chooses survival: the file on your disk needs nobody's permission and opens forever, and
-in exchange it says nothing — not who bought it, when, from whom, or on what terms. A DRM-free file
-is anonymous. A blockchain promises an arbiter that never dies, a public ledger in which the
-receipt is a token that can sit in only one wallet at a time; it pays for that promise with fees,
-with a bet on that one network's longevity, with a player that has to consult the network at the
-moment of use, and with a permanent public record of everyone's purchases. Locked hardware — a chip
-that holds the key and will not give it up — buys exclusivity by rebuilding the closed platform
-inside your own device, and chips die too.
+The first is that a verifier working offline, from signed documents and an append-only record,
+can decide only facts that stay true once they are true. *This key signed these bytes.* *This
+transfer was recorded before that one.* *This receipt was timestamped before that declaration.*
+Every mechanism in this standard manufactures more facts of that kind. "Nobody else is using this
+right now" is not a fact of that kind: it can turn false and true again without any document
+being created, because what would have to be recorded is a non-event, and no quantity of signed
+history records a non-event. A public log makes such facts faster to establish, never a current
+one; consulting a chain at the moment of use is consulting a live arbiter under another name. So
+the corner that gives is exclusivity, never survival. The literature on payments made without a
+network reached the same place decades ago: the classic construction for digital cash spent
+offline does not prevent a coin being spent twice, it honours the second spend and then unmasks
+the spender. A receipt whose exclusivity is a term of the licence, backed by a recorded transfer
+chain that anyone can audit, is in that family, not short of it.
 
-attest's choice is stated once here and holds throughout the document. Survival is not
-negotiable. Exclusivity is weakened, deliberately, from a physical fact into a term of the licence
-that can be checked and refused. That sentence needs unpacking, because the difference is the
-whole design.
+The second reason is the one that decides the matter, and it is about repair. The weaker half of
+exclusivity — the work is unusable without a receipt — *is* buildable with nobody alive: encrypt
+the work, and put the key where only the receipt's holder can reach it. But a lock has exactly
+one known repair when its secret leaks: somebody still alive changes the secret. The one
+published scheme that turns a purchase into a decryption key is candid about this. It promises
+that a book still opens years after the bookshop is gone, and it keeps that promise by keeping a
+certification authority alive to reissue its cryptographic material — which it has already had
+to do once, after that material was breached. A receipt built to still work when *everyone* is
+gone has nobody left to do that. The first holder who extracts the plaintext ends the lock for
+that work, for everyone, permanently, because there is no channel left to reach the copies
+already in circulation; what remains is no protection in fact, and a lock on every copy whose
+standing an independent player would then have to worry about. Survivability does not merely
+conflict with enforcement. It removes the only known repair for a broken lock. That is why the
+standard defines no encryption, carries no copy of a work, and forbids being used or marketed as
+a way to strip protection from one: not as a preference, but because a lock of that kind is a
+promise this project could never keep.
 
-Two things make the weakened form more than words. The first is that a receipt can be tied to a
-key that only you hold, so that a copy of the receipt file, on its own, proves nothing about who
-holds it: when it matters, a verifier can put a fresh question to you that only the holder of that
-key can answer, and the answer is useless for any other question. The second is that the holder can
-change only through a **transfer**, and a transfer is not something two buyers do between
-themselves. The seller counter-signs it, retires your receipt, issues a new one to the new holder,
-and records the transfer in its public log. If two transfers of the same receipt ever appear, the
-one recorded first wins and the second is reported as a conflict. So a duplicated receipt fails
-exactly where a copy would otherwise be useful — at resale, at a successor's desk, at an archive
-that hands out files only to buyers, at a support counter — because none of those parties will
-accept a receipt whose holder cannot answer for it or whose transfer was never recorded.
+attest's choice follows from that and holds throughout the document. Survival is not negotiable.
+Exclusivity is weakened, deliberately, from a physical fact into a term of the licence that can
+be checked and refused. That sentence needs unpacking, because the difference is the whole
+design.
+
+Two things make the weakened form more than words. The first is that a receipt can carry a key
+the seller writes in as the buyer's, so that a copy of the receipt file, on its own, proves
+nothing about who holds that key: when it matters, a verifier can put a fresh question that only
+the holder of the key's private half can answer, and the answer is useless for any other
+question. Who the key belongs to is, today, the seller's word, as section 4 said. The second is
+that the holder can change only through a **transfer**, and a transfer is not something two
+buyers do between themselves. You sign an authorization with the key in your receipt; the seller
+counter-signs it, retires your receipt, issues a new one to the new holder, and records the
+transfer in its public log. If two transfers of the same receipt ever appear, the one recorded
+first wins and the second is reported as a conflict. So a duplicated receipt fails exactly where
+a copy would otherwise be useful — at resale, at a successor's desk, at an archive that hands out
+files only to buyers, at a support counter — because none of those parties will accept a receipt
+whose holder cannot answer for it or whose transfer was never recorded.
 
 And here is the limit, next to the promise it limits. The key is a file too, and it copies. Two
 people who share a receipt and its key share access, the way two people share a password: attest
 does not prevent that and does not try to. Using a duplicated receipt in two places at once is a
-breach of the licence that an honest player or marketplace can detect and decline to honour; it is
-not an impossibility, and this document will not call it one. Detection itself is conditional
+breach of the licence that an honest player or marketplace can detect and decline to honour; it
+is not an impossibility, and this document will not call it one. Detection itself is conditional
 today: it rests on the seller's log being one log, seen the same by everyone, and that guarantee
 is not yet backed by independent observers (section 8). And a transfer needs the seller alive to
 counter-sign it, which is the trilemma biting back on the very corner attest chose to protect:
@@ -509,14 +683,31 @@ today, when the seller goes, transfers stop, and every receipt holds to its last
 Making transfer authority outlive the seller is the hardest open problem on the project's list,
 and it is named there rather than promised here.
 
-The right picture is a deed, not a lock. A deed to a house does not stop anyone walking through
-the door; a lock does that, and locks get changed, picked, and eventually rusted. What the deed
-does is establish whose house it is, prove it to anyone who asks, and go on doing so after the
-notary who drew it up is dead. The objection to the picture is obvious — if it cannot prevent
-copying, it is not ownership — and it proves too much, because physical possession does not
-prevent theft either. What ownership gives you is *standing*: the ability to show a stranger, on a
-bad day, that this is yours. Delivery gives you the bytes. It does not give you standing, and
-standing is what evaporates today.
+Two further limits on transfer are measured on the code, not inferred, and they are stated here
+because a reader would otherwise take more from the paragraphs above than they give. The seller's
+terms say whether a receipt may be passed on, and that field is a signed statement the verifier
+that honours a transfer never reads: the gate it applies is the holder's key and the log, so
+"transferable where the seller allows it" is, today, a term the seller signs and the parties
+honour, not a rule the verifier enforces. And a transfer, once counter-signed and recorded, is
+only as durable as the seller's signing key is *current*: a verifier honours a transfer record
+only while the key that signed it is still in use, so the ordinary act of retiring a key and
+adding a new one — routine, section 4 said — silently un-honours every transfer that key
+counter-signed, and the old receipt reverts to its previous holder while the new one stays valid.
+The rule that would close that — judge a transfer record against the key's validity window at
+the moment the transfer was signed, not against the key's status today — is declared work in the
+specification's own record, and until it is written this document does not say that a transfer
+holds.
+
+So the right picture is this: a receipt is a key to a door, never to a file. It does not open
+anything on your disk; a player that ignores your receipt still plays your file. What it opens is
+a door with someone behind it who checks. The archive that owes you a copy under a publisher's
+pledge checks it before handing one over. The seller checks it before moving your entitlement to
+someone else. A court, a successor, a support desk check it before taking your word. One receipt,
+one legitimate holder is a term of the licence and a record anyone can audit — not a law of
+physics, and this document does not pretend otherwise. Delivery gives you the bytes. It does not
+give you standing, and standing is what evaporates today. None of this solves the trilemma, and
+no solution is promised: it is the corner of it this project chose to stand in, with the reason
+written down.
 
 > **In detail: the two bindings, the transfer rule, and which tools exist.** A receipt binds to
 > its buyer in one of two ways (v0.1 §8). The default, for sales with no buyer-side app, is a
@@ -525,20 +716,35 @@ standing is what evaporates today.
 > identifier and salt (`attest disclose`), and that proof is a bearer proof: whoever sees it can
 > replay it (§8.1). The strong form is an Ed25519 public key in the signed receipt, `buyer.pubkey`,
 > proven by challenge-response over a fresh nonce (§8.2) — non-replayable, and optional, `null` by
-> default where there is no client. Transfer requires the strong form: a v0.2 receipt that claims
+> default where there is no client. The key is written into the payload by the issuer, so
+> `binding: "proven"` establishes possession of the key's private half and never the buyer's
+> participation (section 4). Transfer requires the strong form: a v0.2 receipt that claims
 > `license.transferable: true` with no `buyer.pubkey` is a schema error (v0.2 §17.8). Transfer is
-> issuer-mediated by design, never buyer-to-buyer (§17); a transfer record is honoured only when its
-> inclusion in the issuer's transparency log is proven (§17.2); two logged records for the same
-> receipt are a double assignment and the earliest log index wins (§17.4); walking the chain of
-> title is a separate audit surface with fixed, byte-identical diagnostics (§17.5). What is
-> shipped, on the command-line tool on `main`: the seller's side of a transfer (`transfer
-> authorize`, `transfer record`) and the log operator's commands (`log`), and the redemption
+> issuer-mediated by design, never buyer-to-buyer (§17); the outgoing holder's consent is a
+> signature by that key over a domain-separated preimage (§17.1), and it is what permits
+> extinguishing even an otherwise irrevocable receipt (§17.3); a transfer record is honoured only
+> when its inclusion in the issuer's transparency log is proven (§17.2); two logged records for the
+> same receipt are a double assignment and the earliest log index wins (§17.4); walking the chain
+> of title is a separate audit surface with fixed, byte-identical diagnostics (§17.5). What is
+> shipped, on the command-line tool on `main`: the holder's side of a transfer (`transfer
+> authorize`, which signs the outgoing holder's authorization with the buyer's own key), the
+> issuer's side (`transfer record`), the log operator's commands (`log`), and the redemption
 > challenge for a preservation pledge (`grant challenge`, `grant respond`, `grant verify`, §18.7).
-> The ordinary binding challenge for a receipt — the "prove this is yours" exchange described
-> above — is verified by both implementations as a library call, and no shipped command runs that
-> exchange. "One legitimate holder at a time" is therefore a licence term enforced by honest
+> The ordinary binding challenge for a receipt — the "prove this is yours" exchange described in
+> section 4 — is verified by both implementations as a library call, and no shipped command runs
+> that exchange. "One legitimate holder at a time" is therefore a licence term enforced by honest
 > clients, and by issuers and markets refusing a receipt that fails it; the protocol supplies the
-> evidence and never the enforcement.
+> evidence and never the enforcement. Two measured facts bound the profile as shipped:
+> `license.transferable` is not read on the path that honours a transfer record (every combination
+> of receipt version and flag with a non-null `buyer.pubkey` yields `transferred`), and a transfer
+> record authenticates only while its signing `kid` is `active` (§17.1 mirrors v0.1 §12.1), so a
+> `retired` key un-honours it and the old receipt returns to `revocation: "unknown"`; a rule that
+> judges the record against the key's validity window at `transferred_at` is declared work and not
+> yet specified. The three properties named above, the two arguments for why
+> the triple fails, and the recommendation that no specification change follow from them are the
+> subject of the project's research record of 5 September 2026; the door the receipt opens is the
+> normative precondition a custodian checks before serving bytes (v0.2 §18.7) and the consent gate
+> a transfer passes through (§17.3), both shipped.
 
 ---
 
@@ -729,15 +935,17 @@ long as the information is needed, and reproduce it unchanged. That definition i
 confirmation arrives as something you can keep, rather than as a page that vanishes when you
 close it.
 
-An attest receipt is that same confirmation — same seller, same purchase, same date — in a form a
-machine can check and you can carry away. What a regulator would be asked for is not a new
-obligation but a usable format for one that already exists.
+An attest receipt is not that confirmation, and this document does not claim it is. The
+confirmation the law requires must carry the information the trader owed you before the sale
+(Article 6(1)); a receipt carries the purchase — same seller, same date, the terms of the licence
+— and not the trader's terms of business. What a receipt is, is a form that confirmation could
+include or travel in: one a machine can check and you can carry away. What a regulator would be
+asked for is not a new obligation but a usable format for one that already exists.
 
 The objection to make here is the honest one, and it deserves a straight answer: the email already
 satisfies Article 8(7), so this is a solution looking for a problem. The email does satisfy it.
-Nobody in this document claims otherwise, and a receipt on its own is not claimed to discharge the
-Article either: the confirmation the law requires must carry the information the trader owed you
-before the sale, and a receipt carries the purchase, not the trader's terms. What the format adds
+Nobody in this document claims otherwise, and a receipt on its own does not discharge the
+Article, as the paragraph above said. What the format adds
 is a requirement on the *form* of an existing obligation, not a new duty — that the confirmation be
 checkable by someone other than the sender. The reason that is worth asking for is the whole of
 section 2: a confirmation only the sender can authenticate is worth exactly nothing on the day it
@@ -1004,7 +1212,10 @@ copy and that the remedy, if any, lies with Congress. A file format does not res
 doctrine to digital goods, and a lawyer will say so in one sentence. It cannot force an unwilling
 seller: a shop that never issues a receipt leaves nothing for anyone to check. Transfers stop when
 the issuer does, because every transfer is counter-signed by the issuer; making them outlive the
-issuer has a name in the specification's own open work and is not built. A publisher's word about
+issuer has a name in the specification's own open work and is not built. Whether the seller's
+terms allow a transfer at all is a signed statement that the verifier honouring one never reads,
+and a transfer is honoured only while the key that counter-signed it is still in use, so a routine
+rotation un-honours it — both measured, both stated in section 5 as limits and not as guarantees. A publisher's word about
 who was authorised to sell never touches the verdict, and nothing distinguishes a publisher who
 refuses to participate from one who simply never has. It does no forensic tracking, and it does not
 extend to streaming.
@@ -1019,18 +1230,23 @@ extend to streaming.
 > - **The rescue covers the receipt's own signature and nothing else** (v0.2 §19.5). Revocation
 >   records, artifact manifests, transfer records, grant documents and cessation declarations keep
 >   v0.1's fail-closed rule — a side-document signed by a key that is not `active` is unauthenticated
->   and ignored — and extending the cutoff to them is named as a distinct design with its own hazards,
->   transfer resurrection and double assignment. Neither specification restricts *which* keys may
->   publish a compromise marking.
+>   and ignored, which is also why a routine rotation that retires the signing key un-honours every
+>   transfer record that key signed (section 5) — and extending the cutoff to them is named as a
+>   distinct design with its own hazards, transfer resurrection and double assignment. Neither
+>   specification restricts *which* keys may publish a compromise marking.
 > - **The trust root is domain control** (v0.1 §7.1, §7.4). "An issuer's identity is its DNS domain";
 >   `trust: "verified"` requires a manifest fetched over TLS from it, everything else is
 >   `unauthenticated_tofu` and is "never silently upgraded"; and no value of transparency or
 >   corroboration ever changes that (v0.2 §15 item 4, "the single most important non-goal").
-> - **Proving you are the buyer costs something** (v0.1 §8). Redeeming the commitment by disclosing
->   the identifier and its salt is a replayable bearer proof that burns that receipt's binding
->   secrecy toward that verifier; the non-revealing path — a challenge-response against a buyer
->   public key — is the strong one, and it is optional and absent by default wherever there is no
->   buyer-side client.
+> - **Proving you hold the binding secret costs something, and proves possession, not
+>   participation** (v0.1 §8). Redeeming the commitment by disclosing the identifier and its salt
+>   is a replayable bearer proof that burns that receipt's binding secrecy toward that verifier;
+>   the non-revealing path — a challenge-response against a buyer public key — is the strong one,
+>   and it is optional and absent by default wherever there is no buyer-side client. Every input to
+>   either proof is issuer-chosen, so `proven` never establishes that the named buyer took part;
+>   the amendment stating this in the specification's own text is in progress, and a
+>   `buyer.acceptance` member carrying the buyer's own signature over the offer is a planned,
+>   OPTIONAL addition, not yet specified.
 > - **The heir's case is closed by construction** (v0.2 §18.6, §18.7; threat model TM-44). A pledge
 >   receipt must carry a non-null `buyer.pubkey`, and "Salt disclosure MUST NOT be accepted as a
 >   redemption proof … This is a normative prohibition, not a recommendation."
@@ -1055,186 +1271,619 @@ extend to streaming.
 
 ---
 
-## Part C — Working note for this round (not part of the text; remove before publication)
+### 9. Copying, piracy, and what this is not for
 
-*In italiano, perché è rivolta a chi decide. Elenca le scelte che ho dovuto prendere e su cui chiedo
-conferma o ribaltamento. Nessuna è nascosta nel testo: dove ho scelto, il testo dice ciò che ho
-scelto.*
+Three questions arrive together at this point, and they deserve separate answers because they
+are different questions. Is this DRM? Does it stop piracy? Does it help pirates?
 
-1. **Esiste lavoro precedente, e questo giro ci si appoggia invece di ricominciare.** Il 1° settembre
-   sono stati prodotti, nella cartella privata di lavoro, una struttura in 14 sezioni (con le
-   premesse verificate, i gate lessicali e la scelta del caso d'apertura) e una bozza con 8 sezioni
-   scritte, corredate di tabelle di verifica claim per claim. Le tre sezioni qui in Parte B sono
-   riscritte da capo nel registro richiesto, ma **riusano i fatti già verificati** di quel lavoro,
-   ricontrollati oggi sul codice e sulla spec di `main`; l'outline in Parte A ne conserva l'ossatura
-   con una differenza (punto 3). **Da confermare**: che questo file sia la sede unica da qui in poi e
-   che bozza e struttura del 1° settembre valgano come archivio di verifica, non come testo.
-2. **Il caso d'apertura (sezione 2) non è ancora una tua decisione.** La scelta «Amazon/*1984* del
-   2009, poi gli stessi fatti in quattro mercati» ha sostituito Sony/StudioCanal e *The Crew* dopo
-   due bocciature, ma risulta approvata in tua vece, non da te. L'outline la porta così; la sezione
-   non è scritta in questo giro proprio per questo. **Da confermare o cambiare** prima che si scriva.
-3. **La sezione anti-pirateria è una sezione a sé (9), non un paragrafo dentro «perché vale la
-   pena».** Il brief la elenca fra le cose che il documento deve contenere; la struttura del 1°
-   settembre la teneva come sottosezione. L'ho promossa perché la domanda «è DRM? aiuta i pirati?»
-   è una delle prime che un lettore fa, e merita un titolo che si trovi scorrendo l'indice.
-   **Da confermare.**
-4. **Lessico: «track», mai «rail».** Il README pubblico dice «second track»; la frase canonica rev 2
-   (non ratificata) chiude con «Two rails, one standard». Ho seguito il README e la proposta di
-   emendamento già registrata. Se ratifichi la rev 2 così com'è, i due documenti collidono: la via
-   pulita è emendarla a «tracks» nello stesso atto.
-5. **La clausola del manifesto sulla catena va tolta quando il manifesto va in pensione.** Il
-   manifesto dice che tutto ciò che una catena farebbe qui «è già fatto da log e firme, o è una
-   liability»; la spec (v0.2 §11.1) dice l'opposto: l'ancoraggio a un header Bitcoin è *richiesto*
-   per ogni standing che deve sopravvivere a un computer quantistico, e i checkpoint firmati non
-   possono darlo. La sezione 6 scrive la posizione vera («niente blockchain nel modello; Bitcoin
-   in un solo ruolo, come orologio letto da una copia locale») e non ripete quella frase. **Da
-   confermare** che il whitepaper prevalga e che quella frase non sopravviva altrove.
-6. **Due difetti vivi sono deliberatamente fuori dalla sezione 8**, perché la sequenza decisa è
-   «fix → release letta sui registri → advisory», e scriverli nel whitepaper pubblicherebbe il
-   meccanismo prima del rimedio. Il testo ne dice la *famiglia* («l'evidenza è consumata da
-   entrambe le implementazioni e prodotta da nessuna») e tace meccanismo e soglia. Se il whitepaper
-   atterra *dopo* l'advisory, le due voci rientrano e la sezione si riapre. **La sequenza è tua.**
-7. **Ho corretto un errore della bozza precedente, e lo segnalo perché non si propaghi.** La bozza
-   del 1° settembre affermava che un verificatore «accetterà ancora un record di revoca firmato con
-   la chiave compromessa». È falso: v0.1 §7.3 e §12.1 impongono che un record firmato da una chiave
-   non `active` — compromessa o ritirata — sia trattato come non autenticato e ignorato. Il limite
-   vero di §19.5 è un altro, ed è quello scritto: un trasferimento genuino *anteriore* alla
-   dichiarazione cade con la chiave, e in silenzio.
-8. **Il verdetto a due stati non è più vero ovunque.** L'app di verifica scaricabile, mergiata oggi,
-   distingue il caso trust-on-first-use; la pagina web no. La sezione 8 lo dice così. **Da
-   confermare** che il documento possa citare l'app scaricabile come cosa esistente.
-9. **Fatti esterni che ho citato per nome**: Surety e il *New York Times* dal 1995 (verificato oggi
-   su fonti secondarie concordanti; la fonte primaria sarebbe una pagina del giornale — se vuoi
-   solo fonti primarie, l'immagine si riscrive come ipotetica senza perdere nulla); le tre sentenze
-   sulla rivendita con numero di causa e anno (fatti stabili, da rileggere alla fonte nel giro delle
-   Note); la direttiva 2011/83/UE art. 8(7) e 2(10) (testo verificato; è il vincolo registrato oggi
-   sulle claim UE, e la sezione 7 lo svilupperà per esteso, con la risposta della Commissione del
-   16 giugno 2026 detta
-   con precisione: ha *declinato* l'obbligo e si è impegnata ad *avviare* un confronto per un codice
-   volontario entro fine 2026).
-10. **Titolo e sottotitolo.** «Own what you buy» è la tagline già ratificata; il sottotitolo è la
-    frase canonica in forma P+M+S. **Da confermare.**
-11. **Lunghezza.** La sezione 8 da sola pesa quanto tre sezioni normali. Il tetto proposto per il
-    documento intero resta ~11.000 parole; se lo si vuole più corto, la scelta è *quale* limite
-    dichiarato esce, e non è una scelta di stesura.
-12. **Il nome dell'Internet-Draft non compare**, e non comparirà finché il nome nel repository e
-    quello sul Datatracker non coincidono: oggi divergono, e qualunque dei due manderebbe il lettore
-    su un errore.
-13. **Vincolo sui produttori mancanti, applicato.** Dopo la prima stesura è arrivata la misura che
-    `attest revoke` non esiste (i verbi della CLI su `main` sono `keygen`, `issue`, `verify`,
-    `export`, `import`, `inspect`, `disclose`, `check-artifact` più i gruppi `transfer` e `grant`;
-    l'unico chiamante di `revocation.build_record` è il ramo `transfer --revocation-out`, che emette
-    `status: "transferred"`; il bridge non gestisce i refund). Riverificato oggi sul codice. La
-    sezione 8 ha ora una sottosezione dedicata («The seller's own levers are specified, not
-    shipped»), la frase sulla marcatura è stretta a «quella chiave», e le righe 4, 11 e 13
-    dell'outline portano il vincolo. **Da confermare**: la frase generale «nessuna delle difese
-    classificate "design noto" ha oggi un produttore completo spedito» è scritta come misura del
-    progetto, senza numeri.
-    **Nota di correzione (secondo giro)**: l'elenco dei verbi qui sopra è incompleto. Misurato su
-    `main` leggendo `src/attest/cli.py` con una ricerca che copre anche le chiamate spezzate su più
-    righe (una ricerca a riga singola ne perde circa la metà): i verbi di primo livello sono
-    `keygen manifest issue transfer grant authority log verify disclose export import inspect
-    check-artifact`; sotto `manifest` stanno `init rotate artifacts`, sotto `transfer` `authorize
-    record`, sotto `grant` `issue declare challenge respond verify`, sotto `log` `init append
-    sign-checkpoint prove anchor ots-convert`. Nessun `revoke`, a nessun livello. La conclusione
-    del punto non cambia; cambia il metodo: l'insieme si legge dal posto che lo definisce, non da
-    una lista attesa. La riga 4 dell'outline porta ancora l'elenco corto e va allineata nel giro
-    in cui si scrive la sezione 4.
-14. **Collocazione.** Questo giro salva in `docs/whitepaper.md` su un branch dedicato, come
-    richiesto; la struttura del 1° settembre prevedeva la bozza in cartella privata e l'atterraggio
-    pubblico solo a fine lavoro. Se questo file deve restare privato fino alla ratifica, va detto
-    ora, prima che il branch si accumuli.
+It is not DRM, and the specification says so in the form of a prohibition rather than a
+preference: attest defines no functionality for stripping or bypassing a lock, and a conforming
+implementation must not be built, marketed or used as a means of circumventing one. The receipt
+never touches the work. It does not contain it, wrap it, host it or index it; a conforming
+implementation is forbidden from hosting or indexing the works receipts refer to. What the
+receipt records is that a licence was granted, on stated terms, by a named seller, and a file on
+your disk can be matched against the fingerprints it carries. That is all. A receipt for a work
+sold under a lock is permitted, verifies with a warning attached, and removes nothing: the
+receipt describes what you were sold and does not change it. Nothing in this document rests on a
+right to unlock what you bought, and it takes no position on when removing a lock is lawful; a
+signed receipt is an *additional* thing the seller hands you, and it never picks a lock. Section
+5 said why the standard will never turn a receipt into one.
 
-*Voci aggiunte nel secondo giro (sezioni 5 e 7):*
+Does it stop piracy? No, and it does not try. A pirated file and a lawfully bought file without
+locks are the same bytes; that is not a weakness of the design, it is its premise. Section 5 said
+what a receipt adds to bytes that copy freely — standing, not scarcity — and section 8 said what
+that is worth on an open platform, where any player can leave the check out. Nobody who
+understands the mechanism will claim it prevents copying, and this document does not.
 
-15. **La posizione sul trilemma è quella del gate N5, e non sta ancora su nessuna superficie
-    pubblica.** La sezione 5 scrive: sopravvivenza non negoziabile; esclusività indebolita da
-    fatto fisico a termine di licenza verificabile e rifiutabile; prezzo dichiarato, nessuna
-    prevenzione della copia. È la scelta convergente dei due verdetti del 24 agosto e della sintesi
-    ratificata al gate (nota N6), ma README, FAQ e spec non la enunciano; il manifesto che la
-    porta non è ratificato. **Da confermare** che il whitepaper sia la prima sede pubblica di quella
-    posizione, e che «trilemma» resti il titolo (il testo lo tratta come argomento, non come
-    teorema). Alternativa: intitolare «Deed, not lock» e lasciare la parola trilemma al corpo.
-16. **Un fatto nuovo della famiglia C-127, trovato scrivendo la sezione 5, da registrare nei
-    vincoli.** Lo scambio challenge-response che prova il binding di una ricevuta ordinaria (v0.1
-    §8.2) è consumato da `verify()` in entrambe le implementazioni (`verify.py`, parametro
-    `challenge=(nonce, sig)`), ma **nessun comando spedito lo esegue**: i soli `challenge`/
-    `respond`/`verify` della CLI sono quelli del riscatto del pledge (§18.7, gruppo `grant`).
-    Quindi la frase della FAQ «someone who copies your receipt can't prove it's theirs» è vera
-    solo per ricevute con `buyer.pubkey`, e oggi solo come chiamata di libreria. La sezione 5 lo
-    dice nell'«In detail». **Da decidere** se aprire un task (un verbo di challenge per il
-    binding ordinario) e se la FAQ va stretta.
-17. **Limite nuovo sull'art. 8(7), più cauto del README e della FAQ.** Entrambi dicono che attest
-    «è la stessa conferma». La sezione 7 aggiunge che **una ricevuta da sola non è pretesa
-    assolvere l'articolo**: l'art. 8(7)(a) impone che la conferma contenga le informazioni
-    dell'art. 6(1) salvo già fornite su supporto durevole, e una ricevuta porta l'acquisto, non le
-    condizioni del professionista. È la formulazione difendibile davanti a un giurista; se si
-    preferisce quella corta, il rischio è l'obiezione «non soddisfa nemmeno la norma che invoca».
-    **Da confermare**, e da propagare a README/FAQ quando E3 e #92 le riscrivono (C-125).
-18. **AB 2426: la fonte primaria non è raggiungibile da qui.** `leginfo.legislature.ca.gov` non
-    risolve dall'ambiente di stesura (due canali provati). Il testo di §17500.6 — divieto e le due
-    vie (b)(1)(A)-(B), la clausola di separazione (b)(2), la (b)(3) e le esenzioni (b)(4)(A)-(C), con la frase
-    «permanent offline download to an external storage source to be used without a connection to
-    the internet» — è verificato su una riproduzione del codice che cita leginfo con data di
-    accesso; data di firma e capitolo (24 settembre 2024, cap. 513 Stats. 2024) dalla scheda
-    Digital Democracy di CalMatters; vigenza dal 1° gennaio 2025 da una nota di studio legale
-    concorde. Tre fonti secondarie concordanti, nessuna primaria: **prima della pubblicazione va
-    riletta su leginfo** da una macchina che lo raggiunge. Le sezioni 8 e 10 dell'outline la
-    citano di nuovo: stessa verifica.
-19. **Risposta della Commissione: verificata sul comunicato, non sulla Comunicazione.** Il testo
-    cita il comunicato IP/26/1369 del 16 giugno 2026 (letto per intero) e la pagina dell'ICE
-    (1,29 milioni di firme valide, 24 Stati membri). La Comunicazione formale — nel dossier
-    interno indicata come C(2026) 4110 — non è stata letta; per questo la frase «non menziona la
-    prova d'acquisto» è **circoscritta al comunicato**. Se si vuole l'affermazione sull'atto
-    intero, va letta la Comunicazione. Corollario già noto (C-125): `docs/faq.md` su `main` dice
-    ancora «code of conduct due by the end of 2026», che è più di quanto la Commissione abbia
-    detto — la sezione 7 dice il contrario e la FAQ va allineata.
-20. **Nomi di prodotti nel corpo.** La sezione 7 nomina le tre integrazioni del bridge (Stripe,
-    itch.io, Shopify): sono nomi, non numeri, ma invecchiano allo stesso modo. Tenuti perché la
-    FAQ pubblica li nomina già e perché «il bridge esiste» senza dire con cosa parla è una claim
-    vuota. Alternativa: «i checkout più comuni» e il dettaglio nelle Note.
-21. **La sezione 7 dice che il bridge salta gli ordini rimborsati.** Misurato in
-    `bridge/src/attest_bridge/itch_adapter.py` e nei test (`refunded` e `canceled` saltati, nessun
-    record emesso). È la conseguenza concreta di C-127 per un venditore reale, ed è scritta come
-    limite accanto alla promessa del track 1. **Da confermare** che si possa dire in pubblico prima
-    che A11 chiuda.
-22. **L'immagine «deed, not lock» e la frase «Delivery gives you the bytes. It does not give you
-    standing»** vengono dall'essay del 1° settembre (non pubblicato): la sezione 5 le riusa, la 7
-    le richiama. Se l'essay va pubblicato a sua volta, i due testi si citeranno a vicenda; se
-    muore, il whitepaper è la sede. Decisione di collocazione, non di stesura.
+Does it help pirates, then, by making second-hand copies cheap and lawful? Here the honest answer
+is that the question has never been studied, and the research that comes nearest to it is not on
+the seller's side. Two structural studies of the video-game market model what happens when a
+used market is removed, and both find that it raises producer profit. In the published Japanese
+study, eliminating the used market raises publisher profit by 7.3 per cent at unchanged prices,
+with a small net loss of social welfare, and by 26.8 per cent once prices are re-optimised, at
+which point consumer welfare rises too and the authors conclude that removing resale improves
+welfare overall. A study of the United States market estimates that prohibiting resale outright
+raises producer profit substantially. The one result in the other direction comes from a
+different market — only about 16 per cent of used-book sales on a large marketplace cannibalised
+new sales, with a positive net effect — and books are not games: a digital used copy is a far
+closer substitute for a new one than a second-hand paperback is. This document does not hide
+those studies; it puts them first. What it says in reply is a limit of applicability, not a
+rebuttal. Both hostile studies model a used market with no royalty to the publisher and no
+transaction cost the publisher controls. The transfer of section 5 is issuer-mediated by
+construction — the seller counter-signs every transfer and may attach conditions to it — which is
+a regime neither study represents. That is a real answer, and a smaller one than "they are
+wrong".
 
-*Voci aggiunte nel terzo giro (sezioni 3 e 4):*
+What the evidence does support is only the first link of the chain that the optimistic version
+of the argument would need. Affordable and available legal offers demonstrably move consumption
+towards legal channels. In the 2023 perception study of the European Union's own
+intellectual-property office, 80 per cent of respondents said they prefer legal sources where an
+affordable option is available, and among the minority who use pirated content, 65 per cent
+called doing so acceptable when the content is not on a service they subscribe to — availability,
+not only price, shapes behaviour even for people already outside the legal market. The office's
+executive director has said that the causes of piracy "often stem from a lack of access to
+affordable legal content". Quasi-experimental work commissioned by the United States Patent and
+Trademark Office points the same way: adding a broadcaster's series to a legal streaming service
+cut piracy of those shows by a quarter, adding catalogue films to a download store cut it by 12
+per cent, and removing a network's content from that store raised piracy of it by 12 per cent.
 
-23. **La sezione 1 e il sottotitolo portano ancora «ownership» come descrizione di attest, e
-    collidono con C-132.** La sezione 1 apre con «layer of ownership» e il sottotitolo dice «durable
-    digital ownership»; la spec dice testualmente che una ricevuta «is not a claim of "ownership"»,
-    e la resa fedele della tesi ratificata è «possession». Non li ho corretti perché sono fuori dal
-    perimetro di questo giro (sezioni 3 e 4 soltanto): la sezione 3 cita la frase della spec per
-    intero e usa «possession»/«evidence»; finché la 1 resta com'è, il documento si contraddice a
-    distanza di due pagine. La sezione 5 usa «ownership» in senso argomentativo («what ownership
-    gives you is standing»), che è un'altra cosa e non l'ho toccata. **Da correggere nello stesso
-    atto in cui si ratifica la resa inglese.**
-24. **L'outline citava una voce della FAQ che su `main` non esiste** («Who validates it?»). Le voci
-    realmente usate per la sezione 4 sono «What does "verify offline" actually check, and what can't
-    it tell me?», «Who can revoke my receipt, and what would I see?» e «Is this centralized?»; la
-    riga 4 dell'outline è allineata.
-25. **Lunghezza della sezione 4: 13 paragrafi contro i 9 previsti.** Il di più è tutto il criterio
-    di completezza (C-129): ogni difesa descritta porta accanto il suo produttore, o la sua assenza
-    — revoca, log, cutoff, challenge di binding — e la sottosezione «Withdrawing a receipt» da sola
-    ne assorbe tre. Tagliare significa scegliere *quale* produttore mancante tacere. **Da confermare
-    o tagliare.**
-26. **La sezione 4 è la prima superficie che dice, in questi termini, che nessuna ricevuta emessa
-    con gli strumenti spediti è loggabile (C-130).** README e FAQ dicono «no shipped tool logs a
-    receipt yet», che è coerente; la sezione aggiunge che `log append` esiste ma prende la entry da
-    un file scritto dall'operatore, e che l'unico codice che calcola la entry di una ricevuta è il
-    generatore del corpus. Misurato oggi.
-27. **La sezione 3 non nomina la legge per la condizione di irrevocabilità (§6.1).** La spec
-    appoggia quella ricevuta a esenzioni come AB 2426; la sezione 3 dice solo che la spec la chiama
-    «evidence, not a compliance determination» e rimanda alla 7, dove AB 2426 è citata con capitolo,
-    data e articolo (C-125). Ripeterla in 3 avrebbe voluto la citazione intera due volte.
-28. **Un fatto di contorno su C-131, verificato scrivendo**: la pagina web e l'app scaricabile
-    passano `null` come vista di revoca, quindi lì la risposta è sempre `unknown` prima ancora che
-    il vincolo dei pin vuoti entri in gioco. La sezione 4 dice entrambe le cose in quest'ordine —
-    «non consultano alcun feed» e poi «e anche con un record in mano, configurate così, non
-    potrebbero onorare una finestra di rimborso» — perché la seconda vale per chiunque copi quella
-    configurazione, non solo per le due superfici.
+And those effects have a ceiling, which the same review states plainly: no such strategy has
+ever been shown to reduce piracy by more than about 25 per cent, and the great majority of the
+peer-reviewed literature — 29 of the 33 studies in that review — finds that piracy does displace
+legal sales. A natural experiment on a 14 per cent cut in e-book prices found no statistically
+significant change in total piracy; the effect was concentrated, as a 27 per cent drop, among
+people who search for pirate sources, and was absent among those who go straight to them. Price
+and availability reach the marginal consumer, not the committed one. The most recent European
+data cut against the optimistic reading as well: the same office finds that piracy in the Union
+has stopped falling and settled at around ten accesses per internet user per month, with software
+piracy up 6 per cent in 2023, even as legal offers proliferated.
+
+Finally the hole, stated rather than hidden. There is no empirical literature measuring the effect
+of a *legal, digital* second-hand market on piracy — not contested, simply never tested, because
+no such market has existed in a form anyone could observe. That makes it a research question,
+not a claim, and this document does not make the claim. What it does say is narrower and can be
+defended in front of anyone. A verifiable, portable record of purchase is a precondition for any
+lawful second-hand market in digital goods to exist at all; such a market is one of several ways
+of narrowing the affordability gap that the Union's own office identifies as a driver of piracy;
+and its net effect on primary sales is an open question that the existing studies answer only for
+markets — physical, frictionless, without royalties — that differ from the design described here.
+The evidence closest to attest's own mechanism is not about resale at all. It is that when a
+large music download store removed its locks, legal sales were estimated to have risen by about
+10 per cent, most strongly for less well-known albums: making a lawfully purchased copy less
+restricted made the legal channel more competitive. That is the effect a receipt beside a file
+without locks is built to serve.
+
+---
+
+### 10. Why it is worth having anyway
+
+Everything in section 8 is true, and the case still stands, because the case was never that
+attest makes copying impossible or access eternal. It is that it makes *paying* leave something
+behind. This section says what each party actually gains, in terms each would recognise as its
+own interest, and it names the law where a law is involved.
+
+**For a buyer** the obvious gain is that the proof outlives the shop, and section 11 says what
+that is worth on the day it matters. The less obvious gain is that proof is what turns rights you
+already have into rights you can use. The European Commission's reply of 16 June 2026 to the
+citizens' initiative on the end of life of video games created no new right; it restated
+existing ones, and both of the readings it offered — that withdrawing a digital service earlier
+than a consumer could reasonably expect may be a lack of conformity under the digital-content
+rules, with a proportionate refund, and that competition law is available against a dominant
+publisher that shuts something down without objective justification — require the consumer to
+show what they bought and on what terms. That is exactly the thing that does not survive today.
+The press release announcing the reply does not mention proof of purchase anywhere.
+
+**For a seller of files without locks** the reason is commercial, not moral, and the cost is the
+one section 7 stated: a signing key to look after and a small key file to publish, at the moment
+a confirmation email already goes out, with nothing new that has to keep running afterwards. What
+the seller gets is a sentence competitors cannot say — "what you buy from me stays yours, even if
+I disappear" — and a whole DRM-free brand was built on the first half of it. There is also a
+compliance argument with teeth, stated here precisely because it is easy to overstate.
+California's Business and Professions Code section 17500.6, added by Assembly Bill 2426 and in
+force since 1 January 2025, forbids advertising a digital good with the words "buy" or "purchase"
+unless the seller either obtains the buyer's acknowledgment that what they are getting is a
+licence, with its restrictions listed, or states clearly and conspicuously that "buying" it means
+buying a licence. It then exempts a digital good "that the seller cannot revoke access to after
+the transaction, which includes making the digital good available at the time of purchase for
+permanent offline download to an external storage source to be used without a connection to the
+internet". The legislature is not ordering anyone to preserve anything. It is relieving of a
+warning the sellers who hand over something the buyer keeps. A file without locks plus a receipt
+whose terms say it cannot be withdrawn is exactly the shape of that exemption — and the
+specification, which allows a receipt to claim that class only when the file was sold without
+locks, with a right to download again, and lists what was delivered, says of such a receipt that
+it is evidence, not a determination that the seller complied. Maryland adopted the same carve-out
+in 2025; a New York bill filed in January 2026 mirrors it. There is even indirect evidence that
+less restrictive selling sells more, cited at the end of section 9. What no seller should read
+into any of this is a promise that a receipt discharges a legal duty: the storefront's language
+and funnel remain the seller's own responsibility.
+
+**For a publisher or rights holder** there are two arguments, both self-interested. The
+preservation pledge described in section 11 costs nothing at signing time and only ever activates
+on a market that has stopped existing: the publisher gives up revenue it is by definition no
+longer earning, and gives it up to named people who already paid, not to the public. That
+distinction is the whole reason the scholarly-publishing model it is borrowed from has held for
+two decades. And where a work is transferable at all, the design routes every transfer through
+the issuer, which means a publisher keeps control of whether resale happens and can attach
+conditions to it — a materially different regime from the frictionless, royalty-free used market
+that the economics literature in section 9 models against it.
+
+**For a regulator** the gap in the toolkit is evidentiary, and the technique that works is
+already visible on the statute books. Transparent labelling, which the Commission's reply also
+floats, informs a buyer at the moment of purchase; a verifiable receipt proves what happened
+afterwards, which is when disputes occur. They are complementary, and only one of them exists in
+law today. The United States state laws just cited do not mandate preservation, which would run
+into federal copyright; they regulate what a seller may *claim*, and exempt sellers who hand over
+something they cannot revoke. A published receipt format that anyone can implement without asking
+permission or paying anyone gives that approach something concrete to name. It is worth seeing
+the alternative: a Californian bill that would have required notice before ending the services a
+game needs, plus an offline version, a patch, a refund or the release of server software, failed
+in a Senate committee on 29 June 2026 — not voted down, but stalled: the motion drew four ayes to
+three noes and still fell short of the majority of the committee's membership it needed, with
+four members not voting. Reconsideration was granted, and no further vote has followed.
+Voluntary formats that already work are the cheaper path, and the one available now.
+
+**For an engineer**, finally, the gain is a problem stated with its edges visible. The
+specification is open, both implementations are published, the conformance corpus is
+language-neutral, the threat model keeps its unsolved rows in the open, and section 13 lists what
+remains. A format that does not exist cannot be adopted in the week it is needed; this one
+exists, and it does not spoil while it waits.
+
+---
+
+### 11. After the store is gone
+
+Two cases, and they are so different that answering them together is where most proposals in
+this area go wrong.
+
+In the first, you have the file, because the shop sold without locks and you downloaded it. Then
+the content is already yours, and the receipt goes on doing its job exactly as it did the day
+before. It verifies from its own bytes against the shop's key material carried in your bundle,
+with nobody's permission, and it shows whoever needs to know — a successor honouring old
+purchases, an archive authorised to serve them, a court — that your copy was bought, on which
+date and on what terms. The level of trust it reports is the same one every verification you can
+run today reports, trust on first use, because no shipped tool reaches the strong level while a
+store is alive either: the store's disappearance changes nothing there and closes off nothing you
+had. Two limits apply, both already named. A transfer needs the issuer to counter-sign it, so
+transfers stop when the issuer does; and "forever" holds against the shop disappearing, not
+against a live shop declaring its own key compromised — and for a receipt you hold today, section
+6 explained, that declaration is final, because nothing anyone can install today logs and
+timestamps a receipt. The rule on any store that sells without locks is therefore simple and
+unglamorous: download what you buy, and keep the file next to the receipt. Content plus proof,
+both in your hands.
+
+In the second case you do not have the file. Then the receipt does not bring it back. It proves
+you bought the thing; it is not the thing, and no signature conjures a file off a dead server.
+
+There is a mechanism designed for exactly this case, specified, implemented in both
+implementations, demonstrated, and used by nobody. It brings in a party the story has not needed
+until now: not the shop that sold you the file, but the publisher or studio that owns the work,
+which is often still there when the shop is not. A rights holder can sign a **preservation
+pledge** at the time of sale — a conditional licence, dormant while the product is on sale, that
+authorises delivery of the work to holders of a valid receipt and to nobody else. The pledge is a
+signed document of the rights holder's, fixed into the receipt by its fingerprint, so that its
+terms cannot be rewritten afterwards any more than the receipt's can. It needs no transparency
+log and no timestamping to exist, so a small publisher with no infrastructure at all can sign one
+on the first day; and it commits the publisher to delivering a copy without locks, because a
+pledge over a locked file would promise the holder something they still could not open.
+
+Two things about the pledge are the difference between a mechanism and a wish. It does not wake
+up by itself when a shop closes: either somebody signs — the rights holder, or a successor named
+in the pledge in advance — a declaration that distribution has ended, or a backstop date written
+into the pledge arrives and is proved to have arrived by the clock of section 6. Silence is
+deliberately not read as an answer. An earlier design activated the pledge when a publisher's
+proof of distribution stopped appearing, and it was abandoned because it cannot be made sound: a
+public log proves that something was present, never that something is absent, and a rule that
+fires on silence is defeated by re-timestamping an old but genuine record. That leaves the
+publisher who simply vanishes — signing nothing, naming no successor, setting no date —
+uncovered, and the project's threat model names that as the largest residual risk the mechanism
+carries. The two mitigations available are inside the pledge itself, and both are the rights
+holder's decision at signing: name successors, and set a backstop date. The other thing is that
+the pledge costs the rights holder nothing at signing time, because it can only ever fire on a
+market that has already ceased to exist.
+
+The idea is not new. Scholarly publishing has protected itself this way for two decades, through
+dark archives jointly governed by publishers and libraries that open content when a publisher
+dies or a title is withdrawn — one of them to the public, another only to the libraries that take
+part. Both have fired, more than once, and the one that releases to a named group rather than to
+the world has the broader list of triggers, including a publisher's delivery platform being down
+for more than ninety days. That is the lesson worth carrying across: a release restricted to the
+people who already paid is far easier to get agreed than a release to the world. A verifiable
+receipt is what makes the restricted version possible, because it is what tells an archive which
+of the strangers at the door already paid.
+
+And it is what makes the archive's door a real door. The demonstration this project ships walks a
+pledge from signature through activation to delivery, and the archive gate in it refuses, by
+construction, everything but the holder: a pledge that has not fired, a receipt with a byte
+changed, a receipt that was withdrawn or transferred away, a proof made for a different archive
+and replayed here, a proof already used once, and — refused even when everything else is in
+order — the buyer's salt offered as proof, because handing the salt to an archive is exactly how a
+holder gives away the ability to be impersonated everywhere. Redemption therefore requires a key
+of the buyer's to have been written into the receipt at the time of sale, and the specification
+forbids the easier proof as a normative prohibition; section 8 said what that costs an heir.
+Since no shipped tool lets a buyer answer an ordinary binding challenge, the pledge is today the
+one place where a buyer-side key has a shipped command on both sides: the archive mints the
+challenge and the buyer's tool answers it.
+
+Every seller-side and publisher-side act in this section is stated with whether a shipped tool
+performs it. Issuing a receipt, signing a pledge, declaring a cessation, minting and answering the
+redemption challenge, and counter-signing a transfer have shipped commands. Withdrawing a receipt,
+logging one, timestamping one, and packaging a compromise declaration in the form a verifier
+needs do not. What is missing from the pledge, above all, is not the mechanism: it is a publisher
+who has signed one, an archive that holds anything, and licence prose written by a lawyer instead
+of the placeholder the demonstration carries — which says of itself that it is a reference gate,
+not a production one, and lists the three things it does not do. One detail from running both
+demonstrations belongs here rather than in a note. On a receipt that is entirely genuine, both
+report that nobody has established who controls the signing key. That is the honest state of the
+system today, visible in its own demonstrations.
+
+---
+
+### 12. Where this actually is
+
+Everything described in this document exists and can be read, run and attacked by anyone.
+Nothing described in it is in production.
+
+What exists is this. The specification, in two published parts: a complete version 0.1, and an
+additive 0.2 that adds the hybrid post-quantum signature profile, the transparency and
+timestamping layer, issuer-mediated transfer, the preservation pledge, the compromise rescue and
+publisher authority, without changing any verdict 0.1 already gave. Two independent
+implementations, one in Python and one in TypeScript, published on their respective package
+registries at the same version and measured against a single public corpus of conformance
+vectors that both must reproduce leaf for leaf; the corpus and its current size live in the
+repository, where they cannot go stale in a document, and the conformance program lets a third
+implementation run the same corpus with one command and publish its own claim. A verifier that
+runs in a browser and cannot contact any outside host, and the same verifier as a single
+downloadable file. Two demonstrations that run end to end on an ordinary machine in seconds: one
+deletes a shop's entire infrastructure and checks the receipt afterwards, the other walks a
+preservation pledge from signature to delivery. A formal model of the trust, rotation and
+compromise core of the protocol, machine-checked, with a gate that refuses a proof whose
+statement has been edited; the transfer profile is deliberately outside it, and the repository
+says so. A threat model that catalogues the attacks across the receipt's whole life and keeps the
+ones that are not stopped in a section of their own rather than in a footnote. A privacy analysis
+of what each field reveals to whom. And an Internet-Draft on the IETF Datatracker,
+`draft-martinalli-open-purchase-receipts-00`, published on 6 August 2026 as an individual
+submission with Informational intended status and expiring on 7 February 2027 — which means the
+document exists and can be cited as work in progress, nothing more: it is not the product of any
+working group, carries no IETF endorsement and has no formal standing. It mirrors an earlier
+revision of the specification; the specification in the repository, not the draft, is normative.
+
+What does not exist is a shorter list, and it matters more. No store issues attest receipts in
+production. No publisher has signed a preservation pledge. No archive holds anything. There are
+no external reviews. The clock of section 6 is switched on for nobody, this project's own
+verifier included, and no independently operated witness co-signs the log. The strong trust
+level is unreachable with the tools anyone can install. And of the defences the specification
+writes for the seller — withdrawing a receipt, logging and timestamping one, packaging a
+compromise declaration so that a verifier can bound it — none has a shipped producer, as section
+4 measured and section 13 lists.
+
+The absence of a first adopter is a fact about adoption. It is not a measure of whether the
+standard is finished or worth building, and the work does not wait on it: a format that does not
+exist cannot be adopted in the week it is needed, and the week it is needed keeps arriving.
+
+---
+
+### 13. Open problems
+
+These are stated as problems, not as roadmap promises. Each has a name, none has a date, and the
+first is the one a reader of this document has already met several times.
+
+**The seller's defences have no shipped producer.** This is a fact about tooling, measured on the
+command-line tool and the checkout service rather than inferred, and it is listed first because
+it qualifies most of the others. The specification defines, and both implementations evaluate,
+revocation records, log entries for receipts, timestamp proofs, and the authenticated form of a
+compromise declaration. No shipped tool produces any of them: there is no command that withdraws
+a receipt, none that computes a receipt's log entry, no timestamping option on issuance, and no
+packaging of a compromise declaration in the form the rescue of section 6 needs. Until those
+exist, every defence built on them protects nobody, and every sentence in this document that
+begins "the seller can" describes the specification and the verifier, not a product.
+
+**Witness federation.** Until parties independent of the log co-sign what they have seen, an
+unwitnessed operator can maintain divergent views of history, and detection of a duplicated
+receipt (section 5) is not guaranteed. The format for co-signature shipped; no independent
+operator exists, and no specification can supply one.
+
+**Transfer-authority succession.** Transfers are counter-signed by the issuer, which is what
+keeps them lawful and what gives a publisher control over whether resale happens at all. It also
+means they stop when the issuer does. Making a transfer outlive its issuer — an issuer, while
+alive, delegating that authority to a successor in advance — is unsolved, and it is the hardest
+problem on the project's list. Nearer at hand, and measured: a transfer today is honoured only
+while the key that counter-signed it is still in use, so a routine key rotation un-honours it
+(section 5); the rule that would judge the record against the key's validity window at the time
+of the transfer is declared and not yet written, and the flag in the licence that says whether a
+receipt may be passed on is not read by the verifier that honours the transfer at all.
+
+**Silent death of a publisher.** A publisher who vanishes without signing anything and without
+naming a successor leaves a preservation pledge dormant for ever. The mode that would cover it,
+reading meaning into an absence rather than a presence, cannot be made sound by drafting, for the
+reason section 11 gave.
+
+**Who the buyer's key belongs to.** The strong binding of section 4 proves that the presenter
+holds the private half of a key the seller wrote into the receipt. Nothing in the protocol today
+establishes that the key was the buyer's: the seller chose it, and a compromised or coerced
+seller could choose one of its own. The planned addition described in section 4 — a buyer's
+signature over the offer, carried inside the receipt — would close that against a compromised or
+coerced seller for buyers who hold a key, and would close nothing against a seller that simply
+lies, which the specification places outside its scope. Whether a buyer can have a key whose
+provenance depends on no seller at all is a further design, with a privacy cost, and it has not
+been decided.
+
+**Key custody for ordinary people.** A buyer's binding secret, lost after the issuer is gone, is
+lost. Optional custody is possible because a receipt is inert data with no lock-in, and nothing
+about it is built; a buyer's key today lives in a file, and the tools to carry it any other way
+do not exist.
+
+**Cryptographic ageing**, with a sharper edge than the usual version of this problem. Signatures
+made today have to still mean something in decades, and the standard answer is to re-attest old
+material under newer schemes. Re-attesting requires a signer. In the case this project exists
+for, the issuer is gone and there is nobody to sign, so the only route is a trusted third party
+attesting that a receipt was valid under the older scheme while that scheme still held. That is a
+role nobody has designed. The hybrid signature profile that pairs the classical signature with a
+post-quantum one buys time; it does not answer the question.
+
+**Long-term custody of the block headers.** The clock of section 6 works by comparing a proof
+against block headers a verifier already holds, never by asking a network. That moves the
+question rather than answering it: somebody has to curate and distribute an honest set of those
+headers, verifier after verifier, for as long as the receipts are meant to last. The trust does
+not rest on the network; it rests on that chain of custody, and nothing about it is designed
+today.
+
+**The domain as a lease.** A dead shop's domain name can be re-registered by anyone. The
+direction of work is to make historical key material provable — recorded and timestamped while
+the shop was alive, so that an older, anchored manifest beats a newer, opportunistic one — which
+returns to the two problems above.
+
+---
+
+### 14. What is needed now, and colophon
+
+If you sell files without locks, you are the shortest path, and you can start without asking
+anyone. Signing a receipt is one operation at the moment you already send a confirmation email;
+the buyer has to do nothing; nothing about how you sell has to change. What you take on is real
+and worth knowing first: a signing key, a small key file published on your own domain, and the
+duty to keep that key safe for as long as the receipts matter. Declaring it compromised is the
+one act that reaches back and invalidates what you have already signed, and today no tool of
+yours can withdraw a single receipt or enter one in a log; section 12 said what ships. A seller
+who cannot carry a key is a seller this does not work for. Start there, and say where it hurts.
+
+If you buy digital content, download what you buy and keep the file. Where a receipt exists,
+keep it beside the file, and keep the private file where you keep secrets. And when a platform
+tells you that you have *purchased* something, ask what you would still hold if that platform
+stopped existing tomorrow.
+
+If you write the rules, the confirmation on a durable medium is already owed. The ask is that it
+be issuable in a portable, machine-checkable form: a requirement about format, on an obligation
+that already exists, with an openly licensed specification to point at. Section 7 said, with
+dates, how far that conversation has got, and it is not far.
+
+If you build software, the most useful thing you can produce is an implementation that does not
+trust ours. The conformance corpus is public and language-neutral, and a verifier written from
+the specification alone and checked against the same fixtures is evidence of a kind this project
+cannot produce for itself. Adversarial review is the second most useful thing, and section 8 is
+where to start.
+
+**Colophon.** The specification, both implementations, the conformance corpus, the threat model,
+the privacy analysis, the formal model and the demonstrations are in one public repository,
+`github.com/bernalli/attest`, and a receipt can be verified in a browser with nothing installed
+at `attest-receipts.org`. The reference code is licensed Apache-2.0, whose patent grant reaches
+that code and no further; the specification and its documentation are CC BY 4.0, which states
+outright that it licenses no patent rights. Nothing here charges a fee to implement any of it,
+and nothing here is yet a patent commitment to someone implementing the specification
+independently of that code: the licences say what they cover, and stop short of the words
+"royalty-free". There is nothing to join and no permission of ours to ask. Corrections to
+anything in this document are more welcome than agreement with it; section 8 exists because a
+hostile reading of an earlier text was right.
+
+---
+
+### 15. Notes
+
+External facts only; internal facts link to the live surface — the specification, the code and
+the demonstrations in the repository — rather than to a note. Sources were read at their primary
+text on the dates given. Where a primary text could not be reached from where this document was
+written, the note says so.
+
+**Section 2.**
+
+1. Amazon and *1984*: the deletion is reported by *The Guardian*, 17 July 2009; the spokesman's
+   statement is quoted identically across contemporary reports; the founder's post on Amazon's
+   Kindle forum of 23 July 2009 no longer resolves at its original address after the forum was
+   reorganised, and its wording is preserved identically by three independent publications of the
+   same day; the settlement of $150,000 and the undertaking limited to consent, refund, court order
+   and malware are reported by Reuters, 30 September 2009. An authorised edition of the book
+   remained on sale throughout. Verified at those sources on 1 September 2026.
+2. Microsoft Books: the customer notice on the closure of the Books category, announced 2 April
+   2019, quoted in the *Los Angeles Times*, 2 July 2019, and reported by Forbes and CNET. No source
+   gives an exact day in July 2019 on which the books stopped opening, so none is asserted; no
+   Microsoft statement on the mechanism exists, and the attribution to licence validation is the
+   trade press's. Verified 1 September 2026.
+3. Sony and StudioCanal: PlayStation's legal page for video content, United Kingdom edition
+   (`playstation.com/en-gb/legal/psvideocontent/`), read verbatim on 1 and 3 September 2026; the
+   figure of 551 is the number of rows in the table of titles on that page, counted from the page's
+   own structure on both dates, all distinct. The page carries the effective date and not the
+   announcement date, which press coverage places in late June 2026 without agreeing on the day;
+   the Europe-and-UK scope is from that coverage. The August 2022 removal is reported by
+   GamesIndustry.biz.
+4. *The Crew*: Ubisoft's announcement of 14 December 2023, in its own words; the removal of the
+   licences from buyers' accounts in April 2024 is documented by an in-client message photographed
+   by buyers and reported by the trade press, with no seller statement. The settlement of *Cassell
+   v. Ubisoft* (Sacramento County Superior Court, No. 25CV014305) — a fund of two million dollars,
+   seven dollars in cash or fifteen in store credit — received preliminary approval on 2 April
+   2026, with the final approval hearing set for 13 November 2026 and not yet held as of 3
+   September 2026. The organisers' statement that the European citizens' initiative targets games
+   yet to be developed, not those already sold, is on the record of their meeting with the
+   Commission of 23 February 2026 and of the European Parliament hearing of 16 April 2026.
+
+**Section 5.**
+
+5. The offline digital-cash construction that honours a double-spend and unmasks the spender
+   afterwards is the detect-after-the-fact scheme described in the 1993 exposition "Detecting
+   Double-Spending", read on a public mirror on 5 September 2026. The published scheme that turns
+   a purchase into a decryption key is Readium LCP: its principles page promises that a book still
+   opens after the bookseller has disappeared, and its encryption-profiles page records that the
+   production profile was breached in 2022 and that replacement profiles were issued afterwards;
+   both read on 5 September 2026. No formal impossibility result for offline double-spend
+   prevention without trusted hardware was found; the argument in section 5 is an argument, not a
+   theorem, and the document says so.
+
+**Section 6.**
+
+6. Surety and the *New York Times*: the weekly hash published as a classified advertisement from
+   1995 is reported consistently by secondary sources; the primary source would be a printed page
+   of the newspaper, which this document has not examined. If only primary sources are wanted, the
+   image can be rewritten as hypothetical without loss.
+
+**Section 7.**
+
+7. Directive 2011/83/EU of 25 October 2011, Articles 2(10), 6(1) and 8(7), read on the published
+   text.
+8. European Commission press release IP/26/1369 of 16 June 2026, read in full on 5 September
+   2026: "The Commission considers that at this stage it cannot propose a legal obligation to keep
+   video games playable after they stop being provided commercially"; the commitments to engage
+   with consumers and publishers by the end of 2026 and to report on the digital-content directive
+   before the end of the year are quoted from it; it contains neither "proof of purchase" nor
+   "receipt". The signature count and the number of member states are from the initiative's entry
+   on the Commission's register of citizens' initiatives. The Commission's formal Communication is
+   C(2026) 4110 final; the readings of the digital-content and competition rules in section 10 are
+   from that text, read in full on 1 September 2026 and re-checked on 3 September 2026.
+9. California AB 2426 (Chapter 513, Statutes of 2024), codified as Business and Professions Code
+   section 17500.6, effective 1 January 2025; the prohibition, the two alternatives in subdivision
+   (b)(1)(A) and (B), and the exemption in subdivision (b)(4)(C) are quoted from the codified text
+   on the California Legislative Information site, read on 5 September 2026. Maryland HB 208
+   (Chapter 206 of 2025, in force 1 October 2025) carries an almost identical exemption, read on
+   the enrolled bill; New York S8952, filed 21 January 2026, mirrors it and was in committee when
+   last checked on 3 September 2026.
+
+**Section 8.**
+
+10. CJEU, Case C-263/18 *Tom Kabinet*, judgment of 19 December 2019, ECLI:EU:C:2019:1111; CJEU,
+    Case C-128/11 *UsedSoft v Oracle*, judgment of 3 July 2012; *Capitol Records v. ReDigi*, United
+    States Court of Appeals for the Second Circuit, No. 16-2321, 12 December 2018.
+
+**Section 9.**
+
+11. Ishihara and Ching, "Dynamic Demand for New and Used Durable Goods without Physical
+    Depreciation: The Case of Japanese Video Games", *Marketing Science* 38(3):392–416, 2019, DOI
+    10.1287/mksc.2018.1142; the figures are those of the published abstract, read on 3 September
+    2026. A 2016 working-paper draft of the same title circulates with much larger figures; those
+    describe an earlier version of the model, not the peer-reviewed result, and are not used.
+12. Shiller, "Digital Distribution and the Prohibition of Resale Markets for Information Goods",
+    Brandeis working paper 59, 2012–2013, read 3 September 2026.
+13. Ghose, Smith and Telang, "Internet Exchanges for Used Books", *Information Systems Research*
+    17(1), 2006.
+14. EUIPO, *IP Perception Study 2023*: stated preferences from a survey, not observed behaviour.
+    The 80 per cent figure is across all respondents; the 65 per cent figure is among users of
+    pirated content and is read in the full report, not on the summary page, which renders it
+    misleadingly; 14 per cent admit having intentionally used illegal sources in the previous
+    twelve months, 33 per cent among those aged 15 to 24. Read 3 September 2026.
+15. EUIPO, *Online Copyright Infringement in the EU 2017–2023*, 2024, and the executive director's
+    statement in the accompanying release; read 3 September 2026.
+16. Danaher, Smith and Telang, *Piracy Landscape Study*, commissioned by the United States Patent
+    and Trademark Office, 2020: the three quasi-experimental results, the ceiling of about 25 per
+    cent, the count of 29 of 33 studies, and, as summarised there from Zhang (2017), the estimated
+    10 per cent rise in legal sales after a music download store removed its locks. Read 3
+    September 2026.
+17. Rajavi, Danaher and Newby, "Price, Piracy, and Search", *MIS Quarterly* 48(4):1537–1558,
+    2024; the authors' own terms are "direct" and "indirect" pirates.
+
+**Section 10.**
+
+18. The Commission's Communication C(2026) 4110 final, as in note 8; the refund reading rests on
+    Articles 14 to 16 of Directive (EU) 2019/770 and the competition lever on Article 102 TFEU.
+19. California AB 1921 ("Digital games: ordinary use"): passed the Assembly on 29 May 2026; on 29
+    June 2026 the Senate Business, Professions and Economic Development Committee's motion drew
+    four ayes, three noes and four not voting, and failed for want of a majority of the
+    membership; reconsideration granted. Vote record read on the Legislature's site on 3 September
+    2026, with no later vote recorded.
+
+**Section 11.**
+
+20. The two scholarly dark archives are CLOCKSS, which releases triggered content to the public,
+    and Portico, which releases to its participants and states its trigger conditions — a
+    publisher ceasing operations, a title discontinued, back issues no longer offered, or a
+    delivery platform down for longer than ninety days — on its own site; both read on 3 September
+    2026. Their tallies of activations are counted in different units and are deliberately not
+    compared here.
+
+---
+
+## Part C — Nota per il proprietario (non fa parte del testo; si toglie prima della pubblicazione)
+
+*Elenco corto: solo le decisioni che restano davvero tue, dove due letture ragionevoli portano a
+testo diverso. Per ciascuna, la mia raccomandazione e il testo scelto nel frattempo. Le decisioni
+prese e chiuse in questo giro stanno in coda, una riga ciascuna, perché nessuno le ridomandi.*
+
+1. **Il marcatore di sincronizzazione descrive due revisioni che su questo branch non ci sono
+   ancora: v0.1 rev 17 e v0.2 rev 12.** Entrambe vivono su altri branch non mergiati (rev 17: §8
+   riclassifica il binding, `proven` = possesso di una chiave; rev 12: due frasi in §17.3 e §18.7
+   sulla provenienza issuer-asserted di `buyer.pubkey`, più TM-78 nel threat model). Il testo di
+   §4, §5, §8 e §13 è già scritto in quel lessico, quindi il marcatore dice ciò che il testo
+   descrive davvero. Conseguenza voluta: su questo branch `tests/test_whitepaper_sync.py` è
+   **rosso** (16 ≠ 17, 11 ≠ 12), e diventa verde senza altre modifiche appena il branch è
+   rebasato sopra quelle due revisioni — cioè il test impone l'ordine di merge giusto (prima le
+   spec, poi il whitepaper che le descrive). **Raccomando di lasciarlo così** e mergiare dopo le
+   due revisioni. Alternativa: marcatore a 16/11 subito (verde qui), da rialzare a mano dopo.
+2. **Titolo e sottotitolo.** «Own what you buy» resta (tagline ratificata). Il sottotitolo dice
+   ora «durable digital possession» e la tesi «layer of possession»: la spec dice testualmente che
+   una ricevuta «is not a claim of "ownership"». **Raccomando così.** Alternativa: un sottotitolo
+   senza il sostantivo («a whitepaper on keeping what you buy»).
+3. **I due difetti vivi restano fuori da §8** (il canale della dichiarazione di compromissione; i
+   punti ciechi dei tetti), perché la sequenza decisa è fix → release → advisory e il whitepaper li
+   pubblicherebbe prima. Il testo ne dice la famiglia. **La sequenza è tua**: se il whitepaper esce
+   dopo l'advisory, le due voci rientrano in §8.
+4. **Nomi di prodotti e di archivi.** Il corpo nomina le tre integrazioni del servizio di checkout
+   (Stripe, itch.io, Shopify) perché la FAQ pubblica lo fa già; i due archivi accademici sono
+   descritti nel corpo e nominati solo nelle note (§15, nota 20). **Raccomando così.** Alternativa:
+   «i checkout più comuni» nel corpo e i nomi nelle note; oppure nominare gli archivi anche nel
+   corpo.
+5. **Il manifesto V-F.1 è assorbito e va ritirato, non pubblicato accanto.** Ne ho ripreso
+   struttura e frasi dove reggevano. La sua clausola sulla catena («tutto ciò che una catena
+   farebbe è già fatto da log e firme, o è una liability») contraddice v0.2 §11.1 e non
+   sopravvive qui: §6 scrive la posizione vera. **Raccomando che il whitepaper prevalga e il
+   manifesto sia archiviato.** Alternativa: pubblicarlo come testo breve emendato nel lessico di
+   §5–§6.
+6. **Titolo di §5.** «The trilemma» (il testo lo tratta come argomento, non come teorema).
+   **Raccomando di tenerlo.** Alternativa: «A key to a door, not to a file» come titolo, lasciando
+   la parola nel corpo.
+7. **Lunghezza di §4 e §8.** §4 ha tredici paragrafi contro i nove previsti; il di più è il
+   criterio di completezza (ogni difesa accanto al suo produttore o alla sua assenza). Tagliare
+   vuol dire scegliere quale produttore mancante tacere. **Raccomando di non tagliare.**
+8. **Pubblicità di questo file.** Il branch non è pushato. Il documento è pronto per la lettura
+   e porta ancora questa Part C: la pubblicazione (PR, sito, `docs/`) è un gesto tuo, e la Part C
+   va tolta nello stesso atto.
+
+*Decisioni prese in questo giro, chiuse (una riga ciascuna):*
+
+- **B2: perimetro dichiarato, nessun cambio di spec.** Il fronte B1 ha chiuso il 5 settembre con
+  verdetto «non risolvibile come posto»; §5 rende i due argomenti (i fatti che restano veri; la
+  serratura senza chi la ripari), con un'immagine sola — «a key to a door, never to a file» — e i
+  tre poli rinominati (free copying, non transferability). Nessuna promessa di soluzione futura;
+  l'argomento anti-elusione è detto perché è in v0.1 §2; la caratterizzazione legale del dossier
+  non entra: una frase neutra, nessuna norma citata.
+- D24, entrambe le parti: §4, §5 e §8 scrivono `proven` come possesso di un segreto, mai
+  partecipazione; `buyer.acceptance` è «planned and not yet specified», mai esistente.
+- Trasferimento, due vincoli misurati il 5 settembre e resi in §5 e §13 come limiti, non come
+  garanzie: un transfer record autentica solo con la chiave `active`, quindi una rotazione
+  ordinaria lo annulla (la regola della finestra a `transferred_at` è lavoro dichiarato); e
+  `license.transferable` non è letto dal verificatore che onora un trasferimento (è una
+  dichiarazione firmata, non una regola applicata). Il testo non dice mai che un trasferimento
+  «resta» né che il venditore «permette» tramite il flag.
+- Sezione 2: apertura con Amazon/*1984* (2009), poi Microsoft, Sony/StudioCanal, *The Crew*, coi
+  vincoli di formulazione verificati alla fonte; il nesso *The Crew* → iniziativa europea è smentito
+  nel testo stesso, con la fonte in nota.
+- Sezione 9 a sé, nella sola forma difendibile: primo anello (accesso legale accessibile sposta
+  consumo), tetto dichiarato, studi ostili citati per primi, e la dichiarazione che nessuno studio
+  esiste sull'usato digitale legale ↔ pirateria. Nessuna citazione di norme anti-elusione.
+- Art. 8(7): il whitepaper non dice che la ricevuta «è» la conferma né che la assolve; allineato al
+  README ratificato («un formato in cui la conferma può viaggiare»).
+- Il nome dell'Internet-Draft compare in §12: repo e Datatracker ora coincidono
+  (`ietf/draft-martinalli-open-purchase-receipts.xml`; Datatracker letto il 5 settembre).
+- `attest transfer authorize` è del compratore (firma l'autorizzazione dell'holder uscente con la
+  chiave del compratore): il draft precedente lo attribuiva al venditore; corretto in §4 e §5.
+- La verifica del 1° settembre (struttura, bozza a otto sezioni, tabelle claim per claim) vale
+  come archivio di verifica, non come testo.
+- I nomi dei due file sono quelli spediti (`.attest` e `.private.attest`); nessuna denominazione
+  non ratificata compare.
+- Surety e il *New York Times* restano, con la nota che dichiara il grado della fonte (nota 6).
+- La frase sull'esenzione di AB 2426 e il testo di §17500.6 sono stati riletti sul sito legislativo
+  della California il 5 settembre, da qui: la riserva del giro precedente («fonte primaria non
+  raggiungibile») è chiusa.
