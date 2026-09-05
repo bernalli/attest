@@ -177,8 +177,17 @@ signing; everything else follows from there, or not at all.
 Verification needs two things, and both travel inside the bundle: the receipt bytes
 and the issuer's key material. Neither implementation contains an HTTP client —
 there is no network code in the Python package or the TypeScript verifier, and the
-browser verifier fetches nothing beyond its own demo sample from its own site. So
-offline is not a mode you switch on. It is the only mode there is.
+only thing the browser page fetches for itself is the demo sample it serves from its
+own site. So offline is not a mode you switch on. It is the only mode there is.
+
+The page does make one deliberate request to somewhere else, and it is worth knowing
+about because you would otherwise find it yourself and wonder. It tries to reach a
+host that is not this one — an address under a reserved domain that can never be
+registered — and shows you what your browser answered. The point is the demonstration:
+your receipt cannot leave the tab, because the page's own security policy forbids
+every connection that is not back to itself, and a page that told you it was blocked
+without trying would be asking you to take its word for it. If that request ever went
+through, the page would say so.
 
 With the same receipt bytes and the same local verification material, the signature
 and schema checks are reproducible. A later trusted manifest can change the signing
