@@ -530,3 +530,29 @@ def test_respond_rewrites_an_identical_answer_without_force(tmp_path: Path) -> N
 
     assert rc == cli.EXIT_OK, captured.err
     assert out.read_text(encoding="utf-8").strip() == corpus_sig_b64u()
+
+
+def test_respond_refuses_every_input_path_aliased_to_the_output(tmp_path: Path) -> None:
+    """`--out` must differ from every input, not just the seed.
+
+    The seed was guarded because handing it to `--out` would destroy the key.
+    The receipt is worth no less: it is the issuer's signed envelope, and there
+    is no second copy of it here. Aliasing it to `--out` replaces the whole
+    document with one line of base64url, and `--force` would do it without a
+    word. Every sibling verb in this CLI that writes a signed output refuses
+    each of its own inputs by name.
+    """
+    seed = write_seed(tmp_path / "buyer.seed", BUYER_SEED)
+    nonce = write_nonce(tmp_path / "nonce", corpus_nonce())
+    receipt = tmp_path / "envelope.json"
+    receipt.write_text((LEAF_17B / "envelope.json").read_text(encoding="utf-8"), encoding="utf-8")
+    original = receipt.read_text(encoding="utf-8")
+
+    for label, out in (("--receipt", receipt), ("--nonce", nonce), ("--holder-seed", seed)):
+        rc, captured = run([*respond_argv(receipt, seed, nonce, out), "--force"])
+        assert rc == cli.EXIT_USAGE_ERROR, f"{label} was accepted as --out"
+        assert label in captured.err
+        assert "and --out must be different paths" in captured.err
+
+    assert receipt.read_text(encoding="utf-8") == original
+    assert nonce.read_text(encoding="utf-8").strip() == keys.b64u(corpus_nonce())

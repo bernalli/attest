@@ -3383,8 +3383,17 @@ def _cmd_binding_respond(args: argparse.Namespace) -> int:
     optional). Saying what to ask the issuer for is more use than a refusal the
     reader takes for their own mistake.
     """
-    if _same_file_target(args.holder_seed, args.out):
-        raise CliUsageError("--holder-seed and --out must be different paths")
+    # Every input, not just the seed: the receipt is the issuer's signed
+    # envelope and there is no second copy of it here, so aliasing it to --out
+    # would replace the whole document with one line of base64url. Same policy
+    # as `transfer authorize` and `revoke`, which name each of their own inputs.
+    for label, path in (
+        ("--receipt", args.receipt),
+        ("--holder-seed", args.holder_seed),
+        ("--nonce", args.nonce),
+    ):
+        if _same_file_target(path, args.out):
+            raise CliUsageError(f"{label} and --out must be different paths")
     envelope_bytes = _read_bounded_bytes(
         args.receipt, max_bytes=validate.MAX_ENVELOPE_BYTES, input_name="--receipt"
     )
