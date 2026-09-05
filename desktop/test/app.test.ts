@@ -555,23 +555,28 @@ describe('the four evidence rails: one slot each, replaced never merged, refused
 
   test('a rail drop does not retract a binding proof the reader already gave', () => {
     // §14.3 makes a rail file a change to that rail and nothing else. Re-verifying
-    // with no disclosure prints "Nobody attempted to prove who this receipt belongs
-    // to" over a proof that was given and succeeded — the surface asserting the
-    // opposite of its own state, which is the defect this rail wiring exists to
-    // close. The site keeps this state; two shells over one intake must not
-    // disagree about one gesture.
+    // with no disclosure prints "Nobody attempted the binding proof" over a proof
+    // that was given and succeeded — the surface asserting the opposite of its own
+    // state, which is the defect this rail wiring exists to close. The site keeps
+    // this state; two shells over one intake must not disagree about one gesture.
+    //
+    // The sentence is asserted by the text `explain.ts` actually renders. It used
+    // to read "Nobody attempted to prove who this receipt belongs to", which v0.1
+    // §11.1 now forbids a surface from saying; an assertion left on the retired
+    // wording would be green because the sentence is gone, not because the proof
+    // survived.
     const app = mount()
     loadReceipt(app)
     ;(document.getElementById('binding-identifier') as HTMLInputElement).value = 'buyer@example.com'
     ;(document.getElementById('binding-salt') as HTMLInputElement).value = 'AAAA'
     app.applyDisclosure()
-    expect(resultsText()).not.toContain('Nobody attempted to prove')
+    expect(resultsText()).not.toContain('Nobody attempted the binding proof')
 
     app.handleBytes('revocation-view.json', new TextEncoder().encode('[]'))
-    expect(resultsText()).not.toContain('Nobody attempted to prove')
+    expect(resultsText()).not.toContain('Nobody attempted the binding proof')
 
     app.clearRails()
-    expect(resultsText()).not.toContain('Nobody attempted to prove')
+    expect(resultsText()).not.toContain('Nobody attempted the binding proof')
   })
 
   test('a NEW receipt does drop the previous binding proof', () => {
@@ -583,7 +588,7 @@ describe('the four evidence rails: one slot each, replaced never merged, refused
     ;(document.getElementById('binding-salt') as HTMLInputElement).value = 'AAAA'
     app.applyDisclosure()
     loadReceipt(app)
-    expect(resultsText()).toContain('Nobody attempted to prove')
+    expect(resultsText()).toContain('Nobody attempted the binding proof')
   })
 
   test('does not erase the bearer-file refusal when a rail file arrives after it', () => {
