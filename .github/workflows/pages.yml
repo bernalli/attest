@@ -7,6 +7,18 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # `shell: bash` is `bash --noprofile --norc -eo pipefail {0}`; with no shell
+    # named a step runs as `bash -e {0}` (GitHub Actions workflow syntax,
+    # jobs.<job_id>.steps[*].shell) — `-e`, but NO pipefail, so a pipeline
+    # reports the exit status of its LAST command only. Two shapes below rest on
+    # it: `curl … | sh -s --`, where `sh` on empty stdin exits 0 and the
+    # scanners are silently never installed, and `sha256sum … | tee …`, where
+    # `tee` succeeds while writing an empty checksum file — and a published
+    # checksum nobody computed is worse than no checksum at all.
+    shell: bash
+
 concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: false
