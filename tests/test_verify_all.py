@@ -218,9 +218,15 @@ def _unadmitted_shape(name: str, document: dict[str, Any]) -> str | None:
     return None
 
 
-def _admit(name: str) -> tuple[dict[str, Any], str | None]:
-    """Load a workflow and say, in one string, why it cannot be compared."""
-    text = (REPO_ROOT / ".github/workflows" / name).read_text()
+def _admit(name: str, text: str | None = None) -> tuple[dict[str, Any], str | None]:
+    """Load a workflow and say, in one string, why it cannot be compared.
+
+    `text` is the document to read instead of the one on disk, so the families
+    at the end of this file can put a shape in front of the same admission the
+    real workflows go through rather than a paraphrase of it.
+    """
+    if text is None:
+        text = (REPO_ROOT / ".github/workflows" / name).read_text()
     loader = _UniqueKeyLoader(text)
     try:
         document = loader.get_single_data()
@@ -1287,3 +1293,78 @@ def test_reordering_one_matrix_entry_expands_to_the_same_shards(
         if run.origin.startswith("ci.yml:formal")
     ], permuted.stdout
     assert permuted.returncode == 0, permuted.stdout
+
+
+# ------------------------------------------- the workflow SHAPE as INPUT
+# `test_the_workflows_are_shaped_the_way_these_comparisons_read_them` asks the
+# admission a question about the documents that are actually on disk, so it
+# says nothing about what admission would REFUSE. The two families below put a
+# shape in front of it that no local step can reproduce and require a refusal:
+# without them, deleting `ADMITTED_JOB_FIELDS` or the matrix-axis check leaves
+# the whole suite green, because the workflows in the tree carry neither field.
+# Both were measured that way — green before the checks existed, green again
+# with the checks removed — and both would change what CI runs while changing
+# nothing this file compares: `continue-on-error:` on a job turns its failure
+# into a pass, and a second matrix axis multiplies every run of that job.
+
+PAGES_YML = (REPO_ROOT / ".github/workflows/pages.yml").read_text()
+
+#: The job `pages.yml` runs its `run:` steps in, and the `include:`-only matrix
+#: of `ci.yml:formal`. Named here so the guard below can say when an anchor has
+#: stopped matching instead of letting a family rewrite nothing.
+PAGES_TEST_JOB = "  test:\n"
+FORMAL_MATRIX = "      matrix:\n        include:\n"
+
+UNADMITTED_SHAPES: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "a-job-that-continues-on-error",
+        "pages.yml",
+        PAGES_YML.replace(PAGES_TEST_JOB, "  test:\n    continue-on-error: true\n", 1),
+        "continue-on-error",
+    ),
+    (
+        "a-second-matrix-axis-beside-include",
+        "ci.yml",
+        CI_YML.replace(
+            FORMAL_MATRIX, "      matrix:\n        os: [ubuntu-latest]\n        include:\n", 1
+        ),
+        "os",
+    ),
+)
+
+
+def test_the_shape_families_below_really_do_edit_the_workflows() -> None:
+    """A family built on an anchor that stopped matching would test nothing."""
+    assert PAGES_YML.count(PAGES_TEST_JOB) == 1, (
+        "`pages.yml` no longer declares its run-steps under a job written exactly "
+        "`  test:`; update PAGES_TEST_JOB to match it"
+    )
+    assert CI_YML.count(FORMAL_MATRIX) == 1, (
+        "ci.yml's formal matrix is no longer an `include:` on its own; update FORMAL_MATRIX"
+    )
+    originals = {"ci.yml": CI_YML, "pages.yml": PAGES_YML}
+    unchanged = [case for case, name, text, _ in UNADMITTED_SHAPES if text == originals[name]]
+    assert not unchanged, f"these cases leave the workflow untouched: {unchanged}"
+
+
+@pytest.mark.parametrize(
+    ("case", "name", "text", "field"),
+    UNADMITTED_SHAPES,
+    ids=[case for case, _, _, _ in UNADMITTED_SHAPES],
+)
+def test_a_workflow_field_verify_all_cannot_reproduce_is_refused_by_name(
+    case: str, name: str, text: str, field: str
+) -> None:
+    """Admission has to refuse, and has to say which field it refused.
+
+    A refusal that does not name the field sends whoever added it to read this
+    file instead of their own diff, and one that arrives for some other reason
+    would keep the family green after the check it exists for was deleted. So
+    both halves are asserted: a refusal, and the offending name inside it.
+    """
+    _, refusal = _admit(name, text)
+    assert refusal is not None, (
+        f"{case} was admitted: `{field}` reached the comparisons unrefused, and every "
+        "assertion below would then be made against a document CI does not run"
+    )
+    assert field in refusal, f"{case} was refused without naming `{field}`: {refusal!r}"
