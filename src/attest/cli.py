@@ -49,6 +49,7 @@ from attest import (
     authority,
     bundle,
     canon,
+    commitment,
     grant,
     issue,
     keys,
@@ -3323,6 +3324,131 @@ def _read_rail_array(path: Path | None, flag: str) -> list[Any] | None:
     return value
 
 
+# --- binding: producing the §8.2 challenge proof -----------------------------
+#
+# Both cores have EVALUATED this proof since v0.1 — `verify()` takes
+# `challenge=(nonce, sig)`, and `verify` already exposes the input side — but
+# nothing shipped could PRODUCE one: `commitment.sign_challenge` had no caller
+# in this module at all, so the answer to "what if someone copies your receipt"
+# could only be exercised by writing code against the library. These two verbs
+# are that producer, split the way the roles are: the verifier asks, the holder
+# answers.
+
+#: The nonce this verb generates. Twice v0.1 §8.2's 16-byte floor, matching the
+#: redemption challenge (§18.7) rather than sitting one byte above the minimum.
+_CHALLENGE_NONCE_BYTES = 32
+
+
+def _cmd_binding_challenge(args: argparse.Namespace) -> int:
+    """The verifier's half: a fresh nonce, and no way to supply one.
+
+    The nonce belongs to the party asking the question. A challenger that
+    accepted a caller-supplied nonce would not be challenging anyone — the
+    answer to a nonce the caller chose is one that anybody who has seen it once
+    can replay — so there is deliberately no flag here that could fix it.
+    """
+    nonce = os.urandom(_CHALLENGE_NONCE_BYTES)
+    # Not a secret: the nonce is what the holder is asked to sign, and it is
+    # handed to them in the clear.
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(keys.b64u(nonce), encoding="utf-8")
+    _print_json({"out": str(args.out), "nonce": keys.b64u(nonce)})
+    return EXIT_OK
+
+
+def _read_nonce(path: Path) -> bytes:
+    """The nonce arrives as base64url text from a file the caller controls."""
+    try:
+        return _read_b64u_file(path)
+    except FileNotFoundError as exc:
+        raise CliUsageError(f"--nonce file not found: {path}") from exc
+    except OSError as exc:
+        raise CliUsageError(f"cannot read --nonce {path}: {exc}") from exc
+    except (TypeError, ValueError) as exc:
+        raise CliUsageError(f"--nonce is not canonical base64url: {exc}") from exc
+
+
+def _cmd_binding_respond(args: argparse.Namespace) -> int:
+    """The holder's half: sign the verifier's nonce with the key the receipt
+    names — after establishing that the seed given IS that key.
+
+    The pubkey check is not politeness. A signature made with a key the receipt
+    does not name verifies against nothing, and the holder would learn that
+    from a verifier reporting `binding: "not_proven"` — a result that says a
+    proof failed and nothing about why. Naming the mismatch here is what
+    separates a wrong file from a wrong key.
+
+    A receipt whose `buyer.pubkey` is null cannot carry this proof at all, and
+    that is the common case rather than an edge one (v0.1 §5.3 makes the member
+    optional). Saying what to ask the issuer for is more use than a refusal the
+    reader takes for their own mistake.
+    """
+    if _same_file_target(args.holder_seed, args.out):
+        raise CliUsageError("--holder-seed and --out must be different paths")
+    envelope_bytes = _read_bounded_bytes(
+        args.receipt, max_bytes=validate.MAX_ENVELOPE_BYTES, input_name="--receipt"
+    )
+    envelope = _loads_strict(envelope_bytes, args.receipt, "--receipt")
+    if not isinstance(envelope, dict):
+        raise CliUsageError(f"{args.receipt} must contain a JSON object")
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict):
+        raise CliUsageError(f"{args.receipt} is missing object member 'payload'")
+    receipt_id = payload.get("receipt_id")
+    if not isinstance(receipt_id, str) or revocation.RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+        raise CliUsageError(f"{args.receipt} payload member 'receipt_id' must be a ULID")
+    buyer = payload.get("buyer")
+    declared = buyer.get("pubkey") if isinstance(buyer, dict) else None
+    if declared is None:
+        raise CliUsageError(
+            f"{args.receipt} carries no 'buyer.pubkey', so no binding proof exists for it: "
+            "ask the issuer to re-issue the receipt against a public key you hold "
+            "(v0.1 §5.3, §8.2)"
+        )
+    pubkey = transfer._strict_b64u_decode(declared, _ED25519_PUB_LEN)
+    if pubkey is None:
+        raise CliUsageError(
+            f"{args.receipt} payload member 'buyer.pubkey' must be canonical base64url of a "
+            f"{_ED25519_PUB_LEN}-byte Ed25519 public key"
+        )
+    nonce = _read_nonce(args.nonce)
+    try:
+        kp = _load_seed_kp(args.holder_seed)
+    except (OSError, TypeError, ValueError) as exc:
+        raise CliUsageError(f"--holder-seed is not a usable Ed25519 seed: {exc}") from exc
+    if kp.pub != pubkey:
+        raise CliUsageError(
+            "--holder-seed is not the key this receipt names in 'buyer.pubkey': signing with "
+            "it would produce a proof that verifies against nothing"
+        )
+    try:
+        sig = commitment.sign_challenge(receipt_id, nonce, kp)
+    except ValueError as exc:
+        raise CliUsageError(f"--nonce is not usable: {exc}") from exc
+    # The proof is checked with the verifier's own predicate before it is
+    # handed over, against the key the RECEIPT names rather than the one just
+    # loaded. No input can make this fail — a correct signer's signature
+    # verifies under the key it signed with, and the equality above already
+    # established the two keys are the same — so no test can make it red and
+    # the mutation that deletes it is equivalent. It stays because the cost of
+    # emitting an unverifiable proof falls on the holder, who finds out from a
+    # verifier's `not_proven` days later and cannot tell it from a wrong key.
+    if not commitment.verify_challenge(receipt_id, nonce, sig, pubkey):  # pragma: no cover
+        raise CliUsageError(
+            "the signature produced does not verify against this receipt's 'buyer.pubkey'; "
+            "nothing was written"
+        )
+    text = keys.b64u(sig)
+    # Guarded like every other output this CLI would destroy: `--out` is a path
+    # the caller types, and a typo aims it at a file they already have. Not
+    # secret, though — the response is bound to this receipt and this one
+    # nonce, and it is meant to be handed to the verifier that asked.
+    plan = _prepare_overwrite(args.out, text, label="--out", force=args.force)
+    _write_json_text(args.out, text, label="--out", overwrite_plan=plan)
+    _print_json({"out": str(args.out), "receipt_id": receipt_id})
+    return EXIT_OK
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     try:
         envelope_bytes = args.envelope.read_bytes()
@@ -4400,6 +4526,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--out-dir", required=True, type=Path)
     p.set_defaults(func=_cmd_log_ots_convert)
+
+    p_binding = sub.add_parser(
+        "binding", help="Prove possession of a receipt's buyer key (v0.1 §8.2)"
+    )
+    binding_sub = p_binding.add_subparsers(dest="binding_command", required=True)
+
+    p = binding_sub.add_parser("challenge", help="Generate a fresh nonce (verifier)")
+    p.add_argument("--out", required=True, type=Path, help="output nonce path (base64url text)")
+    p.set_defaults(func=_cmd_binding_challenge)
+
+    p = binding_sub.add_parser("respond", help="Sign a challenge nonce (holder, §8.2)")
+    p.add_argument("--receipt", required=True, type=Path)
+    p.add_argument(
+        "--holder-seed", required=True, type=Path, help="the receipt's own buyer.pubkey seed"
+    )
+    p.add_argument("--nonce", required=True, type=Path, help="nonce from `binding challenge`")
+    p.add_argument("--out", required=True, type=Path, help="output signature path (base64url)")
+    p.add_argument("--force", action="store_true", help="replace an existing --out file")
+    p.set_defaults(func=_cmd_binding_respond)
 
     p = sub.add_parser("verify", help="Verify a receipt envelope")
     p.add_argument("envelope", type=Path)
