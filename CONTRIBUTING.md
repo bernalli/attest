@@ -56,7 +56,7 @@ contract.
 One command runs what CI runs: every `run:` step of `.github/workflows/ci.yml`
 and `.github/workflows/pages.yml`, in the order the jobs run them, with the same
 flags. It stops at the first failure and prints a table of what passed, what
-failed, and what it could not run.
+failed, what it could not run, and what it ran on less than CI runs it.
 
 It is not a convenience wrapper around `pytest`. The steps that break are the
 ones nobody types: over the last ninety-nine runs of each workflow the `site`
@@ -70,9 +70,15 @@ Tamarin/Maude proof shards, the syft/grype/grant supply-chain scans, the
 Internet-Draft build, and the Playwright browser engines. The script installs
 none of them. It names each step it had to skip, prints the command that would
 provide the missing piece, and exits **2** — nothing failed, but the tree is
-unverified rather than verified. `--quick` skips that whole class on purpose. A
-failure exits 1; a run in which everything executed and passed exits 0.
+unverified rather than verified. A step that ran on a narrower footing than CI
+gives it — the desktop end-to-end suite on two Playwright engines where CI runs
+three — is reported `PARTIAL` and exits 2 as well: it is neither a pass of what
+CI runs nor a step that did not run. `--quick` skips that whole class on
+purpose. A failure exits 1; a run in which everything executed as CI executes
+it, and passed, exits 0.
 
 Add or change a step in either workflow and it belongs in `tools/verify-all.sh`
 in the same commit: `tests/test_verify_all.py` compares the two command by
-command and flag by flag, and turns red otherwise.
+command and flag by flag — binding each execution to the job that runs it, so a
+step that disappears from one of four jobs is red and not merely absent — and
+turns red otherwise. What it does not compare is the ORDER of the steps.
