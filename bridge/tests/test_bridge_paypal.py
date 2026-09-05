@@ -329,12 +329,20 @@ def test_missing_or_blank_transmission_header_is_a_signature_error(
     assert api.post_calls == []
 
 
-def test_unsupported_auth_algo_is_rejected_before_any_call(monkeypatch: MonkeyPatch) -> None:
+@pytest.mark.parametrize("auth_algo", ["SHA1withRSA", "SHA256withRSAPSS"])
+def test_unsupported_auth_algo_is_rejected_before_any_call(
+    monkeypatch: MonkeyPatch, auth_algo: str
+) -> None:
+    """`SHA256withRSAPSS` pins the allow-list as an exact comparison, not a
+    prefix match: it is ASCII and inside the length bound, so the C-187 screen
+    passes it through to the allow-list. Nothing else in the suite draws that
+    distinction now that the non-ASCII spelling is refused earlier.
+    """
     api = FakePayPalApi()
     adapter = make_adapter(monkeypatch, api)
 
     with pytest.raises(PayPalSignatureError, match="unsupported auth algorithm"):
-        adapter.parse_event(_payload(), make_transmission(auth_algo="SHA1withRSA"))
+        adapter.parse_event(_payload(), make_transmission(auth_algo=auth_algo))
 
     assert api.post_calls == []
 
@@ -1074,16 +1082,34 @@ def test_valid_paypal_signature_non_utf8_body_returns_400(
     assert paypal_deps.ledger.unresolved_dead_letters() == []
 
 
-def test_non_ascii_paypal_header_returns_400_with_an_empty_ledger(
-    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+@pytest.mark.parametrize(
+    "field",
+    [
+        "transmission_id",
+        "transmission_time",
+        "transmission_sig",
+        "cert_url",
+        "auth_algo",
+    ],
+)
+def test_a_non_ascii_byte_in_any_transmission_header_is_refused_before_any_call(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi, field: str
 ) -> None:
-    event = _route_capture()
-    transmission = make_transmission(auth_algo="SHA256withRSA\xff")
+    """C-187 for every one of the five headers, not just the allow-listed one.
+
+    A WSGI header value is latin-1-decoded remote input (PEP 3333). Pinning
+    only `auth_algo` proves the allow-list, not this property: the equality
+    check refuses that value for its spelling, whatever bytes it carries.
+    """
+    event = _route_capture(event_id=f"WH-NON-ASCII-{field}")
+    valid: str = getattr(make_transmission(), field)
+    transmission = make_transmission(**{field: valid + "\xff"})
 
     status, _, _ = _post_paypal_webhook(paypal_deps, event, transmission=transmission)
 
     assert status.startswith("400")
     assert paypal_api.post_calls == []
+    assert paypal_api.get_calls == []
     assert paypal_deps.ledger.seen_event("paypal", event["id"]) is False
     assert paypal_deps.ledger.unresolved_dead_letters() == []
 
@@ -1490,3 +1516,122 @@ def test_no_paypal_log_line_carries_the_raw_purchase_id_or_a_secret(
         assert _ORDER_ID not in message
         assert _CLIENT_SECRET not in message
         assert _ACCESS_TOKEN not in message
+
+
+def test_shipped_paypal_admission_bounds_are_the_ones_the_cli_serves(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    """`cli._cmd_serve` calls `make_app(deps)`, so only the defaults ever run.
+
+    Without this the C-186 cap and bound could be widened to uselessness and
+    every route test would stay green, because each one configures its own.
+    """
+    assert http_module._DEFAULT_WEBHOOK_BODY_LIMIT_BYTES == 1_048_576
+    assert http_module._DEFAULT_PAYPAL_RATE_LIMIT == 60
+    assert http_module._PAYPAL_RATE_WINDOW_SECONDS == 60.0
+
+    app = make_app(paypal_deps)
+    oversized = b'{"id":"WH-TOO-BIG","padding":"' + b"x" * 1_048_600 + b'"}'
+    status, _, _ = _post_paypal_webhook(paypal_deps, None, body=oversized, app=app)
+
+    assert status.startswith("413")
+    assert paypal_api.post_calls == []
+
+    for index in range(http_module._DEFAULT_PAYPAL_RATE_LIMIT):
+        assert _post_paypal_webhook(
+            paypal_deps, _route_capture(event_id=f"WH-DEFAULT-{index}"), app=app
+        )[0].startswith("200")
+    assert _post_paypal_webhook(paypal_deps, _route_capture(event_id="WH-DEFAULT-OVER"), app=app)[
+        0
+    ].startswith("429")
+
+
+def test_the_rate_window_reopens_so_the_rail_is_not_shut_for_the_process_life() -> None:
+    """The reset branch is unreachable through `make_app`, so drive it here.
+
+    A limiter that never reopens answers 429 for the life of the process: after
+    the first minute's budget every genuine PayPal delivery is refused, and the
+    only trace is one warning line.
+    """
+    clock = 1_000.0
+    limiter = http_module._FixedWindowRateLimiter(2, window_seconds=60.0, clock=lambda: clock)
+
+    assert limiter.allow() is True
+    assert limiter.allow() is True
+    assert limiter.allow() is False
+
+    clock += 59.9
+    assert limiter.allow() is False
+
+    clock += 0.1
+    assert limiter.allow() is True
+    assert limiter.allow() is True
+    assert limiter.allow() is False
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5, "60", None])
+def test_a_rate_bound_that_is_not_a_positive_integer_is_refused(limit: Any) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        http_module._FixedWindowRateLimiter(limit, window_seconds=60.0)
+
+
+@pytest.mark.parametrize("limit_bytes", [0, -1, True, 1.5, "1024", None])
+def test_a_body_cap_that_is_not_a_positive_integer_is_refused(
+    paypal_deps: BridgeDeps, limit_bytes: Any
+) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        make_app(paypal_deps, webhook_body_limit_bytes=limit_bytes)
+
+
+def test_an_approved_order_marked_seen_does_not_close_the_door_on_its_capture(
+    paypal_deps: BridgeDeps,
+) -> None:
+    """Ordering hostility (plan section 6): the two events carry different ids.
+
+    Marking the non-actionable one seen is only safe because of that. Keying on
+    the order id instead — the Shopify shape — would acknowledge and discard
+    the capture that follows.
+    """
+    approved = _route_capture(event_id="WH-ORDER-APPROVED")
+    approved["event_type"] = "CHECKOUT.ORDER.APPROVED"
+    captured = _route_capture(event_id="WH-ORDER-CAPTURED")
+
+    assert _post_paypal_webhook(paypal_deps, approved)[0].startswith("200")
+    assert paypal_deps.ledger.seen_event("paypal", "WH-ORDER-APPROVED") is True
+    assert _post_paypal_webhook(paypal_deps, captured)[0].startswith("200")
+
+    assert paypal_deps.ledger.get_receipt("paypal", _ORDER_ID) is not None
+    assert paypal_deps.ledger.seen_event("paypal", "WH-ORDER-CAPTURED") is True
+
+
+def test_every_local_allow_list_refusal_reads_as_update_the_bridge_not_as_an_attack(
+    paypal_deps: BridgeDeps,
+    paypal_api: FakePayPalApi,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """C-186 for both fail-closed local filters, not only the auth algorithm.
+
+    A wave of either message means PayPal changed something the bridge pins,
+    and the operator must be able to tell it apart from a forged delivery.
+    """
+    caplog.set_level(logging.WARNING)
+    paypal_api.verification_responses.append(b'{"verification_status":"FAILURE"}')
+
+    assert _post_paypal_webhook(
+        paypal_deps,
+        _route_capture(event_id="WH-ALGO"),
+        transmission=make_transmission(auth_algo="SHA512withRSA"),
+    )[0].startswith("400")
+    assert _post_paypal_webhook(
+        paypal_deps,
+        _route_capture(event_id="WH-CERT"),
+        transmission=make_transmission(cert_url="https://api.example.com/certs/CERT-1"),
+    )[0].startswith("400")
+    assert _post_paypal_webhook(paypal_deps, _route_capture(event_id="WH-FORGED"))[0].startswith(
+        "400"
+    )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages.count("paypal webhook: unsupported auth algorithm") == 1
+    assert messages.count("paypal webhook: certificate url outside the pinned paypal.com host") == 1
+    assert messages.count("paypal webhook: signature verification failed") == 1

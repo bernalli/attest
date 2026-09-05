@@ -189,9 +189,23 @@ class PaddleAdapter:
     def parse_event(
         self, payload: bytes, sig_header: str, *, now: int | None = None
     ) -> dict[str, Any]:
-        """Verify the signature over raw bytes, then parse the JSON event."""
+        """Verify the signature over raw bytes, then parse the JSON event.
+
+        Every malformed-input failure is normalised to
+        ``json.JSONDecodeError`` so that one handler clause covers them all.
+        A body that nests too deeply raises ``RecursionError``, which is
+        neither a ``BridgeError`` nor a ``json.JSONDecodeError``: the handler
+        would answer 500 and Paddle would redeliver a body that can never
+        parse, 60 times over three days. Mirrors
+        ``paypal_adapter._loads_authenticated_body``.
+        """
         verify_paddle_signature(payload, sig_header, self._webhook_secret, now=now)
-        event: dict[str, Any] = json.loads(payload)
+        try:
+            event: dict[str, Any] = json.loads(payload)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise
+        except RecursionError as exc:
+            raise json.JSONDecodeError("paddle webhook body nests too deeply", "", 0) from exc
         return event
 
     def wants(self, event: dict[str, Any]) -> bool:

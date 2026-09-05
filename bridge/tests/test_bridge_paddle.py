@@ -1340,3 +1340,48 @@ def test_no_paddle_log_line_carries_the_raw_purchase_id_or_a_secret(
         assert purchase_id not in message
         assert _WEBHOOK_SECRET not in message
         assert _API_KEY not in message
+
+
+def test_a_non_completed_transaction_marked_seen_does_not_close_the_door_on_its_completion(
+    paddle_deps: BridgeDeps,
+) -> None:
+    """Ordering hostility (plan section 6): the two events carry different event ids.
+
+    Marking the non-actionable one seen is only safe because of that. Keying on
+    the transaction id instead — the Shopify shape — would acknowledge and
+    discard the `transaction.completed` that follows.
+    """
+    ready = _route_transaction(
+        event_id="evt_paddle_ready", transaction_id="txn_paddle_lifecycle", status="ready"
+    )
+    completed = _route_transaction(
+        event_id="evt_paddle_completed", transaction_id="txn_paddle_lifecycle"
+    )
+
+    assert _post_paddle_webhook(paddle_deps, ready)[0].startswith("200")
+    assert paddle_deps.ledger.seen_event("paddle", "evt_paddle_ready") is True
+    assert _post_paddle_webhook(paddle_deps, completed)[0].startswith("200")
+
+    assert paddle_deps.ledger.get_receipt("paddle", "txn_paddle_lifecycle") is not None
+    assert paddle_deps.ledger.seen_event("paddle", "evt_paddle_completed") is True
+
+
+def test_a_signed_body_that_can_never_parse_is_400_not_a_three_day_retry_loop(
+    paddle_deps: BridgeDeps,
+) -> None:
+    """Y5 on this rail too: `json.loads` raises `RecursionError`, not a decode
+    error, on a deeply nested body, and the handler's 500 row would make Paddle
+    redeliver a body that can never parse 60 times over three days. Well under
+    the route's body cap, so the cap does not cover this."""
+    body = b"[" * 20_000 + b"]" * 20_000
+
+    status, _, _ = call_app(
+        make_app(paddle_deps),
+        "POST",
+        "/paddle/webhook",
+        body=body,
+        headers={"Paddle-Signature": sign_paddle(body, _WEBHOOK_SECRET, _T)},
+    )
+
+    assert status.startswith("400")
+    assert paddle_deps.ledger.unresolved_dead_letters() == []

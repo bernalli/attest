@@ -113,6 +113,12 @@ _PART_PRIVATE = "private"
 _ITCH_PRODUCT_PREFIX = "itch_"
 _DEFAULT_WEBHOOK_BODY_LIMIT_BYTES = 1_048_576
 _DEFAULT_PAYPAL_RATE_LIMIT = 60
+# The two `PayPalSignatureError` messages that are LOCAL allow-list
+# decisions with no cryptographic value. Matched here on purpose and
+# pinned by a route test, so a rename in the adapter cannot silently
+# demote them to the "you are under attack" line.
+_PAYPAL_UNSUPPORTED_AUTH_ALGO = "unsupported auth algorithm"
+_PAYPAL_CERT_URL_REFUSED = "certificate url is not a paypal.com https url"
 _PAYPAL_RATE_WINDOW_SECONDS = 60.0
 
 # What these served pages may reach: nothing. Both policies deliberately
@@ -753,8 +759,18 @@ def _handle_paypal_webhook(
     try:
         event = paypal.parse_event(body, transmission)
     except PayPalSignatureError as exc:
-        if str(exc) == "unsupported auth algorithm":
+        # C-186 as a PROPERTY, not one example: `auth_algo` and `cert_url` are
+        # both fail-closed LOCAL allow-lists with no cryptographic value. The
+        # day PayPal adds an algorithm or moves its certificate host, every
+        # genuine delivery 400s and is retried for three days -- an operator
+        # reading "verification failed" hunts an attack instead of updating the
+        # bridge. The header-length bound is the third of that family but shares
+        # its message with genuinely malformed input, so it stays generic.
+        reason = str(exc)
+        if reason == _PAYPAL_UNSUPPORTED_AUTH_ALGO:
             deps.log.warning("paypal webhook: unsupported auth algorithm")
+        elif reason == _PAYPAL_CERT_URL_REFUSED:
+            deps.log.warning("paypal webhook: certificate url outside the pinned paypal.com host")
         else:
             deps.log.warning("paypal webhook: signature verification failed")
         return _plain_response(start_response, "400 Bad Request", b"invalid signature")

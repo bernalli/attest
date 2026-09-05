@@ -233,7 +233,17 @@ class PayPalAdapter:
             raise PayPalSignatureError("missing PayPal transmission headers")
         for field_name, limit in _MAX_HEADER_LENGTHS:
             field_value: str = getattr(transmission, field_name)
-            if len(field_value) > limit or any(c.isspace() for c in field_value):
+            # A WSGI header value is latin-1-decoded remote input (PEP 3333),
+            # so a byte >= 0x80 arrives here as a non-ASCII character. All five
+            # PayPal transmission values are ASCII by construction (a UUID, an
+            # RFC 3339 instant, base64, an https URL, an algorithm name), so
+            # refusing a non-ASCII one is exact, not lenient — and it keeps
+            # arbitrary remote bytes out of the outbound postback body.
+            if (
+                len(field_value) > limit
+                or not field_value.isascii()
+                or any(c.isspace() for c in field_value)
+            ):
                 raise PayPalSignatureError("malformed PayPal transmission headers")
         if transmission.auth_algo != _AUTH_ALGO:
             raise PayPalSignatureError("unsupported auth algorithm")
