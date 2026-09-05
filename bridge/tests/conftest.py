@@ -80,6 +80,22 @@ def catalog() -> ProductCatalog:
                 terms_uri=f"https://{ISSUER}/attest/license-templates/standard-v1",
                 legal_text_sha256=LEGAL_TEXT_SHA256,
             ),
+            "paddle_pri_01h8xce4qz2m3n4p5q6r7s8t9v": ProductTemplate(
+                title="Signal at Perihelion",
+                publisher="Example Games Store",
+                identifiers={"paddle_price_id": "pri_01h8xce4qz2m3n4p5q6r7s8t9v"},
+                artifact_series=f"{ISSUER}/works/signal-at-perihelion",
+                terms_uri=f"https://{ISSUER}/attest/license-templates/standard-v1",
+                legal_text_sha256=LEGAL_TEXT_SHA256,
+            ),
+            "paypal_SDC-STD-001": ProductTemplate(
+                title="Stardrift Chronicles",
+                publisher="Example Games Store",
+                identifiers={"sku": "SDC-STD-001"},
+                artifact_series=f"{ISSUER}/works/stardrift-chronicles",
+                terms_uri=f"https://{ISSUER}/attest/license-templates/standard-v1",
+                legal_text_sha256=LEGAL_TEXT_SHA256,
+            ),
         }
     )
 

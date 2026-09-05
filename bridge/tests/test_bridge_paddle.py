@@ -5,13 +5,21 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import string
+import threading
 import urllib.error
 from collections.abc import Callable
 from typing import Any
 
 import pytest
+from attest_bridge import http as http_module
 from attest_bridge import paddle_adapter as paddle_module
+from attest_bridge.config import BridgeConfig, IssuerConfig, PaddleConfig
+from attest_bridge.core import IssuingCore
+from attest_bridge.delivery import Delivery
+from attest_bridge.http import BridgeDeps, make_app
+from attest_bridge.ledger import Ledger
 from attest_bridge.model import ConfigError, PurchaseRejected
 from attest_bridge.paddle_adapter import (
     PaddleAdapter,
@@ -19,10 +27,14 @@ from attest_bridge.paddle_adapter import (
     PaddleSignatureError,
     verify_paddle_signature,
 )
+from attest_bridge.signing import IssuerIdentity
+from conftest import DISPLAY_NAME, ISSUER, KID
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from test_bridge_http import call_app
 
 from attest import keys
+from attest import verify as verify_mod
 
 _WEBHOOK_SECRET = "pdl_ntfset_test_fixture"  # noqa: S105 - env var PADDLE_WEBHOOK_SECRET, not a secret
 _API_KEY = "pdl_sdbx_apikey_test_fixture"
@@ -31,6 +43,7 @@ _T = 1_784_000_000
 _CUSTOMER_ID = "ctm_" + "a" * 26
 _TRANSACTION_ID = "txn_01h123456789abcdefghijklm"
 _PRICE_ID = "pri_01h123456789abcdefghijklm"
+_CATALOG_PRICE_ID = "pri_01h8xce4qz2m3n4p5q6r7s8t9v"
 _PUBKEY_BYTES = bytes(range(32))
 _PUBKEY_B64 = keys.b64u(_PUBKEY_BYTES)
 
@@ -808,3 +821,522 @@ def test_a_signed_body_that_is_json_but_not_an_object_reaches_the_handler_as_is(
     assert not isinstance(event, dict)
     with pytest.raises(AttributeError):
         adapter.wants(event)  # type: ignore[arg-type]
+
+
+# -- the WSGI route ----------------------------------------------------------
+
+
+@pytest.fixture
+def paddle_http() -> RecordingHttpGet:
+    """Return the per-test Paddle customer API fake used by the route."""
+    return RecordingHttpGet()
+
+
+@pytest.fixture
+def paddle_deps(
+    catalog: Any,
+    issuer_identity: IssuerIdentity,
+    ledger: Ledger,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    paddle_http: RecordingHttpGet,
+) -> BridgeDeps:
+    """Build route dependencies with a deterministic Paddle clock and API."""
+    monkeypatch.setattr(paddle_module.time, "time", lambda: float(_T))
+    config = BridgeConfig(
+        public_base_url="https://receipts.example.com",
+        ledger_path=tmp_path / "unused-ledger-path.sqlite3",
+        issuer=IssuerConfig(
+            id=ISSUER,
+            display_name=DISPLAY_NAME,
+            kid=KID,
+            seed_path=tmp_path / "issuer.seed",
+            mldsa_key_path=tmp_path / "issuer.mldsa.json",
+            manifest_path=tmp_path / "key-manifest.json",
+        ),
+        products={},
+        stripe=None,
+        itch=None,
+        delivery=None,
+        paddle=PaddleConfig(webhook_secret=_WEBHOOK_SECRET, api_key=_API_KEY),
+    )
+    core = IssuingCore(
+        catalog=catalog,
+        issuer=issuer_identity,
+        ledger=ledger,
+        public_base_url="https://receipts.example.com",
+        delivery=Delivery(None),
+    )
+    return BridgeDeps(
+        config=config,
+        core=core,
+        ledger=ledger,
+        stripe=None,
+        log=logging.getLogger("test-bridge-paddle"),
+        paddle=PaddleAdapter(
+            webhook_secret=_WEBHOOK_SECRET,
+            api_key=_API_KEY,
+            http_get=paddle_http,
+        ),
+    )
+
+
+def _route_transaction(
+    *,
+    event_id: str = "evt_paddle_route_1",
+    transaction_id: str = "txn_paddle_route_1",
+    **data_overrides: Any,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "id": transaction_id,
+        "items": [{"price": {"id": _CATALOG_PRICE_ID}}],
+    }
+    data.update(data_overrides)
+    event = make_transaction_completed(**data)
+    event["event_id"] = event_id
+    return event
+
+
+def _post_paddle_webhook(
+    deps: BridgeDeps,
+    event: object,
+    *,
+    signature: str | None = None,
+    app: Any | None = None,
+) -> tuple[str, dict[str, str], bytes]:
+    body = json.dumps(event).encode()
+    header = sign_paddle(body, _WEBHOOK_SECRET, _T) if signature is None else signature
+    return call_app(
+        make_app(deps) if app is None else app,
+        "POST",
+        "/paddle/webhook",
+        body=body,
+        headers={"Paddle-Signature": header, "Content-Type": "application/json"},
+    )
+
+
+def test_e2e_signed_paddle_webhook_to_offline_verified_receipt(
+    paddle_deps: BridgeDeps,
+    trust_store: verify_mod.TrustStore,
+    catalog: Any,
+) -> None:
+    event = _route_transaction(transaction_id="txn_paddle_e2e")
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("200")
+    stored = paddle_deps.ledger.get_receipt("paddle", "txn_paddle_e2e")
+    assert stored is not None
+    assert verify_mod.verify(stored.envelope_json.encode(), trust_store).ok is True
+    template = catalog.resolve(f"paddle_{_CATALOG_PRICE_ID}")
+    assert json.loads(stored.envelope_json)["payload"]["work"]["title"] == template.title
+
+
+def test_forged_paddle_signature_returns_400_and_ledger_stays_empty(
+    paddle_deps: BridgeDeps,
+) -> None:
+    event = _route_transaction()
+    body = json.dumps(event).encode()
+
+    status, _, _ = _post_paddle_webhook(
+        paddle_deps,
+        event,
+        signature=sign_paddle(body, _OTHER_SECRET, _T),
+    )
+
+    assert status.startswith("400")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
+    assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_missing_paddle_signature_returns_400(paddle_deps: BridgeDeps) -> None:
+    event = _route_transaction()
+    status, _, _ = call_app(
+        make_app(paddle_deps),
+        "POST",
+        "/paddle/webhook",
+        body=json.dumps(event).encode(),
+    )
+
+    assert status.startswith("400")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
+
+
+def test_valid_paddle_signature_unparseable_json_returns_400(
+    paddle_deps: BridgeDeps,
+) -> None:
+    body = b"{not json"
+    status, _, _ = call_app(
+        make_app(paddle_deps),
+        "POST",
+        "/paddle/webhook",
+        body=body,
+        headers={"Paddle-Signature": sign_paddle(body, _WEBHOOK_SECRET, _T)},
+    )
+
+    assert status.startswith("400")
+    assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_valid_paddle_signature_non_utf8_body_returns_400(
+    paddle_deps: BridgeDeps,
+) -> None:
+    body = b"\xffnot utf-8"
+    status, _, _ = call_app(
+        make_app(paddle_deps),
+        "POST",
+        "/paddle/webhook",
+        body=body,
+        headers={"Paddle-Signature": sign_paddle(body, _WEBHOOK_SECRET, _T)},
+    )
+
+    assert status.startswith("400")
+    assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_non_ascii_paddle_signature_returns_400_with_an_empty_ledger(
+    paddle_deps: BridgeDeps,
+) -> None:
+    event = _route_transaction()
+    status, _, _ = _post_paddle_webhook(paddle_deps, event, signature=f"ts={_T};h1=\xff")
+
+    assert status.startswith("400")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
+    assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_paddle_event_without_an_id_is_dead_lettered_and_acknowledged(
+    paddle_deps: BridgeDeps,
+) -> None:
+    event = _route_transaction()
+    del event["event_id"]
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("200")
+    dead_letters = paddle_deps.ledger.unresolved_dead_letters()
+    assert len(dead_letters) == 1
+    assert dead_letters[0].platform == "paddle"
+    assert paddle_deps.ledger.get_receipt("paddle", event["data"]["id"]) is None
+
+
+@pytest.mark.parametrize("event", [[], 7, "event", None, True])
+def test_signed_non_object_paddle_event_is_dead_lettered_and_acknowledged(
+    paddle_deps: BridgeDeps, event: object
+) -> None:
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("200")
+    assert len(paddle_deps.ledger.unresolved_dead_letters()) == 1
+
+
+def test_unhandled_paddle_event_type_returns_200_and_marks_event(
+    paddle_deps: BridgeDeps,
+) -> None:
+    event = _route_transaction()
+    event["event_type"] = "transaction.updated"
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("200")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is True
+    assert paddle_deps.ledger.get_receipt("paddle", event["data"]["id"]) is None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"status": "paid"},
+        {"subscription_id": "sub_01h123456789abcdefghijklm"},
+    ],
+)
+def test_not_actionable_paddle_event_returns_200_and_marks_event(
+    paddle_deps: BridgeDeps, overrides: dict[str, Any]
+) -> None:
+    event = _route_transaction(**overrides)
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("200")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is True
+    assert paddle_deps.ledger.get_receipt("paddle", event["data"]["id"]) is None
+
+
+def test_replayed_paddle_event_id_returns_200_without_reprocessing(
+    paddle_deps: BridgeDeps,
+    paddle_http: RecordingHttpGet,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = _route_transaction(transaction_id="txn_paddle_replay")
+    outcomes: list[Any] = []
+    process = paddle_deps.core.process
+
+    def record_process(purchase: Any) -> Any:
+        outcome = process(purchase)
+        outcomes.append(outcome)
+        return outcome
+
+    monkeypatch.setattr(paddle_deps.core, "process", record_process)
+
+    first = _post_paddle_webhook(paddle_deps, event)
+    second = _post_paddle_webhook(paddle_deps, event)
+
+    assert first[0].startswith("200")
+    assert second[0].startswith("200")
+    assert len(outcomes) == 1
+    assert len(paddle_http.calls) == 1
+
+
+def test_concurrent_identical_paddle_webhooks_issue_exactly_one_receipt(
+    paddle_deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = _route_transaction(transaction_id="txn_paddle_concurrent")
+    app = make_app(paddle_deps)
+    barrier = threading.Barrier(2)
+    statuses: list[str] = []
+    process_calls: list[int] = []
+    results_lock = threading.Lock()
+    process = paddle_deps.core.process
+
+    def record_process(purchase: Any) -> Any:
+        process_calls.append(1)
+        return process(purchase)
+
+    def hit() -> None:
+        barrier.wait()
+        status, _, _ = _post_paddle_webhook(paddle_deps, event, app=app)
+        with results_lock:
+            statuses.append(status)
+
+    monkeypatch.setattr(paddle_deps.core, "process", record_process)
+    threads = [threading.Thread(target=hit) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(statuses) == 2
+    assert all(status.startswith("200") for status in statuses)
+    assert len(process_calls) == 1
+    assert paddle_deps.ledger.get_receipt("paddle", "txn_paddle_concurrent") is not None
+
+
+def test_unmapped_paddle_product_dead_letters_and_returns_200(
+    paddle_deps: BridgeDeps,
+) -> None:
+    event = _route_transaction(items=[{"price": {"id": "pri_unmapped"}}])
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("200")
+    assert len(paddle_deps.ledger.unresolved_dead_letters()) == 1
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is True
+
+
+def test_missing_paddle_buyer_email_dead_letters_and_returns_200(
+    paddle_deps: BridgeDeps,
+) -> None:
+    paddle_deps.paddle = PaddleAdapter(
+        webhook_secret=_WEBHOOK_SECRET,
+        api_key=_API_KEY,
+        http_get=RecordingHttpGet(b'{"data":{}}'),
+    )
+    event = _route_transaction(transaction_id="txn_paddle_no_email")
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("200")
+    assert len(paddle_deps.ledger.unresolved_dead_letters()) == 1
+    assert paddle_deps.ledger.get_receipt("paddle", "txn_paddle_no_email") is None
+
+
+def test_multiple_paddle_items_dead_letter_without_issuing(
+    paddle_deps: BridgeDeps, paddle_http: RecordingHttpGet
+) -> None:
+    event = _route_transaction(
+        transaction_id="txn_paddle_two_items",
+        items=[{"price": {"id": _CATALOG_PRICE_ID}}, {"price": {"id": "pri_other"}}],
+    )
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("200")
+    assert paddle_deps.ledger.get_receipt("paddle", "txn_paddle_two_items") is None
+    assert "one receipt per purchase" in paddle_deps.ledger.unresolved_dead_letters()[0].reason
+    assert paddle_http.calls == []
+
+
+def test_duplicate_paddle_purchase_across_two_events_reuses_receipt(
+    paddle_deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outcomes: list[Any] = []
+    process = paddle_deps.core.process
+
+    def record_process(purchase: Any) -> Any:
+        outcome = process(purchase)
+        outcomes.append(outcome)
+        return outcome
+
+    monkeypatch.setattr(paddle_deps.core, "process", record_process)
+    first = _route_transaction(event_id="evt_paddle_a", transaction_id="txn_paddle_duplicate")
+    second = _route_transaction(event_id="evt_paddle_b", transaction_id="txn_paddle_duplicate")
+
+    assert _post_paddle_webhook(paddle_deps, first)[0].startswith("200")
+    assert _post_paddle_webhook(paddle_deps, second)[0].startswith("200")
+    assert [outcome.duplicate for outcome in outcomes] == [False, True]
+    assert paddle_deps.ledger.seen_event("paddle", "evt_paddle_a") is True
+    assert paddle_deps.ledger.seen_event("paddle", "evt_paddle_b") is True
+
+
+def test_transient_paddle_api_failure_returns_500_without_dead_lettering_or_marking(
+    paddle_deps: BridgeDeps,
+) -> None:
+    paddle_deps.paddle = PaddleAdapter(
+        webhook_secret=_WEBHOOK_SECRET,
+        api_key=_API_KEY,
+        http_get=RecordingHttpGet(_http_error(503)),
+    )
+    event = _route_transaction(transaction_id="txn_paddle_transient")
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("500")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
+    assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_permanent_paddle_api_failure_dead_letters_and_returns_200(
+    paddle_deps: BridgeDeps,
+) -> None:
+    paddle_deps.paddle = PaddleAdapter(
+        webhook_secret=_WEBHOOK_SECRET,
+        api_key=_API_KEY,
+        http_get=RecordingHttpGet(_http_error(401)),
+    )
+    event = _route_transaction(transaction_id="txn_paddle_permanent")
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("200")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is True
+    assert len(paddle_deps.ledger.unresolved_dead_letters()) == 1
+
+
+def test_paddle_api_calls_happen_before_the_webhook_lock(
+    paddle_deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class InspectableLock:
+        def __init__(self) -> None:
+            self.locked = False
+
+        def __enter__(self) -> None:
+            assert self.locked is False
+            self.locked = True
+
+        def __exit__(self, *args: object) -> None:
+            self.locked = False
+
+    lock = InspectableLock()
+
+    def customer_get(url: str, headers: dict[str, str]) -> bytes:
+        assert lock.locked is False
+        return b'{"data":{"email":"buyer@example.com"}}'
+
+    monkeypatch.setattr(http_module.threading, "Lock", lambda: lock)
+    paddle_deps.paddle = PaddleAdapter(
+        webhook_secret=_WEBHOOK_SECRET,
+        api_key=_API_KEY,
+        http_get=customer_get,
+    )
+
+    assert _post_paddle_webhook(paddle_deps, _route_transaction())[0].startswith("200")
+
+
+def test_unexpected_paddle_core_exception_returns_500_and_does_not_mark_event(
+    paddle_deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(purchase: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(paddle_deps.core, "issue_for", boom)
+    event = _route_transaction(transaction_id="txn_paddle_boom")
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("500")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
+    assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_unexpected_paddle_adapter_exception_returns_500_and_does_not_mark_event(
+    paddle_deps: BridgeDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = _route_transaction()
+
+    def boom(payload: bytes, sig_header: str, *, now: int | None = None) -> dict[str, Any]:
+        raise RuntimeError("adapter bug")
+
+    assert paddle_deps.paddle is not None
+    monkeypatch.setattr(paddle_deps.paddle, "parse_event", boom)
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("500")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
+
+
+def test_paddle_timestamp_underflow_returns_500_and_does_not_mark_event(
+    paddle_deps: BridgeDeps,
+) -> None:
+    event = _route_transaction(billed_at="0001-01-01T00:00:00+05:00")
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, event)
+
+    assert status.startswith("500")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
+    assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_paddle_route_is_404_when_paddle_is_not_configured(paddle_deps: BridgeDeps) -> None:
+    paddle_deps.paddle = None
+
+    status, _, _ = _post_paddle_webhook(paddle_deps, _route_transaction())
+
+    assert status.startswith("404")
+
+
+def test_oversized_paddle_body_returns_413_without_calling_the_adapter(
+    paddle_deps: BridgeDeps, paddle_http: RecordingHttpGet
+) -> None:
+    app = make_app(paddle_deps, webhook_body_limit_bytes=32)
+    event = _route_transaction()
+    body = json.dumps(event).encode()
+    status, _, _ = call_app(
+        app,
+        "POST",
+        "/paddle/webhook",
+        body=body,
+        headers={"Paddle-Signature": sign_paddle(body, _WEBHOOK_SECRET, _T)},
+    )
+
+    assert status.startswith("413")
+    assert paddle_http.calls == []
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
+    assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_no_paddle_log_line_carries_the_raw_purchase_id_or_a_secret(
+    paddle_deps: BridgeDeps,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    purchase_id = "txn_paddle_log_secret_guard"
+    event = _route_transaction(transaction_id=purchase_id)
+    caplog.set_level(logging.INFO)
+
+    assert _post_paddle_webhook(paddle_deps, event)[0].startswith("200")
+
+    for record in caplog.records:
+        message = record.getMessage()
+        assert purchase_id not in message
+        assert _WEBHOOK_SECRET not in message
+        assert _API_KEY not in message

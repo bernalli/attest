@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import threading
 import urllib.error
 from collections.abc import Callable
 from typing import Any
 
+import attest_bridge.http as http_module
 import attest_bridge.paypal_adapter as paypal_module
 import pytest
+from attest_bridge.config import BridgeConfig, IssuerConfig, PayPalConfig
+from attest_bridge.core import IssuingCore
+from attest_bridge.delivery import Delivery
+from attest_bridge.http import BridgeDeps, make_app
+from attest_bridge.ledger import Ledger
 from attest_bridge.model import BridgeError, ConfigError, PurchaseRejected
 from attest_bridge.paypal_adapter import (
     PayPalAdapter,
@@ -18,9 +26,14 @@ from attest_bridge.paypal_adapter import (
     PayPalTransmission,
     build_verification_request,
 )
+from attest_bridge.signing import IssuerIdentity
+from conftest import DISPLAY_NAME, ISSUER, KID
 from hypothesis import given
 from hypothesis import strategies as st
 from pytest import MonkeyPatch
+from test_bridge_http import call_app
+
+from attest import verify as verify_mod
 
 _CLIENT_ID = "paypal-test-client-id"
 _CLIENT_SECRET = "paypal-test-client-secret"  # noqa: S105 - env var PAYPAL_TEST_SECRET, not a secret
@@ -880,3 +893,600 @@ def test_an_authenticated_body_that_cannot_parse_is_always_a_json_decode_error(
 
     with pytest.raises(json.JSONDecodeError):
         adapter.parse_event(body, make_transmission())
+
+
+# -- the WSGI route ----------------------------------------------------------
+
+
+@pytest.fixture
+def paypal_api() -> FakePayPalApi:
+    """Return the per-test PayPal OAuth, verification, and order API fake."""
+    return FakePayPalApi()
+
+
+@pytest.fixture
+def paypal_deps(
+    catalog: Any,
+    issuer_identity: IssuerIdentity,
+    ledger: Ledger,
+    tmp_path: Any,
+    paypal_api: FakePayPalApi,
+) -> BridgeDeps:
+    """Build route dependencies with every PayPal network call injected."""
+    config = BridgeConfig(
+        public_base_url="https://receipts.example.com",
+        ledger_path=tmp_path / "unused-ledger-path.sqlite3",
+        issuer=IssuerConfig(
+            id=ISSUER,
+            display_name=DISPLAY_NAME,
+            kid=KID,
+            seed_path=tmp_path / "issuer.seed",
+            mldsa_key_path=tmp_path / "issuer.mldsa.json",
+            manifest_path=tmp_path / "key-manifest.json",
+        ),
+        products={},
+        stripe=None,
+        itch=None,
+        delivery=None,
+        paypal=PayPalConfig(
+            client_id=_CLIENT_ID,
+            client_secret=_CLIENT_SECRET,
+            webhook_id=_WEBHOOK_ID,
+        ),
+    )
+    core = IssuingCore(
+        catalog=catalog,
+        issuer=issuer_identity,
+        ledger=ledger,
+        public_base_url="https://receipts.example.com",
+        delivery=Delivery(None),
+    )
+    return BridgeDeps(
+        config=config,
+        core=core,
+        ledger=ledger,
+        stripe=None,
+        log=logging.getLogger("test-bridge-paypal"),
+        paypal=PayPalAdapter(
+            client_id=_CLIENT_ID,
+            client_secret=_CLIENT_SECRET,
+            webhook_id=_WEBHOOK_ID,
+            http_get=paypal_api.get,
+            http_post=paypal_api.post,
+        ),
+    )
+
+
+def _route_capture(
+    *,
+    event_id: str = "WH-PAYPAL-ROUTE-1",
+    order_id: str = _ORDER_ID,
+    **resource_overrides: Any,
+) -> dict[str, Any]:
+    resource: dict[str, Any] = {
+        "supplementary_data": {"related_ids": {"order_id": order_id}},
+    }
+    resource.update(resource_overrides)
+    event = make_capture_completed(resource=resource)
+    event["id"] = event_id
+    return event
+
+
+def _post_paypal_webhook(
+    deps: BridgeDeps,
+    event: object,
+    *,
+    transmission: PayPalTransmission | None = None,
+    omit_header: str | None = None,
+    body: bytes | None = None,
+    app: Any | None = None,
+) -> tuple[str, dict[str, str], bytes]:
+    payload = json.dumps(event).encode() if body is None else body
+    sent = make_transmission() if transmission is None else transmission
+    headers = {
+        "PayPal-Transmission-Id": sent.transmission_id,
+        "PayPal-Transmission-Time": sent.transmission_time,
+        "PayPal-Transmission-Sig": sent.transmission_sig,
+        "PayPal-Cert-Url": sent.cert_url,
+        "PayPal-Auth-Algo": sent.auth_algo,
+        "Content-Type": "application/json",
+    }
+    if omit_header is not None:
+        del headers[omit_header]
+    return call_app(
+        make_app(deps) if app is None else app,
+        "POST",
+        "/paypal/webhook",
+        body=payload,
+        headers=headers,
+    )
+
+
+def test_e2e_signed_paypal_webhook_to_offline_verified_receipt(
+    paypal_deps: BridgeDeps,
+    trust_store: verify_mod.TrustStore,
+    catalog: Any,
+) -> None:
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("200")
+    stored = paypal_deps.ledger.get_receipt("paypal", _ORDER_ID)
+    assert stored is not None
+    assert verify_mod.verify(stored.envelope_json.encode(), trust_store).ok is True
+    template = catalog.resolve("paypal_SDC-STD-001")
+    assert json.loads(stored.envelope_json)["payload"]["work"]["title"] == template.title
+
+
+def test_forged_paypal_signature_returns_400_and_ledger_stays_empty(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    paypal_api.verification_responses.append(b'{"verification_status":"FAILURE"}')
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("400")
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is False
+    assert paypal_deps.ledger.unresolved_dead_letters() == []
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "PayPal-Transmission-Id",
+        "PayPal-Transmission-Time",
+        "PayPal-Transmission-Sig",
+        "PayPal-Cert-Url",
+        "PayPal-Auth-Algo",
+    ],
+)
+def test_missing_paypal_signature_header_returns_400_without_an_api_call(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi, missing: str
+) -> None:
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event, omit_header=missing)
+
+    assert status.startswith("400")
+    assert paypal_api.post_calls == []
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is False
+
+
+def test_valid_paypal_signature_unparseable_json_returns_400(
+    paypal_deps: BridgeDeps,
+) -> None:
+    body = b"{not json"
+    status, _, _ = _post_paypal_webhook(paypal_deps, {}, body=body)
+
+    assert status.startswith("400")
+    assert paypal_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_valid_paypal_signature_non_utf8_body_returns_400(
+    paypal_deps: BridgeDeps,
+) -> None:
+    body = b"\xffnot utf-8"
+    status, _, _ = _post_paypal_webhook(paypal_deps, {}, body=body)
+
+    assert status.startswith("400")
+    assert paypal_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_non_ascii_paypal_header_returns_400_with_an_empty_ledger(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    event = _route_capture()
+    transmission = make_transmission(auth_algo="SHA256withRSA\xff")
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event, transmission=transmission)
+
+    assert status.startswith("400")
+    assert paypal_api.post_calls == []
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is False
+    assert paypal_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_paypal_event_without_an_id_is_dead_lettered_and_acknowledged(
+    paypal_deps: BridgeDeps,
+) -> None:
+    event = _route_capture()
+    del event["id"]
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("200")
+    dead_letters = paypal_deps.ledger.unresolved_dead_letters()
+    assert len(dead_letters) == 1
+    assert dead_letters[0].platform == "paypal"
+    assert paypal_deps.ledger.get_receipt("paypal", _ORDER_ID) is None
+
+
+@pytest.mark.parametrize("event", [[], 7, "event", None, True])
+def test_signed_non_object_paypal_event_is_dead_lettered_and_acknowledged(
+    paypal_deps: BridgeDeps, event: object
+) -> None:
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("200")
+    assert len(paypal_deps.ledger.unresolved_dead_letters()) == 1
+
+
+def test_unhandled_paypal_event_type_returns_200_and_marks_event(
+    paypal_deps: BridgeDeps,
+) -> None:
+    event = _route_capture()
+    event["event_type"] = "CHECKOUT.ORDER.APPROVED"
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("200")
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is True
+    assert paypal_deps.ledger.get_receipt("paypal", _ORDER_ID) is None
+
+
+@pytest.mark.parametrize(
+    "resource_overrides",
+    [
+        {"status": "PENDING"},
+        {"final_capture": False},
+    ],
+)
+def test_not_actionable_paypal_event_returns_200_and_marks_event(
+    paypal_deps: BridgeDeps, resource_overrides: dict[str, Any]
+) -> None:
+    event = _route_capture(**resource_overrides)
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("200")
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is True
+    assert paypal_deps.ledger.get_receipt("paypal", _ORDER_ID) is None
+
+
+def test_replayed_paypal_event_id_returns_200_without_renormalizing(
+    paypal_deps: BridgeDeps,
+    paypal_api: FakePayPalApi,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    event = _route_capture()
+    outcomes: list[Any] = []
+    process = paypal_deps.core.process
+
+    def record_process(purchase: Any) -> Any:
+        outcome = process(purchase)
+        outcomes.append(outcome)
+        return outcome
+
+    monkeypatch.setattr(paypal_deps.core, "process", record_process)
+
+    first = _post_paypal_webhook(paypal_deps, event)
+    second = _post_paypal_webhook(paypal_deps, event)
+
+    assert first[0].startswith("200")
+    assert second[0].startswith("200")
+    assert len(outcomes) == 1
+    assert len(paypal_api.verification_calls()) == 2
+    assert len(paypal_api.get_calls) == 1
+
+
+def test_concurrent_identical_paypal_webhooks_issue_exactly_one_receipt(
+    paypal_deps: BridgeDeps, monkeypatch: MonkeyPatch
+) -> None:
+    event = _route_capture()
+    app = make_app(paypal_deps)
+    barrier = threading.Barrier(2)
+    statuses: list[str] = []
+    process_calls: list[int] = []
+    results_lock = threading.Lock()
+    process = paypal_deps.core.process
+
+    def record_process(purchase: Any) -> Any:
+        process_calls.append(1)
+        return process(purchase)
+
+    def hit() -> None:
+        barrier.wait()
+        status, _, _ = _post_paypal_webhook(paypal_deps, event, app=app)
+        with results_lock:
+            statuses.append(status)
+
+    monkeypatch.setattr(paypal_deps.core, "process", record_process)
+    threads = [threading.Thread(target=hit) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(statuses) == 2
+    assert all(status.startswith("200") for status in statuses)
+    assert len(process_calls) == 1
+    assert paypal_deps.ledger.get_receipt("paypal", _ORDER_ID) is not None
+
+
+def test_unmapped_paypal_product_dead_letters_and_returns_200(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    paypal_api.order = make_order(
+        purchase_units=[{"items": [{"name": "Unknown", "sku": "UNKNOWN-SKU"}]}]
+    )
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("200")
+    assert len(paypal_deps.ledger.unresolved_dead_letters()) == 1
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is True
+
+
+def test_missing_paypal_buyer_email_dead_letters_and_returns_200(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    paypal_api.order = make_order(payer={})
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("200")
+    assert len(paypal_deps.ledger.unresolved_dead_letters()) == 1
+    assert paypal_deps.ledger.get_receipt("paypal", _ORDER_ID) is None
+
+
+def test_multiple_paypal_items_dead_letter_without_issuing(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    paypal_api.order = make_order(
+        purchase_units=[
+            {
+                "items": [
+                    {"name": "One", "sku": "SDC-STD-001"},
+                    {"name": "Two", "sku": "SECOND-SKU"},
+                ]
+            }
+        ]
+    )
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("200")
+    assert paypal_deps.ledger.get_receipt("paypal", _ORDER_ID) is None
+    assert "one receipt per purchase" in paypal_deps.ledger.unresolved_dead_letters()[0].reason
+
+
+def test_duplicate_paypal_purchase_across_two_events_reuses_receipt(
+    paypal_deps: BridgeDeps, monkeypatch: MonkeyPatch
+) -> None:
+    outcomes: list[Any] = []
+    process = paypal_deps.core.process
+
+    def record_process(purchase: Any) -> Any:
+        outcome = process(purchase)
+        outcomes.append(outcome)
+        return outcome
+
+    monkeypatch.setattr(paypal_deps.core, "process", record_process)
+    first = _route_capture(event_id="WH-PAYPAL-A")
+    second = _route_capture(event_id="WH-PAYPAL-B")
+
+    assert _post_paypal_webhook(paypal_deps, first)[0].startswith("200")
+    assert _post_paypal_webhook(paypal_deps, second)[0].startswith("200")
+    assert [outcome.duplicate for outcome in outcomes] == [False, True]
+    assert paypal_deps.ledger.seen_event("paypal", "WH-PAYPAL-A") is True
+    assert paypal_deps.ledger.seen_event("paypal", "WH-PAYPAL-B") is True
+
+
+def test_transient_paypal_verification_failure_returns_500_without_marking(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    paypal_api.verification_responses.append(_http_error(503))
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("500")
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is False
+    assert paypal_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_transient_paypal_order_failure_returns_500_without_marking(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    paypal_api.order_responses.append(_http_error(503))
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("500")
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is False
+    assert paypal_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_permanent_paypal_api_failure_dead_letters_and_returns_200(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    paypal_api.order_responses.append(_http_error(404))
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("200")
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is True
+    assert len(paypal_deps.ledger.unresolved_dead_letters()) == 1
+
+
+def test_paypal_api_calls_happen_before_the_webhook_lock(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi, monkeypatch: MonkeyPatch
+) -> None:
+    class InspectableLock:
+        def __init__(self) -> None:
+            self.locked = False
+
+        def __enter__(self) -> None:
+            assert self.locked is False
+            self.locked = True
+
+        def __exit__(self, *args: object) -> None:
+            self.locked = False
+
+    lock = InspectableLock()
+
+    def post(url: str, headers: dict[str, str], body: bytes) -> bytes:
+        assert lock.locked is False
+        return paypal_api.post(url, headers, body)
+
+    def get(url: str, headers: dict[str, str]) -> bytes:
+        assert lock.locked is False
+        return paypal_api.get(url, headers)
+
+    adapter = PayPalAdapter(
+        client_id=_CLIENT_ID,
+        client_secret=_CLIENT_SECRET,
+        webhook_id=_WEBHOOK_ID,
+        http_get=get,
+        http_post=post,
+    )
+    # Construct the adapter first so its legitimate OAuth token lock remains a
+    # real lock; only the app's webhook/rate locks are made inspectable here.
+    monkeypatch.setattr(http_module.threading, "Lock", lambda: lock)
+    paypal_deps.paypal = adapter
+
+    assert _post_paypal_webhook(paypal_deps, _route_capture())[0].startswith("200")
+
+
+def test_unexpected_paypal_core_exception_returns_500_and_does_not_mark_event(
+    paypal_deps: BridgeDeps, monkeypatch: MonkeyPatch
+) -> None:
+    def boom(purchase: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(paypal_deps.core, "issue_for", boom)
+    event = _route_capture()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("500")
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is False
+    assert paypal_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_unexpected_paypal_adapter_exception_returns_500_and_does_not_mark_event(
+    paypal_deps: BridgeDeps, monkeypatch: MonkeyPatch
+) -> None:
+    event = _route_capture()
+
+    def boom(payload: bytes, transmission: PayPalTransmission) -> dict[str, Any]:
+        raise RuntimeError("adapter bug")
+
+    assert paypal_deps.paypal is not None
+    monkeypatch.setattr(paypal_deps.paypal, "parse_event", boom)
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, event)
+
+    assert status.startswith("500")
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is False
+
+
+def test_paypal_route_is_404_when_paypal_is_not_configured(paypal_deps: BridgeDeps) -> None:
+    paypal_deps.paypal = None
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, _route_capture())
+
+    assert status.startswith("404")
+
+
+def test_oversized_paypal_body_returns_413_without_any_outbound_call(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    app = make_app(paypal_deps, webhook_body_limit_bytes=32)
+    event = _route_capture()
+    body = json.dumps(event).encode()
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, {}, body=body, app=app)
+
+    assert status.startswith("413")
+    assert paypal_api.post_calls == []
+    assert paypal_api.get_calls == []
+    assert paypal_deps.ledger.seen_event("paypal", event["id"]) is False
+    assert paypal_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_paypal_rate_limit_accepts_up_to_the_configured_bound_then_rejects(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    app = make_app(paypal_deps, paypal_rate_limit=1)
+    accepted = _route_capture(event_id="WH-PAYPAL-RATE-ACCEPTED")
+    rejected = _route_capture(event_id="WH-PAYPAL-RATE-REJECTED")
+
+    first = _post_paypal_webhook(paypal_deps, accepted, app=app)
+    calls_after_first = len(paypal_api.post_calls) + len(paypal_api.get_calls)
+    second = _post_paypal_webhook(paypal_deps, rejected, app=app)
+
+    assert first[0].startswith("200")
+    assert second[0].startswith("429")
+    assert len(paypal_api.post_calls) + len(paypal_api.get_calls) == calls_after_first
+    assert paypal_deps.ledger.seen_event("paypal", rejected["id"]) is False
+
+
+def test_paypal_dedup_key_comes_from_the_verified_body_not_transmission_id(
+    paypal_deps: BridgeDeps, paypal_api: FakePayPalApi
+) -> None:
+    second_order_id = "7A12345678901234B"
+    paypal_api.order_responses.extend(
+        [
+            json.dumps(make_order(id=_ORDER_ID)).encode(),
+            json.dumps(make_order(id=second_order_id)).encode(),
+        ]
+    )
+    repeated_transmission = make_transmission(transmission_id="repeated-transmission-id")
+    first = _route_capture(event_id="WH-PAYPAL-BODY-A", order_id=_ORDER_ID)
+    second = _route_capture(event_id="WH-PAYPAL-BODY-B", order_id=second_order_id)
+
+    assert _post_paypal_webhook(paypal_deps, first, transmission=repeated_transmission)[
+        0
+    ].startswith("200")
+    assert _post_paypal_webhook(paypal_deps, second, transmission=repeated_transmission)[
+        0
+    ].startswith("200")
+
+    assert paypal_deps.ledger.get_receipt("paypal", second_order_id) is not None
+    assert paypal_deps.ledger.seen_event("paypal", "WH-PAYPAL-BODY-B") is True
+    assert len(paypal_api.get_calls) == 2
+
+
+def test_paypal_auth_algorithm_and_signature_failures_have_distinct_log_lines(
+    paypal_deps: BridgeDeps,
+    paypal_api: FakePayPalApi,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
+    event = _route_capture()
+    unsupported = make_transmission(auth_algo="SHA512withRSA")
+    paypal_api.verification_responses.append(b'{"verification_status":"FAILURE"}')
+
+    assert _post_paypal_webhook(paypal_deps, event, transmission=unsupported)[0].startswith("400")
+    assert _post_paypal_webhook(paypal_deps, event)[0].startswith("400")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages.count("paypal webhook: unsupported auth algorithm") == 1
+    assert messages.count("paypal webhook: signature verification failed") == 1
+    for message in messages:
+        assert _ORDER_ID not in message
+        assert _CLIENT_SECRET not in message
+        assert _ACCESS_TOKEN not in message
+
+
+def test_no_paypal_log_line_carries_the_raw_purchase_id_or_a_secret(
+    paypal_deps: BridgeDeps,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+
+    assert _post_paypal_webhook(paypal_deps, _route_capture())[0].startswith("200")
+
+    for record in caplog.records:
+        message = record.getMessage()
+        assert _ORDER_ID not in message
+        assert _CLIENT_SECRET not in message
+        assert _ACCESS_TOKEN not in message
