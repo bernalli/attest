@@ -474,6 +474,22 @@ def test_the_transfer_record_shape_agrees_with_the_transfer_module(env: Env) -> 
     check()
 
 
+def test_holder_authorization_with_an_extra_member_is_refused(env: Env) -> None:
+    """The property above derives its oracle by calling
+    `transfer._valid_holder_authorization_shape` itself, so a regression
+    INSIDE that predicate moves the oracle and the subject together and is
+    invisible to it (C-174). This pins the outcome literally, without calling
+    the predicate under test to decide what the answer should be."""
+    record = copy.deepcopy(CLAIM_35A["record"])
+    record["holder_authorization"] = {**record["holder_authorization"], "extra": "x"}
+
+    rc, out, captured = _log_entry(env.scratch(), "transfer-record", json.dumps(record))
+
+    assert "Traceback" not in captured.err
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert not out.exists()
+
+
 def test_log_entry_never_reads_the_hash_off_the_document(env: Env) -> None:
     """A document that DECLARES its own hash must not be believed. The record
     below carries a `record_sha256` member of its own; the entry must either be

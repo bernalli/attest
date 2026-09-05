@@ -2285,9 +2285,9 @@ def _cmd_log_init(args: argparse.Namespace) -> int:
 # shape rule is spelled once, in the first half of
 # `transfer.verify_record_signature` (`transfer.py:250-263`), and that
 # function's second half needs a key manifest a producer holding only a record
-# does not have. `_transfer_record_entry` therefore composes the same
+# does not have. `_transfer_record_log_entry` therefore composes the same
 # predicates in the same order, and
-# `test_log_entry_transfer_shape_agrees_with_the_transfer_module` pins the two
+# `test_the_transfer_record_shape_agrees_with_the_transfer_module` pins the two
 # together so they cannot drift apart in silence.
 #
 # The `--type` names are taken from `tlog`'s own registry rather than spelled a

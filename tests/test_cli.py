@@ -4694,6 +4694,61 @@ def _entry_cases() -> dict[str, tuple[Any, dict[str, Any]]]:
 
 ENTRY_CASES = _entry_cases()
 ENTRY_TYPES = sorted(ENTRY_CASES)
+LEAF_15 = VECTORS / "15-revoked-policy"
+LEAF_35A = VECTORS / "35-transfer" / "a-transferred-with-backing"
+LEAF_41A = VECTORS / "41-compromise-cutoff" / "a-rescued-anchored-before-cutoff"
+LEAF_41M = VECTORS / "41-compromise-cutoff" / "m-uncompromise-view-floor"
+LEAF_41P = VECTORS / "41-compromise-cutoff" / "p-declaring-signer-compromised-still-floors"
+CORPUS_COMPROMISED_KID = "store.example.com/keys/2025-01#ed25519-1"
+
+
+def _write_json(path: Path, value: Any) -> Path:
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return path
+
+
+def _corpus_head(leaf: Path) -> dict[str, Any]:
+    bundle = json.loads((leaf / "manifests.json").read_text(encoding="utf-8"))
+    manifest = bundle["manifests"][ISSUER]
+    assert isinstance(manifest, dict)
+    return manifest
+
+
+def _corpus_trust_dir(tmp_path: Path, leaf: Path, name: str) -> Path:
+    out = tmp_path / name
+    out.mkdir()
+    bundle = json.loads((leaf / "manifests.json").read_text(encoding="utf-8"))
+    written = 0
+    for issuer, manifest in bundle.get("manifests", {}).items():
+        chain = bundle.get("chains", {}).get(issuer, [])
+        for version in chain or [manifest]:
+            _write_json(
+                out / f"{issuer}-{version.get('manifest_version', 0)}-{written}.json", version
+            )
+            written += 1
+        if chain:
+            _write_json(out / f"{issuer}-head-{written}.json", manifest)
+            written += 1
+    return out
+
+
+def _compromise_view_argv(
+    tmp_path: Path, leaf: Path, out: Path, *, extra: list[str] | None = None
+) -> list[str]:
+    claim = json.loads((leaf / "compromise-view.json").read_text(encoding="utf-8"))[0]
+    return [
+        "manifest",
+        "compromise-view",
+        "--trusted-manifest",
+        str(_write_json(tmp_path / f"{leaf.name}-trusted.json", _corpus_head(leaf))),
+        "--manifest",
+        str(_write_json(tmp_path / f"{leaf.name}-manifest.json", claim["manifest"])),
+        "--evidence",
+        str(_write_json(tmp_path / f"{leaf.name}-evidence.json", claim["evidence"])),
+        *(extra or []),
+        "--out",
+        str(out),
+    ]
 
 
 def _log_entry(
@@ -5076,13 +5131,13 @@ def test_the_log_and_the_view_builders_admit_the_same_documents(tmp_path: Path) 
     """
     record = copy.deepcopy(ENTRY_CASES["revocation-record"][0])
     record["signature"]["note"] = "signed on a Tuesday"
-    rc, _doc, out = _log_entry(tmp_path, "revocation-record", record)
+    rc, _doc, _out = _log_entry(tmp_path, "revocation-record", record)
     assert rc == cli.EXIT_OK
     assert views.build_revocation_view([record]) == [record]
 
     unsigned = copy.deepcopy(ENTRY_CASES["revocation-record"][0])
     del unsigned["signature"]["sig"]
-    rc, _doc, out = _log_entry(tmp_path, "revocation-record", unsigned, name="unsigned")
+    rc, _doc, _out = _log_entry(tmp_path, "revocation-record", unsigned, name="unsigned")
     assert rc == cli.EXIT_USAGE_ERROR
     with pytest.raises(views.ViewError):
         views.build_revocation_view([unsigned])
