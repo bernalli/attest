@@ -57,7 +57,6 @@ _API_BASES = {
     "sandbox": "https://sandbox-api.paddle.com",
 }
 _PERMANENT_API_STATUSES = frozenset({400, 401, 403, 404})
-_RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 
 
 class PaddleSignatureError(BridgeError):
@@ -82,7 +81,11 @@ def verify_paddle_signature(
     exactly one canonical ASCII ``ts`` and at least one ``h1`` candidate are
     required. Every candidate comparison uses ``hmac.compare_digest``.
     """
-    if secret == "":
+    # Whitespace-only is empty here too: the constructor already refuses such a
+    # secret with `not webhook_secret.strip()`, and a public verifier that is
+    # laxer than the object owning it would silently HMAC under a secret the
+    # rest of the bridge treats as unconfigured.
+    if not secret.strip():
         raise PaddleSignatureError("refusing to verify against an empty webhook secret")
 
     timestamp_values: list[str] = []
@@ -117,7 +120,18 @@ def verify_paddle_signature(
     expected = hmac.new(
         secret.encode(), f"{timestamp}:".encode() + payload, hashlib.sha256
     ).hexdigest()
-    if not any(hmac.compare_digest(expected, candidate) for candidate in signature_values):
+    # `hmac.compare_digest` raises TypeError when either str argument is not
+    # ASCII, and a WSGI header value is latin-1-decoded remote input (PEP 3333):
+    # one byte >= 0x80 in `h1` would escape this function's
+    # "only PaddleSignatureError" contract and surface as an unhandled 500
+    # instead of the pinned "invalid signature -> 400" row. A non-ASCII
+    # candidate can never equal a lower-case hex digest, so scoring it a
+    # non-match is exact, not lenient; `isascii()` inspects only the caller's
+    # own input, never secret-derived data, so it adds no timing signal.
+    if not any(
+        candidate.isascii() and hmac.compare_digest(expected, candidate)
+        for candidate in signature_values
+    ):
         raise PaddleSignatureError("signature mismatch")
 
 
@@ -139,7 +153,12 @@ def _parse_billed_at(raw: Any, purchase_id: str) -> str:
         ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC).strftime(_RFC3339)
+    # `strftime("%Y")` does not zero-pad below year 1000 on glibc, so a year-1
+    # timestamp would leave here as "1-01-01T00:00:00Z", which is not RFC 3339.
+    # `isoformat()` always pads to four digits. The Shopify twin
+    # (`_parse_shopify_created_at`) and `model.rfc3339_from_unix` share the same
+    # edge and are a separate follow-up.
+    return parsed.astimezone(UTC).replace(microsecond=0, tzinfo=None).isoformat() + "Z"
 
 
 class PaddleAdapter:
@@ -324,6 +343,13 @@ class PaddleAdapter:
         if not isinstance(customer, dict):
             raise PurchaseRejected(
                 f"paddle customer for transaction {purchase_log_id} has no email"
+            )
+
+        returned_id = customer.get("id")
+        if isinstance(returned_id, str) and returned_id != customer_id:
+            raise PurchaseRejected(
+                f"paddle customer response for transaction {purchase_log_id} names a "
+                "different customer than the signed transaction"
             )
 
         email = customer.get("email")

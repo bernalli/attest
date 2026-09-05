@@ -217,8 +217,9 @@ def test_future_exactly_at_tolerance_is_accepted() -> None:
 
 
 def test_empty_secret_is_refused_by_the_verifier_and_by_the_constructor() -> None:
-    with pytest.raises(PaddleSignatureError, match="empty webhook secret"):
-        verify_paddle_signature(b"{}", "", "", now=_T)
+    for secret in ("", "   "):
+        with pytest.raises(PaddleSignatureError, match="empty webhook secret"):
+            verify_paddle_signature(b"{}", "", secret, now=_T)
     with pytest.raises(ConfigError, match="paddle webhook secret is empty"):
         PaddleAdapter(
             webhook_secret="   ",  # noqa: S106 - empty env var PADDLE_WEBHOOK_SECRET, not a secret
@@ -270,6 +271,68 @@ def test_non_hex_signature_is_rejected() -> None:
 def test_empty_h1_signature_is_rejected() -> None:
     with pytest.raises(PaddleSignatureError, match="signature mismatch"):
         verify_paddle_signature(b"{}", f"ts={_T};h1=", _WEBHOOK_SECRET, now=_T)
+
+
+def test_a_non_ascii_h1_candidate_is_rejected_and_never_escapes_as_a_typeerror() -> None:
+    body = b"{}"
+    with pytest.raises(PaddleSignatureError, match="signature mismatch"):
+        verify_paddle_signature(body, f"ts={_T};h1=" + "ÿ" * 64, _WEBHOOK_SECRET, now=_T)
+
+
+def test_a_non_ascii_segment_after_a_valid_h1_still_verifies() -> None:
+    body = b"{}"
+    correct = sign_paddle(body, _WEBHOOK_SECRET, _T).partition("h1=")[2]
+    verify_paddle_signature(body, f"ts={_T};h1={correct};h1=é", _WEBHOOK_SECRET, now=_T)
+
+
+def test_candidates_are_compared_with_compare_digest_not_equality(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Any, Any]] = []
+    real = hmac.compare_digest
+
+    def recording(left: Any, right: Any) -> bool:
+        calls.append((left, right))
+        return bool(real(left, right))
+
+    monkeypatch.setattr(paddle_module.hmac, "compare_digest", recording)
+    body = b"{}"
+    verify_paddle_signature(body, sign_paddle(body, _WEBHOOK_SECRET, _T), _WEBHOOK_SECRET, now=_T)
+    assert len(calls) == 1
+
+    calls.clear()
+    correct = sign_paddle(body, _WEBHOOK_SECRET, _T).partition("h1=")[2]
+    header = f"ts={_T};h1={'0' * 64};h1={'f' * 64};h1={correct}"
+    verify_paddle_signature(body, header, _WEBHOOK_SECRET, now=_T)
+    assert len(calls) == 3
+
+    calls.clear()
+    with pytest.raises(PaddleSignatureError, match="signature mismatch"):
+        verify_paddle_signature(body, sign_paddle(body, _OTHER_SECRET, _T), _WEBHOOK_SECRET, now=_T)
+    assert len(calls) == 1
+
+
+def test_a_leading_zero_ts_is_normalised_through_int_before_the_hmac() -> None:
+    body = b"{}"
+    padded = f"0{_T}"
+    over_the_raw_string = hmac.new(
+        _WEBHOOK_SECRET.encode(), f"{padded}:".encode() + body, hashlib.sha256
+    ).hexdigest()
+    with pytest.raises(PaddleSignatureError, match="signature mismatch"):
+        verify_paddle_signature(
+            body, f"ts={padded};h1={over_the_raw_string}", _WEBHOOK_SECRET, now=_T
+        )
+    over_the_normalised_int = sign_paddle(body, _WEBHOOK_SECRET, _T).partition("h1=")[2]
+    verify_paddle_signature(
+        body, f"ts={padded};h1={over_the_normalised_int}", _WEBHOOK_SECRET, now=_T
+    )
+
+
+def test_an_uppercase_hex_h1_is_rejected() -> None:
+    body = b"{}"
+    upper = sign_paddle(body, _WEBHOOK_SECRET, _T).partition("h1=")[2].upper()
+    with pytest.raises(PaddleSignatureError, match="signature mismatch"):
+        verify_paddle_signature(body, f"ts={_T};h1={upper}", _WEBHOOK_SECRET, now=_T)
 
 
 def test_truncated_json_body_is_rejected_after_signature_verification(
@@ -689,6 +752,25 @@ def test_api_response_wrong_transaction_id_cannot_override_the_signed_event_id(
     assert purchase.platform_purchase_id == _TRANSACTION_ID
 
 
+def test_a_customer_response_for_a_different_customer_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = json.dumps(
+        {"data": {"id": "ctm_" + "b" * 26, "email": "someone.else@example.com"}}
+    ).encode()
+    adapter, _ = _adapter(monkeypatch, RecordingHttpGet(response))
+    with pytest.raises(PurchaseRejected, match="different customer"):
+        adapter.normalize(make_transaction_completed())
+
+
+def test_a_customer_response_echoing_the_requested_id_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = json.dumps({"data": {"id": _CUSTOMER_ID, "email": "buyer@example.com"}}).encode()
+    adapter, _ = _adapter(monkeypatch, RecordingHttpGet(response))
+    assert adapter.normalize(make_transaction_completed()).buyer_identifier == "buyer@example.com"
+
+
 def test_401_then_200_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     success = json.dumps({"data": {"email": "buyer@example.com"}}).encode()
     fake = RecordingHttpGet(_http_error(401), success)
@@ -706,3 +788,23 @@ def test_api_error_messages_never_contain_the_api_key(
     with pytest.raises((PurchaseRejected, PaddleApiError)) as raised:
         adapter.normalize(make_transaction_completed())
     assert _API_KEY not in str(raised.value)
+
+
+def test_a_year_below_1000_is_still_zero_padded_to_rfc_3339(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = json.dumps({"data": {"email": "buyer@example.com"}}).encode()
+    adapter, _ = _adapter(monkeypatch, RecordingHttpGet(response))
+    purchase = adapter.normalize(make_transaction_completed(billed_at="0001-01-01T00:00:00Z"))
+    assert purchase.purchased_at == "0001-01-01T00:00:00Z"
+
+
+@pytest.mark.parametrize("body", [b"[]", b"123", b'"x"', b"null", b"true"])
+def test_a_signed_body_that_is_json_but_not_an_object_reaches_the_handler_as_is(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    adapter, _ = _adapter(monkeypatch)
+    event = adapter.parse_event(body, sign_paddle(body, _WEBHOOK_SECRET, _T), now=_T)
+    assert not isinstance(event, dict)
+    with pytest.raises(AttributeError):
+        adapter.wants(event)  # type: ignore[arg-type]
