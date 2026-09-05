@@ -196,7 +196,10 @@ immutable with respect to every future input. The Python and TypeScript
 implementations were built separately and are both exercised against the same shared
 conformance corpus. Anyone can run the verifier; nobody has to be asked.
 
-Four things offline verification cannot tell you, and they matter.
+Four things offline verification does not tell you on its own, and they matter. The
+first two are structural — no evidence you can supply changes them. The last two depend
+on evidence that does not travel with the receipt: give it to the verifier and it answers;
+withhold it and the verifier says so rather than guessing.
 
 **Whether the keys are really that store's.** The specification reserves its strongest
 trust level, `verified`, for key material fetched over TLS from the issuer's own
@@ -211,8 +214,10 @@ not evidence that the shop is real.
 `unknown`, and `unknown` does not fail the receipt. A green verdict means "the
 signature is genuine and nothing I was shown says otherwise." That is the honest
 reading, and it is not the same sentence as "this receipt is valid today." The
-browser verifier does not consult a revocation feed at all, so on that page the
-revocation answer is always `unknown`.
+browser verifier consults a revocation feed only if you give it one: drop the store's
+`revocation-view.json` onto the page alongside the receipt and the answer becomes what
+that feed says. With no feed dropped the answer is `unknown`, which is the ordinary case
+and not a failure.
 
 **Whether the feed you do have is stale.** A revocation feed two years out of date is
 not flagged as old. The verifier reports the most recent date it found inside the
@@ -221,10 +226,14 @@ to rely on is left to whoever is relying on it.
 
 **Whether the receipt has already been sold on.** A transfer retires the old receipt
 through a record that is honoured only when the countersigned transfer evidence is
-supplied alongside it, and the packaged `attest verify` command has no option for
-supplying that evidence. From the command line, a receipt that has already changed
-hands still reports as valid. Reading that case correctly today means writing code
-against the library rather than running the tool.
+supplied alongside it. `attest verify` now takes that evidence on the command line —
+`--transfer-view`, with `--compromise-view` and `--revocation-evidence` for the other two
+caller-supplied files, the last of which needs `--revocations` because it exists to prove
+something about a record in it. What has not changed is where the evidence comes from: it
+is the verifier operator's own, never taken from the bundle the presenter handed over. So
+a receipt checked without it still reports as valid — not because the tool cannot read the
+case, but because nothing was shown to say otherwise, and a verifier that assumed a
+transfer it was never shown would be inventing one.
 
 ## Who can revoke my receipt, and what would I see?
 
