@@ -88,8 +88,8 @@ _PLACEHOLDER_RE = re.compile("__BUNDLE_NAME__|__PRIVATE_WARNING__")
 _README_BODY_TEMPLATE = """\
 <h1>attest receipt bundle: __BUNDLE_NAME__</h1>
 
-<p>This file is your receipt. It proves you bought what's listed inside, and
-it's yours: it doesn't live in any account, and nobody can take it away with
+<p>This file is your receipt. It proves what the seller signed about what's
+listed inside, and it's yours: it doesn't live in any account, and nobody can take it away with
 a click. Keep it with your own files, the way you'd keep an important paper
 receipt. If the store closes one day, or you lose access to your account
 there, this file still proves what you bought. You don't need an internet

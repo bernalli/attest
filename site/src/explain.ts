@@ -93,17 +93,17 @@ const CATALOG: Record<Component, Record<string, Explanation>> = {
     proven: {
       label: 'Buyer binding',
       tone: 'good',
-      text: 'The disclosed identifier and salt reproduce the buyer commitment sealed inside the signed payload — whoever supplied them is the buyer this receipt was issued to (spec §8.1).',
+      text: 'The disclosed identifier and salt reproduce the buyer commitment sealed inside the signed payload: whoever supplied them holds this receipt’s binding secret. Both of those values are the issuer’s own, so that is the whole of what it shows — never that the person named made the purchase (spec §8, §11.1).',
     },
     not_proven: {
       label: 'Buyer binding',
       tone: 'warn',
-      text: 'A binding proof was attempted but did not reproduce the sealed buyer commitment — wrong identifier, wrong salt, or a receipt that simply is not theirs (spec §8).',
+      text: 'A binding proof was attempted and did not verify: what was supplied does not reproduce the sealed buyer commitment — a wrong identifier, a wrong salt, or the wrong receipt. That is all it reports, and it never says that whoever supplied them is not the buyer (spec §8, §11.1).',
     },
     not_checked: {
       label: 'Buyer binding',
       tone: 'neutral',
-      text: 'Nobody attempted to prove who this receipt belongs to — the receipt is genuine either way; binding only says whose it is. Use the panel above with the receipt’s salt to prove it (spec §8).',
+      text: 'Nobody attempted the binding proof — the receipt is genuine either way. Binding reports who holds the secret the issuer sealed into the payload, never who made the purchase. Use the panel above with the receipt’s salt to attempt it (spec §8, §11.1).',
     },
   },
   trust: {

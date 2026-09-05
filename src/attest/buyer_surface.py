@@ -174,8 +174,8 @@ def _shareable_name(bundle_name: str) -> str:
 _WARNING_HEADLINE: Final = "Never send {name} to anyone."
 
 _WARNING_CLAIMS: Final = (
-    "That file is the proof the purchase belongs to you: anyone holding it can "
-    "claim to be the buyer.",
+    "That file carries the binding secret for your receipts: anyone holding it can "
+    "answer the proof and claim to be the buyer.",
     "Because one private file covers your whole library, handing it over hands "
     "over proof for every purchase inside at once, not just the one you meant "
     "to show.",

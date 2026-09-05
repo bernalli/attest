@@ -342,6 +342,14 @@ def test_readme_answers_a_buyer_before_it_explains_cryptography(tmp_path: Path) 
     assert "This file is your receipt." in readme
     assert "If the store that sold you this is gone" in readme
 
+    # A receipt is evidence of what the SELLER signed, never proof that the
+    # named party bought (docs/spec/attest-v0.1.md §8, §11.1 rev 17; threat
+    # model TM-05, TM-78). The opening sentence used to say "It proves you
+    # bought what's listed inside", which is the claim the specification
+    # declines to make on the artifact's behalf.
+    assert "proves you bought" not in readme
+    assert "proves what the seller signed" in readme
+
     # The ordering property is what matters here, not the wording: the warning
     # must precede the cryptography. The warning text itself is now rendered
     # from buyer_surface, so locate it the same way every surface does.

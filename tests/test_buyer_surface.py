@@ -236,6 +236,36 @@ def test_the_sentence_a_buyer_needs_is_on_every_surface_word_for_word(claim: str
     assert claim in readme_paragraphs, "bundle README"
 
 
+#: The sentence the private-file warning MUST NOT say, and the one it says
+#: instead. `docs/spec/attest-v0.1.md` §11.1 (rev 17) forbids a conforming
+#: rendering surface from presenting a binding proof as evidence that the named
+#: person made the purchase, because every input to both binding paths is the
+#: issuer's own (§8). The warning used to open with "That file is the proof the
+#: purchase belongs to you", which is exactly that claim; what the file really
+#: carries is the secret that answers the proof, and the risk it warns about —
+#: anyone holding it can claim to be the buyer — is unchanged by saying so.
+FORBIDDEN_BINDING_CLAIM = "the proof the purchase belongs to you"
+
+
+def test_the_private_file_warning_does_not_read_binding_as_who_bought() -> None:
+    """Every surface that renders the warning, and the published pages with it."""
+    from attest import bundle
+
+    surfaces = {
+        context: " ".join(
+            _headline_and_paragraphs(buyer_surface.private_file_warning_html(**kwargs))[1]
+        )
+        for context, kwargs in READER_CONTEXTS.items()
+    }
+    surfaces["bundle README"] = " ".join(_headline_and_paragraphs(bundle._render_readme("demo"))[1])
+    for page in ("site/public/start-here.html", "site/public/what-is-this.html"):
+        surfaces[page] = (REPO_ROOT / page).read_text(encoding="utf-8")
+
+    for context, rendered in surfaces.items():
+        assert FORBIDDEN_BINDING_CLAIM not in rendered, context
+        assert "binding secret" in rendered, context
+
+
 @pytest.mark.parametrize("claim", ANCHORED_CLAIMS)
 @pytest.mark.parametrize("page", ("site/public/start-here.html", "site/public/what-is-this.html"))
 def test_the_published_page_a_buyer_lands_on_still_carries_the_sentence(

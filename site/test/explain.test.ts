@@ -133,6 +133,31 @@ describe('the three normative constraints on the copy', () => {
     expect(note).toMatch(/§19/)
     expect(note).not.toMatch(/nothing in this group can rescue an invalid receipt/i)
   })
+
+  // Every input to both binding paths is the issuer's own: the identifier
+  // arrives at checkout, the salt is issuer-generated, and `buyer.pubkey` is
+  // written into the payload the issuer signs (spec §8). So `proven` reports
+  // possession of a secret the issuer recorded and never participation of the
+  // buyer, and §11.1 forbids a rendering surface from saying otherwise. The
+  // three sentences this pins each used to say otherwise.
+  it('never reads binding as who made the purchase (spec §8, §11.1)', () => {
+    const proven = explain('binding', 'proven').text
+    expect(proven).toMatch(/holds/i)
+    expect(proven).toMatch(/binding secret/i)
+    expect(proven).toMatch(/issuer/i)
+    expect(proven).not.toMatch(/is the buyer this receipt was issued to/i)
+
+    // `not_proven` says a proof failed, never that the presenter is an impostor.
+    const notProven = explain('binding', 'not_proven').text
+    expect(notProven).toMatch(/did not verify/i)
+    expect(notProven).not.toMatch(/not theirs/i)
+
+    // `not_checked` says nobody asked — not that the question is "whose is it".
+    const notChecked = explain('binding', 'not_checked').text
+    expect(notChecked).toMatch(/who holds/i)
+    expect(notChecked).not.toMatch(/whose it is/i)
+    expect(notChecked).not.toMatch(/belongs to/i)
+  })
 })
 
 describe('compromise-cutoff copy', () => {
