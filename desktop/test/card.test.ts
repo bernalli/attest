@@ -77,6 +77,17 @@ describe('the headline says what the result supports', () => {
     expect(card.textContent ?? '').not.toContain('Receipt verifies')
   })
 
+  // The rule, not the wording (spec v0.1 §11.1, rev 17): a rendering surface
+  // must not present possession of the binding secret as evidence of who
+  // purchased. A blocklist of the sentences this app used to have does not
+  // express that — a paraphrase written to dodge the literals walks through it,
+  // and one did. This pins the shape: a purchase-role word in the predicate of a
+  // possession claim, whatever the wording. The twin of
+  // `tests/test_buyer_surface.py::_ASSERTS_ROLE`, kept in step by hand because
+  // the two live in different packages.
+  const ASSERTS_PURCHASE_ROLE =
+  /\b(establish\w*|confirm\w*|prove\w*|show\w*|mean\w*|is|are)\b[^.<>]{0,60}?\b(you|the holder|the presenter|whoever)\b[^.<>]{0,40}?(purchaser|purchase|buyer|bought|purchased|owner|owns)/i
+
   test('the amber headline names the three things an ok result leaves open', () => {
     const { job, run } = sampleJob()
     const card = renderDesktopCard(job, run, 'demo.attest')
@@ -86,6 +97,7 @@ describe('the headline says what the result supports', () => {
     expect(headline).toMatch(/revok/i) // revocation was not consulted
     expect(headline).toMatch(/binding secret/i) // binding was not checked
     expect(headline).not.toMatch(/receipt is yours|belongs to you/i)
+    expect(headline).not.toMatch(ASSERTS_PURCHASE_ROLE)
   })
 
   test('exactly one verdict node survives the header replacement', () => {

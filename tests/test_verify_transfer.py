@@ -185,7 +185,7 @@ def test_transferred_with_full_backing_reports_transferred_not_ok() -> None:
 
 
 def test_transferred_on_none_with_backing_honored() -> None:
-    """Consent gate (§17.3): honored even for the irrevocable `none` class."""
+    """Key-authorization gate (§17.3): honored even for the irrevocable `none` class."""
     hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
     record = _transfer_record()
     bundle = _transfer_log_bundle([record], hk)[0]

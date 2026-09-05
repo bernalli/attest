@@ -1103,8 +1103,9 @@ buyer signs: UTF8("Attest-binding-challenge-v1") || 0x00
         top of the transparency layer of <xref target="ext-stage2"/> and
         requires it. None of this is specified normatively by the present
         document, including the one new reachable revocation value it
-        introduces; a reader who needs the exact mechanism, its consent
-        gate, or its chain-of-title diagnostics is directed to the living
+        introduces; a reader who needs the exact mechanism, its
+        key-authorization gate, or its chain-of-title diagnostics is directed
+        to the living
         specification.</t>
       </section>
     </section>

@@ -205,6 +205,53 @@ def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
                 assert _files_named(answer) == [], context
 
 
+#: The property, not the three sentences the code used to have. A rendering
+#: surface MUST NOT present binding possession as evidence of who purchased
+#: (`docs/spec/attest-v0.1.md` §11.1, rev 17). A blocklist of historical
+#: wordings does not express that: a paraphrase walks through it, and three
+#: written to dodge every literal these tests name left the suite green. This
+#: pins the shape instead — any sentence that puts a purchase-role word in the
+#: predicate of a possession claim fails, whatever its wording.
+_PURCHASE_ROLE = r"(purchaser|purchase|buyer|bought|purchased|owner|owns)"
+#: The window may not cross a sentence end or a tag. Without the tag barrier a
+#: heading and the paragraph after it read as one sentence: the pages below
+#: open with "What is this file?" followed by "You bought something online",
+#: which is prose about the reader and not a claim about possession. Line
+#: breaks are normalized away instead of excluded: `site/public/*.html` wraps
+#: its prose, and a window that refused to cross a newline missed a claim
+#: written across two lines — the way the retired name survived two sweeps.
+_ASSERTS_ROLE = re.compile(
+    r"\b(establish\w*|confirm\w*|prove\w*|show\w*|mean\w*|is|are)\b"
+    r"[^.<>]{0,60}?\b(you|the holder|the presenter|whoever)\b[^.<>]{0,40}?" + _PURCHASE_ROLE,
+    re.I,
+)
+
+
+def _visible_text(markup: str) -> str:
+    """Tags out with a barrier in their place, then one line: the rule is about
+    what a reader is told, and a claim split by an `<em>` — or by the column the
+    file happens to wrap at — is the same claim. The `<>` left behind still
+    stops the window at a tag; `tests/lexicon_audit.py` flattens for the same
+    reason this does."""
+    return " ".join(re.sub(r"<[^>]+>", " <> ", markup).split())
+
+
+def test_no_surface_asserts_a_purchase_role_from_possession() -> None:
+    """The rule, not the wording: possession never implies who bought."""
+    from attest import bundle
+
+    surfaces = {
+        context: buyer_surface.private_file_warning_html(**kwargs)
+        for context, kwargs in READER_CONTEXTS.items()
+    }
+    surfaces["bundle README"] = bundle._render_readme("demo")
+    for page in ("site/public/start-here.html", "site/public/what-is-this.html"):
+        surfaces[page] = (REPO_ROOT / page).read_text(encoding="utf-8")
+    for context, markup in surfaces.items():
+        offending = _ASSERTS_ROLE.search(_visible_text(markup))
+        assert offending is None, f"{context}: {offending.group(0)!r}" if offending else context
+
+
 #: The two sentences that have to survive a rewording, written out HERE rather
 #: than read from `_WARNING_CLAIMS` — the source they exist to anchor. Every
 #: other test in this section compares one rendering with another, so all of

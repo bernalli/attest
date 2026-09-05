@@ -1446,8 +1446,9 @@ def _resolve_transfer_backing(
        On failure: `_WARN_TRANSFERRED_REVOCATION_UNBACKED` (deduplicated),
        skip.
     3. `payload["buyer"]["pubkey"]` is a non-null string AND
-       `transfer.verify_authorization(record, pubkey)` — the OLD receipt's
-       own holder consented. Same unbacked warning on failure, skip.
+       `transfer.verify_authorization(record, pubkey)` — the signer controls
+       the key the issuer recorded in the OLD receipt, which is not consent
+       by the buyer or outgoing holder. Same unbacked warning on failure, skip.
     4. If `payload["license"]["not_transferable_before"]` is present: both
        timestamps parse (fail-closed) and `record["transferred_at"]` is not
        earlier than it — else `_WARN_TRANSFER_NOT_YET_TRANSFERABLE`, skip.
@@ -1629,7 +1630,8 @@ def _classify_revocation(
     — byte-identical to pre-Stage-3 behavior; this ordering is what keeps
     every existing conformance leaf unchanged — an authenticated, matching
     `status == "transferred"` record is additionally considered, for ALL
-    revocability classes, `none` included (the consent-gate principle,
+    revocability classes, `none` included (the key-authorization-gate
+    principle,
     §17.3): a BACKED winner (see `_resolve_transfer_backing`) yields
     `_REVOCATION_TRANSFERRED`; otherwise the outcome reverts to whatever the
     `"revoked"`-status logic already computed, and
@@ -1850,8 +1852,8 @@ def _classify_revocation(
 
     # --- Stage 3 (§17.3): transferred-class backing, considered only once
     # the "revoked"-status logic above did NOT itself yield "revoked" — and
-    # for ALL revocability classes, `none` included (the consent-gate
-    # principle).
+    # for ALL revocability classes, `none` included (the
+    # key-authorization-gate principle).
     if transferred_matches:
         if transfer_view is None:
             # The resolver is never reached at all — this function is the

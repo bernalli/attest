@@ -221,6 +221,17 @@ describe('intake: the salted-envelope notice', () => {
     return canonicalBytes({ ...env, delivery } as JsonObject)
   }
 
+  // The rule, not the wording (spec v0.1 §11.1, rev 17): a rendering surface
+  // must not present possession of the binding secret as evidence of who
+  // purchased. A blocklist of the sentences this app used to have does not
+  // express that — a paraphrase written to dodge the literals walks through it,
+  // and one did. This pins the shape: a purchase-role word in the predicate of a
+  // possession claim, whatever the wording. The twin of
+  // `tests/test_buyer_surface.py::_ASSERTS_ROLE`, kept in step by hand because
+  // the two live in different packages.
+  const ASSERTS_PURCHASE_ROLE =
+  /\b(establish\w*|confirm\w*|prove\w*|show\w*|mean\w*|is|are)\b[^.<>]{0,60}?\b(you|the holder|the presenter|whoever)\b[^.<>]{0,40}?(purchaser|purchase|buyer|bought|purchased|owner|owns)/i
+
   it('verifies a salted bare envelope but says it is bearer proof', () => {
     const r = intake('receipt.attest.json', salted(true))
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
@@ -230,6 +241,7 @@ describe('intake: the salted-envelope notice', () => {
     // The notice reports possession of a bearer secret, never who bought
     // (spec §8, §11.1): a paraphrase that reads it as ownership must fail here.
     expect(r.notices!.join(' ')).not.toMatch(/purchase is theirs|belongs to you|prove[sd]? you bought/i)
+    expect(r.notices!.join(' ')).not.toMatch(ASSERTS_PURCHASE_ROLE)
     // Still verified, not refused: the warning is additive.
     expect(runVerify(r.jobs[0].envelopeBytes, r.jobs[0].trustStore).result.signature).toBe('valid')
   })

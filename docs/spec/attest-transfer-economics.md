@@ -43,8 +43,9 @@ attest's transfer profile (v0.2 §17) is deliberately silent on how, or whether,
 issuer prices a resale, splits a royalty, or structures any such arrangement. What it
 supplies is the precondition every such arrangement needs: a verifiable record that a
 specific receipt moved from one holder to another, at a specific time, with the outgoing
-holder's consent and the issuer's cooperation, and a chain of title a verifier can audit
-(v0.2 §17.5). The royalty lever itself — and any pricing, revenue split, or resale-window
+holder's key authorization and the issuer's cooperation — a signature by the key the issuer
+recorded, never consent by the holder (v0.2 §17.3) — and a chain of title a verifier can
+audit (v0.2 §17.5). The royalty lever itself — and any pricing, revenue split, or resale-window
 policy built on top of that record — is a business decision the protocol makes possible
 without making mandatory, prescribed, or even visible: no receipt field records a
 royalty, a price, or a split (§4).

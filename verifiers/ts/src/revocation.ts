@@ -197,8 +197,9 @@ const REVOCATION_TRANSFERRED = 'transferred'
  *    mirroring `classifyRevocation`'s own hoisting of the same check). On
  *    failure: TRANSFER_WARN.REVOCATION_UNBACKED (deduplicated), skip.
  * 3. `payload.buyer.pubkey` is a non-null string AND
- *    `transfer.verifyAuthorization(record, pubkey)` — the OLD receipt's own
- *    holder consented. Same unbacked warning on failure, skip.
+ *    `transfer.verifyAuthorization(record, pubkey)` — the signer controls the
+ *    key the issuer recorded in the OLD receipt, which is not consent by the
+ *    buyer or outgoing holder. Same unbacked warning on failure, skip.
  * 4. If `payload.license.not_transferable_before` is present: both
  *    timestamps parse (fail-closed) and `record.transferred_at` is not
  *    earlier than it — else TRANSFER_WARN.NOT_YET_TRANSFERABLE, skip.
@@ -472,7 +473,8 @@ export function classifyRevocation(
 
   // --- Stage 3 (§17.3): transferred-class backing, considered only once the
   // "revoked"-status logic above did NOT itself yield "revoked" — and for
-  // ALL revocability classes, `none` included (the consent-gate principle).
+  // ALL revocability classes, `none` included (the key-authorization-gate
+  // principle).
   if (transferredMatches.length > 0) {
     if (transferView == null) {
       // The resolver is never reached at all — this is the only place left
