@@ -88,7 +88,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `resource-limit` outcome class), rev 15 (the floor's fourth axis, the size of
   the container as stored), and rev 16 (both reference importers reading the
   container through one reading, at that floor). Together with rev 13, cited
-  above, they are every normative amendment between 0.9.1 and this release.
+  above, they are every amendment to v0.1 in this window; `attest-versioning.md`
+  §2 records their consequence in its own revs 9 and 10.
 
 ### Added
 
