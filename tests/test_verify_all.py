@@ -41,8 +41,9 @@ every one of them change unnoticed.
 WHAT THIS DOES NOT CHECK. Two ways of changing what the script does are green
 here, both measured rather than assumed, and both left green knowingly. The
 first is the working directory: making the plain branch of `run` `cd` somewhere
-else first puts fifty-eight of the sixty-one steps in a temporary directory and
-the run still exits 0. The second is a mandatory step demoted to an optional
+else first sends every step whose call site passes no environment assignment
+into a temporary directory, and the run still exits 0. The second is a
+mandatory step demoted to an optional
 one — turning `run pages.yml:test - "npm run build --prefix site"` into an
 `external` guarded by a tool keeps it running wherever that tool is installed
 and turns it into a SKIPPED with exit 2 wherever it is not, which is a

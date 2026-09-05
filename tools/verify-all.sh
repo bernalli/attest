@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # Run locally, in one command, exactly what `ci.yml` and `pages.yml` run.
 #
-# WHY THIS EXISTS. The steps that break are the steps nobody types. Measured
-# 2026-09-04 over the last ninety-nine runs of each workflow: `site` failed
-# twelve times, `ci` once, and none of the twelve was flaky. They were the
-# three things a developer never runs by hand — the two end-to-end suites,
-# because they are slow, and the typecheck inside `npm run build --prefix
-# site`, because `npm test` is the command people know and it is green while
-# `tsc` is red. Until this script there was no single command that ran what CI
-# runs: three npm roots with their own scripts, a Python project with its own,
-# and no Makefile tying them together.
+# WHY THIS EXISTS. The steps that break are the steps nobody types, and there
+# are three a developer never runs by hand: the two end-to-end suites, because
+# they are slow, and the typecheck inside `npm run build --prefix site`,
+# because `npm test` is the command people know and it is green while `tsc` is
+# red. Until this script there was no single command that ran what CI runs:
+# three npm roots with their own scripts, a Python project with its own, and no
+# Makefile tying them together.
 #
 # WHAT IT GUARANTEES, AND WHAT IT DOES NOT. Every `run:` line of both workflows
 # appears here verbatim, in the order the jobs run them, with the same flags,
@@ -269,8 +267,9 @@ run pages.yml:test - "npm run build --prefix verifiers/ts"
 run pages.yml:test - "npm test --prefix verifiers/ts"
 run pages.yml:test - "npm ci --prefix site"
 run pages.yml:test - "npm test --prefix site"
-# The typecheck lives inside this script, not inside `npm test`. Four failures
-# in the site workflow were `tsc` red while `npm test` was green.
+# The typecheck runs here because `npm test` does not run it: site/package.json
+# puts `tsc --noEmit` in `build`, and `test` is `vitest run` alone. So the site
+# workflow can go red on `tsc` with `npm test` green, and only this step sees it.
 run pages.yml:test - "npm run build --prefix site"
 run pages.yml:test - "python3 tools/container_differential.py --count 500 --seed 20260902"
 SITE_ABSENT="$(browser_missing site chromium)"

@@ -59,11 +59,11 @@ flags. It stops at the first failure and prints a table of what passed, what
 failed, what it could not run, and what it ran on less than CI runs it.
 
 It is not a convenience wrapper around `pytest`. The steps that break are the
-ones nobody types: over the last ninety-nine runs of each workflow the `site`
-workflow failed twelve times against `ci`'s one, and none of the twelve was
-flaky. They were the two end-to-end suites, which are slow, and the typecheck
-inside `npm run build --prefix site` — `npm test` is the command people know,
-and it is green while `tsc` is red.
+ones nobody types, and two shapes explain why they escape. The end-to-end
+suites are slow, so they are the first thing left out of a local run. And the
+typecheck lives inside `npm run build --prefix site` rather than inside
+`npm test` — `npm test` is the command people know, so it is the one that gets
+typed, and it stays green while `tsc` is red.
 
 Some steps need toolchains CI installs: Maude/Tamarin, syft/grype/grant,
 xml2rfc, and Playwright browsers. The script does not provision the prover,
