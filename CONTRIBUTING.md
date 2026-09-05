@@ -35,7 +35,9 @@ the full conformance suite before review:
   `docs/spec/vectors/` — 221 leaf vectors across 47 groups, zero skipped;
 - keep both existing suites green: `.venv/bin/pytest -q` (Python) and `npm test`
   in `verifiers/ts/` (TypeScript, which runs the full conformance corpus);
-- `ruff` + `mypy` clean for Python, `tsc --noEmit` clean for TypeScript.
+- `ruff` + `mypy` clean for Python, `tsc --noEmit` clean for TypeScript;
+- run `./tools/verify-all.sh` before opening the PR — the three bullets above
+  are a subset of what CI gates on, and the difference is where PRs go red.
 
 A **new independent implementation** proves conformance by running the public
 conformance runner against its own adapter command — see
@@ -44,3 +46,72 @@ and the report format — and including the resulting report in the PR.
 
 The conformance vectors — not any single implementation's wording — are the
 contract.
+
+## Verifying locally
+
+```sh
+./tools/verify-all.sh
+```
+
+One command runs what CI runs: every `run:` step of `.github/workflows/ci.yml`
+and `.github/workflows/pages.yml`, in the order the jobs run them, with the same
+flags. It stops at the first failure and prints a table of what passed, what
+failed, what it could not run, and what it ran on less than CI runs it.
+
+The command includes both end-to-end suites and the site build.
+`site/package.json` runs `tsc --noEmit` as part of `build`, while `test`
+runs Vitest without that separate typecheck.
+
+Some steps need toolchains CI installs: Maude/Tamarin, syft/grype/grant,
+xml2rfc, and Playwright browsers. The script does not provision the prover,
+scanners, or browsers. It reports missing command-line tools by name and
+prints installation hints for missing browsers. The Internet-Draft step uses
+`uvx` to obtain pinned xml2rfc; its first invocation may download that package.
+
+A successful desktop end-to-end run with Chromium and Firefox available but
+WebKit missing is reported `PARTIAL`. If Chromium or Firefox is missing, the
+whole desktop end-to-end step is `SKIPPED`. A failed step stays `FAIL`, even
+when it ran with reduced browser coverage; subsequent verification steps are
+`NOT RUN`. Environment restoration still runs after a failure.
+
+`--quick` skips the prover, scanner, and Internet-Draft steps. It still runs
+the end-to-end suites when their required browsers are available, so it may
+also report `PARTIAL`. A failure exits 1, including a failed restoration.
+With no failures, any `SKIPPED` or `PARTIAL` step makes the exit status 2;
+only a complete successful run exits 0. Invalid options, a missing base tool
+(`uv`, `node`, `npm`, or `python3`), or a `ci.yml` whose formal shard matrix
+the script refuses to read exit 64 before verification completes.
+
+The proof shards are read out of `ci.yml` rather than copied into the script,
+so that reader is part of the gate. It admits one written-out shape — a single
+`formal:` job, its `strategy: matrix: include:` sequence, and entries carrying
+`shard:`, `timeout:`, `checker_timeout:` and `lemmas:` exactly once each — and
+refuses anything else by file and line before the first step runs. Zero
+entries is a refusal, not a pass: a shard list nobody could read would
+otherwise run no proof and still reach the `OK` line.
+
+Add or change a step in either workflow and it belongs in `tools/verify-all.sh`
+in the same commit: `tests/test_verify_all.py` runs the script against stubbed
+commands and compares what it ACTUALLY EXECUTED with both workflows — the
+command text with its flags, the job it is attributed to, how many times it
+runs there, the environment the runner hands the step (workflow, job and step
+`env:` together), the shell it resolves to, the order within that job, and the
+five proof shards the formal matrix expands into. A step still present in the
+file but no longer reached, or reached under another job's name, is red exactly
+like a step that was deleted; so is a local step no workflow runs, and so is a
+variable handed to a step that CI never sets.
+
+The same file also admits the workflows before comparing them: duplicate keys
+are refused, and a job with `run:` steps, or such a step itself, may carry only
+fields `verify-all` can reproduce. `if:`, `continue-on-error:` and
+`working-directory:` change what runs or what a failure means and have no local
+equivalent, so a workflow that adds one is red rather than compared against a
+script that cannot express it.
+
+Three things it does not check, and they are limits rather than oversights. It
+does not compare the order of the JOBS: the script groups those its own way,
+running the proof shards last where `ci.yml` declares them third. It does not
+check the directory a step runs in. And it does not refuse a step CI always
+runs being made conditional on a tool this machine may lack — where the tool is
+absent that step is reported `SKIPPED` and the run exits **2**, so the
+difference is stated rather than hidden, but nothing turns red.
