@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # Explicit bash enables pipefail in run steps. Without it, a failing
+    # upstream command can be hidden by the final command's successful exit.
+    # This makes failures in the installer pipelines visible at that step.
+    shell: bash
+
 jobs:
   python:
     # BEFORE CHANGING HOW THIS JOB RUNS — a `container:`, a self-hosted runner,
@@ -76,6 +83,12 @@ jobs:
       # corpus nobody can regenerate: this fails on any drift between the
       # committed leaves and what the generator produces today.
       - run: uv run --frozen python tools/gen_container_corpus.py --check
+      # Compare importer outcomes at their defaults, including the browser
+      # parser and file-intake paths, on the generated archive families.
+      # This complements the reader-level differential in pages.yml.
+      # The Python environment, built TS verifier and site dependencies needed
+      # by this command are prepared earlier in this job.
+      - run: uv run --frozen python tools/importer_differential.py
       # Same reason, for the corpus that pins the protocol itself. Replaying
       # the committed leaves never re-runs the asserts the generator makes
       # while minting them, so without this the vectors are the one generated
