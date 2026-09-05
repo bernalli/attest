@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 import pytest
+from attest_bridge import shopify_adapter as shopify_module
 from attest_bridge.config import BridgeConfig, IssuerConfig, ShopifyConfig
 from attest_bridge.core import IssuingCore
 from attest_bridge.delivery import Delivery
@@ -527,3 +528,125 @@ def test_route_is_404_when_shopify_is_not_configured(shopify_deps: BridgeDeps) -
     status, _, _ = _post_webhook(shopify_deps, make_order())
 
     assert status.startswith("404")
+
+
+def test_a_non_ascii_hmac_header_is_rejected_and_never_escapes_as_a_typeerror() -> None:
+    """`hmac.compare_digest` raises TypeError on a non-ASCII str.
+
+    The header is latin-1-decoded remote input (PEP 3333), so one byte >= 0x80
+    would escape this function's "only ShopifySignatureError" contract and
+    reach the route layer as an unhandled 500 instead of the pinned 400.
+    """
+    with pytest.raises(ShopifySignatureError):
+        verify_shopify_signature(b"{}", "\u00ff" * 44, _WEBHOOK_SECRET)
+
+
+def test_the_header_is_compared_with_compare_digest_not_equality(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing else in this file distinguishes `compare_digest` from `==`."""
+    calls: list[tuple[Any, Any]] = []
+    real = hmac.compare_digest
+
+    def recording(left: Any, right: Any) -> bool:
+        calls.append((left, right))
+        return bool(real(left, right))
+
+    monkeypatch.setattr(shopify_module.hmac, "compare_digest", recording)
+    body = b"{}"
+    verify_shopify_signature(body, sign_shopify(body), _WEBHOOK_SECRET)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "created_at",
+    ["0001-01-01T00:00:00+05:00", "9999-12-31T23:59:59-05:00"],
+)
+def test_an_extreme_created_at_is_a_purchase_rejection_not_an_overflowerror(
+    created_at: str,
+) -> None:
+    """`astimezone(UTC)` walks off the end of the representable range.
+
+    `OverflowError` is not named by this adapter's contract, and the body that
+    carries the value is signed, so the route would answer 500 instead of
+    dead-lettering a malformed purchase.
+    """
+    adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
+    with pytest.raises(PurchaseRejected):
+        adapter.normalize(make_order(created_at=created_at))
+
+
+def test_a_year_below_1000_created_at_is_zero_padded_to_rfc_3339() -> None:
+    """`strftime("%Y")` does not zero-pad on glibc; `1-01-01T...` is not RFC 3339."""
+    adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
+    purchase = adapter.normalize(make_order(created_at="0001-01-01T00:00:00Z"))
+    assert purchase.purchased_at == "0001-01-01T00:00:00Z"
+
+
+@pytest.mark.parametrize("verdict", [False, True])
+def test_digest_result_controls_verification(
+    verdict: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counting the calls is not enough: a spy that always agrees also counts."""
+    body = b"{}"
+    expected = sign_shopify(body)
+    candidate = "A" * 44 if verdict else expected
+
+    def comparison(left: str, right: str) -> bool:
+        assert (left, right) == (candidate, expected)
+        return verdict
+
+    monkeypatch.setattr(shopify_module.hmac, "compare_digest", comparison)
+    if verdict:
+        verify_shopify_signature(body, candidate, _WEBHOOK_SECRET)
+    else:
+        with pytest.raises(ShopifySignatureError):
+            verify_shopify_signature(body, candidate, _WEBHOOK_SECRET)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,
+        True,
+        17,
+        [],
+        {},
+        "",
+        " ",
+        "2026-02-30T12:00:00Z",
+        "2026-01-01T24:00:00Z",
+        "2026-01-01T00:00:60Z",
+        "2026-01-01T00:00:00+24:00",
+        "2026-01-01T",
+        "2026-01-01T00:00:00+",
+        "2026-01-01T00:00:00Zjunk",
+    ],
+)
+def test_created_at_negative_family(bad: Any) -> None:
+    """Coverage by property, not by the handful of examples the author imagined."""
+    raw = make_order()
+    raw["created_at"] = bad
+    with pytest.raises(PurchaseRejected):
+        ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET).normalize(raw)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"created":' + b"1" * 4301 + b"}",
+        b"[" * 20000 + b"0" + b"]" * 20000,
+    ],
+)
+def test_json_limits_return_400(shopify_deps: BridgeDeps, body: bytes) -> None:
+    """Same family as the Stripe rail: a bare ValueError and a RecursionError."""
+    status, _, reply = call_app(
+        make_app(shopify_deps),
+        "POST",
+        "/shopify/webhook",
+        body=body,
+        headers={"X-Shopify-Hmac-Sha256": sign_shopify(body)},
+    )
+    assert status == "400 Bad Request"
+    assert reply == b"malformed body"
+    assert shopify_deps.ledger.unresolved_dead_letters() == []

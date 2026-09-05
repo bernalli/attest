@@ -10,7 +10,6 @@ from typing import Any, Protocol
 from attest import keys
 
 _ED25519_PUBKEY_LEN = 32
-_RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 
 
 class BridgeError(Exception):
@@ -86,4 +85,19 @@ def decode_buyer_pubkey(value: str | None) -> bytes | None:
 
 
 def rfc3339_from_unix(ts: int) -> str:
-    return datetime.fromtimestamp(ts, UTC).strftime(_RFC3339)
+    """Render a unix timestamp as RFC 3339 `...Z`, or reject it.
+
+    Two things this cannot do naively. `datetime.fromtimestamp` answers an
+    out-of-range integer with `OSError`, `OverflowError` or `ValueError`,
+    none of which any caller's contract names — and callers only check that
+    the value is an `int` before passing it here, so a signed body carrying an
+    absurd number would escape `normalize` as an unhandled error instead of
+    the pinned rejection. And `strftime("%Y")` does not zero-pad below year
+    1000 on glibc, which would emit `1-01-01T00:00:00Z`: not RFC 3339.
+    `isoformat` always pads to four digits.
+    """
+    try:
+        moment = datetime.fromtimestamp(ts, UTC)
+    except (OSError, OverflowError, ValueError) as exc:
+        raise PurchaseRejected("purchase timestamp is outside the representable range") from exc
+    return moment.replace(microsecond=0, tzinfo=None).isoformat() + "Z"

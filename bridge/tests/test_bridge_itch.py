@@ -1350,3 +1350,72 @@ def test_claim_form_carries_the_private_file_warning(itch_deps: BridgeDeps) -> N
     assert buyer_surface.private_file_warning_html(delivered=False) in page
     assert "attest disclose" not in page
     assert "*.attest" not in page
+
+
+@pytest.mark.parametrize(
+    "created_at",
+    ["0001-01-01T00:00:00+05:00", "9999-12-31T23:59:59-05:00"],
+)
+def test_normalize_extreme_created_at_raises_purchase_rejected(created_at: str) -> None:
+    """`astimezone(UTC)` walks off the end of the representable range.
+
+    `OverflowError` is not named by this adapter's contract: a claim carrying
+    such a value must dead-letter as malformed purchase input, not crash the
+    poller.
+    """
+    raw = _purchase_json(created_at=created_at)
+    with pytest.raises(PurchaseRejected):
+        ItchAdapter(api_key="key").normalize(raw, email="buyer@example.com")
+
+
+def test_normalize_zero_pads_a_year_below_1000() -> None:
+    """`strftime("%Y")` does not zero-pad on glibc; `1-01-01T...` is not RFC 3339."""
+    raw = _purchase_json(created_at="0001-01-01T00:00:00Z")
+    purchase = ItchAdapter(api_key="key").normalize(raw, email="buyer@example.com")
+    assert purchase.purchased_at == "0001-01-01T00:00:00Z"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,
+        True,
+        17,
+        [],
+        {},
+        "",
+        " ",
+        "2026-02-30T12:00:00Z",
+        "2026-01-01T24:00:00Z",
+        "2026-01-01T00:00:60Z",
+        "2026-01-01T00:00:00+24:00",
+        "2026-01-01T",
+        "2026-01-01T00:00:00+",
+        "2026-01-01T00:00:00Zjunk",
+    ],
+)
+def test_created_at_negative_family(bad: Any) -> None:
+    """Coverage by property, not by the handful of examples the author imagined."""
+    raw = _purchase_json()
+    raw["created_at"] = bad
+    with pytest.raises(PurchaseRejected):
+        ItchAdapter(api_key="key").normalize(raw, email="buyer@example.com")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"created":' + b"1" * 4301 + b"}",
+        b"[" * 20000 + b"0" + b"]" * 20000,
+    ],
+)
+def test_json_limits_return_400(itch_deps: BridgeDeps, body: bytes) -> None:
+    """This route takes no signature at all, so the family is reachable by anyone."""
+    status, _, _ = call_app(
+        make_app(itch_deps),
+        "POST",
+        "/itch/claim",
+        body=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert status == "400 Bad Request"

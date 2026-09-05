@@ -1343,3 +1343,29 @@ def test_download_landing_links_the_explainer(deps: BridgeDeps, issued: StoredRe
 
     assert status.startswith("200")
     assert "what-is-this.html" in body.decode()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"created":' + b"1" * 4301 + b"}",
+        b"[" * 20000 + b"0" + b"]" * 20000,
+    ],
+)
+def test_json_limits_return_400(deps: BridgeDeps, frozen_now: int, body: bytes) -> None:
+    """`json.loads` raises more than the two errors the handler used to name.
+
+    An integer past the interpreter's digit limit raises a bare `ValueError`
+    and a deeply nested body raises `RecursionError`; both would have escaped
+    as an unhandled 500 on a body whose signature is valid.
+    """
+    status, _, reply = call_app(
+        make_app(deps),
+        "POST",
+        "/stripe/webhook",
+        body=body,
+        headers={"Stripe-Signature": sign_stripe(body, _WEBHOOK_SECRET, _FROZEN_NOW)},
+    )
+    assert status == "400 Bad Request"
+    assert reply == b"malformed body"
+    assert deps.ledger.unresolved_dead_letters() == []

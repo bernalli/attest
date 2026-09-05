@@ -71,3 +71,35 @@ def test_rfc3339_from_unix_matches_attest_format() -> None:
     # "2026-07-13T16:53:20Z" did not match `datetime.fromtimestamp(1_784_000_000,
     # UTC)`; the literal is fixed here, not the function under test).
     assert rfc3339_from_unix(1_784_000_000) == "2026-07-14T03:33:20Z"
+
+
+def test_rfc3339_from_unix_zero_pads_years_below_1000() -> None:
+    """`strftime("%Y")` does not zero-pad on glibc, and `1-01-01T...` is not RFC 3339."""
+    assert rfc3339_from_unix(-62_135_596_800) == "0001-01-01T00:00:00Z"
+
+
+@pytest.mark.parametrize(
+    "ts",
+    [
+        10**18,
+        -(10**18),
+        253_402_300_800 * 1000,
+        10**100,
+        -(10**100),
+        -62_135_596_801,
+        253_402_300_800,
+    ],
+)
+def test_rfc3339_from_unix_rejects_a_timestamp_outside_the_representable_range(
+    ts: int,
+) -> None:
+    """An out-of-range integer is malformed purchase input, not a crash.
+
+    `datetime.fromtimestamp` raises `OSError` (or `OverflowError`, or
+    `ValueError`) for these, none of which any caller's contract names: the
+    Stripe adapter only checks that `event["created"]` is an `int`, so a signed
+    body carrying an absurd value would escape `normalize` as an unhandled
+    error instead of the pinned rejection.
+    """
+    with pytest.raises(PurchaseRejected):
+        rfc3339_from_unix(ts)

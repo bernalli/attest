@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from attest import (
     anchor,
@@ -1917,3 +1919,141 @@ def test_an_unhashable_end_of_life_does_not_crash_verification() -> None:
         result = verify.verify(_to_bytes(envelope), _trust_store(_key_manifest()))
 
         assert any("end_of_life" in warning for warning in result.warnings)
+
+
+@pytest.mark.parametrize("issued_at", ["9999-12-31T23:59:59Z", "9999-12-20T00:00:00Z"])
+def test_refund_window_overflow_is_a_verification_error(issued_at: str) -> None:
+    """`issued_at + timedelta(days=window)` can leave the representable range.
+
+    The schema caps the window at 3650 days, which does not prevent the sum
+    from overflowing for a receipt issued near the end of year 9999. The
+    resulting `OverflowError` is named by no contract and would escape
+    `verify()` itself, so it is answered as "unknown" with an explicit error:
+    returning no window instead would silently make the revocation record
+    ineffective.
+    """
+    payload = make_payload(
+        license={"revocability": "refund_window", "revocation_window_days": 14},
+        issued_at=issued_at,
+    )
+    assert validate.validate_payload(payload) == []
+    envelope = issue.issue(payload, KP, KID)
+    record = revocation.build_record(payload["receipt_id"], "revoked", issued_at, KP, KID)
+    result = verify.verify(
+        _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[record]
+    )
+    assert result.ok is False
+    assert result.revocation == "unknown"
+    assert "refund window is outside the representable timestamp range" in result.errors
+
+
+def test_refund_window_overflow_reports_the_whole_result_snapshot() -> None:
+    """The full §11.1 snapshot, mirroring the oversized-view leaf: everything
+    except `revocation`/`ok`/`errors` MUST be untouched, and the overflow MUST
+    be the ONLY error — a second, unrelated error would mean the branch was
+    reached for a reason this test does not describe."""
+    payload = make_payload(
+        license={"revocability": "refund_window", "revocation_window_days": 14},
+        issued_at="9999-12-20T00:00:00Z",
+    )
+    envelope = issue.issue(payload, KP, KID)
+    record = revocation.build_record(
+        payload["receipt_id"], "revoked", "9999-12-20T00:00:00Z", KP, KID
+    )
+    result = verify.verify(
+        _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[record]
+    )
+    assert result.signature == "valid"
+    assert result.schema == "valid"
+    assert result.revocation == "unknown"
+    assert result.binding == "not_checked"
+    assert result.trust == "verified"
+    assert result.ok is False
+    assert list(result.errors) == ["refund window is outside the representable timestamp range"]
+
+
+def test_last_representable_refund_deadline_is_still_evaluated_normally() -> None:
+    """The guard MUST NOT over-trigger: `9999-12-17 + 14d == 9999-12-31` is the
+    last representable deadline, and it stays an ordinary §12.2 evaluation."""
+    payload = make_payload(
+        license={"revocability": "refund_window", "revocation_window_days": 14},
+        issued_at="9999-12-17T00:00:00Z",
+    )
+    envelope = issue.issue(payload, KP, KID)
+    record = revocation.build_record(
+        payload["receipt_id"], "revoked", "9999-12-17T00:00:00Z", KP, KID
+    )
+    result = verify.verify(
+        _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[record]
+    )
+    assert result.errors == ()
+    assert result.revocation == "revoked"
+
+
+def test_refund_window_overflow_caps_ok_even_when_stage_3_renames_the_outcome() -> None:
+    """The `unknown` of the branch above is the "revoked"-status dispatch's
+    result, not necessarily the reported one: with a matching `transferred`
+    record the Stage 3 fallthrough overrides it. The invariant that actually
+    holds on EVERY exit path is `errors` non-empty implies `ok is False`."""
+    payload = make_payload(
+        license={"revocability": "refund_window", "revocation_window_days": 14},
+        issued_at="9999-12-20T00:00:00Z",
+    )
+    envelope = issue.issue(payload, KP, KID)
+    record = revocation.build_record(
+        payload["receipt_id"], "transferred", "9999-12-20T00:00:00Z", KP, KID
+    )
+    result = verify.verify(
+        _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[record]
+    )
+    assert result.revocation == "invalid_revocation_ignored"
+    assert "refund window is outside the representable timestamp range" in result.errors
+    assert result.ok is False
+
+
+def test_refund_window_overflow_fires_without_any_matching_record() -> None:
+    """The deadline is a property of the RECEIPT, so the refusal cannot wait
+    for a record about this receipt: a view carrying nothing but junk is
+    already enough to make the window unevaluable."""
+    payload = make_payload(
+        license={"revocability": "refund_window", "revocation_window_days": 14},
+        issued_at="9999-12-20T00:00:00Z",
+    )
+    envelope = issue.issue(payload, KP, KID)
+    result = verify.verify(
+        _to_bytes(envelope),
+        _trust_store(_key_manifest()),
+        revocation_view=[{"not": "a record"}],
+    )
+    assert result.ok is False
+    assert "refund window is outside the representable timestamp range" in result.errors
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    year=st.integers(min_value=9989, max_value=9999),
+    month=st.integers(min_value=1, max_value=12),
+    day=st.integers(min_value=1, max_value=28),
+    window_days=st.integers(min_value=1, max_value=3650),
+)
+def test_no_schema_legal_refund_window_makes_the_verifier_raise(
+    year: int, month: int, day: int, window_days: int
+) -> None:
+    """Property, not examples: over the whole schema-legal cross product of
+    `issued_at` and `revocation_window_days` near the end of the representable
+    range, `verify()` never raises, and a non-empty `errors` always caps `ok`."""
+    issued_at = f"{year:04d}-{month:02d}-{day:02d}T00:00:00Z"
+    payload = make_payload(
+        license={"revocability": "refund_window", "revocation_window_days": window_days},
+        issued_at=issued_at,
+    )
+    assert validate.validate_payload(payload) == []
+    envelope = issue.issue(payload, KP, KID)
+    record = revocation.build_record(payload["receipt_id"], "revoked", issued_at, KP, KID)
+    result = verify.verify(
+        _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[record]
+    )
+    assert result.signature == "valid"
+    assert result.schema == "valid"
+    if result.errors:
+        assert result.ok is False

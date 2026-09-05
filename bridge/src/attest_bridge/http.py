@@ -243,11 +243,13 @@ def _handle_stripe_webhook(
     except StripeSignatureError:
         deps.log.warning("stripe webhook: signature verification failed")
         return _plain_response(start_response, "400 Bad Request", b"invalid signature")
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (ValueError, RecursionError):
         # Signature valid but the body is not parseable JSON — including a body
         # that is not even valid UTF-8 (`json.loads(b"\xff")` raises
         # UnicodeDecodeError, not JSONDecodeError). Both are the pinned
-        # "unparseable body -> 400" row; neither must escape as a 500.
+        # "unparseable body -> 400" row; integer limits and excessive
+        # nesting belong here too (ValueError and RecursionError), and none
+        # of them must escape as a 500.
         deps.log.error("stripe webhook: signature valid but body is not parseable JSON")
         return _plain_response(start_response, "400 Bad Request", b"malformed body")
 
@@ -388,7 +390,7 @@ def _handle_shopify_webhook(
     except ShopifySignatureError:
         deps.log.warning("shopify webhook: signature verification failed")
         return _plain_response(start_response, "400 Bad Request", b"invalid signature")
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (ValueError, RecursionError):
         deps.log.warning("shopify webhook: signature valid but body is not parseable JSON")
         return _plain_response(start_response, "400 Bad Request", b"malformed body")
 
@@ -673,7 +675,7 @@ def _parse_claim_fields(environ: dict[str, Any]) -> dict[str, str]:
     if content_type == "application/json":
         try:
             data = json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (ValueError, RecursionError):
             return {}
         if not isinstance(data, dict):
             return {}
