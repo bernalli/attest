@@ -156,8 +156,8 @@ Your configured `ledger_path` is never opened, and the fake API exists only
 inside this command — no config key or environment variable can point the
 `serve` poller at it.
 
-The signed buyer identity is always `itch-dry-run@example.invalid`, and it is
-not configurable: `--email` is only an SMTP recipient, and only together with
+The signed buyer identifier asserted by the issuer is always
+`itch-dry-run@example.invalid`, and it is not configurable: `--email` is only an SMTP recipient, and only together with
 `--send-email`:
 
 ```sh

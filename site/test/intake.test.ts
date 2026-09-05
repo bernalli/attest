@@ -221,12 +221,38 @@ describe('intake: the salted-envelope notice', () => {
     return canonicalBytes({ ...env, delivery } as JsonObject)
   }
 
+  // The rule this aims at, and how far it actually reaches (spec v0.1 §11.1,
+  // rev 17): a rendering surface must not present possession of the binding
+  // secret as evidence of who purchased. A blocklist of the sentences this app
+  // used to have does not express that — a paraphrase written to dodge the
+  // literals walks through it, and one did. This enumerates a shape instead:
+  // these verbs, these subjects, inside these windows. It is an auxiliary
+  // detector and not a defence of the property it is named for — a substituted
+  // verb, a nominalized predicate or a longer clause passes it — so an
+  // inventory of the published strings, each with an explicit verdict, remains
+  // open work. The twin of `tests/test_buyer_surface.py::_ASSERTS_ROLE`, held
+  // in step by a test that reads both literals, because the two live in
+  // different packages and cannot share an import.
+  const ASSERTS_PURCHASE_ROLE =
+  /\b(establish\w*|confirm\w*|prove\w*|show\w*|mean\w*|is|are)\b[^.<>]{0,60}?\b(you|the\s+holder|the\s+presenter|whoever)\b[^.<>]{0,40}?(purchaser|purchase|buyer|bought|purchased|owner|owns)/i
+
+  it('detects a purchase role across every word separator', () => {
+    const words = 'This binding establishes that the holder made the purchase.'.split(' ')
+    for (const separator of [' ', '\n', '\t', '\r\n', ' \n  ']) {
+      expect(words.join(separator)).toMatch(ASSERTS_PURCHASE_ROLE)
+    }
+  })
+
   it('verifies a salted bare envelope but says it is bearer proof', () => {
     const r = intake('receipt.attest.json', salted(true))
     if (r.kind !== 'jobs') throw new Error(`expected jobs, got ${r.kind}`)
     expect(r.notices).toBeDefined()
     expect(r.notices!.join(' ')).toMatch(/never/i)
     expect(r.notices!.join(' ')).toMatch(/salt/)
+    // The notice reports possession of a bearer secret, never who bought
+    // (spec §8, §11.1): a paraphrase that reads it as ownership must fail here.
+    expect(r.notices!.join(' ')).not.toMatch(/purchase is theirs|belongs to you|prove[sd]? you bought/i)
+    expect(r.notices!.join(' ')).not.toMatch(ASSERTS_PURCHASE_ROLE)
     // Still verified, not refused: the warning is additive.
     expect(runVerify(r.jobs[0].envelopeBytes, r.jobs[0].trustStore).result.signature).toBe('valid')
   })

@@ -30,8 +30,8 @@ The scenario, step by step:
      revocation status is honestly reported as `unknown` (no revocation
      feed was ever consulted — the demo never claims "not revoked" when it
      only knows "no data").
-  7. Casey proves the receipt is theirs by disclosing the salt they saved
-     in step 3 — `binding: "proven"`.
+  7. Casey proves possession of the receipt's binding secret by disclosing
+     the salt they saved in step 3 — `binding: "proven"`.
   8. A mirror copy of the game file — held independently of the dead
      store, with identical bytes — still hashes to exactly what the
      surviving receipt says it should.
@@ -305,7 +305,9 @@ def run_demo(workspace: Path) -> dict[str, Any]:
     outcomes["verify_exit_code"] = rc
 
     # --- Step 7: prove the binding via salt disclosure ------------------------
-    _narrate("Step 7: Casey proves the receipt is theirs by disclosing the salt")
+    _narrate(
+        "Step 7: Casey proves possession of the receipt's binding secret by disclosing the salt"
+    )
     rc, disclosure_report = _run_cli_capture(
         [
             "verify",
@@ -334,8 +336,8 @@ def run_demo(workspace: Path) -> dict[str, Any]:
     _narrate(
         "Done: store.dies.example no longer exists on disk anywhere in this "
         "workspace, and the receipt it once issued still verifies, still "
-        "proves it belongs to Casey, and still matches an independently "
-        "mirrored copy of the game it paid for."
+        "proves possession of its binding secret by Casey, and still matches "
+        "an independently mirrored copy of the game it paid for."
     )
     return outcomes
 

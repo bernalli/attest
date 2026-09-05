@@ -62,8 +62,9 @@ const PRIVATE_NAME_MSG =
 const saltNotice = (subject: string): string =>
   `${subject} still carries its private binding salt (delivery.salt). ` +
   'Checking it here is safe — everything runs in your browser and the file never leaves ' +
-  'your machine — but the file itself is bearer proof: anyone who holds it can claim this ' +
-  'purchase is theirs. Keep it with your own files and never email, post, or upload it to ' +
+  'your machine — but the file itself is bearer proof: anyone who holds it can produce this ' +
+  'receipt’s binding result, which shows possession of the secret and never who bought. ' +
+  'Keep it with your own files and never email, post, or upload it to ' +
   'anyone — not a store, not support. To share the receipt, share the salt-free .attest ' +
   'file instead; if you only have this one, re-download the pair from your receipt link.'
 

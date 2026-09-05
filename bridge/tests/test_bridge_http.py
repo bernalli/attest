@@ -891,8 +891,9 @@ def test_stripe_webhook_returns_404_when_stripe_not_configured(
 # -- the receipt pair on every download surface (V-A.3) --------------------
 #
 # `IssuingCore` records ONE envelope and it is always salt-bearing: it has to
-# be, the buyer needs their own salt to prove the receipt is theirs (§8). What
-# the download routes may hand out is a different question, and until V-A.3
+# be, the buyer needs their own salt to answer the receipt's binding proof with
+# the issuer-recorded binding secret (§8). What the download routes may hand
+# out is a different question, and until V-A.3
 # they handed out that envelope verbatim under `receipt-<id>.attest` — a name
 # §14.1 reserves for the salt-FREE half. A buyer forwarding "their receipt"
 # forwarded their own bearer proof. These tests pin the pair on every surface.

@@ -162,7 +162,7 @@ def test_oversized_view_on_irrevocable_receipt_fails_closed() -> None:
     Until 2026-09-01 this test asserted a non-fatal warning and `ok is True`,
     on the reasoning the spec itself carried: "a revocation record can never
     affect ok". That was true when it was written and false from v0.2 §17.3
-    onward, which extended the consent gate to ALL revocability classes — a
+    onward, which extended the key-authorization gate to ALL revocability classes — a
     backed `status: "transferred"` record caps `ok` for `none` as well, and it
     rides this same view. Asserting the old behaviour meant asserting that an
     oversized feed may hide a transfer from the one class we present as the

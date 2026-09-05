@@ -88,11 +88,11 @@ _PLACEHOLDER_RE = re.compile("__BUNDLE_NAME__|__PRIVATE_WARNING__")
 _README_BODY_TEMPLATE = """\
 <h1>attest receipt bundle: __BUNDLE_NAME__</h1>
 
-<p>This file is your receipt. It proves you bought what's listed inside, and
-it's yours: it doesn't live in any account, and nobody can take it away with
+<p>This file is your receipt. It proves what the seller signed about what's
+listed inside, and it's yours: it doesn't live in any account, and nobody can take it away with
 a click. Keep it with your own files, the way you'd keep an important paper
 receipt. If the store closes one day, or you lose access to your account
-there, this file still proves what you bought. You don't need an internet
+there, this file still proves exactly what the seller signed. You don't need an internet
 connection or anyone's permission to check it: any attest tool can do it,
 free, on your own computer.</p>
 
@@ -105,7 +105,7 @@ the store, or any help from the store to use this file. It's self-contained
 on purpose.</p>
 
 <h2>If the store that sold you this is gone</h2>
-<p>You can still prove you own what you bought. Use any attest-compatible
+<p>You can still check exactly what the seller signed. Use any attest-compatible
 tool to check this bundle — for example, the reference tool:
 <code>attest import __BUNDLE_NAME__.attest</code>, then
 <code>attest verify &lt;receipt_id&gt;</code>. That check runs entirely on

@@ -7,7 +7,8 @@ This demo answers the one that always follows: *and how do I get my file
 back?* A rights holder signs a preservation pledge at the time of sale; the
 store later dies; the rights holder declares the cessation; and an archive
 that has held its own copy all along hands that copy over — but only to
-someone who can prove, right there and then, that the receipt is theirs.
+someone who can prove, right there and then, that they hold the receipt's
+binding secret.
 
 Nothing here is a component of attest. The archive gate is
 `demo/custodian.py`, a non-normative reference: attest defines a receipt
@@ -274,7 +275,7 @@ def run_demo(workspace: Path, trigger: str = TRIGGER_PUBLISHER_DECLARATION) -> d
     grant_sha256 = grant_report["grant_sha256"]
     grant_doc_for_bundle = json.loads(grant_path.read_text(encoding="utf-8"))
 
-    # --- Step 5: the receipt, and the buyer's own key ------------------------
+    # --- Step 5: the receipt, and the key it records for binding -------------
     _driver.narrate(
         f"Step 5: the store issues a receipt to {BUYER_IDENTIFIER}, who holds a signing key "
         "of their own — without it there is nobody the archive could later answer to"

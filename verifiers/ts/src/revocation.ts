@@ -171,7 +171,7 @@ function revocationDeadlineSatisfied(
 
 // v0.2 Stage 3 (§17, issuer-mediated transfer): old-receipt extinguishment
 // via a `status: "transferred"` revocation record, honored only when BACKED
-// by an authenticated, log-included transfer record (§17.3's consent gate).
+// by an authenticated, log-included transfer record (§17.3's key-authorization gate).
 // The literal is deliberately reused for both the record's own `status`
 // field and the reachable `revocation` result value — mirrors 'revoked''s
 // existing dual use above. Python parity: verify.py's
@@ -188,7 +188,7 @@ const REVOCATION_TRANSFERRED = 'transferred'
  * `loadsStrict` preserves the verifier's bigint JSON representation while
  * materializing the canonical serialized form.
  *
- * Per claim, in this exact order (§17.3's consent gate plus §17.7/§17.2):
+ * Per claim, in this exact order (§17.3's key-authorization gate plus §17.7/§17.2):
  *
  * 1. `record` is an object whose `receipt_id` equals `payload`'s own — else
  *    the claim is irrelevant to this receipt and is skipped silently.
@@ -197,8 +197,9 @@ const REVOCATION_TRANSFERRED = 'transferred'
  *    mirroring `classifyRevocation`'s own hoisting of the same check). On
  *    failure: TRANSFER_WARN.REVOCATION_UNBACKED (deduplicated), skip.
  * 3. `payload.buyer.pubkey` is a non-null string AND
- *    `transfer.verifyAuthorization(record, pubkey)` — the OLD receipt's own
- *    holder consented. Same unbacked warning on failure, skip.
+ *    `transfer.verifyAuthorization(record, pubkey)` — the signer controls the
+ *    key the issuer recorded in the OLD receipt, which is not consent by the
+ *    buyer or outgoing holder. Same unbacked warning on failure, skip.
  * 4. If `payload.license.not_transferable_before` is present: both
  *    timestamps parse (fail-closed) and `record.transferred_at` is not
  *    earlier than it — else TRANSFER_WARN.NOT_YET_TRANSFERABLE, skip.
@@ -330,7 +331,7 @@ export function classifyRevocation(
   // append-only feed-poisoning attacker suppress a genuine revocation by
   // padding past the cap. Irrevocable ("none") receipts fail closed too: the
   // branch was a non-fatal warning while "a revocation can never affect ok"
-  // held, and v0.2 §17.3 ended that by extending the consent gate to ALL
+  // held, and v0.2 §17.3 ended that by extending the key-authorization gate to ALL
   // revocability classes — a backed `status: "transferred"` record caps `ok`
   // for `none` as well, and rides this same view, so returning early on size
   // discarded it and let whoever appends to the view pick the transfer the
@@ -472,7 +473,8 @@ export function classifyRevocation(
 
   // --- Stage 3 (§17.3): transferred-class backing, considered only once the
   // "revoked"-status logic above did NOT itself yield "revoked" — and for
-  // ALL revocability classes, `none` included (the consent-gate principle).
+  // ALL revocability classes, `none` included (the key-authorization-gate
+  // principle).
   if (transferredMatches.length > 0) {
     if (transferView == null) {
       // The resolver is never reached at all — this is the only place left

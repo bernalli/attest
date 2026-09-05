@@ -2,8 +2,8 @@
 
 Decides whether a receipt's signature is valid, from which issuer, whether
 it is schema-conformant, whether it has been effectively revoked, and
-whether a buyer-binding disclosure proves the receipt belongs to a given
-identifier/keyholder.
+whether a buyer-binding disclosure proves possession of a secret reproducing
+an issuer-recorded binding value.
 
 Pipeline invariant: `canon.loads_strict` parses the raw envelope bytes
 exactly once (step 0); every later step operates on that single parsed
@@ -100,7 +100,7 @@ _RECORD_STATUS_REVOKED = "revoked"
 
 # v0.2 Stage 3 (§17, issuer-mediated transfer): old-receipt extinguishment via
 # a `status: "transferred"` revocation record, honored only when BACKED by an
-# authenticated, log-included transfer record (§17.3's consent gate). The
+# authenticated, log-included transfer record (§17.3's key-authorization gate). The
 # literal is deliberately reused for both the record's own `status` field and
 # the reachable `revocation` result value — mirrors `_RECORD_STATUS_REVOKED`/
 # `_REVOCATION_REVOKED`'s existing dual use above.
@@ -1435,7 +1435,7 @@ def _resolve_transfer_backing(
     — so every later phase sees ordinary JSON values, never a stateful/
     hostile mapping or list a caller constructed.
 
-    Per claim, in this exact order (§17.3's consent gate plus §17.7/§17.2):
+    Per claim, in this exact order (§17.3's key-authorization gate plus §17.7/§17.2):
 
     1. `record` is a dict whose `receipt_id` equals `payload`'s own — else
        the claim is irrelevant to this receipt and is skipped silently.
@@ -1446,8 +1446,9 @@ def _resolve_transfer_backing(
        On failure: `_WARN_TRANSFERRED_REVOCATION_UNBACKED` (deduplicated),
        skip.
     3. `payload["buyer"]["pubkey"]` is a non-null string AND
-       `transfer.verify_authorization(record, pubkey)` — the OLD receipt's
-       own holder consented. Same unbacked warning on failure, skip.
+       `transfer.verify_authorization(record, pubkey)` — the signer controls
+       the key the issuer recorded in the OLD receipt, which is not consent
+       by the buyer or outgoing holder. Same unbacked warning on failure, skip.
     4. If `payload["license"]["not_transferable_before"]` is present: both
        timestamps parse (fail-closed) and `record["transferred_at"]` is not
        earlier than it — else `_WARN_TRANSFER_NOT_YET_TRANSFERABLE`, skip.
@@ -1618,7 +1619,7 @@ def _classify_revocation(
     for every revocability class: for `policy`/`refund_window` an untrusted
     view too large to evaluate cannot rule out a revocation, and for `none`
     (irrevocable) it cannot rule out a *transfer* either — v0.2 §17.3's
-    consent gate applies to ALL revocability classes, and a BACKED
+    key-authorization gate applies to ALL revocability classes, and a BACKED
     `status: "transferred"` record rides this same view. Both are recorded
     as an error (`ok` becomes `false`); otherwise an append-only
     feed-poisoning attacker could suppress genuine evidence by padding past
@@ -1629,7 +1630,8 @@ def _classify_revocation(
     — byte-identical to pre-Stage-3 behavior; this ordering is what keeps
     every existing conformance leaf unchanged — an authenticated, matching
     `status == "transferred"` record is additionally considered, for ALL
-    revocability classes, `none` included (the consent-gate principle,
+    revocability classes, `none` included (the key-authorization-gate
+    principle,
     §17.3): a BACKED winner (see `_resolve_transfer_backing`) yields
     `_REVOCATION_TRANSFERRED`; otherwise the outcome reverts to whatever the
     `"revoked"`-status logic already computed, and
@@ -1691,7 +1693,7 @@ def _classify_revocation(
             # Irrevocable ("none") or unknown-class (rejected at schema). This
             # branch used to be a non-fatal warning, on the grounds that "a
             # revocation can never affect ok" — true when it was written, and
-            # false since v0.2 §17.3 made the consent gate apply to ALL
+            # false since v0.2 §17.3 made the key-authorization gate apply to ALL
             # revocability classes, `none` included: a BACKED
             # `status: "transferred"` record caps `ok` for this class too, and
             # those records ride this very view (see `_classify_revocation`'s
@@ -1850,8 +1852,8 @@ def _classify_revocation(
 
     # --- Stage 3 (§17.3): transferred-class backing, considered only once
     # the "revoked"-status logic above did NOT itself yield "revoked" — and
-    # for ALL revocability classes, `none` included (the consent-gate
-    # principle).
+    # for ALL revocability classes, `none` included (the
+    # key-authorization-gate principle).
     if transferred_matches:
         if transfer_view is None:
             # The resolver is never reached at all — this function is the

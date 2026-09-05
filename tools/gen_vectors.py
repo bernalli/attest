@@ -4502,7 +4502,7 @@ def gen_35_transfer() -> None:
     )
 
     # --- (b) transferred-on-none-with-backing: same claim, `revocability:
-    # "none"` -> STILL honored — the consent gate (§17.3) applies to every
+    # "none"` -> STILL honored — the key-authorization gate (§17.3) applies to every
     # revocability class, `none` included. ---
     write_vector(
         "35-transfer/b-transferred-on-none-with-backing",
@@ -4551,7 +4551,7 @@ def gen_35_transfer() -> None:
     # --- (d) forged-holder-auth: issuer signature genuinely verifies, but
     # `holder_authorization.sig` was made by an unrelated key
     # (`TRANSFER_FORGER_KP`), not the old receipt's own `BUYER_KP` -> the
-    # consent gate itself fails, unbacked. ---
+    # key-authorization gate itself fails, unbacked. ---
     record_forged = _hybrid_sign_record(
         _transfer_record_body(
             RECEIPT_ID, NEW_RECEIPT_ID, new_holder_pub_b64u, TRANSFERRED_AT, TRANSFER_FORGER_KP
@@ -8740,7 +8740,7 @@ def gen_47_oversized_view_transfer() -> None:
     CLOSED for the `"none"` (irrevocable) class exactly as it already does for
     `policy`/`refund_window` — a genuine, backed `status: "transferred"`
     record padded past `revocation.MAX_REVOCATION_RECORDS` with junk must not
-    verify green with no warning at all (v0.2 §17.3's consent gate applies to
+    verify green with no warning at all (v0.2 §17.3's key-authorization gate applies to
     `none` too, per `35-transfer/b-transferred-on-none-with-backing`).
 
     Reuses `35-transfer/b-transferred-on-none-with-backing`'s exact fixture —
