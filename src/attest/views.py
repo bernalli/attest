@@ -107,7 +107,6 @@ _REVOCATION_RECORD_MEMBERS: tuple[str, ...] = (
 _REVOCATION_STATUSES: frozenset[str] = frozenset({"revoked", "transferred"})
 
 _SIGNATURE_REQUIRED: tuple[str, ...] = ("kid", "sig")
-_SIGNATURE_OPTIONAL: tuple[str, ...] = ("sig_ml_dsa_65",)
 
 
 class ViewError(ValueError):

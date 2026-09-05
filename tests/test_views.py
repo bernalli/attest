@@ -687,6 +687,79 @@ def test_revocation_view_refuses_a_non_ulid_receipt_id() -> None:
         views.build_revocation_view([record])
 
 
+# --- the signature block: every branch of `_signature_block_kid` -------------
+#
+# The builders validate the members of a signature block they RECOGNIZE and
+# tolerate the ones they do not, which is the rule every consumer applies:
+# `manifests.verify_signature_block` authenticates a block carrying a member it
+# does not know, and `transfer.verify_record_signature` does not close the block
+# either. A builder that closed it would refuse records those functions
+# authenticate. Nothing pinned that shape — neither the tolerance nor the
+# validation that survives it — so a later reader could not tell the relaxation
+# from an oversight, and no branch of the function had a test of its own.
+
+
+def test_revocation_view_tolerates_an_unknown_member_in_the_signature_block() -> None:
+    """The relaxation itself, pinned: a member the builder does not know is
+    carried through untouched rather than refused, and the record is emitted
+    exactly as given — the extra member is not dropped either, because every
+    hash this module computes is taken over the whole document."""
+    record = _revocation_record()
+    record["signature"]["alg"] = "ed25519"
+
+    assert canon.canonical_bytes(views.build_revocation_view([record])) == canon.canonical_bytes(
+        [record]
+    )
+
+
+def test_revocation_view_refuses_a_signature_block_that_is_not_an_object() -> None:
+    record = _revocation_record()
+    record["signature"] = [KID_1]
+    with pytest.raises(views.ViewError, match="'signature' must be an object"):
+        views.build_revocation_view([record])
+
+
+def test_revocation_view_refuses_a_signature_block_without_a_kid() -> None:
+    record = _revocation_record()
+    del record["signature"]["kid"]
+    with pytest.raises(views.ViewError, match="missing required member"):
+        views.build_revocation_view([record])
+
+
+def test_revocation_view_refuses_a_signature_block_without_a_sig() -> None:
+    record = _revocation_record()
+    del record["signature"]["sig"]
+    with pytest.raises(views.ViewError, match="missing required member"):
+        views.build_revocation_view([record])
+
+
+def test_revocation_view_refuses_an_empty_kid() -> None:
+    """Tolerating unknown members must not soften the ones that are known: an
+    empty `kid` names no key and cannot resolve to one."""
+    record = _revocation_record()
+    record["signature"]["kid"] = ""
+    with pytest.raises(views.ViewError, match=r"'signature\.kid'"):
+        views.build_revocation_view([record])
+
+
+def test_revocation_view_refuses_a_malformed_sig() -> None:
+    """The other half of the same rule: a builder that stopped validating `sig`
+    would emit an artifact no verifier could ever authenticate."""
+    record = _revocation_record()
+    record["signature"]["sig"] = "not-base64url!"
+    with pytest.raises(views.ViewError, match=r"'signature\.sig'"):
+        views.build_revocation_view([record])
+
+
+def test_revocation_view_refuses_a_malformed_post_quantum_leg() -> None:
+    """`sig_ml_dsa_65` is optional and validated when present — the one member
+    that is neither required nor unknown."""
+    record = _revocation_record()
+    record["signature"]["sig_ml_dsa_65"] = "not-base64url!"
+    with pytest.raises(views.ViewError, match="sig_ml_dsa_65"):
+        views.build_revocation_view([record])
+
+
 def test_revocation_view_verifies_records_against_a_given_key_manifest() -> None:
     """A record signed by a key the manifest does not list as `active` is
     refused when the caller supplies the manifest, and only then."""
