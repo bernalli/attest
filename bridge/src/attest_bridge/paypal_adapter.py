@@ -55,7 +55,19 @@ _TOKEN_PATH = "/v1/oauth2/token"  # noqa: S105 - OAuth endpoint path, not a secr
 _VERIFY_PATH = "/v1/notifications/verify-webhook-signature"
 _ORDER_PATH = "/v2/checkout/orders/{order_id}"
 _AUTH_ALGO = "SHA256withRSA"
+# Y6: the official OpenAPI schema bounds every postback request field. Enforcing
+# the bounds locally keeps a junk delivery from being relayed to PayPal verbatim.
+_MAX_HEADER_LENGTHS = (
+    ("transmission_id", 50),
+    ("transmission_time", 64),
+    ("transmission_sig", 500),
+    ("cert_url", 500),
+    ("auth_algo", 100),
+)
 _CERT_URL_RE = re.compile(r"^https://[A-Za-z0-9.-]*\.paypal\.com(/|$)")
+# Matched with `fullmatch`, not `match`: `$` also matches just before a final
+# newline, so `re.match` would accept "5O190127TN364715T\n" for a value that
+# ends up in an outbound URL path.
 _ORDER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _PERMANENT_API_STATUSES = frozenset({400, 403, 404})
 _TOKEN_REFRESH_MARGIN_SECONDS = 60
@@ -126,6 +138,26 @@ def _reject_duplicate_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def _loads_strict(body: bytes) -> Any:
     return json.loads(body, object_pairs_hook=_reject_duplicate_members)
+
+
+def _loads_authenticated_body(body: bytes) -> Any:
+    """Parse a body PayPal has already authenticated.
+
+    Every malformed-input failure is normalised to ``json.JSONDecodeError`` so
+    that one handler clause covers them all. Without this, a duplicate member
+    raises a bare ``ValueError`` and a deeply nested body raises
+    ``RecursionError``; neither is a ``BridgeError`` nor a
+    ``json.JSONDecodeError``, so the handler would answer 500 and PayPal would
+    redeliver a body that can never parse for three days (Y5).
+    """
+    try:
+        return _loads_strict(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise
+    except RecursionError as exc:
+        raise json.JSONDecodeError("paypal webhook body nests too deeply", "", 0) from exc
+    except ValueError as exc:
+        raise json.JSONDecodeError(str(exc), "", 0) from exc
 
 
 def _parse_create_time(raw: Any, order_id: str) -> str:
@@ -199,6 +231,10 @@ class PayPalAdapter:
         )
         if any(not isinstance(value, str) or not value.strip() for value in values):
             raise PayPalSignatureError("missing PayPal transmission headers")
+        for field_name, limit in _MAX_HEADER_LENGTHS:
+            field_value: str = getattr(transmission, field_name)
+            if len(field_value) > limit or any(c.isspace() for c in field_value):
+                raise PayPalSignatureError("malformed PayPal transmission headers")
         if transmission.auth_algo != _AUTH_ALGO:
             raise PayPalSignatureError("unsupported auth algorithm")
         if _CERT_URL_RE.match(transmission.cert_url) is None:
@@ -215,7 +251,7 @@ class PayPalAdapter:
         if not isinstance(result, dict) or result.get("verification_status") != "SUCCESS":
             raise PayPalSignatureError("paypal webhook signature verification failed")
 
-        event = _loads_strict(payload)
+        event = _loads_authenticated_body(payload)
         return cast(dict[str, Any], event)
 
     def wants(self, event: dict[str, Any]) -> bool:

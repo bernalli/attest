@@ -10,7 +10,7 @@ from typing import Any
 
 import attest_bridge.paypal_adapter as paypal_module
 import pytest
-from attest_bridge.model import ConfigError, PurchaseRejected
+from attest_bridge.model import BridgeError, ConfigError, PurchaseRejected
 from attest_bridge.paypal_adapter import (
     PayPalAdapter,
     PayPalApiError,
@@ -270,11 +270,21 @@ def test_oauth_and_postback_requests_have_exact_headers_and_bodies(
     [
         b'{"verification_status":"FAILURE"}',
         b'{"verification_status":"success"}',
+        b'{"verification_status":"SUCCESS "}',
+        b'{"verification_status":" SUCCESS"}',
+        b'{"verification_status":["SUCCESS"]}',
+        b'{"VERIFICATION_STATUS":"SUCCESS"}',
+        b'{"verification_status":"SUCCESS","verification_status":"FAILURE"}',
         b'{"verification_status":""}',
         b'{"verification_status":null}',
         b'{"verification_status":1}',
         b'{"verification_status":{"x":1}}',
         b"[]",
+        b"null",
+        b"true",
+        b"123",
+        b'"SUCCESS"',
+        b"",
         b"not json",
     ],
 )
@@ -420,29 +430,51 @@ def test_malformed_token_responses_are_api_errors(
         adapter.parse_event(_payload(), make_transmission())
 
 
-@pytest.mark.parametrize("failure_path", ["token", "verification", "order"])
+@pytest.mark.parametrize(
+    ("failure_path", "failure"),
+    [
+        ("token", _http_error(401)),
+        ("token", _http_error(500)),
+        ("token", urllib.error.URLError("offline")),
+        ("token", b'{"access_token":"x","expires_in":"soon"}'),
+        ("verification", _http_error(401)),
+        ("verification", _http_error(500)),
+        ("verification", urllib.error.URLError("offline")),
+        ("order", _http_error(401)),
+        ("order", _http_error(403)),
+        ("order", _http_error(500)),
+        ("order", urllib.error.URLError("offline")),
+    ],
+)
 def test_no_message_ever_contains_the_client_secret_or_the_token(
-    monkeypatch: MonkeyPatch, failure_path: str
+    monkeypatch: MonkeyPatch, failure_path: str, failure: Any
 ) -> None:
+    """Every branch that builds a message must be forced, not just one per path.
+
+    A 401 is queued twice so the refresh-once path also terminates in an error.
+    """
     api = FakePayPalApi()
+    queue = [failure, failure]
     if failure_path == "token":
-        api.token_responses = [_http_error(401)]
+        api.token_responses = queue
     elif failure_path == "verification":
-        api.verification_responses = [_http_error(500)]
+        api.verification_responses = queue
     else:
-        api.order_responses = [_http_error(500)]
+        api.order_responses = queue
     adapter = make_adapter(monkeypatch, api)
 
-    with pytest.raises(PayPalApiError) as raised:
+    with pytest.raises(BridgeError) as raised:
         if failure_path == "order":
             adapter.normalize(make_capture_completed())
         else:
             adapter.parse_event(_payload(), make_transmission())
 
     message = str(raised.value)
+    basic = base64.b64encode(f"{_CLIENT_ID}:{_CLIENT_SECRET}".encode()).decode()
     assert _CLIENT_SECRET not in message
     assert _ACCESS_TOKEN not in message
     assert "Basic " not in message
+    assert basic not in message
 
 
 @pytest.mark.parametrize(
@@ -801,3 +833,50 @@ def test_verification_response_with_extra_members_accepts_exact_success(
     api.verification_responses = [b'{"verification_status":"SUCCESS","future":true}']
     adapter = make_adapter(monkeypatch, api)
     assert adapter.parse_event(_payload(), make_transmission()) == make_capture_completed()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("transmission_id", "i" * 51),
+        ("transmission_sig", "s" * 501),
+        ("cert_url", "https://api.paypal.com/" + "c" * 500),
+        ("auth_algo", "SHA256withRSA" + "x" * 100),
+        ("transmission_time", "2026-09-05T10:00:00Z" * 10),
+        ("cert_url", "https://api.paypal.com\n"),
+        ("transmission_sig", "sig with space"),
+    ],
+)
+def test_oversized_or_whitespace_headers_are_rejected_before_any_call(
+    monkeypatch: MonkeyPatch, field: str, value: str
+) -> None:
+    """Y6 bounds every postback field; a junk header is never relayed to PayPal."""
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(PayPalSignatureError):
+        adapter.parse_event(_payload(), make_transmission(**{field: value}))
+
+    assert api.post_calls == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"id":"a","id":"b"}',
+        b"[" * 200000,
+    ],
+)
+def test_an_authenticated_body_that_cannot_parse_is_always_a_json_decode_error(
+    monkeypatch: MonkeyPatch, body: bytes
+) -> None:
+    """A duplicate member and a too-deep body must reach the handler as one type.
+
+    Otherwise the bare ``ValueError``/``RecursionError`` answers 500 and PayPal
+    redelivers a body that can never parse for three days (Y5).
+    """
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(json.JSONDecodeError):
+        adapter.parse_event(body, make_transmission())
