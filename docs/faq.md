@@ -299,6 +299,27 @@ address cannot carry a pledge. Whoever inherits a pledge-bearing receipt without
 corresponding private key cannot redeem the pledge after it activates. The only fix
 is to be re-issued with a key while the issuer is still there to do it.
 
+There is a third loss the two above do not name, and it is the one an heir runs into.
+Inheriting somebody's files gives you the receipt, and the receipt still verifies:
+the signature and the schema are checked against the store's key and nothing else, so
+what it says about the sale stands whoever is holding it. What inheriting does not
+give you is the ability to answer the binding proof. The private file carries the
+salts and nothing else; the identifier they are salted with — the email address or
+phone number given at checkout — is not in either file, because it never was: it
+lives in the buyer's memory and in the store's records. Without it the salt alone
+proves nothing, and a per-receipt signing key, when a receipt names one, is material
+the buyer's own client held and the store never had to give away.
+
+The same gap opens without anyone dying. An email address you no longer control is a
+lost identifier, and it is lost separately from the file: you can hold both files,
+back them up perfectly, and still be unable to demonstrate the binding because the
+one input that was never written down is gone.
+
+None of this makes the receipt worthless — it is still a signed statement about what
+was sold and on what terms, which is what it is for. It means the *binding* half is
+personal in a way the file is not, and it is worth knowing before you need it rather
+than after.
+
 ## Can I sell what I bought, or pass it on?
 
 Sometimes, and never without the seller in the room. Transfer is shipped code and has
