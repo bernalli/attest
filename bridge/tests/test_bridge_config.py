@@ -581,3 +581,60 @@ issuer_sku = "EXG-002"
 
     assert config.products.keys() == {"price_1PxYzEXAMPLE", "price_SECOND"}
     assert config.legal_texts == {LEGAL_TEXT_SHA256: LEGAL_TEXT}
+
+
+def test_paddle_and_paypal_secret_values_never_appear_in_repr_or_a_later_error(
+    tmp_path: Path,
+) -> None:
+    # A validation error raised AFTER the secrets are already resolved
+    # (environment is checked last in _load_paddle) must not embed them.
+    content = (
+        _MINIMAL_TOML
+        + f"""
+[paddle]
+webhook_secret_env = "{_PADDLE_WEBHOOK_ENV_VAR}"
+api_key_env = "{_PADDLE_API_KEY_ENV_VAR}"
+environment = "prod"
+"""
+    )
+    env = {
+        _PADDLE_WEBHOOK_ENV_VAR: "paddle-webhook-value",
+        _PADDLE_API_KEY_ENV_VAR: "paddle-api-value",
+    }
+
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(_write(tmp_path, content), env=env)
+
+    message = str(exc_info.value)
+    assert "paddle-webhook-value" not in message
+    assert "paddle-api-value" not in message
+
+    paddle_table = f"""
+[paddle]
+webhook_secret_env = "{_PADDLE_WEBHOOK_ENV_VAR}"
+api_key_env = "{_PADDLE_API_KEY_ENV_VAR}"
+"""
+    paypal_table = f"""
+[paypal]
+client_id_env = "{_PAYPAL_CLIENT_ID_ENV_VAR}"
+client_secret_env = "{_PAYPAL_CLIENT_SECRET_ENV_VAR}"
+webhook_id = "8PT597110X687430LKGECATA"
+"""
+    full_env = {
+        **env,
+        _PAYPAL_CLIENT_ID_ENV_VAR: "paypal-client-value",
+        _PAYPAL_CLIENT_SECRET_ENV_VAR: "paypal-secret-value",
+    }
+    config = load_config(
+        _write(tmp_path, _MINIMAL_TOML + paddle_table + paypal_table), env=full_env
+    )
+    assert config.paddle is not None
+    assert config.paypal is not None
+    blob = " ".join([repr(config.paddle), repr(config.paypal)])
+    for secret_value in (
+        "paddle-webhook-value",
+        "paddle-api-value",
+        "paypal-client-value",
+        "paypal-secret-value",
+    ):
+        assert secret_value not in blob
