@@ -145,7 +145,23 @@ jobs:
           } > "$binary_sums"
           sha256sum -c "$binary_sums"
           rm -f "$binary_sums"
-      - run: uv build
+      - name: Build the Python distributions
+        # `uv build` writes a `dist/.gitignore` next to the two distributions.
+        # It is not a distribution, and left in place it splits this job's
+        # checksum manifest from the artifact the publish job downloads: the
+        # `sha256sum dist/*` below runs under `dotglob` and records the dotfile,
+        # while upload-artifact excludes hidden files by default and does not
+        # ship it. The publish job then passes its "wheel and sdist and nothing
+        # else" count -- it sees two -- and fails one step later on
+        # `sha256sum -c`, with `dist/.gitignore: No such file or directory`
+        # (measured locally on the real chain). That failure lands AFTER the tag
+        # is pushed, which is the worst place to discover it. Delete the file
+        # here, at the source, so the manifest and the artifact describe the same
+        # two files; relaxing either check downstream would weaken the sentence
+        # each one exists to say.
+        run: |
+          uv build
+          rm -f dist/.gitignore
       - name: Assert + scan Python
         run: |
           uv run --frozen python tools/assert_artifacts.py --wheel dist/*.whl --sdist dist/*.tar.gz
