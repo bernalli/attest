@@ -92,13 +92,16 @@ export const AUDITED_COPY: readonly AuditRow[] = [
   },
   {
     module: 'explain',
-    sha256: '553654b481a99870066b002bc12f61d5f8f09c0f67b320da8ecfe0adfce3b5d9',
-    excerpt: 'The CLI can check a feed when one is available.',
-    token: 'can ',
-    claimAbout: 'The attest CLI, revocation feed.',
-    command: 'grep -c \'"--revocations"\' src/attest/cli.py  # 1, on the verify subparser',
+    sha256: '60773e80b6fd5b28c88a01451ce56419af6666f9bbda124735544651d04a2929',
+    excerpt:
+      '… this page pins no block headers, so a refund-window revocation cannot be proven timely here; the CLI, given an anchor policy, can',
+    token: 'can be',
+    claimAbout:
+      'Two tools, in one sentence. Negative about THIS artifact — it pins no block headers, so it cannot date a refund-window revocation — and positive about the attest CLI, which can, given an anchor policy.',
+    command:
+      'grep -n pinnedHeaders site/src/trusted-log.ts  # the shipped ANCHOR_POLICY is { pinnedHeaders: {}, crqcHorizon: null }: nothing pinned. grep -n \'"--anchor-policy"\' src/attest/cli.py  # declared on the verify subparser (cli.py:4610). Dating a refund-window revocation needs --revocations, --revocation-evidence, --log-keys AND --anchor-policy together; cli.py:3576 warns when the evidence arrives without both pins. The pairing REFUSAL at cli.py:1647 is `manifest compromise-view`\'s, not verify\'s: verify accepts --anchor-policy alone',
     verdict: 'TRUE',
-    audited: '2026-09-01',
+    audited: '2026-09-06',
   },
   {
     module: 'explain',

@@ -539,3 +539,100 @@ describe('a malformed result degrades one row, never the card', () => {
     expect(attributeWarning({ toString: () => 'transparency_config_missing' })).toBeNull()
   })
 })
+
+// --- T5.3: the copy §14.3 obliges the SURFACE to carry -----------------------
+//
+// v0.1 §14.3 states the distinction outright: a rail with no file was not
+// consulted, a rail holding an empty array WAS consulted and found nothing,
+// `revocation` reports `unknown` for both, and "the verification result ...
+// cannot be used to tell them apart". A catalogue keyed only on the result
+// value therefore cannot be right in both cases — whichever sentence it picks
+// is false on the other screen. `SurfaceFacts` is the page state that closes
+// the gap, and these tests exist so that collapsing it back into one fixed
+// sentence fails here rather than shipping.
+describe('the revocation copy and the two readings of `unknown`', () => {
+  it('says no feed was consulted when the page consulted none', () => {
+    const e = explain('revocation', 'unknown', undefined, { revocationFeedConsulted: false })
+    expect(e.text).toContain('No revocation feed was consulted')
+  })
+
+  it('does NOT say that when a feed was consulted and listed nothing', () => {
+    const e = explain('revocation', 'unknown', undefined, { revocationFeedConsulted: true })
+    expect(e.text).not.toContain('No revocation feed was consulted')
+    expect(e.text).toContain('A revocation feed was consulted')
+  })
+
+  it('still reports the value as unknown rather than as “not revoked”', () => {
+    // The empty feed is evidence of nothing, not evidence of absence: it carries
+    // no signed timestamp saying how current it is (§12.4). Copy that read
+    // "not revoked" here would upgrade an absence into a clearance.
+    const e = explain('revocation', 'unknown', undefined, { revocationFeedConsulted: true })
+    expect(e.text).toContain('“unknown”')
+    expect(e.tone).toBe('neutral')
+  })
+
+  it('defaults to “not consulted” when the caller supplies no page state', () => {
+    // Every caller that passes no rails — the exhibits bench, the conformance
+    // harness, the tamper bench — is in fact consulting nothing. The default
+    // therefore claims LESS, never more.
+    expect(explain('revocation', 'unknown').text).toContain('No revocation feed was consulted')
+    expect(explain('revocation', 'unknown', undefined, undefined).text).toContain(
+      'No revocation feed was consulted',
+    )
+  })
+
+  it('leaves every other revocation value alone whatever the page state', () => {
+    for (const consulted of [true, false]) {
+      const facts = { revocationFeedConsulted: consulted }
+      expect(explain('revocation', 'revoked', undefined, facts).tone).toBe('bad')
+      expect(explain('revocation', 'transferred', undefined, facts).tone).toBe('bad')
+      expect(explain('revocation', 'not_revoked_as_of:2026-01-01T00:00:00Z', undefined, facts).tone)
+        .toBe('good')
+    }
+  })
+})
+
+describe('the refund-window revocation this page cannot date (D7)', () => {
+  const withWarning = (...warnings: string[]): VerificationResult =>
+    ({ warnings, errors: [] }) as unknown as VerificationResult
+
+  it('names the reason when the verifier already said which of the three it was', () => {
+    const e = explain(
+      'revocation',
+      'invalid_revocation_ignored',
+      withWarning('revocation_unlogged_deadline'),
+    )
+    expect(e.text).toContain('refund-window revocation')
+    expect(e.text).toContain('pins no block headers')
+    expect(e.text).toContain('anchor policy')
+  })
+
+  it('keeps the generic wording when the verifier did not', () => {
+    // Without the warning the record was ignored for one of three reasons and
+    // the verifier has not said which. Naming one would be the page guessing.
+    const e = explain('revocation', 'invalid_revocation_ignored', withWarning())
+    expect(e.text).not.toContain('refund-window revocation')
+    expect(e.text).toContain('IGNORED')
+  })
+
+  it('does not blame the record for a limit of this surface', () => {
+    // The distinction the copy has to carry: the receipt stands here for want
+    // of proof, not because the record was judged invalid.
+    const e = explain(
+      'revocation',
+      'invalid_revocation_ignored',
+      withWarning('revocation_unlogged_deadline'),
+    )
+    expect(e.text).toContain('for want of proof')
+  })
+
+  it('survives a result whose warnings a dropped file never supplied', () => {
+    for (const partial of [{}, { warnings: null }, { warnings: 'x' }]) {
+      expect(() =>
+        explain('revocation', 'invalid_revocation_ignored', partial as never, {
+          revocationFeedConsulted: true,
+        }),
+      ).not.toThrow()
+    }
+  })
+})

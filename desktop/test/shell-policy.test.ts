@@ -86,12 +86,17 @@ describe('the shipped artifact is the allowlist it is measured against', () => {
     expect(counts).toEqual({
       'html[lang]': 1, 'head[]': 1, 'meta[charset]': 1, 'meta[content,http-equiv]': 1,
       'meta[content,name]': 1, 'title[]': 1, 'script[type]': 1, 'style[]': 1, 'body[]': 1,
-      'p[class,id,role]': 1, 'header[]': 1, 'h1[]': 1, 'p[]': 5, 'main[]': 1,
+      'p[class,id,role]': 1, 'header[]': 1, 'h1[]': 1, 'p[]': 6, 'main[]': 1,
       'section[class]': 1, 'div[aria-disabled,id,role,tabindex]': 1, 'strong[]': 3,
-      'span[]': 1, 'input[hidden,id,type]': 2, 'div[hidden,id]': 1, 'button[id,type]': 2,
+      'span[]': 1, 'input[hidden,id,type]': 2, 'div[hidden,id]': 1, 'button[id,type]': 3,
       'details[class]': 1, 'summary[]': 1, 'label[for]': 3, 'input[id,type]': 2,
       'select[id]': 1, 'option[value]': 2, 'div[id]': 1, 'footer[]': 1, 'em[]': 1,
-      'a[href]': 1, 'code[]': 3,
+      // The three deltas are the evidence-rail row of v0.1 §14.3: one more
+      // bare `p[]` naming the four file names the drop zone now recognizes,
+      // four more `code[]` for those names, and one more `button[id,type]`
+      // for the control that puts every rail back to "not consulted". No new
+      // KIND of token enters the shell, which is what this allowlist guards.
+      'a[href]': 1, 'code[]': 7,
     })
     expect(parseErrors).toEqual([])
   })

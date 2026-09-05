@@ -23,6 +23,67 @@ export interface Headline {
   tone: 'good' | 'warn' | 'bad'
 }
 
+const OFFLINE_LIMIT_HEAD =
+  'These exact terms were signed by the key this file names, and nothing in them has ' +
+  'changed since. Three things this app cannot settle, offline, on purpose: whether ' +
+  'that key really belongs to the seller it names; '
+
+const OFFLINE_LIMIT_TAIL =
+  '; and whether anyone supplied this receipt’s binding secret. Possession of that secret ' +
+  'does not establish who made the purchase. The rows below say which checks ran.'
+
+const NOT_REVOKED_AS_OF = 'not_revoked_as_of:'
+
+// The same guard `explain.ts` puts on a parametric argument, for the same
+// reason: the timestamp is interpolated into a sentence spoken in the
+// verifier's own voice, so it is composed only when it has the shape the
+// library produces. Anything else falls back to a clause that quotes nothing.
+const TIMESTAMP_RE = /^[0-9A-Za-z:+.\-]{1,64}$/
+
+/**
+ * The revocation clause of the amber headline.
+ *
+ * It has to vary, and that is a requirement rather than a nicety. v0.1 §14.3
+ * fixes the distinction the RESULT cannot carry: a rail with no file was not
+ * consulted, a rail holding an empty array was consulted and found nothing,
+ * `revocation` reads `unknown` for both. The old fixed wording — "since no
+ * revocation feed was consulted" — is therefore false on every screen where a
+ * feed IS loaded, and it sits above a rail line saying so in the same view.
+ *
+ * `feedConsulted` is the page's own state, never read off the result.
+ */
+export function offlineLimitText(revocation: string, feedConsulted: boolean): string {
+  return `${OFFLINE_LIMIT_HEAD}${revocationClause(revocation, feedConsulted)}${OFFLINE_LIMIT_TAIL}`
+}
+
+function revocationClause(revocation: string, feedConsulted: boolean): string {
+  if (revocation.startsWith(NOT_REVOKED_AS_OF)) {
+    const asOf = revocation.slice(NOT_REVOKED_AS_OF.length)
+    // `feedConsulted` gates this branch too. The value can only come from an
+    // authenticated record inside a view the page supplied, so today the two
+    // always agree — but "the revocation feed you supplied" is a claim about
+    // the page's own state, and a sentence that reads it off the RESULT instead
+    // is one refactor away from saying it when no feed was ever consulted.
+    if (feedConsulted && TIMESTAMP_RE.test(asOf))
+      return (
+        'whether the seller has since revoked this receipt — the revocation feed you ' +
+        `supplied lists nothing for it as of ${asOf}, which is as current as that feed goes`
+      )
+    return 'whether the seller has since revoked this receipt — the Revocation row below says what this check settled and what it did not'
+  }
+  if (revocation === 'unknown' && feedConsulted)
+    return (
+      'whether the seller has since revoked this receipt — the revocation feed you ' +
+      'supplied lists nothing for it, and carries no signed timestamp saying how current ' +
+      'it is'
+    )
+  if (revocation === 'unknown') return 'whether the seller has since revoked this receipt, since no revocation feed was consulted'
+  // `revoked` and `transferred` cap `ok`, so they never reach an amber headline;
+  // `invalid_revocation_ignored` does. Naming no cause is the point — the row
+  // below states which of the three it was, and this sentence must not guess.
+  return 'whether the seller has since revoked this receipt — the Revocation row below says what this check settled and what it did not'
+}
+
 /**
  * The headline copy. Draft pending the project's copy ratification gate.
  *
@@ -38,13 +99,10 @@ export const HEADLINES: Record<Exclude<DesktopVerdict, 'failed'>, Headline> = {
   offline_limit: {
     label: 'Checks out — as far as an offline check can go',
     tone: 'warn',
-    text:
-      'These exact terms were signed by the key this file names, and nothing in them has ' +
-      'changed since. Three things this app cannot settle, offline, on purpose: whether ' +
-      'that key really belongs to the seller it names; whether the seller has since revoked ' +
-      'this receipt, since no revocation feed was consulted; ' +
-      'and whether anyone supplied this receipt’s binding secret. Possession of that secret ' +
-      'does not establish who made the purchase. The rows below say which checks ran.',
+    // Composed, not written twice: this is the no-feed reading of the very
+    // sentence `offlineLimitText` builds, so the catalogue entry and the live
+    // headline cannot drift into saying different things.
+    text: offlineLimitText('unknown', false),
   },
   key_history_gap: {
     label: 'Signed — but this seller’s key history does not add up',

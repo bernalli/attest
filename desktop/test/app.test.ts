@@ -445,3 +445,172 @@ describe('a bundle renders a card per receipt, each with its own headline', () =
     expect(title).not.toContain('Steam')
   })
 })
+
+// T5.4 / T5.4-bis: the four evidence rails of v0.1 §14.3, one slot each,
+// replaced and never merged, surviving the receipts drawn against them.
+describe('the four evidence rails: one slot each, replaced never merged, refused independently', () => {
+  const bytesOf = (t: string) => new TextEncoder().encode(t)
+  const railText = () => document.querySelector('p.rails')?.textContent ?? ''
+  const loadReceipt = (app: ReturnType<typeof mount>, fileName = 'r.attest.json'): void => {
+    app.handleBytes(fileName, bareEnvelope())
+    app.handleManifestBytes(singleKeyManifest())
+  }
+
+  test('a rail dropped before any receipt is held, not lost, once one arrives', () => {
+    const app = mount()
+    // Must not throw: the rails outlive the receipts on screen by design, and
+    // that has to hold even when a rail arrives FIRST, with nothing yet to
+    // render it against.
+    expect(() => app.handleBytes('revocation-view.json', bytesOf('[]'))).not.toThrow()
+    loadReceipt(app)
+    expect(railText()).toContain('Revocation feed: 0 records')
+  })
+
+  // §14.3's whole point: the RESULT reports `unknown` for both an absent rail
+  // and an empty one, so the two states have to read differently somewhere —
+  // here, on the rail line itself.
+  test('no file at all and an empty array say different things', () => {
+    const app = mount()
+    loadReceipt(app)
+    expect(railText()).toContain('no revocation feed loaded')
+
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(railText()).toContain('Revocation feed: 0 records')
+  })
+
+  test('a second drop on the same rail replaces it outright, it never merges with the first', () => {
+    const app = mount()
+    loadReceipt(app)
+    app.handleBytes('transfer-view.json', bytesOf('[{"a":1}]'))
+    app.handleBytes('transfer-view.json', bytesOf('[]'))
+    expect(railText()).toContain('Transfer view: 0 claims')
+  })
+
+  test('a refused rail file leaves the receipt card on screen, naming the file it refused', () => {
+    const app = mount()
+    loadReceipt(app)
+    const before = document.querySelectorAll('article.result:not(.rejected)').length
+    expect(before).toBeGreaterThan(0)
+
+    app.handleBytes('revocation-view.json', bytesOf('null'))
+    // `null` reads as an opt-out to a careless reader, and is exactly the one
+    // input §14.3 singles out as NOT one — the message has to name the file.
+    expect(resultsText()).toContain('revocation-view.json')
+    expect(document.querySelectorAll('article.result:not(.rejected)')).toHaveLength(before)
+  })
+
+  test('a refused rail does not clear what the SAME rail held before the refusal', () => {
+    const app = mount()
+    loadReceipt(app)
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    app.handleBytes('revocation-view.json', bytesOf('null'))
+    expect(railText()).toContain('Revocation feed: 0 records')
+  })
+
+  test('clearRails resets all four slots to "not consulted"', () => {
+    const app = mount()
+    loadReceipt(app)
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    app.clearRails()
+    expect(railText()).toContain('no revocation feed loaded')
+  })
+
+  test('the shell’s Clear feeds button is wired to the same reset', () => {
+    const app = mount()
+    loadReceipt(app)
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    const btn = document.getElementById('clear-feeds')
+    expect(btn).toBeInstanceOf(HTMLButtonElement)
+    ;(btn as HTMLButtonElement).click()
+    expect(railText()).toContain('no revocation feed loaded')
+  })
+
+  test('a rail file’s own name never displaces the receipt’s name on the card', () => {
+    const app = mount()
+    loadReceipt(app, 'my-receipt.attest.json')
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(resultsText()).not.toContain('revocation-view.json')
+    expect(resultsText()).toContain('my-receipt.attest.json')
+  })
+
+  test('the four slots are independent: one refusal disturbs none of the other three', () => {
+    const app = mount()
+    loadReceipt(app)
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    app.handleBytes('transfer-view.json', bytesOf('[]'))
+    app.handleBytes('compromise-view.json', bytesOf('[]'))
+    app.handleBytes('revocation-evidence.json', bytesOf('{}'))
+    const before = railText()
+    expect(before).toContain('Revocation feed: 0 records')
+    expect(before).toContain('Transfer view: 0 claims')
+    expect(before).toContain('Compromise view: 0 claims')
+    expect(before).toContain('Revocation evidence: loaded')
+
+    app.handleBytes('transfer-view.json', bytesOf('null'))
+    const after = railText()
+    expect(after).toContain('Revocation feed: 0 records')
+    expect(after).toContain('Compromise view: 0 claims')
+    expect(after).toContain('Revocation evidence: loaded')
+  })
+
+  test('a rail drop does not retract a binding proof the reader already gave', () => {
+    // §14.3 makes a rail file a change to that rail and nothing else. Re-verifying
+    // with no disclosure prints "Nobody attempted to prove who this receipt belongs
+    // to" over a proof that was given and succeeded — the surface asserting the
+    // opposite of its own state, which is the defect this rail wiring exists to
+    // close. The site keeps this state; two shells over one intake must not
+    // disagree about one gesture.
+    const app = mount()
+    loadReceipt(app)
+    ;(document.getElementById('binding-identifier') as HTMLInputElement).value = 'buyer@example.com'
+    ;(document.getElementById('binding-salt') as HTMLInputElement).value = 'AAAA'
+    app.applyDisclosure()
+    expect(resultsText()).not.toContain('Nobody attempted to prove')
+
+    app.handleBytes('revocation-view.json', new TextEncoder().encode('[]'))
+    expect(resultsText()).not.toContain('Nobody attempted to prove')
+
+    app.clearRails()
+    expect(resultsText()).not.toContain('Nobody attempted to prove')
+  })
+
+  test('a NEW receipt does drop the previous binding proof', () => {
+    // The other half: the disclosure belongs to the jobs it was applied to, and
+    // must not survive them.
+    const app = mount()
+    loadReceipt(app)
+    ;(document.getElementById('binding-identifier') as HTMLInputElement).value = 'buyer@example.com'
+    ;(document.getElementById('binding-salt') as HTMLInputElement).value = 'AAAA'
+    app.applyDisclosure()
+    loadReceipt(app)
+    expect(resultsText()).toContain('Nobody attempted to prove')
+  })
+
+  test('does not erase the bearer-file refusal when a rail file arrives after it', () => {
+    // Measured before this guard existed: the `.private.attest` refusal — the one
+    // sentence this app most needs to leave on screen — was wiped by a perfectly
+    // valid revocation-view.json dropped next, and the pane went blank.
+    const app = mount()
+    app.handleBytes('secrets.private.attest', bytesOf('anything'))
+    expect(resultsText()).toContain('Never share')
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(resultsText()).toContain('Never share')
+  })
+
+  test('does not erase the key-list handover while the handover is still open', () => {
+    const app = mount()
+    app.handleBytes('r.attest.json', bareEnvelope())
+    expect(document.getElementById('manifest-zone')!.hidden).toBe(false)
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(document.getElementById('manifest-zone')!.hidden).toBe(false)
+    expect(resultsText()).toContain('key list')
+  })
+
+  test('acknowledges a rail accepted with no receipt on screen', () => {
+    // Silence is the one answer a verifier may never give: a rail accepted with
+    // nothing to qualify still has to say that it was accepted.
+    const app = mount()
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(resultsText()).toContain('Revocation feed: 0 records')
+  })
+})

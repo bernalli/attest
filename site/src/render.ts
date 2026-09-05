@@ -1,5 +1,5 @@
 import type { VerifyRun } from './run.js'
-import type { Component } from './explain.js'
+import type { Component, SurfaceFacts } from './explain.js'
 import { GROUPS, attributeWarning, displayValue, explain, explainVerdict } from './explain.js'
 import { segmentDiagnostic } from './diagnostic.js'
 import { neutralized } from './untrusted-text.js'
@@ -96,9 +96,14 @@ function bucketWarnings(warnings: readonly unknown[]): {
   return { byComponent, unattributed }
 }
 
-function componentRow(component: Component, run: VerifyRun, warnings: readonly unknown[]): HTMLElement {
+function componentRow(
+  component: Component,
+  run: VerifyRun,
+  warnings: readonly unknown[],
+  facts: SurfaceFacts | undefined,
+): HTMLElement {
   const value: unknown = run.result[component]
-  const e = explain(component, value, run.result)
+  const e = explain(component, value, run.result, facts)
   const row = el('div', `component tone-${e.tone}`)
   const dt = el('dt')
   dt.appendChild(el('span', 'component-name', e.label))
@@ -132,7 +137,11 @@ function rawJson(result: unknown): string {
   }
 }
 
-export function renderResult(label: string, run: VerifyRun): HTMLElement {
+// `facts` is what the page knows and the result does not carry — today, only
+// whether a revocation feed was consulted (v0.1 §14.3). Optional, and its
+// absence means "not consulted": every caller that supplies no rail is in fact
+// consulting nothing, so the default claims less rather than more.
+export function renderResult(label: string, run: VerifyRun, facts?: SurfaceFacts): HTMLElement {
   const article = el('article', 'result')
   const verdict = explainVerdict(run.ok)
 
@@ -160,7 +169,7 @@ export function renderResult(label: string, run: VerifyRun): HTMLElement {
     section.appendChild(el('p', 'group-note', group.note))
     const dl = el('dl', 'components')
     for (const component of group.components) {
-      dl.appendChild(componentRow(component, run, byComponent.get(component) ?? []))
+      dl.appendChild(componentRow(component, run, byComponent.get(component) ?? [], facts))
     }
     section.appendChild(dl)
     article.appendChild(section)

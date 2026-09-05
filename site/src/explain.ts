@@ -133,7 +133,11 @@ const CATALOG: Record<Component, Record<string, Explanation>> = {
     unknown: {
       label: 'Revocation',
       tone: 'neutral',
-      text: 'No revocation feed was consulted, so this verifier honestly reports “unknown” instead of guessing — like a paper receipt, the absence of a revocation check does not erase the signature (spec §11.2). The CLI can check a feed when one is available.',
+      // The "no file at all" half of §14.3's absence distinction. The other half
+      // — a rail that WAS consulted and found nothing — reports the same
+      // `unknown`, so the result cannot be used to tell them apart and this
+      // wording must not be the only one on offer: see `explainRevocation`.
+      text: 'No revocation feed was consulted, so this verifier honestly reports “unknown” instead of guessing — like a paper receipt, the absence of a revocation check does not erase the signature (spec §11.2). Drop the issuer’s revocation-view.json here to check one.',
     },
     revoked: {
       label: 'Revocation',
@@ -474,6 +478,53 @@ function explainTrust(value: string, result: VerificationResult | undefined): Ex
   }
 }
 
+const REVOCATION_UNLOGGED_DEADLINE = 'revocation_unlogged_deadline'
+
+/** What the SURFACE knows and the result cannot say.
+ *
+ * v0.1 §14.3 states the one fact of this shape outright: a rail with no file
+ * was not consulted, a rail holding an empty array was consulted and found
+ * nothing, `revocation` reports `unknown` for both, and "the verification
+ * result cannot be used to tell them apart". So the page has to carry that
+ * distinction itself, or say something false in one of the two cases.
+ *
+ * Absent means "not consulted", which is what every caller that supplies no
+ * rail — the exhibits bench, the conformance harness, the tamper bench — is
+ * actually doing. The default therefore claims LESS, never more.
+ */
+export interface SurfaceFacts {
+  revocationFeedConsulted: boolean
+}
+
+function explainRevocation(
+  value: string,
+  result: VerificationResult | undefined,
+  facts: SurfaceFacts | undefined,
+): Explanation | null {
+  if (value === 'unknown' && facts?.revocationFeedConsulted === true) {
+    return {
+      label: 'Revocation',
+      tone: 'neutral',
+      // The catalogue's `unknown` says no feed was consulted. One WAS, so that
+      // sentence would contradict the rail line above it on the same screen —
+      // and would be the page asserting, of its own state, the opposite of the
+      // truth (§14.3).
+      text: 'A revocation feed was consulted and nothing in it revokes this receipt. That is still reported as “unknown” rather than “not revoked”: this feed carries no signed timestamp saying how current it is, so silence in it is not evidence that the issuer published no record (spec §11.2, §12.4).',
+    }
+  }
+  if (value !== 'invalid_revocation_ignored' || !hasWarning(result, REVOCATION_UNLOGGED_DEADLINE))
+    return null
+  return {
+    label: 'Revocation',
+    tone: 'warn',
+    // D7. The generic wording gives three reasons a record is ignored and lets
+    // the reader pick; when this warning is present the verifier has already
+    // said WHICH, and the reason is a limit of this surface rather than a
+    // defect of the record.
+    text: 'A revocation record for this receipt exists but was IGNORED, and this verifier can say why: it is a refund-window revocation, whose deadline only counts if the record can be shown to have been logged in time. This page pins no block headers, so a refund-window revocation cannot be proven timely here; the CLI, given an anchor policy, can. The receipt stands on this page for want of proof, not because the record was judged invalid (spec §12.2).',
+  }
+}
+
 /** The string that stands for a component value on this page.
  *
  * A non-string is NAMED, never coerced. Coercing is what the segmenter refuses
@@ -497,6 +548,7 @@ export function explain(
   component: Component,
   value: unknown,
   result?: VerificationResult,
+  facts?: SurfaceFacts,
 ): Explanation {
   // `value: string` is a claim about a well-formed result, not a guarantee
   // about a dropped file: the result reaches this page through JSON, and a row
@@ -515,6 +567,10 @@ export function explain(
   if (component === 'trust') {
     const trust = explainTrust(v, result)
     if (trust) return trust
+  }
+  if (component === 'revocation') {
+    const revocation = explainRevocation(v, result, facts)
+    if (revocation) return revocation
   }
   // `Object.hasOwn`, not `table[v]`: the catalogue is an object literal, so it
   // inherits Object.prototype and answers a TRUTHY value for `__proto__`,

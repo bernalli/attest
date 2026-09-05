@@ -52,6 +52,13 @@ vi.mock('../src/run.js', () => ({
       },
     }
   },
+  // The module's other exports are pure functions over the rails and carry no
+  // verifier call, so the real ones are used: mocking them would make this file
+  // pass while `main.ts` wired the rails to nothing.
+  NO_RAILS: { revocation: null, transfer: null, compromise: null, revocationEvidence: null },
+  verifyOptionsFor: () => ({}),
+  railNotice: (rail: string, value: unknown) =>
+    value === null ? `no ${rail} loaded` : `${rail}: loaded`,
 }))
 
 const { initApp } = await import('../src/main.js')

@@ -121,6 +121,26 @@ describe('inherited-copy audit — the published table', () => {
     }
   })
 
+  test('every audited row states a deciding command, and the README publishes it', () => {
+    // The `command` field is the whole premise of this table: "Not a citation: a
+    // command." Nothing checked it, so a row whose annotation was false about the
+    // CLI shipped green. This cannot decide TRUTH — no test can — but it makes the
+    // annotation part of the published artifact, where a reader can run it.
+    // A markdown table cell escapes `|` as `\\|`, so the published text of a
+    // command containing a pipe differs from the command by table syntax alone.
+    // The obligation is that the command is PUBLISHED, not how the table quotes
+    // it, so the escape is undone before comparing.
+    const text = readme().replace(/\\\|/g, '|')
+    for (const row of AUDITED_COPY) {
+      if (row.verdict === 'NOT-A-TOOL-CLAIM' && row.command.startsWith('n/a')) continue
+      expect(row.command.length, `row ${row.sha256} has no deciding command`).toBeGreaterThan(20)
+      const firstCommand = row.command.split('  #')[0]!.trim()
+      expect(text, `README does not publish the deciding command of ${row.sha256}`).toContain(
+        firstCommand,
+      )
+    }
+  })
+
   test('README carries no audit row the audited set does not have', () => {
     const inReadme = [...readme().matchAll(/`([0-9a-f]{12})`/g)].map((m) => m[1]!)
     const audited = new Set(AUDITED_COPY.map((r) => r.sha256.slice(0, 12)))

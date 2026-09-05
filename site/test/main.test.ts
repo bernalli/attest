@@ -167,3 +167,159 @@ describe('the salted-envelope notice in the page', () => {
     expect(results().querySelector('.notice')).toBeNull()
   })
 })
+
+// --- T5.4-bis: the four evidence rails as page STATE (v0.1 §14.3) ------------
+//
+// `intake.test.ts` pins what a rail file parses to; this pins what the PAGE
+// does with it, which is a different set of properties: rails outlive the
+// receipts on screen, a later file for a rail replaces the earlier one rather
+// than merging with it, a refused file changes nothing else, and only an
+// explicit gesture puts a rail back to "not consulted".
+describe('the evidence rails as page state', () => {
+  const bytesOf = (text: string): Uint8Array => new TextEncoder().encode(text)
+  const railLine = (): string => document.querySelector('p.rails')?.textContent ?? ''
+  const results = (): HTMLElement => document.getElementById('results')!
+  const withManifest = (): Uint8Array => {
+    const parsed = loadsStrict(envelope()) as JsonObject
+    return canonicalBytes({ ...parsed, delivery: { issuer_manifest: manifest() } } as JsonObject)
+  }
+  const loadReceipt = (): void => {
+    app.handleBytes('receipt.attest.json', withManifest())
+  }
+
+  it('says a rail was not consulted, which the result cannot say', () => {
+    // §14.3: `revocation` reads `unknown` for "no file" and for "an empty
+    // feed" alike, so this line is the only place the two are told apart.
+    loadReceipt()
+    expect(railLine()).toContain('no revocation feed loaded')
+  })
+
+  it('says instead that an empty feed WAS consulted and found nothing', () => {
+    loadReceipt()
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(railLine()).toContain('Revocation feed: 0 records')
+    expect(railLine()).not.toContain('no revocation feed loaded')
+  })
+
+  it('carries the same distinction into the verdict copy', () => {
+    // The rail line and the Revocation row are two sentences on one screen.
+    // Letting them disagree would be the page contradicting itself about its
+    // own state, which is the defect this wiring exists to prevent.
+    loadReceipt()
+    expect(results().textContent).toContain('No revocation feed was consulted')
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(results().textContent).not.toContain('No revocation feed was consulted')
+    expect(results().textContent).toContain('A revocation feed was consulted')
+  })
+
+  it('keeps a rail dropped before any receipt arrived', () => {
+    // The operator of the page supplies the issuer's evidence once and then
+    // checks receipt after receipt against it. A rail emptied by the arrival
+    // of a receipt would be a rail nobody could keep.
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    loadReceipt()
+    expect(railLine()).toContain('Revocation feed: 0 records')
+  })
+
+  it('replaces a rail rather than merging into it', () => {
+    loadReceipt()
+    app.handleBytes('transfer-view.json', bytesOf('[{"a":1}]'))
+    expect(railLine()).toContain('Transfer view: 1 claim')
+    app.handleBytes('transfer-view.json', bytesOf('[]'))
+    expect(railLine()).toContain('Transfer view: 0 claims')
+  })
+
+  it('holds the four slots independently', () => {
+    loadReceipt()
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    app.handleBytes('transfer-view.json', bytesOf('[{"a":1}]'))
+    app.handleBytes('compromise-view.json', bytesOf('[{"b":2}]'))
+    app.handleBytes('revocation-evidence.json', bytesOf('{}'))
+    expect(railLine()).toContain('Revocation feed: 0 records')
+    expect(railLine()).toContain('Transfer view: 1 claim')
+    expect(railLine()).toContain('Compromise view: 1 claim')
+    expect(railLine()).toContain('Revocation evidence: loaded')
+  })
+
+  it('refuses one file without touching the receipts on screen', () => {
+    // §14.3 makes a refused evidence file a refusal of THAT file which changes
+    // nothing else. Clearing the verdicts would punish the reader for a typo
+    // in a file that has nothing to do with the receipt they dropped.
+    loadReceipt()
+    expect(results().querySelectorAll('article.result:not(.rejected)')).toHaveLength(1)
+    app.handleBytes('revocation-view.json', bytesOf('null'))
+    // The refusal is ADDED, above the verdicts, and nothing is taken away: the
+    // receipt's own card is still the one card on screen that reports a verdict.
+    expect(results().querySelectorAll('article.result.rejected')).toHaveLength(1)
+    expect(results().textContent).toContain('revocation-view.json')
+    expect(results().querySelectorAll('article.result:not(.rejected)')).toHaveLength(1)
+    expect(results().textContent).toContain('Receipt verifies')
+  })
+
+  it('refuses one file without emptying the rail it names', () => {
+    loadReceipt()
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    app.handleBytes('revocation-view.json', bytesOf('null'))
+    expect(railLine()).toContain('Revocation feed: 0 records')
+  })
+
+  it('puts every rail back to “not consulted”, and only on an explicit gesture', () => {
+    loadReceipt()
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    app.handleBytes('transfer-view.json', bytesOf('[{"a":1}]'))
+    app.clearRails()
+    expect(railLine()).toContain('no revocation feed loaded')
+    expect(railLine()).toContain('no transfer view loaded')
+  })
+
+  it('wires that gesture to the button the shipped page carries', () => {
+    // The fixture is index.html itself, so this fails if the button is wired
+    // in main.ts but never rendered — or rendered and never wired.
+    loadReceipt()
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    const button = document.getElementById('clear-feeds')
+    expect(button).toBeInstanceOf(HTMLButtonElement)
+    ;(button as HTMLButtonElement).click()
+    expect(railLine()).toContain('no revocation feed loaded')
+  })
+
+  it('qualifies verdicts with all four rails, and acknowledges just one without them', () => {
+    // This replaces an assertion that the rail line is ABSENT when there are no
+    // verdicts. That was true, and it was also why F3 went unseen: "nothing was
+    // drawn" and "everything was erased" are indistinguishable to a test that
+    // only checks for absence. The real distinction is what the line says.
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(railLine()).toBe('Revocation feed: 0 records')
+
+    loadReceipt()
+    expect(railLine()).toContain('Revocation feed: 0 records')
+    expect(railLine()).toContain('no transfer view loaded')
+    expect(railLine()).toContain('no compromise view loaded')
+    expect(railLine()).toContain('no revocation evidence loaded')
+  })
+
+  it('does not erase the bearer-file refusal when a rail file arrives after it', () => {
+    // Measured before this guard existed: the `.private.attest` refusal — the one
+    // sentence on this page that is about the reader's own safety — was wiped by a
+    // perfectly valid revocation-view.json dropped next, and the pane went blank.
+    app.handleBytes('secrets.private.attest', bytesOf('anything'))
+    expect(results().textContent).toContain('Never share')
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(results().textContent).toContain('Never share')
+  })
+
+  it('does not erase the manifest handover while the handover is still open', () => {
+    app.handleBytes('receipt.attest.json', envelope())
+    expect(document.getElementById('manifest-zone')!.hidden).toBe(false)
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(document.getElementById('manifest-zone')!.hidden).toBe(false)
+    expect(results().textContent).toContain('issuer manifest')
+  })
+
+  it('acknowledges a rail accepted with no receipt on screen', () => {
+    // Silence is the one answer a verifier may never give: a rail accepted with
+    // nothing to qualify still has to say that it was accepted.
+    app.handleBytes('revocation-view.json', bytesOf('[]'))
+    expect(results().textContent).toContain('Revocation feed: 0 records')
+  })
+})
