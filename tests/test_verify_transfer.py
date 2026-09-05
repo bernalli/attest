@@ -446,7 +446,7 @@ def test_oversized_revocation_view_still_honours_a_transfer_on_none() -> None:
 
     The over-ceiling branch treats `none` as non-fatal because "a revocation can
     never affect ok" — true before Stage 3, and no longer true since §17.3 made
-    the consent gate apply to ALL revocability classes, `none` included: a backed
+    the key-authorization gate apply to ALL revocability classes, `none` included: a backed
     `status: "transferred"` record caps `ok` for this class too. Those records
     ride the same `revocation_view`, so returning early on size discards them as
     well, and whoever can append to that view decides which transfer the verifier

@@ -39,7 +39,7 @@ export interface ComponentGroup {
 export const GROUPS: ComponentGroup[] = [
   {
     question: 'Is it authentic?',
-    note: 'What the file proves on its own, offline, with no network and no help from us: who signed these exact terms, and whose receipt it is.',
+    note: 'What the file proves on its own, offline, with no network and no help from us: who signed these exact terms, and whether a presenter supplied the binding secret the issuer recorded.',
     components: ['signature', 'schema', 'binding', 'trust'],
   },
   {

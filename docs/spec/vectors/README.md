@@ -180,16 +180,16 @@ Checked against [`docs/spec/attest-v0.2.md`](../attest-v0.2.md) §8/§15 item 5 
 | 33c | `c-late-anchor-ignored` | `revocation_evidence` present and genuinely verifies as logged, but the OTS anchor's pinned header time is AFTER the deadline — same ignored-with-warning outcome as 33b, different cause. |
 | 33d | `d-policy-class-unchanged` | A `policy`-class record (not `refund_window`) under a Stage-2-capable verifier with no `revocation_evidence` — `revocation: "revoked"`, UNCHANGED; the deadline rule never engages outside `refund_window`. |
 
-### 35: transfer — issuer-mediated transfer and the consent gate (v0.2 rev 6 amendment, v0.2 §17, revision provenance: v0.2 rev 6, 2026-07-23)
+### 35: transfer — issuer-mediated transfer and the key-authorization gate (v0.2 rev 6 amendment, v0.2 §17, revision provenance: v0.2 rev 6, 2026-07-23)
 
 Checked against [`docs/spec/attest-v0.2.md`](../attest-v0.2.md) §17.1–§17.4 and §17.7–§17.8 — see that document's own §16.5 for the full leaf table (identical content, kept in one place to avoid drift). One shared `attest_version: "0.2"`, `license.transferable: true` old-receipt fixture (varied per leaf) and one shared, genuinely issuer-signed + holder-authorized + logged transfer record drive leaves a/b/g/k; leaves i/j are D1's (§17.8) schema-conditional negative/positive control pair — `35i` is `attest_version: "0.1"` and therefore counts toward the v0.1 subset above, `35j` is `attest_version: "0.2"` and does not.
 
 | Leaf | Name | Checks |
 | --- | --- | --- |
-| 35a | `a-transferred-with-backing` | A `policy`-class old receipt plus an authenticated `status: "transferred"` revocation record plus one fully valid transfer-view claim (issuer sig + holder auth + logged evidence) — the consent gate is satisfied: `revocation: "transferred"`, `ok: false`. |
-| 35b | `b-transferred-on-none-with-backing` | The identical claim, but `license.revocability: "none"` — STILL honored; the consent gate applies to every revocability class, `none` included. |
+| 35a | `a-transferred-with-backing` | A `policy`-class old receipt plus an authenticated `status: "transferred"` revocation record plus one fully valid transfer-view claim (issuer sig + holder auth + logged evidence) — the key-authorization gate is satisfied: `revocation: "transferred"`, `ok: false`. |
+| 35b | `b-transferred-on-none-with-backing` | The identical claim, but `license.revocability: "none"` — STILL honored; the key-authorization gate applies to every revocability class, `none` included. |
 | 35c | `c-transferred-on-none-unbacked` | The SAME `none`-class receipt/revocation as 35b, but NO `transfer-view.json` at all — the resolver is never reached, unbacked directly: `invalid_revocation_ignored`, `ok: true`, `transferred_revocation_unbacked`. |
-| 35d | `d-forged-holder-auth` | The transfer record's issuer signature genuinely verifies, but `holder_authorization.sig` was made by an unrelated key, not the old receipt's own `buyer.pubkey` — the consent gate itself fails: same unbacked outcome as 35c. |
+| 35d | `d-forged-holder-auth` | The transfer record's issuer signature genuinely verifies, but `holder_authorization.sig` was made by an unrelated key, not the old receipt's own `buyer.pubkey` — the key-authorization gate itself fails: same unbacked outcome as 35c. |
 | 35e | `e-unlogged-transfer` | The SAME fully-authenticating record as 35a, but its claim carries no `evidence` at all — never proven logged: `invalid_revocation_ignored`, `ok: true`, `transfer_record_unlogged`. |
 | 35f | `f-double-assignment-earliest-wins` | TWO fully valid claims for the same `receipt_id`, distinct `new_receipt_id`/`new_holder_pubkey`, logged at indices 0 (earliest) and 1 (later), the later-logged one listed FIRST in the array — the earliest-logged one still wins: `revocation: "transferred"`, `ok: false`, `transfer_double_assignment_conflict`. |
 | 35g | `g-not-transferable-before-violation` | The old receipt's own `license.not_transferable_before` falls AFTER the (otherwise fully valid) claim's `transferred_at` — not yet transferable: `invalid_revocation_ignored`, `ok: true`, `transfer_not_yet_transferable`. |
@@ -376,7 +376,7 @@ signer's open-ended validity window, and an unregistered `status`.
 
 ## 47 — `47-oversized-view-transfer` (v0.1 rev 13)
 
-`_classify_revocation`'s oversized-view ceiling (§18.4) fails CLOSED for the `revocability: "none"` class exactly as it already does for `policy`/`refund_window`: a genuine, backed `status: "transferred"` record — the same fixture as `35-transfer/b-transferred-on-none-with-backing` — padded past `revocation.MAX_REVOCATION_RECORDS` with junk entries must not verify green with no warning at all, per v0.2 §17.3's consent gate applying to every revocability class.
+`_classify_revocation`'s oversized-view ceiling (§18.4) fails CLOSED for the `revocability: "none"` class exactly as it already does for `policy`/`refund_window`: a genuine, backed `status: "transferred"` record — the same fixture as `35-transfer/b-transferred-on-none-with-backing` — padded past `revocation.MAX_REVOCATION_RECORDS` with junk entries must not verify green with no warning at all, per v0.2 §17.3's key-authorization gate applying to every revocability class.
 
 | Leaf | Name | Checks |
 | --- | --- | --- |

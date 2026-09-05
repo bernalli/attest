@@ -15,7 +15,7 @@ ever issue an itch receipt.
 does NOT use `_build_deps`: `_build_deps` opens `config.ledger_path`, while
 this command assembles its own throwaway Ledger in a temporary directory and
 an in-process fake itch API injected through `ItchAdapter(http_get=...)`. It
-signs with the real key, but the buyer identity it commits to is always the
+signs with the real key, but the buyer identifier it commits to is always the
 reserved-TLD `itch-dry-run@example.invalid`.
 """
 
@@ -841,7 +841,7 @@ def _cmd_itch_dry_run(args: argparse.Namespace) -> int:
         if args.email is not None and not args.send_email:
             raise ConfigError(
                 "--email is only the SMTP recipient for --send-email; "
-                "the signed buyer identity is always "
+                "the signed buyer identifier asserted by the issuer is always "
                 f"{_DRY_RUN_BUYER_EMAIL} and cannot be overridden"
             )
         if args.send_email and args.email is None:

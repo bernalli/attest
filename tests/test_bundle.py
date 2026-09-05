@@ -347,8 +347,11 @@ def test_readme_answers_a_buyer_before_it_explains_cryptography(tmp_path: Path) 
     # model TM-05, TM-78). The opening sentence used to say "It proves you
     # bought what's listed inside", which is the claim the specification
     # declines to make on the artifact's behalf.
+    assert "this file still proves exactly what the seller signed" in readme
+    assert "You can still check exactly what the seller signed" in readme
     assert "proves you bought" not in readme
-    assert "proves what the seller signed" in readme
+    assert "proves what you bought" not in readme
+    assert "prove you own what you bought" not in readme
 
     # The ordering property is what matters here, not the wording: the warning
     # must precede the cryptography. The warning text itself is now rendered

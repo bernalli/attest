@@ -202,13 +202,13 @@ export const AUDITED_COPY: readonly AuditRow[] = [
   },
   {
     module: 'intake',
-    sha256: 'e54412ea9a541d9750e5dc7a84cd9b875b27cf4e6d01fecac592f49d96aa1808',
-    excerpt: '… the file itself is bearer proof: anyone who holds it can claim this',
+    sha256: '64278c3086b13982e43cd1dec4fd83af6e25441ab1c4b3998e4f03365ff45737',
+    excerpt: '… the file itself is bearer proof: anyone who holds it can produce this',
     token: 'can ',
     claimAbout: 'None. States a property of the file format, not something a tool does.',
     command: 'n/a — no capability asserted',
     verdict: 'NOT-A-TOOL-CLAIM',
-    audited: '2026-09-01',
+    audited: '2026-09-05',
   },
   {
     module: 'render',

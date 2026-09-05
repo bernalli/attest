@@ -11,8 +11,9 @@ This module exists because the mechanism used to live inside `delivery.py`,
 reachable only from the email path: every other surface that handed a receipt
 to a buyer — the `/r/<token>` download, `/stripe/receipt`, the itch dry-run —
 served the bare salt-bearing envelope under the shareable `.attest` name, so a
-buyer forwarding "their receipt" forwarded their own binding secret. Extracting
-`build_pair` here is what lets all of them build the same two files.
+buyer forwarding "their receipt" forwarded the issuer-recorded binding secret
+that answers its binding proof. Extracting `build_pair` here is what lets all
+of them build the same two files.
 
 The key manifest is read from the ENVELOPE (`delivery.issuer_manifest`), not
 from an issuer identity: `delivery.sweep_undelivered` and the download routes

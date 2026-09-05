@@ -175,9 +175,16 @@ def test_only_the_answer_changes_and_it_changes_with_what_the_reader_holds() -> 
 
 def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
     """Whatever else the wording becomes, these three facts have to survive it:
-    the file proves ownership, one file covers the whole library, and there is
-    something safe to send in its place — named where the name is known,
-    described where it is not."""
+    the file carries the binding secret, one file covers the whole library, and
+    there is something safe to send in its place — named where the name is
+    known, described where it is not.
+
+    The first fact used to be "the file proves ownership", pinned by the bare
+    word "proof". `docs/spec/attest-v0.1.md` §11.1 (rev 17) forbids that
+    reading: what the file carries is the secret that answers the binding
+    check, and the check reports possession of it, never who bought. The
+    assertion moved with the claim, and the two readings the rule forbids are
+    pinned negatively so a paraphrase back to ownership fails here."""
     for context, kwargs in READER_CONTEXTS.items():
         styled = buyer_surface.private_file_warning_html(**kwargs)
         plain = buyer_surface.private_file_warning_text(**kwargs)
@@ -185,8 +192,10 @@ def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
             (_claims_in_html(styled), _headline_and_paragraphs(styled)[1][-1]),
             (plain, plain.splitlines()[-1]),
         ):
-            assert "proof" in read.lower(), context
+            assert "binding secret" in read.lower(), context
             assert "whole library" in read.lower(), context
+            assert "proves ownership" not in read.lower(), context
+            assert "belongs to you" not in read.lower(), context
             if context == "named":
                 assert _files_named(answer) == ["mylibrary.attest"]
             else:
@@ -261,9 +270,16 @@ def test_the_private_file_warning_does_not_read_binding_as_who_bought() -> None:
     for page in ("site/public/start-here.html", "site/public/what-is-this.html"):
         surfaces[page] = (REPO_ROOT / page).read_text(encoding="utf-8")
 
+    expected = (
+        "That file carries the binding secrets for your receipts: anyone holding "
+        "it can make the binding check report possession of those secrets. "
+        "That result does not establish who bought anything."
+    )
+    assert buyer_surface._WARNING_CLAIMS[0] == expected
+
     for context, rendered in surfaces.items():
         assert FORBIDDEN_BINDING_CLAIM not in rendered, context
-        assert "binding secret" in rendered, context
+        assert expected in rendered, context
 
 
 @pytest.mark.parametrize("claim", ANCHORED_CLAIMS)

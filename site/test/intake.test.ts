@@ -227,6 +227,9 @@ describe('intake: the salted-envelope notice', () => {
     expect(r.notices).toBeDefined()
     expect(r.notices!.join(' ')).toMatch(/never/i)
     expect(r.notices!.join(' ')).toMatch(/salt/)
+    // The notice reports possession of a bearer secret, never who bought
+    // (spec §8, §11.1): a paraphrase that reads it as ownership must fail here.
+    expect(r.notices!.join(' ')).not.toMatch(/purchase is theirs|belongs to you|prove[sd]? you bought/i)
     // Still verified, not refused: the warning is additive.
     expect(runVerify(r.jobs[0].envelopeBytes, r.jobs[0].trustStore).result.signature).toBe('valid')
   })

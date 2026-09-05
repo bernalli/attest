@@ -42,8 +42,9 @@ export const HEADLINES: Record<Exclude<DesktopVerdict, 'failed'>, Headline> = {
       'These exact terms were signed by the key this file names, and nothing in them has ' +
       'changed since. Three things this app cannot settle, offline, on purpose: whether ' +
       'that key really belongs to the seller it names; whether the seller has since revoked ' +
-      'this receipt, since no revocation feed was consulted; and whether this receipt is ' +
-      'yours rather than a copy someone passed on. The rows below say which is which.',
+      'this receipt, since no revocation feed was consulted; ' +
+      'and whether anyone supplied this receipt’s binding secret. Possession of that secret ' +
+      'does not establish who made the purchase. The rows below say which checks ran.',
   },
   key_history_gap: {
     label: 'Signed — but this seller’s key history does not add up',

@@ -38,13 +38,13 @@ An attest receipt is signed with a cryptographic key named for the seller: editi
 its signed contents without that key breaks the signature. It uses one standard
 format, so one free verifier works for every store that signs. Anyone can perform
 that check offline, without contacting the seller. The check does not by itself
-authenticate the supplied key as belonging to that seller: every shipped tool
-reports TOFU rather than verified domain provenance, as the offline-verification
-answer below explains. It carries machine-readable rules for revocation, and for
-transfer where the seller allows it. And it is bound to an identifier of yours —
-sealed into the receipt rather than written in the clear — though what that binding
-is worth takes a longer answer, and it is the next one. Same fact attested.
-Completely different lifespan.
+authenticate the supplied key as belonging to that seller: every shipped tool reports
+TOFU rather than verified domain provenance, as the offline-verification answer below
+explains. It carries machine-readable rules for revocation, and for transfer where
+the seller allows it. And it carries a commitment to an identifier the seller
+recorded — sealed into the receipt rather than written in the clear — though what
+that binding is worth takes a longer answer, and it is the next one. Same fact
+attested. Completely different lifespan.
 
 ## If the receipt is just a file, what stops ten people from using the same one?
 
@@ -65,21 +65,23 @@ secret.
 
 Now the uncomfortable half, because it is the part that decides how much this is
 worth. The secret in the second file is a bearer secret. The specification says so in
-its own words: revealing it is "a replayable bearer proof." Whoever holds it can claim
-to be the buyer, and once you have shown it to someone, that someone can show it to a
-third person and be believed. No cryptography here distinguishes you from a person
-you handed your secret to, and nothing expires the proof after one use. One private
-file covers your whole library, so showing it to prove a single purchase proves every
-purchase in it at once. That is why `attest disclose <receipt_id>` exists: it shares
-one receipt, with its own salt, and nothing else.
+its own words: revealing it is "a replayable bearer proof." Whoever holds it can
+reproduce the same binding result, and once you have shown it to someone, that person
+can reproduce that result for a third party. The result proves possession of the
+secret, not buyer status. No cryptography here distinguishes you from a person you
+handed your secret to, and nothing expires the proof after one use. One private file
+covers your whole library, so showing it for one receipt exposes the binding secret
+for every receipt in the private bundle at once. That is why `attest disclose
+<receipt_id>` exists: it shares one receipt, with its own salt, and nothing else.
 
-And the sharper limit, the one that decides real cases: nothing obliges anyone to ask.
-Whether a receipt verifies and whether anyone has checked its binding are two
-separate results,
-and the first does not depend on the second. A verifier that never requests the
-binding proof gains nothing from the two files being separate. So a copied receipt,
-presented to somebody who does not ask, looks exactly like the real thing. What
-distinguishes the real buyer is custody of the private file, not mathematics.
+And the sharper limit, the one that decides real cases: nothing obliges anyone to
+ask. Whether a receipt verifies and whether anyone has checked its binding are two
+separate results, and the first does not depend on the second. A verifier that never
+requests the binding proof gains nothing from the two files being separate. So a
+copied receipt, presented to somebody who does not ask, looks exactly like the real
+thing. Custody distinguishes a presenter who can answer the binding check from one
+who cannot; it does not distinguish the real buyer from an issuer or another holder
+of the secret.
 
 There is a stronger path in the standard, and it is implemented: instead of a shared
 secret, a public key is signed into the receipt, and you show you hold the matching
@@ -117,10 +119,10 @@ nobody has solved, and the attempts at it are what produced the mess in the firs
 place — the licence server that goes dark, the book that stops opening, the film
 that leaves the library because a deal expired.
 
-attest answers a different question. Not "who can copy this?" but "who bought this,
-and can they still show it once the shop is gone?" DRM's answer to a shutdown is a
-dead server. The receipt's answer is a file that keeps verifying without anybody's
-permission.
+attest answers a different question. Not "who can copy this?" but "what did the
+seller sign, and can that evidence still be checked once the shop is gone?" DRM's
+answer to a shutdown is a dead server. The receipt's answer is a file that keeps
+verifying without anybody's permission.
 
 The one place the two touch is integrity, not control. A receipt can list the files
 you bought with their sizes and SHA-256 hashes, and `attest check-artifact` hashes a
@@ -293,13 +295,13 @@ Sometimes, and never without the seller in the room. Transfer is shipped code an
 been since version 0.4.0; this page used to say it was reserved and not implemented,
 which was true once and then stopped being true without the page noticing.
 
-The shape of it: you sign an authorization naming the receipt, the new holder's key
-and the moment; the issuer verifies your signature and countersigns a transfer record;
-the old receipt is retired by a record on the revocation feed that is honoured only
-when it is backed by that countersigned transfer and the transfer has been included in
-the issuer's transparency log. Your consent is what makes the retirement legitimate.
-It is the only thing that can retire even an irrevocable receipt, which is why it is
-required rather than polite.
+The shape of it: a signature made by the private key corresponding to the old receipt's
+`buyer.pubkey` authorizes a transfer record naming the receipt, the new key and the
+moment; the issuer verifies that signature and countersigns; the old receipt is
+retired only when the transfer is also logged. This proves control of the
+issuer-recorded key, not consent by the person who bought. The issuer may have minted
+that key itself, so the gate is exactly as strong as the key provenance described in
+v0.1 §8 and TM-78.
 
 Every one of those steps is somewhere it can stop. The issuer's countersignature is
 structural, not a courtesy: no path in the code completes a transfer without it, there
@@ -308,13 +310,14 @@ issuer may refuse, may charge for it, and an issuer that runs no transparency lo
 cannot mediate a transfer at all, because the log is where the evidence has to live.
 When the issuer is gone, transfers stop with them; transfer authority that outlives
 the seller is on the roadmap, as the README says, and is not written. It also only
-works for receipts that name a key of yours: a receipt bound only to an email address
+works for receipts that name a non-null key recorded by the issuer: a receipt bound
+only to an email address
 cannot be transferred whatever its `transferable` flag says, because the key, not the
 flag, is the gate the verifier actually applies.
 
 There is no private, seller-free resale, and that is a decision rather than a
 missing feature. Handing your bundle to somebody is not a transfer: you keep
-exactly the ability to prove the receipt is yours that you had before, so the
+exactly the ability to answer the receipt's binding proof that you had before, so the
 person paying you receives nothing exclusive. The protocol defines an
 issuer-mediated transfer path; it does not create a seller-free resale right.
 
@@ -408,12 +411,13 @@ You have the file, because the store sold DRM-free and you downloaded it. Then t
 content is already yours, and the receipt keeps doing its job: it verifies offline
 against the store's key material in your bundle, with nobody's permission, and it
 shows anyone who needs to know — a successor honouring old purchases, an archive
-authorised to serve them — that your copy was bought. The project's own demo deletes
-a store's entire infrastructure mid-lifecycle and shows the receipt verifying
-afterwards. The trust level reported alongside that result is `unauthenticated_tofu`,
-the same level every verification you can run today reports while the store is
-alive, since no shipped tool reaches `verified` in the first place; the store's
-disappearance changes nothing there, and closes off nothing you had.
+authorised to serve them — exactly what the seller signed about that copy. The
+project's own demo deletes a store's entire infrastructure mid-lifecycle and shows
+the receipt verifying afterwards. The trust level reported alongside that result is
+`unauthenticated_tofu`, the same level every verification you can run today reports
+while the store is alive, since no shipped tool reaches `verified` in the first
+place; the store's disappearance changes nothing there, and closes off nothing you
+had.
 
 Two limits, both named. Transfers are countersigned by the issuer, so they stop when
 the issuer does; the resale answer above says what is and is not written about that.
@@ -434,16 +438,16 @@ declaration is final, and the rule on any DRM-free store is simple and unglamoro
 download what you buy, and keep the file next to the receipt. Content plus proof,
 both in your hands.
 
-You don't have the file. Then the receipt alone doesn't bring it back. It proves you
-bought the thing; it isn't the thing, and no signature can conjure a file out of a
-dead server. The specified mechanism for addressing this gap is the preservation
-pledge: a licence term the publisher signs at the moment of sale, committing that
-when they cease distribution the content becomes redistributable to valid receipt
-holders. Grant evaluation and redemption verification are implemented in both
-verifier cores; only the Python package exposes `grant` commands. In the default
-`python -m demo.pledge_dies` scenario, the store is deleted, the pledge initially
-stays dormant, the surviving rights holder signs a cessation declaration, and a
-non-normative demo custodian delivers after checking the holder proof. What is
+You don't have the file. Then the receipt alone doesn't bring it back. It proves that
+the seller signed the receipt's claims; it isn't the thing, and no signature can
+conjure a file out of a dead server. The specified mechanism for addressing this gap
+is the preservation pledge: a licence term the publisher signs at the moment of sale,
+committing that when they cease distribution the content becomes redistributable to
+valid receipt holders. Grant evaluation and redemption verification are implemented
+in both verifier cores; only the Python package exposes `grant` commands. In the
+default `python -m demo.pledge_dies` scenario, the store is deleted, the pledge
+initially stays dormant, the surviving rights holder signs a cessation declaration,
+and a non-normative demo custodian delivers after checking the holder proof. What is
 missing is a production publisher who has signed such a pledge, a production archive
 service, and final licence prose rather than the demo placeholder.
 

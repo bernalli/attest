@@ -364,8 +364,9 @@
 
       <section anchor="buyer-binding" numbered="true" toc="default">
         <name>Buyer commitment and binding</name>
-        <t>Two layered mechanisms bind a receipt to its buyer without
-        signing a plaintext identifier.</t>
+        <t>Two layered mechanisms let a presenter prove possession of a
+        secret reproducing a value the issuer wrote into the receipt.
+        Neither mechanism establishes buyer identity or participation.</t>
         <t><strong>Commitment (always present).</strong> With domain label the ASCII
         string <tt>"Attest-buyer-commitment-v1"</tt>:</t>
         <artwork><![CDATA[
@@ -409,6 +410,13 @@ buyer signs: UTF8("Attest-binding-challenge-v1") || 0x00
         re-encoded. A verifier <bcp14>MUST NOT</bcp14> treat
         <tt>buyer.pubkey</tt> equality across two receipts as proof of buyer
         identity; keys SHOULD be per-receipt.</t>
+        <t>Every input to both binding paths is available to the issuer, including
+        <tt>buyer.pubkey</tt>, which the issuer writes into the signed payload. A
+        <tt>binding: proven</tt> result therefore establishes possession of the
+        corresponding secret and nothing about who bought or participated. A conforming
+        rendering surface <bcp14>MUST NOT</bcp14> present <tt>proven</tt> as evidence
+        that the named person made the purchase, and <bcp14>MUST NOT</bcp14> present
+        <tt>not_proven</tt> as evidence that the presenter is not the buyer.</t>
       </section>
     </section>
 

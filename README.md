@@ -83,13 +83,13 @@ could include or travel in — one you keep, that anyone can check unchanged,
 still valid when the seller is no longer around to ask. That gives regulators a
 concrete format to point to, and the standard is built for exactly that.
 
-Where this goes: receipts you can pass on to someone else where the rights holder
-allows it; transfer authority that can outlive the original seller, the hardest
-open problem on the roadmap; records witnessed by independent parties, so nobody
-can quietly rewrite them; and publishers signing a pledge, today, that if they
-ever shut down, their content becomes redistributable and your receipt proves
-you'd bought it. Owning digital things the way you own physical ones. That's the
-destination. The receipt is the first brick.
+Where this goes: receipts you can pass on to someone else where the rights
+holder allows it; transfer authority that can outlive the original seller, the
+hardest open problem on the roadmap; records witnessed by independent parties,
+so nobody can quietly rewrite them; and publishers signing a pledge, today, that
+if they ever shut down, their content becomes redistributable and your receipt
+preserves exactly what the seller signed. Owning digital things the way you own
+physical ones. That's the destination. The receipt is the first brick.
 
 One thing a receipt is not, and this matters: it is not a backup. If a store dies
 and you never downloaded the DRM-free file, no signature can conjure it back off
@@ -98,13 +98,14 @@ a dead server. What survives is the proof — see the
 
 There is a way to change that answer, and it now runs rather than being planned:
 a rights holder can sign a preservation pledge when they sell, and once that
-pledge fires, an archive holding its own copy can hand the file to whoever proves
-the receipt is theirs — and to nobody else. `python -m demo.pledge_dies` does
-exactly that, end to end, on your machine. What is missing is not the mechanism:
-it is a publisher who has signed one, an archive that holds anything, and prose
-written by a lawyer instead of the placeholder the demo carries. The archive
-gate the demo runs against is a non-normative reference, not a production gate;
-it names the three things it does not do in [`demo/README.md`](demo/README.md).
+pledge fires, an archive holding its own copy can hand the file to whoever
+proves possession of the private key named in the receipt — and to nobody else.
+`python -m demo.pledge_dies` does exactly that, end to end, on your machine.
+What is missing is not the mechanism: it is a publisher who has signed one, an
+archive that holds anything, and prose written by a lawyer instead of the
+placeholder the demo carries. The archive gate the demo runs against is a
+non-normative reference, not a production gate; it names the three things it
+does not do in [`demo/README.md`](demo/README.md).
 
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations. Their published
@@ -167,9 +168,9 @@ friend, a marketplace, the buyer themself — can check that bundle's signature
 offline against the issuer's published key material and confirm it is genuine;
 whether it has since been revoked is only as good as the status material that
 verifier has, and with none it reports revocation as unknown rather than
-guessing. If the buyer needs to prove the receipt is specifically *theirs* (not
-just a copy that has floated around), they can do so by disclosing a salt or
-answering a key challenge, without exposing their identity to the verifier.
+guessing. If a presenter needs to prove possession of the receipt's binding
+secret, they can disclose a salt or answer a key challenge. This identifies
+possession of issuer-recorded material, not the buyer.
 Nothing in this loop requires a server: there is no central attest authority, no
 registry that must exist, and no phone-home — a verifier needs only the receipt
 bytes, the issuer's key material, and, optionally, a revocation feed.

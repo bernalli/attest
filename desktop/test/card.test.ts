@@ -84,7 +84,8 @@ describe('the headline says what the result supports', () => {
 
     expect(headline).toMatch(/belongs to the seller/i) // key trust
     expect(headline).toMatch(/revok/i) // revocation was not consulted
-    expect(headline).toMatch(/yours/i) // buyer binding was not proven
+    expect(headline).toMatch(/binding secret/i) // binding was not checked
+    expect(headline).not.toMatch(/receipt is yours|belongs to you/i)
   })
 
   test('exactly one verdict node survives the header replacement', () => {

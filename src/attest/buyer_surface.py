@@ -174,11 +174,12 @@ def _shareable_name(bundle_name: str) -> str:
 _WARNING_HEADLINE: Final = "Never send {name} to anyone."
 
 _WARNING_CLAIMS: Final = (
-    "That file carries the binding secret for your receipts: anyone holding it can "
-    "answer the proof and claim to be the buyer.",
-    "Because one private file covers your whole library, handing it over hands "
-    "over proof for every purchase inside at once, not just the one you meant "
-    "to show.",
+    "That file carries the binding secrets for your receipts: anyone holding "
+    "it can make the binding check report possession of those secrets. That "
+    "result does not establish who bought anything.",
+    "Because one private file covers your whole library, handing it over lets "
+    "its holder produce that same possession result for every receipt inside, "
+    "not just the one you meant to show.",
     "A real store or support agent will never need it — they can already see your order.",
     "Keep it private, the way you would keep a paper receipt with your card number on it.",
 )
@@ -190,8 +191,8 @@ _WARNING_CLAIMS: Final = (
 #: It used to be ``attest disclose <receipt_id>``, which is correct and
 #: useless: these words are read on a claim form linked from a game page, by
 #: someone who has never opened a terminal and never will. The alternative
-#: that is always true is the other half of the pair — same purchases, no
-#: proof of ownership (v0.1 §14.1). But WHICH half, and whether it exists yet,
+#: that is always true is the other half of the pair — same purchases, nothing
+#: that answers a binding proof (v0.1 §14.1). But WHICH half, and whether it exists yet,
 #: depends on where the reader stands, and that is the one thing this module
 #: lets a surface change:
 #:
