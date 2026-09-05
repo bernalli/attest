@@ -162,12 +162,25 @@ const proofFor = (proofs: Record<string, JsonValue>, id: string | null): JsonVal
 export function declinedForSize(storedBytes: number, fileName?: string): Refusal | null {
   // A rail has its own admission unit. Metadata can prove it over the
   // code-point limit only beyond four UTF-8 bytes per code point.
+  //
+  // That unit COMPOSES with the floor, it does not stand in for it. Three of
+  // the four rail ceilings are wider than `MAX_STORED_BYTES` on their own —
+  // transfer and compromise at 64 * 10,000,000 code points (2.56 GB at four
+  // bytes each), revocation at 10,000 * 10,000,000 (~372 GB) — so a rail check
+  // used INSTEAD of the floor admits, for three rails out of four, exactly the
+  // copy the floor exists to refuse. A file is read only when it is under BOTH
+  // bounds; a bound that applies to one file may narrow the general one and
+  // never widen it. Each is asked separately so the refusal can name the bound
+  // that actually stopped the file: over four bytes per code point the ceiling
+  // is proved, while at the floor nothing about the code-point count is known.
   const rail = fileName === undefined ? null : railFor(fileName)
   if (rail !== null) {
     const ceiling = MAX_RAIL_CODE_POINTS[rail[1]]
-    return storedBytes > 4 * ceiling
-      ? railRefusal(rail[0], rail[1], `it is larger than the ${ceiling} code points this rail admits`)
-      : null
+    if (storedBytes > 4 * ceiling)
+      return railRefusal(rail[0], rail[1], `it is larger than the ${ceiling} code points this rail admits`)
+    if (storedBytes > MAX_STORED_BYTES)
+      return railRefusal(rail[0], rail[1], railStoredLimitMessage(storedBytes))
+    return null
   }
   if (!(storedBytes > MAX_STORED_BYTES)) return null
   return { kind: 'rejected', reason: storedLimitMessage(storedBytes), declined: true }
@@ -250,6 +263,15 @@ const overCodePointCeiling = (bytes: Uint8Array, ceiling: number): boolean => {
 
 const railFor = (fileName: string): (typeof RAIL_SUFFIXES)[number] | null =>
   RAIL_SUFFIXES.find(([suffix]) => fileName.endsWith(suffix)) ?? null
+
+// Why a rail file stopped at the container floor rather than at its own
+// ceiling. `storedLimitMessage` is not reusable here: it says "container" and
+// "archive", and a rail is a bare JSON document rather than either. The two
+// numbers are the ones `storedLimitMessage` carries, for the same reason — a
+// refusal about size states the size and the limit, and nothing about content.
+const railStoredLimitMessage = (storedBytes: number): string =>
+  `it is ${storedBytes} bytes, over the ${MAX_STORED_BYTES}-byte limit this surface ` +
+  'reads in order to open any file'
 
 const railRefusal = (suffix: string, rail: Rail, why: string): Refusal => ({
   kind: 'rejected',

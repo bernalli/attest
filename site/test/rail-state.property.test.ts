@@ -39,6 +39,33 @@ for (const shell of ['site', 'desktop'] as const) describe(`${shell}: rail trans
     expect(results().textContent).toContain('Revocation feed: 0 records')
   })
 
+  // The test above drops the ONE rail whose own ceiling is narrower than the
+  // floor. That rail cannot tell a bound composed with the floor from a bound
+  // put in its place: both refuse it at 40,000,000. The other three can — their
+  // ceilings convert to 2.56 GB and ~372 GB — so each is dropped here at one
+  // byte over the limit that actually applies to it, which for those three is
+  // the floor itself. Nothing may be read, and the receipt must survive.
+  const overLimit: ReadonlyArray<readonly [string, number]> = [
+    ['revocation-evidence.json', Math.min(4 * 10_000_000, MAX_STORED_BYTES) + 1],
+    ['transfer-view.json', Math.min(4 * 64 * 10_000_000, MAX_STORED_BYTES) + 1],
+    ['compromise-view.json', Math.min(4 * 64 * 10_000_000, MAX_STORED_BYTES) + 1],
+    ['revocation-view.json', Math.min(4 * 10_000 * 10_000_000, MAX_STORED_BYTES) + 1],
+  ]
+  it.each(overLimit)('never copies %s at %i bytes, and keeps the receipt', async (name, size) => {
+    const app = mount(shell)
+    app.handleBytes('sample.attest', sample)
+    const card = results().querySelector('article.result')!
+    expect(card).not.toBeNull()
+    const read = vi.fn(() => Promise.resolve(new ArrayBuffer(0)))
+    drop(name, size, read)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(read).not.toHaveBeenCalled()
+    expect(results().contains(card)).toBe(true)
+    expect(results().textContent).toContain(name)
+    app.handleBytes(name, bytes(name === 'revocation-evidence.json' ? '{}' : '[]'))
+    expect(results().querySelectorAll('article.result')).toHaveLength(1)
+  })
+
   it('preserves each receipt across arbitrary rejected rail drops, then accepts a valid replacement', () => {
     fc.assert(fc.property(
       fc.array(fc.tuple(fc.constantFrom(...rails), fc.constantFrom('null', '{', '[1.5]', '{"a":1,"a":2}')), { minLength: 1, maxLength: 8 }),
