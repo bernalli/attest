@@ -35,8 +35,9 @@ jobs:
       # imported `desktop/src/app.ts`; this job installs site/node_modules and not
       # desktop/node_modules, so `attest-verifier` did not resolve and vitest collected
       # zero tests from the file. Sixteen assertions ran on developer machines and in no
-      # job here, and the only trace was a total that went UP — the ten new unit tests
-      # more than covered the eight that vanished. A number nobody compares is not a
+      # job here, and the only trace was a total that went UP: 850 on the commit before
+      # the file existed, 864 with it uncollected, because the files that WERE collected
+      # gained more tests than this one took away. A number nobody compares is not a
       # gate; tools/test-census.json is the comparison.
       - run: |
           npm test --prefix site -- --reporter=default --reporter=json \
