@@ -133,6 +133,32 @@ describe('the three normative constraints on the copy', () => {
     expect(note).toMatch(/§19/)
     expect(note).not.toMatch(/nothing in this group can rescue an invalid receipt/i)
   })
+
+  // The issuer records the binding values and can fabricate a receipt using
+  // secrets it knows; recording a buyer-generated public key does not reveal
+  // its private half (spec §8). So `proven` reports
+  // possession of a secret the issuer recorded and never participation of the
+  // buyer, and §11.1 forbids a rendering surface from saying otherwise. The
+  // three sentences this pins each used to say otherwise.
+  it('never reads binding as who made the purchase (spec §8, §11.1)', () => {
+    expect(explain('binding', 'proven').text).toBe(
+      'The disclosed identifier and salt reproduce the buyer commitment sealed inside the signed payload: whoever supplied them holds this receipt’s binding secret. Both of those values are the issuer’s own, so that is the whole of what it shows — never that the person named made the purchase (spec §8, §11.1).',
+    )
+
+    // `not_proven` says a proof failed, never that the presenter is an impostor.
+    expect(explain('binding', 'not_proven').text).toBe(
+      'A binding proof was attempted and did not verify: what was supplied does not reproduce the sealed buyer commitment — a wrong identifier, a wrong salt, or the wrong receipt. That is all it reports, and it never says that whoever supplied them is not the buyer (spec §8, §11.1).',
+    )
+
+    // `not_checked` says nobody asked — not that the question is "whose is it".
+    expect(explain('binding', 'not_checked').text).toBe(
+      'Nobody attempted the binding proof — the receipt is genuine either way. Binding reports who holds the secret the issuer sealed into the payload, never who made the purchase. Use the panel above with the receipt’s salt to attempt it (spec §8, §11.1).',
+    )
+
+    const authentic = GROUPS.find((group) => group.question === 'Is it authentic?')!.note
+    expect(authentic).toMatch(/binding secret the issuer recorded/i)
+    expect(authentic).not.toMatch(/whose receipt|belongs to|who bought/i)
+  })
 })
 
 describe('compromise-cutoff copy', () => {

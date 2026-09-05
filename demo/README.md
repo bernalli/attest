@@ -7,15 +7,16 @@ something digital, the seller signs a receipt and hands it to you: that is
 the part of the purchase that is actually yours. An attest receipt is not a
 database row the issuing store keeps alive for you. It is a self-verifying
 object. Delete the store — its signing keys, its manifests, its whole
-infrastructure — and the receipt it issued still verifies, still proves who
-it belongs to, and still points at an artifact that still matches.
+infrastructure — and the receipt it issued still verifies, still proves
+possession by whoever holds its binding secret, and still points at an
+artifact that still matches.
 
 **`pledge_dies.py` — the pledge fires, and the file comes back.** Which
 answers the question that always follows: *and how do I get my file back?*
 A rights holder signs a preservation pledge at the time of sale. The store
 later dies. The pledge's trigger fires. An archive that has held its own
 copy all along hands that copy over — but only to someone who can prove,
-right there and then, that the receipt is theirs.
+right there and then, that they hold the receipt's binding secret.
 
 Neither demo is part of the protocol. attest defines a receipt format and a
 verifier; it does not distribute content, and there is no `attest custodian`
@@ -49,8 +50,8 @@ then kills it, then proves the receipt outlived it:
    and `revocation: "unknown"` (no revocation feed was ever consulted —
    the demo never claims "not revoked" when the honest answer is "no
    data").
-7. Casey proves the receipt is actually theirs by disclosing the salt they
-   saved in step 3 — `binding: "proven"`.
+7. Casey proves possession of the receipt's binding secret by disclosing
+   the salt they saved in step 3 — `binding: "proven"`.
 8. A *mirror* copy of the game file — held independently of the now-dead
    store, byte-identical to the original — is hashed and checked against
    the surviving receipt's artifact list. It matches.
@@ -147,12 +148,13 @@ that hides them teaches the wrong thing.
 
 A receipt id is not a secret — it travels in the shareable bundle — and this
 archive keeps at most one outstanding challenge per receipt, spent by use.
-So anyone holding a copy of the public bundle can **burn** the challenge a
-legitimate holder is about to answer, by answering it wrongly first or by
-asking for a fresh one that supersedes it. Nobody gets bytes and nothing is
-disclosed; the holder simply has to ask again, and an attacker who keeps
-doing it keeps them asking. A production gate would key its challenges by
-nonce rather than by receipt, and let several stand at once.
+So anyone holding a copy of the public bundle can **burn** the challenge the
+holder of the private key named by the issuer is about to answer, by
+answering it wrongly first or by asking for a fresh one that supersedes it.
+Nobody gets bytes and nothing is disclosed; the holder simply has to ask
+again, and an attacker who keeps doing it keeps them asking. A production
+gate would key its challenges by nonce rather than by receipt, and let
+several stand at once.
 
 It also serves the file with a `shutil.copy` **by path**, after verifying the
 bytes at that path. Anyone with write access *inside* the archive directory
@@ -209,10 +211,10 @@ would be theatre.
 
 Now two of them.
 
-**`casey-library.private.attest`** holds Casey's buyer-binding salt, which is
-what proves a receipt belongs to them. `casey-library.attest` (no `.private`
-in the name) is safe to share or publish: `export()` strips every salt from
-it before writing it out.
+**`casey-library.private.attest`** holds Casey's buyer-binding salt, which
+is what proves possession of the receipt's binding secret.
+`casey-library.attest` (no `.private` in the name) is safe to share or
+publish: `export()` strips every salt from it before writing it out.
 
 **The buyer's signing seed** (`buyer/buyer.seed`) is the second, and in the
 pledge story it is the more consequential of the two: losing it means losing

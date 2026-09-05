@@ -562,7 +562,7 @@ def audit_chain(
       must come from ONE reconstruction. Reading the live view again after
       `verify_record_signature` is what lets a caller authorize `OLD -> NEW_A`
       and be judged to have authorized `OLD -> NEW_B`, with the issuer's and the
-      original holder's genuine signatures -- a chain of title nobody consented
+      original holder's genuine signatures -- a chain of title nobody authorized
       to, reported valid. A reconstructed record has plain members, so the
       successor id a signature covers is the successor id the link is matched
       against.

@@ -364,8 +364,9 @@
 
       <section anchor="buyer-binding" numbered="true" toc="default">
         <name>Buyer commitment and binding</name>
-        <t>Two layered mechanisms bind a receipt to its buyer without
-        signing a plaintext identifier.</t>
+        <t>Two layered mechanisms let a presenter prove possession of a
+        secret reproducing a value the issuer wrote into the receipt.
+        Neither mechanism establishes buyer identity or participation.</t>
         <t><strong>Commitment (always present).</strong> With domain label the ASCII
         string <tt>"Attest-buyer-commitment-v1"</tt>:</t>
         <artwork><![CDATA[
@@ -409,6 +410,14 @@ buyer signs: UTF8("Attest-binding-challenge-v1") || 0x00
         re-encoded. A verifier <bcp14>MUST NOT</bcp14> treat
         <tt>buyer.pubkey</tt> equality across two receipts as proof of buyer
         identity; keys SHOULD be per-receipt.</t>
+        <t>The issuer writes the binding values, including <tt>buyer.pubkey</tt>,
+        into the signed payload and can fabricate a receipt using secrets it knows.
+        It does not thereby learn a buyer-generated private key. A
+        <tt>binding: proven</tt> result therefore establishes possession of the
+        corresponding secret and nothing about who bought or participated. A conforming
+        rendering surface <bcp14>MUST NOT</bcp14> present <tt>proven</tt> as evidence
+        that the named person made the purchase, and <bcp14>MUST NOT</bcp14> present
+        <tt>not_proven</tt> as evidence that the presenter is not the buyer.</t>
       </section>
     </section>
 
@@ -1095,8 +1104,9 @@ buyer signs: UTF8("Attest-binding-challenge-v1") || 0x00
         top of the transparency layer of <xref target="ext-stage2"/> and
         requires it. None of this is specified normatively by the present
         document, including the one new reachable revocation value it
-        introduces; a reader who needs the exact mechanism, its consent
-        gate, or its chain-of-title diagnostics is directed to the living
+        introduces; a reader who needs the exact mechanism, its
+        key-authorization gate, or its chain-of-title diagnostics is directed
+        to the living
         specification.</t>
       </section>
     </section>

@@ -250,7 +250,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     expect(isOk(result)).toBe(false)
   })
 
-  it('honors the consent gate even for the irrevocable "none" class', () => {
+  it('honors the key-authorization gate even for the irrevocable "none" class', () => {
     const hk = generateHybridLogKeys()
     const record = tTransferRecord()
     const bundle = tLogBundle([record], hk)[0]

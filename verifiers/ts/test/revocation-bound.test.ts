@@ -144,7 +144,7 @@ describe('revocation view bound (improvement #17, fail-closed)', () => {
 
   // Until 2026-09-01 this asserted a warning and no error, on the reasoning the
   // spec itself carried: "a revocation record can never affect ok". v0.2 §17.3
-  // ended that — the consent gate covers ALL revocability classes, and a backed
+  // ended that — the key-authorization gate covers ALL revocability classes, and a backed
   // `status: "transferred"` record rides this same view, so the old assertion
   // said an oversized feed may hide a transfer from the strongest class.
   it('oversized view on an irrevocable receipt fails closed too', () => {

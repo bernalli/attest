@@ -101,9 +101,10 @@ footer nav{display:flex;gap:22px;flex-wrap:wrap}
 files ending in <code>.attest</code> or <code>.private.attest</code>. This page
 explains what they are.</p>
 
-<p>Each file is a small, signed <strong>receipt</strong> from the store you
-bought from. It's yours: proof that you paid for what's listed inside, signed by
-the seller so anyone can check it's genuine. Keep it the way you'd keep an
+<p>Each file is a small, signed <strong>receipt</strong> carrying the seller's
+claims about the listed transaction. The seller's signature lets anyone check
+those exact claims and detect later changes; it does not prove that the named
+person paid or participated. Keep it the way you'd keep an
 important paper receipt — it doesn't live in any account. It survives the shop
 closing. It does not survive the seller declaring the key that signed it
 compromised: the standard describes a shield against that, but no store tool
@@ -124,8 +125,8 @@ browser, with the file never leaving your machine.</p>
 
 <div class="warning">
 <h2>Never send *.private.attest to anyone.</h2>
-<p>That file is the proof the purchase belongs to you: anyone holding it can claim to be the buyer.</p>
-<p>Because one private file covers your whole library, handing it over hands over proof for every purchase inside at once, not just the one you meant to show.</p>
+<p>That file carries the binding secrets for your receipts: anyone holding it can make the binding check report possession of those secrets. That result does not establish who bought anything.</p>
+<p>Because one private file covers your whole library, handing it over lets its holder produce that same possession result for every receipt inside, not just the one you meant to show.</p>
 <p>A real store or support agent will never need it — they can already see your order.</p>
 <p>Keep it private, the way you would keep a paper receipt with your card number on it.</p>
 <p>If anyone needs to see what you bought, send them the other file from your download instead — the one whose name ends in .attest but not in .private.attest. It shows the same purchases and gives no one a way to claim them.</p>
@@ -138,9 +139,9 @@ browser, with the file never leaving your machine.</p>
 call home, it doesn't need the store's servers to be running, and it doesn't
 expire when a shop closes down. A verifier can check it entirely offline, months
 or years later, using nothing but the file itself and the seller's published
-signing key. If a store you bought from shuts down, your receipt still proves
-you bought what it lists — it isn't the thing itself, but it's the part of your
-purchase that survives the store.</p>
+signing key. If a store shuts down, the receipt still proves exactly what that
+store signed; it does not prove who made the purchase. It isn't the thing
+itself, but it's the part of your purchase that survives the store.</p>
 </section>
 
 <hr>

@@ -1214,6 +1214,22 @@ def test_binding_challenge_disclosure_proven() -> None:
     assert result.binding == "proven"
 
 
+def test_issuer_key_cannot_answer_for_a_buyer_generated_key() -> None:
+    buyer_kp = keys.from_seed(bytes([11]) * 32)
+    payload = make_payload(buyer={"pubkey": keys.b64u(buyer_kp.pub)})
+    envelope = issue.issue(payload, KP, KID)
+    nonce = bytes(range(16))
+    for signer, expected in ((buyer_kp, "proven"), (KP, "not_proven")):
+        sig = commitment.sign_challenge(payload["receipt_id"], nonce, signer)
+        result = verify.verify(
+            _to_bytes(envelope),
+            _trust_store(_key_manifest()),
+            disclosure=verify.Disclosure(challenge=(nonce, sig)),
+        )
+        assert result.signature == "valid"
+        assert result.binding == expected
+
+
 def test_binding_challenge_disclosure_wrong_nonce_is_not_proven() -> None:
     buyer_kp = keys.from_seed(bytes([11]) * 32)
     payload = make_payload(buyer={"pubkey": keys.b64u(buyer_kp.pub)})

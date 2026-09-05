@@ -478,7 +478,7 @@ export function auditChain(
   // once, per unit, before anything reads them -- and from here on ONLY the
   // reconstruction is read. Without it the successor id a signature COVERS and
   // the successor id a link is MATCHED against could differ, and a chain of
-  // title nobody consented to would be reported valid. Python parity:
+  // title nobody authorized would be reported valid. Python parity:
   // transfer._admit_caller_rail.
   //
   // AFTER the manifest self-verify, never before: that check is cheap and

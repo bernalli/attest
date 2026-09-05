@@ -495,8 +495,9 @@ def _best_effort_shopify_purchase_id(order: object) -> str | None:
 # -- receipt downloads: the §14.1/§14.2 pair, never the salted envelope -----
 #
 # The Ledger stores ONE envelope per receipt and it is always salt-bearing: it
-# has to be, the buyer needs their own salt to prove the receipt is theirs
-# (§8). What these routes may hand out is a different question. §14.1 reserves
+# has to be, the buyer needs their own salt to answer the receipt's binding
+# proof with the issuer-recorded binding secret (§8). What these routes may
+# hand out is a different question. §14.1 reserves
 # the `.attest` name for the salt-FREE half, so serving that envelope verbatim
 # under `receipt-<id>.attest` — as this module did until V-A.3 — handed every
 # buyer a bearer proof wearing the name of the file they are told to share.

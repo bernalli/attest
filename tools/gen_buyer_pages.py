@@ -234,9 +234,10 @@ _BODY = """\
 files ending in <code>.attest</code> or <code>.private.attest</code>. This page
 explains what they are.</p>
 
-<p>Each file is a small, signed <strong>receipt</strong> from the store you
-bought from. It's yours: proof that you paid for what's listed inside, signed by
-the seller so anyone can check it's genuine. Keep it the way you'd keep an
+<p>Each file is a small, signed <strong>receipt</strong> carrying the seller's
+claims about the listed transaction. The seller's signature lets anyone check
+those exact claims and detect later changes; it does not prove that the named
+person paid or participated. Keep it the way you'd keep an
 important paper receipt — it doesn't live in any account. It survives the shop
 closing. It does not survive the seller declaring the key that signed it
 compromised: the standard describes a shield against that, but no store tool
@@ -264,9 +265,9 @@ __PRIVATE_WARNING__
 call home, it doesn't need the store's servers to be running, and it doesn't
 expire when a shop closes down. A verifier can check it entirely offline, months
 or years later, using nothing but the file itself and the seller's published
-signing key. If a store you bought from shuts down, your receipt still proves
-you bought what it lists — it isn't the thing itself, but it's the part of your
-purchase that survives the store.</p>
+signing key. If a store shuts down, the receipt still proves exactly what that
+store signed; it does not prove who made the purchase. It isn't the thing
+itself, but it's the part of your purchase that survives the store.</p>
 </section>
 
 <hr>
@@ -325,8 +326,8 @@ doesn't live in an account, so no account can lose it for you.</li>
 <li><strong>Check it whenever you like.</strong> With a free tool, on your own
 computer, with the internet switched off, without asking the store.
 <a href="./">Try it on a sample receipt →</a></li>
-<li><strong>Prove what you bought years from now</strong> — even if the store no
-longer exists.</li>
+<li><strong>Check what the seller signed years from now</strong> — even if the
+store no longer exists.</li>
 </ul>
 </section>
 
@@ -648,9 +649,9 @@ _FOR_SELLERS_BODY = """\
 
 <section>
 <h2>What you would be signing</h2>
-<p>A receipt is a small JSON document you sign at the moment of sale. It names you by your domain, names the work, points at the licence terms by URI and by the hash of their text, and binds the purchase to the buyer through a salted commitment to their email address rather than the address itself. Your signature is Ed25519; when the bridge signs, it adds an ML-DSA-65 signature beside it, so the same receipt carries a post-quantum leg. Once signed, the receipt does not change. Refunds, revocations and key changes live in separate signed documents, never inside it.</p>
+<p>A receipt is a small JSON document you sign at the moment of sale. It names you by your domain, names the work, and points at the licence terms by URI and by the hash of their text. The receipt carries a salted commitment to an identifier you record. A matching disclosure proves possession of the binding secret, never who bought. Your signature is Ed25519; when the bridge signs, it adds an ML-DSA-65 signature beside it, so the same receipt carries a post-quantum leg. Once signed, the receipt does not change. Refunds, revocations and key changes live in separate signed documents, never inside it.</p>
 
-<p>The buyer receives two files. The shareable one, named after your domain and the receipt id and ending in <code>.attest</code>, carries the receipt with its salt stripped, your key manifest exactly as it was when you signed, the licence text the receipt's hash points at, and a generated page explaining how to check the receipt once your store is gone. The other, ending in <code>.private.attest</code>, holds the salt that lets the buyer prove the receipt is theirs; the name is deliberate, because the web verifier refuses that file on sight, and it is the one file they must never send to anyone. Anyone holding the shareable file can verify it offline — on this site, with the <code>attest</code> command, or with the npm package — and none of that needs you, your server or your bridge to still exist.</p>
+<p>The buyer receives two files. The shareable one, named after your domain and the receipt id and ending in <code>.attest</code>, carries the receipt with its salt stripped, your key manifest exactly as it was when you signed, the licence text the receipt's hash points at, and a generated page explaining how to check the receipt once your store is gone. The other, ending in <code>.private.attest</code>, holds the salt that lets a presenter reproduce the receipt's binding value; that result proves possession of the salt, not buyer identity. The name is deliberate, because the web verifier refuses that file on sight, and it is the one file they must never send to anyone. Anyone holding the shareable file can verify it offline — on this site, with the <code>attest</code> command, or with the npm package — and none of that needs you, your server or your bridge to still exist.</p>
 </section>
 
 <hr>
@@ -724,7 +725,7 @@ _FOR_SELLERS_BODY = """\
 <div><span class="term">No account with this project, and no traffic to it</span><span>The bridge speaks to your payment platform and to your mail server. Neither verifier contains an HTTP client. The only reference to this site in the bridge is the default link in the receipt email, which you can replace.</span></div>
 <div><span class="term">No change to how you sell</span><span>The bridge sits beside your checkout and reacts to its events. It is not a payment processor, a store, or a source of truth for your orders; on Shopify, the app that delivers the file keeps delivering it, and the bridge only issues the receipt.</span></div>
 <div><span class="term">No copy of what you sell</span><span>A receipt names the work and the terms. It never carries, hosts or indexes the content, and the specification forbids implementations from doing so.</span></div>
-<div><span class="term">No custody handed to anyone</span><span>Your key stays where your bridge runs. No buyer key material passes through the bridge beyond a public key a buyer chooses to bind their receipt to.</span></div>
+<div><span class="term">No custody handed to anyone</span><span>Your key stays where your bridge runs. No buyer private material passes through the bridge. A public key may arrive as checkout input, but the issuer is the party that writes it into the receipt and the protocol does not establish who chose it.</span></div>
 <div><span class="term">No DRM, and no promise about it</span><span>A receipt records whether the sale was DRM-free or DRM-bound and never changes which. The standard forbids using attest to strip or bypass DRM.</span></div>
 </div>
 </section>

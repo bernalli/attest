@@ -479,7 +479,8 @@ def _audit_one_transfer(
 ) -> transfer.ChainAuditResult:
     """Issue through the bridge, then audit one transfer away from it.
 
-    `authorizing_kp` is what the two callers vary: the buyer's own key, which
+    `authorizing_kp` is what the two callers vary: the key the receipt records in
+    `buyer.pubkey`, which
     the receipt names as the holder, or a stranger's.
     """
     outcome = core.issue_for(_purchase(platform_purchase_id=purchase_id, buyer_pubkey=buyer_kp.pub))
@@ -525,7 +526,7 @@ def test_a_bridge_receipt_is_a_working_root_of_title(
     hybrid_keys: pq.HybridSigningKeys,
     transfer_log_keys: pq.HybridSigningKeys,
 ) -> None:
-    """The buyer's own key can move a bridge-issued receipt on.
+    """The key recorded in `buyer.pubkey` can move a bridge-issued receipt on.
 
     This is the claim the bridge makes to a buyer who supplies a pubkey, and
     until there is a link in the chain nothing checks it: the audit has to

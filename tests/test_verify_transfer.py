@@ -185,7 +185,7 @@ def test_transferred_with_full_backing_reports_transferred_not_ok() -> None:
 
 
 def test_transferred_on_none_with_backing_honored() -> None:
-    """Consent gate (§17.3): honored even for the irrevocable `none` class."""
+    """Key-authorization gate (§17.3): honored even for the irrevocable `none` class."""
     hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
     record = _transfer_record()
     bundle = _transfer_log_bundle([record], hk)[0]
@@ -446,7 +446,7 @@ def test_oversized_revocation_view_still_honours_a_transfer_on_none() -> None:
 
     The over-ceiling branch treats `none` as non-fatal because "a revocation can
     never affect ok" — true before Stage 3, and no longer true since §17.3 made
-    the consent gate apply to ALL revocability classes, `none` included: a backed
+    the key-authorization gate apply to ALL revocability classes, `none` included: a backed
     `status: "transferred"` record caps `ok` for this class too. Those records
     ride the same `revocation_view`, so returning early on size discards them as
     well, and whoever can append to that view decides which transfer the verifier

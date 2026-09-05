@@ -175,9 +175,16 @@ def test_only_the_answer_changes_and_it_changes_with_what_the_reader_holds() -> 
 
 def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
     """Whatever else the wording becomes, these three facts have to survive it:
-    the file proves ownership, one file covers the whole library, and there is
-    something safe to send in its place — named where the name is known,
-    described where it is not."""
+    the file carries the binding secret, one file covers the whole library, and
+    there is something safe to send in its place — named where the name is
+    known, described where it is not.
+
+    The first fact used to be "the file proves ownership", pinned by the bare
+    word "proof". `docs/spec/attest-v0.1.md` §11.1 (rev 17) forbids that
+    reading: what the file carries is the secret that answers the binding
+    check, and the check reports possession of it, never who bought. The
+    assertion moved with the claim, and the two readings the rule forbids are
+    pinned negatively so a paraphrase back to ownership fails here."""
     for context, kwargs in READER_CONTEXTS.items():
         styled = buyer_surface.private_file_warning_html(**kwargs)
         plain = buyer_surface.private_file_warning_text(**kwargs)
@@ -185,8 +192,10 @@ def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
             (_claims_in_html(styled), _headline_and_paragraphs(styled)[1][-1]),
             (plain, plain.splitlines()[-1]),
         ):
-            assert "proof" in read.lower(), context
+            assert "binding secret" in read.lower(), context
             assert "whole library" in read.lower(), context
+            assert "proves ownership" not in read.lower(), context
+            assert "belongs to you" not in read.lower(), context
             if context == "named":
                 assert _files_named(answer) == ["mylibrary.attest"]
             else:
@@ -194,6 +203,74 @@ def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
                 # two halves apart — `.attest` alone would describe both.
                 assert ".attest" in answer and ".private.attest" in answer, context
                 assert _files_named(answer) == [], context
+
+
+#: The property this aims at, and the narrower thing it actually catches. A
+#: rendering surface MUST NOT present binding possession as evidence of who
+#: purchased (`docs/spec/attest-v0.1.md` §11.1, rev 17). A blocklist of
+#: historical wordings does not express that: a paraphrase walks through it,
+#: and three written to dodge every literal these tests name left the suite
+#: green. What follows is one step better and no more — an ENUMERATED shape:
+#: these verbs, these subjects, inside these windows. It is an auxiliary
+#: detector, not a defence of the property it is named for. A substituted verb
+#: ("demonstrates that the presenter made the purchase"), a nominalized
+#: predicate ("confirms ownership of the purchase") and a clause long enough to
+#: outrun the window all pass it, and lengthening the lists would only move
+#: that boundary rather than close it. Deciding what the surfaces say is still
+#: done by reading them: an inventory of the published strings, each with a
+#: hash and an explicit verdict, is open work, and this rule does not stand in
+#: for it.
+_PURCHASE_ROLE = r"(purchaser|purchase|buyer|bought|purchased|owner|owns)"
+#: The window may not cross a sentence end or a tag. Without the tag barrier a
+#: heading and the paragraph after it read as one sentence: the pages below
+#: open with "What is this file?" followed by "You bought something online",
+#: which is prose about the reader and not a claim about possession. Line
+#: breaks are normalized away instead of excluded: `site/public/*.html` wraps
+#: its prose, and a window that refused to cross a newline missed a claim
+#: written across two lines — the way the retired name survived two sweeps.
+_ASSERTS_ROLE = re.compile(
+    r"\b(establish\w*|confirm\w*|prove\w*|show\w*|mean\w*|is|are)\b"
+    r"[^.<>]{0,60}?\b(you|the\s+holder|the\s+presenter|whoever)\b[^.<>]{0,40}?" + _PURCHASE_ROLE,
+    re.I,
+)
+
+
+def _visible_text(markup: str) -> str:
+    """Preserve inline prose and entities while retaining block boundaries."""
+    from tests.rendered_text import visible_text
+
+    return visible_text(markup)
+
+
+def test_role_detection_preserves_visible_prose() -> None:
+    claim = "This binding establishes that the holder made the purchase."
+    for separator in (" ", "\n", "\t", "\r\n", " \n  ", "<br>"):
+        assert _ASSERTS_ROLE.search(_visible_text(separator.join(claim.split())))
+    for offset in range(len(claim)):
+        encoded = claim[:offset] + f"&#{ord(claim[offset])};" + claim[offset + 1 :]
+        assert _ASSERTS_ROLE.search(_visible_text(encoded))
+        for tag in ("em", "strong", "span", "code"):
+            wrapped = claim[:offset] + f"<{tag}>" + claim[offset:] + f"</{tag}>"
+            assert _ASSERTS_ROLE.search(_visible_text(wrapped))
+    assert (
+        _ASSERTS_ROLE.search(_visible_text("<h2>What is this?</h2><p>You bought it.</p>")) is None
+    )
+
+
+def test_no_surface_asserts_a_purchase_role_from_possession() -> None:
+    """The rule, not the wording: possession never implies who bought."""
+    from attest import bundle
+
+    surfaces = {
+        context: buyer_surface.private_file_warning_html(**kwargs)
+        for context, kwargs in READER_CONTEXTS.items()
+    }
+    surfaces["bundle README"] = bundle._render_readme("demo")
+    for page in ("site/public/start-here.html", "site/public/what-is-this.html"):
+        surfaces[page] = (REPO_ROOT / page).read_text(encoding="utf-8")
+    for context, markup in surfaces.items():
+        offending = _ASSERTS_ROLE.search(_visible_text(markup))
+        assert offending is None, f"{context}: {offending.group(0)!r}" if offending else context
 
 
 #: The two sentences that have to survive a rewording, written out HERE rather
@@ -234,6 +311,43 @@ def test_the_sentence_a_buyer_needs_is_on_every_surface_word_for_word(claim: str
     # renderer that would have lost it.
     _, readme_paragraphs = _headline_and_paragraphs(bundle._render_readme("demo"))
     assert claim in readme_paragraphs, "bundle README"
+
+
+#: The sentence the private-file warning MUST NOT say, and the one it says
+#: instead. `docs/spec/attest-v0.1.md` §11.1 (rev 17) forbids a conforming
+#: rendering surface from presenting a binding proof as evidence that the named
+#: person made the purchase, because the provenance of the signed binding
+#: values is issuer-asserted (§8). The warning used to open with "That file is the proof the
+#: purchase belongs to you", which is exactly that claim; what the file really
+#: carries is the secret that answers the proof, and the risk it warns about —
+#: anyone holding it can claim to be the buyer — is unchanged by saying so.
+FORBIDDEN_BINDING_CLAIM = "the proof the purchase belongs to you"
+
+
+def test_the_private_file_warning_does_not_read_binding_as_who_bought() -> None:
+    """Every surface that renders the warning, and the published pages with it."""
+    from attest import bundle
+
+    surfaces = {
+        context: " ".join(
+            _headline_and_paragraphs(buyer_surface.private_file_warning_html(**kwargs))[1]
+        )
+        for context, kwargs in READER_CONTEXTS.items()
+    }
+    surfaces["bundle README"] = " ".join(_headline_and_paragraphs(bundle._render_readme("demo"))[1])
+    for page in ("site/public/start-here.html", "site/public/what-is-this.html"):
+        surfaces[page] = (REPO_ROOT / page).read_text(encoding="utf-8")
+
+    expected = (
+        "That file carries the binding secrets for your receipts: anyone holding "
+        "it can make the binding check report possession of those secrets. "
+        "That result does not establish who bought anything."
+    )
+    assert buyer_surface._WARNING_CLAIMS[0] == expected
+
+    for context, rendered in surfaces.items():
+        assert FORBIDDEN_BINDING_CLAIM not in rendered, context
+        assert expected in rendered, context
 
 
 @pytest.mark.parametrize("claim", ANCHORED_CLAIMS)
