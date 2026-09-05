@@ -1419,3 +1419,70 @@ def test_json_limits_return_400(itch_deps: BridgeDeps, body: bytes) -> None:
         headers={"Content-Type": "application/json"},
     )
     assert status == "400 Bad Request"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"email": "\\ud800@example.com", "game_id": "123456"}',
+        b'{"email": "a\\udfff b@example.com", "game_id": "123456"}',
+    ],
+)
+def test_a_lone_surrogate_in_the_claim_body_is_a_400_not_a_500(
+    itch_deps: BridgeDeps, body: bytes
+) -> None:
+    """`\\udXXX` is legal JSON syntax, so `json.loads` does not raise at all.
+
+    It answers with a `str` Python cannot encode, which survives every
+    `isinstance` check and every field check this handler makes and only fails
+    at the first sink that encodes it — here `sqlite3`, as a
+    `UnicodeEncodeError` that escapes the WSGI app entirely. This route takes
+    no signature, so anyone can reach it.
+    """
+    status, _, _ = call_app(
+        make_app(itch_deps),
+        "POST",
+        "/itch/claim",
+        body=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert status == "400 Bad Request"
+
+
+def test_a_surrogate_pair_is_ordinary_input_and_still_enqueues(
+    itch_deps: BridgeDeps,
+) -> None:
+    """The negative control: a WELL-FORMED astral character is encodable and
+    must stay an ordinary accepted claim. Without this the guard could reject
+    every non-BMP address and stay green."""
+    body = '{"email": "\U0001f600@example.com", "game_id": "123456"}'.encode()
+    status, _, _ = call_app(
+        make_app(itch_deps),
+        "POST",
+        "/itch/claim",
+        body=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert status == "202 Accepted"
+
+
+@pytest.mark.parametrize(
+    "created_at",
+    [
+        "2026-07-14T03:33:20.123456Z",
+        "2026-07-14T03:33:20.5+02:00",
+        "2026-07-14 03:33:20.999999",
+    ],
+)
+def test_a_fractional_second_created_at_is_truncated_not_carried_through(created_at: str) -> None:
+    """`isoformat()` keeps sub-second precision; `strftime` never did.
+
+    The schema pins `^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$`, so the
+    `microsecond=0` in the replace() is load-bearing and not cosmetic: without
+    it the swap from `strftime` to `isoformat` silently widens the output
+    format on the one input class that distinguishes them.
+    """
+    raw = _purchase_json(created_at=created_at)
+    purchase = ItchAdapter(api_key="key").normalize(raw, email="buyer@example.com")
+    assert purchase.purchased_at.endswith(":20Z")
+    assert "." not in purchase.purchased_at

@@ -72,6 +72,7 @@ from attest_bridge.model import (
     NormalizedPurchase,
     PurchaseRejected,
     UnmappedProduct,
+    loads_utf8_strict,
     purchase_id_for_log,
 )
 from attest_bridge.pair import BundlePair, build_pair
@@ -674,7 +675,7 @@ def _parse_claim_fields(environ: dict[str, Any]) -> dict[str, str]:
     content_type = (environ.get("CONTENT_TYPE") or "").split(";")[0].strip().lower()
     if content_type == "application/json":
         try:
-            data = json.loads(body)
+            data = loads_utf8_strict(body)
         except (ValueError, RecursionError):
             return {}
         if not isinstance(data, dict):

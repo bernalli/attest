@@ -42,7 +42,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -52,6 +51,7 @@ from attest_bridge.model import (
     NormalizedPurchase,
     PurchaseRejected,
     decode_buyer_pubkey,
+    loads_utf8_strict,
     purchase_id_for_log,
 )
 
@@ -166,7 +166,7 @@ class ShopifyAdapter:
     def parse_event(self, payload: bytes, sig_header: str) -> dict[str, Any]:
         """Verify the signature, then parse — in that order, always."""
         verify_shopify_signature(payload, sig_header, self._webhook_secret)
-        order: dict[str, Any] = json.loads(payload)
+        order: dict[str, Any] = loads_utf8_strict(payload)
         return order
 
     def wants(self, order: dict[str, Any]) -> bool:

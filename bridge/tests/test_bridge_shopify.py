@@ -650,3 +650,39 @@ def test_json_limits_return_400(shopify_deps: BridgeDeps, body: bytes) -> None:
     assert status == "400 Bad Request"
     assert reply == b"malformed body"
     assert shopify_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_a_lone_surrogate_order_id_is_a_400_not_a_500(shopify_deps: BridgeDeps) -> None:
+    """Same family on the signed rail: the parse succeeds and the encode fails
+    later, in `Ledger.seen_event`, outside every `except` this handler names."""
+    body = b'{"id": "\\ud800", "created_at": "2026-07-14T03:33:20Z"}'
+    status, _, reply = call_app(
+        make_app(shopify_deps),
+        "POST",
+        "/shopify/webhook",
+        body=body,
+        headers={"X-Shopify-Hmac-Sha256": sign_shopify(body)},
+    )
+    assert status == "400 Bad Request"
+    assert reply == b"malformed body"
+
+
+@pytest.mark.parametrize(
+    "created_at",
+    [
+        "2026-07-14T03:33:20.123456Z",
+        "2026-07-14T03:33:20.5+02:00",
+        "2026-07-14T03:33:20.999999-05:00",
+    ],
+)
+def test_a_fractional_second_created_at_is_truncated_not_carried_through(created_at: str) -> None:
+    """Same property as the itch rail: `microsecond=0` is load-bearing.
+
+    The schema pins `^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$`, and
+    `isoformat()` — unlike the `strftime` it replaced — carries sub-second
+    precision through unless it is zeroed first.
+    """
+    adapter = ShopifyAdapter(webhook_secret=_WEBHOOK_SECRET)
+    purchase = adapter.normalize(make_order(created_at=created_at))
+    assert purchase.purchased_at.endswith(":20Z")
+    assert "." not in purchase.purchased_at

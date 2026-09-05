@@ -41,6 +41,7 @@ from attest_bridge.model import (
     NormalizedPurchase,
     PurchaseRejected,
     decode_buyer_pubkey,
+    loads_utf8_strict,
     purchase_id_for_log,
     rfc3339_from_unix,
 )
@@ -185,7 +186,7 @@ class StripeAdapter:
     ) -> dict[str, Any]:
         """Verify the signature, then parse — in that order, always."""
         verify_stripe_signature(payload, sig_header, self._webhook_secret, now=now)
-        event: dict[str, Any] = json.loads(payload)
+        event: dict[str, Any] = loads_utf8_strict(payload)
         return event
 
     def wants(self, event: dict[str, Any]) -> bool:

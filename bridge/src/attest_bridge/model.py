@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -30,6 +31,25 @@ class ConfigError(BridgeError):
 
 class ClaimQueueFull(BridgeError):
     """The bounded itch claim queue cannot accept another pending claim."""
+
+
+def loads_utf8_strict(payload: bytes) -> Any:
+    """`json.loads`, minus the strings Python can hold but cannot encode.
+
+    A `\\udXXX` escape is legal JSON syntax and `json.loads` answers it with a
+    lone-surrogate `str`. Such a value survives every `isinstance` check a
+    caller can write and only fails much later, at the first sink that encodes
+    it — `sqlite3`, `purchase_id_for_log`, an SMTP header — as a
+    `UnicodeEncodeError` no handler contract names. Rejecting it here keeps the
+    whole family on the one row that already exists: unparseable body -> 400.
+    `UnicodeEncodeError` is a `ValueError`, so every caller's existing
+    `except ValueError` already covers it.
+    """
+    data = json.loads(payload)
+    # `ensure_ascii=False` is what makes the re-encode able to fail: with the
+    # default the surrogate would be escaped back into ASCII and pass.
+    json.dumps(data, ensure_ascii=False).encode("utf-8")
+    return data
 
 
 def purchase_id_for_log(purchase_id: str) -> str:
