@@ -9,6 +9,7 @@ re-testing crypto/schema logic already covered by the library's own suite.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -19,7 +20,19 @@ from typing import Any
 
 import pytest
 
-from attest import anchor, canon, cli, keys, manifests, pq, revocation, tlog, transfer, verify
+from attest import (
+    anchor,
+    canon,
+    cli,
+    keys,
+    manifests,
+    pq,
+    revocation,
+    tlog,
+    transfer,
+    verify,
+    views,
+)
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -379,8 +392,11 @@ def test_revoke_help_exists(capsys: CapSys) -> None:
     assert "--receipt" in capsys.readouterr().out
 
 
-@pytest.mark.xfail(strict=True, reason="needs attest revocation-view, T4")
 def test_revoke_policy_receipt_end_to_end(tmp_path: Path, capsys: CapSys) -> None:
+    """producer -> array -> consumer, with no hand-written JSON anywhere in it
+    (F1): `revoke` signs the record, `revocation-view` wraps it, and `verify`
+    honors what came out. Writing the array by hand here would test the rail
+    and leave the producer untested, which is the gap this task closes."""
     seed, manifest, receipt = _revoke_setup(tmp_path, license_block={"revocability": "policy"})
     record = tmp_path / "record.json"
     assert cli.main(_revoke_argv(receipt, manifest, seed, record)) == cli.EXIT_OK
@@ -4598,3 +4614,1271 @@ def test_a_well_formed_witness_policy_alone_changes_nothing(tmp_path: Path, caps
         ]
     )
     assert (rc_with_policy, json.loads(capsys.readouterr().out)) == (rc, baseline)
+
+
+# --- log entry: the six §8 transparency-log entry types (A11 T4.0) -----------
+#
+# The oracle for four of the six types is a CHECKED-IN artifact under
+# `docs/spec/vectors/`: the corpus carries both a document and the log entry
+# that document produced, so reproducing that entry byte for byte proves this
+# verb emits the WIRE format rather than whatever the code happens to compute.
+# A generator derived from the builder under test could not find the hole these
+# tests exist to find.
+#
+# `cessation-declaration` and `publisher-authorization` have no logged entry
+# anywhere in the corpus (measured 2026-09-03:
+# `grep -rl '"cessation-declaration"' docs/spec/vectors` prints nothing, and so
+# does the `publisher-authorization` sweep). There is therefore no independent
+# artifact to compare those two against, and this is stated rather than papered
+# over: their expected hash is spelled out below as SHA-256 over the canonical
+# bytes — the rule §8 states — instead of by calling `grant.declaration_hash` /
+# `authority.authorization_hash`, which are the functions under test. Their
+# `issuer` is written as a literal for the same reason.
+
+VECTORS = Path(__file__).resolve().parents[1] / "docs" / "spec" / "vectors"
+
+
+def _vector(*parts: str) -> Any:
+    return json.loads(VECTORS.joinpath(*parts).read_text(encoding="utf-8"))
+
+
+def _sha256_jcs(document: dict[str, Any]) -> str:
+    """§8's `record_sha256`, spelled out: SHA-256 over the document's canonical
+    bytes, its own `signature` member included."""
+    return hashlib.sha256(canon.canonical_bytes(document)).hexdigest()
+
+
+def _entry_cases() -> dict[str, tuple[Any, dict[str, Any]]]:
+    """`--type` -> (the document `--in` is fed, the entry §8 says it produces)."""
+    compromise_claim = _vector(
+        "41-compromise-cutoff", "a-rescued-anchored-before-cutoff", "compromise-view.json"
+    )[0]
+    transfer_claim = _vector("35-transfer", "a-transferred-with-backing", "transfer-view.json")[0]
+    declaration = _vector(
+        "37-preservation-pledge", "b-activated-publisher-declaration", "grant-view.json"
+    )["declarations"][0]
+    authorization = _vector("43-publisher-authority", "a-authorized", "authority-view.json")[
+        "authorizations"
+    ][0]
+    return {
+        "receipt": (
+            _vector("28-transparency", "a-logged-trust-unchanged", "envelope.json"),
+            _vector("28-transparency", "a-logged-trust-unchanged", "transparency.json")["entry"],
+        ),
+        "key-manifest": (compromise_claim["manifest"], compromise_claim["evidence"]["entry"]),
+        "revocation-record": (
+            _vector("33-logged-revocation", "a-timely-logged-honored", "revocation.json"),
+            _vector("33-logged-revocation", "a-timely-logged-honored", "revocation-evidence.json")[
+                "entry"
+            ],
+        ),
+        "transfer-record": (transfer_claim["record"], transfer_claim["evidence"]["entry"]),
+        "cessation-declaration": (
+            declaration,
+            {
+                "type": "cessation-declaration",
+                "issuer": "pub.example",
+                "record_sha256": _sha256_jcs(declaration),
+            },
+        ),
+        "publisher-authorization": (
+            authorization,
+            {
+                "type": "publisher-authorization",
+                "issuer": "pub.example",
+                "record_sha256": _sha256_jcs(authorization),
+            },
+        ),
+    }
+
+
+ENTRY_CASES = _entry_cases()
+ENTRY_TYPES = sorted(ENTRY_CASES)
+
+
+def _log_entry(
+    tmp_path: Path, entry_type: str, document: Any, *, name: str = "entry"
+) -> tuple[int, Path, Path]:
+    """Run `attest log entry` over `document`; return (rc, --in path, --out path)."""
+    doc_path = tmp_path / f"{name}-document.json"
+    doc_path.write_text(json.dumps(document), encoding="utf-8")
+    out = tmp_path / f"{name}.json"
+    rc = cli.main(["log", "entry", "--type", entry_type, "--in", str(doc_path), "--out", str(out)])
+    return rc, doc_path, out
+
+
+def _signed_log_with(tmp_path: Path, entry_path: Path) -> tuple[Path, Path, Path, Path]:
+    """A fresh single-entry log holding `entry_path`, signed and provable.
+
+    Returns (log dir, checkpoint, evidence from `log prove`, log-keys file).
+    """
+    log_dir = _log_init(tmp_path)
+    ed_seed, ed_pub, mldsa_out = _keygen_hybrid(tmp_path, "log-signer")
+    assert cli.main(["log", "append", "--dir", str(log_dir), "--entry-json", str(entry_path)]) == 0
+    checkpoint = _log_sign_checkpoint(log_dir, ed_seed, mldsa_out)
+    evidence = _log_prove(tmp_path, log_dir, 0)
+    return log_dir, checkpoint, evidence, _log_keys_file(tmp_path, ed_pub, mldsa_out)
+
+
+# `transparency.py`'s own documented KAT instant for this unix time.
+_ANCHOR_HEADER_TIME = 1700000000
+_ANCHOR_HEADER_TIME_ISO = "2023-11-14T22:13:20Z"
+
+
+def _anchor_evidence(
+    tmp_path: Path, log_dir: Path, checkpoint: Path, evidence: Path, *, name: str = "anchored"
+) -> tuple[Path, Path]:
+    """Attach a synthetic single-`sha256` OTS path to `evidence`.
+
+    The op-chain replays from the checkpoint's FULL signed note, because `log
+    anchor` stamps `anchor_profile: "signed-note-v2"` on everything it attaches
+    (G4, v0.2 §11.1). Returns (anchored evidence, anchor policy pinning the
+    header the chain lands on).
+    """
+    signed_note_bytes = tlog.parse_checkpoint(
+        checkpoint.read_text(encoding="utf-8")
+    ).signed_note_bytes
+    merkle_root = hashlib.sha256(hashlib.sha256(signed_note_bytes).digest()).digest().hex()
+    header_hash = hashlib.sha256(f"attest-t4-anchor-{name}".encode()).hexdigest()
+    ots_proof = tmp_path / f"{name}-ots-proof.json"
+    ots_proof.write_text(
+        json.dumps(
+            {
+                "ops": [["sha256"]],
+                "header_merkle_root": merkle_root,
+                "header_hash": header_hash,
+                "header_time": _ANCHOR_HEADER_TIME,
+            }
+        ),
+        encoding="utf-8",
+    )
+    anchored = tmp_path / f"{name}-evidence.json"
+    assert (
+        cli.main(
+            [
+                "log",
+                "anchor",
+                "--dir",
+                str(log_dir),
+                "--evidence",
+                str(evidence),
+                "--ots-proof",
+                str(ots_proof),
+                "--out",
+                str(anchored),
+            ]
+        )
+        == 0
+    )
+    policy = _anchor_policy_file(
+        tmp_path,
+        pinned_headers={
+            header_hash: {
+                "header_hash": header_hash,
+                "merkle_root": merkle_root,
+                "time": _ANCHOR_HEADER_TIME,
+            }
+        },
+        name=f"{name}-anchor-policy.json",
+    )
+    return anchored, policy
+
+
+def test_log_entry_help_exists(capsys: CapSys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["log", "entry", "--help"])
+
+    out = capsys.readouterr().out
+    assert exc_info.value.code == 0
+    assert "--type" in out
+    assert "--in" in out
+
+
+@pytest.mark.parametrize("entry_type", ENTRY_TYPES)
+def test_log_entry_reproduces_the_wire_entry_of_the_corpus(
+    tmp_path: Path, capsys: CapSys, entry_type: str
+) -> None:
+    document, expected = ENTRY_CASES[entry_type]
+
+    capsys.readouterr()
+    rc, _doc, out = _log_entry(tmp_path, entry_type, document)
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == cli.EXIT_OK
+    produced = json.loads(out.read_text(encoding="utf-8"))
+    assert canon.canonical_bytes(produced) == canon.canonical_bytes(expected)
+    assert report["out"] == str(out)
+    assert report["type"] == entry_type
+    assert report["issuer"] == expected["issuer"]
+
+
+@pytest.mark.parametrize("entry_type", ENTRY_TYPES)
+def test_log_entry_writes_the_file_the_log_stores_and_proves_back(
+    tmp_path: Path, entry_type: str
+) -> None:
+    """The file the verb writes is appendable AS IT IS, and `log prove` hands
+    it back unchanged. A producer whose output `log append` refuses — or
+    silently reshapes — fails here rather than in an operator's log."""
+    document, _expected = ENTRY_CASES[entry_type]
+    rc, _doc, out = _log_entry(tmp_path, entry_type, document)
+    assert rc == cli.EXIT_OK
+    entry = json.loads(out.read_text(encoding="utf-8"))
+
+    _log_dir, _checkpoint, evidence, _log_keys = _signed_log_with(tmp_path, out)
+
+    assert json.loads(evidence.read_text(encoding="utf-8"))["entry"] == entry
+
+
+def test_log_entry_receipt_feeds_verify_transparency(tmp_path: Path, capsys: CapSys) -> None:
+    """The consumer for a `receipt` entry is `verify --transparency`, which
+    recomputes the entry from the envelope and compares. An entry built from
+    the wrong hash domain or the wrong issuer field does not match, and the
+    receipt's transparency standing stays `not_checked`."""
+    seed, _pub = _keygen(tmp_path, "issuer")
+    manifest_path = _manifest_init(tmp_path, seed)
+    envelope_path = _issue(tmp_path, seed, _write_payload(tmp_path))
+    rc, _doc, entry_out = _log_entry(
+        tmp_path, "receipt", json.loads(envelope_path.read_text(encoding="utf-8"))
+    )
+    assert rc == cli.EXIT_OK
+    _log_dir, _checkpoint, evidence, log_keys = _signed_log_with(tmp_path, entry_out)
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "verify",
+            str(envelope_path),
+            "--trust-dir",
+            str(_trust_dir(tmp_path, manifest_path)),
+            "--transparency",
+            str(evidence),
+            "--log-keys",
+            str(log_keys),
+            "--anchor-policy",
+            str(_anchor_policy_file(tmp_path, name="receipt-entry-anchor-policy.json")),
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert rc == cli.EXIT_OK
+    assert result["transparency"] == "logged"
+
+
+def test_log_entry_revocation_record_feeds_verify_revocation_evidence(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The consumer for a `revocation-record` entry is `verify
+    --revocation-evidence`, which recomputes `record_sha256` from the record
+    and honors a refund-window revocation only when the evidence carrying that
+    exact entry is anchored before the deadline (G5, v0.2 §8/§15)."""
+    seed, manifest, receipt = _revoke_setup(
+        tmp_path,
+        license_block={"revocability": "refund_window", "revocation_window_days": 30},
+    )
+    record = tmp_path / "record.json"
+    assert cli.main(_revoke_argv(receipt, manifest, seed, record)) == cli.EXIT_OK
+    rc, _doc, entry_out = _log_entry(
+        tmp_path, "revocation-record", json.loads(record.read_text(encoding="utf-8"))
+    )
+    assert rc == cli.EXIT_OK
+
+    log_dir, checkpoint, evidence, log_keys = _signed_log_with(tmp_path, entry_out)
+    anchored, policy = _anchor_evidence(tmp_path, log_dir, checkpoint, evidence)
+    view = tmp_path / "revocations.json"
+    view.write_text(json.dumps([json.loads(record.read_text(encoding="utf-8"))]), encoding="utf-8")
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "verify",
+            str(receipt),
+            "--trust-dir",
+            str(_trust_dir(tmp_path, manifest, "revocation-evidence-trust")),
+            "--revocations",
+            str(view),
+            "--revocation-evidence",
+            str(anchored),
+            "--log-keys",
+            str(log_keys),
+            "--anchor-policy",
+            str(policy),
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert rc == cli.EXIT_VERIFICATION_FAILED
+    assert result["revocation"] == "revoked"
+
+
+def test_log_entry_transfer_record_feeds_a_transfer_claim(tmp_path: Path, capsys: CapSys) -> None:
+    """The consumer for a `transfer-record` entry is the transfer claim
+    builder, which recomputes the entry from the record and refuses evidence
+    that commits to any other document (§19.3 item 4's rule, applied to §17)."""
+    record = ENTRY_CASES["transfer-record"][0]
+    rc, record_path, entry_out = _log_entry(tmp_path, "transfer-record", record)
+    assert rc == cli.EXIT_OK
+    _log_dir, _checkpoint, evidence, _log_keys = _signed_log_with(tmp_path, entry_out)
+    out = tmp_path / "transfer-view.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "transfer",
+            "view",
+            "--record",
+            str(record_path),
+            "--evidence",
+            str(evidence),
+            "--out",
+            str(out),
+        ]
+    )
+
+    assert rc == cli.EXIT_OK
+    built = json.loads(out.read_text(encoding="utf-8"))
+    assert built[0]["record"] == record
+    assert built[0]["evidence"]["entry"] == json.loads(entry_out.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    ("entry_type", "document_key", "error_fragment"),
+    [
+        pytest.param("receipt", "key-manifest", "payload", id="receipt-given-a-manifest"),
+        pytest.param(
+            "revocation-record",
+            "transfer-record",
+            "revocation record",
+            id="revocation-given-transfer",
+        ),
+        pytest.param(
+            "cessation-declaration",
+            "publisher-authorization",
+            "cessation declaration",
+            id="declaration-given-authorization",
+        ),
+    ],
+)
+def test_log_entry_refuses_a_document_of_another_type(
+    tmp_path: Path, capsys: CapSys, entry_type: str, document_key: str, error_fragment: str
+) -> None:
+    document = ENTRY_CASES[document_key][0]
+
+    capsys.readouterr()
+    rc, _doc, out = _log_entry(tmp_path, entry_type, document)
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert error_fragment in captured.err
+    assert "Traceback" not in captured.err
+    assert not out.exists()
+
+
+def test_log_entry_refuses_a_key_manifest_that_does_not_self_verify(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """A manifest whose own signature does not verify against a key it lists
+    is not a declaration of anything: logging it would publish an entry every
+    consumer of a compromise claim then refuses (`views.build_compromise_claim`)."""
+    manifest = copy.deepcopy(ENTRY_CASES["key-manifest"][0])
+    manifest["manifest_signature"]["sig"] = keys.b64u(bytes(64))
+
+    capsys.readouterr()
+    rc, _doc, out = _log_entry(tmp_path, "key-manifest", manifest)
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "does not verify" in captured.err
+    assert not out.exists()
+
+
+RECORD_SHAPED_TYPES = (
+    "revocation-record",
+    "transfer-record",
+    "cessation-declaration",
+    "publisher-authorization",
+)
+
+
+@pytest.mark.parametrize("entry_type", RECORD_SHAPED_TYPES)
+def test_log_entry_follows_its_consumer_on_an_unknown_signature_member(
+    tmp_path: Path, capsys: CapSys, entry_type: str
+) -> None:
+    """A producer must be neither stricter nor looser than its consumer.
+
+    Measured on the authentication path, not on a shape pre-filter:
+    `manifests.verify_signature_block` returns True for a block carrying an
+    unknown member, and `transfer.verify_record_signature`,
+    `revocation.verify_record`, `grant._valid_declaration_shape` and
+    `authority._valid_authorization_shape` inherit that. Every verifier
+    authenticates such a document, so a `log entry` refusing it would make a
+    valid document permanently untransparent. Nothing is lost by admitting it:
+    the entry commits to a hash over the WHOLE document, that member included.
+
+    All four types behave the same way, and that uniformity is the fix: an
+    earlier version admitted three of them and refused the revocation record,
+    on the theory that a materialized view earns a stricter shape. It does not
+    — materialization does not close a signature block either.
+    """
+    document = copy.deepcopy(ENTRY_CASES[entry_type][0])
+    document["signature"]["note"] = "signed on a Tuesday"
+
+    capsys.readouterr()
+    rc, _doc, out = _log_entry(tmp_path, entry_type, document)
+    captured = capsys.readouterr()
+
+    assert "Traceback" not in captured.err
+    assert rc == cli.EXIT_OK, captured.err
+    entry = json.loads(out.read_text(encoding="utf-8"))
+    assert entry["type"] == entry_type
+    expected_issuer = (
+        document["publisher"]
+        if entry_type == "publisher-authorization"
+        else document["signature"]["kid"].split("/", 1)[0]
+    )
+    assert entry["issuer"] == expected_issuer
+
+
+@pytest.mark.parametrize("entry_type", RECORD_SHAPED_TYPES)
+@pytest.mark.parametrize("member", ["sig", "sig_ml_dsa_65"])
+def test_log_entry_still_validates_the_signature_members_it_knows(
+    tmp_path: Path, capsys: CapSys, entry_type: str, member: str
+) -> None:
+    """Tolerating an unknown member is not the same as tolerating a broken
+    known one, and conflating the two is how a transfer record with NO `sig`
+    was briefly loggable: an entry that no verifier can ever authenticate,
+    committed permanently to a log. `sig` must be present and well formed, and
+    a `sig_ml_dsa_65` that is present must be a real ML-DSA-65 signature.
+    """
+    document = copy.deepcopy(ENTRY_CASES[entry_type][0])
+    if member == "sig_ml_dsa_65" and member not in document["signature"]:
+        document["signature"][member] = "not-a-signature"
+    elif member == "sig_ml_dsa_65":
+        document["signature"][member] = "not-a-signature"
+    else:
+        del document["signature"][member]
+
+    capsys.readouterr()
+    rc, _doc, out = _log_entry(tmp_path, entry_type, document)
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "signature" in captured.err
+    assert "Traceback" not in captured.err
+    assert not out.exists()
+
+
+def test_the_log_and_the_view_builders_admit_the_same_documents(tmp_path: Path) -> None:
+    """One extension policy, stated once in `views` and inherited by both.
+
+    A record the log admits must be packageable into a view, and one the log
+    refuses must not enter a view either — otherwise a holder can log a record
+    they cannot ship, or ship one they cannot log.
+    """
+    record = copy.deepcopy(ENTRY_CASES["revocation-record"][0])
+    record["signature"]["note"] = "signed on a Tuesday"
+    rc, _doc, out = _log_entry(tmp_path, "revocation-record", record)
+    assert rc == cli.EXIT_OK
+    assert views.build_revocation_view([record]) == [record]
+
+    unsigned = copy.deepcopy(ENTRY_CASES["revocation-record"][0])
+    del unsigned["signature"]["sig"]
+    rc, _doc, out = _log_entry(tmp_path, "revocation-record", unsigned, name="unsigned")
+    assert rc == cli.EXIT_USAGE_ERROR
+    with pytest.raises(views.ViewError):
+        views.build_revocation_view([unsigned])
+
+
+def test_compromise_view_warns_when_a_claim_marks_no_key_the_head_lists(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """A claim can be perfectly valid and still change nothing.
+
+    If the declaration marks a kid the TRUSTED head does not list, the
+    capability report for that claim is empty: no verifier holding that head
+    will act on it. Publishing it in silence would let an operator believe they
+    had published a declaration when they had published an inert file — the
+    same failure the revocation producer refuses outright, and the reason this
+    task exists at all. It is a warning and not a refusal because the claim is
+    valid: against a different trusted head it may well bite, and what is local
+    is the verdict, not the claim.
+    """
+    claim = json.loads((LEAF_41A / "compromise-view.json").read_text(encoding="utf-8"))[0]
+    # A head that is self-consistent, authentic, and about someone else.
+    kp = keys.from_seed(bytes([11]) * 32)
+    other_kid = "other.example.org/keys/2026-01#ed25519-1"
+    stranger = manifests.build_key_manifest(
+        "other.example.org",
+        1,
+        VALID_FROM,
+        [manifests.key_entry(other_kid, kp.pub, VALID_FROM)],
+        kp,
+        other_kid,
+    )
+    out = tmp_path / "view.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "manifest",
+            "compromise-view",
+            "--trusted-manifest",
+            str(_write_json(tmp_path / "stranger.json", stranger)),
+            "--manifest",
+            str(_write_json(tmp_path / "declaration.json", claim["manifest"])),
+            "--evidence",
+            str(_write_json(tmp_path / "evidence.json", claim["evidence"])),
+            "--out",
+            str(out),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_OK, captured.err
+    assert "marks no key listed in --trusted-manifest" in captured.err
+    report = json.loads(captured.out)
+    assert report["capabilities"] == [{}]
+    # The file is still written: the claim is valid, and the operator may be
+    # building a view for a head they do not hold.
+    assert out.exists()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(["revocation-view", "--help"], id="revocation-view"),
+        pytest.param(["manifest", "compromise-view", "--help"], id="manifest-compromise-view"),
+        pytest.param(["transfer", "view", "--help"], id="transfer-view"),
+    ],
+)
+def test_view_producer_help_exists(capsys: CapSys, argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(argv)
+
+    out = capsys.readouterr().out
+    assert exc_info.value.code == 0
+    assert "--out" in out
+
+
+def test_compromise_view_reproduces_the_corpus_view_of_41a(tmp_path: Path, capsys: CapSys) -> None:
+    corpus = json.loads((LEAF_41A / "compromise-view.json").read_text(encoding="utf-8"))
+    out = tmp_path / "compromise-view.json"
+
+    capsys.readouterr()
+    rc = cli.main(_compromise_view_argv(tmp_path, LEAF_41A, out))
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert rc == cli.EXIT_OK
+    assert canon.canonical_bytes(json.loads(out.read_text(encoding="utf-8"))) == (
+        canon.canonical_bytes(corpus)
+    )
+    assert report["claims"] == 1
+    assert report["capabilities"][0][CORPUS_COMPROMISED_KID] == {
+        "floor": "established",
+        "cutoff_signer": "eligible",
+        "anchor_evidence": "present_unverified",
+        "cutoff": "not_evaluated",
+    }
+    # A claim that both establishes the floor and could date a cutoff, carrying
+    # anchor material: nothing for the operator to be warned about.
+    assert "warning:" not in captured.err
+
+
+def test_transfer_view_reproduces_the_corpus_view_of_35a(tmp_path: Path, capsys: CapSys) -> None:
+    corpus = json.loads((LEAF_35A / "transfer-view.json").read_text(encoding="utf-8"))
+    out = tmp_path / "transfer-view.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "transfer",
+            "view",
+            "--record",
+            str(_write_json(tmp_path / "record.json", corpus[0]["record"])),
+            "--evidence",
+            str(_write_json(tmp_path / "evidence.json", corpus[0]["evidence"])),
+            "--out",
+            str(out),
+        ]
+    )
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == cli.EXIT_OK
+    assert canon.canonical_bytes(json.loads(out.read_text(encoding="utf-8"))) == (
+        canon.canonical_bytes(corpus)
+    )
+    assert report["claims"] == 1
+
+
+def test_revocation_view_builds_the_array_the_verifier_honors(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The revocation view's oracle is its consumer (F1): the array this verb
+    writes is the one `verify --revocations` reads, and the corpus record it
+    wraps is one the verifier honors against that leaf's own receipt."""
+    record = LEAF_15 / "revocation.json"
+    out = tmp_path / "revocation-view.json"
+
+    capsys.readouterr()
+    rc = cli.main(["revocation-view", "--record", str(record), "--out", str(out)])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == cli.EXIT_OK
+    assert report["records"] == 1
+    assert report["verified_against_manifest"] is False
+    view = json.loads(out.read_text(encoding="utf-8"))
+    assert isinstance(view, list)
+    assert canon.canonical_bytes(view) == canon.canonical_bytes(
+        [json.loads(record.read_text(encoding="utf-8"))]
+    )
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "verify",
+            str(LEAF_15 / "envelope.json"),
+            "--trust-dir",
+            str(_corpus_trust_dir(tmp_path, LEAF_15, "trust-15")),
+            "--revocations",
+            str(out),
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert rc == cli.EXIT_VERIFICATION_FAILED
+    assert result["revocation"] == "revoked"
+
+
+def test_compromise_view_of_41m_makes_the_receipt_fail(tmp_path: Path, capsys: CapSys) -> None:
+    """41m's head RETRACTS the compromise marking; the view re-establishes the
+    status floor. The receipt therefore verifies without the rail and fails
+    with it — which is the whole reason the rail exists (D7)."""
+    out = tmp_path / "compromise-view.json"
+    assert cli.main(_compromise_view_argv(tmp_path, LEAF_41M, out)) == cli.EXIT_OK
+    trust = str(_corpus_trust_dir(tmp_path, LEAF_41M, "trust-41m"))
+    envelope = str(LEAF_41M / "envelope.json")
+
+    capsys.readouterr()
+    rc_without = cli.main(["verify", envelope, "--trust-dir", trust])
+    without = json.loads(capsys.readouterr().out)
+
+    capsys.readouterr()
+    rc_with = cli.main(["verify", envelope, "--trust-dir", trust, "--compromise-view", str(out)])
+    with_view = json.loads(capsys.readouterr().out)
+
+    assert (rc_without, without["ok"]) == (cli.EXIT_OK, True)
+    assert (rc_with, with_view["ok"]) == (cli.EXIT_VERIFICATION_FAILED, False)
+    assert any("compromised" in error for error in with_view["errors"])
+
+
+def test_a_compromise_view_wrapped_in_an_object_is_refused_by_the_consumer(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The mutation §5 names for T4.1: a producer that wrapped its array as
+    `{"claims": [...]}` would write a file the rail refuses outright. Pinning
+    the refusal here is what makes the array shape a tested contract rather
+    than a coincidence of how the builder happens to return."""
+    out = tmp_path / "compromise-view.json"
+    assert cli.main(_compromise_view_argv(tmp_path, LEAF_41M, out)) == cli.EXIT_OK
+    wrapped = _write_json(
+        tmp_path / "wrapped.json", {"claims": json.loads(out.read_text(encoding="utf-8"))}
+    )
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "verify",
+            str(LEAF_41M / "envelope.json"),
+            "--trust-dir",
+            str(_corpus_trust_dir(tmp_path, LEAF_41M, "trust-41m-wrapped")),
+            "--compromise-view",
+            str(wrapped),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "must contain a JSON array" in captured.err
+
+
+# --- T4.3: refusals and the capability report -------------------------------
+
+
+@pytest.mark.parametrize(
+    ("verb", "pair_flag"),
+    [
+        pytest.param(["transfer", "view"], "--record", id="transfer-view"),
+        pytest.param(["manifest", "compromise-view"], "--manifest", id="compromise-view"),
+    ],
+)
+def test_view_producers_refuse_unequal_pair_lists(
+    tmp_path: Path, capsys: CapSys, verb: list[str], pair_flag: str
+) -> None:
+    """Pairs match by POSITION, so unequal lists mean the operator's idea of
+    which evidence backs which document is not the one the command would use.
+    Zipping to the shorter list would build a view that is well-formed and
+    wrong."""
+    claim = json.loads((LEAF_41A / "compromise-view.json").read_text(encoding="utf-8"))[0]
+    subject = _write_json(tmp_path / "subject.json", claim["manifest"])
+    evidence = _write_json(tmp_path / "evidence.json", claim["evidence"])
+    out = tmp_path / "view.json"
+    argv = [*verb, pair_flag, str(subject), pair_flag, str(subject), "--evidence", str(evidence)]
+    if verb[0] == "manifest":
+        argv += [
+            "--trusted-manifest",
+            str(_write_json(tmp_path / "t.json", _corpus_head(LEAF_41A))),
+        ]
+
+    capsys.readouterr()
+    rc = cli.main([*argv, "--out", str(out)])
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "paired by position" in captured.err
+    assert "Traceback" not in captured.err
+    assert not out.exists()
+
+
+def test_compromise_view_refuses_an_append_file_that_is_not_an_array(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    out = tmp_path / "view.json"
+    append = _write_json(tmp_path / "append.json", {"claims": []})
+
+    capsys.readouterr()
+    rc = cli.main(_compromise_view_argv(tmp_path, LEAF_41A, out, extra=["--append", str(append)]))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "--append" in captured.err
+    assert not out.exists()
+
+
+def test_compromise_view_refuses_an_append_that_would_exceed_the_ceiling(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """64 appended claims plus one new one is 65: the builder's ceiling, read
+    from `verify`, is what refuses — not a second copy of the number here."""
+    claim = json.loads((LEAF_41A / "compromise-view.json").read_text(encoding="utf-8"))[0]
+    append = _write_json(tmp_path / "append.json", [claim] * verify._MAX_COMPROMISE_CLAIMS)
+    out = tmp_path / "view.json"
+
+    capsys.readouterr()
+    rc = cli.main(_compromise_view_argv(tmp_path, LEAF_41A, out, extra=["--append", str(append)]))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert str(verify._MAX_COMPROMISE_CLAIMS) in captured.err
+    assert not out.exists()
+
+
+def test_compromise_view_revalidates_every_appended_claim(tmp_path: Path, capsys: CapSys) -> None:
+    """An existing view is the obvious vector for a poisoned one: a claim that
+    would not be BUILT today must not survive merely because it was already in
+    the file."""
+    claim = copy.deepcopy(
+        json.loads((LEAF_41A / "compromise-view.json").read_text(encoding="utf-8"))[0]
+    )
+    claim["evidence"]["leaf_index"] = -1
+    append = _write_json(tmp_path / "append.json", [claim])
+    out = tmp_path / "view.json"
+
+    capsys.readouterr()
+    rc = cli.main(_compromise_view_argv(tmp_path, LEAF_41A, out, extra=["--append", str(append)]))
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "leaf_index" in captured.err
+    assert not out.exists()
+
+
+def test_compromise_view_refuses_to_write_over_an_input(tmp_path: Path, capsys: CapSys) -> None:
+    claim = json.loads((LEAF_41A / "compromise-view.json").read_text(encoding="utf-8"))[0]
+    evidence = _write_json(tmp_path / "evidence.json", claim["evidence"])
+    before = evidence.read_text(encoding="utf-8")
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "manifest",
+            "compromise-view",
+            "--trusted-manifest",
+            str(_write_json(tmp_path / "trusted.json", _corpus_head(LEAF_41A))),
+            "--manifest",
+            str(_write_json(tmp_path / "declaration.json", claim["manifest"])),
+            "--evidence",
+            str(evidence),
+            "--out",
+            str(evidence),
+        ]
+    )
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "--evidence and --out must be different paths" in capsys.readouterr().err
+    assert evidence.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        pytest.param("--trusted-manifest", id="trusted-manifest"),
+        pytest.param("--manifest", id="manifest"),
+        pytest.param("--evidence", id="evidence"),
+        pytest.param("--append", id="append"),
+    ],
+)
+def test_compromise_view_refuses_a_duplicate_key_on_any_input(
+    tmp_path: Path, capsys: CapSys, flag: str
+) -> None:
+    """D11: every input reads through `canon.loads_strict`. A file whose
+    meaning depends on which duplicate a parser happened to keep is a file the
+    operator did not read, whichever flag named it."""
+    claim = json.loads((LEAF_41A / "compromise-view.json").read_text(encoding="utf-8"))[0]
+    duplicated = tmp_path / "duplicated.json"
+    duplicated.write_text('{"issuer": "a", "issuer": "b"}', encoding="utf-8")
+    out = tmp_path / "view.json"
+    argv = _compromise_view_argv(tmp_path, LEAF_41A, out)
+    if flag == "--append":
+        argv += ["--append", str(duplicated)]
+    else:
+        argv[argv.index(flag) + 1] = str(duplicated)
+
+    capsys.readouterr()
+    rc = cli.main(argv)
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "Traceback" not in captured.err
+    assert not out.exists()
+    assert claim["manifest"]["issuer"] == "store.example.com"  # fixture sanity
+
+
+def test_revocation_view_refuses_a_status_outside_the_registry(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """`revoke` is not a §12 status. A view carrying one would be authenticated
+    and then silently ignored by every verifier that reads it."""
+    record = copy.deepcopy(json.loads((LEAF_15 / "revocation.json").read_text(encoding="utf-8")))
+    record["status"] = "revoke"
+    out = tmp_path / "view.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "revocation-view",
+            "--record",
+            str(_write_json(tmp_path / "record.json", record)),
+            "--out",
+            str(out),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "status" in captured.err
+    assert not out.exists()
+
+
+def test_revocation_view_with_manifest_refuses_a_record_signed_by_a_retired_key(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """`--manifest` turns on `revocation.verify_record`, whose signer must be
+    ACTIVE. The same record is accepted without the flag, which is what makes
+    this a test of the flag rather than of the record."""
+    seed, manifest_v1, receipt = _revoke_setup(tmp_path, license_block={"revocability": "policy"})
+    record = tmp_path / "record.json"
+    assert cli.main(_revoke_argv(receipt, manifest_v1, seed, record)) == cli.EXIT_OK
+
+    seed2, pub2 = _keygen(tmp_path, "issuer-2")
+    kid2 = f"{ISSUER}/keys/test-2#ed25519-1"
+    manifest_v2 = tmp_path / "manifest-v2.json"
+    assert (
+        cli.main(
+            [
+                "manifest",
+                "rotate",
+                "--in",
+                str(manifest_v1),
+                "--signing-kid",
+                KID,
+                "--signing-seed",
+                str(seed),
+                "--new-kid",
+                kid2,
+                "--new-pub",
+                str(pub2),
+                "--valid-from",
+                VALID_FROM,
+                "--retire-kid",
+                KID,
+                "--issued-at",
+                "2026-08-01T00:00:00Z",
+                "--out",
+                str(manifest_v2),
+            ]
+        )
+        == 0
+    )
+    assert (
+        manifests.find_key(json.loads(manifest_v2.read_text(encoding="utf-8")), KID)["status"]
+        == "retired"
+    )
+
+    unchecked = tmp_path / "unchecked-view.json"
+    assert (
+        cli.main(["revocation-view", "--record", str(record), "--out", str(unchecked)])
+        == cli.EXIT_OK
+    )
+
+    out = tmp_path / "view.json"
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "revocation-view",
+            "--record",
+            str(record),
+            "--manifest",
+            str(manifest_v2),
+            "--out",
+            str(out),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "active" in captured.err
+    assert not out.exists()
+    assert seed2.exists()  # fixture sanity: the rotation really used a second key
+
+
+@pytest.mark.parametrize(
+    ("leaf", "axis", "value"),
+    [
+        pytest.param(LEAF_41P, "cutoff_signer", "ineligible", id="41p-ineligible"),
+        pytest.param(LEAF_41M, "anchor_evidence", "absent", id="41m-absent"),
+    ],
+)
+def test_compromise_view_warns_on_a_claim_that_cannot_do_what_it_looks_like(
+    tmp_path: Path, capsys: CapSys, leaf: Path, axis: str, value: str
+) -> None:
+    """The two axes §5 names: a declaration whose signer cannot date a cutoff,
+    and one carrying no anchor material at all. Both are published every day by
+    operators who read them as more than they are, so both are said out loud —
+    and both are said RELATIVE to the head that was passed."""
+    out = tmp_path / "view.json"
+
+    capsys.readouterr()
+    rc = cli.main(_compromise_view_argv(tmp_path, leaf, out))
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert rc == cli.EXIT_OK
+    assert report["capabilities"][0][CORPUS_COMPROMISED_KID][axis] == value
+    assert f"{axis}: {value}" in captured.err
+    assert (
+        "against the trusted manifest given; a verifier holding a different head or chain "
+        "may classify differently"
+    ) in captured.err
+
+
+def test_compromise_view_reports_an_established_cutoff_only_under_both_pins(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """Without the two pins the honest answer is that the question was not
+    asked; with them, 41a's declaration dates a cutoff at the instant its own
+    anchor material supports."""
+    out = tmp_path / "view.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        _compromise_view_argv(
+            tmp_path,
+            LEAF_41A,
+            out,
+            extra=[
+                "--log-keys",
+                str(LEAF_41A / "log-keys.json"),
+                "--anchor-policy",
+                str(LEAF_41A / "anchor-policy.json"),
+            ],
+        )
+    )
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == cli.EXIT_OK
+    assert report["capabilities"][0][CORPUS_COMPROMISED_KID]["cutoff"] == (
+        "established:2025-08-01T00:00:00Z"
+    )
+
+
+def test_compromise_view_refuses_one_pin_without_the_other(tmp_path: Path, capsys: CapSys) -> None:
+    out = tmp_path / "view.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        _compromise_view_argv(
+            tmp_path, LEAF_41A, out, extra=["--log-keys", str(LEAF_41A / "log-keys.json")]
+        )
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "--log-keys and --anchor-policy" in captured.err
+    assert not out.exists()
+
+
+# --- T4.2: the whole incident, with shipped verbs only ----------------------
+
+
+def _compromise_incident(tmp_path: Path) -> dict[str, Path]:
+    """Run the runbook's Case A up to the published declaration.
+
+    keygen -> manifest init (v1, K) -> rotate adding K2 (v2, signed by K) ->
+    rotate marking K compromised (v3, signed by K2, because the thief holds K
+    too). Returns the paths a caller needs to go on: the receipt K signed, the
+    three manifests, and the seed material of the log signer.
+    """
+    seed, _pub = _keygen(tmp_path, "incident-issuer")
+    v1 = _manifest_init(tmp_path, seed, "incident-v1.json")
+    receipt = _issue(
+        tmp_path,
+        seed,
+        _write_payload(tmp_path, "incident-payload.json"),
+        "incident-envelope.json",
+    )
+
+    seed2, pub2 = _keygen(tmp_path, "incident-issuer-2")
+    kid2 = f"{ISSUER}/keys/test-2#ed25519-1"
+    v2 = tmp_path / "incident-v2.json"
+    assert (
+        cli.main(
+            [
+                "manifest",
+                "rotate",
+                "--in",
+                str(v1),
+                "--signing-kid",
+                KID,
+                "--signing-seed",
+                str(seed),
+                "--new-kid",
+                kid2,
+                "--new-pub",
+                str(pub2),
+                "--valid-from",
+                "2026-02-01T00:00:00Z",
+                "--issued-at",
+                "2026-02-01T00:00:00Z",
+                "--out",
+                str(v2),
+            ]
+        )
+        == 0
+    )
+    v3 = tmp_path / "incident-v3.json"
+    assert (
+        cli.main(
+            [
+                "manifest",
+                "rotate",
+                "--in",
+                str(v2),
+                "--signing-kid",
+                kid2,
+                "--signing-seed",
+                str(seed2),
+                "--compromise-kid",
+                KID,
+                "--issued-at",
+                "2026-03-01T00:00:00Z",
+                "--out",
+                str(v3),
+            ]
+        )
+        == 0
+    )
+    return {"receipt": receipt, "v1": v1, "v2": v2, "v3": v3}
+
+
+def test_compromise_incident_closes_with_shipped_verbs_only(tmp_path: Path, capsys: CapSys) -> None:
+    """The chain an operator actually walks, end to end, with nothing written
+    by hand: two rotations, the declaration logged and proved, the view built,
+    and a verifier that stops honoring the receipt because of it.
+
+    The same receipt verifies OK without the view — K is still `active` in the
+    head the buyer holds — which is precisely why the view has to exist and be
+    producible by a shipped verb (F1).
+    """
+    paths = _compromise_incident(tmp_path)
+    entry_out = tmp_path / "declaration-entry.json"
+    assert (
+        cli.main(
+            [
+                "log",
+                "entry",
+                "--type",
+                "key-manifest",
+                "--in",
+                str(paths["v3"]),
+                "--out",
+                str(entry_out),
+            ]
+        )
+        == cli.EXIT_OK
+    )
+    _log_dir, _checkpoint, evidence, log_keys = _signed_log_with(tmp_path, entry_out)
+
+    view = tmp_path / "compromise-view.json"
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "manifest",
+            "compromise-view",
+            "--trusted-manifest",
+            str(paths["v2"]),
+            "--chain",
+            str(paths["v1"]),
+            "--manifest",
+            str(paths["v3"]),
+            "--evidence",
+            str(evidence),
+            "--out",
+            str(view),
+        ]
+    )
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert rc == cli.EXIT_OK
+    assert report["capabilities"][0][KID] == {
+        "floor": "established",
+        "cutoff_signer": "eligible",
+        "anchor_evidence": "absent",
+        "cutoff": "not_evaluated",
+    }
+    # `log prove` attaches no anchor, so the declaration gives the floor and
+    # nothing more — said out loud rather than left for the operator to infer.
+    assert "anchor_evidence: absent" in captured.err
+
+    trust = tmp_path / "incident-trust"
+    trust.mkdir()
+    for name in ("v1", "v2"):
+        (trust / f"{name}.json").write_text(
+            paths[name].read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    anchor_policy = _anchor_policy_file(tmp_path, name="incident-anchor-policy.json")
+    base = [
+        "verify",
+        str(paths["receipt"]),
+        "--trust-dir",
+        str(trust),
+        "--log-keys",
+        str(log_keys),
+        "--anchor-policy",
+        str(anchor_policy),
+    ]
+
+    capsys.readouterr()
+    rc_without = cli.main(base)
+    without = json.loads(capsys.readouterr().out)
+
+    capsys.readouterr()
+    rc_with = cli.main([*base, "--compromise-view", str(view)])
+    with_view = json.loads(capsys.readouterr().out)
+
+    assert (rc_without, without["ok"]) == (cli.EXIT_OK, True)
+    assert (rc_with, with_view["ok"]) == (cli.EXIT_VERIFICATION_FAILED, False)
+    assert "compromise_rescue_requires_anchored_receipt" in with_view["warnings"]
+
+
+def test_compromise_incident_does_not_close_without_the_append_step(tmp_path: Path) -> None:
+    """The mutation §5 names for T4.2: drop a step and the chain stops. An
+    entry that was built but never appended cannot be proved, so no evidence
+    exists for the view to be built around."""
+    paths = _compromise_incident(tmp_path)
+    entry_out = tmp_path / "declaration-entry.json"
+    assert (
+        cli.main(
+            [
+                "log",
+                "entry",
+                "--type",
+                "key-manifest",
+                "--in",
+                str(paths["v3"]),
+                "--out",
+                str(entry_out),
+            ]
+        )
+        == cli.EXIT_OK
+    )
+    log_dir = _log_init(tmp_path)
+    ed_seed, _ed_pub, mldsa_out = _keygen_hybrid(tmp_path, "log-signer")
+
+    rc = cli.main(
+        [
+            "log",
+            "sign-checkpoint",
+            "--dir",
+            str(log_dir),
+            "--ed25519-key",
+            str(ed_seed),
+            "--mldsa-key",
+            str(mldsa_out),
+            "--name",
+            LOG_NAME,
+        ]
+    )
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert not (log_dir / "checkpoint").exists()
+    assert entry_out.exists()  # the entry was built; it is the LOG that is empty
+
+
+def test_compromise_view_refuses_evidence_for_another_manifest(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The mutation §5 names for T4.2 in its sharpest form: evidence proving
+    that some OTHER document was logged. §19.3 item 4 exists for exactly this,
+    and reading the hash off the evidence instead of recomputing it from the
+    manifest would make the check vacuous."""
+    paths = _compromise_incident(tmp_path)
+    entry_out = tmp_path / "wrong-entry.json"
+    assert (
+        cli.main(
+            [
+                "log",
+                "entry",
+                "--type",
+                "key-manifest",
+                "--in",
+                str(paths["v2"]),
+                "--out",
+                str(entry_out),
+            ]
+        )
+        == cli.EXIT_OK
+    )
+    _log_dir, _checkpoint, evidence, _log_keys = _signed_log_with(tmp_path, entry_out)
+    view = tmp_path / "compromise-view.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "manifest",
+            "compromise-view",
+            "--trusted-manifest",
+            str(paths["v2"]),
+            "--manifest",
+            str(paths["v3"]),
+            "--evidence",
+            str(evidence),
+            "--out",
+            str(view),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "does not commit to this document" in captured.err
+    assert not view.exists()

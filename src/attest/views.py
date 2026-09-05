@@ -237,10 +237,28 @@ def _validated_entry(entry: dict[str, Any], what: str) -> dict[str, Any]:
 
 
 def _signature_block_kid(block: object, what: str) -> str:
-    """Validate a `{kid, sig, sig_ml_dsa_65?}` block and return its `kid`."""
+    """Validate the recognized members of a signature block and return its `kid`.
+
+    Unknown members are tolerated; `kid`, `sig` and any `sig_ml_dsa_65` are
+    validated. That combination is not a compromise between two rules, it IS
+    the rule every consumer follows: `manifests.verify_signature_block`
+    authenticates a block carrying a member it does not know while requiring
+    well-formed material for the ones it does, and `revocation.verify_record`,
+    `transfer.verify_record` and the `grant`/`authority` predicates all inherit
+    that. A builder that closed the block would refuse records those functions
+    authenticate — the produced view could not carry a record the verifier
+    accepts — and one that stopped validating `sig` would emit an artifact no
+    verifier could ever authenticate. Both were live defects here, in that
+    order, one week apart in the same file.
+
+    The extra member is not lost or hidden: every hash this module computes is
+    taken over the whole document.
+    """
     if not isinstance(block, dict):
         raise ViewError(f"{what} 'signature' must be an object, got {type(block).__name__}")
-    _closed_object(block, _SIGNATURE_REQUIRED, _SIGNATURE_OPTIONAL, f"{what} 'signature'")
+    missing = sorted(member for member in _SIGNATURE_REQUIRED if member not in block)
+    if missing:
+        raise ViewError(f"{what} 'signature' is missing required member(s): {missing}")
     kid = block["kid"]
     if not isinstance(kid, str) or not kid:
         raise ViewError(f"{what} 'signature.kid' must be a non-empty string: {kid!r}")
