@@ -83,6 +83,13 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   manifest member`. A bundle carrying one manifest per issuer, which is what
   this package writes, is unaffected.
 
+- Normative, for the container work above: v0.1 §14.4 is amended three times in
+  this release — revision log rev 14 (the container resource floor and the
+  `resource-limit` outcome class), rev 15 (the floor's fourth axis, the size of
+  the container as stored), and rev 16 (both reference importers reading the
+  container through one reading, at that floor). Together with rev 13, cited
+  above, they are every normative amendment between 0.9.1 and this release.
+
 ### Added
 
 - **`BundleTooLargeError`, so a caller can tell "I did not read this" from "this

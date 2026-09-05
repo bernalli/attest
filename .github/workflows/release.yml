@@ -240,6 +240,17 @@ jobs:
           verifiers=(attest-verifier-*.tgz)
           test "${#verifiers[@]}" -eq 1 \
             || { echo "expected exactly 1 verifier tarball, found ${#verifiers[@]}: ${verifiers[*]}"; exit 1; }
+          # The manifest below globs dist/ under dotglob and upload-artifact
+          # ships no hidden file, so anything here the artifact will not carry
+          # splits the two and fails `sha256sum -c` in the publish job -- after
+          # the tag is pushed. `uv build`'s `.gitignore` is deleted at the source
+          # above; this refuses the NEXT one here, where a re-run is free,
+          # instead of discovering it there. It is the same sentence the pypi
+          # job already says about the downloaded artifact, said about the bytes
+          # that produce it.
+          shipped=(dist/*)
+          test "${#shipped[@]}" -eq 2 \
+            || { echo "dist/ must hold only the wheel and the sdist before the manifest is written, found ${#shipped[@]}: ${shipped[*]}"; exit 1; }
           sha256sum dist/* sbom-python.cdx.json sbom-npm.cdx.json attest-verifier-*.tgz \
             | tee gated-artifacts.sha256
           # Same idiom as the desktop job: prove the file we ship is one that
