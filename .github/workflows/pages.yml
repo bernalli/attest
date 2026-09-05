@@ -27,7 +27,21 @@ jobs:
       - run: npm run build --prefix verifiers/ts
       - run: npm test --prefix verifiers/ts
       - run: npm ci --prefix site
-      - run: npm test --prefix site
+      # The guard below is pointed at defects it must name before it is trusted to have
+      # found none. A check that has only ever been seen passing is not known to catch
+      # anything — the same reason gate G1 in desktop/test carries a negative self-test.
+      - run: python3 tools/check_test_census.py --selftest
+      # The suite's total is ASSERTED, not printed. `site/test/rail-state.property.test.ts`
+      # imported `desktop/src/app.ts`; this job installs site/node_modules and not
+      # desktop/node_modules, so `attest-verifier` did not resolve and vitest collected
+      # zero tests from the file. Sixteen assertions ran on developer machines and in no
+      # job here, and the only trace was a total that went UP — the ten new unit tests
+      # more than covered the eight that vanished. A number nobody compares is not a
+      # gate; tools/test-census.json is the comparison.
+      - run: |
+          npm test --prefix site -- --reporter=default --reporter=json \
+            --outputFile.json="$RUNNER_TEMP/site-tests.json"
+      - run: python3 tools/check_test_census.py site --report "$RUNNER_TEMP/site-tests.json"
       - run: npm run build --prefix site
       # The two container readers are judged against each other on archives
       # nobody chose. A disagreement here is the defect the canonical reader
@@ -45,14 +59,19 @@ jobs:
   # The desktop verifier borrows site/src modules by relative path, so its suite is the
   # only thing that notices when a change here breaks that seam — in particular the pin
   # that the site still emits exactly one .verdict node, which the desktop card replaces
-  # to remove the binary headline. `needs: test` inherits the verifiers/ts rebuild
-  # ordering rather than duplicating it: the site suite runs against the COMPILED dist,
-  # so a stale one produces false reds that read like plumbing faults.
+  # to remove the binary headline.
   #
-  # The build is now part of the gate: `npm run e2e` opens the BUILT artifact over
-  # file://, so a job that skipped the build would have nothing to open.
+  # This job used to declare `needs: test`, and that made it blind on exactly the change
+  # it exists to catch. A commit that edits a SHARED source — site/src/intake.ts is the
+  # case that produced this comment — can leave the site suite red and the desktop suite
+  # is then never asked: GitHub reports it `skipping`, which reads like "not affected"
+  # rather than "not measured". The two shells are two verdicts on the same shared code
+  # and each has to reach its own. It rebuilds verifiers/ts itself (below), so it needed
+  # nothing from that job but the ordering.
+  #
+  # The build is part of the gate: `npm run e2e` opens the BUILT artifact over file://,
+  # so a job that skipped the build would have nothing to open.
   desktop:
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -73,7 +92,13 @@ jobs:
       - run: npm ci --prefix site
       - run: npm ci --prefix desktop
       - run: npm run typecheck --prefix desktop
-      - run: npm test --prefix desktop
+      # Same assertion the site job makes on its own suite, for the same reason: this is
+      # where the eight desktop rail-transition assertions now live, and their dependency
+      # — the desktop app, and through it attest-verifier — is installed here.
+      - run: |
+          npm test --prefix desktop -- --reporter=default --reporter=json \
+            --outputFile.json="$RUNNER_TEMP/desktop-tests.json"
+      - run: python3 tools/check_test_census.py desktop --report "$RUNNER_TEMP/desktop-tests.json"
       - run: npm run build --prefix desktop
       # All three engines here, and the install must SUCCEED: a cross-browser gate that
       # skips when a browser is missing produces a green nobody earned. WebKit runs only

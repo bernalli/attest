@@ -1,0 +1,58 @@
+{
+  "why": "The expected test count of each browser-shell suite, per file. A file that stops being collected lowers a total nobody compares; asserted here, it turns the build red instead. See tools/check_test_census.py.",
+  "regenerate": "npm test --prefix <suite> -- --reporter=default --reporter=json --outputFile.json=/tmp/<suite>-tests.json && python3 tools/check_test_census.py <suite> --report /tmp/<suite>-tests.json --update",
+  "suites": {
+    "site": {
+      "total": 872,
+      "files": {
+        "test/b64u.test.ts": 3,
+        "test/bundle.test.ts": 71,
+        "test/conformance.test.ts": 248,
+        "test/container-corpus.test.ts": 94,
+        "test/container-properties.test.ts": 6,
+        "test/container.test.ts": 15,
+        "test/deflate.test.ts": 9,
+        "test/demo-wiring.test.ts": 15,
+        "test/dev-server.test.ts": 6,
+        "test/diagnostic-corpus.test.ts": 6,
+        "test/diagnostic-rendering-adversarial.test.ts": 25,
+        "test/diagnostic.test.ts": 38,
+        "test/exhibits.test.ts": 21,
+        "test/explain.test.ts": 44,
+        "test/intake-views.property.test.ts": 12,
+        "test/intake.test.ts": 54,
+        "test/main-verify-throws.test.ts": 3,
+        "test/main.test.ts": 25,
+        "test/page-claims.test.ts": 6,
+        "test/pixels.test.ts": 26,
+        "test/probe.test.ts": 11,
+        "test/rail-state.property.test.ts": 8,
+        "test/render-demo.test.ts": 15,
+        "test/render.test.ts": 15,
+        "test/sample-transparency.test.ts": 4,
+        "test/smoke.test.ts": 2,
+        "test/stored-floor.test.ts": 29,
+        "test/tamper.test.ts": 19,
+        "test/unsigned-label-adversarial.test.ts": 15,
+        "test/untrusted-text.test.ts": 16,
+        "test/vectors-loader.test.ts": 7,
+        "test/vl6-duplicate-members-adversarial.test.ts": 4
+      }
+    },
+    "desktop": {
+      "total": 547,
+      "files": {
+        "test/app.test.ts": 57,
+        "test/card-hostile.test.ts": 35,
+        "test/card.test.ts": 14,
+        "test/container-inherited.test.ts": 66,
+        "test/inherited-copy.test.ts": 11,
+        "test/inline.test.ts": 39,
+        "test/provenance-characterization.test.ts": 4,
+        "test/rail-state.property.test.ts": 8,
+        "test/shell-policy.test.ts": 300,
+        "test/verdict.test.ts": 13
+      }
+    }
+  }
+}

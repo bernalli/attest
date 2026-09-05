@@ -3,18 +3,26 @@ import { describe, expect, it, vi } from 'vitest'
 import fc from 'fast-check'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL as NodeURL } from 'node:url'
-import { initApp } from '../src/main.js'
-import { MAX_STORED_BYTES } from '../src/container.js'
+import { initDesktopApp } from '../src/app.js'
+import { MAX_STORED_BYTES } from '../../site/src/container.js'
 
 /**
- * The desktop shell asserts this same contract over its own wiring, in
- * `desktop/test/rail-state.property.test.ts`. The two files are deliberate twins rather
- * than one file parameterised over both shells, and the reason is the defect that split
- * them: this file used to mount the desktop app too, by importing `desktop/src/app.ts`.
- * The `site` job installs `site/node_modules` and not `desktop/node_modules`, so
- * `attest-verifier` did not resolve through that import and vitest collected NO tests
- * from this file — sixteen assertions that ran on developer machines and nowhere else.
- * A test belongs in the package whose dependencies it needs.
+ * The desktop half of the rail-transition contract, twin of
+ * `site/test/rail-state.property.test.ts`.
+ *
+ * Both halves used to live in the site suite, in one file parameterised over the two
+ * shells — which meant the site suite imported `desktop/src/app.ts`. The `site` job
+ * installs `site/node_modules` and not `desktop/node_modules`, so `attest-verifier` did
+ * not resolve through that import, vitest failed to transform the file, and it
+ * contributed ZERO tests: eight desktop assertions and eight site ones ran on developer
+ * machines and nowhere else. The rule that follows is the reason this file exists: a
+ * test belongs in the package whose dependencies it needs, and the desktop app's
+ * dependencies are installed here.
+ *
+ * What this pins is the desktop shell's own wiring — `initDesktopApp` over
+ * `desktop/index.html` — against the shared intake it borrows from `site/src`. It is
+ * the only place that notices when a change to that shared code refuses a rail here
+ * while still admitting it there.
  *
  * These twins drift silently unless someone carries a change across, so change one and
  * change the other.
@@ -22,19 +30,19 @@ import { MAX_STORED_BYTES } from '../src/container.js'
 
 const rails = ['revocation-view.json', 'transfer-view.json', 'compromise-view.json', 'revocation-evidence.json'] as const
 const bytes = (s: string) => new TextEncoder().encode(s)
-const sample = new Uint8Array(readFileSync(fileURLToPath(new NodeURL('../public/sample/demo.attest', import.meta.url))))
+const sample = new Uint8Array(readFileSync(fileURLToPath(new NodeURL('../../site/public/sample/demo.attest', import.meta.url))))
 const results = () => document.getElementById('results')!
 function mount() {
   const html = readFileSync(fileURLToPath(new NodeURL('../index.html', import.meta.url)), 'utf8')
   document.body.innerHTML = /<body[^>]*>([\s\S]*)<\/body>/.exec(html)![1]
-  return initApp(document)
+  return initDesktopApp(document)
 }
 function drop(name: string, size: number, arrayBuffer: () => Promise<ArrayBuffer>) {
   const event = new Event('drop')
   Object.defineProperty(event, 'dataTransfer', { value: { files: [{ name, size, arrayBuffer }] } })
   document.getElementById('dropzone')!.dispatchEvent(event)
 }
-describe('site: rail transitions', () => {
+describe('desktop: rail transitions', () => {
   it.each([40_000_001, MAX_STORED_BYTES + 1])('refuses an oversized evidence file (%i bytes) without cancelling the current receipt', async size => {
     const app = mount()
     app.handleBytes('sample.attest', sample)
