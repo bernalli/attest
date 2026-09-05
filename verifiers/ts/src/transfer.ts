@@ -36,6 +36,7 @@ import {
 } from './revocation.js'
 import { parseStrictUtc, parseIsoLenient, validStage3UtcTimestamp } from './dates.js'
 import { b64uDecode, b64uEncode } from './b64u.js'
+import { RECEIPT_ID_RE } from './ids.js'
 import { verifyStrict } from './ed25519.js'
 import type { LogKey } from './tlog.js'
 import { encodeEntry, TlogError } from './tlog.js'
@@ -57,8 +58,6 @@ export const LABEL_TRANSFER_AUTHORIZATION = new TextEncoder().encode('Attest-tra
 
 // Fixed literal (v0.2 §8/§17.1) — the fourth transparency-log entry type.
 const LOG_ENTRY_TYPE = 'transfer-record'
-
-const RECEIPT_ID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
 
 const TRANSFER_RECORD_MEMBERS = new Set([
   'receipt_id', 'new_receipt_id', 'new_holder_pubkey', 'transferred_at', 'holder_authorization', 'signature',

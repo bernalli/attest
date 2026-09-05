@@ -140,6 +140,10 @@ export const revocationViewOversize = (n: number, max: number) =>
   `revocation view exceeds ${max} records (${n} supplied), cannot rule out a transfer`
 export const revocationViewOversizeRevocable = (n: number, max: number) =>
   `revocation view exceeds ${max} records (${n} supplied), cannot certify a revocable receipt`
+// Byte-identical to verify.py's literal for the same condition. A refund
+// window whose deadline is not representable cannot be evaluated, and what
+// cannot be evaluated must not be certified.
+export const REFUND_WINDOW_UNREPRESENTABLE = 'refund window is outside the representable timestamp range'
 
 // G1 normative ceilings (attest-versioning.md §5 amendment) — byte-identical
 // to validate.py / manifests.py.

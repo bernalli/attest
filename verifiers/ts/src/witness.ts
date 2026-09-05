@@ -12,7 +12,7 @@
 import { AnchorPolicy, validatePolicy, verifyAnchor } from './anchor.js'
 import { b64uDecode } from './b64u.js'
 import { canonicalBytes, loadsStrict } from './canon.js'
-import { parseStrictUtc } from './dates.js'
+import { parseStrictUtc, MAX_REPRESENTABLE_UNIX_SECONDS } from './dates.js'
 import {
   ML_DSA_65_PK_LEN,
   ML_DSA_65_SIG_LEN,
@@ -423,11 +423,10 @@ const TIMESTAMP_LEN = 8
 const ED25519_SIG_LEN = 64
 const COSIGNATURE_BLOB_LEN = KEY_ID_LEN + TIMESTAMP_LEN + ED25519_SIG_LEN
 
-// Both cores must agree on which timestamps are representable at all:
-// Python's `datetime` stops at year 9999 while JavaScript's `Date` reaches
-// year 275760, so a cosignature past this bound would be rejected by one core
-// and accepted by the other. 253402300799 is 9999-12-31T23:59:59Z.
-export const MAX_COSIGNATURE_TIMESTAMP = 253402300799
+// Both cores must agree on which timestamps are representable at all; the
+// bound itself, and why it exists, live in `dates.ts`. Kept as a named export
+// because it is part of this module's published surface.
+export const MAX_COSIGNATURE_TIMESTAMP = MAX_REPRESENTABLE_UNIX_SECONDS
 
 export const WARN_INDEPENDENCE_NOT_ESTABLISHED = 'witness_independence_not_established'
 

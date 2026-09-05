@@ -237,13 +237,19 @@ describe('revocation', () => {
       // "valid" (effective) record for this receipt — this isolates the anchor
       // computation, which runs over ALL authenticated records regardless of
       // receipt_id, from the per-receipt matching logic.
+      //
+      // Both ids are WELL-FORMED ULIDs that simply name other receipts. They
+      // have to be: a malformed receipt_id now fails authentication outright
+      // (see revocation-parity.test.ts), which would make this test pass for
+      // the wrong reason — no record would authenticate and the anchor would be
+      // absent rather than correctly chosen.
       const authRecordEarlier = signRecord(
-        { receipt_id: 'other-receipt-A', status: 'revoked', revoked_at: '2025-01-01T00:00:00Z' },
+        { receipt_id: '01J000000000000000000000AA', status: 'revoked', revoked_at: '2025-01-01T00:00:00Z' },
         kid1,
         seed1,
       )
       const unauthRecordLater = signRecord(
-        { receipt_id: 'other-receipt-B', status: 'revoked', revoked_at: '2099-01-01T00:00:00Z' },
+        { receipt_id: '01J000000000000000000000AB', status: 'revoked', revoked_at: '2099-01-01T00:00:00Z' },
         kidWrong,
         seedWrong,
       )

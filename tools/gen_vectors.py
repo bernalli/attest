@@ -198,6 +198,10 @@ REFUND_WINDOW_DAYS = 14  # vector 23: ISSUED_AT 2025-07-02 -> window end 2025-07
 REVOKED_INSIDE_WINDOW_AT = (
     "2025-07-10T00:00:00Z"  # vector 23a: inside the window (REVOKED_AT 2025-08-01 is outside)
 )
+# vector 23c: `issued_at + REFUND_WINDOW_DAYS days` walks off the representable
+# `datetime` range (year 9999) -- 9999-12-17T23:59:59Z + 14d == 9999-12-31T23:59:59Z
+# is the LAST representable deadline; one day later already overflows.
+WINDOW_OVERFLOW_ISSUED_AT = "9999-12-20T00:00:00Z"
 
 SUPPLEMENTARY_TITLE = (
     "Music \U0001d11e Theme"  # vector 21f/g: U+1D11E, needs a surrogate pair when escaped
@@ -2450,7 +2454,22 @@ def gen_23_revocation_refund_window() -> None:
     authenticated and well-formed (`verify_record` asserted True at
     generation time) so the boundary is exercised purely on the refund-window
     comparison, mirroring the `revoked_policy` / `revocation_against_none`
-    generation-time discipline (vectors 15/16)."""
+    generation-time discipline (vectors 15/16).
+
+    (c) WINDOW_OVERFLOW_ISSUED_AT (9999-12-20) pushes `issued_at +
+    revocation_window_days` past the representable `datetime` range (year
+    9999) -- `_refund_window_end` raises `OverflowError`, which `verify.py`
+    answers as a verification error rather than letting it escape: `errors`
+    gains the literal `"refund window is outside the representable timestamp
+    range"`, `revocation: "unknown"`, `ok: False` (`verify.py` around the
+    `_REVOCABILITY_REFUND_WINDOW` branch of `_classify_revocation`'s nested
+    `_revoked_class_result`; see also `tests/test_verify.py`'s
+    `test_refund_window_overflow_is_a_verification_error` family, which this
+    leaf mirrors into the cross-language corpus). The record is otherwise
+    genuinely authenticated (`verify_record` asserted True at generation
+    time, exactly like (a)/(b)): the overflow fires on the receipt's own
+    `issued_at`/`revocation_window_days`, before the record's `revoked_at` is
+    ever compared against the (unrepresentable) deadline."""
     payload = issue.build_payload(
         **_base_payload_kwargs(
             revocability="refund_window", revocation_window_days=REFUND_WINDOW_DAYS
@@ -2507,6 +2526,43 @@ def gen_23_revocation_refund_window() -> None:
         trust=trust,
         expected=expected_b,
         revocation_record=record_after,
+    )
+
+    overflow_payload = issue.build_payload(
+        **_base_payload_kwargs(
+            revocability="refund_window",
+            revocation_window_days=REFUND_WINDOW_DAYS,
+            issued_at=WINDOW_OVERFLOW_ISSUED_AT,
+        )
+    )
+    _assert_schema_valid(overflow_payload)
+    overflow_envelope = issue.issue(overflow_payload, ISSUER_KP, ISSUER_KID)
+    record_overflow = revocation.build_record(
+        overflow_payload["receipt_id"],
+        "revoked",
+        WINDOW_OVERFLOW_ISSUED_AT,
+        ISSUER_KP,
+        ISSUER_KID,
+    )
+    assert revocation.verify_record(record_overflow, issuer_manifest) is True
+    expected_c = {
+        "signature": "valid",
+        "schema": "valid",
+        "revocation": "unknown",
+        "binding": "not_checked",
+        "trust": "verified",
+        "ok": False,
+        "errors": ["refund window is outside the representable timestamp range"],
+        "warnings": [],
+    }
+    write_vector(
+        "23-revocation-refund-window/c-window-end-unrepresentable",
+        payload=overflow_payload,
+        envelope=overflow_envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected=expected_c,
+        revocation_record=record_overflow,
     )
 
 
@@ -8628,7 +8684,19 @@ def gen_45_revocation_anchor_status() -> None:
     view (`a`: an unrelated receipt_id) and even for the receipt it named
     (`b`: a matching receipt_id, which §12 already refuses to treat as a
     revocation). Post-amendment both report the bare literal `unknown`.
-    """
+
+    (c) A sibling malformation, not a status one: the schema pins `receipt_id`
+    to a ULID (`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`), and a record whose OWN
+    `receipt_id` violates that shape -- `01JBQ0000000000000000OTHER`, 26
+    characters but with an `O` (never in Crockford's base32) in place of a
+    valid one -- fails `revocation.verify_record_signature`'s type/format
+    gate (12.1) exactly like a missing or non-string `receipt_id` would,
+    genuine issuer signature and a REGISTERED `"revoked"` status
+    notwithstanding: it never authenticates, so it can never set T either.
+    `revocability: "policy"` again isolates this from the refund-window
+    arithmetic group 23 exercises -- this is about which records are even
+    ELIGIBLE to authenticate, not about a deadline computed from one that
+    did."""
     payload = issue.build_payload(**_base_payload_kwargs(revocability="policy"))
     _assert_schema_valid(payload)
     envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)
@@ -8659,6 +8727,21 @@ def gen_45_revocation_anchor_status() -> None:
             expected=expected,
             revocation_record=record,
         )
+
+    malformed_receipt_id_record = revocation.build_record(
+        "01JBQ0000000000000000OTHER", "revoked", REVOKED_AT, ISSUER_KP, ISSUER_KID
+    )
+    issuer_manifest = trust["manifests"][ISSUER_ID]
+    assert revocation.verify_record(malformed_receipt_id_record, issuer_manifest) is False
+    write_vector(
+        "45-revocation-anchor-status/c-malformed-receipt-id-unknown-status",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected=expected,
+        revocation_record=malformed_receipt_id_record,
+    )
 
 
 def gen_46_manifest_unauthenticated() -> None:

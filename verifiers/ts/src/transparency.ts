@@ -45,6 +45,7 @@ import {
   validateOrigin as tlogValidateOrigin,
 } from './tlog.js'
 import { TRANSPARENCY_WARN, pyTypeName } from './messages.js'
+import { MAX_REPRESENTABLE_UNIX_SECONDS } from './dates.js'
 import {
   evaluateCorroboration,
   isParsedPolicy,
@@ -101,7 +102,10 @@ export function iso8601(unixTime: number): string | null {
   const d = new Date(ms)
   if (Number.isNaN(d.getTime())) return null
   const year = d.getUTCFullYear()
-  if (year < 0 || year > 9999) return null
+  // The upper half of this test is the shared representable bound (`dates.ts`);
+  // the lower half is NOT its mirror — `year < 0` is far below `unixTime < 0`,
+  // which would reject every instant before 1970 — so it stays a year check.
+  if (year < 0 || unixTime > MAX_REPRESENTABLE_UNIX_SECONDS) return null
   const pad = (n: number, len = 2) => String(n).padStart(len, '0')
   return (
     `${pad(year, 4)}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +

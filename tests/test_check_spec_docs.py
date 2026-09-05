@@ -1449,8 +1449,13 @@ class TestConformanceSelfCertification:
         # Pins the main() wiring, same reasoning as the sibling guard above:
         # a check only exercised directly stays green if main() drops it.
         real_doc = (REPO_ROOT / "docs" / "conformance.md").read_text(encoding="utf-8")
-        drifted = real_doc.replace("| 221/221 |", "| 213/213 |")
-        assert drifted != real_doc, "the real table no longer has the row this test drifts"
+        # Match the row by SHAPE, not by its current figure. The self-cert
+        # counts move every time the corpus grows, and naming one here made
+        # this guard go red for a reason that has nothing to do with the
+        # main() wiring it exists to pin — the sibling guards above already
+        # derive theirs from `measured`, which is the same discipline.
+        drifted, substitutions = re.subn(r"\| (\d+)/\1 \|", "| 213/213 |", real_doc, count=1)
+        assert substitutions == 1, "the real table no longer has a row this test can drift"
         monkeypatch.setattr(
             check_spec_docs, "_CONFORMANCE_DOC_PATH", _write(tmp_path, "c.md", drifted)
         )
