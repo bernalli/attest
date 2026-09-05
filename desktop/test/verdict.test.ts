@@ -104,6 +104,9 @@ describe('offlineLimitText — the revocation clause pins §14.3, not just the c
   })
 
   test('invalid_revocation_ignored names neither a consulted nor an unconsulted feed', () => {
+    expect(offlineLimitText('invalid_revocation_ignored', true)).toContain(
+      'the Revocation row below says what this check settled and what it did not',
+    )
     expect(offlineLimitText('invalid_revocation_ignored', true)).not.toContain(
       'since no revocation feed was consulted',
     )
@@ -118,6 +121,9 @@ describe('offlineLimitText — the revocation clause pins §14.3, not just the c
   test('the as-of clause is never spoken when the page consulted no feed', () => {
     // Unreachable today — `not_revoked_as_of:` can only come from an authenticated
     // record inside a supplied view — and pinned so that it stays unreachable.
+    expect(offlineLimitText('not_revoked_as_of:2026-01-01T00:00:00Z', false)).toContain(
+      'the Revocation row below says what this check settled and what it did not',
+    )
     expect(offlineLimitText('not_revoked_as_of:2026-01-01T00:00:00Z', false)).not.toContain(
       'the revocation feed you supplied',
     )

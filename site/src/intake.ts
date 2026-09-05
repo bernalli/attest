@@ -159,7 +159,16 @@ const proofFor = (proofs: Record<string, JsonValue>, id: string | null): JsonVal
  * about, and it is admitted so the reader downstream can give it a verdict.
  * The parser's own front door bounds the bytes that actually arrive.
  */
-export function declinedForSize(storedBytes: number): Refusal | null {
+export function declinedForSize(storedBytes: number, fileName?: string): Refusal | null {
+  // A rail has its own admission unit. Metadata can prove it over the
+  // code-point limit only beyond four UTF-8 bytes per code point.
+  const rail = fileName === undefined ? null : railFor(fileName)
+  if (rail !== null) {
+    const ceiling = MAX_RAIL_CODE_POINTS[rail[1]]
+    return storedBytes > 4 * ceiling
+      ? railRefusal(rail[0], rail[1], `it is larger than the ${ceiling} code points this rail admits`)
+      : null
+  }
   if (!(storedBytes > MAX_STORED_BYTES)) return null
   return { kind: 'rejected', reason: storedLimitMessage(storedBytes), declined: true }
 }
@@ -242,7 +251,7 @@ const overCodePointCeiling = (bytes: Uint8Array, ceiling: number): boolean => {
 const railFor = (fileName: string): (typeof RAIL_SUFFIXES)[number] | null =>
   RAIL_SUFFIXES.find(([suffix]) => fileName.endsWith(suffix)) ?? null
 
-const railRefusal = (suffix: string, rail: Rail, why: string): IntakeResult => ({
+const railRefusal = (suffix: string, rail: Rail, why: string): Refusal => ({
   kind: 'rejected',
   rail,
   // The file is named because four rails look alike on a desk, and the null

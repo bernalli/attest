@@ -227,6 +227,10 @@ export function initDesktopApp(doc: Document): DesktopApp {
    * boundary at the drop target alike. A container this app DECLINED to read
    * gets §14.4's neutral register; everything else gets the rejection. */
   function showRefusal(r: Refusal): void {
+    if (r.rail !== undefined) {
+      results.prepend(renderRejection(r.reason))
+      return
+    }
     currentJobs = []
     currentNotices = []
     // Cleared here too, or a half-finished handover survives its own refusal: measured,
@@ -384,7 +388,7 @@ export function initDesktopApp(doc: Document): DesktopApp {
     // this process. This artifact runs from a file:// URL on whatever machine a
     // holder still has years from now, which is the machine least able to afford a
     // copy it was never going to read.
-    const refusal = declinedForSize(file.size)
+    const refusal = declinedForSize(file.size, sink === handleBytes ? file.name : undefined)
     if (refusal !== null) {
       showRefusal(refusal)
       return

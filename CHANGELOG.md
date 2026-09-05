@@ -17,8 +17,11 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `attest.views` — builders for the evidence files a verifier may be handed alongside a
   receipt: revocation views, compromise claims and views, transfer claims and views. Each
-  builder validates shape, ceilings and signatures before it emits anything, and refuses
-  ambiguous trust material rather than classifying it. `claim_capabilities` reports, for a
+  builder checks the shape and applicable ceilings before emitting a file. Compromise
+  builders also verify the declaration manifest's own signature; revocation records are
+  authenticated only when a key manifest is supplied. Transfer builders check signature
+  encodings and evidence shape, leaving authentication to the verifier. `claim_capabilities`
+  refuses ambiguous trust material rather than classifying it, and reports, for a
   compromise claim against a given trusted manifest, four independent axes — whether the
   claim establishes the floor, whether its signer can establish a cutoff, whether it
   carries anchor evidence, and (only when the verifier's log keys and anchor policy are
@@ -36,8 +39,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   compromise view can only restrict a verdict, never rescue a receipt, and the help says so.
 
 - `attest revocation-view`, `attest transfer view` and `attest manifest compromise-view` —
-  commands over the `attest.views` builders, so the three evidence files above no longer
-  require writing code against the library. `revocation-view` wraps signed records into the
+  commands over the `attest.views` builders, so revocation, transfer and compromise views
+  no longer require writing code against the library. `revocation-view` wraps signed records into the
   array both cores read, carrying both statuses §12 registers — `revoked` and the
   `transferred` record `transfer record --revocation-out` emits — and checks every record
   against `--manifest` when one is given. `transfer view` pairs `--record` and `--evidence`

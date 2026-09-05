@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
+import { loadsStrict } from 'attest-verifier'
 import { intake } from '../src/intake.js'
 
 /**
@@ -62,9 +63,9 @@ describe('the evidence rails, on raw bytes', () => {
     // back in: each one is a refusal or a view, never an exception.
     const whole = '[{"receipt_id":"01JZ5PDHT0000G40R40M30E209","status":"revoked"}]'
     fc.assert(
-      fc.property(fc.nat({ max: whole.length }), (cut) => {
+      fc.property(fc.nat({ max: whole.length - 1 }), (cut) => {
         const r = intake('revocation-view.json', bytes(whole.slice(0, cut)))
-        expect(['view', 'rejected']).toContain(r.kind)
+        expect(r.kind).toBe('rejected')
       }),
       { numRuns: 200 },
     )
@@ -91,9 +92,19 @@ describe('the evidence rails, on raw bytes', () => {
     fc.assert(
       fc.property(fc.constantFrom(...RAILS), jsonText, (fileName, text) => {
         const r = intake(fileName, bytes(text))
-        if (r.kind !== 'view') return
+        let parsed: ReturnType<typeof loadsStrict>
+        try {
+          parsed = loadsStrict(bytes(text))
+        } catch {
+          expect(r.kind).toBe('rejected')
+          return
+        }
         const wantsArray = fileName !== 'revocation-evidence.json'
-        expect(Array.isArray(r.value)).toBe(wantsArray)
+        const admitted = wantsArray
+          ? Array.isArray(parsed)
+          : parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+        expect(r.kind).toBe(admitted ? 'view' : 'rejected')
+        if (r.kind === 'view') expect(r.value).toEqual(parsed)
       }),
       { numRuns: 300 },
     )
@@ -105,12 +116,20 @@ describe('the evidence rails, on raw bytes', () => {
     // well-formed view, and refusing it here would hide from the reader that
     // the issuer published something unusable.
     fc.assert(
-      fc.property(fc.json(), (junk) => {
-        const good = '{"receipt_id":"01JZ5PDHT0000G40R40M30E209","status":"revoked"}'
-        const r = intake('revocation-view.json', bytes(`[${good},${junk}]`))
-        if (r.kind !== 'view') return
-        expect(Array.isArray(r.value) && r.value.length === 2).toBe(true)
-      }),
+      fc.property(
+        fc.oneof(fc.constant(null), fc.boolean(), fc.integer(), fc.string(),
+          fc.constant({}), fc.constant({ record: {}, evidence: {}, extra: true })),
+        fc.boolean(),
+        (junk, reverse) => {
+          const record = { receipt_id: '01JZ5PDHT0000G40R40M30E209', status: 'revoked' }
+          const entries = reverse ? [junk, record, record] : [record, record, junk]
+          // Element shape, order and duplicate RECORDS belong to the verifier.
+          // Intake must preserve them, including extra/missing fields and wrong types.
+          const r = intake('revocation-view.json', bytes(JSON.stringify(entries)))
+          expect(r.kind).toBe('view')
+          if (r.kind === 'view') expect(r.value).toEqual(loadsStrict(bytes(JSON.stringify(entries))))
+        },
+      ),
       { numRuns: 200 },
     )
   })
@@ -154,6 +173,52 @@ describe('the evidence rails, on raw bytes', () => {
       }),
       { numRuns: 500 },
     )
+  })
+
+  it('refuses duplicate members at generated depths on every rail', () => {
+    fc.assert(fc.property(fc.constantFrom(...RAILS), fc.string(), fc.integer({ min: 0, max: 12 }),
+      (fileName, key, depth) => {
+        const quoted = JSON.stringify(key)
+        let text = `{${quoted}:0,${quoted}:1}`
+        for (let i = 0; i < depth; i++) text = `{"nested":${text}}`
+        if (fileName !== 'revocation-evidence.json') text = `[${text}]`
+        const r = intake(fileName, bytes(text))
+        expect(r.kind).toBe('rejected')
+        if (r.kind === 'rejected') expect(r.rail).toBeDefined()
+      }), { numRuns: 200, seed: 124 })
+  })
+
+  it('refuses non-integer numbers wherever nested', () => {
+    fc.assert(fc.property(fc.constantFrom(...RAILS),
+      fc.constantFrom('1.5', '1.0', '-1.5', '1e999'),
+      fc.integer({ min: 0, max: 12 }), (fileName, number, depth) => {
+        let text: string = number
+        for (let i = 0; i < depth; i++) text = `{"nested":${text}}`
+        text = fileName === 'revocation-evidence.json' ? `{"entry":${text}}` : `[${text}]`
+        expect(intake(fileName, bytes(text)).kind).toBe('rejected')
+      }), { numRuns: 200, seed: 124 })
+  })
+
+  it('forwards out-of-range integers unchanged for the verifier to judge', () => {
+    fc.assert(fc.property(fc.constantFrom(...RAILS),
+      fc.bigInt({ min: 2n ** 53n, max: 2n ** 64n }), (fileName, value) => {
+        const text = fileName === 'revocation-evidence.json' ? `{"entry":${value}}` : `[${value}]`
+        const r = intake(fileName, bytes(text))
+        expect(r.kind).toBe('view')
+        if (r.kind === 'view')
+          expect(r.value).toEqual(fileName === 'revocation-evidence.json' ? { entry: value } : [value])
+      }), { numRuns: 200, seed: 124 })
+  })
+
+  it('refuses invalid UTF-8 inside a string at any generated position', () => {
+    fc.assert(fc.property(fc.constantFrom(...RAILS), fc.integer({ min: 0, max: 64 }),
+      (fileName, offset) => {
+        const text = fileName === 'revocation-evidence.json'
+          ? `{"entry":"${'x'.repeat(offset)}!"}` : `["${'x'.repeat(offset)}!"]`
+        const raw = bytes(text)
+        raw[raw.indexOf(33)] = 0x80
+        expect(intake(fileName, raw).kind).toBe('rejected')
+      }), { numRuns: 200, seed: 124 })
   })
 
   it('never speaks the caller-supplied file name back in the refusal', () => {

@@ -184,6 +184,10 @@ export function initApp(doc: Document): AppHandle {
    * the admission boundary at the drop target arrive here, so the register can
    * never depend on which of them refused. */
   function showRefusal(r: Refusal): void {
+    if (r.rail !== undefined) {
+      results.prepend(renderRejection(r.reason))
+      return
+    }
     clearJobs()
     currentNotices = []
     // A receipt waiting for its key manifest is state about a file that is no
@@ -364,7 +368,7 @@ export function initApp(doc: Document): AppHandle {
     // container over §14.4's floor is refused here — before `arrayBuffer()`
     // brings a copy of it into this tab. Refusing after the copy would spend
     // exactly what the floor exists to protect and then report a limit.
-    const refusal = declinedForSize(file.size)
+    const refusal = declinedForSize(file.size, sink === handleBytes ? file.name : undefined)
     if (refusal !== null) {
       showRefusal(refusal)
       return

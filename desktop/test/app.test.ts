@@ -553,42 +553,48 @@ describe('the four evidence rails: one slot each, replaced never merged, refused
     expect(after).toContain('Revocation evidence: loaded')
   })
 
-  test('a rail drop does not retract a binding proof the reader already gave', () => {
-    // §14.3 makes a rail file a change to that rail and nothing else. Re-verifying
-    // with no disclosure prints "Nobody attempted the binding proof" over a proof
-    // that was given and succeeded — the surface asserting the opposite of its own
-    // state, which is the defect this rail wiring exists to close. The site keeps
-    // this state; two shells over one intake must not disagree about one gesture.
-    //
-    // The sentence is asserted by the text `explain.ts` actually renders. It used
-    // to read "Nobody attempted to prove who this receipt belongs to", which v0.1
-    // §11.1 now forbids a surface from saying; an assertion left on the retired
-    // wording would be green because the sentence is gone, not because the proof
-    // survived.
-    const app = mount()
+  const bindingValue = (): string | null => {
+    const rows = [...document.querySelectorAll('.component')].filter(
+      row => row.querySelector('.component-name')?.textContent === 'Buyer binding',
+    )
+    expect(rows).toHaveLength(1)
+    return rows[0].querySelector('.component-value')?.textContent ?? null
+  }
+
+  const loadBindingReceipt = (app: ReturnType<typeof mount>): void => {
     loadReceipt(app)
-    ;(document.getElementById('binding-identifier') as HTMLInputElement).value = 'buyer@example.com'
-    ;(document.getElementById('binding-salt') as HTMLInputElement).value = 'AAAA'
+    const path = fileURLToPath(new NodeURL('../../site/public/sample/demo-binding.json', import.meta.url))
+    const disclosure = JSON.parse(readFileSync(path, 'utf8'))
+    ;(document.getElementById('binding-identifier') as HTMLInputElement).value = disclosure.identifier
+    ;(document.getElementById('binding-type') as HTMLSelectElement).value = disclosure.identifier_type
+    ;(document.getElementById('binding-salt') as HTMLInputElement).value = disclosure.salt_b64u
+  }
+
+  test.each(['proven', 'not_proven'] as const)('a rail drop and clear preserve binding %s', expected => {
+    const app = mount()
+    loadBindingReceipt(app)
+    expect(bindingValue()).toBe('not_checked')
+    if (expected === 'not_proven')
+      (document.getElementById('binding-identifier') as HTMLInputElement).value = 'wrong identifier'
     app.applyDisclosure()
-    expect(resultsText()).not.toContain('Nobody attempted the binding proof')
+    expect(bindingValue()).toBe(expected)
 
     app.handleBytes('revocation-view.json', new TextEncoder().encode('[]'))
-    expect(resultsText()).not.toContain('Nobody attempted the binding proof')
+    expect(bindingValue()).toBe(expected)
 
     app.clearRails()
-    expect(resultsText()).not.toContain('Nobody attempted the binding proof')
+    expect(bindingValue()).toBe(expected)
   })
 
-  test('a NEW receipt does drop the previous binding proof', () => {
-    // The other half: the disclosure belongs to the jobs it was applied to, and
-    // must not survive them.
+  test.each(['proven', 'not_proven'] as const)('a NEW receipt drops the previous binding %s', expected => {
     const app = mount()
-    loadReceipt(app)
-    ;(document.getElementById('binding-identifier') as HTMLInputElement).value = 'buyer@example.com'
-    ;(document.getElementById('binding-salt') as HTMLInputElement).value = 'AAAA'
+    loadBindingReceipt(app)
+    if (expected === 'not_proven')
+      (document.getElementById('binding-identifier') as HTMLInputElement).value = 'wrong identifier'
     app.applyDisclosure()
+    expect(bindingValue()).toBe(expected)
     loadReceipt(app)
-    expect(resultsText()).toContain('Nobody attempted the binding proof')
+    expect(bindingValue()).toBe('not_checked')
   })
 
   test('does not erase the bearer-file refusal when a rail file arrives after it', () => {
