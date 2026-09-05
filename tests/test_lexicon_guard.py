@@ -97,23 +97,45 @@ def enumerate_occurrences(sources: dict[str, str]) -> list[tuple[str, str, str]]
     """
     found: list[tuple[str, str, str]] = []
     for path, text in sorted(sources.items()):
-        flat = " ".join(text.split())
-        # One occurrence, one row. The retired NAME contains a `consent` word,
-        # so both patterns match the same text at different spans; hashing each
-        # span separately would ask a reader to register the same sentence
-        # twice, with two verdicts that cannot disagree. Spans are taken in
-        # pattern order — the name first, since it is the more specific — and a
-        # later match overlapping one already taken is the same occurrence.
-        spans: list[tuple[int, int]] = []
-        for pattern in PATTERNS:
-            for match in pattern.finditer(flat):
-                if any(match.start() < end and start < match.end() for start, end in spans):
-                    continue
-                spans.append((match.start(), match.end()))
-        for start, end in sorted(spans):
-            excerpt = _excerpt(flat, start, end)
-            found.append((path, hashlib.sha256(excerpt.encode("utf-8")).hexdigest(), excerpt))
-    return found
+        views = [text]
+        # Every audited file, not the two suffixes that happen to BE markup.
+        # Markdown, TypeScript comments and JSON strings carry inline tags and
+        # character entities exactly as HTML does, and `con<em>sent</em> gate`
+        # is one claim wherever it is written. The rendered reading is taken
+        # ALONGSIDE the raw text, never instead of it, so it can only add an
+        # occurrence and never hide one.
+        #
+        # Two equivalences this does NOT close, named here so the next reader
+        # takes the guard for what it is. Markdown's own emphasis —
+        # `con*sent* gate` — stays invisible to a reader of HTML, and the third
+        # view that would catch it is not additive: it re-excerpts occurrences
+        # already registered, so closing it means either two verdicts for one
+        # sentence or making a single view canonical and rehashing `AUDITED`.
+        # Format characters — a zero-width space, written literally or as an
+        # entity — walk through this and through the claim rule alike, in every
+        # file type; that one predates the rendered reading and is the next door
+        # open, not something this closed and lost.
+        from tests.rendered_text import visible_text
+
+        views.append(visible_text(text))
+        for view in dict.fromkeys(views):
+            flat = " ".join(view.split())
+            # One occurrence, one row. The retired NAME contains a `consent` word,
+            # so both patterns match the same text at different spans; hashing each
+            # span separately would ask a reader to register the same sentence
+            # twice, with two verdicts that cannot disagree. Spans are taken in
+            # pattern order — the name first, since it is the more specific — and a
+            # later match overlapping one already taken is the same occurrence.
+            spans: list[tuple[int, int]] = []
+            for pattern in PATTERNS:
+                for match in pattern.finditer(flat):
+                    if any(match.start() < end and start < match.end() for start, end in spans):
+                        continue
+                    spans.append((match.start(), match.end()))
+            for start, end in sorted(spans):
+                excerpt = _excerpt(flat, start, end)
+                found.append((path, hashlib.sha256(excerpt.encode("utf-8")).hexdigest(), excerpt))
+    return list(dict.fromkeys(found))
 
 
 def _tree_sources() -> dict[str, str]:
@@ -124,9 +146,24 @@ def _tree_sources() -> dict[str, str]:
             continue
         try:
             sources[name] = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):  # pragma: no cover
-            continue
+        except (OSError, UnicodeDecodeError) as exc:
+            pytest.fail(f"cannot audit tracked text file {name}: {exc}")
     return sources
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_unreadable_tracked_text_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: bool
+) -> None:
+    source = tmp_path / "annex.md"
+    if not missing:
+        source.write_bytes(b"The consent gate applies.\n\xff")
+    monkeypatch.setattr(__import__(__name__, fromlist=["REPO_ROOT"]), "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        __import__(__name__, fromlist=["_tracked_files"]), "_tracked_files", lambda: ["annex.md"]
+    )
+    with pytest.raises(pytest.fail.Exception, match=r"annex\.md"):
+        _tree_sources()
 
 
 def test_every_occurrence_of_a_retired_term_is_audited() -> None:
@@ -180,6 +217,24 @@ def test_the_guard_names_a_planted_occurrence(tmp_path: Path) -> None:
 
     assert [path for path, _, _ in found] == ["annex.md"]
     assert "consent gate" in found[0][2]
+
+
+def test_retired_term_survives_inline_markup_and_entities() -> None:
+    term = "consent gate"
+    for suffix in ("html", "xml", "md", "ts", "json", "txt"):
+        path = f"annex.{suffix}"
+        for offset in range(len(term)):
+            forms = [
+                term[:offset] + f"&#{ord(term[offset])};" + term[offset + 1 :],
+                term[:offset] + "<!-- x -->" + term[offset:],
+            ]
+            for tag in ("em", "strong", "span", "tt"):
+                forms.append(term[:offset] + f"<{tag}>" + term[offset:] + f"</{tag}>")
+            for form in forms:
+                assert any(
+                    "consent gate" in excerpt
+                    for _, _, excerpt in enumerate_occurrences({path: form})
+                ), f"{path}: {form!r} walked through the guard"
 
 
 def test_every_audited_row_carries_a_verdict_from_the_closed_list() -> None:

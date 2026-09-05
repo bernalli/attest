@@ -77,16 +77,27 @@ describe('the headline says what the result supports', () => {
     expect(card.textContent ?? '').not.toContain('Receipt verifies')
   })
 
-  // The rule, not the wording (spec v0.1 §11.1, rev 17): a rendering surface
-  // must not present possession of the binding secret as evidence of who
-  // purchased. A blocklist of the sentences this app used to have does not
-  // express that — a paraphrase written to dodge the literals walks through it,
-  // and one did. This pins the shape: a purchase-role word in the predicate of a
-  // possession claim, whatever the wording. The twin of
-  // `tests/test_buyer_surface.py::_ASSERTS_ROLE`, kept in step by hand because
-  // the two live in different packages.
+  // The rule this aims at, and how far it actually reaches (spec v0.1 §11.1,
+  // rev 17): a rendering surface must not present possession of the binding
+  // secret as evidence of who purchased. A blocklist of the sentences this app
+  // used to have does not express that — a paraphrase written to dodge the
+  // literals walks through it, and one did. This enumerates a shape instead:
+  // these verbs, these subjects, inside these windows. It is an auxiliary
+  // detector and not a defence of the property it is named for — a substituted
+  // verb, a nominalized predicate or a longer clause passes it — so an
+  // inventory of the published strings, each with an explicit verdict, remains
+  // open work. The twin of `tests/test_buyer_surface.py::_ASSERTS_ROLE`, held
+  // in step by a test that reads both literals, because the two live in
+  // different packages and cannot share an import.
   const ASSERTS_PURCHASE_ROLE =
-  /\b(establish\w*|confirm\w*|prove\w*|show\w*|mean\w*|is|are)\b[^.<>]{0,60}?\b(you|the holder|the presenter|whoever)\b[^.<>]{0,40}?(purchaser|purchase|buyer|bought|purchased|owner|owns)/i
+  /\b(establish\w*|confirm\w*|prove\w*|show\w*|mean\w*|is|are)\b[^.<>]{0,60}?\b(you|the\s+holder|the\s+presenter|whoever)\b[^.<>]{0,40}?(purchaser|purchase|buyer|bought|purchased|owner|owns)/i
+
+  test('detects a purchase role across every word separator', () => {
+    const words = 'This binding establishes that the holder made the purchase.'.split(' ')
+    for (const separator of [' ', '\n', '\t', '\r\n', ' \n  ']) {
+      expect(words.join(separator)).toMatch(ASSERTS_PURCHASE_ROLE)
+    }
+  })
 
   test('the amber headline names the three things an ok result leaves open', () => {
     const { job, run } = sampleJob()

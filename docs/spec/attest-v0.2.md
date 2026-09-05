@@ -1125,7 +1125,7 @@ UTF8("Attest-redemption-challenge-v1") || 0x00 || UTF8(receipt_id) || 0x00 || UT
 - `receipt_id` is the receipt's own `payload.receipt_id`, as UTF-8 text, not decoded and re-encoded — v0.1 §8.2 and §17.1 discipline, unchanged.
 - Signed with `buyer.pubkey` (Ed25519), the same authorization-liveness posture and the same honestly-stated post-CRQC bound as §17.8: a post-CRQC forger of this leg still cannot forge the publisher's hybrid signature (§18.2) — the holder leg's classical weakness is bounded by what surrounds it, never load-bearing alone.
 
-`audience` is why this is a NEW preimage rather than a reuse of §8.2: v0.1's binding challenge names no recipient, so a response produced for one custodian would be replayable at another. What the proof establishes is possession of `buyer.pubkey`, whose provenance is issuer-asserted (v0.1 §8, threat model TM-78); it does not establish that the holder took part in the purchase.
+`audience` is why this is a NEW preimage rather than a reuse of §8.2: v0.1's binding challenge names no recipient, so a response produced for one custodian would be replayable at another. What the proof establishes is possession of the private key corresponding to `buyer.pubkey`, whose provenance is issuer-asserted (v0.1 §8, threat model TM-78); it does not establish that the holder took part in the purchase.
 
 **Salt disclosure MUST NOT be accepted as a redemption proof.** It is a replayable bearer proof that also hands over the identifier (v0.1 §8.1) and burns the receipt's binding secrecy toward that verifier — unfit for a gate queried repeatedly by different custodians. This is a normative prohibition, not a recommendation.
 

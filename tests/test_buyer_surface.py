@@ -205,13 +205,21 @@ def test_the_warning_names_all_three_facts_a_buyer_needs() -> None:
                 assert _files_named(answer) == [], context
 
 
-#: The property, not the three sentences the code used to have. A rendering
-#: surface MUST NOT present binding possession as evidence of who purchased
-#: (`docs/spec/attest-v0.1.md` §11.1, rev 17). A blocklist of historical
-#: wordings does not express that: a paraphrase walks through it, and three
-#: written to dodge every literal these tests name left the suite green. This
-#: pins the shape instead — any sentence that puts a purchase-role word in the
-#: predicate of a possession claim fails, whatever its wording.
+#: The property this aims at, and the narrower thing it actually catches. A
+#: rendering surface MUST NOT present binding possession as evidence of who
+#: purchased (`docs/spec/attest-v0.1.md` §11.1, rev 17). A blocklist of
+#: historical wordings does not express that: a paraphrase walks through it,
+#: and three written to dodge every literal these tests name left the suite
+#: green. What follows is one step better and no more — an ENUMERATED shape:
+#: these verbs, these subjects, inside these windows. It is an auxiliary
+#: detector, not a defence of the property it is named for. A substituted verb
+#: ("demonstrates that the presenter made the purchase"), a nominalized
+#: predicate ("confirms ownership of the purchase") and a clause long enough to
+#: outrun the window all pass it, and lengthening the lists would only move
+#: that boundary rather than close it. Deciding what the surfaces say is still
+#: done by reading them: an inventory of the published strings, each with a
+#: hash and an explicit verdict, is open work, and this rule does not stand in
+#: for it.
 _PURCHASE_ROLE = r"(purchaser|purchase|buyer|bought|purchased|owner|owns)"
 #: The window may not cross a sentence end or a tag. Without the tag barrier a
 #: heading and the paragraph after it read as one sentence: the pages below
@@ -222,18 +230,31 @@ _PURCHASE_ROLE = r"(purchaser|purchase|buyer|bought|purchased|owner|owns)"
 #: written across two lines — the way the retired name survived two sweeps.
 _ASSERTS_ROLE = re.compile(
     r"\b(establish\w*|confirm\w*|prove\w*|show\w*|mean\w*|is|are)\b"
-    r"[^.<>]{0,60}?\b(you|the holder|the presenter|whoever)\b[^.<>]{0,40}?" + _PURCHASE_ROLE,
+    r"[^.<>]{0,60}?\b(you|the\s+holder|the\s+presenter|whoever)\b[^.<>]{0,40}?" + _PURCHASE_ROLE,
     re.I,
 )
 
 
 def _visible_text(markup: str) -> str:
-    """Tags out with a barrier in their place, then one line: the rule is about
-    what a reader is told, and a claim split by an `<em>` — or by the column the
-    file happens to wrap at — is the same claim. The `<>` left behind still
-    stops the window at a tag; `tests/lexicon_audit.py` flattens for the same
-    reason this does."""
-    return " ".join(re.sub(r"<[^>]+>", " <> ", markup).split())
+    """Preserve inline prose and entities while retaining block boundaries."""
+    from tests.rendered_text import visible_text
+
+    return visible_text(markup)
+
+
+def test_role_detection_preserves_visible_prose() -> None:
+    claim = "This binding establishes that the holder made the purchase."
+    for separator in (" ", "\n", "\t", "\r\n", " \n  ", "<br>"):
+        assert _ASSERTS_ROLE.search(_visible_text(separator.join(claim.split())))
+    for offset in range(len(claim)):
+        encoded = claim[:offset] + f"&#{ord(claim[offset])};" + claim[offset + 1 :]
+        assert _ASSERTS_ROLE.search(_visible_text(encoded))
+        for tag in ("em", "strong", "span", "code"):
+            wrapped = claim[:offset] + f"<{tag}>" + claim[offset:] + f"</{tag}>"
+            assert _ASSERTS_ROLE.search(_visible_text(wrapped))
+    assert (
+        _ASSERTS_ROLE.search(_visible_text("<h2>What is this?</h2><p>You bought it.</p>")) is None
+    )
 
 
 def test_no_surface_asserts_a_purchase_role_from_possession() -> None:
@@ -295,8 +316,8 @@ def test_the_sentence_a_buyer_needs_is_on_every_surface_word_for_word(claim: str
 #: The sentence the private-file warning MUST NOT say, and the one it says
 #: instead. `docs/spec/attest-v0.1.md` §11.1 (rev 17) forbids a conforming
 #: rendering surface from presenting a binding proof as evidence that the named
-#: person made the purchase, because every input to both binding paths is the
-#: issuer's own (§8). The warning used to open with "That file is the proof the
+#: person made the purchase, because the provenance of the signed binding
+#: values is issuer-asserted (§8). The warning used to open with "That file is the proof the
 #: purchase belongs to you", which is exactly that claim; what the file really
 #: carries is the secret that answers the proof, and the risk it warns about —
 #: anyone holding it can claim to be the buyer — is unchanged by saying so.

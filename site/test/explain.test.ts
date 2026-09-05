@@ -134,9 +134,9 @@ describe('the three normative constraints on the copy', () => {
     expect(note).not.toMatch(/nothing in this group can rescue an invalid receipt/i)
   })
 
-  // Every input to both binding paths is the issuer's own: the identifier
-  // arrives at checkout, the salt is issuer-generated, and `buyer.pubkey` is
-  // written into the payload the issuer signs (spec §8). So `proven` reports
+  // The issuer records the binding values and can fabricate a receipt using
+  // secrets it knows; recording a buyer-generated public key does not reveal
+  // its private half (spec §8). So `proven` reports
   // possession of a secret the issuer recorded and never participation of the
   // buyer, and §11.1 forbids a rendering surface from saying otherwise. The
   // three sentences this pins each used to say otherwise.
