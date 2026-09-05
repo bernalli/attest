@@ -145,7 +145,23 @@ jobs:
           } > "$binary_sums"
           sha256sum -c "$binary_sums"
           rm -f "$binary_sums"
-      - run: uv build
+      - name: Build the Python distributions
+        # `uv build` writes a `dist/.gitignore` next to the two distributions.
+        # It is not a distribution, and left in place it splits this job's
+        # checksum manifest from the artifact the publish job downloads: the
+        # `sha256sum dist/*` below runs under `dotglob` and records the dotfile,
+        # while upload-artifact excludes hidden files by default and does not
+        # ship it. The publish job then passes its "wheel and sdist and nothing
+        # else" count -- it sees two -- and fails one step later on
+        # `sha256sum -c`, with `dist/.gitignore: No such file or directory`
+        # (measured locally on the real chain). That failure lands AFTER the tag
+        # is pushed, which is the worst place to discover it. Delete the file
+        # here, at the source, so the manifest and the artifact describe the same
+        # two files; relaxing either check downstream would weaken the sentence
+        # each one exists to say.
+        run: |
+          uv build
+          rm -f dist/.gitignore
       - name: Assert + scan Python
         run: |
           uv run --frozen python tools/assert_artifacts.py --wheel dist/*.whl --sdist dist/*.tar.gz
@@ -224,6 +240,17 @@ jobs:
           verifiers=(attest-verifier-*.tgz)
           test "${#verifiers[@]}" -eq 1 \
             || { echo "expected exactly 1 verifier tarball, found ${#verifiers[@]}: ${verifiers[*]}"; exit 1; }
+          # The manifest below globs dist/ under dotglob and upload-artifact
+          # ships no hidden file, so anything here the artifact will not carry
+          # splits the two and fails `sha256sum -c` in the publish job -- after
+          # the tag is pushed. `uv build`'s `.gitignore` is deleted at the source
+          # above; this refuses the NEXT one here, where a re-run is free,
+          # instead of discovering it there. It is the same sentence the pypi
+          # job already says about the downloaded artifact, said about the bytes
+          # that produce it.
+          shipped=(dist/*)
+          test "${#shipped[@]}" -eq 2 \
+            || { echo "dist/ must hold only the wheel and the sdist before the manifest is written, found ${#shipped[@]}: ${shipped[*]}"; exit 1; }
           sha256sum dist/* sbom-python.cdx.json sbom-npm.cdx.json attest-verifier-*.tgz \
             | tee gated-artifacts.sha256
           # Same idiom as the desktop job: prove the file we ship is one that

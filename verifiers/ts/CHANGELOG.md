@@ -6,6 +6,56 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-09-05
+
+### Security / correctness
+
+- **A key manifest the trusted manifest does not vouch for can no longer deny a
+  compromise cutoff.** A verifier holding an issuer's rotation chain used every
+  member of that chain as evidence when deciding whether a compromise
+  declaration establishes a cutoff — and chain members arrive from
+  presenter-supplied input: an exported bundle, or a trust directory an earlier
+  import wrote. So whoever held a stolen signing key could supply a manifest
+  marking the signer who declared the compromise as itself compromised. That
+  denied the cutoff, and receipts forged and anchored after the theft verified
+  as genuine, which is the outcome v0.2 §19 exists to refuse. For the clause
+  that denies a cutoff, a held member now counts only if the trusted manifest
+  vouches for it: its signing `kid` resolves there to an active or retired
+  entry, `issued_at` falls inside that entry's window, and its signature
+  verifies under that entry's material. Checking a member against its own
+  `keys[]` was never enough, because a manifest made with the stolen key
+  carries a genuine signature. Nothing else narrows: an unvouched member still
+  feeds the absorbing compromise floor, still raises the retraction warning,
+  and still leaves the trust label where it was. Separately, a manifest
+  carrying a duplicated `keys[]` entry is now refused wherever a key manifest
+  is consumed rather than at bundle import alone, as v0.1 §7.1 already
+  required. **Upgrade from 0.9.1 or earlier.**
+
+- **An over-sized view no longer disarms the defence it carries.** A compromise
+  view may arrive over the untrusted channel v0.2 §19.2 blesses, under a
+  ceiling of 64 claims. Past that ceiling the whole view used to be discarded
+  and reported exactly as though none had been supplied, so anyone able to
+  append to that channel could push a genuine compromise declaration over the
+  cap with padding, and the receipt that declaration should have killed came
+  back valid, with an empty warnings list. The revocation rail had the same
+  shape: a padded view hid a backed `status: "transferred"` record, and with it
+  the transfer consent gate that v0.2 §17.3 extends to every revocability
+  class — including `none`, where a revocation record was previously unable to
+  affect the verdict at all. An over-ceiling view on either rail is now refused
+  outright instead of ignored, so the defence fails closed rather than open.
+  Normative: v0.1 §12.4 is amended, revision log rev 13. **Upgrade from 0.9.1
+  or earlier.**
+
+- **The compromise view is measured by its own length descriptor, not by a
+  getter.** The ceiling check above read `compromiseView.length` while the
+  materializer counted the same view through its own property descriptor. On an
+  array `length` is writable, so nothing forces those two readings to agree: a
+  view could report a small size to the check and an over-ceiling size to the
+  materializer, leaving the guard quiet while the genuine declaration was
+  dropped — the defect above, reached by one extra step. Both now count the
+  same way, as the revocation rail already did. The Python core never had this
+  divergence.
+
 ### Added
 
 - **`sha256Hex`, the hash this package already computes, now exported.** A
