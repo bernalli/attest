@@ -112,7 +112,19 @@ def _parse_itch_created_at(raw: Any) -> str:
             ) from exc
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC).strftime(_RFC3339)
+    # `astimezone(UTC)` raises OverflowError at either end of the representable
+    # range (a year-1 value with a positive offset, a year-9999 value with a
+    # negative one), and `strftime("%Y")` does not zero-pad below year 1000 on
+    # glibc. The first would escape this function's PurchaseRejected contract
+    # and crash the poller on one malformed claim; the second would emit a
+    # string that is not RFC 3339.
+    try:
+        moment = parsed.astimezone(UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise PurchaseRejected(
+            f"itch purchase created_at is outside the representable range: {text!r}"
+        ) from exc
+    return moment.replace(microsecond=0, tzinfo=None).isoformat() + "Z"
 
 
 class ItchAdapter:

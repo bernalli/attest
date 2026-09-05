@@ -42,7 +42,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -52,10 +51,10 @@ from attest_bridge.model import (
     NormalizedPurchase,
     PurchaseRejected,
     decode_buyer_pubkey,
+    loads_utf8_strict,
     purchase_id_for_log,
 )
 
-_RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 _PRODUCT_KEY_PREFIX = "shopify_"
 # Only `orders/paid` is handled. `orders/create` fires before payment is
 # settled and `orders/updated` fires for edits, refunds and fulfilment changes
@@ -81,7 +80,16 @@ def verify_shopify_signature(payload: bytes, sig_header: str, secret: str) -> No
     expected = base64.b64encode(
         hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).digest()
     ).decode("ascii")
-    if not hmac.compare_digest(sig_header.strip(), expected):
+    # `hmac.compare_digest` raises TypeError when either str argument is not
+    # ASCII, and the header is latin-1-decoded remote input (PEP 3333): one byte
+    # >= 0x80 would escape this function's "only ShopifySignatureError" contract
+    # and surface as an unhandled 500 instead of the pinned "invalid signature
+    # -> 400" row. A non-ASCII header can never equal a base64 digest, so
+    # scoring it a non-match is exact, not lenient; `isascii()` inspects only
+    # the caller's own input, never secret-derived data, so it adds no timing
+    # signal.
+    candidate = sig_header.strip()
+    if not candidate.isascii() or not hmac.compare_digest(candidate, expected):
         raise ShopifySignatureError("shopify webhook signature verification failed")
 
 
@@ -102,7 +110,20 @@ def _parse_shopify_created_at(raw: Any, purchase_id: str) -> str:
         ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC).strftime(_RFC3339)
+    # `astimezone(UTC)` raises OverflowError at either end of the representable
+    # range (a year-1 value with a positive offset, a year-9999 value with a
+    # negative one), and `strftime("%Y")` does not zero-pad below year 1000 on
+    # glibc. Neither belongs in a signed-body path: the first escapes this
+    # function's PurchaseRejected contract, the second emits a string that is
+    # not RFC 3339.
+    try:
+        moment = parsed.astimezone(UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise PurchaseRejected(
+            f"shopify order {purchase_id_for_log(purchase_id)} created_at is outside the "
+            "representable range"
+        ) from exc
+    return moment.replace(microsecond=0, tzinfo=None).isoformat() + "Z"
 
 
 def _note_attributes(order: dict[str, Any], purchase_id: str) -> dict[str, str]:
@@ -145,7 +166,7 @@ class ShopifyAdapter:
     def parse_event(self, payload: bytes, sig_header: str) -> dict[str, Any]:
         """Verify the signature, then parse — in that order, always."""
         verify_shopify_signature(payload, sig_header, self._webhook_secret)
-        order: dict[str, Any] = json.loads(payload)
+        order: dict[str, Any] = loads_utf8_strict(payload)
         return order
 
     def wants(self, order: dict[str, Any]) -> bool:

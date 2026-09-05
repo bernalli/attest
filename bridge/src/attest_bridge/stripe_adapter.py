@@ -41,6 +41,7 @@ from attest_bridge.model import (
     NormalizedPurchase,
     PurchaseRejected,
     decode_buyer_pubkey,
+    loads_utf8_strict,
     purchase_id_for_log,
     rfc3339_from_unix,
 )
@@ -140,7 +141,18 @@ def verify_stripe_signature(
     expected = hmac.new(secret.encode(), f"{t}.".encode() + payload, hashlib.sha256).hexdigest()
     # Constant-time compare against every v1 candidate — never short-circuit
     # on the first mismatch's content, and never use `==` on secret-derived data.
-    if not any(hmac.compare_digest(expected, candidate) for candidate in v1_candidates):
+    # `hmac.compare_digest` raises TypeError when either str argument is not
+    # ASCII, and the header is latin-1-decoded remote input (PEP 3333): one byte
+    # >= 0x80 in a candidate would escape this function's
+    # "only StripeSignatureError" contract and surface as an unhandled 500
+    # instead of the pinned "invalid signature -> 400" row. A non-ASCII
+    # candidate can never equal a lower-case hex digest, so scoring it a
+    # non-match is exact, not lenient; `isascii()` inspects only the caller's
+    # own input, never secret-derived data, so it adds no timing signal.
+    if not any(
+        candidate.isascii() and hmac.compare_digest(expected, candidate)
+        for candidate in v1_candidates
+    ):
         raise StripeSignatureError("signature mismatch")
 
 
@@ -174,7 +186,7 @@ class StripeAdapter:
     ) -> dict[str, Any]:
         """Verify the signature, then parse — in that order, always."""
         verify_stripe_signature(payload, sig_header, self._webhook_secret, now=now)
-        event: dict[str, Any] = json.loads(payload)
+        event: dict[str, Any] = loads_utf8_strict(payload)
         return event
 
     def wants(self, event: dict[str, Any]) -> bool:

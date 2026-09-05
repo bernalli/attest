@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -10,7 +11,6 @@ from typing import Any, Protocol
 from attest import keys
 
 _ED25519_PUBKEY_LEN = 32
-_RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 
 
 class BridgeError(Exception):
@@ -31,6 +31,25 @@ class ConfigError(BridgeError):
 
 class ClaimQueueFull(BridgeError):
     """The bounded itch claim queue cannot accept another pending claim."""
+
+
+def loads_utf8_strict(payload: bytes) -> Any:
+    """`json.loads`, minus the strings Python can hold but cannot encode.
+
+    A `\\udXXX` escape is legal JSON syntax and `json.loads` answers it with a
+    lone-surrogate `str`. Such a value survives every `isinstance` check a
+    caller can write and only fails much later, at the first sink that encodes
+    it — `sqlite3`, `purchase_id_for_log`, an SMTP header — as a
+    `UnicodeEncodeError` no handler contract names. Rejecting it here keeps the
+    whole family on the one row that already exists: unparseable body -> 400.
+    `UnicodeEncodeError` is a `ValueError`, so every caller's existing
+    `except ValueError` already covers it.
+    """
+    data = json.loads(payload)
+    # `ensure_ascii=False` is what makes the re-encode able to fail: with the
+    # default the surrogate would be escaped back into ASCII and pass.
+    json.dumps(data, ensure_ascii=False).encode("utf-8")
+    return data
 
 
 def purchase_id_for_log(purchase_id: str) -> str:
@@ -86,4 +105,19 @@ def decode_buyer_pubkey(value: str | None) -> bytes | None:
 
 
 def rfc3339_from_unix(ts: int) -> str:
-    return datetime.fromtimestamp(ts, UTC).strftime(_RFC3339)
+    """Render a unix timestamp as RFC 3339 `...Z`, or reject it.
+
+    Two things this cannot do naively. `datetime.fromtimestamp` answers an
+    out-of-range integer with `OSError`, `OverflowError` or `ValueError`,
+    none of which any caller's contract names — and callers only check that
+    the value is an `int` before passing it here, so a signed body carrying an
+    absurd number would escape `normalize` as an unhandled error instead of
+    the pinned rejection. And `strftime("%Y")` does not zero-pad below year
+    1000 on glibc, which would emit `1-01-01T00:00:00Z`: not RFC 3339.
+    `isoformat` always pads to four digits.
+    """
+    try:
+        moment = datetime.fromtimestamp(ts, UTC)
+    except (OSError, OverflowError, ValueError) as exc:
+        raise PurchaseRejected("purchase timestamp is outside the representable range") from exc
+    return moment.replace(microsecond=0, tzinfo=None).isoformat() + "Z"
