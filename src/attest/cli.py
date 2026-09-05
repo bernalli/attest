@@ -39,6 +39,7 @@ import shutil
 import stat
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -48,6 +49,7 @@ from attest import (
     authority,
     bundle,
     canon,
+    commitment,
     grant,
     issue,
     keys,
@@ -57,7 +59,9 @@ from attest import (
     revocation,
     tlog,
     transfer,
+    validate,
     verify,
+    views,
     witness,
 )
 
@@ -338,6 +342,32 @@ def _read_json(path: Path, *, max_bytes: int | None = None, input_name: str = "J
         return json.loads(text)
     except json.JSONDecodeError as exc:
         raise CliUsageError(f"invalid JSON in {path}: {exc}") from exc
+
+
+def _loads_strict(data: bytes, path: Path, input_name: str) -> Any:
+    """Parse CLI input bytes with the canonical strict parser.
+
+    `_read_json` above uses `json.loads`, where a duplicate object member
+    collapses onto the last one and a float parses fine — behavior published
+    for the flags that already had it, and not changed here. Inputs introduced
+    with the revocation rail read through this function instead: a file whose
+    meaning depends on which duplicate a parser happens to keep is refused,
+    not resolved by position (`canon.loads_strict`, same reader the verifier's
+    own admission path uses).
+    """
+    try:
+        return canon.loads_strict(data)
+    except canon.CanonError as exc:
+        raise CliUsageError(f"cannot read {input_name} {path}: {exc}") from exc
+
+
+def _read_strict_json(path: Path, *, max_bytes: int, input_name: str) -> Any:
+    """`_read_bounded_bytes` followed by `_loads_strict`, for a NEW CLI input."""
+    return _loads_strict(
+        _read_bounded_bytes(path, max_bytes=max_bytes, input_name=input_name),
+        path,
+        input_name,
+    )
 
 
 def _json_text(obj: Any) -> str:
@@ -1275,6 +1305,456 @@ def _cmd_transfer_authorize(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# v0.1 §12.2: only these two classes can be revoked at all. A `none` receipt
+# is irrevocable by construction, so a record naming one is an artifact every
+# conforming verifier ignores — this producer refuses to write one.
+_REVOCABLE_CLASSES = ("refund_window", "policy")
+
+
+def _cmd_revoke(args: argparse.Namespace) -> int:
+    for label, path in (
+        ("--receipt", args.receipt),
+        ("--manifest", args.manifest),
+        ("--seed", args.seed),
+    ):
+        if _same_file_target(path, args.out):
+            raise CliUsageError(f"{label} and --out must be different paths")
+    if args.mldsa_seed is not None and _same_file_target(args.mldsa_seed, args.out):
+        raise CliUsageError("--mldsa-seed and --out must be different paths")
+
+    # Bounded by the ceiling the VERIFIER applies to an envelope, not by the
+    # wider Stage-2 input ceiling the other JSON inputs use: the closing
+    # predicate below hands these very bytes to `verify.verify`, which refuses
+    # anything above `validate.MAX_ENVELOPE_BYTES`. A wider bound here would
+    # only buy the same refusal one step later, with a worse message.
+    envelope_bytes = _read_bounded_bytes(
+        args.receipt, max_bytes=validate.MAX_ENVELOPE_BYTES, input_name="--receipt"
+    )
+    envelope = _loads_strict(envelope_bytes, args.receipt, "--receipt")
+    if not isinstance(envelope, dict):
+        raise CliUsageError(f"{args.receipt} must contain a JSON object")
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict):
+        raise CliUsageError(f"{args.receipt} is missing object member 'payload'")
+    receipt_id = payload.get("receipt_id")
+    if not isinstance(receipt_id, str) or revocation.RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+        raise CliUsageError(f"{args.receipt} payload member 'receipt_id' must be a ULID")
+    issuer_block = payload.get("issuer")
+    issuer_id = issuer_block.get("id") if isinstance(issuer_block, dict) else None
+    if not isinstance(issuer_id, str):
+        raise CliUsageError(f"{args.receipt} payload is missing string 'issuer.id'")
+
+    license_block = payload.get("license")
+    revocability = license_block.get("revocability") if isinstance(license_block, dict) else None
+    if not isinstance(revocability, str):
+        raise CliUsageError(f"{args.receipt} payload is missing string 'license.revocability'")
+    if revocability not in _REVOCABLE_CLASSES:
+        raise CliUsageError(
+            f"license.revocability is {revocability!r}: v0.1 §12.2 makes such a receipt "
+            "irrevocable, and a record naming it would be ignored by every verifier "
+            f"(revocable classes: {', '.join(_REVOCABLE_CLASSES)})"
+        )
+
+    # `strptime` alone accepts unpadded components (`2025-8-1T0:0:0Z`) and would
+    # sign a spelling no verifier re-serializes the same way; the round trip is
+    # what pins the byte form the signature commits to.
+    try:
+        revoked_at = datetime.datetime.strptime(args.revoked_at, revocation._DATE_FMT)
+    except ValueError as exc:
+        raise CliUsageError(
+            f"--revoked-at must be an ISO-8601 UTC instant spelled YYYY-MM-DDTHH:MM:SSZ: {exc}"
+        ) from exc
+    canonical_revoked_at = revoked_at.strftime(revocation._DATE_FMT)
+    if canonical_revoked_at != args.revoked_at:
+        raise CliUsageError(
+            f"--revoked-at {args.revoked_at!r} is not the canonical spelling of that "
+            f"instant: write it exactly as {canonical_revoked_at!r}"
+        )
+
+    manifest = _read_strict_json(
+        args.manifest, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--manifest"
+    )
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("keys"), list):
+        raise CliUsageError(f"{args.manifest} must contain a key manifest with a 'keys' array")
+    if manifest.get("issuer") != issuer_id:
+        raise CliUsageError(
+            f"{args.manifest} is issued by {manifest.get('issuer')!r}, not by the receipt's "
+            f"issuer {issuer_id!r}"
+        )
+    if not manifests.verify_key_manifest(manifest):
+        raise CliUsageError(f"{args.manifest} does not verify against its own listed keys")
+
+    # Hybrid detection reads the manifest ENTRY, exactly as `manifest rotate`
+    # does: the key material decides which legs a signature owes, never a flag.
+    entry = manifests.find_key(manifest, args.kid)
+    if entry is None:
+        raise CliUsageError(f"--kid {args.kid!r} is not present in {args.manifest}")
+    is_hybrid = "pub_ml_dsa_65" in entry
+    if is_hybrid and args.mldsa_seed is None:
+        raise CliUsageError(f"signing key {args.kid!r} is hybrid; --mldsa-seed is required")
+    if not is_hybrid and args.mldsa_seed is not None:
+        raise CliUsageError(
+            f"signing key {args.kid!r} is Ed25519-only; --mldsa-seed is not allowed"
+        )
+    mldsa_kp: pq.MLDSAKeyPair | None = None
+    if is_hybrid and args.mldsa_seed is not None:
+        mldsa_kp = _load_mldsa_kp(args.mldsa_seed)
+        try:
+            entry_mldsa_pub = keys.b64u_decode(entry["pub_ml_dsa_65"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CliUsageError(
+                f"{args.manifest} has a malformed pub_ml_dsa_65 for {args.kid!r}: {exc}"
+            ) from exc
+        if mldsa_kp.pub != entry_mldsa_pub:
+            raise CliUsageError(
+                "--mldsa-seed does not match the signing key's ML-DSA-65 public key in the manifest"
+            )
+
+    ed_signing_kp = _load_seed_kp(args.seed)
+    signing_kp: keys.SigningKeyPair | pq.HybridSigningKeys = ed_signing_kp
+    if mldsa_kp is not None:
+        signing_kp = pq.HybridSigningKeys(ed=ed_signing_kp, mldsa=mldsa_kp)
+
+    record = revocation.build_record(receipt_id, "revoked", args.revoked_at, signing_kp, args.kid)
+
+    # `revocation.build_record` signs whatever it is handed: the module has no
+    # opinion on whether a record is EFFECTIVE against a given receipt, because
+    # answering that needs the receipt payload too. So the only honest test of
+    # effectiveness is to run the shipped verifier over the receipt with this
+    # record in hand, before anything reaches disk. It covers, without a second
+    # copy of the rule: a signer that is not `active`, a signer whose validity
+    # window does not cover `revoked_at`, a `revoked_at` past the refund window,
+    # and a receipt that does not verify against the manifest given.
+    result = verify.verify(
+        envelope_bytes,
+        verify.TrustStore(manifests={issuer_id: manifest}, provenance={issuer_id: "bundle"}),
+        [record],
+    )
+    if result.revocation != "revoked":
+        raise CliUsageError(
+            "the verifier would not honor this record: "
+            f"revocation={result.revocation!r}, warnings={result.warnings!r}, "
+            f"errors={result.errors!r}"
+        )
+
+    _write_guarded_json(args.out, record, label="--out", force=args.force)
+    if revocability == "refund_window":
+        print(
+            "warning: refund_window records are ignored by Stage-2 verifiers unless logged "
+            "and anchored before the deadline (v0.2 §8/§15, G5): run attest log entry "
+            "--type revocation-record and log the record",
+            file=sys.stderr,
+        )
+    _print_json(
+        {
+            "out": str(args.out),
+            "receipt_id": receipt_id,
+            "revocability": revocability,
+            "revoked_at": args.revoked_at,
+            "record_sha256": revocation.record_hash(record),
+        }
+    )
+    return EXIT_OK
+
+
+# --- view producers: revocation, transfer, compromise (v0.2 §8/§17.1/§19.2) --
+#
+# Three verbs with one shape. Each reads the documents a view is made of, hands
+# them to the builder in `views.py` — the single producer of these three wire
+# formats — and writes back what the builder returns. No claim is validated
+# here: a producer with its own opinion about a claim's shape would be a second
+# spelling of a rule that already has one, and the two would drift.
+#
+# Two properties are shared and load-bearing. Every input is read with
+# `canon.loads_strict` (D11), because a view whose meaning depends on which
+# duplicate member a parser happened to keep is a view the operator did not
+# read. And every file is read, and every claim built, BEFORE the output is
+# opened: a refusal on the last pair must not be able to leave a half-built
+# view on disk.
+
+# §19.3's classification is relative to the head and chain the CALLER passed.
+# Saying so in the warning is not hedging: the same claim can be ignored by one
+# verifier and floor-establishing for another, and an operator who reads
+# `ineligible` as a property of the declaration itself will draw the wrong
+# conclusion about what they just published.
+_COMPROMISE_VIEW_CAVEAT = (
+    "against the trusted manifest given; a verifier holding a different head or chain "
+    "may classify differently"
+)
+
+
+def _reject_output_aliases(out: Path, inputs: list[tuple[str, Path]]) -> None:
+    """Refuse an `--out` that names one of the inputs, before any I/O.
+
+    An input clobbered by its own command's output is unrecoverable, and the
+    mistake is about the ARGUMENTS, not about the files: it is reported before
+    anything is opened, so the operator is not sent to look at a file that is
+    perfectly fine (the ordering `--revocation-evidence` already established).
+    """
+    for label, path in inputs:
+        if _same_file_target(path, out):
+            raise CliUsageError(f"{label} and --out must be different paths")
+
+
+def _require_paired(
+    first: list[Path], second: list[Path], first_flag: str, second_flag: str
+) -> None:
+    """`--manifest`/`--evidence` (and `--record`/`--evidence`) pair by POSITION.
+
+    Checked before any I/O: mismatched lengths mean the operator's idea of
+    which evidence backs which document is not the one the command would use,
+    and silently zipping to the shorter list would build a view that is
+    well-formed and wrong.
+    """
+    if len(first) != len(second):
+        raise CliUsageError(
+            f"{first_flag} and {second_flag} are paired by position and must be given the same "
+            f"number of times: {len(first)} vs {len(second)}"
+        )
+
+
+def _read_view_inputs(paths: list[Path], flag: str) -> list[Any]:
+    return [
+        _read_strict_json(path, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name=flag)
+        for path in paths
+    ]
+
+
+def _read_appended_view(path: Path | None) -> list[Any]:
+    """The existing view `--append` names, or an empty list.
+
+    Its elements are NOT carried over on trust: they are handed to the builder
+    beside the new ones and rebuilt claim by claim, so a claim that would not
+    be built today cannot survive in a view merely because it was already in
+    the file. An existing view is the obvious vector for a poisoned one.
+    """
+    if path is None:
+        return []
+    value = _read_strict_json(
+        path, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--append"
+    )
+    if not isinstance(value, list):
+        raise CliUsageError(
+            f"--append {path} must contain the JSON array of an existing view; a file "
+            "containing `null` is not an empty view — omit the flag instead"
+        )
+    return value
+
+
+def _built_view(build: Callable[[], list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Run one `views.py` builder, reporting its refusal as a usage error.
+
+    A `ViewError` is always the material this command was given, never a
+    verdict about anyone's receipt, so it exits 2 with the builder's own
+    message — which already names the claim and the member at fault.
+    """
+    try:
+        return build()
+    except views.ViewError as exc:
+        raise CliUsageError(str(exc)) from exc
+
+
+def _cmd_revocation_view(args: argparse.Namespace) -> int:
+    """Assemble `revocation-view.json` from signed revocation records (D12).
+
+    Both statuses §12 registers travel this one rail — `revoked` and
+    `transferred` — because `attest transfer record` has always emitted the
+    second, and a view that dropped it would hide a transfer from the verifier.
+
+    `--manifest` turns on `revocation.verify_record` for every record: signer
+    active in a self-consistent manifest, validity window covering the record's
+    own signed `revoked_at`. Without it the records are checked for shape only,
+    which is the right default for a holder assembling a view out of records
+    they were handed and cannot yet authenticate.
+    """
+    inputs: list[tuple[str, Path]] = [("--record", path) for path in args.record]
+    if args.append is not None:
+        inputs.append(("--append", args.append))
+    if args.manifest is not None:
+        inputs.append(("--manifest", args.manifest))
+    _reject_output_aliases(args.out, inputs)
+
+    key_manifest = None
+    if args.manifest is not None:
+        key_manifest = _read_strict_json(
+            args.manifest, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--manifest"
+        )
+        if not isinstance(key_manifest, dict):
+            raise CliUsageError(f"--manifest {args.manifest} must contain a JSON object")
+    records = [*_read_appended_view(args.append), *_read_view_inputs(args.record, "--record")]
+
+    view = _built_view(lambda: views.build_revocation_view(records, key_manifest))
+    _write_guarded_json(args.out, view, label="--out", force=args.force)
+    _print_json(
+        {
+            "out": str(args.out),
+            "records": len(view),
+            "verified_against_manifest": key_manifest is not None,
+        }
+    )
+    return EXIT_OK
+
+
+def _cmd_transfer_view(args: argparse.Namespace) -> int:
+    """Assemble `transfer-view.json` from `{record, evidence}` pairs (§17.1).
+
+    No anchor is required of a transfer claim: one carries weight at `logged`
+    standing (`transfer.record_logged_standing`), so demanding an anchor here
+    would refuse claims the verifier accepts.
+    """
+    _require_paired(args.record, args.evidence, "--record", "--evidence")
+    inputs: list[tuple[str, Path]] = [("--record", path) for path in args.record]
+    inputs += [("--evidence", path) for path in args.evidence]
+    if args.append is not None:
+        inputs.append(("--append", args.append))
+    _reject_output_aliases(args.out, inputs)
+
+    records = _read_view_inputs(args.record, "--record")
+    evidence = _read_view_inputs(args.evidence, "--evidence")
+    claims: list[Any] = [
+        *_read_appended_view(args.append),
+        *(
+            {"record": record, "evidence": bundle}
+            for record, bundle in zip(records, evidence, strict=True)
+        ),
+    ]
+
+    view = _built_view(lambda: views.build_transfer_view(claims))
+    _write_guarded_json(args.out, view, label="--out", force=args.force)
+    _print_json({"out": str(args.out), "claims": len(view)})
+    return EXIT_OK
+
+
+def _cmd_manifest_compromise_view(args: argparse.Namespace) -> int:
+    """Assemble `compromise-view.json`, and say what each claim can do (§19.3).
+
+    The FILE is the protocol artifact and its shape never varies. The report is
+    a local diagnostic: for every claim, and for every compromised kid the
+    trusted manifest lists, the four independent axes of
+    `views.claim_capabilities`. They are kept apart on purpose — a claim can
+    establish the status floor and still be unable to date a cutoff, and
+    collapsing that into one synthetic verdict is what made an earlier design
+    unanswerable.
+
+    `--trusted-manifest` is required because there is no classification without
+    one: the same declaration is ignored by a verifier that does not vouch for
+    its signer and floor-establishing for one that does. `--log-keys` and
+    `--anchor-policy` are given together or not at all — a cutoff exists only
+    once `evaluate_transparency` reaches `anchored_before` under BOTH pins, and
+    without them the honest answer is that the question was not asked.
+    """
+    _require_paired(args.manifest, args.evidence, "--manifest", "--evidence")
+    if (args.log_keys is None) != (args.anchor_policy is None):
+        raise CliUsageError(
+            "--log-keys and --anchor-policy are given together or not at all: a cutoff is "
+            "established only under both pins, and either one alone establishes nothing"
+        )
+    inputs: list[tuple[str, Path]] = [("--trusted-manifest", args.trusted_manifest)]
+    inputs += [("--chain", path) for path in args.chain]
+    inputs += [("--manifest", path) for path in args.manifest]
+    inputs += [("--evidence", path) for path in args.evidence]
+    for label, optional in (
+        ("--append", args.append),
+        ("--log-keys", args.log_keys),
+        ("--anchor-policy", args.anchor_policy),
+    ):
+        if optional is not None:
+            inputs.append((label, optional))
+    _reject_output_aliases(args.out, inputs)
+
+    trusted_manifest = _read_strict_json(
+        args.trusted_manifest,
+        max_bytes=_MAX_STAGE2_INPUT_BYTES["json"],
+        input_name="--trusted-manifest",
+    )
+    if not isinstance(trusted_manifest, dict):
+        raise CliUsageError(
+            f"--trusted-manifest {args.trusted_manifest} must contain a JSON object"
+        )
+    chain = _read_view_inputs(args.chain, "--chain") or None
+    declarations = _read_view_inputs(args.manifest, "--manifest")
+    evidence = _read_view_inputs(args.evidence, "--evidence")
+    claims: list[Any] = [
+        *_read_appended_view(args.append),
+        *(
+            {"manifest": declaration, "evidence": bundle}
+            for declaration, bundle in zip(declarations, evidence, strict=True)
+        ),
+    ]
+    log_keys = _load_log_keys(args.log_keys) if args.log_keys is not None else None
+    anchor_policy = _load_anchor_policy(args.anchor_policy, None)
+
+    view = _built_view(lambda: views.build_compromise_view(claims))
+    # Classification runs before the write, not after: ambiguous or inauthentic
+    # trust material yields no classification at all, and a view published with
+    # an unanswerable report is a view whose operator was told nothing.
+    capabilities = [
+        _claim_capabilities(claim, trusted_manifest, chain, log_keys, anchor_policy)
+        for claim in view
+    ]
+
+    _write_guarded_json(args.out, view, label="--out", force=args.force)
+    for index, report in enumerate(capabilities):
+        if not report:
+            # An empty report is not a quiet success: the claim marks no key
+            # that the trusted manifest lists, so no verifier holding this head
+            # will act on it. Saying nothing here would let an operator publish
+            # a view that does nothing and believe they had published a
+            # declaration — the same failure the revocation producer refuses
+            # outright. This one is a warning rather than a refusal because the
+            # claim IS valid, and against a DIFFERENT trusted head it may well
+            # bite; what is local is the verdict, not the claim.
+            print(
+                f"warning: claim {index} marks no key listed in --trusted-manifest, so it "
+                f"changes nothing for a verifier holding that head, "
+                f"{_COMPROMISE_VIEW_CAVEAT}",
+                file=sys.stderr,
+            )
+        for kid, axes in report.items():
+            if axes["floor"] == "ignored":
+                # `claim_capabilities` allows `floor: ignored` together with
+                # `cutoff_signer: ineligible`, and the message below asserts the
+                # floor IS established — so on that combination the warning said
+                # the opposite of the report it came from.
+                print(
+                    f"warning: claim {index} kid {kid!r} is ignored under the trusted manifest "
+                    f"and chain supplied, so it establishes neither the status floor nor a "
+                    f"cutoff, {_COMPROMISE_VIEW_CAVEAT}",
+                    file=sys.stderr,
+                )
+            elif axes["cutoff_signer"] == "ineligible":
+                print(
+                    f"warning: claim {index} kid {kid!r} establishes the status floor but its "
+                    f"signer cannot date a cutoff (cutoff_signer: ineligible), "
+                    f"{_COMPROMISE_VIEW_CAVEAT}",
+                    file=sys.stderr,
+                )
+            if axes["anchor_evidence"] == "absent":
+                print(
+                    f"warning: claim {index} kid {kid!r} carries no anchor material "
+                    f"(anchor_evidence: absent), so it can establish no cutoff for a verifier "
+                    f"that checks anchors, {_COMPROMISE_VIEW_CAVEAT}",
+                    file=sys.stderr,
+                )
+    _print_json({"out": str(args.out), "claims": len(view), "capabilities": capabilities})
+    return EXIT_OK
+
+
+def _claim_capabilities(
+    claim: dict[str, Any],
+    trusted_manifest: dict[str, Any],
+    chain: list[Any] | None,
+    log_keys: list[tlog.LogKey] | None,
+    anchor_policy: anchor.AnchorPolicy | None,
+) -> dict[str, dict[str, str]]:
+    try:
+        return views.claim_capabilities(
+            claim, trusted_manifest, chain, log_keys=log_keys, anchor_policy=anchor_policy
+        )
+    except views.ViewError as exc:
+        raise CliUsageError(str(exc)) from exc
+
+
 def _cmd_transfer_record(args: argparse.Namespace) -> int:
     if _same_file_target(args.receipt, args.out):
         # The issuer must read the old receipt before it can verify the
@@ -1786,6 +2266,263 @@ def _cmd_log_init(args: argparse.Namespace) -> int:
     entries_path.touch(exist_ok=True)
 
     _print_json({"dir": str(log_dir), "origin": origin, "size": 0})
+    return EXIT_OK
+
+
+# --- log entry: the six §8 entry types, computed from the documents ----------
+#
+# One rule holds for all six, and it is the reason this verb exists: the hash
+# is ALWAYS recomputed from the document, never read from a member the
+# document declares. An entry that repeated a number its own subject supplied
+# would commit to nothing.
+#
+# The second rule is that no document shape is described here. Each is checked
+# by asking the module that OWNS it — `validate.validate_payload` for an
+# envelope, `manifests.verify_key_manifest` for a manifest,
+# `views.build_revocation_view` for a revocation record,
+# `grant._valid_declaration_shape` for a declaration,
+# `authority._valid_authorization_shape` for an authorization. The one
+# document with no single owner-side validator is the transfer record: its
+# shape rule is spelled once, in the first half of
+# `transfer.verify_record_signature` (`transfer.py:250-263`), and that
+# function's second half needs a key manifest a producer holding only a record
+# does not have. `_transfer_record_log_entry` therefore composes the same
+# predicates in the same order, and
+# `test_the_transfer_record_shape_agrees_with_the_transfer_module` pins the two
+# together so they cannot drift apart in silence.
+#
+# The `--type` names are taken from `tlog`'s own registry rather than spelled a
+# second time: the flag and `tlog.encode_entry` must never be able to disagree
+# about which six types exist.
+_LOG_ENTRY_TYPES: tuple[str, ...] = (
+    tlog._TYPE_RECEIPT,
+    tlog._TYPE_KEY_MANIFEST,
+    tlog._TYPE_REVOCATION_RECORD,
+    tlog._TYPE_TRANSFER_RECORD,
+    tlog._TYPE_CESSATION_DECLARATION,
+    tlog._TYPE_PUBLISHER_AUTHORIZATION,
+)
+
+# Same number `transfer.verify_record_signature` passes to its own decoder for
+# `new_holder_pubkey`; named here so the check below reads as the rule it is.
+_ED25519_PUB_LEN = 32
+
+
+def _entry_issuer_hint(document: dict[str, Any], what: str) -> str:
+    """The issuer a record-shaped document's signing `kid` names (v0.2 §8).
+
+    A browsing convenience and NOT a trust anchor: `tlog.encode_entry` only
+    asks that it be a DNS name, and what binds a document to an issuer is the
+    document's own signature, which nothing here verifies.
+
+    The block is read the way the CONSUMER reads it, which `views` now states
+    once for every producer: an unknown member is tolerated, and `kid`, `sig`
+    and any `sig_ml_dsa_65` are validated. Demanding a closed block here would
+    refuse to log a declaration every verifier accepts — a valid document made
+    permanently untransparent. Skipping the validation of the members that ARE
+    known would do the opposite and log a record with no signature at all.
+    What keeps the entry unambiguous is not this field but `record_sha256`,
+    which commits to the whole document, the unknown member included.
+    """
+    try:
+        return views._issuer_of_kid(views._signature_block_kid(document.get("signature"), what))
+    except views.ViewError as exc:
+        raise CliUsageError(str(exc)) from exc
+
+
+def _receipt_log_entry(document: dict[str, Any], path: Path) -> dict[str, Any]:
+    """`{"type","issuer","core_sha256"}` for a schema-valid receipt envelope.
+
+    The payload is validated exactly as `attest issue` validates what it is
+    about to sign. An entry naming a payload no verifier would admit commits
+    to something nobody can check, which is worse than no entry at all.
+    """
+    payload = document.get("payload")
+    if not isinstance(payload, dict):
+        raise CliUsageError(f"{path} is not a receipt envelope: no object member 'payload'")
+    if not isinstance(document.get("signatures"), list):
+        raise CliUsageError(f"{path} is not a receipt envelope: no array member 'signatures'")
+    violations = validate.validate_payload(payload)
+    if violations:
+        raise CliUsageError(f"{path} payload failed schema validation: " + "; ".join(violations))
+    issuer_block = payload.get("issuer")
+    issuer = issuer_block.get("id") if isinstance(issuer_block, dict) else None
+    if not isinstance(issuer, str):
+        raise CliUsageError(f"{path} payload is missing string 'issuer.id'")
+    return {
+        "type": tlog._TYPE_RECEIPT,
+        "issuer": issuer,
+        "core_sha256": tlog.receipt_core_hash(document),
+    }
+
+
+def _key_manifest_log_entry(document: dict[str, Any], path: Path) -> dict[str, Any]:
+    """`views.key_manifest_log_entry`, for a manifest that verifies against a
+    key it lists.
+
+    The self-consistency check is not decoration: `views.build_compromise_claim`
+    refuses a claim whose manifest does not self-verify, so an entry logged for
+    one is an entry no compromise claim could ever be built around.
+    """
+    if not manifests.verify_key_manifest(document):
+        raise CliUsageError(f"{path} does not verify against its own listed keys")
+    return views.key_manifest_log_entry(document)
+
+
+def _revocation_record_log_entry(document: dict[str, Any], path: Path) -> dict[str, Any]:
+    """`{"type","issuer","record_sha256"}` for a §8 four-member revocation record.
+
+    Shape-checked by building a one-record revocation view, which is the same
+    producer every consumer of that rail reads: a record this entry names is a
+    record `attest revocation-view` would also carry. The hash is taken over
+    the view's own materialized copy, never over the caller's object.
+    """
+    try:
+        record = views.build_revocation_view([document])[0]
+    except views.ViewError as exc:
+        raise CliUsageError(f"{path} is not a revocation record: {exc}") from exc
+    return {
+        "type": tlog._TYPE_REVOCATION_RECORD,
+        "issuer": _entry_issuer_hint(record, "revocation record"),
+        "record_sha256": revocation.record_hash(record),
+    }
+
+
+def _transfer_record_log_entry(document: dict[str, Any], path: Path) -> dict[str, Any]:
+    """`{"type","issuer","record_sha256"}` for a §17.1 six-member transfer record.
+
+    The shape half of `transfer.verify_record_signature`, in that function's
+    own order and out of that function's own predicates. Its other half — the
+    signer active in a key manifest, the validity window covering
+    `transferred_at` — needs a manifest this producer does not hold, and stays
+    the verifier's to apply.
+    """
+    if set(document) != transfer._TRANSFER_RECORD_MEMBERS:
+        raise CliUsageError(
+            f"{path} is not a transfer record: v0.2 §17.1 closes it at exactly "
+            f"{sorted(transfer._TRANSFER_RECORD_MEMBERS)}"
+        )
+    for member in ("receipt_id", "new_receipt_id"):
+        value = document[member]
+        if not isinstance(value, str) or transfer._RECEIPT_ID_RE.fullmatch(value) is None:
+            raise CliUsageError(f"{path} transfer record {member!r} must be a ULID: {value!r}")
+    if transfer._strict_b64u_decode(document["new_holder_pubkey"], _ED25519_PUB_LEN) is None:
+        raise CliUsageError(
+            f"{path} transfer record 'new_holder_pubkey' must be canonical base64url of a "
+            f"{_ED25519_PUB_LEN}-byte Ed25519 public key"
+        )
+    if not transfer._valid_utc_timestamp(document["transferred_at"]):
+        raise CliUsageError(
+            f"{path} transfer record 'transferred_at' must be a zero-padded UTC instant "
+            f"spelled YYYY-MM-DDTHH:MM:SSZ: {document['transferred_at']!r}"
+        )
+    if not transfer._valid_holder_authorization_shape(document["holder_authorization"]):
+        raise CliUsageError(
+            f"{path} transfer record 'holder_authorization' must be exactly "
+            "{'sig': <base64url of a 64-byte Ed25519 signature>}"
+        )
+    return {
+        "type": tlog._TYPE_TRANSFER_RECORD,
+        "issuer": _entry_issuer_hint(document, "transfer record"),
+        "record_sha256": transfer.record_hash(document),
+    }
+
+
+def _cessation_declaration_log_entry(document: dict[str, Any], path: Path) -> dict[str, Any]:
+    """`{"type","issuer","record_sha256"}` for a §18.4 cessation declaration.
+
+    Logging one is RECOMMENDED and never load-bearing: an authenticated
+    declaration activates a grant whether or not it was ever logged. The entry
+    still has to be exact, because what the log gives it is a date opposable
+    to third parties.
+    """
+    if not grant._valid_declaration_shape(document):
+        raise CliUsageError(
+            f"{path} is not a valid cessation declaration under v0.2 §18.4: a required "
+            "member is missing or extra, or one of them has an invalid value"
+        )
+    return {
+        "type": tlog._TYPE_CESSATION_DECLARATION,
+        "issuer": _entry_issuer_hint(document, "cessation declaration"),
+        "record_sha256": grant.declaration_hash(document),
+    }
+
+
+def _publisher_authorization_log_entry(document: dict[str, Any], path: Path) -> dict[str, Any]:
+    """`{"type","issuer","record_sha256"}` for a §20.2 publisher authorization.
+
+    `issuer` here is the PUBLISHER's domain, and remains the same
+    non-authenticated hint as every other type's: currency disputes between two
+    authorizations are settled by `authorization_version`, never by the log.
+    """
+    if not authority._valid_authorization_shape(document):
+        raise CliUsageError(
+            f"{path} is not a valid publisher authorization under v0.2 §20.2: a required "
+            "member is missing or extra, or one of them has an invalid value"
+        )
+    # §8 defines THIS entry's hint as the document's publisher, not the signer's
+    # domain, and the two differ whenever a publisher's authorization is signed
+    # under another domain — which `authority.verify_authorization` allows,
+    # handling the domain question separately. The signature block is still
+    # validated, for the same reason as every other type.
+    _entry_issuer_hint(document, "publisher authorization")
+    return {
+        "type": tlog._TYPE_PUBLISHER_AUTHORIZATION,
+        "issuer": cast(str, document["publisher"]),
+        "record_sha256": authority.authorization_hash(document),
+    }
+
+
+_LOG_ENTRY_BUILDERS: dict[str, Callable[[dict[str, Any], Path], dict[str, Any]]] = {
+    tlog._TYPE_RECEIPT: _receipt_log_entry,
+    tlog._TYPE_KEY_MANIFEST: _key_manifest_log_entry,
+    tlog._TYPE_REVOCATION_RECORD: _revocation_record_log_entry,
+    tlog._TYPE_TRANSFER_RECORD: _transfer_record_log_entry,
+    tlog._TYPE_CESSATION_DECLARATION: _cessation_declaration_log_entry,
+    tlog._TYPE_PUBLISHER_AUTHORIZATION: _publisher_authorization_log_entry,
+}
+
+
+def _cmd_log_entry(args: argparse.Namespace) -> int:
+    """Build one document's transparency-log entry (v0.2 §8).
+
+    Alias checks run before any I/O: `--out` pointing at `--in` is a mistake
+    about the arguments, not about the file, and reporting it as a read
+    failure would send the operator looking in the wrong place.
+    """
+    if _same_file_target(args.doc_in, args.out):
+        raise CliUsageError("--in and --out must be different paths")
+
+    # A `receipt` entry names an envelope, and an envelope over
+    # `MAX_ENVELOPE_BYTES` is one no conforming verifier will parse: bound it
+    # by the envelope's own ceiling so the refusal names the real problem here
+    # instead of arriving from a verifier three steps later. The other five
+    # documents are ordinary Stage-2 JSON inputs.
+    max_bytes = (
+        validate.MAX_ENVELOPE_BYTES
+        if args.type == tlog._TYPE_RECEIPT
+        else _MAX_STAGE2_INPUT_BYTES["json"]
+    )
+    document = _read_strict_json(args.doc_in, max_bytes=max_bytes, input_name="--in")
+    if not isinstance(document, dict):
+        raise CliUsageError(f"--in {args.doc_in} must contain a JSON object")
+
+    try:
+        entry = _LOG_ENTRY_BUILDERS[args.type](document, args.doc_in)
+        # The log's own closed schema has the last word, and it gets it BEFORE
+        # anything reaches disk: an entry `tlog.encode_entry` refuses is an
+        # entry `attest log append` would refuse too, and writing it first
+        # would hand the operator a file whose only use is to be rejected.
+        tlog.encode_entry(entry)
+    except (tlog.TlogError, canon.CanonError, views.ViewError) as exc:
+        raise CliUsageError(
+            f"--in {args.doc_in} cannot be logged as a {args.type} entry: {exc}"
+        ) from exc
+
+    _write_guarded_json(args.out, entry, label="--out", force=args.force)
+    # The report IS the entry, plus where it went: an operator can diff it
+    # against the file without a second description of the same object.
+    _print_json({"out": str(args.out), **entry})
     return EXIT_OK
 
 
@@ -2566,6 +3303,161 @@ def _build_disclosure(args: argparse.Namespace) -> verify.Disclosure | None:
     )
 
 
+def _read_rail_array(path: Path | None, flag: str) -> list[Any] | None:
+    """Read one of the two array-shaped evidence rails, or nothing.
+
+    No content validation happens here by design: a malformed claim inside a
+    well-formed array is the VERIFIER's to refuse, claim by claim, and
+    pre-filtering here would hide from the operator the very refusal the
+    verifier exists to make. Only the container is this function's business —
+    and an oversized array is forwarded whole, so the verifier reports its own
+    ceiling instead of being silently trimmed.
+    """
+    if path is None:
+        return None
+    value = _read_strict_json(path, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name=flag)
+    if not isinstance(value, list):
+        raise CliUsageError(
+            f"{flag} file {path} must contain a JSON array of claims; a file containing "
+            "`null` is not an opt-out — omit the flag instead"
+        )
+    return value
+
+
+# --- binding: producing the §8.2 challenge proof -----------------------------
+#
+# Both cores have EVALUATED this proof since v0.1 — `verify()` takes
+# `challenge=(nonce, sig)`, and `verify` already exposes the input side — but
+# nothing shipped could PRODUCE one: `commitment.sign_challenge` had no caller
+# in this module at all, so the answer to "what if someone copies your receipt"
+# could only be exercised by writing code against the library. These two verbs
+# are that producer, split the way the roles are: the verifier asks, the holder
+# answers.
+
+#: The nonce this verb generates. Twice v0.1 §8.2's 16-byte floor, matching the
+#: redemption challenge (§18.7) rather than sitting one byte above the minimum.
+_CHALLENGE_NONCE_BYTES = 32
+
+
+def _cmd_binding_challenge(args: argparse.Namespace) -> int:
+    """The verifier's half: a fresh nonce, and no way to supply one.
+
+    The nonce belongs to the party asking the question. A challenger that
+    accepted a caller-supplied nonce would not be challenging anyone — the
+    answer to a nonce the caller chose is one that anybody who has seen it once
+    can replay — so there is deliberately no flag here that could fix it.
+    """
+    nonce = os.urandom(_CHALLENGE_NONCE_BYTES)
+    # Not a secret: the nonce is what the holder is asked to sign, and it is
+    # handed to them in the clear.
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(keys.b64u(nonce), encoding="utf-8")
+    _print_json({"out": str(args.out), "nonce": keys.b64u(nonce)})
+    return EXIT_OK
+
+
+def _read_nonce(path: Path) -> bytes:
+    """The nonce arrives as base64url text from a file the caller controls."""
+    try:
+        return _read_b64u_file(path)
+    except FileNotFoundError as exc:
+        raise CliUsageError(f"--nonce file not found: {path}") from exc
+    except OSError as exc:
+        raise CliUsageError(f"cannot read --nonce {path}: {exc}") from exc
+    except (TypeError, ValueError) as exc:
+        raise CliUsageError(f"--nonce is not canonical base64url: {exc}") from exc
+
+
+def _cmd_binding_respond(args: argparse.Namespace) -> int:
+    """The holder's half: sign the verifier's nonce with the key the receipt
+    names — after establishing that the seed given IS that key.
+
+    The pubkey check is not politeness. A signature made with a key the receipt
+    does not name verifies against nothing, and the holder would learn that
+    from a verifier reporting `binding: "not_proven"` — a result that says a
+    proof failed and nothing about why. Naming the mismatch here is what
+    separates a wrong file from a wrong key.
+
+    A receipt whose `buyer.pubkey` is null cannot carry this proof at all, and
+    that is the common case rather than an edge one (v0.1 §5.3 makes the member
+    optional). Saying what to ask the issuer for is more use than a refusal the
+    reader takes for their own mistake.
+    """
+    # Every input, not just the seed: the receipt is the issuer's signed
+    # envelope and there is no second copy of it here, so aliasing it to --out
+    # would replace the whole document with one line of base64url. Same policy
+    # as `transfer authorize` and `revoke`, which name each of their own inputs.
+    for label, path in (
+        ("--receipt", args.receipt),
+        ("--holder-seed", args.holder_seed),
+        ("--nonce", args.nonce),
+    ):
+        if _same_file_target(path, args.out):
+            raise CliUsageError(f"{label} and --out must be different paths")
+    envelope_bytes = _read_bounded_bytes(
+        args.receipt, max_bytes=validate.MAX_ENVELOPE_BYTES, input_name="--receipt"
+    )
+    envelope = _loads_strict(envelope_bytes, args.receipt, "--receipt")
+    if not isinstance(envelope, dict):
+        raise CliUsageError(f"{args.receipt} must contain a JSON object")
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict):
+        raise CliUsageError(f"{args.receipt} is missing object member 'payload'")
+    receipt_id = payload.get("receipt_id")
+    if not isinstance(receipt_id, str) or revocation.RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+        raise CliUsageError(f"{args.receipt} payload member 'receipt_id' must be a ULID")
+    buyer = payload.get("buyer")
+    declared = buyer.get("pubkey") if isinstance(buyer, dict) else None
+    if declared is None:
+        raise CliUsageError(
+            f"{args.receipt} carries no 'buyer.pubkey', so no binding proof exists for it: "
+            "ask the issuer to re-issue the receipt against a public key you hold "
+            "(v0.1 §5.3, §8.2)"
+        )
+    pubkey = transfer._strict_b64u_decode(declared, _ED25519_PUB_LEN)
+    if pubkey is None:
+        raise CliUsageError(
+            f"{args.receipt} payload member 'buyer.pubkey' must be canonical base64url of a "
+            f"{_ED25519_PUB_LEN}-byte Ed25519 public key"
+        )
+    nonce = _read_nonce(args.nonce)
+    try:
+        kp = _load_seed_kp(args.holder_seed)
+    except (OSError, TypeError, ValueError) as exc:
+        raise CliUsageError(f"--holder-seed is not a usable Ed25519 seed: {exc}") from exc
+    if kp.pub != pubkey:
+        raise CliUsageError(
+            "--holder-seed is not the key this receipt names in 'buyer.pubkey': signing with "
+            "it would produce a proof that verifies against nothing"
+        )
+    try:
+        sig = commitment.sign_challenge(receipt_id, nonce, kp)
+    except ValueError as exc:
+        raise CliUsageError(f"--nonce is not usable: {exc}") from exc
+    # The proof is checked with the verifier's own predicate before it is
+    # handed over, against the key the RECEIPT names rather than the one just
+    # loaded. No input can make this fail — a correct signer's signature
+    # verifies under the key it signed with, and the equality above already
+    # established the two keys are the same — so no test can make it red and
+    # the mutation that deletes it is equivalent. It stays because the cost of
+    # emitting an unverifiable proof falls on the holder, who finds out from a
+    # verifier's `not_proven` days later and cannot tell it from a wrong key.
+    if not commitment.verify_challenge(receipt_id, nonce, sig, pubkey):  # pragma: no cover
+        raise CliUsageError(
+            "the signature produced does not verify against this receipt's 'buyer.pubkey'; "
+            "nothing was written"
+        )
+    text = keys.b64u(sig)
+    # Guarded like every other output this CLI would destroy: `--out` is a path
+    # the caller types, and a typo aims it at a file they already have. Not
+    # secret, though — the response is bound to this receipt and this one
+    # nonce, and it is meant to be handed to the verifier that asked.
+    plan = _prepare_overwrite(args.out, text, label="--out", force=args.force)
+    _write_json_text(args.out, text, label="--out", overwrite_plan=plan)
+    _print_json({"out": str(args.out), "receipt_id": receipt_id})
+    return EXIT_OK
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     try:
         envelope_bytes = args.envelope.read_bytes()
@@ -2643,6 +3535,51 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             'wrap a lone publisher authorization document as {"authorizations": [<document>]}'
         )
 
+    # The three caller-side rails of v0.2 §17/§19.2. They are read strictly
+    # (`canon.loads_strict`, D11) because they are new surface: a duplicate
+    # member in a claim would otherwise collapse onto whichever copy the
+    # parser kept, and the claim that authenticates would not be the claim the
+    # operator read.
+    #
+    # The guard is on the FLAG, not on the parsed value — the same rule
+    # `--authority-view` above states and for the same reason: a file
+    # containing `null` parses to None, and testing the parsed value would
+    # read a channel the caller DID supply as one they never supplied,
+    # silently opting them out of the check they asked for.
+    if args.revocation_evidence is not None and args.revocations is None:
+        # Checked before the file is touched: evidence proves that one of the
+        # records in --revocations was logged and anchored in time, so with no
+        # records supplied there is nothing for it to be evidence OF — whether
+        # or not that file happens to exist and parse. Reading first would
+        # report "file not found" for a mistake that is not about the file.
+        raise CliUsageError(
+            "--revocation-evidence needs --revocations: it proves that one of those "
+            "records was logged and anchored before the refund-window deadline"
+        )
+
+    transfer_view = _read_rail_array(args.transfer_view, "--transfer-view")
+    compromise_view = _read_rail_array(args.compromise_view, "--compromise-view")
+    revocation_evidence = None
+    if args.revocation_evidence is not None:
+        revocation_evidence = _read_strict_json(
+            args.revocation_evidence,
+            max_bytes=_MAX_STAGE2_INPUT_BYTES["json"],
+            input_name="--revocation-evidence",
+        )
+        if not isinstance(revocation_evidence, dict):
+            raise CliUsageError(
+                f"--revocation-evidence file {args.revocation_evidence} must contain ONE "
+                "JSON object: the log evidence bundle for the refund-window record in "
+                "--revocations; a file containing `null` is not an opt-out — omit the "
+                "flag instead"
+            )
+        if args.log_keys is None or args.anchor_policy is None:
+            print(
+                "warning: --revocation-evidence is only evaluated by a Stage-2-capable "
+                "verifier; pass --log-keys and --anchor-policy for it to be read",
+                file=sys.stderr,
+            )
+
     result = verify.verify(
         envelope_bytes,
         trust_store,
@@ -2651,6 +3588,9 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         transparency=transparency_evidence,
         log_keys=log_keys,
         anchor_policy=anchor_policy,
+        revocation_evidence=revocation_evidence,
+        transfer_view=transfer_view,
+        compromise_view=compromise_view,
         witness_policy=witness_policy,
         grant_view=grant_view,
         authority_view=authority_view,
@@ -3048,6 +3988,73 @@ def build_parser() -> argparse.ArgumentParser:
     _add_force_flag(p)
     p.set_defaults(func=_cmd_manifest_rotate)
 
+    p = manifest_sub.add_parser(
+        "compromise-view",
+        help="Assemble compromise-view.json and report what each claim can do (v0.2 §19.3)",
+        description=(
+            "Builds the compromise view a verifier reads out of {--manifest, --evidence} pairs, "
+            "each one a key manifest that marks a key compromised plus the log evidence proving "
+            "that manifest was logged. Pairs are matched BY POSITION. The output file's shape "
+            "never varies; what varies is the report, which says for every claim and every "
+            "compromised kid whether the claim establishes the status floor, whether its signer "
+            "could date a §19.3 item 3b cutoff, whether it carries anchor material at all, and "
+            "— only with both --log-keys and --anchor-policy — whether a cutoff is actually "
+            "established. Those four are independent on purpose. All of it is relative to "
+            "--trusted-manifest: the same declaration is ignored by a verifier that does not "
+            "vouch for its signer and floor-establishing for one that does. No network I/O."
+        ),
+    )
+    p.add_argument(
+        "--trusted-manifest",
+        required=True,
+        type=Path,
+        help="the head key manifest the report classifies against",
+    )
+    p.add_argument(
+        "--chain",
+        action="append",
+        default=[],
+        type=Path,
+        help="repeatable; an earlier manifest in the issuer's published chain",
+    )
+    p.add_argument(
+        "--manifest",
+        required=True,
+        action="append",
+        default=[],
+        type=Path,
+        help="repeatable; a key manifest declaring a key compromised",
+    )
+    p.add_argument(
+        "--evidence",
+        required=True,
+        action="append",
+        default=[],
+        type=Path,
+        help="repeatable; the `log prove`/`log anchor` evidence for the manifest at this position",
+    )
+    p.add_argument(
+        "--append",
+        type=Path,
+        default=None,
+        help="an existing compromise view to extend; its claims are re-validated too",
+    )
+    p.add_argument(
+        "--log-keys",
+        type=Path,
+        default=None,
+        help="pinned log keys; required with --anchor-policy to evaluate a cutoff",
+    )
+    p.add_argument(
+        "--anchor-policy",
+        type=Path,
+        default=None,
+        help="pinned block headers; required with --log-keys to evaluate a cutoff",
+    )
+    p.add_argument("--out", required=True, type=Path, help="output compromise view JSON path")
+    _add_force_flag(p)
+    p.set_defaults(func=_cmd_manifest_compromise_view)
+
     p = manifest_sub.add_parser("artifacts", help="Build and sign an artifact manifest")
     p.add_argument(
         "--in", dest="manifest_in", required=True, type=Path, help="signer's key manifest"
@@ -3097,6 +4104,67 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, type=Path, help="output envelope JSON path")
     _add_force_flag(p)
     p.set_defaults(func=_cmd_issue)
+
+    p = sub.add_parser(
+        "revoke",
+        help="Sign a revocation record for a refund_window or policy receipt (v0.1 §12)",
+    )
+    p.add_argument("--receipt", required=True, type=Path, help="receipt envelope JSON to revoke")
+    p.add_argument("--manifest", required=True, type=Path, help="issuer key manifest listing --kid")
+    p.add_argument(
+        "--revoked-at",
+        required=True,
+        help="signed UTC instant, spelled exactly YYYY-MM-DDTHH:MM:SSZ",
+    )
+    p.add_argument("--seed", required=True, type=Path, help="issuer signing key seed")
+    p.add_argument("--kid", required=True, help="key id to sign with; must be active in --manifest")
+    p.add_argument(
+        "--mldsa-seed",
+        type=Path,
+        default=None,
+        help="ML-DSA-65 leg of the signing key; required exactly for a hybrid key entry",
+    )
+    p.add_argument("--out", required=True, type=Path, help="output revocation record JSON path")
+    _add_force_flag(p)
+    p.set_defaults(func=_cmd_revoke)
+
+    p = sub.add_parser(
+        "revocation-view",
+        help="Assemble the revocation-view.json array a verifier reads (v0.2 §8/§12)",
+        description=(
+            "Wraps signed revocation records into the JSON ARRAY that `attest verify "
+            "--revocations` and both shipped verifier cores read. Carries the two statuses "
+            "§12 registers, `revoked` and `transferred`: the second is what `attest transfer "
+            "record --revocation-out` emits, and a view that dropped it would hide a transfer. "
+            "With --manifest, every record must additionally verify against that key manifest "
+            "— signer active, validity window covering the record's own signed revoked_at. "
+            "Without it the records are shape-checked only, which is the right default for a "
+            "holder assembling records they cannot yet authenticate."
+        ),
+    )
+    p.add_argument(
+        "--record",
+        required=True,
+        action="append",
+        default=[],
+        type=Path,
+        help="repeatable; one signed revocation record JSON file",
+    )
+    p.add_argument(
+        "--append",
+        type=Path,
+        default=None,
+        help="an existing revocation view to extend; its records are re-validated too",
+    )
+    p.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="issuer key manifest every record must verify against",
+    )
+    p.add_argument("--out", required=True, type=Path, help="output revocation view JSON path")
+    _add_force_flag(p)
+    p.set_defaults(func=_cmd_revocation_view)
 
     p_transfer = sub.add_parser("transfer", help="Issuer-mediated transfer operations (v0.2 §17)")
     transfer_sub = p_transfer.add_subparsers(dest="transfer_command", required=True)
@@ -3149,6 +4217,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_force_flag(p)
     p.set_defaults(func=_cmd_transfer_record)
+
+    p = transfer_sub.add_parser(
+        "view",
+        help="Assemble the transfer-view.json array a verifier reads (v0.2 §17.1)",
+        description=(
+            "Builds the transfer view out of {--record, --evidence} pairs, matched BY POSITION: "
+            "each signed transfer record plus the log evidence proving that record was logged. "
+            "No anchor is required — a transfer claim carries weight at `logged` standing, so "
+            "demanding one here would refuse claims the verifier accepts. No network I/O."
+        ),
+    )
+    p.add_argument(
+        "--record",
+        required=True,
+        action="append",
+        default=[],
+        type=Path,
+        help="repeatable; one signed transfer record JSON file",
+    )
+    p.add_argument(
+        "--evidence",
+        required=True,
+        action="append",
+        default=[],
+        type=Path,
+        help="repeatable; the `log prove` evidence for the record at this position",
+    )
+    p.add_argument(
+        "--append",
+        type=Path,
+        default=None,
+        help="an existing transfer view to extend; its claims are re-validated too",
+    )
+    p.add_argument("--out", required=True, type=Path, help="output transfer view JSON path")
+    _add_force_flag(p)
+    p.set_defaults(func=_cmd_transfer_view)
 
     p_grant = sub.add_parser("grant", help="Preservation-pledge operations (v0.2 §18)")
     grant_sub = p_grant.add_subparsers(dest="grant_command", required=True)
@@ -3299,6 +4403,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=_cmd_log_init)
 
     p = log_sub.add_parser(
+        "entry",
+        help="Build the v0.2 §8 transparency-log entry for one signed document",
+        description=(
+            "Computes the log entry a signed document produces, ALWAYS by rehashing the "
+            "document itself — no hash is ever read from a member the document declares. The "
+            "document is first validated against the shape its own module owns (schema for an "
+            "envelope, self-consistency for a key manifest, the closed member set for the four "
+            "record-shaped types), and the resulting entry is validated against the log's own "
+            "closed entry schema BEFORE anything is written, so an entry this command emits is "
+            "one `attest log append` accepts. `issuer` is a non-authenticated browsing hint: "
+            "for a receipt it is the payload's own issuer id, for the other five the domain of "
+            "the signing kid. Nothing here verifies a signature, and nothing here touches the "
+            "network."
+        ),
+    )
+    p.add_argument(
+        "--type",
+        required=True,
+        choices=list(_LOG_ENTRY_TYPES),
+        help="which of the six §8 entry types this document produces",
+    )
+    p.add_argument(
+        "--in", dest="doc_in", required=True, type=Path, help="the signed document to log"
+    )
+    p.add_argument("--out", required=True, type=Path, help="output entry JSON path")
+    _add_force_flag(p)
+    p.set_defaults(func=_cmd_log_entry)
+
+    p = log_sub.add_parser(
         "append",
         help="Validate+append one entry, rebuild tiles, write an UNSIGNED candidate",
         description=(
@@ -3403,10 +4536,58 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", required=True, type=Path)
     p.set_defaults(func=_cmd_log_ots_convert)
 
+    p_binding = sub.add_parser(
+        "binding", help="Prove possession of a receipt's buyer key (v0.1 §8.2)"
+    )
+    binding_sub = p_binding.add_subparsers(dest="binding_command", required=True)
+
+    p = binding_sub.add_parser("challenge", help="Generate a fresh nonce (verifier)")
+    p.add_argument("--out", required=True, type=Path, help="output nonce path (base64url text)")
+    p.set_defaults(func=_cmd_binding_challenge)
+
+    p = binding_sub.add_parser("respond", help="Sign a challenge nonce (holder, §8.2)")
+    p.add_argument("--receipt", required=True, type=Path)
+    p.add_argument(
+        "--holder-seed", required=True, type=Path, help="the receipt's own buyer.pubkey seed"
+    )
+    p.add_argument("--nonce", required=True, type=Path, help="nonce from `binding challenge`")
+    p.add_argument("--out", required=True, type=Path, help="output signature path (base64url)")
+    p.add_argument("--force", action="store_true", help="replace an existing --out file")
+    p.set_defaults(func=_cmd_binding_respond)
+
     p = sub.add_parser("verify", help="Verify a receipt envelope")
     p.add_argument("envelope", type=Path)
     p.add_argument("--trust-dir", required=True, type=Path, help="directory of key manifest files")
     p.add_argument("--revocations", type=Path, default=None, help="JSON file: revocation records")
+    p.add_argument(
+        "--transfer-view",
+        type=Path,
+        default=None,
+        help=(
+            "JSON file: array of v0.2 §17 transfer claims [{record, evidence}], supplied by "
+            "the party running the verifier — never taken from the presenter's bundle"
+        ),
+    )
+    p.add_argument(
+        "--compromise-view",
+        type=Path,
+        default=None,
+        help=(
+            "JSON file: array of v0.2 §19.2 compromise claims [{manifest, evidence}]. "
+            "Without --log-keys and --anchor-policy a compromise view can only RESTRICT "
+            "the verdict: no cutoff can be established, so no receipt can be rescued"
+        ),
+    )
+    p.add_argument(
+        "--revocation-evidence",
+        type=Path,
+        default=None,
+        help=(
+            "JSON file: ONE log evidence bundle {entry, leaf_index, tree_size, "
+            "inclusion_proof, checkpoint[, anchors]} for a refund-window record in "
+            "--revocations. Without it, a Stage-2-capable verifier ignores such a record"
+        ),
+    )
     p.add_argument("--disclose-identifier", default=None)
     p.add_argument("--disclose-type", default=None)
     p.add_argument("--disclose-salt", type=Path, default=None)

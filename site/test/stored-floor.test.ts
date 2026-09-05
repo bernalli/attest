@@ -87,6 +87,77 @@ describe('the admission boundary decides from the size alone', () => {
   })
 })
 
+// --- the floor and a rail's own ceiling, composed ----------------------------
+//
+// A rail carries its own admission unit (§14.3), and the boundary consults it
+// so that a file which cannot be under the code-point ceiling is refused before
+// it is copied. That unit NARROWS the floor; it does not stand in for it. Three
+// of the four ceilings are wider than the floor when converted at four UTF-8
+// bytes per code point — transfer and compromise reach 2.56 GB, revocation
+// ~372 GB — so a rail consulted INSTEAD of the floor admits, on those three,
+// exactly the copy §14.4 exists to refuse.
+//
+// Every rail is pinned here, not only the one whose ceiling is the narrow one.
+// The direction of the error is invisible from the narrow rail: there the
+// substitution and the composition agree, and only the other three show that a
+// bound put in place of another goes wherever that other one was not.
+//
+// Each limit is written as the composition itself, with the arithmetic spelled
+// out the way the source states it. A change to any ceiling has to be made here
+// too, in the open, and it shows up as a red test rather than as a widening.
+const RAIL_LIMITS: ReadonlyArray<readonly [string, number]> = [
+  // v0.2 §6.3: the whole file is one admission unit of 10,000,000 code points.
+  ['revocation-evidence.json', Math.min(4 * 10_000_000, MAX_STORED_BYTES)],
+  // v0.2 §17.11 and §19.2: 64 claims, each bounded by that same unit.
+  ['transfer-view.json', Math.min(4 * 64 * 10_000_000, MAX_STORED_BYTES)],
+  ['compromise-view.json', Math.min(4 * 64 * 10_000_000, MAX_STORED_BYTES)],
+  // §12.4: 10,000 records, with no size stated for a record.
+  ['revocation-view.json', Math.min(4 * 10_000 * 10_000_000, MAX_STORED_BYTES)],
+]
+
+describe('a rail is admitted only under BOTH its ceiling and the floor', () => {
+  it.each(RAIL_LIMITS)('admits %s at exactly %i bytes', (name, limit) => {
+    expect(declinedForSize(limit, name)).toBeNull()
+  })
+
+  it.each(RAIL_LIMITS)('refuses %s one byte over %i, unread', (name, limit) => {
+    const refusal = declinedForSize(limit + 1, name)
+    expect(refusal).not.toBeNull()
+    expect(refusal?.kind).toBe('rejected')
+    // Marked as the rail's own refusal (§14.3): it refuses THAT file and
+    // leaves everything else standing, which is what keeps a receipt on
+    // screen when an evidence file is too large to look at.
+    expect(refusal?.rail).toBeDefined()
+    expect(refusal?.reason).toContain(name)
+    expect(refusal?.reason).toContain('was not read')
+    // Unread bytes earn no verdict about their content.
+    expect(refusal?.reason).not.toMatch(/invalid|corrupt|tampered/i)
+  })
+
+  it('never admits a rail the floor alone would have refused', () => {
+    // The property the composition exists for, stated without reference to any
+    // particular ceiling: whatever the rail, past the floor nothing is read.
+    for (const [name] of RAIL_LIMITS) {
+      expect(declinedForSize(MAX_STORED_BYTES + 1, name)).not.toBeNull()
+      expect(declinedForSize(50_000_000_000, name)).not.toBeNull()
+    }
+  })
+
+  it('refuses for the bound that actually stopped the file', () => {
+    // Past four bytes per code point the ceiling is PROVED: a file that large
+    // cannot be under it whatever its text. At the floor nothing about the
+    // code-point count is known yet, so naming the ceiling there would state a
+    // fact this boundary has not established — it has read no byte.
+    const overCeiling = declinedForSize(4 * 10_000_000 + 1, 'revocation-evidence.json')
+    expect(overCeiling?.reason).toContain('10000000 code points')
+
+    const overFloor = declinedForSize(MAX_STORED_BYTES + 1, 'transfer-view.json')
+    expect(overFloor?.reason).toContain(String(MAX_STORED_BYTES + 1))
+    expect(overFloor?.reason).toContain(String(MAX_STORED_BYTES))
+    expect(overFloor?.reason).not.toContain('code points')
+  })
+})
+
 describe('parseBundle bounds the container as stored before it reads members', () => {
   it('accepts a container of exactly the limit it is given', () => {
     const zip = bundleBytes()

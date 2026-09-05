@@ -6,6 +6,90 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `attest revoke` — sign a revocation record for a `refund_window` or `policy` receipt.
+  The command refuses to produce a record the verifier would ignore: an irrevocable
+  (`none`) receipt, a `revoked_at` past the refund-window deadline or outside the signing
+  key's validity, a key that is not active in the manifest, or a receipt that does not
+  verify against the manifest given. A `refund_window` record prints a reminder that
+  Stage-2 verifiers honor it only once it is logged and anchored before the deadline.
+
+- `attest.views` — builders for the evidence files a verifier may be handed alongside a
+  receipt: revocation views, compromise claims and views, transfer claims and views. Each
+  builder checks the shape and applicable ceilings before emitting a file. Compromise
+  builders also verify the declaration manifest's own signature; revocation records are
+  authenticated only when a key manifest is supplied. Transfer builders check signature
+  encodings and evidence shape, leaving authentication to the verifier. `claim_capabilities`
+  refuses ambiguous trust material rather than classifying it, and reports, for a
+  compromise claim against a given trusted manifest, four independent axes — whether the
+  claim establishes the floor, whether its signer can establish a cutoff, whether it
+  carries anchor evidence, and (only when the verifier's log keys and anchor policy are
+  supplied) whether a cutoff resolves. It is a local diagnostic, not a protocol
+  classification, and has no TypeScript twin.
+
+- `attest verify --transfer-view`, `--compromise-view` and `--revocation-evidence` — the
+  three caller-side evidence files the verifier has accepted since v0.2 can now be supplied
+  on the command line. They are the verifier operator's own evidence, never taken from the
+  receipt presenter's bundle. Each file is strict-parsed and size-bounded, and its container
+  is checked per rail; a file containing `null` is a usage error rather than a silent
+  opt-out. What is inside the file stays the verifier's to judge: a malformed claim is
+  refused claim by claim, and an over-ceiling view reaches the verifier whole so that the
+  ceiling reported is the verifier's own. Without `--log-keys` and `--anchor-policy` a
+  compromise view can only restrict a verdict, never rescue a receipt, and the help says so.
+
+- `attest revocation-view`, `attest transfer view` and `attest manifest compromise-view` —
+  commands over the `attest.views` builders, so revocation, transfer and compromise views
+  no longer require writing code against the library. `revocation-view` wraps signed records into the
+  array both cores read, carrying both statuses §12 registers — `revoked` and the
+  `transferred` record `transfer record --revocation-out` emits — and checks every record
+  against `--manifest` when one is given. `transfer view` pairs `--record` and `--evidence`
+  by position into the claims a verifier accepts at `logged` standing. `manifest
+  compromise-view` pairs `--manifest` and `--evidence` the same way and, classified against
+  `--trusted-manifest`, prints `claim_capabilities`'s four axes as warnings before the file
+  is written, so an operator knows whether a claim floors a key, can date a cutoff, or does
+  neither. `--append` re-validates an existing view's claims rather than carrying them over
+  on trust, and every producer refuses an `--out` that aliases one of its own inputs.
+
+- `attest log entry` — computes the v0.2 §8 transparency-log entry for any of the six
+  signed document types (receipt, key manifest, revocation record, transfer record,
+  cessation declaration, publisher authorization), always by rehashing the document itself
+  rather than trusting a hash it declares. Each document is checked against the shape rule
+  its own module owns before the entry is built, and the entry against the log's own closed
+  schema before it is written.
+
+- `attest binding challenge` and `attest binding respond` — produce the v0.1 §8.2
+  possession proof `verify()` has always been able to check but that nothing in the CLI
+  could generate. `challenge` writes a fresh 32-byte nonce and takes no flag that could fix
+  it, since a nonce the caller chose is one anyone who has seen it once can replay.
+  `respond` confirms `--holder-seed` is the key `buyer.pubkey` names before signing — a
+  signature from any other key verifies against nothing, which the holder would otherwise
+  learn only from a verifier's bare `not_proven` — and refuses a receipt with no
+  `buyer.pubkey` by saying what to ask the issuer for. `--out` may not alias `--receipt`,
+  `--holder-seed` or `--nonce`: aliasing the receipt would replace the issuer's signed
+  envelope with one line of base64url, and aliasing the seed would destroy it.
+
+- `docs/incident-runbook.md` — a step-by-step guide for a seller whose signing key is
+  stolen or lost: securing the domain before rotating anything, the two-rotation sequence a
+  compromise declaration requires (the stolen key cannot sign its own compromise),
+  publishing that declaration as evidence with `attest manifest compromise-view`,
+  reissuing the affected receipts, and two ready-to-send buyer notices — theft and loss say
+  opposite things and must not be mixed up.
+
+- **The site and desktop verifiers accept the four caller-side evidence files as a second
+  drop.** `revocation-view.json`, `transfer-view.json`, `compromise-view.json` and
+  `revocation-evidence.json` — the files v0.1 §14.3 registers — are recognized by both
+  shells by exact, case-sensitive suffix, one slot per rail, replaced rather than merged; a
+  bad file is refused without disturbing the receipts already on screen. A rail persists
+  once supplied, because it qualifies every receipt checked afterwards — only an explicit
+  "Clear feeds" clears it. Each rail is bounded by its own §14.3 floor (10,000 records, 64
+  claims, or one 10,000,000-code-point admission unit), counted in code points with a byte
+  fast path, closing a gap where a single hybrid-signed revocation record already measured
+  a quarter of §12.4's own ceiling while the CLI read the same file with no bound at all. A
+  status line says, per rail, whether it was never supplied or supplied and found empty — a
+  distinction the verdict itself cannot carry. `grant-view.json` and `authority-view.json`
+  stay unrecognized: admitting a rail is a registry amendment, never a surface's own choice.
+
 ## [0.9.2] — 2026-09-05
 
 ### Security / correctness

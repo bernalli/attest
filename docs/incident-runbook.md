@@ -151,6 +151,69 @@ including receipts the thief anchored. The longer you wait, the more of the
 thief's work survives your declaration. If you do not run a log, skip this; it
 changes nothing else in this runbook.
 
+#### Publishing the declaration as evidence
+
+Six commands. The first turns the new key file into the log entry that names it.
+The middle four put that entry in your log and get proof it is there. The last
+packages the proof into the one file a buyer can hand to a verifier.
+
+```sh
+attest log entry --type key-manifest \
+  --in key-manifest.v3.json \
+  --out declaration-entry.json
+
+attest log append --dir ./attest-log --entry-json declaration-entry.json
+attest log sign-checkpoint --dir ./attest-log \
+  --ed25519-key log-signer.seed --mldsa-key log-signer.mldsa \
+  --name your-log-name
+attest log prove --dir ./attest-log --leaf-index 0 --out declaration-proof.json
+attest log anchor --dir ./attest-log \
+  --evidence declaration-proof.json \
+  --ots-proof bitcoin-path.json \
+  --out declaration-evidence.json
+
+attest manifest compromise-view \
+  --trusted-manifest key-manifest.v2.json \
+  --chain key-manifest.v1.json \
+  --manifest key-manifest.v3.json \
+  --evidence declaration-evidence.json \
+  --out compromise-view.json
+```
+
+`--leaf-index` is the position `attest log append` printed for your entry, not
+always zero. `--ots-proof` comes from `attest log ots-convert`, run over a
+timestamp you obtained yourself: nothing in this tool touches the network, so
+getting the Bitcoin attestation is your job, not its.
+
+Publish `compromise-view.json` next to your key file. It is what a buyer drops
+into a verifier, and it is the only way a verifier that has never seen your new
+key file learns that the old key is not to be trusted.
+
+**Skip the anchor and the declaration still works, but it does less.** Without
+anchor material it establishes the *floor* — verifiers stop honoring receipts
+signed by the stolen key — and it establishes no *cutoff*, which is the thing
+that would have spared receipts anchored before you declared. If you have no
+anchor yet, leave out `attest log anchor` and pass `declaration-proof.json` as
+`--evidence`. The view is still worth publishing, and you can publish a better
+one later.
+
+The report `attest manifest compromise-view` prints is the part worth reading.
+For every compromised key it answers four separate questions, and the one to
+look at is `cutoff_signer`. It says whether the key that *signed* your
+declaration is one a verifier holding the head you published would accept as
+able to date a cutoff. `eligible` is what you want. `ineligible` means your
+declaration still floors the stolen key but will never spare anything —
+usually because the key that signed it is itself marked compromised in the head
+you published. The report also says `anchor_evidence: absent` when you skipped
+the anchor, and repeats both of those on standard error as warnings, so a script
+that only reads stderr still sees them.
+
+Every answer in that report is **against the trusted manifest you passed**. A
+buyer holding a different key file, or a different chain of them, can classify
+the same declaration differently. Pass the key file you actually published as
+`--trusted-manifest`, or you are reading a report about a world nobody else
+lives in.
+
 ### Step 7. Reissue the affected receipts.
 
 Every receipt signed with the compromised key now fails verification, unless it

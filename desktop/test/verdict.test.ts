@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { VerificationResult } from 'attest-verifier'
-import { desktopVerdict } from '../src/verdict.js'
+import { desktopVerdict, offlineLimitText, HEADLINES } from '../src/verdict.js'
 
 type Trust = VerificationResult['trust']
 
@@ -67,5 +67,65 @@ describe('desktopVerdict — what the app is allowed to claim', () => {
         expect(desktopVerdict(ok, trust), `ok=${ok} trust=${trust}`).toBeTruthy()
       }
     }
+  })
+})
+
+describe('offlineLimitText — the revocation clause pins §14.3, not just the copy', () => {
+  test('no feed consulted: the old fixed wording is still true here', () => {
+    expect(offlineLimitText('unknown', false)).toContain('since no revocation feed was consulted')
+  })
+
+  // §14.3 makes `revocation: unknown` ambiguous on its own: the verifier reports it
+  // both when no rail file was supplied AND when the rail held an empty array, so the
+  // RESULT cannot be used to tell "not consulted" from "consulted, found nothing"
+  // apart. Only the page's own state (`feedConsulted`) can — which is why the fixed
+  // "since no revocation feed was consulted" sentence would be false on a screen where
+  // a feed WAS loaded and simply had nothing to say about this receipt.
+  test('feed consulted but silent on this receipt: never claims no feed was consulted', () => {
+    const text = offlineLimitText('unknown', true)
+    expect(text).not.toContain('since no revocation feed was consulted')
+    expect(text).toContain('the revocation feed you supplied lists nothing for it')
+  })
+
+  test('a signed as-of timestamp is quoted in the clause', () => {
+    expect(offlineLimitText('not_revoked_as_of:2026-01-01T00:00:00Z', true)).toContain(
+      'as of 2026-01-01T00:00:00Z',
+    )
+  })
+
+  // The same guard explain.ts puts on this parametric argument, for the same reason:
+  // the timestamp is interpolated into a sentence spoken in the verifier's own voice,
+  // so a value shaped nothing like the ones the library produces must fall back to a
+  // clause that quotes nothing, rather than carry attacker-supplied markup into the page.
+  test('a hostile as-of value is never interpolated; the generic clause is used instead', () => {
+    const text = offlineLimitText('not_revoked_as_of:<script>x</script>', true)
+    expect(text).not.toContain('<script>')
+    expect(text).toContain('the Revocation row below says what this check settled')
+  })
+
+  test('invalid_revocation_ignored names neither a consulted nor an unconsulted feed', () => {
+    expect(offlineLimitText('invalid_revocation_ignored', true)).toContain(
+      'the Revocation row below says what this check settled and what it did not',
+    )
+    expect(offlineLimitText('invalid_revocation_ignored', true)).not.toContain(
+      'since no revocation feed was consulted',
+    )
+  })
+
+  test('the catalogue headline is composed from this function, not restated by hand', () => {
+    // One source for the no-feed reading of this sentence: a hand-typed second copy in
+    // the HEADLINES table is exactly how the two would drift apart unnoticed.
+    expect(HEADLINES.offline_limit.text).toBe(offlineLimitText('unknown', false))
+  })
+
+  test('the as-of clause is never spoken when the page consulted no feed', () => {
+    // Unreachable today — `not_revoked_as_of:` can only come from an authenticated
+    // record inside a supplied view — and pinned so that it stays unreachable.
+    expect(offlineLimitText('not_revoked_as_of:2026-01-01T00:00:00Z', false)).toContain(
+      'the Revocation row below says what this check settled and what it did not',
+    )
+    expect(offlineLimitText('not_revoked_as_of:2026-01-01T00:00:00Z', false)).not.toContain(
+      'the revocation feed you supplied',
+    )
   })
 })

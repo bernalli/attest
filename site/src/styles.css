@@ -186,6 +186,13 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
 }
 
 .notice { border-left: 4px solid var(--warn); padding-left: 0.8rem; color: var(--muted); }
+/* What the verdicts below were computed against. Deliberately NOT --warn:
+   a rail that holds no file is a fact about this page's configuration, not a
+   fault, and colouring it as a warning would read as a defect in the receipt.
+   It still has to be SEEN — v0.1 §14.3 makes saying it an obligation of the
+   surface, because the result reports `unknown` whether a feed was absent or
+   empty and cannot be used to tell the two apart. */
+.rails { border-left: 4px solid var(--neutral); padding-left: 0.8rem; color: var(--muted); font-size: 12.5px; }
 .result { border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; margin-top: 1.25rem; }
 .result.rejected { border-color: var(--bad); }
 /* Not a verdict on the receipt — the page could not run. Deliberately NOT

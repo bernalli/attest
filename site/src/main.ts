@@ -1,7 +1,7 @@
 import type { Disclosure } from 'attest-verifier'
 import { intake, declinedForSize, trustStoreFromManifestBytes, type Refusal, type VerifyJob } from './intake.js'
 import { BundleTooLargeError } from './bundle.js'
-import { runVerify } from './run.js'
+import { runVerify, verifyOptionsFor, railNotice, NO_RAILS, type Rails } from './run.js'
 import {
   renderResult, renderRejection, renderDeclined, renderVerifyFailure,
   renderTamper, renderExhibit, renderExhibitTally, renderProbe,
@@ -19,9 +19,23 @@ export interface AppHandle {
   applyDisclosure(): void
   loadSampleBundle(): Promise<void>
   applyTamperById(id: TamperId): void
+  clearRails(): void
   restore(): void
   showExhibits(): void
   runProbe(deps?: ProbeDeps): Promise<void>
+}
+
+// The rails' own status line, deliberately NOT a `.notice`. A notice is about
+// the file just dropped and comes and goes with it; this says what the verdicts
+// on screen were computed against, and it is owed whenever there are verdicts —
+// §14.3 requires the surface to say that a rail with no file was not consulted.
+// Sharing the class would also make "no notice for a salt-free receipt", which
+// this page pins elsewhere, impossible to state.
+function railStatus(doc: Document, text: string): HTMLElement {
+  const p = doc.createElement('p')
+  p.className = 'rails'
+  p.textContent = text
+  return p
 }
 
 function message(doc: Document, text: string): HTMLElement {
@@ -46,6 +60,7 @@ export function initApp(doc: Document): AppHandle {
   const bindingSalt = byId<HTMLInputElement>('binding-salt')
   const bindingApply = byId<HTMLButtonElement>('binding-apply')
   const loadSampleBtn = byId<HTMLButtonElement>('load-sample')
+  const clearFeedsBtn = byId<HTMLButtonElement>('clear-feeds')
   const results = byId<HTMLElement>('results')
   const bench = byId<HTMLElement>('bench')
   const benchButtons = byId<HTMLElement>('bench-buttons')
@@ -63,6 +78,11 @@ export function initApp(doc: Document): AppHandle {
   // page showing a receipt that is neither the original nor the tampered one.
   let baseJobs: VerifyJob[] = []
   let currentJobs: VerifyJob[] = []
+  // The four evidence rails (v0.1 §14.3), one slot each, replaced and never
+  // merged. They outlive the receipts on screen on purpose: the operator of
+  // this page supplies them once and then drops receipts against them, and a
+  // rail cleared by the arrival of a receipt would be a rail nobody could keep.
+  let currentRails: Rails = { ...NO_RAILS }
   let currentNotices: string[] = []
   let currentDisclosure: Disclosure | null = null
   let pendingEnvelope: { bytes: Uint8Array; label: string } | null = null
@@ -83,6 +103,20 @@ export function initApp(doc: Document): AppHandle {
   function renderJobs(disclosure: Disclosure | null): void {
     results.replaceChildren(
       ...currentNotices.map((text) => message(doc, text)),
+      // What each rail is holding, in numbers and fixed labels only: the
+      // presence of a file is not evidence that anything in it verified, and
+      // "not consulted" must stay distinct from "consulted, found nothing"
+      // because the result reports `unknown` for both (§14.3, C-86).
+      ...(currentJobs.length > 0
+        ? [
+            railStatus(
+              doc,
+              (['revocation', 'transfer', 'compromise', 'revocationEvidence'] as const)
+                .map((rail) => railNotice(rail, currentRails[rail]))
+                .join(' · '),
+            ),
+          ]
+        : []),
       // Per job, never per batch: verify()'s trusted-config validation throws
       // by design, and an exception escaping this map would abandon the whole
       // `replaceChildren` call — leaving the page silently showing the
@@ -92,11 +126,16 @@ export function initApp(doc: Document): AppHandle {
         try {
           return renderResult(
             job.label,
-            runVerify(job.envelopeBytes, job.trustStore, null, disclosure, {
+            runVerify(job.envelopeBytes, job.trustStore, currentRails.revocation, disclosure, {
               transparency: job.transparency,
               logKeys: LOG_KEYS,
               anchorPolicy: ANCHOR_POLICY,
+              ...verifyOptionsFor(currentRails),
             }),
+            // The one fact the result cannot carry: `revocation` reads
+            // `unknown` whether the rail held no file or an empty array, and
+            // §14.3 obliges the surface to tell the reader which.
+            { revocationFeedConsulted: currentRails.revocation !== null },
           )
         } catch (e) {
           return renderVerifyFailure(job.label, e instanceof Error ? e.message : String(e))
@@ -145,6 +184,10 @@ export function initApp(doc: Document): AppHandle {
    * the admission boundary at the drop target arrive here, so the register can
    * never depend on which of them refused. */
   function showRefusal(r: Refusal): void {
+    if (r.rail !== undefined) {
+      results.prepend(renderRejection(r.reason))
+      return
+    }
     clearJobs()
     currentNotices = []
     // A receipt waiting for its key manifest is state about a file that is no
@@ -162,7 +205,35 @@ export function initApp(doc: Document): AppHandle {
   function handleBytes(fileName: string, bytes: Uint8Array): void {
     const r = intake(fileName, bytes)
     if (r.kind === 'rejected') {
+      if (r.rail !== undefined) {
+        // §14.3: a refused evidence file is a refusal of THAT file and changes
+        // nothing else. Clearing the receipts here would punish the reader for
+        // a typo in a file that has nothing to do with them.
+        results.prepend(renderRejection(r.reason))
+        return
+      }
+      // Everything else goes through the one register: `showRefusal` also drops
+      // the pending envelope and tells a DECLINED container from a rejected one.
       showRefusal(r)
+      return
+    }
+    if (r.kind === 'view') {
+      // Replaced, never merged, and the receipts on screen stay exactly as they
+      // are — only their verdicts are recomputed against the new rail.
+      currentRails = { ...currentRails, [r.rail]: r.value } as Rails
+      if (currentJobs.length === 0) {
+        // Nothing to recompute, so nothing may be REPLACED either. `renderJobs`
+        // ends in `replaceChildren`, and with no jobs the list it replaces the
+        // pane with is empty — measured, that wiped the `.private.attest` refusal
+        // and the "drop the issuer's key-manifest JSON below" instruction while
+        // `manifestZone` was still open for it. A rail file changes that rail and
+        // nothing else (§14.3), including nothing the pane is holding. And the
+        // reader is still owed the acknowledgement the rail line cannot give when
+        // there are no verdicts for it to qualify.
+        results.prepend(railStatus(doc, railNotice(r.rail, r.value)))
+        return
+      }
+      renderJobs(currentDisclosure)
       return
     }
     currentNotices = r.notices ?? []
@@ -250,6 +321,22 @@ export function initApp(doc: Document): AppHandle {
     renderJobs(currentDisclosure)
   }
 
+  // §14.3 makes a rail's slot the operator's own configuration, not something a
+  // dropped receipt may change, so the only way back to "not consulted" has to
+  // be an explicit gesture. All four at once: four buttons would let a reader
+  // believe they had cleared the rails while one still held a file.
+  function clearRails(): void {
+    currentRails = { ...NO_RAILS }
+    if (currentJobs.length === 0) {
+      // Same rule as the rail-view branch above: with no verdicts on screen,
+      // re-rendering is a `replaceChildren` over an empty list, which erases what
+      // the pane is holding instead of updating anything.
+      results.prepend(railStatus(doc, 'Every evidence rail is back to “not consulted”.'))
+      return
+    }
+    renderJobs(currentDisclosure)
+  }
+
   function restore(): void {
     currentJobs = baseJobs
     benchState.replaceChildren()
@@ -281,7 +368,7 @@ export function initApp(doc: Document): AppHandle {
     // container over §14.4's floor is refused here — before `arrayBuffer()`
     // brings a copy of it into this tab. Refusing after the copy would spend
     // exactly what the floor exists to protect and then report a limit.
-    const refusal = declinedForSize(file.size)
+    const refusal = declinedForSize(file.size, sink === handleBytes ? file.name : undefined)
     if (refusal !== null) {
       showRefusal(refusal)
       return
@@ -312,6 +399,7 @@ export function initApp(doc: Document): AppHandle {
     manifestInput.value = ''
   })
   bindingApply.addEventListener('click', applyDisclosure)
+  clearFeedsBtn.addEventListener('click', clearRails)
   benchRestore.addEventListener('click', restore)
   loadSampleBtn.addEventListener('click', () => {
     void loadSampleBundle().catch((error: unknown) => {
@@ -345,7 +433,7 @@ export function initApp(doc: Document): AppHandle {
 
   return {
     handleBytes, handleManifestBytes, applyDisclosure, loadSampleBundle,
-    applyTamperById, restore, showExhibits, runProbe,
+    applyTamperById, clearRails, restore, showExhibits, runProbe,
   }
 }
 

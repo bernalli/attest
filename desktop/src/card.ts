@@ -1,9 +1,10 @@
 import { loadsStrict } from 'attest-verifier'
 import { explainVerdict } from '../../site/src/explain.js'
+import type { SurfaceFacts } from '../../site/src/explain.js'
 import { renderResult } from '../../site/src/render.js'
 import type { VerifyJob } from '../../site/src/intake.js'
 import type { VerifyRun } from '../../site/src/run.js'
-import { desktopVerdict, HEADLINES } from './verdict.js'
+import { desktopVerdict, HEADLINES, offlineLimitText } from './verdict.js'
 
 /**
  * The result card, composed from the site's renderer with one sanctioned difference:
@@ -90,7 +91,10 @@ export function cardTitle(envelopeBytes: Uint8Array, run: VerifyRun): string {
   }
 }
 
-function headlineFor(run: VerifyRun): { label: string; text: string; className: string } {
+function headlineFor(
+  run: VerifyRun,
+  facts: SurfaceFacts | undefined,
+): { label: string; text: string; className: string } {
   const verdict = desktopVerdict(run.ok, run.result.trust)
   if (verdict === 'failed') {
     // Reused verbatim: one red wording in the project, never two that can drift.
@@ -98,13 +102,24 @@ function headlineFor(run: VerifyRun): { label: string; text: string; className: 
     return { label: red.label, text: red.text, className: 'verdict tone-bad' }
   }
   const headline = HEADLINES[verdict]
+  // The amber headline names what this check could not settle, and one of the
+  // three is revocation — so it has to know whether a feed was consulted.
+  // `revocation` reads `unknown` for "no file" and for "an empty feed" alike
+  // (§14.3), which is exactly why this cannot be read off the result.
+  const text =
+    verdict === 'offline_limit'
+      ? offlineLimitText(
+          typeof run.result.revocation === 'string' ? run.result.revocation : '',
+          facts?.revocationFeedConsulted === true,
+        )
+      : headline.text
   // Four states, four appearances. `key_history_gap` keeps `tone-warn` — it IS
   // cautionary — and adds a class of its own, because sharing one class with
   // `offline_limit` would leave the two distinguishable only by their wording, and a
   // reader who has learned that amber means the ordinary offline limit would read an
   // anomaly as the limit.
   const extra = verdict === 'key_history_gap' ? ' verdict-key-gap' : ''
-  return { label: headline.label, text: headline.text, className: `verdict tone-${headline.tone}${extra}` }
+  return { label: headline.label, text, className: `verdict tone-${headline.tone}${extra}` }
 }
 
 /**
@@ -123,8 +138,9 @@ export function renderDesktopCard(
   job: VerifyJob,
   run: VerifyRun,
   droppedFileName: string,
+  facts?: SurfaceFacts,
 ): HTMLElement {
-  const card = renderResult(cardTitle(job.envelopeBytes, run), run)
+  const card = renderResult(cardTitle(job.envelopeBytes, run), run, facts)
 
   // Fail CLOSED on the seam. The node being replaced carries the site's binary
   // headline, which on an `ok` receipt reads "Receipt verifies" — the single most
@@ -136,7 +152,7 @@ export function renderDesktopCard(
   if (badges.length !== 1)
     throw new Error(`desktop card: expected one .verdict node to replace, found ${badges.length}`)
 
-  const headline = headlineFor(run)
+  const headline = headlineFor(run, facts)
   const replacement = document.createElement('p')
   replacement.className = headline.className
   const strong = document.createElement('strong')

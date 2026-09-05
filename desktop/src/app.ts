@@ -4,7 +4,9 @@ import {
   intake, declinedForSize, trustStoreFromManifestBytes,
   type Refusal, type VerifyJob,
 } from '../../site/src/intake.js'
-import { runVerify } from '../../site/src/run.js'
+import {
+  runVerify, verifyOptionsFor, railNotice, NO_RAILS, type Rails,
+} from '../../site/src/run.js'
 import { renderRejection, renderDeclined, renderVerifyFailure } from '../../site/src/render.js'
 import { LOG_KEYS, ANCHOR_POLICY } from '../../site/src/trusted-log.js'
 import { b64uDecode } from '../../site/src/b64u.js'
@@ -113,6 +115,7 @@ export interface DesktopApp {
   handleBytes(fileName: string, bytes: Uint8Array): void
   handleManifestBytes(bytes: Uint8Array): void
   applyDisclosure(): void
+  clearRails(): void
 }
 
 export function initDesktopApp(doc: Document): DesktopApp {
@@ -130,9 +133,27 @@ export function initDesktopApp(doc: Document): DesktopApp {
   const bindingType = byId<HTMLSelectElement>('binding-type')
   const bindingSalt = byId<HTMLInputElement>('binding-salt')
   const bindingApply = byId<HTMLButtonElement>('binding-apply')
+  const clearFeedsBtn = byId<HTMLButtonElement>('clear-feeds')
   const results = byId<HTMLElement>('results')
 
   let currentJobs: VerifyJob[] = []
+  // The four evidence rails of v0.1 §14.3, one slot each, replaced and never
+  // merged. Same machine as the site's, over the SAME `intake`: the rails are a
+  // property of the file format, not of the shell that reads it, and two shells
+  // that disagreed about which files they recognize would be two verifiers.
+  //
+  // They outlive the receipts on screen deliberately. Whoever runs this app
+  // supplies the seller's evidence once and then opens receipts against it; a
+  // rail emptied by the arrival of a receipt is a rail nobody can keep.
+  let currentRails: Rails = { ...NO_RAILS }
+  // The binding proof the reader has already given, kept as STATE rather than as
+  // an argument that lives for one render. Two of the paths below re-render the
+  // same cards without a new file — a rail drop and Clear feeds — and passing
+  // `null` there re-verifies with no disclosure, which prints "Nobody attempted
+  // to prove who this receipt belongs to" over a proof the reader just supplied.
+  // `main.ts` has held this state since it had a bench to hold it for; the two
+  // shells run one `intake` and must not disagree about one gesture.
+  let currentDisclosure: Disclosure | null = null
   let currentNotices: string[] = []
   let pendingEnvelope: { bytes: Uint8Array; fileName: string; label: string } | null = null
   // The name the OS handed over with the bytes currently on screen. Kept here rather
@@ -147,6 +168,16 @@ export function initDesktopApp(doc: Document): DesktopApp {
     return p
   }
 
+  // Deliberately NOT a `.notice`. A notice is about the file just dropped and
+  // goes away with it; this says what the verdicts below were computed against,
+  // and it is owed for as long as they are on screen.
+  const railLine = (text: string): HTMLElement => {
+    const p = doc.createElement('p')
+    p.className = 'rails'
+    p.textContent = text
+    return p
+  }
+
   function renderJobs(disclosure: Disclosure | null, notice?: string): void {
     results.replaceChildren(
       // A transient notice — a mistyped salt, an empty identifier — rides ABOVE the cards
@@ -154,6 +185,20 @@ export function initDesktopApp(doc: Document): DesktopApp {
       // field was typed wrong is the same harm the per-job catch below exists to prevent.
       ...(notice === undefined ? [] : [message(notice)]),
       ...currentNotices.map(message),
+      // What each rail is holding, in numbers and fixed labels only. Owed
+      // whenever there are verdicts, because §14.3 requires the surface to say
+      // that a rail with no file was not consulted — and the result cannot,
+      // reporting `unknown` for that and for an empty feed alike. Never the
+      // presence of a file as proof that anything in it verified (C-86).
+      ...(currentJobs.length > 0
+        ? [
+            railLine(
+              (['revocation', 'transfer', 'compromise', 'revocationEvidence'] as const)
+                .map((rail) => railNotice(rail, currentRails[rail]))
+                .join(' · '),
+            ),
+          ]
+        : []),
       // Per job, never per batch: the verifier's trusted-config validation throws by
       // design, and an exception escaping this map would abandon the whole replace —
       // leaving the previous results on screen, which is the worst outcome available.
@@ -162,12 +207,14 @@ export function initDesktopApp(doc: Document): DesktopApp {
         try {
           return renderDesktopCard(
             job,
-            runVerify(job.envelopeBytes, job.trustStore, null, disclosure, {
+            runVerify(job.envelopeBytes, job.trustStore, currentRails.revocation, disclosure, {
               transparency: job.transparency,
               logKeys: LOG_KEYS,
               anchorPolicy: ANCHOR_POLICY,
+              ...verifyOptionsFor(currentRails),
             }),
             droppedFileName,
+            { revocationFeedConsulted: currentRails.revocation !== null },
           )
         } catch (e) {
           return renderVerifyFailure(job.label, e instanceof Error ? e.message : String(e))
@@ -180,6 +227,10 @@ export function initDesktopApp(doc: Document): DesktopApp {
    * boundary at the drop target alike. A container this app DECLINED to read
    * gets §14.4's neutral register; everything else gets the rejection. */
   function showRefusal(r: Refusal): void {
+    if (r.rail !== undefined) {
+      results.prepend(renderRejection(r.reason))
+      return
+    }
     currentJobs = []
     currentNotices = []
     // Cleared here too, or a half-finished handover survives its own refusal: measured,
@@ -193,15 +244,49 @@ export function initDesktopApp(doc: Document): DesktopApp {
   }
 
   function handleBytes(fileName: string, bytes: Uint8Array): void {
-    droppedFileName = fileName
     const r = intake(fileName, bytes)
     if (r.kind === 'rejected') {
+      if (r.rail !== undefined) {
+        // §14.3: a refused evidence file is a refusal of THAT file and changes
+        // nothing else. The receipts on screen stay, their verdicts stay, and
+        // the rails keep whatever they held — clearing them would punish the
+        // reader for a typo in a file that has nothing to do with the receipt.
+        results.prepend(renderRejection(r.reason))
+        return
+      }
+      // The two pieces of state `showRefusal` cannot reach: the name belongs to
+      // the file that was just dropped, and a disclosure given for the PREVIOUS
+      // receipt must not outlive it — a refusal leaves nothing of it on screen,
+      // and a proof still held would be a claim about a file that is gone.
+      droppedFileName = fileName
+      currentDisclosure = null
       showRefusal(r)
       return
     }
+    if (r.kind === 'view') {
+      // Replaced, never merged, and the cards on screen stay exactly where they
+      // are — only their verdicts are recomputed against the new rail.
+      currentRails = { ...currentRails, [r.rail]: r.value } as Rails
+      if (currentJobs.length === 0) {
+        // With no cards, `renderJobs` is a `replaceChildren` over an empty list:
+        // measured, it erased the `.private.attest` refusal — the one sentence
+        // this app most needs to leave on screen — and the key-list handover
+        // instruction, while the handover zone stayed open. A rail file changes
+        // that rail and nothing else (§14.3).
+        results.prepend(railLine(railNotice(r.rail, r.value)))
+        return
+      }
+      renderJobs(currentDisclosure)
+      return
+    }
+    // Only now: a rail file is not the file the card is about, and writing its
+    // name here would print it under "File you dropped" beside a verdict
+    // computed over entirely different bytes.
+    droppedFileName = fileName
     currentNotices = r.notices ?? []
     if (r.kind === 'needs-manifest') {
       currentJobs = []
+      currentDisclosure = null
       // `fileName` is the parameter, not anything intake returns: intake's own `label`
       // is the signed receipt id.
       pendingEnvelope = { bytes: r.envelopeBytes, fileName, label: r.label }
@@ -218,7 +303,10 @@ export function initDesktopApp(doc: Document): DesktopApp {
     pendingEnvelope = null
     manifestZone.hidden = true
     currentJobs = r.jobs
-    renderJobs(null)
+    // A new receipt is not the receipt the previous proof was for: the disclosure
+    // is dropped WITH the jobs it applied to, never carried across them.
+    currentDisclosure = null
+    renderJobs(currentDisclosure)
   }
 
   function handleManifestBytes(bytes: Uint8Array): void {
@@ -239,7 +327,8 @@ export function initDesktopApp(doc: Document): DesktopApp {
     ]
     pendingEnvelope = null
     manifestZone.hidden = true
-    renderJobs(null)
+    currentDisclosure = null
+    renderJobs(currentDisclosure)
   }
 
   function applyDisclosure(): void {
@@ -254,8 +343,11 @@ export function initDesktopApp(doc: Document): DesktopApp {
     try {
       salt = b64uDecode(bindingSalt.value.trim())
     } catch {
+      // The previously proven binding stays: a typo in the salt field is not a
+      // retraction of a proof that already succeeded, and wiping it would make the
+      // Binding row say that nobody ever tried.
       renderJobs(
-        null,
+        currentDisclosure,
         'That salt is not valid base64url (unpadded). Copy it exactly from your ' +
           '.private.attest sidecar.',
       )
@@ -263,17 +355,31 @@ export function initDesktopApp(doc: Document): DesktopApp {
     }
     if (bindingIdentifier.value.trim() === '') {
       renderJobs(
-        null,
+        currentDisclosure,
         'Type the email address or account id this receipt was issued to — checking ' +
           'against an empty one proves nothing.',
       )
       return
     }
-    renderJobs({
+    currentDisclosure = {
       identifier: bindingIdentifier.value.trim(),
       identifier_type: bindingType.value,
       salt,
-    })
+    }
+    renderJobs(currentDisclosure)
+  }
+
+  // §14.3 makes a rail's slot the operator's own configuration rather than
+  // something a dropped receipt may change, so the only way back to "not
+  // consulted" is an explicit gesture. All four at once: four buttons would let
+  // someone believe they had cleared the feeds while one still held a file.
+  function clearRails(): void {
+    currentRails = { ...NO_RAILS }
+    if (currentJobs.length === 0) {
+      results.prepend(railLine('Every evidence feed is back to “not consulted”.'))
+      return
+    }
+    renderJobs(currentDisclosure)
   }
 
   const readFile = (file: File, sink: (name: string, bytes: Uint8Array) => void): void => {
@@ -282,7 +388,7 @@ export function initDesktopApp(doc: Document): DesktopApp {
     // this process. This artifact runs from a file:// URL on whatever machine a
     // holder still has years from now, which is the machine least able to afford a
     // copy it was never going to read.
-    const refusal = declinedForSize(file.size)
+    const refusal = declinedForSize(file.size, sink === handleBytes ? file.name : undefined)
     if (refusal !== null) {
       showRefusal(refusal)
       return
@@ -335,11 +441,12 @@ export function initDesktopApp(doc: Document): DesktopApp {
     manifestInput.value = ''
   })
   bindingApply.addEventListener('click', applyDisclosure)
+  clearFeedsBtn.addEventListener('click', clearRails)
 
   // Last, and only once the wiring above cannot fail: clearing the banner is this app's
   // claim that it is working, so it must be the final step rather than the first.
   doc.getElementById('boot-failsafe')?.remove()
   dropzone.removeAttribute('aria-disabled')
 
-  return { handleBytes, handleManifestBytes, applyDisclosure }
+  return { handleBytes, handleManifestBytes, applyDisclosure, clearRails }
 }

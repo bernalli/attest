@@ -5,7 +5,8 @@ import { zipSync } from 'fflate'
 import { loadsStrict, canonicalBytes } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes } from '../src/intake.js'
-import { runVerify } from '../src/run.js'
+import { runVerify, verifyOptionsFor, railNotice } from '../src/run.js'
+import type { JsonValue } from 'attest-verifier'
 import { VECTORS_ROOT } from './helpers/vectors.js'
 import { CORPUS_ROOT } from './helpers/container-corpus.js'
 import { LEGAL_TEXT, LEGAL_DIGEST } from './helpers/zip.js'
@@ -357,4 +358,221 @@ describe('the trust stores intake builds answer only for the issuers they were g
     expect(Object.keys(store!.manifests)).toEqual(['__proto__'])
     expect(store!.manifests['__proto__']).toBeDefined()
   })
+})
+
+// --- T5.1: the four verifier-side evidence rails (v0.1 §14.3) ----------------
+//
+// The suffixes are recognized before the ZIP branch and after `.private.attest`,
+// and they are the ONLY four: §14.3 names `grant-view.json` and
+// `authority-view.json` as rails this revision does not recognize, and says that
+// recognizing one on a surface is a registry amendment rather than a surface's
+// own choice. So a test that only checked the four would pass on a surface that
+// quietly accepted six.
+
+const bytesOf = (text: string): Uint8Array => new TextEncoder().encode(text)
+
+describe('intake: the four evidence rails', () => {
+  const RAILS: ReadonlyArray<[string, string]> = [
+    ['revocation-view.json', 'revocation'],
+    ['transfer-view.json', 'transfer'],
+    ['compromise-view.json', 'compromise'],
+    ['revocation-evidence.json', 'revocationEvidence'],
+  ]
+
+  it.each(RAILS)('routes %s to its rail', (fileName, rail) => {
+    const body = rail === 'revocationEvidence' ? '{}' : '[]'
+    const r = intake(fileName, bytesOf(body))
+    expect(r.kind).toBe('view')
+    if (r.kind !== 'view') return
+    expect(r.rail).toBe(rail)
+  })
+
+  it('matches on the suffix, so a path in front of the name still routes', () => {
+    const r = intake('drops/2026/revocation-view.json', bytesOf('[]'))
+    expect(r.kind).toBe('view')
+  })
+
+  it('is case-sensitive: Revocation-View.json is not a rail', () => {
+    const r = intake('Revocation-View.json', bytesOf('[]'))
+    expect(r.kind).not.toBe('view')
+  })
+
+  it.each(['grant-view.json', 'authority-view.json'])(
+    'does not recognize %s: §14.3 leaves those rails to a registry amendment',
+    (fileName) => {
+      const r = intake(fileName, bytesOf('[]'))
+      expect(r.kind).not.toBe('view')
+    },
+  )
+
+  it('accepts an empty array: consulted and found nothing is not absence', () => {
+    const r = intake('revocation-view.json', bytesOf('[]'))
+    expect(r.kind).toBe('view')
+    if (r.kind !== 'view') return
+    expect(Array.isArray(r.value) && r.value.length === 0).toBe(true)
+  })
+
+  it.each([
+    ['null', 'null'],
+    ['an object where the rail wants an array', '{}'],
+    ['a duplicate member at depth', '[{"a":{"b":1,"b":2}}]'],
+    ['a non-integer number', '[1.5]'],
+  ])('refuses %s', (_label, body) => {
+    const r = intake('revocation-view.json', bytesOf(body))
+    expect(r.kind).toBe('rejected')
+    if (r.kind !== 'rejected') return
+    expect(r.reason).toContain('revocation-view.json')
+  })
+
+  it('refuses an array where the evidence rail wants one object', () => {
+    const r = intake('revocation-evidence.json', bytesOf('[]'))
+    expect(r.kind).toBe('rejected')
+  })
+
+  it('says that a file containing null is not an opt-out', () => {
+    const r = intake('revocation-view.json', bytesOf('null'))
+    expect(r.kind).toBe('rejected')
+    if (r.kind !== 'rejected') return
+    expect(r.reason).toContain('a file containing null is not an opt-out')
+  })
+})
+
+// --- T5.2/T5.4-bis: the options the rails become, and the state machine ------
+
+describe('verifyOptionsFor', () => {
+  const EMPTY_VIEWS = {
+    revocation: null,
+    transfer: null,
+    compromise: null,
+    revocationEvidence: null,
+  }
+
+  it('forwards each rail under the name the verifier reads it by', () => {
+    const views = {
+      revocation: [{ a: 1 } as unknown as JsonValue],
+      transfer: [{ b: 2 } as unknown as JsonValue],
+      compromise: [{ c: 3 } as unknown as JsonValue],
+      revocationEvidence: { d: 4 } as unknown as JsonObject,
+    }
+    const options = verifyOptionsFor(views)
+
+    // Pinned on the OPTIONS, not on a verdict: P30 makes the page's result
+    // identical with and without `revocationEvidence`, so a test that watched
+    // the verdict would stay green with the rail dropped on the floor.
+    expect(options.transferView).toEqual(views.transfer)
+    expect(options.compromiseView).toEqual(views.compromise)
+    expect(options.revocationEvidence).toEqual(views.revocationEvidence)
+  })
+
+  it('leaves a rail with no file out of the options entirely', () => {
+    const options = verifyOptionsFor(EMPTY_VIEWS)
+    expect(options.transferView ?? null).toBeNull()
+    expect(options.compromiseView ?? null).toBeNull()
+    expect(options.revocationEvidence ?? null).toBeNull()
+  })
+
+  it('keeps an empty rail distinct from an absent one', () => {
+    // §14.3: absence is "not consulted", an empty array is "consulted and found
+    // nothing". They must not collapse onto the same options.
+    const options = verifyOptionsFor({ ...EMPTY_VIEWS, transfer: [] as JsonValue[] })
+    expect(options.transferView).toEqual([])
+    expect(options.transferView).not.toBeNull()
+  })
+})
+
+describe('railNotice', () => {
+  it('says a rail was not consulted when no file arrived', () => {
+    expect(railNotice('revocation', null)).toBe('no revocation feed loaded')
+  })
+
+  it('distinguishes an empty feed from an absent one', () => {
+    expect(railNotice('revocation', [])).toBe('Revocation feed: 0 records')
+    expect(railNotice('revocation', [{ a: 1 } as unknown as JsonValue])).toBe('Revocation feed: 1 record')
+  })
+
+  it('counts claims for the two claim rails and says only loaded for evidence', () => {
+    expect(railNotice('transfer', [{ a: 1 } as unknown as JsonValue, { b: 2 } as unknown as JsonValue])).toBe(
+      'Transfer view: 2 claims',
+    )
+    expect(railNotice('compromise', [])).toBe('Compromise view: 0 claims')
+    expect(railNotice('revocationEvidence', { a: 1 } as unknown as JsonObject)).toBe(
+      'Revocation evidence: loaded',
+    )
+    expect(railNotice('revocationEvidence', null)).toBe('no revocation evidence loaded')
+  })
+})
+
+// --- §14.3's fifth refusal: excess size, and the unit it is measured in ------
+//
+// The four ceilings §14.3 names are in three different units, and the one this
+// surface must not be tighter than is measured in CODE POINTS of the file's text
+// (v0.2 §6.3: "never encoded UTF-8 bytes or UTF-16 code units"). Measured on this
+// project's own vector corpus, one hybrid-signed revocation record is 4,691 bytes,
+// so an honest view at a QUARTER of §12.4's 10,000-record ceiling is already over
+// 11 MB — and cli.py reads that same file with no bound at all.
+describe('intake: the size bound is a floor, not a ceiling (§14.3)', () => {
+  const HYBRID_RECORD = JSON.stringify(
+    (loadsStrict(
+      new Uint8Array(
+        readFileSync(
+          join(
+            VECTORS_ROOT,
+            '47-oversized-view-transfer',
+            'a-oversized-view-hides-transfer',
+            'revocation-view.json',
+          ),
+        ),
+      ),
+    ) as JsonObject[])[0],
+  )
+
+  it('one honest hybrid-signed revocation record is bigger than a naive bound assumes', () => {
+    // The premise of every assertion below. Pinned so that a corpus change which
+    // shrinks the record cannot make these tests vacuous in silence.
+    expect(HYBRID_RECORD.length).toBeGreaterThan(4_000)
+  })
+
+  it('admits a revocation view well past 10,000,000 bytes, because §12.4 admits it', () => {
+    const view = `[${new Array(2_500).fill(HYBRID_RECORD).join(',')}]`
+    expect(view.length).toBeGreaterThan(10_000_000)
+    expect(intake('revocation-view.json', bytesOf(view)).kind).toBe('view')
+  })
+
+  it('admits an evidence bundle under 10,000,000 CODE POINTS however many bytes it encodes to', () => {
+    // Two UTF-8 bytes per code point: the bundle is under §6.3's admission unit
+    // and over twice that in bytes. A surface counting bytes refuses what both
+    // cores admit — refused on one surface, evaluated on another.
+    const bundle = JSON.stringify({ note: 'é'.repeat(6_000_000) })
+    expect(bundle.length).toBeLessThan(10_000_000)
+    expect(bytesOf(bundle).length).toBeGreaterThan(10_000_000)
+    expect(intake('revocation-evidence.json', bytesOf(bundle)).kind).toBe('view')
+  })
+
+  it('still refuses a file past the ceiling its own rail admits', () => {
+    // The bound exists — §14.3 lists excess size among the refusals. What must not
+    // happen is that it fires below the rail's own ceiling.
+    const over = `{"note":"${'a'.repeat(10_000_001)}"}`
+    const r = intake('revocation-evidence.json', bytesOf(over))
+    expect(r.kind).toBe('rejected')
+    if (r.kind !== 'rejected') return
+    expect(r.reason).toContain('code points')
+    expect(r.rail).toBe('revocationEvidence')
+  })
+
+  it('refuses a rail whose bytes are not UTF-8 at all, without throwing', () => {
+    // 0x80 is a lone UTF-8 continuation byte: no code point begins with it. Every
+    // other rail input in this suite is produced by TextEncoder and is therefore
+    // valid UTF-8 by construction, which is only half of "raw bytes".
+    const r = intake('revocation-view.json', new Uint8Array([0x5b, 0x80, 0x5d]))
+    expect(r.kind).toBe('rejected')
+    if (r.kind !== 'rejected') return
+    expect(r.rail).toBe('revocation')
+  })
+
+  it('refuses a rail nested past the profile depth ceiling, without throwing', () => {
+    const deep = `${'['.repeat(300)}1${']'.repeat(300)}`
+    const r = intake('revocation-view.json', bytesOf(deep))
+    expect(r.kind).toBe('rejected')
+    if (r.kind !== 'rejected') return
+    expect(r.rail).toBe('revocation')  })
 })

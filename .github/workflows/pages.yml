@@ -33,7 +33,22 @@ jobs:
       - run: npm run build --prefix verifiers/ts
       - run: npm test --prefix verifiers/ts
       - run: npm ci --prefix site
-      - run: npm test --prefix site
+      # The guard below is pointed at defects it must name before it is trusted to have
+      # found none. A check that has only ever been seen passing is not known to catch
+      # anything — the same reason gate G1 in desktop/test carries a negative self-test.
+      - run: python3 tools/check_test_census.py --selftest
+      # The suite's total is ASSERTED, not printed. `site/test/rail-state.property.test.ts`
+      # imported `desktop/src/app.ts`; this job installs site/node_modules and not
+      # desktop/node_modules, so `attest-verifier` did not resolve and vitest collected
+      # zero tests from the file. Sixteen assertions ran on developer machines and in no
+      # job here, and the only trace was a total that went UP: 850 on the commit before
+      # the file existed, 864 with it uncollected, because the files that WERE collected
+      # gained more tests than this one took away. A number nobody compares is not a
+      # gate; tools/test-census.json is the comparison.
+      - run: |
+          npm test --prefix site -- --reporter=default --reporter=json \
+            --outputFile.json="$RUNNER_TEMP/site-tests.json"
+      - run: python3 tools/check_test_census.py site --report "$RUNNER_TEMP/site-tests.json"
       - run: npm run build --prefix site
       # The two container readers are judged against each other on archives
       # nobody chose. A disagreement here is the defect the canonical reader
@@ -48,11 +63,14 @@ jobs:
         with:
           path: site/dist
 
-  # Desktop imports site/src modules and tests the built file:// artifact.
-  # needs: test orders the jobs; each job prepares its own dependencies and
-  # builds its own verifier. The desktop job builds before running its e2e suite.
+  # Desktop imports site/src modules and tests the built file:// artifact. Each job
+  # prepares its own dependencies and builds its own verifier, so this one takes nothing
+  # from the site job. It declared needs: test for ordering alone, and the price of that
+  # ordering was that a red site suite left the desktop shell unmeasured: a commit editing
+  # a source both shells import is the case where both verdicts are wanted, and GitHub
+  # reports the dependent job as skipping, which is not the same statement as a pass.
+  # The desktop job builds before running its e2e suite.
   desktop:
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -73,7 +91,13 @@ jobs:
       - run: npm ci --prefix site
       - run: npm ci --prefix desktop
       - run: npm run typecheck --prefix desktop
-      - run: npm test --prefix desktop
+      # Same assertion the site job makes on its own suite, for the same reason: this is
+      # where the eight desktop rail-transition assertions now live, and their dependency
+      # — the desktop app, and through it attest-verifier — is installed here.
+      - run: |
+          npm test --prefix desktop -- --reporter=default --reporter=json \
+            --outputFile.json="$RUNNER_TEMP/desktop-tests.json"
+      - run: python3 tools/check_test_census.py desktop --report "$RUNNER_TEMP/desktop-tests.json"
       - run: npm run build --prefix desktop
       # All three engines here, and the install must SUCCEED: a cross-browser gate that
       # skips when a browser is missing produces a green nobody earned. WebKit runs only

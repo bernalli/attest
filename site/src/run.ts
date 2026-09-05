@@ -19,6 +19,62 @@ export interface VerifyRun {
 // grantView/authorityView) is additive: the page itself never passes it today
 // (defaults to `{}`, zero behavior change), only the group-28/35/37/41/43
 // conformance leaves in test/conformance.test.ts do.
+/** The four rails as the page holds them, one slot each (v0.1 §14.3). */
+export interface Rails {
+  revocation: JsonValue[] | null
+  transfer: JsonValue[] | null
+  compromise: JsonValue[] | null
+  revocationEvidence: JsonObject | null
+}
+
+export const NO_RAILS: Rails = {
+  revocation: null,
+  transfer: null,
+  compromise: null,
+  revocationEvidence: null,
+}
+
+/** The rails, as the options `verify()` reads them by.
+ *
+ * The revocation rail is NOT here: it is `verify()`'s own third argument, and
+ * passing it twice would give the page two places to disagree with itself.
+ *
+ * A rail with no file is left out entirely rather than passed as `null`,
+ * because §14.3 makes absence and emptiness different things: an empty array
+ * says the rail WAS consulted and found nothing, and the verifier is entitled
+ * to tell the two apart.
+ */
+export function verifyOptionsFor(rails: Rails): VerifyTransparencyOptions {
+  const options: VerifyTransparencyOptions = {}
+  if (rails.transfer !== null) options.transferView = rails.transfer
+  if (rails.compromise !== null) options.compromiseView = rails.compromise
+  if (rails.revocationEvidence !== null) options.revocationEvidence = rails.revocationEvidence
+  return options
+}
+
+/** What the page says a rail is holding.
+ *
+ * Numbers and fixed labels only, never a judgement: the presence of a file is
+ * not evidence that anything in it verified (C-86), and the wording has to keep
+ * "not consulted" and "consulted, found nothing" apart because the verification
+ * result reports `unknown` for both and cannot be used to tell them apart
+ * (§14.3).
+ */
+export function railNotice(rail: keyof Rails, value: JsonValue[] | JsonObject | null): string {
+  if (value === null) {
+    return rail === 'revocationEvidence'
+      ? 'no revocation evidence loaded'
+      : rail === 'revocation'
+        ? 'no revocation feed loaded'
+        : `no ${rail} view loaded`
+  }
+  if (rail === 'revocationEvidence') return 'Revocation evidence: loaded'
+  const count = Array.isArray(value) ? value.length : 0
+  if (rail === 'revocation') return `Revocation feed: ${count} record${count === 1 ? '' : 's'}`
+  const label = rail === 'transfer' ? 'Transfer view' : 'Compromise view'
+  return `${label}: ${count} claim${count === 1 ? '' : 's'}`
+}
+
 export function runVerify(
   envelopeBytes: Uint8Array,
   trustStore: TrustStore,

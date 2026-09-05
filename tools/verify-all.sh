@@ -455,7 +455,12 @@ run pages.yml:test - "npm ci --prefix verifiers/ts"
 run pages.yml:test - "npm run build --prefix verifiers/ts"
 run pages.yml:test - "npm test --prefix verifiers/ts"
 run pages.yml:test - "npm ci --prefix site"
-run pages.yml:test - "npm test --prefix site"
+# The suite writes a JSON report and the census asserts it: a test file that stops
+# being collected has to be red here too, not only a smaller number in the table
+# below. The selftest runs first, for the same reason it does in the workflow.
+run pages.yml:test - "python3 tools/check_test_census.py --selftest"
+run pages.yml:test - 'npm test --prefix site -- --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/site-tests.json"'
+run pages.yml:test - 'python3 tools/check_test_census.py site --report "$RUNNER_TEMP/site-tests.json"'
 # The typecheck runs here because `npm test` does not run it: site/package.json
 # puts `tsc --noEmit` in `build`, and `test` is `vitest run` alone. So the site
 # build includes a separate typecheck that `npm test` does not invoke.
@@ -475,7 +480,8 @@ run pages.yml:desktop - "npm run build --prefix verifiers/ts"
 run pages.yml:desktop - "npm ci --prefix site"
 run pages.yml:desktop - "npm ci --prefix desktop"
 run pages.yml:desktop - "npm run typecheck --prefix desktop"
-run pages.yml:desktop - "npm test --prefix desktop"
+run pages.yml:desktop - 'npm test --prefix desktop -- --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/desktop-tests.json"'
+run pages.yml:desktop - 'python3 tools/check_test_census.py desktop --report "$RUNNER_TEMP/desktop-tests.json"'
 run pages.yml:desktop - "npm run build --prefix desktop"
 # desktop/playwright.config.ts adds WebKit only when CI is set, so CI is enabled
 # here only when WebKit is actually installed and cleared otherwise. Running with CI=1 and no WebKit
