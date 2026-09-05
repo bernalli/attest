@@ -8,6 +8,18 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # `shell: bash` is `bash --noprofile --norc -eo pipefail {0}`; with no shell
+    # named a step runs as `bash -e {0}` (GitHub Actions workflow syntax,
+    # jobs.<job_id>.steps[*].shell) — `-e`, but NO pipefail, so a pipeline
+    # reports the exit status of its LAST command only. That is what lets
+    # `curl … | sh -s --` install nothing and stay green: `sh` on empty stdin
+    # exits 0. Three of those are in `supply-chain` below, and the scanners they
+    # install are the whole point of that job — a job that skips its installer
+    # and still reports success has scanned nothing and said so to nobody.
+    shell: bash
+
 jobs:
   python:
     # BEFORE CHANGING HOW THIS JOB RUNS — a `container:`, a self-hosted runner,

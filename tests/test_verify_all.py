@@ -21,7 +21,10 @@ change unnoticed.
 from __future__ import annotations
 
 import re
+import shlex
+import shutil
 import stat
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -151,6 +154,64 @@ def test_no_exemption_outlives_the_step_it_excuses(pattern: str, reason: str) ->
         f"nothing in ci.yml or pages.yml matches {pattern!r} any more "
         f"({reason}); remove the exemption before it excuses something else"
     )
+
+
+#: The invocation `verify-all` uses for each step. Written as a pattern rather
+#: than a constant so the flags are read from the script instead of asserted
+#: about it: what this file pins is the BEHAVIOUR those flags produce.
+_STEP_SHELL = re.compile(r"\bbash\s+(.*?)\s+-c\s+\"\$command\"")
+
+
+def _step_shell_flags() -> list[list[str]]:
+    return [shlex.split(match) for match in _STEP_SHELL.findall(VERIFY_ALL.read_text())]
+
+
+def _probe(flags: list[str], script: str) -> int:
+    bash = shutil.which("bash") or "bash"
+    return subprocess.run([bash, *flags, "-c", script], check=False).returncode  # noqa: S603
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_a_workflow_step_fails_when_any_command_in_a_pipeline_fails(workflow: str) -> None:
+    """`shell: bash` is what buys pipefail; the default shell does not have it.
+
+    GitHub runs a step as `bash --noprofile --norc -eo pipefail {0}` when the
+    shell is named, and as `bash -e {0}` when it is not (docs.github.com,
+    "Workflow syntax for GitHub Actions", jobs.<job_id>.steps[*].shell). The
+    difference is pipefail, and it is not cosmetic here: both workflows run
+    `curl … | sh -s --`, where `sh` on empty stdin exits 0 and the step stays
+    green having installed nothing, and one runs `sha256sum … | tee …`, where
+    `tee` succeeds while writing an empty checksum file.
+    """
+    document = yaml.safe_load((REPO_ROOT / ".github/workflows" / workflow).read_text())
+    declared = document.get("defaults", {}).get("run", {}).get("shell")
+    assert declared == "bash", (
+        f"{workflow} does not declare `defaults: run: shell: bash`, so its steps run "
+        f"under `bash -e {{0}}` and a pipeline reports only its last command (got {declared!r})"
+    )
+
+
+def test_verify_all_runs_every_step_under_that_same_shell() -> None:
+    """The two halves are one property: the workflows' shell and the script's.
+
+    `verify-all` runs each logical line in its own shell, so `-e` is mostly
+    moot — but pipefail is not, and a script that ran the same pipeline under
+    a laxer shell than CI would report green on exactly the steps CI is now
+    able to fail. Whichever half is missing, this is red.
+    """
+    call_sites = _step_shell_flags()
+    assert call_sites, (
+        'no `bash <flags> -c "$command"` step invocation found in tools/verify-all.sh — '
+        "the parity between the workflows' shell and the script's cannot be checked"
+    )
+    for flags in call_sites:
+        assert _probe(flags, "true") == 0, f"bash {flags} cannot run a successful command"
+        assert _probe(flags, "exit 3") == 3, f"bash {flags} loses a command's exit status"
+        assert _probe(flags, "false | true") != 0, (
+            f"tools/verify-all.sh runs steps as `bash {' '.join(flags)} -c`, where a failing "
+            "command in a pipeline is reported as success; both workflows declare "
+            "`shell: bash`, which is `bash --noprofile --norc -eo pipefail {0}`"
+        )
 
 
 def test_the_script_can_actually_be_run() -> None:
