@@ -53,6 +53,8 @@ sku = "SDC-STD-001"
 
 _SHOPIFY_ENV_VAR = "SHOPIFY_WEBHOOK_SECRET_CLI_TEST"  # env var NAME, not a secret
 _SMTP_PASSWORD_ENV_VAR = "SMTP_PASSWORD_CLI_TEST"  # noqa: S105 - env var NAME, not a secret
+_PADDLE_WEBHOOK_ENV_VAR = "PADDLE_WEBHOOK_SECRET_CLI_TEST"
+_PADDLE_API_KEY_ENV_VAR = "PADDLE_API_KEY_CLI_TEST"
 _SHOPIFY_VARIANT_PRODUCT = f"""
 [products.shopify_49148385]
 title = "The Long Dusk"
@@ -146,6 +148,49 @@ def test_check_config_rc_0_on_valid_config_with_real_key_files(
     assert ISSUER in out
     assert "price_TEST" in out
     assert "stripe: configured" in out
+
+
+def test_check_config_reports_paddle_and_paypal(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "stripe-webhook-value")
+    config_path = _write_config(
+        tmp_path, hybrid_keys, key_manifest, products_toml=_PRICE_TEST_PRODUCT
+    )
+
+    assert cli.main(["check-config", "--config", str(config_path)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    stripe_index = next(index for index, line in enumerate(lines) if line.startswith("stripe:"))
+    assert lines[stripe_index:] == [
+        "stripe: configured",
+        "shopify: not configured",
+        "itch: not configured",
+        "paddle: not configured",
+        "paypal: not configured",
+        "delivery: download-link-only",
+    ]
+
+    monkeypatch.setenv(_PADDLE_WEBHOOK_ENV_VAR, "paddle-webhook-value")
+    monkeypatch.setenv(_PADDLE_API_KEY_ENV_VAR, "paddle-api-value")
+    paddle_table = f"""
+[paddle]
+webhook_secret_env = "{_PADDLE_WEBHOOK_ENV_VAR}"
+api_key_env = "{_PADDLE_API_KEY_ENV_VAR}"
+"""
+    configured_path = _write_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        products_toml=_PRICE_TEST_PRODUCT,
+        extra_toml=paddle_table,
+    )
+
+    assert cli.main(["check-config", "--config", str(configured_path)]) == 0
+    assert "paddle: configured" in capsys.readouterr().out.splitlines()
 
 
 def test_check_config_rc_2_on_missing_env_var(

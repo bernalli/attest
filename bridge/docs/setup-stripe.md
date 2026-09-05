@@ -228,6 +228,8 @@ products: price_1PxYzEXAMPLE
 stripe: configured
 shopify: not configured
 itch: not configured
+paddle: not configured
+paypal: not configured
 delivery: download-link-only
 ```
 <!-- @check-config-summary-end -->

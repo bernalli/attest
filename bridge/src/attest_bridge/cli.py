@@ -686,6 +686,8 @@ def _cmd_check_config(args: argparse.Namespace) -> int:
     print(f"stripe: {'configured' if config.stripe is not None else 'not configured'}")
     print(f"shopify: {'configured' if config.shopify is not None else 'not configured'}")
     print(f"itch: {'configured' if config.itch is not None else 'not configured'}")
+    print(f"paddle: {'configured' if config.paddle is not None else 'not configured'}")
+    print(f"paypal: {'configured' if config.paypal is not None else 'not configured'}")
     print(f"delivery: {'smtp' if config.delivery is not None else 'download-link-only'}")
     return _RC_OK
 
