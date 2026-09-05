@@ -54,13 +54,14 @@ a component of `ok`. The receipt is a file you are supposed to copy: back it up,
 mail it to yourself, keep a second copy on another disk. A receipt that resisted
 copying would be DRM again, and would fail for the same reasons DRM fails.
 
-What copying does not hand over is the ability to prove the purchase is *yours*.
+What copying does not hand over is the ability to show you hold the receipt's binding
+secret.
 When a store exports your receipts you get two files, and only one of them is meant
 to leave your hands. The shareable one carries the receipts, the store's key
 material and the licence texts, with the binding secret stripped from every receipt
 inside it. The other file carries that secret. Someone who copies the shareable file
-has a receipt that verifies perfectly and, if anyone asks, cannot show it belongs
-to them.
+has a receipt that verifies perfectly and, if anyone asks, cannot produce that
+secret.
 
 Now the uncomfortable half, because it is the part that decides how much this is
 worth. The secret in the second file is a bearer secret. The specification says so in
@@ -73,19 +74,23 @@ purchase in it at once. That is why `attest disclose <receipt_id>` exists: it sh
 one receipt, with its own salt, and nothing else.
 
 And the sharper limit, the one that decides real cases: nothing obliges anyone to ask.
-Whether a receipt verifies and whether it belongs to you are two separate results,
+Whether a receipt verifies and whether anyone has checked its binding are two
+separate results,
 and the first does not depend on the second. A verifier that never requests the
 binding proof gains nothing from the two files being separate. So a copied receipt,
 presented to somebody who does not ask, looks exactly like the real thing. What
 distinguishes the real buyer is custody of the private file, not mathematics.
 
 There is a stronger path in the standard, and it is implemented: instead of a shared
-secret, a key of yours is signed into the receipt, and you prove ownership by signing
-a challenge the verifier just invented, so a recorded answer is no use to anyone
-later. Two things keep it from being the answer today. It is optional, and the key
-is absent by default: a receipt from a checkout with no client software carries no
-key at all. And it needs software that holds a key on your behalf, which nobody has
-solved for ordinary buyers, this project included. The library also checks only the
+secret, a public key is signed into the receipt, and you show you hold the matching
+private one by signing a challenge the verifier just invented, so a recorded answer
+is no use to anyone later. Three things keep it from being the answer today. It is
+optional, and the key is absent by default: a receipt from a checkout with no client
+software carries no key at all. It needs software that holds a key on your behalf,
+which nobody has solved for ordinary buyers, this project included. And the seller is
+the one who writes that key into the receipt, along with the identifier, so answering
+the challenge shows who holds the binding secret the seller recorded — not that the
+seller recorded the person who actually bought. The library also checks only the
 signature on the challenge; making sure each challenge is fresh is the verifier's
 own job. Until that path is the ordinary one, the honest answer to "what stops them"
 is: you do, by not handing the private file over.
