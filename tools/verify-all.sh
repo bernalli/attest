@@ -14,14 +14,18 @@
 # WHAT IT GUARANTEES. Every `run:` line of both workflows appears here
 # verbatim, in the order the jobs run them, with the same flags, under the same
 # shell both workflows name (`bash --noprofile --norc -eo pipefail`) — and
-# `tests/test_verify_all.py` fails if one of them stops being true. Steps that
-# only provision a toolchain (downloading a prover, a scanner, a browser
-# engine) are the exception: this script reports what is missing and prints the
-# command, rather than installing software behind you.
+# `tests/test_verify_all.py` runs this script against stubbed commands and
+# compares what it ACTUALLY EXECUTED — job, environment, order, multiplicity —
+# with both workflows, so a step that stops being reached is as red as a step
+# that was deleted. Steps that only provision a toolchain (downloading a
+# prover, a scanner, a browser engine) are the exception: this script reports
+# what is missing and prints the command, rather than installing software
+# behind you.
 #
 # HOW IT REPORTS. No `set -e`: every step is timed, its outcome recorded, and a
 # table printed at the end. Execution stops at the first failure — the steps
-# after it are reported NOT RUN rather than silently dropped.
+# after it are reported NOT RUN rather than silently dropped. Environment
+# restoration still runs and cannot erase an earlier failure.
 #
 #   ./tools/verify-all.sh            everything this machine can run
 #   ./tools/verify-all.sh --quick    same, minus the steps that need a
@@ -30,8 +34,9 @@
 #                                    syft/grype/grant, the Internet-Draft
 #                                    build); each one named as SKIPPED
 #
-# Exit status: 0 every step ran and passed; 1 a step failed; 2 nothing failed
-# but something was skipped, so the tree is unverified rather than verified.
+# Exit status: 0 every step ran and passed; 1 a step or restoration failed;
+# 2 nothing failed but a step was SKIPPED or PARTIAL; 64 invalid invocation
+# or a missing base tool. SKIPPED/PARTIAL means unverified, not verified.
 # The third code matters: a skip inside a total of passes reads exactly like a
 # step that ran, which is the defect this whole script exists to remove.
 
@@ -159,6 +164,14 @@ external() {
   run "$origin" "-" "$command"
 }
 
+# Environment restoration must run even after a verification failure.
+restore() {
+  local previous_failed="$FAILED"
+  FAILED=0
+  run verify-all:restore - "$1"
+  if [ "$previous_failed" -ne 0 ]; then FAILED="$previous_failed"; fi
+}
+
 # browser_missing <npm root> <engine...> — echoes the engines whose Playwright
 # build is absent. Checked instead of installed: `npx playwright install
 # --with-deps` runs apt and pulls in over two hundred packages for WebKit
@@ -225,7 +238,9 @@ run ci.yml:supply-chain - 'python3 tools/conformance_runner.py --adapter "node t
 # The SBOM group strips both environments down to runtime dependencies, which
 # is what CI measures and what a developer does not want left behind. It runs
 # only when syft is here, and the restore below puts the dev toolchain back.
-if [ "$QUICK" -eq 0 ] && command -v syft > /dev/null 2>&1; then SBOM_ENV_TOUCHED=1; fi
+if [ "$FAILED" -eq 0 ] && [ "$QUICK" -eq 0 ] && command -v syft > /dev/null 2>&1; then
+  SBOM_ENV_TOUCHED=1
+fi
 external ci.yml:supply-chain "syft" "uv sync --locked"
 external ci.yml:supply-chain "syft" "syft dir:.venv -o cyclonedx-json=sbom-python.cdx.json"
 external ci.yml:supply-chain "syft" "(cd verifiers/ts && npm ci --omit=dev)"
@@ -235,7 +250,8 @@ external ci.yml:supply-chain "grype" "grype sbom:sbom-npm.cdx.json --fail-on hig
 external ci.yml:supply-chain "grant" "grant check -c .grant.yaml sbom-python.cdx.json"
 external ci.yml:supply-chain "grant" "grant check -c .grant.yaml sbom-npm.cdx.json"
 if [ "$SBOM_ENV_TOUCHED" -eq 1 ]; then
-  run verify-all:restore - "uv sync --locked --extra dev --all-packages"
+  restore "uv sync --locked --extra dev --all-packages"
+  restore "npm ci --prefix verifiers/ts"
 fi
 
 # ------------------------------------------------------------- pages.yml: test
@@ -264,8 +280,8 @@ run pages.yml:desktop - "npm ci --prefix desktop"
 run pages.yml:desktop - "npm run typecheck --prefix desktop"
 run pages.yml:desktop - "npm test --prefix desktop"
 run pages.yml:desktop - "npm run build --prefix desktop"
-# desktop/playwright.config.ts adds WebKit only when CI is set, so CI is set
-# here only when WebKit is actually installed. Running with CI=1 and no WebKit
+# desktop/playwright.config.ts adds WebKit only when CI is set, so CI is enabled
+# here only when WebKit is actually installed and cleared otherwise. Running with CI=1 and no WebKit
 # would turn a missing engine into a red suite; running without saying so would
 # report three engines' worth of green earned by two.
 DESKTOP_ABSENT="$(browser_missing desktop chromium firefox)"
@@ -274,9 +290,9 @@ if [ -n "$DESKTOP_ABSENT" ]; then
   _skip pages.yml:desktop "npm run e2e --prefix desktop" \
     "Playwright engine absent:$DESKTOP_ABSENT — install with: npx playwright install --with-deps$DESKTOP_ABSENT"
 elif [ -n "$WEBKIT_ABSENT" ]; then
-  note "WebKit is not installed, so this run exercises chromium and firefox and CI stays unset."
+  note "WebKit is not installed, so this run exercises chromium and firefox and CI is cleared."
   note "CI exercises three engines; to match it: npx playwright install --with-deps webkit"
-  run pages.yml:desktop - "npm run e2e --prefix desktop"
+  run pages.yml:desktop "CI=" "npm run e2e --prefix desktop"
   # Two engines where CI runs three. The step passed, so `run` recorded OK, and
   # an OK here would be counted in a total of passes and exit 0 — three engines'
   # worth of green earned by two, which the comment above says this branch
@@ -293,10 +309,17 @@ elif [ -n "$WEBKIT_ABSENT" ]; then
 else
   run pages.yml:desktop "CI=1" "npm run e2e --prefix desktop"
 fi
+DESKTOP_ENV_TOUCHED=0
+if [ "$FAILED" -eq 0 ] && [ "$QUICK" -eq 0 ] && command -v syft > /dev/null 2>&1; then
+  DESKTOP_ENV_TOUCHED=1
+fi
 external pages.yml:desktop "syft" "npm ci --omit=dev --prefix desktop"
 external pages.yml:desktop "syft" "syft dir:desktop -o cyclonedx-json=sbom-desktop.cdx.json"
 external pages.yml:desktop "grype" "grype sbom:sbom-desktop.cdx.json --fail-on high"
 external pages.yml:desktop "grant" "grant check -c .grant.yaml sbom-desktop.cdx.json"
+if [ "$DESKTOP_ENV_TOUCHED" -eq 1 ]; then
+  restore "npm ci --prefix desktop"
+fi
 run pages.yml:desktop - "sha256sum desktop/dist/attest-verifier.html | tee desktop/dist/attest-verifier.html.sha256"
 
 # ---------------------------------------------------------------- ci.yml: formal
@@ -318,12 +341,8 @@ done < <(awk '
   }
 ' .github/workflows/ci.yml)
 
-# ---------------------------------------------------------------------- tidy up
-# `uv build`, `npm pack` and syft leave artefacts in the tree. dist/ is ignored
-# by git; these are not, and a verification command that leaves the working
-# tree dirty gets typed once.
-rm -f "$REPO_ROOT"/sbom-python.cdx.json "$REPO_ROOT"/sbom-npm.cdx.json "$REPO_ROOT"/sbom-desktop.cdx.json
-rm -f "$REPO_ROOT"/verifiers/ts/*.tgz
+# Build and scan artifacts remain available for inspection. They may predate
+# this invocation, so verification must not delete them by filename or glob.
 
 # ----------------------------------------------------------------------- report
 echo

@@ -65,20 +65,31 @@ flaky. They were the two end-to-end suites, which are slow, and the typecheck
 inside `npm run build --prefix site` — `npm test` is the command people know,
 and it is green while `tsc` is red.
 
-Some steps need a toolchain CI installs and a working copy usually does not: the
-Tamarin/Maude proof shards, the syft/grype/grant supply-chain scans, the
-Internet-Draft build, and the Playwright browser engines. The script installs
-none of them. It names each step it had to skip, prints the command that would
-provide the missing piece, and exits **2** — nothing failed, but the tree is
-unverified rather than verified. A step that ran on a narrower footing than CI
-gives it — the desktop end-to-end suite on two Playwright engines where CI runs
-three — is reported `PARTIAL` and exits 2 as well: it is neither a pass of what
-CI runs nor a step that did not run. `--quick` skips that whole class on
-purpose. A failure exits 1; a run in which everything executed as CI executes
-it, and passed, exits 0.
+Some steps need toolchains CI installs: Maude/Tamarin, syft/grype/grant,
+xml2rfc, and Playwright browsers. The script does not provision the prover,
+scanners, or browsers. It reports missing command-line tools by name and
+prints installation hints for missing browsers. The Internet-Draft step uses
+`uvx` to obtain pinned xml2rfc; its first invocation may download that package.
+
+A successful desktop end-to-end run with Chromium and Firefox available but
+WebKit missing is reported `PARTIAL`. If Chromium or Firefox is missing, the
+whole desktop end-to-end step is `SKIPPED`. A failed step stays `FAIL`, even
+when it ran with reduced browser coverage; subsequent verification steps are
+`NOT RUN`. Environment restoration still runs after a failure.
+
+`--quick` skips the prover, scanner, and Internet-Draft steps. It still runs
+the end-to-end suites when their required browsers are available, so it may
+also report `PARTIAL`. A failure exits 1, including a failed restoration.
+With no failures, any `SKIPPED` or `PARTIAL` step makes the exit status 2;
+only a complete successful run exits 0. Invalid options or a missing base
+tool (`uv`, `node`, `npm`, or `python3`) exit 64 before verification completes.
 
 Add or change a step in either workflow and it belongs in `tools/verify-all.sh`
-in the same commit: `tests/test_verify_all.py` compares the two command by
-command and flag by flag — binding each execution to the job that runs it, so a
-step that disappears from one of four jobs is red and not merely absent — and
-turns red otherwise. What it does not compare is the ORDER of the steps.
+in the same commit: `tests/test_verify_all.py` runs the script against stubbed
+commands and compares what it ACTUALLY EXECUTED with both workflows — job by
+job, flag by flag, in order, with the environment each step declares, and with
+the five proof shards the formal matrix expands into. A step still present in
+the file but no longer reached, or reached under another job's name, is red
+exactly like a step that was deleted; so is a local step no workflow runs. What
+it does not compare is the order of the JOBS: the script groups those its own
+way, running the proof shards last where `ci.yml` declares them third.
