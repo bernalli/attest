@@ -20,6 +20,7 @@ change unnoticed.
 
 from __future__ import annotations
 
+import collections
 import re
 import shlex
 import shutil
@@ -219,3 +220,58 @@ def test_the_script_can_actually_be_run() -> None:
     assert VERIFY_ALL.exists(), f"{VERIFY_ALL} is missing"
     assert VERIFY_ALL.read_text().startswith("#!"), "no interpreter line"
     assert VERIFY_ALL.stat().st_mode & stat.S_IXUSR, f"{VERIFY_ALL} is not executable"
+
+
+def _script_executions() -> dict[str, collections.Counter[str]]:
+    """(origin -> {command: times}) for every step `verify-all` actually runs.
+
+    `run` and `external` are the only two verbs that execute a workflow step;
+    `_skip` records one that did not run, so it is deliberately not counted.
+    """
+    text = VERIFY_ALL.read_text().replace("\\\n", " ")
+    found: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    for line in text.splitlines():
+        match = re.match(r"^\s*(run|external)\s+(.*)$", line)
+        if not match:
+            continue
+        try:
+            parts = shlex.split(match.group(2))
+        except ValueError:
+            continue
+        if len(parts) >= 3:
+            found[parts[0]][parts[2]] += 1
+    return found
+
+
+@pytest.mark.parametrize(
+    ("origin", "command"),
+    [(origin, command) for origin, command, _ in COMMANDS],
+    ids=[f"{origin} {command[:60]}" for origin, command, _ in COMMANDS],
+)
+def test_every_ci_command_runs_at_its_own_origin(origin: str, command: str) -> None:
+    """Existence is not parity: a command CI runs in four jobs has to run in four.
+
+    `test_every_ci_command_is_in_verify_all` asks only whether the text appears
+    somewhere in the script, so three of the four `npm ci --prefix verifiers/ts`
+    executions could be deleted and every assertion stayed green — the workflow
+    step vanished from the local run and nothing said so. This binds each
+    execution to the job it belongs to and counts it. The comparison is `>=`
+    rather than `==` because the script expands one workflow step into mutually
+    exclusive branches (the desktop e2e runs with or without `CI=1` depending on
+    which Playwright engines are installed), and only one of them ever runs.
+    """
+    if _provisioning_reason(command) is not None:
+        pytest.skip(f"provisioning: {_provisioning_reason(command)}")
+    workflow, job, _index = origin.split(":")
+    where = f"{workflow}:{job}"
+    wanted = sum(
+        1
+        for other, other_command, _ in COMMANDS
+        if other.rsplit(":", 1)[0] == where and other_command == command
+    )
+    got = _script_executions().get(where, collections.Counter())[command]
+    assert got >= wanted, (
+        f"{where} runs `{command}` {wanted} time(s) and tools/verify-all.sh runs it "
+        f"{got} time(s) at that origin. A step that disappears from the script is a "
+        "step the local run stops covering, and membership alone cannot see it."
+    )

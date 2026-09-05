@@ -77,6 +77,10 @@ MILLIS=()
 NOTES=()
 FAILED=0
 SKIPPED=0
+# A step that RAN, but not the way CI runs it. Neither a pass of what CI runs
+# nor a step that did not run, and reporting it as either is the defect this
+# script exists to remove.
+PARTIAL=0
 SBOM_ENV_TOUCHED=0
 
 note() { printf '%s>> %s%s\n' "$DIM" "$1" "$RESET"; }
@@ -273,6 +277,19 @@ elif [ -n "$WEBKIT_ABSENT" ]; then
   note "WebKit is not installed, so this run exercises chromium and firefox and CI stays unset."
   note "CI exercises three engines; to match it: npx playwright install --with-deps webkit"
   run pages.yml:desktop - "npm run e2e --prefix desktop"
+  # Two engines where CI runs three. The step passed, so `run` recorded OK, and
+  # an OK here would be counted in a total of passes and exit 0 — three engines'
+  # worth of green earned by two, which the comment above says this branch
+  # exists to avoid saying. Re-label the record it just wrote and count it, so
+  # the exit code carries the difference instead of two stdout notes nobody
+  # greps. A FAIL is left alone: it is already the stronger sentence.
+  _last=$((${#OUTCOMES[@]} - 1))
+  if [ "${OUTCOMES[$_last]}" = "OK" ]; then
+    OUTCOMES[$_last]="PARTIAL"
+    NOTES[$_last]="ran chromium and firefox; CI also runs webkit"
+    PARTIAL=$((PARTIAL + 1))
+  fi
+  unset _last
 else
   run pages.yml:desktop "CI=1" "npm run e2e --prefix desktop"
 fi
@@ -320,14 +337,16 @@ done
 total_ms=0
 for ms in "${MILLIS[@]}"; do total_ms=$((total_ms + ms)); done
 echo
-printf '%s steps, %s skipped, %s ms total\n' "${#ORIGINS[@]}" "$SKIPPED" "$total_ms"
+printf '%s steps, %s skipped, %s partial, %s ms total\n' \
+  "${#ORIGINS[@]}" "$SKIPPED" "$PARTIAL" "$total_ms"
 
 if [ "$FAILED" -ne 0 ]; then
   echo "${BOLD}FAIL${RESET} — a step CI runs failed here."
   exit 1
 fi
-if [ "$SKIPPED" -ne 0 ]; then
-  echo "${BOLD}INCOMPLETE${RESET} — nothing failed, but $SKIPPED step(s) did not run. See SKIPPED above."
+if [ "$SKIPPED" -ne 0 ] || [ "$PARTIAL" -ne 0 ]; then
+  echo "${BOLD}INCOMPLETE${RESET} — nothing failed, but $SKIPPED step(s) did not run and" \
+    "$PARTIAL ran on less than CI runs them. See SKIPPED and PARTIAL above."
   exit 2
 fi
 echo "${BOLD}OK${RESET} — every step both workflows run passed here."
