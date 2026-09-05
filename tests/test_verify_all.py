@@ -38,11 +38,21 @@ part that drifts — `--count 500`, `--seed 20260902`, `--fail-on high`,
 `--frozen` — and a comparison that matched on the program name alone would let
 every one of them change unnoticed.
 
-WHAT THIS CANNOT SEE. The harness replaces commands, so it measures
-orchestration, not the work: a step that runs the right command against the
-wrong tree is green here. And instrumentation is in principle detectable — a
-line that branched on `PATH` or on one of the `VERIFY_ALL_TEST_*` variables the
-stubs read would run one way here and another on a developer's machine. These
+WHAT THIS DOES NOT CHECK. Two ways of changing what the script does are green
+here, both measured rather than assumed, and both left green knowingly. The
+first is the working directory: making the plain branch of `run` `cd` somewhere
+else first puts fifty-eight of the sixty-one steps in a temporary directory and
+the run still exits 0. The second is a mandatory step demoted to an optional
+one — turning `run pages.yml:test - "npm run build --prefix site"` into an
+`external` guarded by a tool keeps it running wherever that tool is installed
+and turns it into a SKIPPED with exit 2 wherever it is not, which is a
+difference the report states rather than hides, but nothing here refuses the
+change.
+
+Beyond those two, the harness replaces commands, so it measures orchestration
+and not the work; and instrumentation is in principle detectable — a line that
+branched on `PATH` or on one of the `VERIFY_ALL_TEST_*` variables the stubs
+read would run one way here and another on a developer's machine. These
 assertions defend against drift, not against a script written to deceive them.
 """
 
@@ -192,10 +202,32 @@ LOCAL_HOUSEKEEPING: tuple[tuple[str, str], ...] = (
     ("verify-all:restore", "npm ci --prefix desktop"),
 )
 
-#: A hosted runner exports `CI` to every step, so the script setting it is not
-#: drift when the workflow does not name it. Anything else the script hands a
-#: step is a variable CI never gave it, and changes what that step measures.
-RUNNER_PROVIDED = frozenset({"CI"})
+#: A hosted runner exports these to every step, so the script setting them is
+#: not drift when the workflow does not name them: `CI` is what tells a suite it
+#: runs unattended, `RUNNER_TEMP` is the scratch directory the Internet-Draft
+#: step names. A name outside these two lists and outside the step's own `env:`
+#: is read straight out of the child process, so where the script added it makes
+#: no difference — at the top, or in either branch of `run`. Three mutations of
+#: exactly those shapes were green while this assertion read the printed line.
+RUNNER_PROVIDED = frozenset({"CI", "RUNNER_TEMP"})
+
+#: What the harness itself puts in the environment, plus what bash exports on
+#: its own. None of it comes from `verify-all.sh`, so none of it is drift.
+#: Enumerated rather than inferred from a reference step, because a variable the
+#: script exports once at the top reaches every step and would sit in any
+#: inferred baseline — which is the mutation this list exists to leave visible.
+HARNESS_PROVIDED = frozenset(
+    {
+        "PATH",
+        "TMPDIR",
+        "VERIFY_ALL_TEST_ABSENT",
+        "VERIFY_ALL_TEST_TRACE",
+        "VERIFY_ALL_TEST_FAIL",
+        "PWD",
+        "OLDPWD",
+        "SHLVL",
+    }
+)
 
 
 def test_the_workflows_still_have_steps() -> None:
@@ -332,9 +364,15 @@ if [ "${0##*/}" = node ]; then
 fi
 if [ "${0##*/}" != bash ]; then exit 0; fi
 # One line per step the script actually launched, carrying the environment the
-# step's own process received — not the one the script printed.
-printf '%s\t%s\t%s\n' "${!#}" "CI=${CI-<unset>}" \
-  "ATTEST_CI_REQUIRED=${ATTEST_CI_REQUIRED-<unset>}" >> "$VERIFY_ALL_TEST_TRACE"
+# step's own process received — not the one the script printed. The last field
+# is every variable name in that process: a variable the script exports at the
+# top, or adds inside `run`, reaches the step without ever appearing in the line
+# the script prints, and this is what makes it visible.
+_exported=""
+for _name in $(compgen -e); do _exported="$_exported $_name"; done
+printf '%s\t%s\t%s\t%s\n' "${!#}" "CI=${CI-<unset>}" \
+  "ATTEST_CI_REQUIRED=${ATTEST_CI_REQUIRED-<unset>}" "$_exported" \
+  >> "$VERIFY_ALL_TEST_TRACE"
 if [ "${!#}" = "${VERIFY_ALL_TEST_FAIL:-}" ]; then exit 9; fi
 exit 0
 """
@@ -384,6 +422,8 @@ class Trace:
     reported: tuple[tuple[str, str, str], ...]
     #: (command, `CI=…`, `ATTEST_CI_REQUIRED=…`) as each child process saw it.
     child_environment: tuple[tuple[str, str, str], ...]
+    #: (command, every variable name) as each child process saw it, same order.
+    child_variables: tuple[tuple[str, frozenset[str]], ...]
 
     def count(self, origin: str, command: str) -> int:
         return sum(1 for run in self.executed if run.origin == origin and run.command == command)
@@ -459,10 +499,9 @@ def _trace(
     for origin, shown in _STARTED.findall(result.stdout):
         env, command = _split_environment(shown)
         executed.append(Execution(origin=origin, env=env, command=command))
-    child = tuple(
-        (line.split("\t")[0], line.split("\t")[1], line.split("\t")[2])
-        for line in recorded.read_text().splitlines()
-    )
+    rows = [line.split("\t") for line in recorded.read_text().splitlines()]
+    child = tuple((row[0], row[1], row[2]) for row in rows)
+    variables = tuple((row[0], frozenset(row[3].split())) for row in rows)
     return Trace(
         root=root,
         returncode=result.returncode,
@@ -471,6 +510,7 @@ def _trace(
         not_started=tuple(_NOT_STARTED.findall(result.stdout)),
         reported=tuple(_REPORTED.findall(result.stdout)),
         child_environment=child,
+        child_variables=variables,
     )
 
 
@@ -680,21 +720,30 @@ def test_no_step_carries_an_environment_variable_the_workflow_does_not(
     """The other direction of the environment: extra is drift too.
 
     `test_the_environment_of_a_step_travels_with_that_step` asks whether every
-    variable the workflow declares reached the step. It cannot see a variable
-    the SCRIPT adds and CI never sets — `PYTEST_ADDOPTS=--ignore=...` on the
-    pytest step makes the local run measure less than CI, and every other
-    assertion in this file stays green. Measured, on two different steps.
+    variable the workflow declares reached the step. The variable to catch here
+    is the opposite one: handed to a step by the SCRIPT and never set by CI.
+    `PYTEST_ADDOPTS=--ignore=...` makes the local run measure less than CI while
+    every step still reports OK and the whole run still exits 0.
+
+    Read in the child process, not in the line the script prints. An earlier
+    version of this assertion read that line, and three ways of adding a
+    variable were green against it: exporting it once at the top of the script,
+    and adding it to either branch of `run`. None of the three appears in what
+    the script prints, and all three reach every step.
     """
     declared: dict[tuple[str, str], set[str]] = {}
     for origin, command, workflow_env in COMMANDS:
         declared.setdefault((_job(origin), command), set()).update(workflow_env)
     extra = [
         (run.origin, run.command, sorted(names))
-        for run in complete_run.executed
+        for run, (_, carried) in zip(
+            complete_run.executed, complete_run.child_variables, strict=True
+        )
         if (
-            names := {assignment.split("=", 1)[0] for assignment in run.env}
-            - declared.get((run.origin, run.command), set())
+            names := carried
+            - HARNESS_PROVIDED
             - RUNNER_PROVIDED
+            - declared.get((run.origin, run.command), set())
         )
     ]
     assert not extra, (

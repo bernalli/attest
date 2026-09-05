@@ -11,16 +11,25 @@
 # runs: three npm roots with their own scripts, a Python project with its own,
 # and no Makefile tying them together.
 #
-# WHAT IT GUARANTEES. Every `run:` line of both workflows appears here
-# verbatim, in the order the jobs run them, with the same flags, under the same
-# shell both workflows name (`bash --noprofile --norc -eo pipefail`) — and
-# `tests/test_verify_all.py` runs this script against stubbed commands and
-# compares what it ACTUALLY EXECUTED — job, environment, order, multiplicity —
-# with both workflows, so a step that stops being reached is as red as a step
-# that was deleted. Steps that only provision a toolchain (downloading a
-# prover, a scanner, a browser engine) are the exception: this script reports
-# what is missing and prints the command, rather than installing software
-# behind you.
+# WHAT IT GUARANTEES, AND WHAT IT DOES NOT. Every `run:` line of both workflows
+# appears here verbatim, in the order the jobs run them, with the same flags,
+# under the same shell both workflows name (`bash --noprofile --norc -eo
+# pipefail`). `tests/test_verify_all.py` runs this script against stubbed
+# commands and compares six things with the workflows: the command text with
+# its flags, the job it is attributed to, how many times it runs there, the
+# order within that job, the environment the step's own process receives, and
+# the five proof shards the formal matrix expands into. The environment is
+# compared in both directions, so a variable CI sets and this script does not
+# is red, and so is one this script hands a step and CI never sets.
+#
+# It does NOT check the directory a step runs in, and it does NOT refuse a step
+# CI always runs being made conditional on a tool this machine may lack. That
+# second one is reported as SKIPPED with exit 2 where the tool is absent, so it
+# is stated rather than hidden — but the gate will not stop the change.
+#
+# Steps that only provision a toolchain (downloading a prover, a scanner, a
+# browser engine) are the exception: this script reports what is missing and
+# prints the command, rather than installing software behind you.
 #
 # HOW IT REPORTS. No `set -e`: every step is timed, its outcome recorded, and a
 # table printed at the end. Execution stops at the first failure — the steps

@@ -86,10 +86,18 @@ tool (`uv`, `node`, `npm`, or `python3`) exit 64 before verification completes.
 
 Add or change a step in either workflow and it belongs in `tools/verify-all.sh`
 in the same commit: `tests/test_verify_all.py` runs the script against stubbed
-commands and compares what it ACTUALLY EXECUTED with both workflows — job by
-job, flag by flag, in order, with the environment each step declares, and with
-the five proof shards the formal matrix expands into. A step still present in
-the file but no longer reached, or reached under another job's name, is red
-exactly like a step that was deleted; so is a local step no workflow runs. What
-it does not compare is the order of the JOBS: the script groups those its own
-way, running the proof shards last where `ci.yml` declares them third.
+commands and compares what it ACTUALLY EXECUTED with both workflows — the
+command text with its flags, the job it is attributed to, how many times it
+runs there, the order within that job, the environment the step's own process
+receives, and the five proof shards the formal matrix expands into. A step
+still present in the file but no longer reached, or reached under another job's
+name, is red exactly like a step that was deleted; so is a local step no
+workflow runs, and so is a variable handed to a step that CI never sets.
+
+Three things it does not check, and they are limits rather than oversights. It
+does not compare the order of the JOBS: the script groups those its own way,
+running the proof shards last where `ci.yml` declares them third. It does not
+check the directory a step runs in. And it does not refuse a step CI always
+runs being made conditional on a tool this machine may lack — where the tool is
+absent that step is reported `SKIPPED` and the run exits **2**, so the
+difference is stated rather than hidden, but nothing turns red.
