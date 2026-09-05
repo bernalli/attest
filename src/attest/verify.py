@@ -1806,7 +1806,27 @@ def _classify_revocation(
             return not_revoked
 
         if revocability == _REVOCABILITY_REFUND_WINDOW:
-            window_end = _refund_window_end(payload)
+            # `issued_at + timedelta(days=window_days)` walks off the end of the
+            # representable range for a receipt issued near year 9999, and the
+            # schema's 3650-day cap does not prevent it. `OverflowError` is not
+            # part of this function's contract: it would escape `verify()`
+            # itself. Answering "unknown" with an explicit error is the
+            # fail-closed reading — returning None instead would silently make
+            # the revocation record ineffective (`_within_refund_window` treats
+            # a `None` window as "no record is ever effective", so the receipt
+            # would verify green with a genuine revocation in hand).
+            # The "unknown" here is THIS dispatch's answer, not necessarily the
+            # reported one: a matching `status: "transferred"` record still
+            # sends the outcome through the Stage 3 fallthrough below, which may
+            # rename it `invalid_revocation_ignored` or `transferred`. What holds
+            # on every one of those paths is the error, and `VerificationResult.ok`
+            # is `False` as soon as `errors` is non-empty — that, not the literal
+            # returned here, is what makes this fail closed.
+            try:
+                window_end = _refund_window_end(payload)
+            except OverflowError:
+                errors.append("refund window is outside the representable timestamp range")
+                return _REVOCATION_UNKNOWN
             effective = [r for r in valid if _within_refund_window(r, window_end)]
             if effective:
                 # G5 (TM-47): a Stage-2-capable verifier MUST additionally

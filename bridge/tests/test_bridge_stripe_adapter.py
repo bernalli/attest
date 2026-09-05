@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 import pytest
+from attest_bridge import stripe_adapter as stripe_module
 from attest_bridge.model import (
     ConfigError,
     NormalizedPurchase,
@@ -531,3 +532,97 @@ def test_line_items_network_failure_is_stripe_api_error() -> None:
             api_key="sk_test_merchant_key",
             http_get=_raising_http_get(urllib.error.URLError("connection refused")),
         ).normalize(_event(session))
+
+
+def test_a_non_ascii_v1_candidate_is_rejected_and_never_escapes_as_a_typeerror() -> None:
+    """`hmac.compare_digest` raises TypeError on a non-ASCII str.
+
+    A WSGI header value is latin-1-decoded remote input (PEP 3333), so one byte
+    >= 0x80 in the signature header would escape this function's
+    "only StripeSignatureError" contract and reach the route layer as an
+    unhandled 500 instead of the pinned 400.
+    """
+    with pytest.raises(StripeSignatureError, match="signature mismatch"):
+        verify_stripe_signature(_BODY, f"t={_T},v1=" + "\u00ff" * 64, _SECRET, now=_T)
+
+
+@pytest.mark.parametrize("bad_first", [False, True])
+def test_mixed_ascii_and_non_ascii_v1_candidates_verify_in_either_order(
+    bad_first: bool,
+) -> None:
+    """With the valid candidate first, `any()` short-circuits and the guard is
+    never reached: only the reverse order exercises it."""
+    correct = sign_stripe(_BODY, _SECRET, _T).partition("v1=")[2]
+    values = ["\u00e9", correct] if bad_first else [correct, "\u00e9"]
+    header = f"t={_T}," + ",".join(f"v1={value}" for value in values)
+    verify_stripe_signature(_BODY, header, _SECRET, now=_T)
+
+
+def test_candidates_are_compared_with_compare_digest_not_equality(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing else in this file distinguishes `compare_digest` from `==`."""
+    calls: list[tuple[Any, Any]] = []
+    real = hmac.compare_digest
+
+    def recording(left: Any, right: Any) -> bool:
+        calls.append((left, right))
+        return bool(real(left, right))
+
+    monkeypatch.setattr(stripe_module.hmac, "compare_digest", recording)
+    verify_stripe_signature(_BODY, sign_stripe(_BODY, _SECRET, _T), _SECRET, now=_T)
+    assert len(calls) == 1
+
+    calls.clear()
+    with pytest.raises(StripeSignatureError, match="signature mismatch"):
+        verify_stripe_signature(_BODY, f"t={_T},v1={'0' * 64}", _SECRET, now=_T)
+    assert len(calls) == 1
+
+
+def test_an_out_of_range_created_is_a_purchase_rejection_not_an_oserror() -> None:
+    """`created` is only checked for being an int, and the body is signed.
+
+    An absurd value therefore reaches `datetime.fromtimestamp`, which answers
+    with `OSError`/`OverflowError` — neither named by this adapter's contract.
+    The happy path is asserted first on purpose: without it the rejection could
+    come from anywhere else in `normalize` and the test would pass vacuously.
+    """
+    event = make_session_completed_event(metadata={"attest_product_key": "price_TEST"})
+    assert _adapter().normalize(event).purchased_at == "2026-07-14T03:33:20Z"
+    event["created"] = 10**18
+    with pytest.raises(PurchaseRejected, match="purchase timestamp is outside"):
+        _adapter().normalize(event)
+
+
+@pytest.mark.parametrize("bad", [None, True, False, "1784000000", 1.5, [], {}])
+def test_created_requires_a_non_boolean_integer(bad: Any) -> None:
+    event = make_session_completed_event(metadata={"attest_product_key": "price_TEST"})
+    assert _adapter().normalize(event).purchased_at == "2026-07-14T03:33:20Z"
+    event["created"] = bad
+    with pytest.raises(PurchaseRejected, match="created is missing or not an integer"):
+        _adapter().normalize(event)
+
+
+@pytest.mark.parametrize("verdict", [False, True])
+def test_digest_result_controls_verification(
+    verdict: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counting the calls is not enough: a spy that always agrees also counts.
+
+    This pins that the RESULT of the constant-time comparison is what decides,
+    which is the mutant `compare_digest(expected, expected) and candidate ==
+    expected` would otherwise survive.
+    """
+    expected = sign_stripe(_BODY, _SECRET, _T).partition("v1=")[2]
+    candidate = "0" * 64 if verdict else expected
+
+    def comparison(left: str, right: str) -> bool:
+        assert (left, right) == (expected, candidate)
+        return verdict
+
+    monkeypatch.setattr(stripe_module.hmac, "compare_digest", comparison)
+    if verdict:
+        verify_stripe_signature(_BODY, f"t={_T},v1={candidate}", _SECRET, now=_T)
+    else:
+        with pytest.raises(StripeSignatureError):
+            verify_stripe_signature(_BODY, f"t={_T},v1={candidate}", _SECRET, now=_T)
