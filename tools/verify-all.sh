@@ -12,7 +12,8 @@
 # and no Makefile tying them together.
 #
 # WHAT IT GUARANTEES. Every `run:` line of both workflows appears here
-# verbatim, in the order the jobs run them, with the same flags — and
+# verbatim, in the order the jobs run them, with the same flags, under the same
+# shell both workflows name (`bash --noprofile --norc -eo pipefail`) — and
 # `tests/test_verify_all.py` fails if one of them stops being true. Steps that
 # only provision a toolchain (downloading a prover, a scanner, a browser
 # engine) are the exception: this script reports what is missing and prints the
@@ -112,10 +113,15 @@ run() {
   printf '\n%s=== %s%s  %s\n' "$BOLD" "$origin" "$RESET" "$shown"
   local start finish rc
   start="$(date +%s%N)"
+  # The same shell both workflows name. `shell: bash` is
+  # `bash --noprofile --norc -eo pipefail {0}`, and the flags that matter are
+  # the last two: without pipefail a pipeline reports its LAST command only, so
+  # a step that pipes would be green here on precisely the failure CI can now
+  # see. tests/test_verify_all.py reads these flags back and proves it.
   if [ "$envs" = "-" ]; then
-    bash -c "$command"
+    bash --noprofile --norc -eo pipefail -c "$command"
   else
-    env $envs bash -c "$command"
+    env $envs bash --noprofile --norc -eo pipefail -c "$command"
   fi
   rc=$?
   finish="$(date +%s%N)"
