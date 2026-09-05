@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
 # Run locally, in one command, exactly what `ci.yml` and `pages.yml` run.
 #
-# WHY THIS EXISTS. The steps that break are the steps nobody types, and there
-# are three a developer never runs by hand: the two end-to-end suites, because
-# they are slow, and the typecheck inside `npm run build --prefix site`,
-# because `npm test` is the command people know and it is green while `tsc` is
-# red. Until this script there was no single command that ran what CI runs:
-# three npm roots with their own scripts, a Python project with its own, and no
-# Makefile tying them together.
+# WHY THIS EXISTS. The repository has separate Python, TypeScript, site and
+# desktop verification commands. This script groups their workflow checks,
+# including both end-to-end suites and the site build's typecheck.
+# `site/package.json` runs `tsc --noEmit` in `build`; `test` runs Vitest.
 #
 # WHAT IT GUARANTEES, AND WHAT IT DOES NOT. Every `run:` line of both workflows
 # appears here verbatim, in the order the jobs run them, with the same flags,
 # under the same shell both workflows name (`bash --noprofile --norc -eo
 # pipefail`). `tests/test_verify_all.py` runs this script against stubbed
-# commands and compares six things with the workflows: the command text with
+# commands and compares seven things with the workflows: the command text with
 # its flags, the job it is attributed to, how many times it runs there, the
-# order within that job, the environment the step's own process receives, and
-# the five proof shards the formal matrix expands into. The environment is
-# compared in both directions, so a variable CI sets and this script does not
-# is red, and so is one this script hands a step and CI never sets.
+# order within that job, the environment the step's own process receives, the
+# shell each `run:` step resolves to, and the five proof shards the formal
+# matrix expands into. The environment is compared in both directions, so a
+# variable CI sets and this script does not is red, and so is one this script
+# hands a step and CI never sets; it is read at workflow, job and step level,
+# because a runner hands all three to the step.
 #
 # It does NOT check the directory a step runs in, and it does NOT refuse a step
 # CI always runs being made conditional on a tool this machine may lack. That
@@ -27,7 +26,7 @@
 #
 # Steps that only provision a toolchain (downloading a prover, a scanner, a
 # browser engine) are the exception: this script reports what is missing and
-# prints the command, rather than installing software behind you.
+# prints browser installation hints; it does not install those toolchains.
 #
 # HOW IT REPORTS. No `set -e`: every step is timed, its outcome recorded, and a
 # table printed at the end. Execution stops at the first failure — the steps
@@ -42,8 +41,9 @@
 #                                    build); each one named as SKIPPED
 #
 # Exit status: 0 every step ran and passed; 1 a step or restoration failed;
-# 2 nothing failed but a step was SKIPPED or PARTIAL; 64 invalid invocation
-# or a missing base tool. SKIPPED/PARTIAL means unverified, not verified.
+# 2 nothing failed but a step was SKIPPED or PARTIAL; 64 invalid invocation, a
+# missing base tool, or a `ci.yml` whose formal shard matrix this script
+# refuses to read. SKIPPED/PARTIAL means unverified, not verified.
 # The third code matters: a skip inside a total of passes reads exactly like a
 # step that ran, which is the defect this whole script exists to remove.
 
@@ -181,8 +181,8 @@ restore() {
 
 # browser_missing <npm root> <engine...> — echoes the engines whose Playwright
 # build is absent. Checked instead of installed: `npx playwright install
-# --with-deps` runs apt and pulls in over two hundred packages for WebKit
-# alone, which is not something a verification command should do to a machine.
+# --with-deps` is not invoked here. The probe below checks for the executable;
+# a missing engine is reported with an installation hint.
 browser_missing() {
   local root="$1"
   shift
@@ -201,14 +201,203 @@ browser_missing() {
   echo "$absent"
 }
 
+# The proof shards are READ out of ci.yml rather than copied here, so this
+# reader is part of the gate rather than a convenience: a reader that returns
+# nothing where the matrix declares five shards runs no proof and still reaches
+# the OK line, which is the shape of failure this whole script exists to
+# remove. So it admits one written-out shape and refuses everything else by
+# name, with the line number, before any step runs — and zero entries is a
+# refusal, never a success.
+#
+# Admitted, and nothing else: `jobs:` at column 0; at most one `formal:` job;
+# inside it `strategy:`, `matrix:` and `include:`, each nested deeper than the
+# one before; under `include:` a `- ` sequence whose entries carry `shard:`,
+# `timeout:`, `checker_timeout:` and `lemmas:`, each exactly once, aligned two
+# columns past the dash. A `lemmas:` key anywhere else is refused rather than
+# folded into whichever entry was read last.
+FORMAL_SHARDS=()
+FORMAL_TIMEOUTS=()
+FORMAL_LEMMAS=()
+FORMAL_FIELD_SEP="$(printf '\037')"
+
+formal_refuse() {
+  echo "verify-all: .github/workflows/ci.yml: $1" >&2
+  echo "verify-all: the shard matrix is the proof gate, so a matrix this script" \
+    "cannot read is refused rather than skipped." >&2
+  exit 64
+}
+
+read_formal_matrix() {
+  local records status shard checker lemmas seen
+  records="$(awk -v sep="$FORMAL_FIELD_SEP" '
+    function refuse(why) {
+      printf "verify-all: .github/workflows/ci.yml:%d: %s\n", NR, why > "/dev/stderr"
+      refused = 1
+      exit 1
+    }
+    function value(text,   found) {
+      found = text
+      sub(/^[^:]*:[[:space:]]*/, "", found)
+      return found
+    }
+    function close_entry() {
+      if (!open) return
+      if (shard == "") refuse("a matrix entry with no shard: name")
+      if (runner == "") refuse("matrix entry " shard " has no timeout:")
+      if (checker == "") refuse("matrix entry " shard " has no checker_timeout:")
+      if (lemmas == "") refuse("matrix entry " shard " has no lemmas:")
+      print shard sep checker sep lemmas
+      entries++
+      open = 0
+    }
+    /^[[:space:]]*(#|$)/ { next }
+    /\t/ { refuse("a tab in the indentation; this reader admits spaces only") }
+    {
+      match($0, /^ */)
+      indent = RLENGTH
+      text = substr($0, indent + 1)
+      sub(/[[:space:]]+$/, "", text)
+
+      if (in_include && indent <= at_include) { close_entry(); in_include = 0 }
+      if (in_matrix && indent <= at_matrix) { in_matrix = 0 }
+      if (in_strategy && indent <= at_strategy) { in_strategy = 0 }
+      if (in_formal && indent <= at_formal) { in_formal = 0 }
+      if (in_jobs && indent == 0) { in_jobs = 0 }
+
+      if (!in_include && text ~ /^lemmas:/) {
+        refuse("a lemmas: key outside jobs.formal.strategy.matrix.include")
+      }
+      if (indent == 0) {
+        if (text == "jobs:") {
+          if (jobs_seen++) refuse("a second top-level jobs: key")
+          in_jobs = 1
+        }
+        next
+      }
+      if (!in_jobs) next
+      if (!in_formal) {
+        if (text == "formal:") {
+          if (formal_seen++) refuse("a second formal: job")
+          in_formal = 1
+          at_formal = indent
+        }
+        next
+      }
+      if (!in_strategy) {
+        if (text == "strategy:" && indent > at_formal) { in_strategy = 1; at_strategy = indent }
+        next
+      }
+      if (!in_matrix) {
+        if (text == "matrix:" && indent > at_strategy) { in_matrix = 1; at_matrix = indent }
+        next
+      }
+      if (!in_include) {
+        if (text == "include:" && indent > at_matrix) { in_include = 1; at_include = indent }
+        next
+      }
+      if (substr(text, 1, 2) == "- ") {
+        close_entry()
+        open = 1
+        shard = ""
+        runner = ""
+        checker = ""
+        lemmas = ""
+        at_entry = indent
+        text = substr(text, 3)
+        sub(/^ +/, "", text)
+        indent = at_entry + 2
+      } else if (!open) {
+        refuse("a mapping under include: that is not a - sequence entry")
+      } else if (indent != at_entry + 2) {
+        refuse("a field at column " indent " where this entry has its fields at " at_entry + 2)
+      }
+      if (text ~ /^shard:/) {
+        if (shard != "") refuse("a second shard: in one matrix entry")
+        if (text !~ /^shard:[[:space:]]*[A-Za-z0-9][A-Za-z0-9._-]*$/) {
+          refuse("a shard: that is not a bare name: " text)
+        }
+        shard = value(text)
+      } else if (text ~ /^timeout:/) {
+        if (runner != "") refuse("a second timeout: in one matrix entry")
+        if (text !~ /^timeout:[[:space:]]*[0-9]+$/) {
+          refuse("a timeout: that is not a whole number: " text)
+        }
+        runner = value(text)
+      } else if (text ~ /^checker_timeout:/) {
+        if (checker != "") refuse("a second checker_timeout: in one matrix entry")
+        if (text !~ /^checker_timeout:[[:space:]]*[0-9]+$/) {
+          refuse("a checker_timeout: that is not a whole number: " text)
+        }
+        checker = value(text)
+      } else if (text ~ /^lemmas:/) {
+        if (lemmas != "") refuse("a second lemmas: in one matrix entry")
+        if (text !~ /^lemmas:[[:space:]]*"[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*"$/) {
+          refuse("a lemmas: that is not a quoted comma-separated list of names: " text)
+        }
+        lemmas = value(text)
+        sub(/^"/, "", lemmas)
+        sub(/"$/, "", lemmas)
+      } else {
+        refuse("a field this reader does not admit in a matrix entry: " text)
+      }
+    }
+    END {
+      if (refused) exit 1
+      close_entry()
+      if (refused) exit 1
+      if (entries == 0) exit 3
+    }
+  ' .github/workflows/ci.yml)"
+  status=$?
+  # 3 is this reader saying it read the file and found no entries; awk uses 2
+  # for a file it could not open, and the two must not read as one thing.
+  if [ "$status" -eq 3 ]; then
+    formal_refuse "no shard entries under jobs.formal.strategy.matrix.include"
+  fi
+  if [ "$status" -ne 0 ]; then
+    formal_refuse "the shard matrix could not be read (reader exit $status)"
+  fi
+  if [ -z "$records" ]; then
+    formal_refuse "the shard matrix reader returned nothing"
+  fi
+  while IFS="$FORMAL_FIELD_SEP" read -r shard checker lemmas; do
+    case "$shard" in
+      "" | *[!A-Za-z0-9._-]*) formal_refuse "shard name '$shard' is not a bare name" ;;
+    esac
+    case "$checker" in
+      "" | *[!0-9]*) formal_refuse "shard $shard has a non-numeric checker_timeout '$checker'" ;;
+    esac
+    if [ "$checker" -lt 1 ] || [ "$checker" -gt 86400 ]; then
+      formal_refuse "shard $shard has checker_timeout $checker outside 1..86400 seconds"
+    fi
+    case "$lemmas" in
+      "" | *[!A-Za-z0-9_,]* | ,* | *, | *,,*)
+        formal_refuse "shard $shard has a malformed lemma list '$lemmas'"
+        ;;
+    esac
+    for seen in "${FORMAL_SHARDS[@]}"; do
+      if [ "$seen" = "$shard" ]; then
+        formal_refuse "shard name $shard appears twice in the matrix"
+      fi
+    done
+    FORMAL_SHARDS+=("$shard")
+    FORMAL_TIMEOUTS+=("$checker")
+    FORMAL_LEMMAS+=("$lemmas")
+  done <<< "$records"
+  if [ "${#FORMAL_SHARDS[@]}" -eq 0 ]; then
+    formal_refuse "no shard entries under jobs.formal.strategy.matrix.include"
+  fi
+}
+
 echo "${BOLD}verify-all${RESET} — $REPO_ROOT"
 [ "$QUICK" -eq 1 ] && note "--quick: the externally-provisioned steps will be listed as SKIPPED."
 for tool in uv node npm python3; do
   command -v "$tool" > /dev/null 2>&1 || {
-    echo "verify-all: '$tool' is not on PATH; every workflow job needs it." >&2
+    echo "verify-all: required base tool '$tool' is not on PATH." >&2
     exit 64
   }
 done
+read_formal_matrix
 
 # ---------------------------------------------------------------- ci.yml: python
 run ci.yml:python - "npm ci --prefix verifiers/ts"
@@ -269,7 +458,7 @@ run pages.yml:test - "npm ci --prefix site"
 run pages.yml:test - "npm test --prefix site"
 # The typecheck runs here because `npm test` does not run it: site/package.json
 # puts `tsc --noEmit` in `build`, and `test` is `vitest run` alone. So the site
-# workflow can go red on `tsc` with `npm test` green, and only this step sees it.
+# build includes a separate typecheck that `npm test` does not invoke.
 run pages.yml:test - "npm run build --prefix site"
 run pages.yml:test - "python3 tools/container_differential.py --count 500 --seed 20260902"
 SITE_ABSENT="$(browser_missing site chromium)"
@@ -333,21 +522,13 @@ run pages.yml:desktop - "sha256sum desktop/dist/attest-verifier.html | tee deskt
 # ---------------------------------------------------------------- ci.yml: formal
 # The shard list is read from ci.yml rather than copied: the lemma names are
 # split across five shards whose union must equal the checker's contract, and a
-# second copy here would be a second thing to keep in step.
-while IFS="$(printf '\t')" read -r shard checker_timeout lemmas; do
-  [ -z "${shard:-}" ] && continue
-  external "ci.yml:formal($shard)" "maude tamarin-prover" \
-    "python3 tools/check_formal.py formal/attest.spthy --only \"$lemmas\" --timeout $checker_timeout"
-done < <(awk '
-  $1 == "-" && $2 == "shard:" { shard = $3 }
-  $1 == "checker_timeout:" { timeout = $2 }
-  $1 == "lemmas:" {
-    line = $0
-    sub(/^[[:space:]]*lemmas:[[:space:]]*"/, "", line)
-    sub(/"[[:space:]]*$/, "", line)
-    print shard "\t" timeout "\t" line
-  }
-' .github/workflows/ci.yml)
+# second copy here would be a second thing to keep in step. `read_formal_matrix`
+# ran before the first step and refused the file if it could not read that list,
+# so this loop either expands the entries it admitted or never runs at all.
+for shard_index in "${!FORMAL_SHARDS[@]}"; do
+  external "ci.yml:formal(${FORMAL_SHARDS[$shard_index]})" "maude tamarin-prover" \
+    "python3 tools/check_formal.py formal/attest.spthy --only \"${FORMAL_LEMMAS[$shard_index]}\" --timeout ${FORMAL_TIMEOUTS[$shard_index]}"
+done
 
 # Build and scan artifacts remain available for inspection. They may predate
 # this invocation, so verification must not delete them by filename or glob.

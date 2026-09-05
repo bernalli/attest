@@ -9,14 +9,8 @@ permissions:
 
 defaults:
   run:
-    # `shell: bash` is `bash --noprofile --norc -eo pipefail {0}`; with no shell
-    # named a step runs as `bash -e {0}` (GitHub Actions workflow syntax,
-    # jobs.<job_id>.steps[*].shell) — `-e`, but NO pipefail, so a pipeline
-    # reports the exit status of its LAST command only. Two shapes below rest on
-    # it: `curl … | sh -s --`, where `sh` on empty stdin exits 0 and the
-    # scanners are silently never installed, and `sha256sum … | tee …`, where
-    # `tee` succeeds while writing an empty checksum file — and a published
-    # checksum nobody computed is worse than no checksum at all.
+    # Explicit bash enables pipefail in run steps. A failure in curl or
+    # sha256sum must fail its pipeline even if sh or tee succeeds.
     shell: bash
 
 concurrency:
@@ -54,15 +48,9 @@ jobs:
         with:
           path: site/dist
 
-  # The desktop verifier borrows site/src modules by relative path, so its suite is the
-  # only thing that notices when a change here breaks that seam — in particular the pin
-  # that the site still emits exactly one .verdict node, which the desktop card replaces
-  # to remove the binary headline. `needs: test` inherits the verifiers/ts rebuild
-  # ordering rather than duplicating it: the site suite runs against the COMPILED dist,
-  # so a stale one produces false reds that read like plumbing faults.
-  #
-  # The build is now part of the gate: `npm run e2e` opens the BUILT artifact over
-  # file://, so a job that skipped the build would have nothing to open.
+  # Desktop imports site/src modules and tests the built file:// artifact.
+  # needs: test orders the jobs; each job prepares its own dependencies and
+  # builds its own verifier. The desktop job builds before running its e2e suite.
   desktop:
     needs: test
     runs-on: ubuntu-latest
@@ -96,10 +84,10 @@ jobs:
       - run: cd desktop && npx playwright install --with-deps chromium firefox webkit
       - run: npm run e2e --prefix desktop
 
-      # Same scanners, same pinned versions and the same allow-list the supply-chain job
-      # already uses on the other two ecosystems. No new scanner is introduced: the point
-      # of this package is that it adds no dependency the repository did not already
-      # carry, and the SBOM is how that is checked rather than asserted.
+      # Scan the desktop runtime dependencies using the same scanner versions
+      # and licence policy as the supply-chain job. These steps generate an
+      # SBOM and check vulnerability severity and licence policy; they do not
+      # compare the dependency set with another package or an earlier revision.
       - name: Install syft, grype, grant (pinned)
         env:
           SYFT_VERSION: v1.46.0
@@ -117,10 +105,8 @@ jobs:
           grype sbom:sbom-desktop.cdx.json --fail-on high
           grant check -c .grant.yaml sbom-desktop.cdx.json
 
-      # The artifact and its checksum, so the local build can be compared with the one CI
-      # produced. That comparison is what turns "the build is not self-randomising" into
-      # "the build is reproducible across machines", which is what a published checksum
-      # needs to mean.
+      # Record this artifact's checksum for a separate comparison with other
+      # builds. This step computes a digest; it does not compare builds.
       - name: Record the artifact checksum
         run: sha256sum desktop/dist/attest-verifier.html | tee desktop/dist/attest-verifier.html.sha256
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

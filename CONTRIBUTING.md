@@ -58,12 +58,9 @@ and `.github/workflows/pages.yml`, in the order the jobs run them, with the same
 flags. It stops at the first failure and prints a table of what passed, what
 failed, what it could not run, and what it ran on less than CI runs it.
 
-It is not a convenience wrapper around `pytest`. The steps that break are the
-ones nobody types, and two shapes explain why they escape. The end-to-end
-suites are slow, so they are the first thing left out of a local run. And the
-typecheck lives inside `npm run build --prefix site` rather than inside
-`npm test` — `npm test` is the command people know, so it is the one that gets
-typed, and it stays green while `tsc` is red.
+The command includes both end-to-end suites and the site build.
+`site/package.json` runs `tsc --noEmit` as part of `build`, while `test`
+runs Vitest without that separate typecheck.
 
 Some steps need toolchains CI installs: Maude/Tamarin, syft/grype/grant,
 xml2rfc, and Playwright browsers. The script does not provision the prover,
@@ -81,18 +78,35 @@ when it ran with reduced browser coverage; subsequent verification steps are
 the end-to-end suites when their required browsers are available, so it may
 also report `PARTIAL`. A failure exits 1, including a failed restoration.
 With no failures, any `SKIPPED` or `PARTIAL` step makes the exit status 2;
-only a complete successful run exits 0. Invalid options or a missing base
-tool (`uv`, `node`, `npm`, or `python3`) exit 64 before verification completes.
+only a complete successful run exits 0. Invalid options, a missing base tool
+(`uv`, `node`, `npm`, or `python3`), or a `ci.yml` whose formal shard matrix
+the script refuses to read exit 64 before verification completes.
+
+The proof shards are read out of `ci.yml` rather than copied into the script,
+so that reader is part of the gate. It admits one written-out shape — a single
+`formal:` job, its `strategy: matrix: include:` sequence, and entries carrying
+`shard:`, `timeout:`, `checker_timeout:` and `lemmas:` exactly once each — and
+refuses anything else by file and line before the first step runs. Zero
+entries is a refusal, not a pass: a shard list nobody could read would
+otherwise run no proof and still reach the `OK` line.
 
 Add or change a step in either workflow and it belongs in `tools/verify-all.sh`
 in the same commit: `tests/test_verify_all.py` runs the script against stubbed
 commands and compares what it ACTUALLY EXECUTED with both workflows — the
 command text with its flags, the job it is attributed to, how many times it
-runs there, the order within that job, the environment the step's own process
-receives, and the five proof shards the formal matrix expands into. A step
-still present in the file but no longer reached, or reached under another job's
-name, is red exactly like a step that was deleted; so is a local step no
-workflow runs, and so is a variable handed to a step that CI never sets.
+runs there, the environment the runner hands the step (workflow, job and step
+`env:` together), the shell it resolves to, the order within that job, and the
+five proof shards the formal matrix expands into. A step still present in the
+file but no longer reached, or reached under another job's name, is red exactly
+like a step that was deleted; so is a local step no workflow runs, and so is a
+variable handed to a step that CI never sets.
+
+The same file also admits the workflows before comparing them: duplicate keys
+are refused, and a job with `run:` steps, or such a step itself, may carry only
+fields `verify-all` can reproduce. `if:`, `continue-on-error:` and
+`working-directory:` change what runs or what a failure means and have no local
+equivalent, so a workflow that adds one is red rather than compared against a
+script that cannot express it.
 
 Three things it does not check, and they are limits rather than oversights. It
 does not compare the order of the JOBS: the script groups those its own way,

@@ -10,14 +10,9 @@ permissions:
 
 defaults:
   run:
-    # `shell: bash` is `bash --noprofile --norc -eo pipefail {0}`; with no shell
-    # named a step runs as `bash -e {0}` (GitHub Actions workflow syntax,
-    # jobs.<job_id>.steps[*].shell) — `-e`, but NO pipefail, so a pipeline
-    # reports the exit status of its LAST command only. That is what lets
-    # `curl … | sh -s --` install nothing and stay green: `sh` on empty stdin
-    # exits 0. Three of those are in `supply-chain` below, and the scanners they
-    # install are the whole point of that job — a job that skips its installer
-    # and still reports success has scanned nothing and said so to nobody.
+    # Explicit bash enables pipefail in run steps. Without it, a failing
+    # upstream command can be hidden by the final command's successful exit.
+    # This makes failures in the installer pipelines visible at that step.
     shell: bash
 
 jobs:
@@ -88,18 +83,11 @@ jobs:
       # corpus nobody can regenerate: this fails on any drift between the
       # committed leaves and what the generator produces today.
       - run: uv run --frozen python tools/gen_container_corpus.py --check
-      # The container differential compares the two container READERS, and the
-      # site workflow runs it at 500 archives; this one compares the two
-      # IMPORTERS, which wrap those readers in different budgets and reach them
-      # by different doors. An archive can pass through both readers identically
-      # and still be imported by one and refused by the other — the proposition
-      # the specification denies in §14.4 — so the reader differential cannot
-      # see that class of defect at all. It is the only gate that can, it had no
-      # caller anywhere in CI, and at its own defaults it costs under four
-      # seconds (measured). Unlike the reader differential it needs the Python
-      # package installed, not just stdlib, which is why it belongs to this job
-      # and not to the site workflow: this is the only job that has both the
-      # built TypeScript side and the Python environment on disk.
+      # Compare importer outcomes at their defaults, including the browser
+      # parser and file-intake paths, on the generated archive families.
+      # This complements the reader-level differential in pages.yml.
+      # The Python environment, built TS verifier and site dependencies needed
+      # by this command are prepared earlier in this job.
       - run: uv run --frozen python tools/importer_differential.py
       # Same reason, for the corpus that pins the protocol itself. Replaying
       # the committed leaves never re-runs the asserts the generator makes

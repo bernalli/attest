@@ -1,13 +1,8 @@
 """`tools/verify-all.sh` claims to run what CI runs, and this is what checks the claim.
 
-The script exists because the steps CI runs and the steps a developer runs had
-drifted apart: three npm roots with separate scripts, no Makefile, and a
-pre-push hook that looks at leaks and nothing else. The steps nobody types
-locally are exactly the ones that break — the two end-to-end suites, and the
-typecheck that `npm run build --prefix site` performs and `npm test` does not.
-
-A one-off script would close that gap for a week. What keeps it closed is this
-file.
+The repository has separate Python, TypeScript, site and desktop verification
+commands. The script groups the workflow checks, including both end-to-end
+suites and the typecheck in `npm run build --prefix site`.
 
 HOW THE CLAIM IS CHECKED, AND WHY NOT BY READING THE SCRIPT. An earlier version
 of this file answered "does the script run what CI runs?" by counting `run` and
@@ -37,6 +32,27 @@ The comparison of the command itself stays textual on purpose. Flags are the
 part that drifts — `--count 500`, `--seed 20260902`, `--fail-on high`,
 `--frozen` — and a comparison that matched on the program name alone would let
 every one of them change unnoticed.
+
+WHICH DOCUMENTS ARE COMPARED AT ALL. A comparison is only as good as the
+reading it starts from, and `yaml.safe_load` reads more shapes than these
+assertions can express. Two were measured green: a step carrying two `run:`
+keys, where the loader keeps the second and drops the first without a word, and
+a step carrying a field this file has no notion of. So the workflows are
+ADMITTED before they are compared — duplicate keys refused outright, and a
+fixed set of fields for the jobs that have `run:` steps and for the steps
+themselves. A field outside those sets changes what runs (`if:` makes a step
+conditional, `continue-on-error:` changes what its failure means,
+`working-directory:` moves it) and `verify-all` has no way to express any of
+them, so the workflow is refused by name rather than compared against a script
+that cannot reproduce it. `strategy:` is admitted on `jobs.formal` alone,
+because that is the only matrix this file expands.
+
+The environment and the shell are resolved the way a runner resolves them, not
+the way one step declares them: a job-level `env:` reaches every step of that
+job, and a step-level `shell:` overrides the workflow default. Both were
+measured green when this file read only `step.env` and only
+`defaults.run.shell` — a job-level `NODE_OPTIONS` no local step received, and a
+checksum step moved to `sh`, where `false | true` exits 0.
 
 WHAT THIS DOES NOT CHECK. Two ways of changing what the script does are green
 here, both measured rather than assumed, and both left green knowingly. The
@@ -129,18 +145,143 @@ def _logical_lines(script: str) -> list[str]:
     return lines
 
 
+class WorkflowNotAdmitted(Exception):
+    """The workflow is not in the shape these comparisons can read."""
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """`yaml.safe_load` keeps the LAST of two identical keys and says nothing.
+
+    A second `run:` on one step is then a command that silently replaces
+    another, and every assertion below would be made against a document the
+    runner would not agree with. Measured: adding `run: echo discarded` above
+    the checksum step's own `run:` left the whole suite green.
+    """
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise WorkflowNotAdmitted(
+                    f"duplicate key {key!r} at line {key_node.start_mark.line + 1}"
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep)
+
+
+#: What a `run:` step may carry. Each of these either cannot change what runs
+#: (`name`, `id`) or is compared: `run` is the command, `env` in both
+#: directions, `shell` against the pipefail shell, `timeout-minutes` is the
+#: runner's own backstop and has no local equivalent.
+ADMITTED_RUN_STEP_FIELDS = frozenset({"name", "id", "run", "shell", "env", "timeout-minutes"})
+
+#: The same, for a job that has `run:` steps. `strategy` is not here: a matrix
+#: turns one declared step into several runs, and the only expansion this file
+#: reproduces is `jobs.formal`'s, so it is admitted there and nowhere else.
+ADMITTED_JOB_FIELDS = frozenset({"name", "runs-on", "needs", "steps", "defaults", "env"})
+JOB_ALLOWED_A_MATRIX = "ci.yml:formal"
+
+
+def _unadmitted_shape(name: str, document: dict[str, Any]) -> str | None:
+    """The first field these comparisons cannot reproduce, or None."""
+    for job, spec in document["jobs"].items():
+        steps = spec.get("steps", [])
+        if not any("run" in step for step in steps):
+            continue
+        allowed = set(ADMITTED_JOB_FIELDS)
+        if f"{name}:{job}" == JOB_ALLOWED_A_MATRIX:
+            allowed.add("strategy")
+        unknown = sorted(set(spec) - allowed)
+        if unknown:
+            return f"{name}: job `{job}` carries {unknown}, which verify-all does not reproduce"
+        if "strategy" in spec:
+            unknown = sorted(set(spec["strategy"]) - {"fail-fast", "matrix"})
+            if unknown:
+                return f"{name}: job `{job}` has strategy keys {unknown} with no local equivalent"
+            unknown = sorted(set(spec["strategy"].get("matrix") or {}) - {"include"})
+            if unknown:
+                return (
+                    f"{name}: job `{job}` declares matrix axes {unknown} beside `include`; "
+                    "verify-all expands `include` alone, so the extra axis would multiply "
+                    "the runs CI does and not the ones compared here"
+                )
+        for index, step in enumerate(steps):
+            if "run" not in step:
+                continue
+            unknown = sorted(set(step) - ADMITTED_RUN_STEP_FIELDS)
+            if unknown:
+                return (
+                    f"{name}: step {index} of job `{job}` carries {unknown}, "
+                    "which verify-all does not reproduce"
+                )
+    return None
+
+
+def _admit(name: str) -> tuple[dict[str, Any], str | None]:
+    """Load a workflow and say, in one string, why it cannot be compared."""
+    text = (REPO_ROOT / ".github/workflows" / name).read_text()
+    loader = _UniqueKeyLoader(text)
+    try:
+        document = loader.get_single_data()
+    except WorkflowNotAdmitted as refusal:
+        # Refused, but the tests below still need SOMETHING to parametrise over,
+        # or a refusal would empty the suite instead of turning one test red.
+        return yaml.safe_load(text), f"{name}: {refusal}"
+    finally:
+        loader.dispose()
+    return document, _unadmitted_shape(name, document)
+
+
+_ADMITTED = {name: _admit(name) for name in WORKFLOWS}
+DOCUMENTS: dict[str, dict[str, Any]] = {name: pair[0] for name, pair in _ADMITTED.items()}
+NOT_ADMITTED: dict[str, str] = {name: pair[1] for name, pair in _ADMITTED.items() if pair[1]}
+
+
+def _declared_shell(scope: dict[str, Any]) -> str | None:
+    return ((scope.get("defaults") or {}).get("run") or {}).get("shell")
+
+
+def _effective_shell(document: dict[str, Any], spec: dict[str, Any], step: dict[str, Any]) -> Any:
+    """The shell a runner gives this step: its own, else the job's, else the workflow's."""
+    if "shell" in step:
+        return step["shell"]
+    return _declared_shell(spec) or _declared_shell(document)
+
+
 def _workflow_commands() -> list[tuple[str, str, dict[str, Any]]]:
-    """(origin, command, env) for every `run:` line of the two workflows."""
+    """(origin, command, env) for every `run:` line of the two workflows.
+
+    `env` is the environment the RUNNER hands the step, not the mapping the
+    step declares: a workflow-level and a job-level `env:` both reach it, and
+    reading `step.env` alone left a job-level variable no local step received
+    invisible to every assertion here.
+    """
     found: list[tuple[str, str, dict[str, Any]]] = []
     for name in WORKFLOWS:
-        document = yaml.safe_load((REPO_ROOT / ".github/workflows" / name).read_text())
+        document = DOCUMENTS[name]
+        workflow_env = document.get("env") or {}
         for job, spec in document["jobs"].items():
+            job_env = spec.get("env") or {}
             for index, step in enumerate(spec.get("steps", [])):
                 if "run" not in step:
                     continue
+                inherited = {**workflow_env, **job_env, **(step.get("env") or {})}
                 for command in _logical_lines(step["run"]):
-                    found.append((f"{name}:{job}:{index}", command, step.get("env") or {}))
+                    found.append((f"{name}:{job}:{index}", command, inherited))
     return found
+
+
+def _run_step_shells() -> tuple[tuple[str, Any], ...]:
+    """(origin, effective shell) for every `run:` step of the two workflows."""
+    steps: list[tuple[str, Any]] = []
+    for name in WORKFLOWS:
+        document = DOCUMENTS[name]
+        for job, spec in document["jobs"].items():
+            for index, step in enumerate(spec.get("steps", [])):
+                if "run" in step:
+                    steps.append((f"{name}:{job}:{index}", _effective_shell(document, spec, step)))
+    return tuple(steps)
 
 
 def _script_text() -> str:
@@ -160,6 +301,7 @@ def _job(origin: str) -> str:
 
 
 COMMANDS = _workflow_commands()
+RUN_STEPS = _run_step_shells()
 
 
 def _formal_shard_commands() -> tuple[tuple[str, str], ...]:
@@ -171,8 +313,7 @@ def _formal_shard_commands() -> tuple[tuple[str, str], ...]:
     expansions comparable — the alternative is exempting the template and
     checking nothing, which is what let the whole loop be deleted unnoticed.
     """
-    document = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text())
-    job = document["jobs"]["formal"]
+    job = DOCUMENTS["ci.yml"]["jobs"]["formal"]
     templates = [
         command
         for step in job["steps"]
@@ -234,6 +375,43 @@ HARNESS_PROVIDED = frozenset(
 def test_the_workflows_still_have_steps() -> None:
     """A parser that silently finds nothing would pass every test below."""
     assert len(COMMANDS) > 40, f"only {len(COMMANDS)} run-lines parsed out of two workflows"
+    assert len(RUN_STEPS) > 40, f"only {len(RUN_STEPS)} run-steps parsed out of two workflows"
+
+
+def test_the_workflows_are_shaped_the_way_these_comparisons_read_them() -> None:
+    """Admission before comparison: a document read wrong compares wrong.
+
+    Everything below asks whether `verify-all` reproduces the workflows. That
+    question has an answer only for a document this file can read in full, so a
+    duplicate key or a field with no local equivalent is refused here rather
+    than dropped quietly and compared around. Both shapes were measured green
+    before this existed: a second `run:` on one step, which `yaml.safe_load`
+    resolves by keeping the last, and an unknown field on the same step.
+    """
+    assert NOT_ADMITTED == {}, (
+        "these workflows are not in the shape tests/test_verify_all.py compares:\n  "
+        + "\n  ".join(NOT_ADMITTED.values())
+        + "\nEither drop the field or teach tools/verify-all.sh to reproduce it and "
+        "add it to ADMITTED_JOB_FIELDS/ADMITTED_RUN_STEP_FIELDS."
+    )
+
+
+@pytest.mark.parametrize(("origin", "shell"), RUN_STEPS, ids=[origin for origin, _ in RUN_STEPS])
+def test_no_step_names_a_shell_that_loses_pipefail(origin: str, shell: object) -> None:
+    """`defaults` is the shell a step gets when it does not name one of its own.
+
+    A step-level `shell:` overrides that default, so reading only
+    `defaults.run.shell` answers a question about the workflow and not about
+    the step. Measured: `shell: sh` on the checksum step left the suite green,
+    and the process it describes really is laxer — `/bin/sh -e -c
+    \'false | true\'` exits 0, so `sha256sum … | tee …` would publish an empty
+    checksum and the step would pass.
+    """
+    assert shell == "bash", (
+        f"{origin} runs under {shell!r} rather than `bash`, so a failing command in one of "
+        "its pipelines is reported as success; tools/verify-all.sh runs every step under "
+        "`bash --noprofile --norc -eo pipefail` and cannot reproduce a laxer shell"
+    )
 
 
 @pytest.mark.parametrize(
@@ -295,8 +473,7 @@ def test_a_workflow_step_fails_when_any_command_in_a_pipeline_fails(workflow: st
     green having installed nothing, and one runs `sha256sum … | tee …`, where
     `tee` succeeds while writing an empty checksum file.
     """
-    document = yaml.safe_load((REPO_ROOT / ".github/workflows" / workflow).read_text())
-    declared = document.get("defaults", {}).get("run", {}).get("shell")
+    declared = _declared_shell(DOCUMENTS[workflow])
     assert declared == "bash", (
         f"{workflow} does not declare `defaults: run: shell: bash`, so its steps run "
         f"under `bash -e {{0}}` and a pipeline reports only its last command (got {declared!r})"
@@ -306,10 +483,13 @@ def test_a_workflow_step_fails_when_any_command_in_a_pipeline_fails(workflow: st
 def test_verify_all_runs_every_step_under_that_same_shell() -> None:
     """The two halves are one property: the workflows' shell and the script's.
 
-    `verify-all` runs each logical line in its own shell, so `-e` is mostly
-    moot — but pipefail is not, and a script that ran the same pipeline under
-    a laxer shell than CI would report green on exactly the steps CI is now
-    able to fail. Whichever half is missing, this is red.
+    The script promises the shell both workflows name, and both flags of that
+    shell are probed rather than read off the flag string: `-e`, so a command
+    that fails stops the one after it inside the same step, and pipefail, so a
+    pipeline is not reported by its last command alone. Dropping `e` from one
+    call site and keeping `-o pipefail` was measured leaving the whole suite
+    green — the three earlier probes cannot tell the two shells apart, which is
+    why `false; true` is here. Whichever half is missing, this is red.
     """
     call_sites = _step_shell_flags()
     assert call_sites, (
@@ -319,6 +499,9 @@ def test_verify_all_runs_every_step_under_that_same_shell() -> None:
     for flags in call_sites:
         assert _probe(flags, "true") == 0, f"bash {flags} cannot run a successful command"
         assert _probe(flags, "exit 3") == 3, f"bash {flags} loses a command's exit status"
+        assert _probe(flags, "false; true") != 0, (
+            f"bash {flags} continues after a failed command; workflow bash enables errexit"
+        )
         assert _probe(flags, "false | true") != 0, (
             f"tools/verify-all.sh runs steps as `bash {' '.join(flags)} -c`, where a failing "
             "command in a pipeline is reported as success; both workflows declare "
@@ -415,6 +598,7 @@ class Trace:
     root: Path
     returncode: int
     stdout: str
+    stderr: str
     #: Steps the script launched, in the order it launched them.
     executed: tuple[Execution, ...]
     #: (origin, command) for steps it reported as not run.
@@ -449,6 +633,7 @@ def _trace(
     fail: str = "",
     inherited: dict[str, str] | None = None,
     seed: tuple[str, ...] = (),
+    ci_yml: str | None = None,
 ) -> Trace:
     """Run the real script against stub commands and read back what it ran.
 
@@ -463,6 +648,8 @@ def _trace(
     shutil.copy2(VERIFY_ALL, root / "tools/verify-all.sh")
     for name in WORKFLOWS:
         shutil.copy2(REPO_ROOT / ".github/workflows" / name, root / ".github/workflows" / name)
+    if ci_yml is not None:
+        (root / ".github/workflows/ci.yml").write_text(ci_yml)
     for relative in seed:
         (root / relative).write_text(SEEDED_CONTENT)
 
@@ -507,6 +694,7 @@ def _trace(
         root=root,
         returncode=result.returncode,
         stdout=result.stdout,
+        stderr=result.stderr,
         executed=tuple(executed),
         not_started=tuple(_NOT_STARTED.findall(result.stdout)),
         reported=tuple(_REPORTED.findall(result.stdout)),
@@ -936,3 +1124,166 @@ def test_a_failed_run_leaves_behind_the_files_it_did_not_create(tmp_path: Path) 
         f"a failed verification removed files it never created: "
         f"{sorted(set(seeded) - set(survivors))}"
     )
+
+
+# ------------------------------------------------ the shard matrix as INPUT
+# `verify-all` READS the five proof shards out of `ci.yml` instead of copying
+# them, which is right — one copy, not two — and it makes that reader part of
+# the gate rather than a convenience. A reader that returns nothing where the
+# matrix declares five shards runs no proof and still reaches the OK line, and
+# one that carries state across an incomplete entry runs a shard nobody wrote.
+# Every family below was measured doing exactly that against the previous
+# reader: exit 0, `OK — every step both workflows run passed here`, and zero,
+# wrong or extra `ci.yml:formal(...)` runs.
+
+CI_YML = (REPO_ROOT / ".github/workflows/ci.yml").read_text()
+TRUNCATED_MATRIX = "jobs:\n  formal:\n    strategy:\n      matrix:\n        include:\n"
+
+
+def _matrix_entry(shard: str, timeout: str, checker: str, lemmas: str) -> str:
+    return (
+        f"          - shard: {shard}\n"
+        f"            timeout: {timeout}\n"
+        f"            checker_timeout: {checker}\n"
+        f'            lemmas: "{lemmas}"\n'
+    )
+
+
+FIRST_MATRIX_ENTRY = _matrix_entry(
+    "heavy-revdowngrade", "120", "6900", "no_downgrade_revocation_allhybrid"
+)
+ONLY_LEMMA = "no_downgrade_revocation_allhybrid"
+
+
+def _first_entry_becomes(replacement: str) -> str:
+    return CI_YML.replace(FIRST_MATRIX_ENTRY, replacement, 1)
+
+
+UNREADABLE_MATRICES: tuple[tuple[str, str], ...] = (
+    ("an-empty-file", ""),
+    ("truncated-before-the-entries", TRUNCATED_MATRIX),
+    (
+        "an-entry-with-no-checker-timeout",
+        _first_entry_becomes(
+            "          - shard: heavy-revdowngrade\n"
+            "            timeout: 120\n"
+            f'            lemmas: "{ONLY_LEMMA}"\n'
+        ),
+    ),
+    (
+        "a-negative-checker-timeout",
+        _first_entry_becomes(_matrix_entry("heavy-revdowngrade", "120", "-1", ONLY_LEMMA)),
+    ),
+    (
+        "a-checker-timeout-that-is-a-boolean",
+        _first_entry_becomes(_matrix_entry("heavy-revdowngrade", "120", "false", ONLY_LEMMA)),
+    ),
+    (
+        "two-checker-timeouts-in-one-entry",
+        _first_entry_becomes(
+            "          - shard: heavy-revdowngrade\n"
+            "            timeout: 120\n"
+            "            checker_timeout: 5\n"
+            "            checker_timeout: 6900\n"
+            f'            lemmas: "{ONLY_LEMMA}"\n'
+        ),
+    ),
+    (
+        "an-entry-with-no-shard-name",
+        _first_entry_becomes(
+            "          - timeout: 120\n"
+            "            checker_timeout: 6900\n"
+            f'            lemmas: "{ONLY_LEMMA}"\n'
+        ),
+    ),
+    ("the-same-shard-name-twice", _first_entry_becomes(FIRST_MATRIX_ENTRY * 2)),
+    (
+        "an-entry-field-the-reader-does-not-know",
+        _first_entry_becomes(
+            "          - shard: heavy-revdowngrade\n"
+            "            timeout: 120\n"
+            "            unexpected: true\n"
+            "            checker_timeout: 6900\n"
+            f'            lemmas: "{ONLY_LEMMA}"\n'
+        ),
+    ),
+    (
+        "an-empty-lemma-list",
+        _first_entry_becomes(_matrix_entry("heavy-revdowngrade", "120", "6900", "")),
+    ),
+    ("a-lemmas-key-outside-the-matrix", CI_YML + '\nlemmas: "orphan"\n'),
+)
+
+#: The same document with one entry's fields permuted. A runner reads a mapping,
+#: so this changes nothing it would do, and the expansion has to be identical:
+#: an admission boundary that refused a reordering would be refusing correct
+#: input, which is its own way of being a gate that does not work.
+PERMUTED_MATRIX = _first_entry_becomes(
+    "          - shard: heavy-revdowngrade\n"
+    f'            lemmas: "{ONLY_LEMMA}"\n'
+    "            checker_timeout: 6900\n"
+    "            timeout: 120\n"
+)
+
+
+def test_the_matrix_families_below_really_do_edit_the_matrix() -> None:
+    """A family built on an anchor that stopped matching would test nothing."""
+    assert CI_YML.count(FIRST_MATRIX_ENTRY) == 1, (
+        "the first `include:` entry of ci.yml's formal matrix is no longer the shape these "
+        "families rewrite; update FIRST_MATRIX_ENTRY to match it"
+    )
+    unchanged = [
+        case
+        for case, text in (*UNREADABLE_MATRICES, ("permuted", PERMUTED_MATRIX))
+        if text == CI_YML
+    ]
+    assert not unchanged, f"these cases leave ci.yml untouched: {unchanged}"
+
+
+@pytest.mark.parametrize(
+    ("case", "text"), UNREADABLE_MATRICES, ids=[case for case, _ in UNREADABLE_MATRICES]
+)
+def test_a_matrix_the_script_cannot_read_is_refused_before_any_step_runs(
+    case: str, text: str, tmp_path: Path
+) -> None:
+    """Zero shards, or a shard read out of a half-written entry, is an error.
+
+    The failure this closes is the quiet one: the script exited 0 and printed
+    the OK line having expanded the matrix into nothing, or into a command
+    holding a lemma name where the timeout goes. A verification that reports
+    success after reading nothing is worse than one that does not run, so the
+    reader refuses the file, names the line, and exits 64 before the first
+    step — no partial run, no report, no OK.
+    """
+    run = _trace(tmp_path, ci_yml=text)
+    assert run.returncode == 64, f"{case} was not refused:\n{run.stdout}\n{run.stderr}"
+    assert not run.executed, f"{case} ran steps before refusing: {run.executed}"
+    assert "OK — every step both workflows run passed here." not in run.stdout
+    assert ".github/workflows/ci.yml" in run.stderr, (
+        f"{case} was refused without saying which file and line: {run.stderr!r}"
+    )
+
+
+def test_reordering_one_matrix_entry_expands_to_the_same_shards(
+    tmp_path: Path, complete_run: Trace
+) -> None:
+    """The other half of admission: correct input has to stay admitted.
+
+    `shard`, `timeout`, `checker_timeout` and `lemmas` are members of a
+    mapping, and their order on the page means nothing to a runner. The reader
+    collects the whole entry before emitting it, so a permutation expands to
+    the same five shards; the previous one emitted at `lemmas:` and produced
+    `--only "" --timeout no_downgrade_revocation_allhybrid` for this very case.
+    """
+    permuted = _trace(tmp_path, ci_yml=PERMUTED_MATRIX)
+    formal = [
+        (run.origin, run.command)
+        for run in permuted.executed
+        if run.origin.startswith("ci.yml:formal")
+    ]
+    assert formal == [
+        (run.origin, run.command)
+        for run in complete_run.executed
+        if run.origin.startswith("ci.yml:formal")
+    ], permuted.stdout
+    assert permuted.returncode == 0, permuted.stdout
