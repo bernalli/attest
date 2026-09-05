@@ -1,0 +1,803 @@
+"""PayPal adapter tests: postback verification and order normalization."""
+
+from __future__ import annotations
+
+import base64
+import json
+import urllib.error
+from collections.abc import Callable
+from typing import Any
+
+import attest_bridge.paypal_adapter as paypal_module
+import pytest
+from attest_bridge.model import ConfigError, PurchaseRejected
+from attest_bridge.paypal_adapter import (
+    PayPalAdapter,
+    PayPalApiError,
+    PayPalSignatureError,
+    PayPalTransmission,
+    build_verification_request,
+)
+from hypothesis import given
+from hypothesis import strategies as st
+from pytest import MonkeyPatch
+
+_CLIENT_ID = "paypal-test-client-id"
+_CLIENT_SECRET = "paypal-test-client-secret"  # noqa: S105 - env var PAYPAL_TEST_SECRET, not a secret
+_WEBHOOK_ID = "8PT597110X687430LKGECATA"
+_ACCESS_TOKEN = "paypal-test-access-token"  # noqa: S105 - env var PAYPAL_TEST_TOKEN, not a secret
+_ORDER_ID = "5O190127TN364715T"
+
+
+def _http_error(code: int) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError("https://api-m.paypal.com", code, "failure", {}, None)
+
+
+def make_transmission(**overrides: Any) -> PayPalTransmission:
+    """Return valid PayPal transmission metadata with optional overrides."""
+    values: dict[str, Any] = {
+        "transmission_id": "69cd13f0-d67a-11e5-baa3-778b53f4ae55",
+        "transmission_time": "2026-09-05T10:00:00Z",
+        "transmission_sig": "base64-signature",
+        "cert_url": "https://api.paypal.com/v1/notifications/certs/CERT-1",
+        "auth_algo": "SHA256withRSA",
+    }
+    values.update(overrides)
+    return PayPalTransmission(**values)
+
+
+def make_capture_completed(**overrides: Any) -> dict[str, Any]:
+    """Return a Payments v2 final-capture event shaped like PayPal's envelope."""
+    resource: dict[str, Any] = {
+        "id": "2GG279541U471931P",
+        "status": "COMPLETED",
+        "amount": {"currency_code": "USD", "value": "100.00"},
+        "final_capture": True,
+        "supplementary_data": {"related_ids": {"order_id": _ORDER_ID}},
+        "create_time": "2026-09-05T09:58:00Z",
+    }
+    resource_override = overrides.pop("resource", {})
+    if isinstance(resource_override, dict):
+        resource.update(resource_override)
+        event_resource: Any = resource
+    else:
+        event_resource = resource_override
+    event: dict[str, Any] = {
+        "id": "WH-7W0787462A916330F-7MF68566VF385353G",
+        "event_version": "1.0",
+        "create_time": "2026-09-05T09:58:01Z",
+        "resource_type": "capture",
+        "resource_version": "2.0",
+        "event_type": "PAYMENT.CAPTURE.COMPLETED",
+        "summary": "Payment completed",
+        "resource": event_resource,
+        "links": [],
+    }
+    event.update(overrides)
+    return event
+
+
+def make_order(**overrides: Any) -> dict[str, Any]:
+    """Return a one-unit, one-item Orders v2 response."""
+    order: dict[str, Any] = {
+        "id": _ORDER_ID,
+        "status": "COMPLETED",
+        "intent": "CAPTURE",
+        "payer": {"email_address": "buyer@example.com"},
+        "purchase_units": [
+            {
+                "reference_id": "default",
+                "items": [{"name": "Stardrift Chronicles", "sku": "SDC-STD-001"}],
+            }
+        ],
+    }
+    order.update(overrides)
+    return order
+
+
+class FakePayPalApi:
+    """In-memory replacement for the two shared outbound HTTP primitives."""
+
+    def __init__(self) -> None:
+        self.post_calls: list[tuple[str, dict[str, str], bytes]] = []
+        self.get_calls: list[tuple[str, dict[str, str]]] = []
+        self.verification_responses: list[bytes | BaseException] = []
+        self.token_responses: list[bytes | BaseException] = []
+        self.order_responses: list[bytes | BaseException] = []
+        self.order = make_order()
+        self.token_number = 0
+
+    def post(self, url: str, headers: dict[str, str], body: bytes) -> bytes:
+        self.post_calls.append((url, dict(headers), body))
+        if url.endswith("/v1/oauth2/token"):
+            if self.token_responses:
+                return self._resolve(self.token_responses.pop(0))
+            self.token_number += 1
+            return json.dumps(
+                {"access_token": f"{_ACCESS_TOKEN}-{self.token_number}", "expires_in": 120}
+            ).encode()
+        if url.endswith("/v1/notifications/verify-webhook-signature"):
+            if self.verification_responses:
+                return self._resolve(self.verification_responses.pop(0))
+            return b'{"verification_status":"SUCCESS"}'
+        raise AssertionError(f"unexpected POST url: {url}")
+
+    def get(self, url: str, headers: dict[str, str]) -> bytes:
+        self.get_calls.append((url, dict(headers)))
+        if self.order_responses:
+            return self._resolve(self.order_responses.pop(0))
+        return json.dumps(self.order).encode()
+
+    @staticmethod
+    def _resolve(value: bytes | BaseException) -> bytes:
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    def token_calls(self) -> list[tuple[str, dict[str, str], bytes]]:
+        return [call for call in self.post_calls if call[0].endswith("/v1/oauth2/token")]
+
+    def verification_calls(self) -> list[tuple[str, dict[str, str], bytes]]:
+        return [
+            call
+            for call in self.post_calls
+            if call[0].endswith("/v1/notifications/verify-webhook-signature")
+        ]
+
+
+def make_adapter(
+    monkeypatch: MonkeyPatch,
+    api: FakePayPalApi,
+    *,
+    environment: str = "live",
+    now: Callable[[], float] | None = None,
+    client_secret: str = _CLIENT_SECRET,
+) -> PayPalAdapter:
+    """Patch the shared HTTP primitives and construct an adapter."""
+    monkeypatch.setattr(paypal_module, "https_post", api.post)
+    monkeypatch.setattr(paypal_module, "https_get", api.get)
+    return PayPalAdapter(
+        client_id=_CLIENT_ID,
+        client_secret=client_secret,
+        webhook_id=_WEBHOOK_ID,
+        environment=environment,
+        now=now,
+    )
+
+
+def _payload(event: dict[str, Any] | None = None) -> bytes:
+    return json.dumps(event if event is not None else make_capture_completed()).encode()
+
+
+def test_build_verification_request_embeds_the_raw_body_verbatim() -> None:
+    payload = b'{\n  "id" : "evt-1", "summary": "spaces stay"\n}'
+    request = build_verification_request(payload, make_transmission(), _WEBHOOK_ID)
+
+    assert request.find(payload) != -1
+    assert request.endswith(b'"webhook_event":' + payload + b"}")
+
+
+_JSON_SCALARS = (
+    st.none() | st.booleans() | st.integers(min_value=-(2**53) + 1, max_value=2**53 - 1) | st.text()
+)
+_JSON_VALUES = st.recursive(
+    _JSON_SCALARS,
+    lambda children: (
+        st.lists(children, max_size=5) | st.dictionaries(st.text(), children, max_size=5)
+    ),
+    max_leaves=20,
+)
+
+
+@given(
+    value=_JSON_VALUES,
+    indent=st.one_of(st.none(), st.integers(min_value=0, max_value=4)),
+    ensure_ascii=st.booleans(),
+)
+def test_verification_request_parses_to_the_original_event_for_any_json_body(
+    value: Any, indent: int | None, ensure_ascii: bool
+) -> None:
+    payload = json.dumps(
+        value,
+        ensure_ascii=ensure_ascii,
+        indent=indent,
+        separators=None if indent is not None else (",", ":"),
+    ).encode()
+
+    request = build_verification_request(payload, make_transmission(), _WEBHOOK_ID)
+
+    assert json.loads(request)["webhook_event"] == value
+    assert request.find(payload) != -1
+
+
+def test_verification_request_keeps_non_ascii_bytes_untouched() -> None:
+    payload = '{"summary":"caffè ☃"}'.encode()
+    request = build_verification_request(payload, make_transmission(), _WEBHOOK_ID)
+
+    assert payload in request
+    assert json.loads(request)["webhook_event"] == {"summary": "caffè ☃"}
+
+
+def test_parse_event_calls_the_postback_before_parsing_and_only_parses_on_success(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    api = FakePayPalApi()
+    api.verification_responses = [b'{"verification_status":"FAILURE"}']
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(PayPalSignatureError):
+        transmission = make_transmission()
+        adapter.parse_event(b"not json", transmission)
+
+    assert len(api.verification_calls()) == 1
+    assert api.verification_calls()[0][2] == build_verification_request(
+        b"not json", transmission, _WEBHOOK_ID
+    )
+
+
+def test_oauth_and_postback_requests_have_exact_headers_and_bodies(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+    payload = _payload()
+    transmission = make_transmission()
+
+    adapter.parse_event(payload, transmission)
+
+    oauth_url, oauth_headers, oauth_body = api.token_calls()[0]
+    basic = base64.b64encode(f"{_CLIENT_ID}:{_CLIENT_SECRET}".encode()).decode()
+    assert oauth_url == "https://api-m.paypal.com/v1/oauth2/token"
+    assert oauth_headers == {
+        "Authorization": f"Basic {basic}",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+    }
+    assert oauth_body == b"grant_type=client_credentials"
+
+    verify_url, verify_headers, verify_body = api.verification_calls()[0]
+    assert verify_url == ("https://api-m.paypal.com/v1/notifications/verify-webhook-signature")
+    assert verify_headers == {
+        "Authorization": f"Bearer {_ACCESS_TOKEN}-1",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    assert verify_body == build_verification_request(payload, transmission, _WEBHOOK_ID)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        b'{"verification_status":"FAILURE"}',
+        b'{"verification_status":"success"}',
+        b'{"verification_status":""}',
+        b'{"verification_status":null}',
+        b'{"verification_status":1}',
+        b'{"verification_status":{"x":1}}',
+        b"[]",
+        b"not json",
+    ],
+)
+def test_anything_but_the_exact_success_string_is_a_failure(
+    monkeypatch: MonkeyPatch, response: bytes
+) -> None:
+    api = FakePayPalApi()
+    api.verification_responses = [response]
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(PayPalSignatureError, match="signature verification failed"):
+        adapter.parse_event(_payload(), make_transmission())
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["transmission_id", "transmission_time", "transmission_sig", "cert_url", "auth_algo"],
+)
+@pytest.mark.parametrize("bad", ["", "   ", None])
+def test_missing_or_blank_transmission_header_is_a_signature_error(
+    monkeypatch: MonkeyPatch, field: str, bad: Any
+) -> None:
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(PayPalSignatureError, match="missing PayPal transmission headers"):
+        adapter.parse_event(_payload(), make_transmission(**{field: bad}))
+
+    assert api.post_calls == []
+
+
+def test_unsupported_auth_algo_is_rejected_before_any_call(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(PayPalSignatureError, match="unsupported auth algorithm"):
+        adapter.parse_event(_payload(), make_transmission(auth_algo="SHA1withRSA"))
+
+    assert api.post_calls == []
+
+
+@pytest.mark.parametrize(
+    ("cert_url", "accepted"),
+    [
+        ("http://api.paypal.com/x", False),
+        ("https://paypal.com.evil.example/x", False),
+        ("https://evil-paypal.com/x", False),
+        ("https://evilpaypal.com/x", False),
+        ("https://api.paypal.com", True),
+        ("https://api.sandbox.paypal.com/v1/notifications/certs/CERT", True),
+    ],
+)
+def test_cert_url_must_be_https_on_paypal_com(
+    monkeypatch: MonkeyPatch, cert_url: str, accepted: bool
+) -> None:
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+
+    if accepted:
+        assert adapter.parse_event(_payload(), make_transmission(cert_url=cert_url))
+        assert len(api.verification_calls()) == 1
+    else:
+        with pytest.raises(PayPalSignatureError, match=r"paypal[.]com https url"):
+            adapter.parse_event(_payload(), make_transmission(cert_url=cert_url))
+        assert api.post_calls == []
+
+
+def test_empty_payload_is_rejected_before_any_call(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(PayPalSignatureError, match="empty body"):
+        adapter.parse_event(b"", make_transmission())
+
+    assert api.post_calls == []
+
+
+@pytest.mark.parametrize(("code", "error"), [(400, PayPalSignatureError), (500, PayPalApiError)])
+def test_verification_400_is_a_signature_error_and_5xx_is_transient(
+    monkeypatch: MonkeyPatch, code: int, error: type[Exception]
+) -> None:
+    api = FakePayPalApi()
+    api.verification_responses = [_http_error(code)]
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(error):
+        adapter.parse_event(_payload(), make_transmission())
+
+
+@pytest.mark.parametrize("fails_twice", [False, True], ids=["retry_success", "retry_failure"])
+def test_a_401_refreshes_the_token_once_then_fails_closed(
+    monkeypatch: MonkeyPatch, fails_twice: bool
+) -> None:
+    api = FakePayPalApi()
+    api.verification_responses = [_http_error(401)]
+    if fails_twice:
+        api.verification_responses.append(_http_error(401))
+    adapter = make_adapter(monkeypatch, api)
+
+    if fails_twice:
+        with pytest.raises(PayPalApiError, match="client_id_env / client_secret_env"):
+            adapter.parse_event(_payload(), make_transmission())
+    else:
+        assert adapter.parse_event(_payload(), make_transmission()) == make_capture_completed()
+
+    assert len(api.token_calls()) == 2
+    assert len(api.verification_calls()) == 2
+
+
+def test_token_is_cached_until_its_margin(monkeypatch: MonkeyPatch) -> None:
+    clock = [1_000.0]
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api, now=lambda: clock[0])
+
+    adapter.parse_event(_payload(), make_transmission())
+    clock[0] = 1_059.0
+    adapter.parse_event(_payload(), make_transmission())
+    assert len(api.token_calls()) == 1
+
+    clock[0] = 1_060.0
+    adapter.parse_event(_payload(), make_transmission())
+    assert len(api.token_calls()) == 2
+
+
+@pytest.mark.parametrize(
+    "token_response",
+    [
+        b"not json",
+        b"[]",
+        b"{}",
+        b'{"access_token":"","expires_in":120}',
+        b'{"access_token":"x","expires_in":true}',
+    ],
+)
+def test_malformed_token_responses_are_api_errors(
+    monkeypatch: MonkeyPatch, token_response: bytes
+) -> None:
+    api = FakePayPalApi()
+    api.token_responses = [token_response]
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(PayPalApiError):
+        adapter.parse_event(_payload(), make_transmission())
+
+
+@pytest.mark.parametrize("failure_path", ["token", "verification", "order"])
+def test_no_message_ever_contains_the_client_secret_or_the_token(
+    monkeypatch: MonkeyPatch, failure_path: str
+) -> None:
+    api = FakePayPalApi()
+    if failure_path == "token":
+        api.token_responses = [_http_error(401)]
+    elif failure_path == "verification":
+        api.verification_responses = [_http_error(500)]
+    else:
+        api.order_responses = [_http_error(500)]
+    adapter = make_adapter(monkeypatch, api)
+
+    with pytest.raises(PayPalApiError) as raised:
+        if failure_path == "order":
+            adapter.normalize(make_capture_completed())
+        else:
+            adapter.parse_event(_payload(), make_transmission())
+
+    message = str(raised.value)
+    assert _CLIENT_SECRET not in message
+    assert _ACCESS_TOKEN not in message
+    assert "Basic " not in message
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"client_id": ""},
+        {"client_id": "   "},
+        {"client_secret": ""},
+        {"client_secret": "   "},
+        {"webhook_id": ""},
+        {"webhook_id": "   "},
+        {"environment": "production"},
+    ],
+)
+def test_empty_credentials_or_webhook_id_are_config_errors(kwargs: dict[str, str]) -> None:
+    values = {
+        "client_id": _CLIENT_ID,
+        "client_secret": _CLIENT_SECRET,
+        "webhook_id": _WEBHOOK_ID,
+        "environment": "live",
+    }
+    values.update(kwargs)
+    with pytest.raises(ConfigError):
+        PayPalAdapter(**values)
+
+
+def test_wants_true_for_a_completed_final_capture(monkeypatch: MonkeyPatch) -> None:
+    assert make_adapter(monkeypatch, FakePayPalApi()).wants(make_capture_completed()) is True
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "CHECKOUT.ORDER.APPROVED",
+        "CHECKOUT.ORDER.COMPLETED",
+        "PAYMENT.CAPTURE.REFUNDED",
+        "PAYMENT.SALE.COMPLETED",
+    ],
+)
+def test_wants_false_for_other_event_types(monkeypatch: MonkeyPatch, event_type: str) -> None:
+    event = make_capture_completed(event_type=event_type, resource="not-an-object")
+    assert make_adapter(monkeypatch, FakePayPalApi()).wants(event) is False
+
+
+@pytest.mark.parametrize("status", ["PENDING", "DECLINED", "REFUNDED", ""])
+def test_wants_false_when_status_is_not_completed(monkeypatch: MonkeyPatch, status: str) -> None:
+    event = make_capture_completed(resource={"status": status, "final_capture": "wrong"})
+    assert make_adapter(monkeypatch, FakePayPalApi()).wants(event) is False
+
+
+def test_wants_false_for_a_partial_capture(monkeypatch: MonkeyPatch) -> None:
+    event = make_capture_completed(resource={"final_capture": False})
+    assert make_adapter(monkeypatch, FakePayPalApi()).wants(event) is False
+
+
+def test_wants_treats_an_absent_final_capture_as_final(monkeypatch: MonkeyPatch) -> None:
+    event = make_capture_completed()
+    del event["resource"]["final_capture"]
+    assert make_adapter(monkeypatch, FakePayPalApi()).wants(event) is True
+
+
+@pytest.mark.parametrize("value", ["false", 0])
+def test_wants_rejects_a_non_bool_final_capture(monkeypatch: MonkeyPatch, value: Any) -> None:
+    event = make_capture_completed(resource={"final_capture": value})
+    with pytest.raises(PurchaseRejected):
+        make_adapter(monkeypatch, FakePayPalApi()).wants(event)
+
+
+def test_wants_rejects_a_non_object_resource(monkeypatch: MonkeyPatch) -> None:
+    with pytest.raises(PurchaseRejected, match="resource is not an object"):
+        make_adapter(monkeypatch, FakePayPalApi()).wants(
+            make_capture_completed(resource="not-an-object")
+        )
+
+
+def test_normalize_uses_the_order_id_as_the_purchase_id_and_fetches_the_order(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    api = FakePayPalApi()
+    purchase = make_adapter(monkeypatch, api).normalize(make_capture_completed())
+
+    assert purchase.platform == "paypal"
+    assert purchase.platform_purchase_id == _ORDER_ID
+    assert purchase.buyer_identifier == "buyer@example.com"
+    assert purchase.identifier_type == "email"
+    assert purchase.buyer_pubkey is None
+    assert purchase.product_key == "paypal_SDC-STD-001"
+    assert purchase.purchased_at == "2026-09-05T09:58:00Z"
+    assert purchase.amount == "100.00"
+    assert purchase.currency == "USD"
+    assert api.get_calls[0][0] == f"https://api-m.paypal.com/v2/checkout/orders/{_ORDER_ID}"
+
+
+def test_sandbox_base(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api, environment="sandbox")
+    adapter.parse_event(_payload(), make_transmission())
+    adapter.normalize(make_capture_completed())
+
+    assert all(url.startswith("https://api-m.sandbox.paypal.com/") for url, _, _ in api.post_calls)
+    assert api.get_calls[0][0].startswith("https://api-m.sandbox.paypal.com/")
+
+
+@pytest.mark.parametrize("bad", [None, "", "../x", "a b", True, "x" * 65])
+def test_normalize_rejects_a_missing_or_malformed_related_order_id(
+    monkeypatch: MonkeyPatch, bad: Any
+) -> None:
+    api = FakePayPalApi()
+    event = make_capture_completed(
+        resource={"supplementary_data": {"related_ids": {"order_id": bad}}}
+    )
+
+    with pytest.raises(PurchaseRejected, match="no usable related order id"):
+        make_adapter(monkeypatch, api).normalize(event)
+
+    assert api.post_calls == []
+    assert api.get_calls == []
+
+
+@pytest.mark.parametrize(
+    "chain",
+    [
+        None,
+        "bad",
+        {},
+        {"related_ids": None},
+        {"related_ids": "bad"},
+        {"related_ids": {}},
+    ],
+)
+def test_wrong_types_in_the_related_order_chain_are_rejected_before_network(
+    monkeypatch: MonkeyPatch, chain: Any
+) -> None:
+    api = FakePayPalApi()
+    event = make_capture_completed(resource={"supplementary_data": chain})
+
+    with pytest.raises(PurchaseRejected, match="no usable related order id"):
+        make_adapter(monkeypatch, api).normalize(event)
+
+    assert api.post_calls == []
+    assert api.get_calls == []
+
+
+@pytest.mark.parametrize("bad", [None, "", "   ", "yesterday", 17])
+def test_normalize_rejects_an_unparseable_create_time(monkeypatch: MonkeyPatch, bad: Any) -> None:
+    api = FakePayPalApi()
+    with pytest.raises(PurchaseRejected, match="create_time"):
+        make_adapter(monkeypatch, api).normalize(
+            make_capture_completed(resource={"create_time": bad})
+        )
+    assert api.get_calls == []
+
+
+@pytest.mark.parametrize(
+    ("amount_data", "expected"),
+    [
+        (None, (None, None)),
+        ({}, (None, None)),
+        ({"value": 100, "currency_code": ["USD"]}, (None, None)),
+        ({"value": "12.30", "currency_code": "EUR"}, ("12.30", "EUR")),
+    ],
+)
+def test_amount_rules(
+    monkeypatch: MonkeyPatch, amount_data: Any, expected: tuple[str | None, str | None]
+) -> None:
+    api = FakePayPalApi()
+    event = make_capture_completed(resource={"amount": amount_data})
+    purchase = make_adapter(monkeypatch, api).normalize(event)
+    assert (purchase.amount, purchase.currency) == expected
+
+
+def test_amount_wrong_type_is_rejected_before_network(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    with pytest.raises(PurchaseRejected, match="amount is not an object"):
+        make_adapter(monkeypatch, api).normalize(
+            make_capture_completed(resource={"amount": "100.00"})
+        )
+    assert api.get_calls == []
+
+
+@pytest.mark.parametrize("payer", [None, {}, {"email_address": ""}, {"email_address": 7}])
+def test_normalize_rejects_an_order_without_a_payer_email(
+    monkeypatch: MonkeyPatch, payer: Any
+) -> None:
+    api = FakePayPalApi()
+    api.order = make_order(payer=payer)
+    with pytest.raises(PurchaseRejected, match=r"payer[.]email_address"):
+        make_adapter(monkeypatch, api).normalize(make_capture_completed())
+
+
+@pytest.mark.parametrize(
+    "purchase_units",
+    [
+        [],
+        [{"items": [{"sku": "one"}]}, {"items": [{"sku": "two"}]}],
+        [{"items": []}],
+        [{"items": [{"sku": "one"}, {"sku": "two"}]}],
+        [{}],
+        "not-a-list",
+        ["not-an-object"],
+    ],
+)
+def test_normalize_rejects_more_than_one_purchase_unit_or_item(
+    monkeypatch: MonkeyPatch, purchase_units: Any
+) -> None:
+    api = FakePayPalApi()
+    api.order = make_order(purchase_units=purchase_units)
+    with pytest.raises(PurchaseRejected) as raised:
+        make_adapter(monkeypatch, api).normalize(make_capture_completed())
+    assert "one receipt per purchase" in str(raised.value)
+
+
+@pytest.mark.parametrize("item", [{}, {"sku": ""}, {"sku": 7}])
+def test_normalize_rejects_a_line_item_without_a_sku(
+    monkeypatch: MonkeyPatch, item: dict[str, Any]
+) -> None:
+    api = FakePayPalApi()
+    api.order = make_order(purchase_units=[{"items": [item]}])
+    with pytest.raises(PurchaseRejected, match="no sku"):
+        make_adapter(monkeypatch, api).normalize(make_capture_completed())
+
+
+def test_custom_id_never_names_the_product(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    api.order = make_order(
+        purchase_units=[{"custom_id": "someone-elses-product", "items": [{"sku": "SDC-STD-001"}]}]
+    )
+    purchase = make_adapter(monkeypatch, api).normalize(make_capture_completed())
+    assert purchase.product_key == "paypal_SDC-STD-001"
+
+
+def test_custom_id_is_not_interpreted_today_and_the_seam_returns_an_empty_map(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    api = FakePayPalApi()
+    api.order = make_order(
+        purchase_units=[{"custom_id": "x" * 255, "items": [{"sku": "SDC-STD-001"}]}]
+    )
+    adapter = make_adapter(monkeypatch, api)
+    purchase = adapter.normalize(make_capture_completed())
+    assert adapter._checkout_attributes(api.order) == {}
+    assert purchase.buyer_pubkey is None
+
+
+@pytest.mark.parametrize("code", [400, 403, 404])
+def test_permanent_order_fetch_status_is_purchase_rejected(
+    monkeypatch: MonkeyPatch, code: int
+) -> None:
+    api = FakePayPalApi()
+    api.order_responses = [_http_error(code)]
+    with pytest.raises(PurchaseRejected, match=f"api returned {code}"):
+        make_adapter(monkeypatch, api).normalize(make_capture_completed())
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        _http_error(408),
+        _http_error(429),
+        _http_error(500),
+        _http_error(503),
+        urllib.error.URLError("offline"),
+    ],
+)
+def test_transient_order_fetch_status_is_paypal_api_error(
+    monkeypatch: MonkeyPatch, failure: BaseException
+) -> None:
+    api = FakePayPalApi()
+    api.order_responses = [failure]
+    with pytest.raises(PayPalApiError):
+        make_adapter(monkeypatch, api).normalize(make_capture_completed())
+
+
+@pytest.mark.parametrize("fails_twice", [False, True], ids=["retry_success", "retry_failure"])
+def test_order_fetch_401_refreshes_once(monkeypatch: MonkeyPatch, fails_twice: bool) -> None:
+    api = FakePayPalApi()
+    api.order_responses = [_http_error(401)]
+    if fails_twice:
+        api.order_responses.append(_http_error(401))
+    adapter = make_adapter(monkeypatch, api)
+
+    if fails_twice:
+        with pytest.raises(PayPalApiError, match="client_id_env / client_secret_env"):
+            adapter.normalize(make_capture_completed())
+    else:
+        assert adapter.normalize(make_capture_completed()).platform_purchase_id == _ORDER_ID
+
+    assert len(api.token_calls()) == 2
+    assert len(api.get_calls) == 2
+
+
+def test_order_response_with_the_wrong_id_is_rejected(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    api.order = make_order(id="DIFFERENTORDER123")
+    with pytest.raises(PurchaseRejected, match="does not match capture order"):
+        make_adapter(monkeypatch, api).normalize(make_capture_completed())
+
+
+@pytest.mark.parametrize("response", [b"not json", b"[]", b"null"])
+def test_order_response_must_be_a_json_object(monkeypatch: MonkeyPatch, response: bytes) -> None:
+    api = FakePayPalApi()
+    api.order_responses = [response]
+    with pytest.raises(PurchaseRejected, match="order response"):
+        make_adapter(monkeypatch, api).normalize(make_capture_completed())
+
+
+def test_duplicated_json_members_are_rejected_after_success(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+    body = b'{"id":"first","id":"second","event_type":"PAYMENT.CAPTURE.COMPLETED","resource":{}}'
+
+    with pytest.raises(ValueError, match="duplicate JSON member"):
+        adapter.parse_event(body, make_transmission())
+
+    assert body in api.verification_calls()[0][2]
+
+
+def test_wrong_json_member_types_are_rejected(monkeypatch: MonkeyPatch) -> None:
+    adapter = make_adapter(monkeypatch, FakePayPalApi())
+    with pytest.raises(PurchaseRejected, match="resource is not an object"):
+        adapter.wants({"event_type": "PAYMENT.CAPTURE.COMPLETED", "resource": []})
+
+
+def test_extra_json_members_are_ignored(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    api.order = make_order(unrecognized={"future": True})
+    event = make_capture_completed(unrecognized={"future": True})
+    purchase = make_adapter(monkeypatch, api).normalize(event)
+    assert purchase.platform_purchase_id == _ORDER_ID
+
+
+def test_missing_json_members_are_rejected_without_api_calls(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    event = make_capture_completed(resource={"supplementary_data": {}})
+    with pytest.raises(PurchaseRejected, match="no usable related order id"):
+        make_adapter(monkeypatch, api).normalize(event)
+    assert api.post_calls == []
+    assert api.get_calls == []
+
+
+def test_truncated_body_is_rejected_only_after_postback_success(monkeypatch: MonkeyPatch) -> None:
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+    body = b'{"id":"evt-1","event_type":'
+
+    with pytest.raises(json.JSONDecodeError):
+        adapter.parse_event(body, make_transmission())
+
+    assert body in api.verification_calls()[0][2]
+
+
+def test_verification_response_with_extra_members_accepts_exact_success(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    api = FakePayPalApi()
+    api.verification_responses = [b'{"verification_status":"SUCCESS","future":true}']
+    adapter = make_adapter(monkeypatch, api)
+    assert adapter.parse_event(_payload(), make_transmission()) == make_capture_completed()
