@@ -327,10 +327,13 @@ jobs:
             desktop/dist/attest-verifier.html.sha256
 
   pypi:
-    # Also on desktop: publishing to PyPI is irreversible and npm refuses a version
-    # it has already seen, so a verifier that fails validation after the packages are
-    # out leaves a release nobody can complete or re-run. Everything that can refuse
-    # must refuse before anything is published.
+    # Finish local gates before publishing. Prove PyPI's bytes before npm starts;
+    # each publish job recalculates its own registry state on every attempt.
+    # Recovery: fix an external registry/OIDC/network failure, then choose
+    # "Re-run failed jobs" on the original run within 30 days, while its
+    # dist-and-sboms artifact is retained. Never re-tag, rebuild, or re-run all jobs.
+    # A defect in the tagged workflow or divergent bytes requires the next patch.
+    # A half-created GitHub Release still needs manual deletion before resuming.
     needs: [build, desktop]
     runs-on: ubuntu-latest
     environment: pypi
@@ -378,15 +381,178 @@ jobs:
         # The step above proves dist/ holds two files with the right names. Names
         # are not bytes, and the next step is irreversible.
         run: sha256sum -c gated-artifacts.sha256
+      - name: Preflight PyPI against the gated bytes
+        id: preflight
+        env:
+          REGISTRY_ATTEMPTS: "10"
+          REGISTRY_RETRY_SECONDS: "15"
+          REGISTRY_PHASE: preflight
+        # Reuse the parser for the post-publish check, with fresh network requests.
+        run: &pypi_registry_check |
+          python3 - <<'PYCODE'
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+          import tempfile
+          import time
+          from pathlib import Path
+
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          phase = os.environ["REGISTRY_PHASE"]
+          if phase not in {"preflight", "verify"}:
+              raise SystemExit("cannot determine: invalid registry phase")
+          attempts = int(os.environ["REGISTRY_ATTEMPTS"])
+          delay = int(os.environ["REGISTRY_RETRY_SECONDS"])
+          if attempts < 1 or delay < 0:
+              raise SystemExit("cannot determine: invalid retry budget")
+
+          registry = "PyPI"
+          subprocess.run(["sha256sum", "-c", "gated-artifacts.sha256"], check=True)
+          files = sorted(Path("dist").iterdir())
+          if (
+              len(files) != 2
+              or not Path(f"dist/attest_receipts-{version}.tar.gz").is_file()
+              or len(list(Path("dist").glob(f"attest_receipts-{version}-*.whl"))) != 1
+              or not all(file.is_file() for file in files)
+          ):
+              raise SystemExit("cannot determine: expected this tag's wheel and sdist")
+          wanted = {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in files}
+
+
+          def fetch(url, accept="application/json"):
+              # Do not use -f: 404 confirms absence; 5xx and transport errors never do.
+              with tempfile.TemporaryDirectory() as directory:
+                  body = Path(directory) / "response.json"
+                  response = subprocess.run(
+                      [
+                          "curl",
+                          "-sSL",
+                          "--connect-timeout",
+                          "10",
+                          "--max-time",
+                          "30",
+                          "-H",
+                          f"Accept: {accept}",
+                          "-o",
+                          str(body),
+                          "-w",
+                          "%{http_code}",
+                          url,
+                      ],
+                      capture_output=True,
+                      text=True,
+                      check=False,
+                  )
+                  if response.returncode != 0:
+                      raise ValueError(f"transport failure ({response.returncode})")
+                  if response.stdout == "404":
+                      return None
+                  if response.stdout != "200":
+                      raise ValueError(f"HTTP {response.stdout}")
+                  document = json.loads(body.read_text())
+                  if not isinstance(document, dict):
+                      raise ValueError("expected a JSON object")
+                  return document
+
+
+          def entries(document, field, digest_field):
+              if document is None:
+                  return {}
+              rows = document[field]
+              if not isinstance(rows, list):
+                  raise ValueError(f"{field} must be a list")
+              result = {}
+              for row in rows:
+                  name = row["filename"]
+                  digest = row[digest_field]["sha256"]
+                  if (
+                      not isinstance(name, str)
+                      or not isinstance(digest, str)
+                      or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                  ):
+                      raise ValueError("invalid filename or sha256")
+                  if name in result and result[name] != digest:
+                      raise ValueError(f"conflicting duplicate filename: {name}")
+                  result[name] = digest
+              return result
+
+
+          def observe():
+              primary = entries(
+                  fetch(f"https://pypi.org/pypi/attest-receipts/{version}/json"), "urls", "digests"
+              )
+              # Check both surfaces, including a 200 missing just one file: caches can omit it.
+              secondary = entries(
+                  fetch("https://pypi.org/simple/attest-receipts/", "application/vnd.pypi.simple.v1+json"),
+                  "files",
+                  "hashes",
+              )
+              return {
+                  name: [surface[name] for surface in (primary, secondary) if name in surface]
+                  for name in wanted
+              }
+
+
+          for attempt in range(1, attempts + 1):
+              try:
+                  observed = observe()
+                  present = 0
+                  for name, want in wanted.items():
+                      values = observed[name]
+                      for got in values:
+                          if got != want:
+                              print(f"{registry} already serves {name} as {got}, this run gated {want}.")
+                              print(
+                                  f"Version {version} is burned on {registry}: published files cannot be replaced, even after deletion."
+                              )
+                              print(
+                                  "Do not move the tag and do not re-run this workflow against it. Release the next patch version."
+                              )
+                              raise SystemExit(1)
+                      present += bool(values)
+                  state = "absent" if present == 0 else "identical" if present == len(wanted) else "partial"
+                  if phase == "preflight":
+                      # No *_STATE environment input: this attempt's observations alone authorize publication.
+                      with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                          output.write(f"state={state}\n")
+                      print(f"{registry} preflight: {state}")
+                      break
+                  if state == "identical":
+                      print(f"{registry} serves the bytes this run gated")
+                      if os.environ["PREFLIGHT_RESULT"] == "identical":
+                          for name in wanted:
+                              print(
+                                  f"{registry} already served the gated bytes for {name}: resumed, not republished"
+                              )
+                      break
+                  reason = f"{registry} does not serve all gated files for {version}"
+              except (ValueError, KeyError, TypeError, OSError) as error:
+                  reason = f"cannot determine {registry} {version}: {error}"
+              print(f"attempt {attempt}/{attempts}: {reason}")
+              if attempt < attempts:
+                  time.sleep(delay)
+          else:
+              print(reason)
+              raise SystemExit(1)
+          PYCODE
       - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
         # Trusted Publishing (OIDC) + PEP 740 attestations are on by default.
         with:
-          # Idempotent: a re-run (e.g. after fixing the npm job) must not fail
-          # because 0.1.2 is already on PyPI from the first run.
+          # Skip only files this job's preflight has just proved identical.
+          # The post-publish check catches stale absence and closes the npm gate.
           skip-existing: true
+      - name: Assert PyPI serves the bytes this run gated
+        env:
+          REGISTRY_ATTEMPTS: "10"
+          REGISTRY_RETRY_SECONDS: "15"
+          REGISTRY_PHASE: verify
+          PREFLIGHT_RESULT: ${{ steps.preflight.outputs.state }}
+        run: *pypi_registry_check
 
   npm:
-    needs: [build, desktop]
+    needs: [build, desktop, pypi]
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -406,7 +572,153 @@ jobs:
         with:
           name: dist-and-sboms
           path: dist-and-sboms
+      - name: Verify the tarball is the bytes the build job gated
+        run: (cd dist-and-sboms && sha256sum -c gated-artifacts.sha256)
+      - name: Preflight npm against the gated bytes
+        id: preflight
+        env:
+          REGISTRY_ATTEMPTS: "10"
+          REGISTRY_RETRY_SECONDS: "15"
+          REGISTRY_PHASE: preflight
+        # Reuse the parser for the post-publish check, with fresh network requests.
+        run: &npm_registry_check |
+          python3 - <<'PYCODE'
+          import base64
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import tempfile
+          import time
+          from pathlib import Path
+
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          phase = os.environ["REGISTRY_PHASE"]
+          if phase not in {"preflight", "verify"}:
+              raise SystemExit("cannot determine: invalid registry phase")
+          attempts = int(os.environ["REGISTRY_ATTEMPTS"])
+          delay = int(os.environ["REGISTRY_RETRY_SECONDS"])
+          if attempts < 1 or delay < 0:
+              raise SystemExit("cannot determine: invalid retry budget")
+
+          registry = "npm"
+          root = Path("dist-and-sboms")
+          subprocess.run(["sha256sum", "-c", "gated-artifacts.sha256"], cwd=root, check=True)
+          tarball = root / f"attest-verifier-{version}.tgz"
+          if not tarball.is_file() or len(list(root.glob("attest-verifier-*.tgz"))) != 1:
+              raise SystemExit("cannot determine: expected this tag's single tarball")
+          wanted = {
+              tarball.name: "sha512-"
+              + base64.b64encode(hashlib.sha512(tarball.read_bytes()).digest()).decode()
+          }
+
+
+          def fetch(url, accept="application/json"):
+              # Do not use -f: 404 confirms absence; 5xx and transport errors never do.
+              with tempfile.TemporaryDirectory() as directory:
+                  body = Path(directory) / "response.json"
+                  response = subprocess.run(
+                      [
+                          "curl",
+                          "-sSL",
+                          "--connect-timeout",
+                          "10",
+                          "--max-time",
+                          "30",
+                          "-H",
+                          f"Accept: {accept}",
+                          "-o",
+                          str(body),
+                          "-w",
+                          "%{http_code}",
+                          url,
+                      ],
+                      capture_output=True,
+                      text=True,
+                      check=False,
+                  )
+                  if response.returncode != 0:
+                      raise ValueError(f"transport failure ({response.returncode})")
+                  if response.stdout == "404":
+                      return None
+                  if response.stdout != "200":
+                      raise ValueError(f"HTTP {response.stdout}")
+                  document = json.loads(body.read_text())
+                  if not isinstance(document, dict):
+                      raise ValueError("expected a JSON object")
+                  return document
+
+
+          def integrity(document):
+              if document is None:
+                  return []
+              if document["version"] != version:
+                  raise ValueError("npm document has the wrong version")
+              value = document["dist"]["integrity"]
+              if not isinstance(value, str) or not value:
+                  raise ValueError("dist.integrity must be a nonempty string")
+              return [value]
+
+
+          def observe():
+              primary = integrity(fetch(f"https://registry.npmjs.org/attest-verifier/{version}"))
+              packument = fetch("https://registry.npmjs.org/attest-verifier")
+              secondary = []
+              if packument is not None:
+                  versions = packument["versions"]
+                  if not isinstance(versions, dict):
+                      raise ValueError("versions must be an object")
+                  if version in versions:
+                      if not isinstance(versions[version], dict):
+                          raise ValueError("version entry must be an object")
+                      secondary = integrity(versions[version])
+              return {tarball.name: primary + secondary}
+
+
+          for attempt in range(1, attempts + 1):
+              try:
+                  observed = observe()
+                  present = 0
+                  for name, want in wanted.items():
+                      values = observed[name]
+                      for got in values:
+                          if got != want:
+                              print(f"{registry} already serves {name} as {got}, this run gated {want}.")
+                              print(
+                                  f"Version {version} is burned on {registry}: published files cannot be replaced, even after deletion."
+                              )
+                              print(
+                                  "Do not move the tag and do not re-run this workflow against it. Release the next patch version."
+                              )
+                              raise SystemExit(1)
+                      present += bool(values)
+                  state = "absent" if present == 0 else "identical" if present == len(wanted) else "partial"
+                  if phase == "preflight":
+                      # No *_STATE environment input: this attempt's observations alone authorize publication.
+                      with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                          output.write(f"state={state}\n")
+                      print(f"{registry} preflight: {state}")
+                      break
+                  if state == "identical":
+                      print(f"{registry} serves the bytes this run gated")
+                      if os.environ["PREFLIGHT_RESULT"] == "identical":
+                          for name in wanted:
+                              print(
+                                  f"{registry} already served the gated bytes for {name}: resumed, not republished"
+                              )
+                      break
+                  reason = f"{registry} does not serve all gated files for {version}"
+              except (ValueError, KeyError, TypeError, OSError) as error:
+                  reason = f"cannot determine {registry} {version}: {error}"
+              print(f"attempt {attempt}/{attempts}: {reason}")
+              if attempt < attempts:
+                  time.sleep(delay)
+          else:
+              print(reason)
+              raise SystemExit(1)
+          PYCODE
       - name: Publish with provenance (OIDC Trusted Publishing)
+        if: steps.preflight.outputs.state == 'absent'
         # Publish the exact tarball asserted + scanned in the build job, not a fresh pack.
         run: |
           shopt -s nullglob dotglob
@@ -428,6 +740,14 @@ jobs:
           # package spec: a bare "dist-and-sboms/..." path is parsed as a git
           # <owner>/<repo> shorthand and npm tries to `git ls-remote` it.
           npm publish "./${tarball}" --provenance
+
+      - name: Assert npm serves the bytes this run gated
+        env:
+          REGISTRY_ATTEMPTS: "10"
+          REGISTRY_RETRY_SECONDS: "15"
+          REGISTRY_PHASE: verify
+          PREFLIGHT_RESULT: ${{ steps.preflight.outputs.state }}
+        run: *npm_registry_check
 
   github-release:
     needs: [pypi, npm, desktop]
