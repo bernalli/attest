@@ -24,6 +24,14 @@ from datetime import datetime
 from typing import Any
 
 from attest import canon, keys, manifests, pq
+
+# Re-exported, not owned: `ulid` holds the one Python declaration of the §5.1
+# receipt-id grammar. The name stays here because it is published API (a
+# producer of records has to refuse a receipt id this module would later refuse
+# to authenticate), so do not delete it as redundant. The `as` spelling is
+# required, not decoration: this package ships `py.typed`, and under
+# `no_implicit_reexport` a plain import is not a re-export for a downstream
+# strict checker. `tests/test_shared_predicate_parity.py` pins the identity.
 from attest.ulid import RECEIPT_ID_RE as RECEIPT_ID_RE
 
 # Preflight bound on an untrusted revocation view: a legitimate view is an

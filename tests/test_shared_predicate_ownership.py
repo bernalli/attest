@@ -21,12 +21,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _EXCLUDED_DIRS = {"node_modules", "dist", "__pycache__", "tests", "test", "e2e"}
 
 
-def _sources(suffix: str) -> list[Path]:
+def _sources(suffixes: tuple[str, ...]) -> list[Path]:
     paths = []
     for directory, dirs, files in os.walk(REPO_ROOT):
         dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in _EXCLUDED_DIRS)
         for name in sorted(files):
-            if name.endswith(suffix) and not name.endswith((".test.ts", ".spec.ts")):
+            if name.endswith(suffixes) and not name.endswith(
+                (".test.ts", ".spec.ts", ".test.mjs", ".spec.mjs")
+            ):
                 paths.append(Path(directory) / name)
     return paths
 
@@ -69,7 +71,7 @@ def test_shared_predicate_definitions_do_not_multiply(language: str, predicate: 
     }
     found: Counter[str] = Counter()
     needle = EXPECTED_ULID_PATTERN.removeprefix("^").removesuffix("$")
-    for path in _sources(".py" if language == "python" else ".ts"):
+    for path in _sources((".py",) if language == "python" else (".ts", ".mjs")):
         source = path.read_text(encoding="utf-8")
         if language == "python":
             literals = _python_literals(source)
@@ -84,9 +86,11 @@ def test_shared_predicate_definitions_do_not_multiply(language: str, predicate: 
             if predicate == "receipt_id":
                 count = source.count(needle)
             else:
+                # `n?`: this core reads JSON integers as `bigint`, so a
+                # restated bound can carry a BigInt suffix and must still count.
                 count = sum(
-                    int(number.replace("_", "")) == EXPECTED_BOUND
-                    for number in re.findall(r"(?<![\w.])\d[\d_]*(?![\w.])", source)
+                    int(number.replace("_", "").removesuffix("n")) == EXPECTED_BOUND
+                    for number in re.findall(r"(?<![\w.])\d[\d_]*n?(?![\w.])", source)
                 )
         if count:
             found[path.relative_to(REPO_ROOT).as_posix()] = count

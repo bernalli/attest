@@ -24,8 +24,8 @@ Two properties hold everywhere here, and both are load-bearing:
 Ceilings are never restated: `manifests.MAX_MANIFEST_KEYS`,
 `revocation.MAX_REVOCATION_RECORDS`, `transfer.MAX_TRANSFER_CLAIMS` and
 `verify._MAX_COMPROMISE_CLAIMS` are read from the modules that own them, for
-the reason `revocation.py:29-35` already gives: a ceiling restated in two
-places is a ceiling that will drift.
+the reason the comment on `revocation.MAX_REVOCATION_RECORDS` already gives:
+a ceiling restated in two places is a ceiling that will drift.
 """
 
 from __future__ import annotations
