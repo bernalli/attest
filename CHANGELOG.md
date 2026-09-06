@@ -38,8 +38,9 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value. They no longer describe that result as proof of who bought, or a transfer
   key authorization as proof of the buyer's consent. The specification's rendering
   rule is clarified in v0.1 revision 17; the binding calculation is unchanged.
-  Desktop also keeps an already supplied disclosure when evidence feeds change or
-  a replacement salt is malformed, and clears it when the receipt changes.
+  Desktop also keeps an already supplied disclosure when evidence feeds change,
+  a replacement salt is malformed or a replacement identifier is empty, and
+  clears it when the receipt changes.
 
 - In the separately distributed merchant bridge, malformed webhook bodies with
   lone surrogates, excessive nesting or over-limit integers return 400; non-ASCII
@@ -144,12 +145,19 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   10,000,000-code-point unit for revocation evidence. Code-point limits use a byte
   fast path; the shared 1 GiB stored-file limit also applies. Record and claim
   counts are checked by the core, not trimmed by the shell. The existing CLI
-  `--revocations` reader is unchanged and remains unbounded. These shells do not pin
-  log keys or block headers, so accepting a file does not establish a transfer's
-  logged standing, a compromise cutoff or a refund-window revocation's timeliness. A
+  `--revocations` reader is unchanged and remains unbounded. These shells ship
+  pinned log keys and an anchor policy with no pinned block headers. A transfer
+  can reach logged standing when its inclusion evidence verifies under those
+  log keys; the shipped anchor policy cannot establish a compromise cutoff or
+  a refund-window revocation's timeliness. A
   status line says, per rail, whether it was never supplied or supplied and found empty — a
   distinction the verdict itself cannot carry. `grant-view.json` and `authority-view.json`
   stay unrecognized: admitting a rail is a registry amendment, never a surface's own choice.
+
+- Repository verification tooling: `tools/verify-all.sh` provides a local entry
+  point for CI checks, with explicit skipped and partial results and a `--quick`
+  mode. `tools/check_test_census.py` checks collected unit-test counts against
+  `tools/test-census.json` in the site and desktop CI jobs.
 
 ## [0.9.2] — 2026-09-05
 
