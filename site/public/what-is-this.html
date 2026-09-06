@@ -106,9 +106,12 @@ claims about the listed transaction. The seller's signature lets anyone check
 those exact claims and detect later changes; it does not prove that the named
 person paid or participated. Keep it the way you'd keep an
 important paper receipt — it doesn't live in any account. It survives the shop
-closing. It does not survive the seller declaring the key that signed it
-compromised: the standard describes a shield against that, but no store tool
-offers it yet and this page cannot check it.</p>
+closing. A seller's declaration that its signing key was compromised can invalidate
+receipts signed with that key. The standard provides a rescue for receipts with
+qualifying evidence that they were logged and anchored before the declaration.
+The command line can prepare and verify that evidence, with an external timestamp
+and separately configured trusted anchors. The bridge does not produce it
+automatically, and the verifier on this site currently pins no anchors.</p>
 </section>
 
 <hr>

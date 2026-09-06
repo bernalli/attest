@@ -239,9 +239,12 @@ claims about the listed transaction. The seller's signature lets anyone check
 those exact claims and detect later changes; it does not prove that the named
 person paid or participated. Keep it the way you'd keep an
 important paper receipt — it doesn't live in any account. It survives the shop
-closing. It does not survive the seller declaring the key that signed it
-compromised: the standard describes a shield against that, but no store tool
-offers it yet and this page cannot check it.</p>
+closing. A seller's declaration that its signing key was compromised can invalidate
+receipts signed with that key. The standard provides a rescue for receipts with
+qualifying evidence that they were logged and anchored before the declaration.
+The command line can prepare and verify that evidence, with an external timestamp
+and separately configured trusted anchors. The bridge does not produce it
+automatically, and the verifier on this site currently pins no anchors.</p>
 </section>
 
 <hr>
@@ -339,14 +342,13 @@ store no longer exists.</li>
 <li><strong>It is not the game, film or book.</strong> If you never downloaded the
 file and the store is gone, no receipt can bring it back. Download what you buy,
 and keep it next to the receipt.</li>
-<li><strong>It protects you from a store that disappears, not from one that is still
-open and turns on you.</strong> A live seller can declare one of its own signing
-keys compromised, and that cancels the receipts signed with that key. The standard
-describes a shield against this — a receipt publicly logged and anchored before the
-declaration — and the verifiers already honour it when they are shown one. But
-nothing makes such a receipt yet: no store logs or anchors what it signs, and the
-verifier on this site holds no anchor to check against. So for now there is nothing
-you can do about it.</li>
+<li><strong>A live seller can declare its signing key compromised.</strong> That
+can invalidate receipts signed with the key. The standard provides a rescue for a
+receipt with qualifying proof that it was logged and anchored before the declaration.
+An operator can prepare that proof with the log commands and an external timestamp,
+and a verifier with matching trusted log keys and anchors can check it. The bridge
+does not automate this work, and the verifier on this site currently pins no
+anchors. Keeping only an unlogged receipt leaves it without that protection.</li>
 <li><strong>It doesn't unlock anything</strong> and it doesn't remove copy protection.</li>
 <li><strong>Almost no store issues one yet.</strong> Stores that sell files without copy
 protection can start today. Closed platforms are a longer road: when you buy from
@@ -691,7 +693,7 @@ _FOR_SELLERS_BODY = """\
 <h2>What you decide, per product</h2>
 <p>The bridge signs nothing it has not been told about. For every item you sell you write a table in <code>bridge.toml</code>, keyed by the platform's identifier for it — a Stripe price id, a Shopify variant id, an itch game id — with the title, the publisher, an identifier of your own, a URI for the licence terms, the SHA-256 of the licence text and the path to that text. The bridge reads the text at startup, hashes it, and refuses to start if the hash does not match what you declared. A purchase of anything not in the file is refused and set aside rather than issued with guessed terms. The text itself ships inside every buyer's bundle, so the deal travels with the signature.</p>
 
-<p>The defaults are not modest, and you should read them before you accept them: a perpetual grant, DRM-free, irrevocable, with a right to re-download. The specification allows an irrevocable receipt only for a DRM-free sale with a redownload right and a named artifact series or list of files, and it treats such a receipt as evidence that a sale falls under laws like California's AB 2426 or Maryland's HB 208 — evidence, it says, not a compliance determination, and your storefront language stays your own duty. It also means a refund does not take the receipt back: a revocation record aimed at an irrevocable receipt is ignored by every conforming verifier. If you want refunds to reach the receipt, set <code>revocability = "refund_window"</code> with a number of days, and know what that buys you today: no shipped command signs a stand-alone revocation record — the library can, and you would be writing code — and the record then has to reach the buyer as a file, because no shipped tool fetches a revocation feed.</p>
+<p>The defaults are not modest, and you should read them before you accept them: a perpetual grant, DRM-free, irrevocable, with a right to re-download. The specification allows an irrevocable receipt only for a DRM-free sale with a redownload right and a named artifact series or list of files, and it treats such a receipt as evidence that a sale falls under laws like California's AB 2426 or Maryland's HB 208 — evidence, it says, not a compliance determination, and your storefront language stays your own duty. It also means a refund does not take the receipt back: a record with <code>status: "revoked"</code> aimed at an irrevocable receipt is ignored. A backed <code>status: "transferred"</code> record is a separate case and can retire even an irrevocable receipt under the issuer-mediated transfer rules. If you want refunds to reach the receipt, set <code>revocability = "refund_window"</code> with a number of days, and know what that buys you today: <code>attest revoke</code> signs a stand-alone revocation record and checks its signature, signing-key eligibility and refund-window timestamp against the receipt and manifest you supply. A Stage-2-capable verifier also requires evidence that the record was logged and anchored no later than the refund-window deadline; the command does not produce that evidence and warns about the extra requirement. Use <code>attest log entry --type revocation-record</code> and the log commands to prepare it, obtaining the external timestamp separately. Use <code>attest revocation-view</code> to assemble the record into the view a verifier accepts. The view and evidence must reach the buyer as files, and the verifier needs matching trusted log keys and an anchor policy. No shipped tool fetches a revocation feed, and the browser and desktop currently pin no block headers.</p>
 </section>
 
 <hr>
@@ -707,7 +709,7 @@ _FOR_SELLERS_BODY = """\
 
 <section>
 <h2>What stays with you afterwards</h2>
-<p>The signing key. It lives only where your bridge runs; the bridge reads it to sign and never exports, logs or writes it back. There is no attest portal, no authority and no company holding a copy that can restore it, and that is by design: an authority able to hand your identity back to you could hand it to someone else. Back the seed up where a disk failure on the issuing machine cannot take it, never next to what it signs, and read the incident runbook before you need it. Its two cases differ in a way worth knowing now. A lost key leaves your old receipts valid and leaves a permanent, visible gap in your key history. A stolen key, once you declare it compromised, invalidates every receipt it signed. The standard defines a rescue for receipts logged and anchored before such a declaration, but the bridge does not log what it issues and no shipped command turns a receipt into an entry for one, so today that declaration is final for every receipt the bridge signs.</p>
+<p>The signing key. It lives only where your bridge runs; the bridge reads it to sign and never exports, logs or writes it back. There is no attest portal, no authority and no company holding a copy that can restore it, and that is by design: an authority able to hand your identity back to you could hand it to someone else. Back the seed up where a disk failure on the issuing machine cannot take it, never next to what it signs, and read the incident runbook before you need it. Its two cases differ in a way worth knowing now. A lost key leaves your old receipts valid and leaves a permanent, visible gap in your key history. A stolen key, once you declare it compromised, invalidates every receipt it signed. The standard defines a rescue for receipts logged and anchored before such a declaration, but the bridge does not log what it issues. <code>attest log entry --type receipt</code> turns a receipt into an entry and the log commands append it, so the evidence is something you can produce; nothing in the bridge produces it for you, and for a receipt nobody logged that declaration is final.</p>
 
 <p>The Ledger. It is your memory of which purchases already have a receipt and the source of every download link. Losing it does not touch receipts already delivered, but a redeploy without it can issue a second receipt for a retried webhook.</p>
 

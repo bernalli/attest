@@ -4,10 +4,14 @@ attest is the durable, portable, user-held layer of possession for digital conte
 signs a purchase receipt, the buyer holds the file, and anyone can verify it offline after the
 store is gone. "Forever" holds against the store disappearing, not against a live store declaring
 one of its own signing keys compromised: that declaration invalidates the receipts signed with
-that key. This verifier implements the v0.2 §19 rescue for a receipt proven logged and anchored
-before the declaration, but only when its caller supplies that evidence (`compromiseView` plus
-pinned headers); no shipped tool produces it yet and the browser and desktop verifiers pass none,
-so today the declaration is final. It works directly for DRM-free sellers. For closed platforms it
+that key. This verifier implements the v0.2 §19 rescue when the receipt's own `transparency`
+evidence establishes anchored standing under caller-supplied trusted `logKeys` and `anchorPolicy`,
+strictly before any qualifying anchored compromise cutoff. `compromiseView` supplies additional
+compromise declarations; `attest manifest compromise-view` produces that file, and the browser
+and desktop accept it as a drop alongside the receipt. Those apps currently pin no block
+headers, so dropping the file does not make the rescue available there. An operator must
+separately obtain timestamp evidence and configure matching trusted anchors in a capable
+verifier. For a receipt without anchored standing, a known compromise declaration remains final. It works directly for DRM-free sellers. For closed platforms it
 is built as a format a legally required purchase confirmation could include or travel in — in the
 EU, Article 8(7) of the Consumer Rights Directive (2011/83/EU, 25 October 2011) — not as that
 confirmation itself: the law asks for nothing a machine can verify. This package is the verifier —
@@ -49,15 +53,26 @@ export function verify(
   revocationView?: JsonValue[] | null,
   disclosure?: Disclosure | null,
   maxRevocationRecords?: number,
-  options?: VerifyTransparencyOptions,   // { transparency?, logKeys?, anchorPolicy?, compromiseView? } — v0.2 Stage 2
+  options?: VerifyTransparencyOptions,   // v0.2 Stage 2+ evidence — see below
 ): VerificationResult
 
-export function isOk(r: VerificationResult): boolean // signature=valid && schema=valid && revocation!=='revoked' && errors.length===0
+export function isOk(r: VerificationResult): boolean // signature=valid && schema=valid && revocation!=='revoked' && revocation!=='transferred' && errors.length===0
 ```
 
 `maxRevocationRecords` bounds the untrusted `revocationView` (default 10000); a view larger than the cap is not evaluated and fails closed (an `errors` entry, so `isOk()` is `false`) for a revocable receipt, or warns for an irrevocable one.
 
 `options` is how v0.2 Stage 2 evidence enters: `transparency` (the inclusion evidence accompanying the receipt), `logKeys` (the log keys you pin, in your own trust store — never taken from the bundle), and `anchorPolicy` (including the CRQC horizon). Omit it entirely and verification behaves exactly as before, offline and log-free; supply it and the result additionally carries `transparency` / `corroboration`, which never upgrade the `trust` verdict.
+
+The full set is optional and supplied by the caller. Trusted configuration (`logKeys`,
+`anchorPolicy` and `witnessPolicy`) must come from the verifier's own trust decisions, never
+from the bundle being checked. Evidence is untrusted input: in particular, the caller may
+extract `transparency` from the bundle's `proofs/` members. The options are:
+`transparency` (the inclusion evidence accompanying the receipt), `logKeys` (the log keys you
+pin), `anchorPolicy` (including the CRQC horizon), `witnessPolicy` (the trusted witness policy,
+without which `corroboration: "witnessed"` is unreachable), `revocationEvidence` (the evidence
+that one record in `revocationView` was logged and anchored before a refund-window deadline),
+`transferView`, `compromiseView`, `grantView` and `authorityView`. Omit the object entirely and
+verification behaves exactly as before, offline and log-free.
 
 `compromiseView` is the v0.2 §19 channel for key-manifest compromise declarations. Each claim is `{ manifest, evidence }`, where `manifest` is the issuer key manifest declaring the signing `kid` compromised and `evidence` is that manifest's transparency proof. Authenticated declarations make `compromised` absorbing even if the trusted manifest later re-lists the key as active; a Stage-2-capable verifier can still accept a receipt whose own `transparency` claim proves the receipt was anchored strictly before the earliest anchored compromise declaration. A declaration with no anchored time cannot invalidate an anchored receipt, and a receipt with no anchored receipt claim is not rescued.
 
@@ -96,7 +111,7 @@ Nothing in `src/` touches `node:*` APIs — base64 uses `btoa`/`atob`, crypto is
   import { verify, isOk, loadsStrict } from 'https://esm.sh/attest-verifier'
 
   const envelopeBytes = new Uint8Array(await (await fetch('/receipt.attest.json')).arrayBuffer())
-  const trustData = loadsStrict(new Uint8Array(await (await fetch('/issuer-manifests.json')).arrayBuffer())) as any
+  const trustData = loadsStrict(new Uint8Array(await (await fetch('/issuer-manifests.json')).arrayBuffer()))
 
   const result = verify(envelopeBytes, {
     manifests: trustData.manifests,
