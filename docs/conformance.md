@@ -192,14 +192,16 @@ subset each, self-certified through this exact public path (never a special
 internal shortcut). These rows are a CURRENT claim, not a changelog: a corpus revision
 is a digest over the leaf files, so it changes whenever the corpus grows, and
 a row naming a digest that no longer exists on any branch cannot be re-run by
-anyone. They are re-measured and replaced whenever the corpus changes.
+anyone. They are re-measured and replaced whenever the corpus changes. The versions
+below identify the source checkout tested by these commands, not an installation
+from PyPI or npm; the 0.9.3 rows record release preparation before publication.
 
 | Implementation | Subset | Leaves passed | Corpus revision | Date | Command |
 | --- | --- | --- | --- | --- | --- |
-| attest (Python reference) 0.9.2 | v0.2 | 223/223 | `b724f2c19888e496b0fc17bb04809710623c055d8ead43608d65916e6079bf94` | 2026-09-05 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
-| attest (Python reference) 0.9.2 | v0.1 | 65/65 | `b724f2c19888e496b0fc17bb04809710623c055d8ead43608d65916e6079bf94` | 2026-09-05 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
-| attest-verifier (TypeScript) 0.9.2 | v0.2 | 223/223 | `b724f2c19888e496b0fc17bb04809710623c055d8ead43608d65916e6079bf94` | 2026-09-06 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
-| attest-verifier (TypeScript) 0.9.2 | v0.1 | 65/65 | `b724f2c19888e496b0fc17bb04809710623c055d8ead43608d65916e6079bf94` | 2026-09-06 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
+| attest (Python reference) 0.9.3 | v0.2 | 223/223 | `b724f2c19888e496b0fc17bb04809710623c055d8ead43608d65916e6079bf94` | 2026-09-06 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
+| attest (Python reference) 0.9.3 | v0.1 | 65/65 | `b724f2c19888e496b0fc17bb04809710623c055d8ead43608d65916e6079bf94` | 2026-09-06 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
+| attest-verifier (TypeScript) 0.9.3 | v0.2 | 223/223 | `b724f2c19888e496b0fc17bb04809710623c055d8ead43608d65916e6079bf94` | 2026-09-06 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
+| attest-verifier (TypeScript) 0.9.3 | v0.1 | 65/65 | `b724f2c19888e496b0fc17bb04809710623c055d8ead43608d65916e6079bf94` | 2026-09-06 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
 
 A third-party implementation adds a row here (or in its own repo/README,
 linking back to this process) the same way: run §2's command, record the

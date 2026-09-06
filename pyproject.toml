@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "attest-receipts"
-version = "0.9.2"
+version = "0.9.3"
 description = "attest reference implementation: durable, portable proof of purchase you hold — the seller signs a receipt, you keep the file, anyone verifies it offline after the store is gone."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -48,6 +48,9 @@ attest = "attest.cli:main"
 # "everything not gitignored", so without this line publishing the library
 # would publish both with it.
 exclude = ["/witness", "/bridge"]
+
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "tools/sdist_files.py"
 
 [tool.hatch.build.targets.wheel]
 # Distribution name (attest-receipts) differs from the import package (attest),

@@ -4,7 +4,50 @@ All notable changes to `attest-receipts` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.3] — 2026-09-06
+
+### Fixed
+
+- Source distributions include only tracked source files, preserving the bridge
+  and witness exclusions. Local files excluded by Git no longer leak into an
+  sdist built from a working checkout. Creating an sdist now requires Git;
+  building or installing a wheel from that sdist does not.
+
+- The release build checks both Python distribution filenames against the tag
+  before either registry can publish. A stale wheel/sdist pair previously passed
+  the build's count check and was refused only by the PyPI job, while npm could
+  already be publishing.
+
+- **Refund-window deadlines beyond year 9999 fail closed in both verifiers.**
+  When revocation evaluation reaches such a deadline, Python now returns an error
+  instead of raising `OverflowError`. TypeScript applies the same representable
+  timestamp bound, with the same error and `ok: false`, instead of evaluating a
+  deadline Python cannot represent. This changes existing outcomes; it is not
+  merely a new command. The transfer branch may still change the revocation
+  label, but does not remove the error.
+
+- **TypeScript no longer authenticates revocation records with malformed receipt
+  identifiers.** As Python already did, it requires a ULID before checking the
+  signature. A signed record with a malformed identifier can no longer supply the
+  timestamp in another receipt's `not_revoked_as_of:<T>` result.
+
+### Changed
+
+- Binding explanations in the site, desktop verifier, exported bundles and demos
+  describe possession of the secret or private key matching the issuer-recorded
+  value. They no longer describe that result as proof of who bought, or a transfer
+  key authorization as proof of the buyer's consent. The specification's rendering
+  rule is clarified in v0.1 revision 17; the binding calculation is unchanged.
+  Desktop also keeps an already supplied disclosure when evidence feeds change,
+  a replacement salt is malformed or a replacement identifier is empty, and
+  clears it when the receipt changes.
+
+- In the separately distributed merchant bridge, malformed webhook bodies with
+  lone surrogates, excessive nesting or over-limit integers return 400; non-ASCII
+  signature-header candidates are treated as non-matches. Timestamp conversion
+  rejects values outside the representable range with `PurchaseRejected`, and
+  pads years below 1000 to four digits. The bridge is excluded from the core
+  Python distributions and is not published by this release workflow.
 
 ### Added
 
@@ -27,6 +70,14 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   carries anchor evidence, and (only when the verifier's log keys and anchor policy are
   supplied) whether a cutoff resolves. It is a local diagnostic, not a protocol
   classification, and has no TypeScript twin.
+  The public functions are `build_revocation_view`, `build_compromise_claim`,
+  `build_compromise_view`, `build_transfer_claim`, `build_transfer_view` and
+  `claim_capabilities`, with `ViewError` for input failures and
+  `MAX_INCLUSION_PROOF_NODES` for the proof-node ceiling. The separate
+  `key_manifest_log_entry` helper computes a manifest entry without authenticating
+  its signature. `attest.revocation.RECEIPT_ID_RE` exposes the existing Python
+  receipt-identifier predicate. View builders refuse canonically identical
+  elements and preserve distinct claims about the same document.
 
 - `attest verify --transfer-view`, `--compromise-view` and `--revocation-evidence` — the
   three caller-side evidence files the verifier has accepted since v0.2 can now be supplied
@@ -34,8 +85,10 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   receipt presenter's bundle. Each file is strict-parsed and size-bounded, and its container
   is checked per rail; a file containing `null` is a usage error rather than a silent
   opt-out. What is inside the file stays the verifier's to judge: a malformed claim is
-  refused claim by claim, and an over-ceiling view reaches the verifier whole so that the
-  ceiling reported is the verifier's own. Without `--log-keys` and `--anchor-policy` a
+  refused claim by claim, and a view over the claim-count ceiling but within the file
+  read limit reaches the verifier whole so that the ceiling reported is the verifier's
+  own. `--revocation-evidence` requires `--revocations` and warns when either Stage-2
+  pin is absent. Without `--log-keys` and `--anchor-policy` a
   compromise view can only restrict a verdict, never rescue a receipt, and the help says so.
 
 - `attest revocation-view`, `attest transfer view` and `attest manifest compromise-view` —
@@ -56,7 +109,11 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cessation declaration, publisher authorization), always by rehashing the document itself
   rather than trusting a hash it declares. Each document is checked against the shape rule
   its own module owns before the entry is built, and the entry against the log's own closed
-  schema before it is written.
+  schema before it is written. For receipts this checks the payload schema and that
+  `signatures` is an array; it does not require a valid or nonempty signature array.
+  The key-manifest command checks the manifest's own signature. The other five
+  types are not authenticated here: an entry accepted by the log is not proof that
+  its source document verifies.
 
 - `attest binding challenge` and `attest binding respond` — produce the v0.1 §8.2
   possession proof `verify()` has always been able to check but that nothing in the CLI
@@ -71,7 +128,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `docs/incident-runbook.md` — a step-by-step guide for a seller whose signing key is
   stolen or lost: securing the domain before rotating anything, the two-rotation sequence a
-  compromise declaration requires (the stolen key cannot sign its own compromise),
+  anchored compromise cutoff needs (a declaration signed by a compromised key can
+  still establish a compromise floor, but that signer cannot establish a cutoff),
   publishing that declaration as evidence with `attest manifest compromise-view`,
   reissuing the affected receipts, and two ready-to-send buyer notices — theft and loss say
   opposite things and must not be mixed up.
@@ -82,13 +140,24 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shells by exact, case-sensitive suffix, one slot per rail, replaced rather than merged; a
   bad file is refused without disturbing the receipts already on screen. A rail persists
   once supplied, because it qualifies every receipt checked afterwards — only an explicit
-  "Clear feeds" clears it. Each rail is bounded by its own §14.3 floor (10,000 records, 64
-  claims, or one 10,000,000-code-point admission unit), counted in code points with a byte
-  fast path, closing a gap where a single hybrid-signed revocation record already measured
-  a quarter of §12.4's own ceiling while the CLI read the same file with no bound at all. A
+  "Clear feeds" clears it. File limits are derived from each rail's admission units:
+  10,000 records for revocations, 64 claims for transfer or compromise views, and one
+  10,000,000-code-point unit for revocation evidence. Code-point limits use a byte
+  fast path; the shared 1 GiB stored-file limit also applies. Record and claim
+  counts are checked by the core, not trimmed by the shell. The existing CLI
+  `--revocations` reader is unchanged and remains unbounded. These shells ship
+  pinned log keys and an anchor policy with no pinned block headers. A transfer
+  can reach logged standing when its inclusion evidence verifies under those
+  log keys; the shipped anchor policy cannot establish a compromise cutoff or
+  a refund-window revocation's timeliness. A
   status line says, per rail, whether it was never supplied or supplied and found empty — a
   distinction the verdict itself cannot carry. `grant-view.json` and `authority-view.json`
   stay unrecognized: admitting a rail is a registry amendment, never a surface's own choice.
+
+- Repository verification tooling: `tools/verify-all.sh` provides a local entry
+  point for CI checks, with explicit skipped and partial results and a `--quick`
+  mode. `tools/check_test_census.py` checks collected unit-test counts against
+  `tools/test-census.json` in the site and desktop CI jobs.
 
 ## [0.9.2] — 2026-09-05
 
