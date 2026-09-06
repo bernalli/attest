@@ -49,10 +49,14 @@ invalidates the receipts signed with that key. v0.2 defines a rescue for a
 receipt logged and anchored before the declaration, and both verifier
 implementations evaluate that evidence; what is missing sits upstream of them. A
 verifier looks for it only once it has been given trusted log keys and an anchor
-policy, and nothing in the issuing path puts a receipt in a log — `attest log
-append` will take a receipt entry you build yourself, but no shipped command
-derives one from a receipt. So a receipt issued today carries nothing for the
-rescue to act on, and for now the declaration is final. Here's how:
+policy, and nothing in the issuing path puts a receipt in a log: neither `attest
+issue` nor the bridge writes one. What changed is that deriving the entry no
+longer means writing code — `attest log entry --type receipt` computes it from
+the signed envelope, always by rehashing the document rather than trusting a hash
+it declares, and `attest log append` takes it from there. So the rescue is
+reachable for a receipt whose issuer chose to log it, and unreachable for one
+issued and forgotten: what is missing is not a tool any more, it is the step
+being automatic. Here's how:
 
 ## What attest is
 
@@ -230,7 +234,7 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   negative controls that must falsify. Each theorem states its own scope in the
   theory file; nothing is claimed more broadly there than the prover checked, and
   a CI checker pins those statements so the claims cannot drift from the proofs.
-- **[Threat model](docs/spec/attest-threat-model.md).** 77 attacks catalogued
+- **[Threat model](docs/spec/attest-threat-model.md).** 78 attacks catalogued
   across the whole receipt lifecycle, each either mitigated or recorded as out of
   scope with a reason, a traceability matrix, and the protocol gaps the exercise
   found left tracked in the open instead of quietly fixed.

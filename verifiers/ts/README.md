@@ -6,8 +6,10 @@ store is gone. "Forever" holds against the store disappearing, not against a liv
 one of its own signing keys compromised: that declaration invalidates the receipts signed with
 that key. This verifier implements the v0.2 §19 rescue for a receipt proven logged and anchored
 before the declaration, but only when its caller supplies that evidence (`compromiseView` plus
-pinned headers); no shipped tool produces it yet and the browser and desktop verifiers pass none,
-so today the declaration is final. It works directly for DRM-free sellers. For closed platforms it
+pinned headers). Both halves of that now exist: `attest manifest compromise-view` produces the
+file, and the browser and desktop verifiers accept it as a drop alongside the receipt. What
+still decides the outcome is whether anyone logged and anchored the receipt before the
+declaration — for one issued and never logged, the declaration is still final. It works directly for DRM-free sellers. For closed platforms it
 is built as a format a legally required purchase confirmation could include or travel in — in the
 EU, Article 8(7) of the Consumer Rights Directive (2011/83/EU, 25 October 2011) — not as that
 confirmation itself: the law asks for nothing a machine can verify. This package is the verifier —
@@ -49,7 +51,7 @@ export function verify(
   revocationView?: JsonValue[] | null,
   disclosure?: Disclosure | null,
   maxRevocationRecords?: number,
-  options?: VerifyTransparencyOptions,   // { transparency?, logKeys?, anchorPolicy?, compromiseView? } — v0.2 Stage 2
+  options?: VerifyTransparencyOptions,   // v0.2 Stage 2+ evidence — see below
 ): VerificationResult
 
 export function isOk(r: VerificationResult): boolean // signature=valid && schema=valid && revocation!=='revoked' && errors.length===0
@@ -58,6 +60,14 @@ export function isOk(r: VerificationResult): boolean // signature=valid && schem
 `maxRevocationRecords` bounds the untrusted `revocationView` (default 10000); a view larger than the cap is not evaluated and fails closed (an `errors` entry, so `isOk()` is `false`) for a revocable receipt, or warns for an irrevocable one.
 
 `options` is how v0.2 Stage 2 evidence enters: `transparency` (the inclusion evidence accompanying the receipt), `logKeys` (the log keys you pin, in your own trust store — never taken from the bundle), and `anchorPolicy` (including the CRQC horizon). Omit it entirely and verification behaves exactly as before, offline and log-free; supply it and the result additionally carries `transparency` / `corroboration`, which never upgrade the `trust` verdict.
+
+The full set, all optional, all supplied by the caller and never read off the bundle:
+`transparency` (the inclusion evidence accompanying the receipt), `logKeys` (the log keys you
+pin), `anchorPolicy` (including the CRQC horizon), `witnessPolicy` (the trusted witness policy,
+without which `corroboration: "witnessed"` is unreachable), `revocationEvidence` (the evidence
+that one record in `revocationView` was logged and anchored before a refund-window deadline),
+`transferView`, `compromiseView`, `grantView` and `authorityView`. Omit the object entirely and
+verification behaves exactly as before, offline and log-free.
 
 `compromiseView` is the v0.2 §19 channel for key-manifest compromise declarations. Each claim is `{ manifest, evidence }`, where `manifest` is the issuer key manifest declaring the signing `kid` compromised and `evidence` is that manifest's transparency proof. Authenticated declarations make `compromised` absorbing even if the trusted manifest later re-lists the key as active; a Stage-2-capable verifier can still accept a receipt whose own `transparency` claim proves the receipt was anchored strictly before the earliest anchored compromise declaration. A declaration with no anchored time cannot invalidate an anchored receipt, and a receipt with no anchored receipt claim is not rescued.
 

@@ -35,9 +35,11 @@ database, or its uptime ever again.
 That is the bridge's promise, not the key's: a receipt survives the bridge disappearing, and
 it does not survive the merchant declaring the key that signed it compromised. The v0.2 §19
 rescue for a receipt logged and anchored before that declaration is specified and evaluated
-by the verifier cores, but the bridge does not log the receipts it issues: `attest log append`
-will take a receipt entry you build yourself, and no shipped command derives one from a
-receipt, so today that declaration is final for every receipt the bridge signs.
+by the verifier cores, but the bridge does not log the receipts it issues. Deriving the entry
+is no longer something you write code for — `attest log entry --type receipt` computes it and
+`attest log append` takes it from there — but nothing in the bridge invokes either, so a
+receipt it signs carries no such evidence unless an operator produces it afterwards. For one
+nobody logged, that declaration is final.
 
 Receipt email delivery is at-least-once. If the bridge crashes after SMTP has
 accepted a message but before the Ledger records it as delivered, its retry
