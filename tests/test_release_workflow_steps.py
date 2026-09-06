@@ -1100,3 +1100,677 @@ def test_the_install_step_leaves_no_temporary_files_behind(tmp_path: Path) -> No
     result = _run(str(_install_step()["run"]), tmp_path, env)
     assert result.returncode == 0, result.stdout + result.stderr
     assert list(tmp.iterdir()) == [], f"temporary files left behind: {list(tmp.iterdir())}"
+
+
+# --------------------------------------------------------------------------
+# Per-attempt registry preflight and recovery, using status-aware HTTP fixtures
+# --------------------------------------------------------------------------
+_REGISTRY_URLS = {
+    "pypi": (
+        "https://pypi.org/pypi/attest-receipts/9.9.9/json",
+        "https://pypi.org/simple/attest-receipts/",
+    ),
+    "npm": (
+        "https://registry.npmjs.org/attest-verifier/9.9.9",
+        "https://registry.npmjs.org/attest-verifier",
+    ),
+}
+
+
+def _stub_registry_http(tmp_path: Path, routes: dict[str, Any]) -> None:
+    """Mutable URL -> [status, body, curl exit] fixtures; log every request.
+
+    Each route can also be a list of responses, consumed in order and then
+    repeating the last one. Unlike _stub_registries, HTTP and transport failures
+    are independent, and -w, -o and the PEP 691 Accept header are observable.
+    """
+    (tmp_path / "http-routes.json").write_text(json.dumps(routes), encoding="utf-8")
+    _stub_bin(
+        tmp_path / "stubs",
+        "curl",
+        "exec /usr/bin/python3 - \"$@\" <<'HTTP_STUB'\n"
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        f"root = Path({str(tmp_path)!r})\n"
+        "args = sys.argv[1:]\n"
+        "url = next(arg for arg in args if arg.startswith('https://'))\n"
+        "log = root / 'http-calls.jsonl'\n"
+        "lines = log.read_text().splitlines() if log.exists() else []\n"
+        "previous = [json.loads(line) for line in lines]\n"
+        "with log.open('a') as output: output.write(json.dumps(args) + '\\n')\n"
+        "routes = json.loads((root / 'http-routes.json').read_text())\n"
+        "if url not in routes: raise SystemExit(97)\n"
+        "response = routes[url]\n"
+        "if isinstance(response[0], list):\n"
+        "    count = sum(url in call for call in previous)\n"
+        "    response = response[min(count, len(response) - 1)]\n"
+        "status, body, code = response\n"
+        "body_text = body if isinstance(body, str) else json.dumps(body)\n"
+        "Path(args[args.index('-o') + 1]).write_text(body_text)\n"
+        "if '-w' in args:\n"
+        "    assert args[args.index('-w') + 1] == '%{http_code}'\n"
+        "    print(status, end='')\n"
+        "raise SystemExit(code)\n"
+        "HTTP_STUB",
+    )
+
+
+def _publish_seed(tmp_path: Path, job: str) -> dict[str, Any]:
+    _seed_identity(tmp_path)
+    if job == "npm":
+        (tmp_path / "artifacts").rename(tmp_path / "dist-and-sboms")
+    else:
+        for item in (tmp_path / "artifacts").iterdir():
+            item.rename(tmp_path / item.name)
+    primary = json.loads((tmp_path / f"{job}.json").read_text())
+    secondary = (
+        {
+            "files": [
+                {"filename": row["filename"], "hashes": row["digests"]} for row in primary["urls"]
+            ]
+        }
+        if job == "pypi"
+        else {"versions": {"9.9.9": primary}}
+    )
+    return dict(zip(_REGISTRY_URLS[job], ([200, primary, 0], [200, secondary, 0]), strict=True))
+
+
+def _publish_step(job: str, phase: str = "preflight") -> dict[str, Any]:
+    return _step(job, "Preflight" if phase == "preflight" else "serves the bytes this run gated")
+
+
+def _publish_run(
+    tmp_path: Path,
+    job: str,
+    phase: str = "preflight",
+    *,
+    prior: str = "absent",
+    attempts: str = "1",
+    extra: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    step = _publish_step(job, phase)
+    output = tmp_path / "step-output"
+    output.write_text("", encoding="utf-8")
+    env = {str(key): str(value) for key, value in step["env"].items()}
+    env.update(_registry_env(tmp_path))
+    env.update(GITHUB_OUTPUT=str(output), REGISTRY_ATTEMPTS=attempts, PREFLIGHT_RESULT=prior)
+    env.update(extra or {})
+    return _run(str(step["run"]), tmp_path, env)
+
+
+def _publish_state(tmp_path: Path, expected: str) -> None:
+    assert (tmp_path / "step-output").read_text() == f"state={expected}\n"
+
+
+def _publish_refused(tmp_path: Path, result: subprocess.CompletedProcess[str]) -> None:
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "cannot determine" in result.stdout
+    assert (tmp_path / "step-output").read_text() == ""
+
+
+def test_publish_sequential_dag_and_same_artifact() -> None:
+    jobs = _workflow()["jobs"]
+    assert "registries" not in jobs
+    assert jobs["pypi"]["needs"] == ["build", "desktop"]
+    assert jobs["npm"]["needs"] == ["build", "desktop", "pypi"]
+    assert jobs["github-release"]["needs"] == ["pypi", "npm", "desktop"]
+    for job in ("pypi", "npm", "github-release"):
+        assert any(
+            "download-artifact@" in step.get("uses", "")
+            and step.get("with", {}).get("name") == "dist-and-sboms"
+            for step in jobs[job]["steps"]
+        )
+    for job, definition in jobs.items():
+        assert not re.search(r"needs\..*?\.outputs", json.dumps(definition))
+        for step in definition["steps"]:
+            text = json.dumps(step)
+            assert not re.search(r"needs\..*?\.outputs", text)
+            if "outputs" in text:
+                assert job in {"pypi", "npm"}
+                assert re.findall(r"[\w.]+\.outputs\.[\w]+", text) == [
+                    "steps.preflight.outputs.state"
+                ]
+            if job in {"build", "desktop"}:
+                assert "pypi.org" not in text and "registry.npmjs.org" not in text
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+def test_publish_preflight_is_between_local_verification_and_publish(job: str) -> None:
+    steps = _workflow()["jobs"][job]["steps"]
+    checks = [i for i, step in enumerate(steps) if step.get("id") == "preflight"]
+    assert len(checks) == 1
+    preflight = checks[0]
+    publish = next(
+        i
+        for i, step in enumerate(steps)
+        if "pypi-publish@" in step.get("uses", "") or "npm publish" in step.get("run", "")
+    )
+    local = next(
+        i
+        for i, step in enumerate(steps)
+        if "sha256sum -c gated-artifacts.sha256" in step.get("run", "")
+    )
+    post = steps.index(_publish_step(job, "verify"))
+    assert local < preflight < publish < post
+    assert "if" not in steps[preflight] and "if" not in steps[post]
+    script = steps[preflight]["run"]
+    own, other = (
+        ("pypi.org", "registry.npmjs.org") if job == "pypi" else ("registry.npmjs.org", "pypi.org")
+    )
+    assert own in script and other not in script
+    assert "https://pypi.org/pypi/attest-receipts/json" not in script
+    if job == "npm":
+        assert steps[publish]["if"] == "steps.preflight.outputs.state == 'absent'"
+    else:
+        assert steps[publish]["with"]["skip-existing"] is True
+    for phase in ("preflight", "verify"):
+        env = _publish_step(job, phase)["env"]
+        assert env["REGISTRY_ATTEMPTS"] == "10"
+        assert env["REGISTRY_RETRY_SECONDS"] == "15"
+        assert env["REGISTRY_PHASE"] == phase
+    assert steps[post]["env"]["PREFLIGHT_RESULT"] == "${{ steps.preflight.outputs.state }}"
+
+
+# GitHub applies an implicit `success()` to every step `if:`, and a step that
+# fails fails its job -- the two facts the sequence above rests on. Both have an
+# off switch (`continue-on-error`, a status-check function in the condition), and
+# neither switch is spelled anywhere else in this file.
+_STATUS_CHECK_FUNCTIONS = ("always(", "failure(", "cancelled(", "success(")
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+def test_publish_gates_can_actually_fail_their_job(job: str) -> None:
+    """Order and `if:` are not the whole guarantee: a gate that cannot fail its
+    job cannot refuse anything.
+
+    `continue-on-error: true` "prevents a job from failing when a step fails",
+    and a status-check function in an `if:` overrides the implicit `success()`
+    GitHub applies to step conditions. Either one, added to the preflight, the
+    publish or the post-publish proof, leaves every other test in this file green
+    while the release stops being gated: `if: always()` on the publish uploads
+    the bytes a refusing preflight just rejected, and a job-level `if:` runs npm
+    after a pypi that failed.
+    """
+    definition = _workflow()["jobs"][job]
+    assert "if" not in definition, (
+        f"a job-level if: on {job} overrides `needs`, so it would run after a failed dependency"
+    )
+    assert not definition.get("continue-on-error"), f"{job} could fail without failing the run"
+    steps = definition["steps"]
+    preflight = _publish_step(job, "preflight")
+    post = _publish_step(job, "verify")
+    publish = next(
+        step
+        for step in steps
+        if "pypi-publish@" in step.get("uses", "") or "npm publish" in step.get("run", "")
+    )
+    for step in (preflight, publish, post):
+        assert not step.get("continue-on-error"), (
+            f"{step.get('name') or step.get('uses')} could fail without failing {job}, "
+            "which is the same as not being there"
+        )
+    assert "if" not in preflight and "if" not in post
+    condition = str(publish.get("if", ""))
+    assert not any(function in condition for function in _STATUS_CHECK_FUNCTIONS), (
+        f"{job}'s publish condition {condition!r} overrides the implicit success() check: "
+        "a preflight that exited 1 would no longer stop the publish"
+    )
+    if job == "pypi":
+        assert "if" not in publish
+
+
+@pytest.mark.parametrize("phase", ["preflight", "verify"])
+@pytest.mark.parametrize("other", ["identical", "absent"])
+@pytest.mark.parametrize("diverging", [0, 1])
+def test_publish_refuses_divergence_on_either_gated_file(
+    tmp_path: Path, diverging: int, other: str, phase: str
+) -> None:
+    """Divergence is a property of the SET of gated files, not of the first one.
+
+    Every other divergence case here rewrites `urls[0]`/`files[0]`, which is
+    always the wheel: a check that stopped after one file would keep them all
+    green. This is also the `partial` question -- PyPI serving one of the two
+    files with other bytes must stop the upload of the one it does not serve,
+    because the pinned publisher hands twine both files in a single
+    `--skip-existing` invocation and cannot be told to upload just one.
+    """
+    routes = _publish_seed(tmp_path, "pypi")
+    primary, secondary = _REGISTRY_URLS["pypi"]
+    wrong = "1" * 64
+    names = [row["filename"] for row in routes[primary][1]["urls"]]
+    routes[primary][1]["urls"][diverging]["digests"] = {"sha256": wrong}
+    routes[secondary][1]["files"][diverging]["hashes"] = {"sha256": wrong}
+    if other == "absent":
+        routes[primary][1]["urls"].pop(1 - diverging)
+        routes[secondary][1]["files"].pop(1 - diverging)
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, "pypi", phase)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert names[diverging] in result.stdout
+    assert wrong in result.stdout
+    assert "burned" in result.stdout
+    assert (tmp_path / "step-output").read_text() == ""
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("surface", [0, 1])
+@pytest.mark.parametrize("status", ["", "000", 301, 403, 429, 500, 502, 504])
+def test_publish_reads_nothing_but_200_and_404_as_an_answer(
+    tmp_path: Path, job: str, surface: int, status: Any
+) -> None:
+    """503 is one example; the property is that 200 and 404 are the only answers.
+
+    A redirect that lands somewhere else, a rate limit, a WAF page, or a curl
+    that printed no status at all must read as unknown. `absent` authorizes an
+    irreversible act, so it is the one conclusion an unreadable answer may never
+    produce.
+    """
+    routes = _publish_seed(tmp_path, job)
+    url = _REGISTRY_URLS[job][surface]
+    routes[url] = [status, routes[url][1], 0]
+    _stub_registry_http(tmp_path, routes)
+    _publish_refused(tmp_path, _publish_run(tmp_path, job))
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("absent", [False, True])
+def test_publish_preflight_absent_or_identical(tmp_path: Path, job: str, absent: bool) -> None:
+    routes = _publish_seed(tmp_path, job)
+    if absent:
+        routes = {url: [404, "not found", 0] for url in routes}
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job)
+    assert result.returncode == 0, result.stdout + result.stderr
+    _publish_state(tmp_path, "absent" if absent else "identical")
+    calls = [json.loads(line) for line in (tmp_path / "http-calls.jsonl").read_text().splitlines()]
+    assert [call[-1] for call in calls] == list(_REGISTRY_URLS[job])
+    if job == "pypi":
+        assert "Accept: application/vnd.pypi.simple.v1+json" in calls[1]
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("primary_missing", [False, True])
+@pytest.mark.parametrize("divergent", [False, True])
+def test_publish_present_wins_and_divergence_burns_version(
+    tmp_path: Path, job: str, primary_missing: bool, divergent: bool
+) -> None:
+    routes = _publish_seed(tmp_path, job)
+    primary, secondary = _REGISTRY_URLS[job]
+    if job == "pypi":
+        name = "attest_receipts-9.9.9-py3-none-any.whl"
+        want = hashlib.sha256(b"W").hexdigest()
+        wrong = "0" * 64
+        if divergent:
+            routes[secondary][1]["files"][0]["hashes"] = {"sha256": wrong}
+            if not primary_missing:
+                routes[primary][1]["urls"][0]["digests"] = {"sha256": wrong}
+    else:
+        name = "attest-verifier-9.9.9.tgz"
+        want = "sha512-" + base64.b64encode(hashlib.sha512(b"T").digest()).decode()
+        wrong = "sha512-AAAA"
+        if divergent:
+            routes[secondary][1]["versions"]["9.9.9"]["dist"]["integrity"] = wrong
+    if primary_missing:
+        routes[primary] = [404, "not found", 0]
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job)
+    if divergent:
+        assert result.returncode == 1
+        assert all(
+            part in result.stdout
+            for part in (name, want, wrong, "burned", "Do not move the tag", "next patch")
+        )
+        assert (tmp_path / "step-output").read_text() == ""
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        _publish_state(tmp_path, "identical")
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("surface", [0, 1])
+@pytest.mark.parametrize("failure", [[503, "unavailable", 0], [200, {}, 7], [200, "{", 0]])
+def test_publish_http_transport_and_json_fail_closed_with_retries(
+    tmp_path: Path, job: str, surface: int, failure: list[Any]
+) -> None:
+    routes = _publish_seed(tmp_path, job)
+    url = _REGISTRY_URLS[job][surface]
+    routes[url] = failure
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job, attempts="3")
+    _publish_refused(tmp_path, result)
+    calls = [json.loads(line) for line in (tmp_path / "http-calls.jsonl").read_text().splitlines()]
+    assert sum(url in call for call in calls) == 3
+    assert "attempt 3/3" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("job", "surface", "body"),
+    [
+        ("pypi", 0, {}),
+        ("pypi", 0, {"urls": {}}),
+        ("pypi", 0, {"urls": [{"filename": "wheel"}]}),
+        ("pypi", 0, {"urls": [{"filename": "wheel", "digests": {"sha256": 7}}]}),
+        ("pypi", 0, {"urls": [{"filename": "wheel", "digests": {"sha256": "x" * 64}}]}),
+        ("pypi", 0, {"urls": [None]}),
+        ("pypi", 1, {}),
+        ("pypi", 1, {"files": "files"}),
+        ("pypi", 1, {"files": [{"filename": "wheel", "hashes": {}}]}),
+        ("npm", 0, {"version": "9.9.8", "dist": {"integrity": "sha512-AAAA"}}),
+        ("npm", 0, {"version": "9.9.9", "dist": {"integrity": 7}}),
+        ("npm", 0, {"version": "9.9.9", "dist": {"integrity": ""}}),
+        ("npm", 0, {"version": "9.9.9"}),
+        ("npm", 1, {}),
+        ("npm", 1, {"versions": []}),
+        ("npm", 1, {"versions": {"9.9.9": None}}),
+        ("npm", 1, {"versions": {"9.9.9": {"version": "9.9.8"}}}),
+        ("npm", 1, {"versions": {"9.9.9": {"version": "9.9.9", "dist": {"integrity": []}}}}),
+        ("pypi", 0, []),
+        ("npm", 0, None),
+    ],
+)
+def test_publish_malformed_shapes_cannot_authorize_publish(
+    tmp_path: Path, job: str, surface: int, body: Any
+) -> None:
+    routes = _publish_seed(tmp_path, job)
+    routes[_REGISTRY_URLS[job][surface]] = [200, body, 0]
+    _stub_registry_http(tmp_path, routes)
+    _publish_refused(tmp_path, _publish_run(tmp_path, job))
+
+
+@pytest.mark.parametrize("surface", [0, 1])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_publish_conflicting_duplicate_filenames_cannot_hide_behind_order(
+    tmp_path: Path, surface: int, reverse: bool
+) -> None:
+    routes = _publish_seed(tmp_path, "pypi")
+    rows = routes[_REGISTRY_URLS["pypi"][surface]][1]["urls" if surface == 0 else "files"]
+    duplicate = json.loads(json.dumps(rows[0]))
+    duplicate["digests" if surface == 0 else "hashes"]["sha256"] = "0" * 64
+    rows.insert(0 if reverse else len(rows), duplicate)
+    _stub_registry_http(tmp_path, routes)
+    _publish_refused(tmp_path, _publish_run(tmp_path, "pypi"))
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("phase", ["preflight", "verify"])
+def test_publish_manifest_failure_precedes_any_network(
+    tmp_path: Path, job: str, phase: str
+) -> None:
+    routes = _publish_seed(tmp_path, job)
+    root = tmp_path if job == "pypi" else tmp_path / "dist-and-sboms"
+    manifest = root / "gated-artifacts.sha256"
+    manifest.write_text("0" * 64 + manifest.read_text()[64:], encoding="utf-8")
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job, phase)
+    assert result.returncode != 0
+    assert not (tmp_path / "http-calls.jsonl").exists()
+    assert (tmp_path / "step-output").read_text() == ""
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+def test_publish_preflight_ignores_ambient_states(tmp_path: Path, job: str) -> None:
+    _stub_registry_http(tmp_path, _publish_seed(tmp_path, job))
+    result = _publish_run(
+        tmp_path,
+        job,
+        extra={
+            key: "absent"
+            for key in ("PYPI_STATE", "NPM_STATE", "REGISTRY_STATE", "STATE", "PREFLIGHT_STATE")
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    _publish_state(tmp_path, "identical")
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("outcome", ["identical", "absent", "divergent", "partial"])
+def test_publish_post_publish_proves_bytes(tmp_path: Path, job: str, outcome: str) -> None:
+    routes = _publish_seed(tmp_path, job)
+    if outcome == "absent" or (job == "npm" and outcome == "partial"):
+        routes = {url: [404, "not found", 0] for url in routes}
+    elif outcome == "partial":
+        routes[_REGISTRY_URLS[job][0]][1]["urls"].pop(0)
+        routes[_REGISTRY_URLS[job][1]][1]["files"].pop(0)
+    elif outcome == "divergent":
+        if job == "pypi":
+            routes[_REGISTRY_URLS[job][0]][1]["urls"][0]["digests"] = {"sha256": "0" * 64}
+        else:
+            routes[_REGISTRY_URLS[job][0]][1]["dist"]["integrity"] = "sha512-AAAA"
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job, "verify", prior="identical", attempts="2")
+    if outcome == "identical":
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "serves the bytes this run gated" in result.stdout
+        assert "resumed, not republished" in result.stdout
+    else:
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert ("this run gated" if outcome == "divergent" else "does not serve") in result.stdout
+        if outcome == "divergent":
+            want = (
+                hashlib.sha256(b"W").hexdigest()
+                if job == "pypi"
+                else "sha512-" + base64.b64encode(hashlib.sha512(b"T").digest()).decode()
+            )
+            assert want in result.stdout
+            assert ("0" * 64 if job == "pypi" else "sha512-AAAA") in result.stdout
+    assert (tmp_path / "step-output").read_text() == ""
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+def test_publish_resume_after_successful_publish_and_failed_verification(
+    tmp_path: Path, job: str
+) -> None:
+    healthy = _publish_seed(tmp_path, job)
+    _stub_registry_http(tmp_path, {url: [404, "not found", 0] for url in healthy})
+    first = _publish_run(tmp_path, job)
+    assert first.returncode == 0
+    _publish_state(tmp_path, "absent")
+    # The publish succeeds; a later, independent read hits an outage.
+    _stub_registry_http(tmp_path, healthy)
+    published = json.loads((tmp_path / "http-routes.json").read_text())
+    _stub_registry_http(tmp_path, {url: [503, "outage", 0] for url in healthy})
+    _publish_refused(tmp_path, _publish_run(tmp_path, job, "verify", attempts="2"))
+    _stub_registry_http(tmp_path, published)
+    # Fresh GITHUB_OUTPUT, unchanged gated artifact, deliberately stale ambient state.
+    second = _publish_run(tmp_path, job, extra={f"{job.upper()}_STATE": "absent"})
+    assert second.returncode == 0, second.stdout + second.stderr
+    _publish_state(tmp_path, "identical")
+    if job == "npm":
+        _stub_bin(tmp_path / "stubs", "npm", "echo duplicate-publish >> duplicate-call; exit 1")
+        condition = _step("npm", "Publish with provenance")["if"]
+        assert condition == "steps.preflight.outputs.state == 'absent'"
+        state = (tmp_path / "step-output").read_text().strip().split("=")[1]
+        if state == "absent":
+            result = _run(_npm_script(), tmp_path, _registry_env(tmp_path))
+            assert result.returncode == 0, result.stdout + result.stderr
+        assert not (tmp_path / "duplicate-call").exists()
+    final = _publish_run(tmp_path, job, "verify", prior="identical")
+    assert final.returncode == 0, final.stdout + final.stderr
+    assert "resumed, not republished" in final.stdout
+
+
+def test_publish_resume_partial_pypi_upload(tmp_path: Path) -> None:
+    healthy = _publish_seed(tmp_path, "pypi")
+    partial = json.loads(json.dumps(healthy))
+    partial[_REGISTRY_URLS["pypi"][0]][1]["urls"].pop(0)
+    partial[_REGISTRY_URLS["pypi"][1]][1]["files"].pop(0)
+    _stub_registry_http(tmp_path, {url: [404, "not found", 0] for url in healthy})
+    assert _publish_run(tmp_path, "pypi").returncode == 0
+    _publish_state(tmp_path, "absent")
+    # First publish was interrupted after the sdist. The next attempt sees it.
+    _stub_registry_http(tmp_path, partial)
+    result = _publish_run(tmp_path, "pypi")
+    assert result.returncode == 0, result.stdout + result.stderr
+    _publish_state(tmp_path, "partial")
+    publish = next(
+        step
+        for step in _workflow()["jobs"]["pypi"]["steps"]
+        if "pypi-publish@" in step.get("uses", "")
+    )
+    assert publish["with"]["skip-existing"] is True
+    # Model the pinned publisher's `twine upload --skip-existing dist/*` contract.
+    # This is not execution of the external Docker action or its OIDC exchange.
+    _stub_bin(
+        tmp_path / "stubs",
+        "twine",
+        'test "$1" = upload && test "$2" = --skip-existing || exit 1\n'
+        "shift 2\n"
+        'for file in "$@"; do\n'
+        '  case "$file" in\n'
+        '    *.tar.gz) echo "$file" >> skipped ;;\n'
+        '    *.whl) echo "$file" >> uploaded ;;\n'
+        "    *) exit 1 ;;\n"
+        "  esac\n"
+        "done",
+    )
+    uploaded = _run("twine upload --skip-existing dist/*", tmp_path, _registry_env(tmp_path))
+    assert uploaded.returncode == 0
+    assert (tmp_path / "uploaded").read_text() == "dist/attest_receipts-9.9.9-py3-none-any.whl\n"
+    assert (tmp_path / "skipped").read_text() == "dist/attest_receipts-9.9.9.tar.gz\n"
+    _stub_registry_http(tmp_path, healthy)
+    assert _publish_run(tmp_path, "pypi", "verify", prior="partial").returncode == 0
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+def test_publish_transient_read_failure_recovers_within_budget(tmp_path: Path, job: str) -> None:
+    routes = _publish_seed(tmp_path, job)
+    url = _REGISTRY_URLS[job][0]
+    routes[url] = [[503, "outage", 0], routes[url]]
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job, attempts="2")
+    assert result.returncode == 0, result.stdout + result.stderr
+    _publish_state(tmp_path, "identical")
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("missing_surface", [0, 1])
+def test_publish_present_wins_over_a_200_omission_or_a_404(
+    tmp_path: Path, job: str, missing_surface: int
+) -> None:
+    routes = _publish_seed(tmp_path, job)
+    if missing_surface == 0:
+        body = {"urls": []} if job == "pypi" else None
+        routes[_REGISTRY_URLS[job][0]] = [200, body, 0] if job == "pypi" else [404, "", 0]
+    else:
+        routes[_REGISTRY_URLS[job][1]] = [
+            200,
+            {"files": []} if job == "pypi" else {"versions": {}},
+            0,
+        ]
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job)
+    assert result.returncode == 0, result.stdout + result.stderr
+    _publish_state(tmp_path, "identical")
+
+
+@pytest.mark.parametrize("surface", [0, 1])
+def test_publish_npm_wrong_version_is_rejected_even_with_identical_integrity(
+    tmp_path: Path, surface: int
+) -> None:
+    routes = _publish_seed(tmp_path, "npm")
+    routes = json.loads(json.dumps(routes))
+    body = routes[_REGISTRY_URLS["npm"][surface]][1]
+    document = body if surface == 0 else body["versions"]["9.9.9"]
+    document["version"] = "9.9.8"
+    _stub_registry_http(tmp_path, routes)
+    _publish_refused(tmp_path, _publish_run(tmp_path, "npm"))
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("surface", [0, 1])
+def test_publish_a_divergent_surface_cannot_be_overruled_by_an_identical_one(
+    tmp_path: Path, job: str, surface: int
+) -> None:
+    routes = json.loads(json.dumps(_publish_seed(tmp_path, job)))
+    body = routes[_REGISTRY_URLS[job][surface]][1]
+    if job == "pypi":
+        body["urls" if surface == 0 else "files"][0]["digests" if surface == 0 else "hashes"][
+            "sha256"
+        ] = "0" * 64
+    else:
+        document = body if surface == 0 else body["versions"]["9.9.9"]
+        document["dist"]["integrity"] = "sha512-AAAA"
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "burned" in result.stdout
+    assert (tmp_path / "step-output").read_text() == ""
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("phase", ["preflight", "verify"])
+@pytest.mark.parametrize("failure", ["missing", "stale", "extra"])
+def test_publish_registry_checks_require_this_tags_complete_local_files(
+    tmp_path: Path, job: str, phase: str, failure: str
+) -> None:
+    routes = _publish_seed(tmp_path, job)
+    root = tmp_path if job == "pypi" else tmp_path / "dist-and-sboms"
+    target = root / (
+        "dist/attest_receipts-9.9.9-py3-none-any.whl"
+        if job == "pypi"
+        else "attest-verifier-9.9.9.tgz"
+    )
+    if failure == "missing":
+        target.unlink()
+    elif failure == "stale":
+        target.rename(target.with_name(target.name.replace("9.9.9", "9.9.8")))
+    else:
+        target.with_name(target.name.replace("9.9.9", "9.9.8")).write_bytes(b"old")
+    # Valid checksums for the wrong shape must still fail before any network call.
+    files = sorted((root / "dist").iterdir()) if job == "pypi" else sorted(root.glob("*.tgz"))
+    (root / "gated-artifacts.sha256").write_text(
+        "".join(
+            f"{hashlib.sha256(file.read_bytes()).hexdigest()}  {file.relative_to(root)}\n"
+            for file in files
+        ),
+        encoding="utf-8",
+    )
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job, phase)
+    assert result.returncode != 0
+    assert not (tmp_path / "http-calls.jsonl").exists()
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("phase", ["preflight", "verify"])
+@pytest.mark.parametrize("attempts,delay", [("0", "0"), ("-1", "0"), ("1", "-1")])
+def test_publish_invalid_retry_budget_cannot_authorize_publication(
+    tmp_path: Path, job: str, phase: str, attempts: str, delay: str
+) -> None:
+    _stub_registry_http(tmp_path, _publish_seed(tmp_path, job))
+    result = _publish_run(
+        tmp_path, job, phase, attempts=attempts, extra={"REGISTRY_RETRY_SECONDS": delay}
+    )
+    assert result.returncode != 0
+    assert "cannot determine: invalid retry budget" in result.stdout + result.stderr
+    assert not (tmp_path / "http-calls.jsonl").exists()
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+def test_publish_invalid_phase_cannot_authorize_publication(tmp_path: Path, job: str) -> None:
+    _stub_registry_http(tmp_path, _publish_seed(tmp_path, job))
+    result = _publish_run(tmp_path, job, extra={"REGISTRY_PHASE": "absent"})
+    assert result.returncode != 0
+    assert "cannot determine: invalid registry phase" in result.stdout + result.stderr
+    assert not (tmp_path / "http-calls.jsonl").exists()
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+def test_publish_json_scalar_is_not_a_registry_document(tmp_path: Path, job: str) -> None:
+    routes = _publish_seed(tmp_path, job)
+    routes[_REGISTRY_URLS[job][0]] = [200, None, 0]
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, job)
+    _publish_refused(tmp_path, result)
+    assert "expected a JSON object" in result.stdout
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("surface", [0, 1])
+def test_publish_transport_error_with_a_valid_body_is_still_unknown(
+    tmp_path: Path, job: str, surface: int
+) -> None:
+    routes = _publish_seed(tmp_path, job)
+    routes[_REGISTRY_URLS[job][surface]][2] = 7
+    _stub_registry_http(tmp_path, routes)
+    _publish_refused(tmp_path, _publish_run(tmp_path, job))

@@ -4,6 +4,13 @@ All notable changes to `attest-receipts` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Release retries reuse gated artifacts, check registry byte identity before each
+  publish, and verify PyPI before npm; identical npm versions skip publication.
+
 ## [0.9.3] — 2026-09-06
 
 ### Fixed
