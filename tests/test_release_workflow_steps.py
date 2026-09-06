@@ -1271,6 +1271,107 @@ def test_publish_preflight_is_between_local_verification_and_publish(job: str) -
     assert steps[post]["env"]["PREFLIGHT_RESULT"] == "${{ steps.preflight.outputs.state }}"
 
 
+# GitHub applies an implicit `success()` to every step `if:`, and a step that
+# fails fails its job -- the two facts the sequence above rests on. Both have an
+# off switch (`continue-on-error`, a status-check function in the condition), and
+# neither switch is spelled anywhere else in this file.
+_STATUS_CHECK_FUNCTIONS = ("always(", "failure(", "cancelled(", "success(")
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+def test_publish_gates_can_actually_fail_their_job(job: str) -> None:
+    """Order and `if:` are not the whole guarantee: a gate that cannot fail its
+    job cannot refuse anything.
+
+    `continue-on-error: true` "prevents a job from failing when a step fails",
+    and a status-check function in an `if:` overrides the implicit `success()`
+    GitHub applies to step conditions. Either one, added to the preflight, the
+    publish or the post-publish proof, leaves every other test in this file green
+    while the release stops being gated: `if: always()` on the publish uploads
+    the bytes a refusing preflight just rejected, and a job-level `if:` runs npm
+    after a pypi that failed.
+    """
+    definition = _workflow()["jobs"][job]
+    assert "if" not in definition, (
+        f"a job-level if: on {job} overrides `needs`, so it would run after a failed dependency"
+    )
+    assert not definition.get("continue-on-error"), f"{job} could fail without failing the run"
+    steps = definition["steps"]
+    preflight = _publish_step(job, "preflight")
+    post = _publish_step(job, "verify")
+    publish = next(
+        step
+        for step in steps
+        if "pypi-publish@" in step.get("uses", "") or "npm publish" in step.get("run", "")
+    )
+    for step in (preflight, publish, post):
+        assert not step.get("continue-on-error"), (
+            f"{step.get('name') or step.get('uses')} could fail without failing {job}, "
+            "which is the same as not being there"
+        )
+    assert "if" not in preflight and "if" not in post
+    condition = str(publish.get("if", ""))
+    assert not any(function in condition for function in _STATUS_CHECK_FUNCTIONS), (
+        f"{job}'s publish condition {condition!r} overrides the implicit success() check: "
+        "a preflight that exited 1 would no longer stop the publish"
+    )
+    if job == "pypi":
+        assert "if" not in publish
+
+
+@pytest.mark.parametrize("phase", ["preflight", "verify"])
+@pytest.mark.parametrize("other", ["identical", "absent"])
+@pytest.mark.parametrize("diverging", [0, 1])
+def test_publish_refuses_divergence_on_either_gated_file(
+    tmp_path: Path, diverging: int, other: str, phase: str
+) -> None:
+    """Divergence is a property of the SET of gated files, not of the first one.
+
+    Every other divergence case here rewrites `urls[0]`/`files[0]`, which is
+    always the wheel: a check that stopped after one file would keep them all
+    green. This is also the `partial` question -- PyPI serving one of the two
+    files with other bytes must stop the upload of the one it does not serve,
+    because the pinned publisher hands twine both files in a single
+    `--skip-existing` invocation and cannot be told to upload just one.
+    """
+    routes = _publish_seed(tmp_path, "pypi")
+    primary, secondary = _REGISTRY_URLS["pypi"]
+    wrong = "1" * 64
+    names = [row["filename"] for row in routes[primary][1]["urls"]]
+    routes[primary][1]["urls"][diverging]["digests"] = {"sha256": wrong}
+    routes[secondary][1]["files"][diverging]["hashes"] = {"sha256": wrong}
+    if other == "absent":
+        routes[primary][1]["urls"].pop(1 - diverging)
+        routes[secondary][1]["files"].pop(1 - diverging)
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, "pypi", phase)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert names[diverging] in result.stdout
+    assert wrong in result.stdout
+    assert "burned" in result.stdout
+    assert (tmp_path / "step-output").read_text() == ""
+
+
+@pytest.mark.parametrize("job", ["pypi", "npm"])
+@pytest.mark.parametrize("surface", [0, 1])
+@pytest.mark.parametrize("status", ["", "000", 301, 403, 429, 500, 502, 504])
+def test_publish_reads_nothing_but_200_and_404_as_an_answer(
+    tmp_path: Path, job: str, surface: int, status: Any
+) -> None:
+    """503 is one example; the property is that 200 and 404 are the only answers.
+
+    A redirect that lands somewhere else, a rate limit, a WAF page, or a curl
+    that printed no status at all must read as unknown. `absent` authorizes an
+    irreversible act, so it is the one conclusion an unreadable answer may never
+    produce.
+    """
+    routes = _publish_seed(tmp_path, job)
+    url = _REGISTRY_URLS[job][surface]
+    routes[url] = [status, routes[url][1], 0]
+    _stub_registry_http(tmp_path, routes)
+    _publish_refused(tmp_path, _publish_run(tmp_path, job))
+
+
 @pytest.mark.parametrize("job", ["pypi", "npm"])
 @pytest.mark.parametrize("absent", [False, True])
 def test_publish_preflight_absent_or_identical(tmp_path: Path, job: str, absent: bool) -> None:

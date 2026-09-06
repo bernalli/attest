@@ -233,9 +233,10 @@ jobs:
           test "${#missing[@]}" -eq 0 \
             || { echo "the artifact would leave this job without: ${missing[*]}"; exit 1; }
           # The verifier tarball's VERSION is otherwise bound only in the npm
-          # job -- which runs CONCURRENTLY with the irreversible PyPI publish,
-          # so a refusal there arrives after PyPI has the release. This job is
-          # the last one that runs before anything is published: bind it here.
+          # job -- which now runs after `pypi`, so a refusal there arrives after
+          # PyPI has the release even though the two are no longer concurrent.
+          # This job is the last one that runs before anything is published:
+          # bind it here.
           # The count matters too, because the checksum line below globs.
           verifiers=(attest-verifier-*.tgz)
           test "${#verifiers[@]}" -eq 1 \
@@ -251,8 +252,8 @@ jobs:
           shipped=(dist/*)
           test "${#shipped[@]}" -eq 2 \
             || { echo "dist/ must hold only the wheel and the sdist before the manifest is written, found ${#shipped[@]}: ${shipped[*]}"; exit 1; }
-          # Bind both Python filenames here too: a later PyPI refusal cannot
-          # stop the concurrent npm job from publishing its half of the release.
+          # Bind both Python filenames here too: `pypi` runs before `npm`, so a
+          # refusal there stops npm -- but not a PyPI upload this job authorized.
           sdist="dist/attest_receipts-${VERSION}.tar.gz"
           wheels=(dist/attest_receipts-"${VERSION}"-*.whl)
           test -f "$sdist" && test "${#wheels[@]}" -eq 1 && test -f "${wheels[0]}" \
