@@ -194,10 +194,14 @@ def test_select_subset_v01_is_exactly_61_leaves_of_the_real_corpus() -> None:
     # 44-manifest-duplicate-kid (3 leaves) and 45-revocation-anchor-status (2),
     # both v0.1 conformance; 58 before the publisher-claim floor (2026-08-26,
     # v0.1 rev 11) added group 42-publisher-claim (3 leaves), also v0.1
-    # conformance.
+    # conformance; 63 before the parity fix (2026-09-05) added
+    # `23-revocation-refund-window/c-window-end-unrepresentable` (group 23,
+    # <= V01_MAX_GROUP) and
+    # `45-revocation-anchor-status/c-malformed-receipt-id-unknown-status`
+    # (V01_EXTRA_GROUPS), one leaf each, both v0.1 conformance.
     leaves = cr.find_leaf_dirs(REAL_VECTORS)
     subset = cr.select_subset(leaves, REAL_VECTORS, "v0.1")
-    assert len(subset) == 63
+    assert len(subset) == 65
 
 
 def test_select_subset_v02_is_the_full_real_corpus() -> None:

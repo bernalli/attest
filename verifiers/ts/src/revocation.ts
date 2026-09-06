@@ -6,7 +6,8 @@ import {
   MAX_ADMISSION_NODES, VIEW_ARRAY_ELEMENT_NESTING, VIEW_MEMBER_ABSENT, VIEW_MEMBER_COLLAPSED,
 } from './canon.js'
 import { verifyKeyManifest, manifestSignatureIsAuthentic, findKey, verifySignatureBlock } from './manifests.js'
-import { parseStrictUtc, parseIsoLenient, validStage3UtcTimestamp } from './dates.js'
+import { parseStrictUtc, parseIsoLenient, validStage3UtcTimestamp, MAX_REPRESENTABLE_UNIX_SECONDS } from './dates.js'
+import { RECEIPT_ID_RE } from './ids.js'
 import { LogKey, encodeEntry, TlogError } from './tlog.js'
 import { AnchorPolicy, validatePolicy } from './anchor.js'
 import { evaluateTransparency, validateLogKeys, TransparencyError } from './transparency.js'
@@ -18,6 +19,7 @@ import {
 } from './transfer.js'
 import {
   revocationFailedVerify, outsideRefundWindow, revocationViewOversize, revocationViewOversizeRevocable,
+  REFUND_WINDOW_UNREPRESENTABLE,
   WARN, VERIFY_TRANSPARENCY_WARN, TRANSFER_WARN, pyRepr, codePointLength,
 } from './messages.js'
 
@@ -54,6 +56,13 @@ export function recordHash(record: JsonObject): string {
 // sibling-patch parity).
 export function verifyRecordSignature(record: JsonObject, keyManifest: JsonObject): boolean {
   try {
+    // Shape before crypto, mirroring revocation.py: a record the issuer signed
+    // but left malformed must NOT authenticate, or it feeds the freshness
+    // anchor a statement about a receipt it does not name. The signature can be
+    // perfectly genuine — only the issuer can make one — and that is precisely
+    // why the field's shape has to stop it here instead of downstream.
+    const receiptId = record['receipt_id']
+    if (typeof receiptId !== 'string' || !RECEIPT_ID_RE.test(receiptId)) return false
     const sig = asObject(record['signature'])
     if (!sig || typeof sig['kid'] !== 'string') return false
     const entry = findKey(keyManifest, sig['kid'])
@@ -448,6 +457,16 @@ export function classifyRevocation(
     if (revocability === 'policy') return valid.length > 0 ? 'revoked' : notRevoked
     if (revocability === 'refund_window') {
       const end = refundWindowEnd(payload)
+      // Python raises OverflowError here — `issued_at + timedelta(days)` walks
+      // off the end of `datetime` — and answers "unknown" with this error.
+      // JavaScript's `Date` reaches year 275760, so the same sum is an ordinary
+      // finite number and every comparison against it behaves normally: without
+      // this bound the two cores return DIFFERENT VERDICTS on identical bytes.
+      // What cannot be evaluated must not be certified, on either side.
+      if (end !== null && end > MAX_REPRESENTABLE_UNIX_SECONDS * 1000) {
+        errors.push(REFUND_WINDOW_UNREPRESENTABLE)
+        return 'unknown'
+      }
       const effective = valid.filter((r) => { const ms = parseIsoLenient(r['revoked_at']); return end !== null && ms !== null && ms <= end })
       if (effective.length > 0) {
         // G5 (TM-47): a Stage-2-capable verifier (logKeys AND anchorPolicy

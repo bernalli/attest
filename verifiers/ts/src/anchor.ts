@@ -33,6 +33,7 @@
 import { equalBytes, concatBytes, hexToBytes } from '@noble/curves/utils.js'
 import { sha256 } from '@noble/hashes/sha2'
 import { Checkpoint, TlogError, parseCheckpoint } from './tlog.js'
+import { MAX_REPRESENTABLE_UNIX_SECONDS } from './dates.js'
 import {
   ANCHOR_WARN,
   RFC3161_WARNING,
@@ -81,10 +82,9 @@ const MAX_OP_HEX_LEN = 16384 // hex chars (8192 bytes) per append/prepend operan
 // attacker-chosen bytes per proof, twice what this allows. What does grow is
 // the op COUNT per bundle (4x) and the peak single concatenation (8x).
 const MAX_TOTAL_OP_HEX_LEN = 65536
-// The latest Unix timestamp `Date`/`datetime` can render through
-// 9999-12-31T23:59:59Z. Keep pinned and untrusted proof times inside that
-// shared bound.
-const MAX_RENDERABLE_UNIX_TIME = 253402300799
+// Keep pinned and untrusted proof times inside the bound both cores can
+// represent. The number, and why it is what it is, live in `dates.ts`.
+const MAX_RENDERABLE_UNIX_TIME = MAX_REPRESENTABLE_UNIX_SECONDS
 
 const KNOWN_OTS_OPS = new Set(['sha256', 'append', 'prepend'])
 

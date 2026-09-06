@@ -2,6 +2,20 @@
 // freshness uses a separate lenient ISO parse (Python fromisoformat). Both fail closed.
 const STRICT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/
 
+/** The latest instant BOTH cores can represent, as Unix seconds:
+ * 253402300799 is 9999-12-31T23:59:59Z.
+ *
+ * Python's `datetime` stops at year 9999 while JavaScript's `Date` reaches
+ * year 275760, so anything past this bound is accepted by one core and
+ * rejected by the other — a divergence of verdict, not of message.
+ *
+ * This module owns the number for the whole package. It lived in three
+ * independent copies before (a cosignature bound, an anchor bound, and a
+ * year comparison), and the fourth call site that needed it — the refund
+ * window — did not remember it existed. A restated predicate is owned by
+ * nobody: import this, never re-declare it. */
+export const MAX_REPRESENTABLE_UNIX_SECONDS = 253402300799
+
 export function parseStrictUtc(s: unknown): number | null {
   if (typeof s !== 'string') return null
   const m = STRICT.exec(s)
