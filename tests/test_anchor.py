@@ -700,7 +700,7 @@ def test_ots_proof_rejects_bool_header_time() -> None:
     assert verdict.anchored is False
     assert verdict.warnings == [
         "proof[0]: ots proof 'header_time' must be a positive int no later than "
-        f"{anchor._MAX_RENDERABLE_UNIX_TIME}"
+        f"{anchor.MAX_REPRESENTABLE_UNIX_SECONDS}"
     ]
 
 
@@ -710,18 +710,18 @@ def test_ots_proof_rejects_zero_or_negative_header_time() -> None:
     assert verdict.anchored is False
     assert verdict.warnings == [
         "proof[0]: ots proof 'header_time' must be a positive int no later than "
-        f"{anchor._MAX_RENDERABLE_UNIX_TIME}"
+        f"{anchor.MAX_REPRESENTABLE_UNIX_SECONDS}"
     ]
 
 
 def test_ots_proof_rejects_header_time_after_renderable_unix_bound() -> None:
-    proof = _ots_proof(header_time=anchor._MAX_RENDERABLE_UNIX_TIME + 1)
+    proof = _ots_proof(header_time=anchor.MAX_REPRESENTABLE_UNIX_SECONDS + 1)
     verdict = anchor.verify_anchor(_evidence([proof]), _checkpoint(), _policy())
     assert verdict.anchored is False
     assert verdict.pq_surviving is False
     assert verdict.warnings == [
         "proof[0]: ots proof 'header_time' must be a positive int no later than "
-        f"{anchor._MAX_RENDERABLE_UNIX_TIME}"
+        f"{anchor.MAX_REPRESENTABLE_UNIX_SECONDS}"
     ]
 
 
@@ -736,7 +736,7 @@ def test_anchor_policy_rejects_pinned_header_time_after_renderable_unix_bound() 
     pinned = anchor.PinnedHeader(
         header_hash=HEADER_HASH,
         merkle_root="aa" * 32,
-        time=anchor._MAX_RENDERABLE_UNIX_TIME + 1,
+        time=anchor.MAX_REPRESENTABLE_UNIX_SECONDS + 1,
     )
     policy = anchor.AnchorPolicy(pinned_headers={HEADER_HASH: pinned}, crqc_horizon=None)
     with pytest.raises(anchor.AnchorError):

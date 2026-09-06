@@ -9,7 +9,6 @@
  * the issuer signed but left malformed must not authenticate, or it feeds the
  * freshness anchor a statement about a receipt it does not name.
  *
- * Python declares this in `revocation.py`, `transfer.py`, `bundle.py` and
- * `cli.py`; the TypeScript tree declared it twice and the revocation path
- * imported neither copy. One definition, imported — never a third copy. */
+ * Python owns its matching definition in `ulid.py`. Each core imports its
+ * shared predicate; source-ownership and parity tests keep them in step. */
 export const RECEIPT_ID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/

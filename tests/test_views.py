@@ -212,7 +212,7 @@ def test_verify_private_predicates_exist() -> None:
     assert views._cutoff_denying_manifests is verify._cutoff_denying_manifests
     assert views._claim_has_cutoff_signer is verify._claim_has_cutoff_signer
     assert views._resolve_compromise_cutoff is verify._resolve_compromise_cutoff
-    assert views._RECEIPT_ID_RE is revocation.RECEIPT_ID_RE
+    assert views.RECEIPT_ID_RE is revocation.RECEIPT_ID_RE
     assert views._valid_holder_authorization_shape is transfer._valid_holder_authorization_shape
     assert views._strict_b64u_decode is transfer._strict_b64u_decode
 

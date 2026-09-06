@@ -20,6 +20,10 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from attest import anchor, canon, keys, pq, tlog
+from attest.dates import MAX_REPRESENTABLE_UNIX_SECONDS
+
+# Public compatibility name for the shared timestamp bound.
+MAX_COSIGNATURE_TIMESTAMP: Final = MAX_REPRESENTABLE_UNIX_SECONDS
 
 SCHEMA_ID: Final = "attest-witness-policy-v1"
 
@@ -449,12 +453,6 @@ _KEY_ID_LEN: Final = 4
 _TIMESTAMP_LEN: Final = 8
 _ED25519_SIG_LEN: Final = 64
 _COSIGNATURE_BLOB_LEN: Final = _KEY_ID_LEN + _TIMESTAMP_LEN + _ED25519_SIG_LEN
-
-# Both cores must agree on which timestamps are representable at all: Python's
-# `datetime` stops at year 9999 while JavaScript's `Date` reaches year 275760,
-# so a cosignature past this bound would be rejected by one core and accepted
-# by the other. 253402300799 is 9999-12-31T23:59:59Z.
-MAX_COSIGNATURE_TIMESTAMP: Final = 253402300799
 
 WARN_INDEPENDENCE_NOT_ESTABLISHED: Final = "witness_independence_not_established"
 

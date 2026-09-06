@@ -13,21 +13,21 @@ certify receipts the other rejected. The ULID pattern was declared four times
 in Python and twice in TypeScript, and the revocation path imported neither TS
 copy, which let a record naming no real receipt set the freshness anchor.
 
-The TypeScript side has since been reduced to one definition each. Python still
-declares its own, and this module is what keeps the two languages in step until
-(and after) that changes. It reads sources as data rather than shelling out to
-a build: the point is a red line in one second inside the ordinary suite.
+Each core now has one definition per predicate. The tests read sources as
+data rather than shelling out to a build, and pin the independent language
+definitions as well as the identity of Python's public compatibility exports.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from attest import anchor, bundle, cli, revocation, transfer, views, witness
+from attest import anchor, bundle, cli, dates, revocation, transfer, ulid, validate, views, witness
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TS_SRC = REPO_ROOT / "verifiers" / "ts" / "src"
@@ -57,8 +57,9 @@ def _sole_ts_declaration(pattern: str, name: str) -> str:
 
 
 def test_every_python_declaration_of_the_representable_bound_agrees() -> None:
-    assert witness.MAX_COSIGNATURE_TIMESTAMP == EXPECTED_BOUND
-    assert anchor._MAX_RENDERABLE_UNIX_TIME == EXPECTED_BOUND
+    assert dates.MAX_REPRESENTABLE_UNIX_SECONDS == EXPECTED_BOUND
+    assert witness.MAX_COSIGNATURE_TIMESTAMP is dates.MAX_REPRESENTABLE_UNIX_SECONDS
+    assert anchor.MAX_REPRESENTABLE_UNIX_SECONDS is dates.MAX_REPRESENTABLE_UNIX_SECONDS
 
 
 def test_the_typescript_bound_is_declared_once_and_matches_python() -> None:
@@ -127,8 +128,9 @@ def test_receipt_id_guard_rejects_flag_drift(name: str) -> None:
 
 
 def test_every_python_declaration_of_the_receipt_id_pattern_agrees() -> None:
-    for module in (revocation, transfer, bundle, cli, views):
+    for module in (ulid, revocation, transfer, bundle, cli, views):
         assert _receipt_id_pattern(module) == EXPECTED_ULID_PATTERN, module.__name__
+        assert module.RECEIPT_ID_RE is ulid.RECEIPT_ID_RE
 
 
 def test_the_typescript_receipt_id_pattern_is_declared_once_and_matches_python() -> None:
@@ -155,3 +157,34 @@ def test_the_unrepresentable_window_error_is_byte_identical_across_cores() -> No
         r"export const REFUND_WINDOW_UNREPRESENTABLE = '(.+)'", "messages.ts"
     )
     assert declared == EXPECTED_UNREPRESENTABLE_ERROR
+
+
+@pytest.mark.parametrize("member", ["receipt_id", "supersedes"])
+def test_payload_schema_uses_the_owned_receipt_id_pattern(member: str) -> None:
+    assert validate.SCHEMA["properties"][member]["pattern"] is ulid.RECEIPT_ID_RE.pattern
+
+
+def _unique_schema_members(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    members: dict[str, object] = {}
+    for key, value in pairs:
+        assert key not in members, f"duplicate schema member: {key!r}"
+        members[key] = value
+    return members
+
+
+@pytest.mark.parametrize("member", ["receipt_id", "supersedes"])
+def test_the_schema_artifact_on_disk_still_declares_the_owned_pattern(member: str) -> None:
+    """Binding the runtime validator to the Python owner makes the JSON artifact
+    inert for these two members: editing it no longer changes any behaviour, so
+    nothing would notice it drifting. The artifact is normative and other
+    implementations are written from it, so it must keep declaring the owner's
+    pattern verbatim."""
+    for path in (
+        REPO_ROOT / "docs" / "spec" / "schema" / "attest-receipt.schema.json",
+        REPO_ROOT / "src" / "attest" / "schema" / "attest-receipt.schema.json",
+    ):
+        schema = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_unique_schema_members
+        )
+        declared = schema["properties"][member]["pattern"]
+        assert declared == ulid.RECEIPT_ID_RE.pattern, path.name

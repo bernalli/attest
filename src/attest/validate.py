@@ -9,6 +9,7 @@ from typing import Any
 import jsonschema
 
 from attest import canon
+from attest.ulid import RECEIPT_ID_RE
 
 with (
     importlib.resources.files("attest.schema")
@@ -16,6 +17,11 @@ with (
     .open("rb") as f
 ):
     SCHEMA: dict[str, Any] = json.load(f)
+
+# Keep the standalone schema artifact intact, but bind both runtime rules to
+# the Python owner. Preserve JSON Schema's pattern/search semantics and errors.
+for _receipt_id_member in ("receipt_id", "supersedes"):
+    SCHEMA["properties"][_receipt_id_member]["pattern"] = RECEIPT_ID_RE.pattern
 
 _VALIDATOR = jsonschema.Draft202012Validator(SCHEMA)
 

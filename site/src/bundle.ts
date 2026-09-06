@@ -176,7 +176,10 @@ const byCodePoint = (left: string, right: string): number => {
 }
 
 // The receipt schema's own ULID grammar (Crockford base32, 26 chars, leading
-// character 0-7). Mirrors the reference importer's `_RECEIPT_ID_RE`.
+// character 0-7). Mirrors `RECEIPT_ID_RE`, which `src/attest/ulid.py` owns for the
+// whole Python core and `verifiers/ts/src/ids.ts` owns for the verifier package;
+// neither is reachable from here, so this copy stays and is pinned by
+// `tests/test_shared_predicate_ownership.py`.
 const RECEIPT_ID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
 
 // v0.2 §14: a conforming bundle carries proofs members ONLY as

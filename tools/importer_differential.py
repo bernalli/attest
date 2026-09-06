@@ -53,7 +53,6 @@ import hashlib
 import itertools
 import json
 import random
-import re
 import shutil
 import struct
 import subprocess
@@ -71,6 +70,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from attest import bundle as py_importer  # noqa: E402
 from attest import canon  # noqa: E402
+from attest.ulid import RECEIPT_ID_RE  # noqa: E402
 
 # A ZIP encoder with every structural field overridable, shared with the
 # container bench. It writes archives; it holds no opinion about which ones are
@@ -105,10 +105,6 @@ BARE_ENVELOPE = "bare-envelope"
 #: vocabulary. Always a divergence, never a permitted one.
 CRASH = "crash"
 
-#: §5.1: `receipt_id` is a ULID, Crockford base32, 26 characters, leading
-#: character bounded to `[0-7]`.
-RECEIPT_ID_GRAMMAR = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-
 
 def checked_receipt_id(receipt_id: str) -> str:
     """A vector's own receipt id, refused unless it is the shape §5.1 pins.
@@ -117,7 +113,7 @@ def checked_receipt_id(receipt_id: str) -> str:
     a reason that has nothing to do with what each vector measures, and every
     family below would agree about the wrong thing.
     """
-    if RECEIPT_ID_GRAMMAR.fullmatch(receipt_id) is None:
+    if RECEIPT_ID_RE.fullmatch(receipt_id) is None:
         raise SystemExit(f"vector receipt id {receipt_id!r} is not the shape §5.1 requires")
     return receipt_id
 

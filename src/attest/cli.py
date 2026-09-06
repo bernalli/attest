@@ -64,6 +64,7 @@ from attest import (
     views,
     witness,
 )
+from attest.ulid import RECEIPT_ID_RE
 
 EXIT_OK = 0
 EXIT_VERIFICATION_FAILED = 1
@@ -99,7 +100,6 @@ _LOG_CHECKPOINT_FILENAME = "checkpoint"
 _LOG_TILE_DIRNAME = "tile"
 _TILE_FULL_WIDTH = 256  # C2SP tlog-tiles: leaves per level-0 tile
 _ISO8601_UTC_FMT = "%Y-%m-%dT%H:%M:%SZ"
-_RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 # Stage-2 inputs are parsed from untrusted files, so cap them before decoding
 # or base64 expansion. JSON feeds `verify`'s 10M-character evidence
@@ -689,7 +689,7 @@ def _proof_path_in_dir(proof_dir: Path, receipt_id: str) -> Path:
     resolved proof directory as a defence in depth against an unexpected
     symlink.  ``attest export`` must never read evidence outside ``--proof-dir``.
     """
-    if _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+    if RECEIPT_ID_RE.fullmatch(receipt_id) is None:
         raise CliUsageError(
             f"receipt_id {receipt_id!r} is not a valid ULID; refusing to read a proof path"
         )
@@ -1337,7 +1337,7 @@ def _cmd_revoke(args: argparse.Namespace) -> int:
     if not isinstance(payload, dict):
         raise CliUsageError(f"{args.receipt} is missing object member 'payload'")
     receipt_id = payload.get("receipt_id")
-    if not isinstance(receipt_id, str) or revocation.RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+    if not isinstance(receipt_id, str) or RECEIPT_ID_RE.fullmatch(receipt_id) is None:
         raise CliUsageError(f"{args.receipt} payload member 'receipt_id' must be a ULID")
     issuer_block = payload.get("issuer")
     issuer_id = issuer_block.get("id") if isinstance(issuer_block, dict) else None
@@ -2404,7 +2404,7 @@ def _transfer_record_log_entry(document: dict[str, Any], path: Path) -> dict[str
         )
     for member in ("receipt_id", "new_receipt_id"):
         value = document[member]
-        if not isinstance(value, str) or transfer._RECEIPT_ID_RE.fullmatch(value) is None:
+        if not isinstance(value, str) or RECEIPT_ID_RE.fullmatch(value) is None:
             raise CliUsageError(f"{path} transfer record {member!r} must be a ULID: {value!r}")
     if transfer._strict_b64u_decode(document["new_holder_pubkey"], _ED25519_PUB_LEN) is None:
         raise CliUsageError(
@@ -3404,7 +3404,7 @@ def _cmd_binding_respond(args: argparse.Namespace) -> int:
     if not isinstance(payload, dict):
         raise CliUsageError(f"{args.receipt} is missing object member 'payload'")
     receipt_id = payload.get("receipt_id")
-    if not isinstance(receipt_id, str) or revocation.RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+    if not isinstance(receipt_id, str) or RECEIPT_ID_RE.fullmatch(receipt_id) is None:
         raise CliUsageError(f"{args.receipt} payload member 'receipt_id' must be a ULID")
     buyer = payload.get("buyer")
     declared = buyer.get("pubkey") if isinstance(buyer, dict) else None

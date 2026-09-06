@@ -20,11 +20,19 @@ lives in `verify.py` (§6 step 6), the one module that has both.
 from __future__ import annotations
 
 import hashlib
-import re
 from datetime import datetime
 from typing import Any
 
 from attest import canon, keys, manifests, pq
+
+# Re-exported, not owned: `ulid` holds the one Python declaration of the §5.1
+# receipt-id grammar. The name stays here because it is published API (a
+# producer of records has to refuse a receipt id this module would later refuse
+# to authenticate), so do not delete it as redundant. The `as` spelling is
+# required, not decoration: this package ships `py.typed`, and under
+# `no_implicit_reexport` a plain import is not a re-export for a downstream
+# strict checker. `tests/test_shared_predicate_parity.py` pins the identity.
+from attest.ulid import RECEIPT_ID_RE as RECEIPT_ID_RE
 
 # Preflight bound on an untrusted revocation view: a legitimate view is an
 # issuer's records for one receipt -- realistically single digits; 10k is far
@@ -37,16 +45,6 @@ MAX_REVOCATION_RECORDS = 10_000
 
 _DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
-# The receipt schema pins ids to ULIDs. This is the SAME predicate `bundle.py`
-# keeps, deliberately restated rather than imported: `revocation` sits below
-# `bundle` (bundle -> verify -> revocation), so importing it would close an
-# import cycle. Any change to the shape belongs to both.
-#
-# Public for the same reason as `MAX_REVOCATION_RECORDS` above: a producer of
-# records has to refuse a receipt id this module would later refuse to
-# authenticate, and a predicate restated at the call site is a predicate that
-# will drift from the one that decides.
-RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 
 def _parse_date(value: str) -> datetime:

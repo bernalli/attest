@@ -8,7 +8,11 @@ characters (130 bits of output; the 2 highest-order bits are always zero).
 from __future__ import annotations
 
 import os
+import re
 import time
+
+# The receipt schema uses the 128-bit ULID range, including the leading digit.
+RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _TIMESTAMP_BITS = 48
