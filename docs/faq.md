@@ -180,14 +180,14 @@ there is no network code in the Python package or the TypeScript verifier, and t
 only thing the browser page fetches for itself is the demo sample it serves from its
 own site. So offline is not a mode you switch on. It is the only mode there is.
 
-The page does make one deliberate request to somewhere else, and it is worth knowing
-about because you would otherwise find it yourself and wonder. It tries to reach a
-host that is not this one — an address under a reserved domain that can never be
-registered — and shows you what your browser answered. The point is the demonstration:
-your receipt cannot leave the tab, because the page's own security policy forbids
-every connection that is not back to itself, and a page that told you it was blocked
-without trying would be asking you to take its word for it. If that request ever went
-through, the page would say so.
+The page also offers a deliberate request to another host. When you press "Try to reach
+another host", it attempts a fetch to an address under the reserved `.example` domain
+and shows what your browser answered. The request contains no receipt data. The page's
+security policy permits same-origin connections and blocks this fetch to another origin.
+The demonstration reports whether the browser recorded a policy violation; a failed
+request without that violation is not evidence that the policy blocked it. If the fetch
+succeeds, the page says so. This demonstrates the restriction on that cross-origin fetch;
+same-origin connections remain permitted by the policy.
 
 With the same receipt bytes and the same local verification material, the signature
 and schema checks are reproducible. A later trusted manifest can change the signing
@@ -196,10 +196,12 @@ immutable with respect to every future input. The Python and TypeScript
 implementations were built separately and are both exercised against the same shared
 conformance corpus. Anyone can run the verifier; nobody has to be asked.
 
-Four things offline verification does not tell you on its own, and they matter. The
-first two are structural — no evidence you can supply changes them. The last two depend
-on evidence that does not travel with the receipt: give it to the verifier and it answers;
-withhold it and the verifier says so rather than guessing.
+Four things offline verification does not tell you on its own, and they matter.
+Authenticating the store's keys and deciding whether a feed is too old are structural
+limits of the shipped tools. Revocation and transfer instead depend on evidence supplied
+by the verifier operator: the verifier evaluates that evidence under the receipt's rules.
+An absent feed, or evidence that cannot establish a transfer, is not proof that neither
+revocation nor transfer has happened.
 
 **Whether the keys are really that store's.** The specification reserves its strongest
 trust level, `verified`, for key material fetched over TLS from the issuer's own
@@ -308,26 +310,24 @@ address cannot carry a pledge. Whoever inherits a pledge-bearing receipt without
 corresponding private key cannot redeem the pledge after it activates. The only fix
 is to be re-issued with a key while the issuer is still there to do it.
 
-There is a third loss the two above do not name, and it is the one an heir runs into.
-Inheriting somebody's files gives you the receipt, and the receipt still verifies:
-the signature and the schema are checked against the store's key and nothing else, so
-what it says about the sale stands whoever is holding it. What inheriting does not
-give you is the ability to answer the binding proof. The private file carries the
-salts and nothing else; the identifier they are salted with — the email address or
-phone number given at checkout — is not in either file, because it never was: it
-lives in the buyer's memory and in the store's records. Without it the salt alone
-proves nothing, and a per-receipt signing key, when a receipt names one, is material
-the buyer's own client held and the store never had to give away.
+A third loss can arise when somebody inherits the two exported files without knowing
+the identifier used at checkout. Inheritance itself changes neither the signature nor
+the schema result: with the same bytes and verification material, those checks give the
+same answer whoever holds the files. Binding is a separate check.
 
-The same gap opens without anyone dying. An email address you no longer control is a
-lost identifier, and it is lost separately from the file: you can hold both files,
-back them up perfectly, and still be unable to demonstrate the binding because the
-one input that was never written down is gone.
+For the salt-based binding proof, the private file produced by the exporter carries
+salts indexed by receipt ID. The buyer field in the receipt carries the commitment and
+identifier type, not the identifier itself. You still need the original email address
+or issuer-account identifier to recompute the commitment. If an heir knows or obtains
+that identifier and holds the salt, they can produce the same binding proof as the
+original holder. The verifier does not check control of an email inbox: losing access
+to that inbox alone does not lose the identifier string or prevent the proof.
 
-None of this makes the receipt worthless — it is still a signed statement about what
-was sold and on what terms, which is what it is for. It means the *binding* half is
-personal in a way the file is not, and it is worth knowing before you need it rather
-than after.
+Without the identifier, the salt path cannot be completed. A receipt that names a buyer
+public key also permits a challenge-response proof by whoever holds the matching private
+key; the exporter does not supply that private key. Either path proves possession of
+binding material, not who bought the work. Keep the identifier as well as the private
+file, and any separately held binding key, if you want that proof to remain available.
 
 ## Can I sell what I bought, or pass it on?
 
@@ -467,14 +467,16 @@ signed with that key. The standard defines a rescue for a receipt logged and anc
 before the declaration, and both implementations evaluate it: shown a receipt with
 that standing, they let it survive; the command line has options for the evidence
 and for the log keys and block headers it is checked against; and the conformance
-corpus carries a rescued receipt to hold them to it. What is missing is the evidence
-itself, and an anchor to check it against. No shipped tool produces it for you — the
-bridge does not log what it issues, and though the command line can run a log, no
-command turns a receipt into an entry for it — and nothing pins an anchor by
-default: the browser verifier pins no Bitcoin block header, and the command line and
-both libraries run with no anchoring policy at all unless you hand them one, as the
-answer about Bitcoin above spells out. So for a receipt you hold today the
-declaration is final, and the rule on any DRM-free store is simple and unglamorous:
+corpus carries a rescued receipt to hold them to it. What is missing by default is the evidence
+itself and an anchor to check it against. The bridge does not log what it issues.
+The command line can now turn a receipt into an entry with `attest log entry --type receipt`,
+and its log commands can append that entry and produce an inclusion proof under a signed
+checkpoint. Getting an external timestamp and configuring trusted anchors remain separate
+steps. Nothing pins an anchor by default: the browser verifier pins no Bitcoin block
+header, and the command line and both libraries run with no anchoring policy at all unless
+you hand them one, as the answer about Bitcoin above spells out. With those default inputs,
+there is no dated evidence to rescue a receipt from the declaration. The rule on any
+DRM-free store is simple and unglamorous:
 download what you buy, and keep the file next to the receipt. Content plus proof,
 both in your hands.
 
