@@ -75,8 +75,11 @@ _SCRIPT_COMMENTS = re.compile(
     r"|/\*.*?\*/|//[^\n]*",
     re.DOTALL,
 )
+# Every radix prefix needs a real digit before any separator: `0x_` is not a
+# number in any of these languages, and `int("0x", 0)` would abort the scan.
 _SCRIPT_NUMBERS = re.compile(
-    r"(?<![\w.])(?:0[xX][0-9a-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|"
+    r"(?<![\w.])(?:0[xX][0-9a-fA-F][0-9a-fA-F_]*n?|0[bB][01][01_]*n?|"
+    r"0[oO][0-7][0-7_]*n?|"
     r"[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?n?)(?![\w.])"
 )
 
