@@ -53,10 +53,13 @@ policy, and nothing in the issuing path puts a receipt in a log: neither `attest
 issue` nor the bridge writes one. What changed is that deriving the entry no
 longer means writing code — `attest log entry --type receipt` computes it from
 the signed envelope, always by rehashing the document rather than trusting a hash
-it declares, and `attest log append` takes it from there. So the rescue is
-reachable for a receipt whose issuer chose to log it, and unreachable for one
-issued and forgotten: what is missing is not a tool any more, it is the step
-being automatic. Here's how:
+it declares, and `attest log append` takes it from there. The log commands can
+produce an inclusion proof under a signed checkpoint. An operator must still
+obtain an external timestamp and supply the evidence and matching trusted log
+keys and anchors to a capable verifier. A receipt with qualifying anchored
+standing can be rescued; an unlogged one cannot. The bridge and `attest issue`
+do not automate these steps, and the browser and desktop currently pin no block
+headers. Here's how:
 
 ## What attest is
 
@@ -328,7 +331,8 @@ implementation for operators and is not published to any package registry.
 [docs/spec/attest-v0.2.md](docs/spec/attest-v0.2.md) is an additive delta
 specification defining the v0.2 hybrid Ed25519+ML-DSA-65 signature profile
 (post-quantum-resistant receipts, `attest_version: "0.2"`); v0.1 receipts
-remain valid and verifiable forever. That profile was Stage 1; Stage 2 — issuer
+remain verifiable forever; later compromise declarations or applicable revocation
+records can still make them invalid. That profile was Stage 1; Stage 2 — issuer
 key transparency and timestamp anchoring, where a log corroborates a receipt's
 existence without ever being able to make an unsigned receipt look authentic —
 is specified in the same document. Stage 3 — issuer-mediated transfer, giving

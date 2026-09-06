@@ -15,10 +15,10 @@ export interface VerifyRun {
 // The single verify() call site in site/. Everything the page verifies —
 // bundles, bare envelopes, the sample — funnels through here, so the
 // conformance suite in test/conformance.test.ts pins the page's actual path.
-// `options` (transparency/logKeys/anchorPolicy/transferView/compromiseView/
-// grantView/authorityView) is additive: the page itself never passes it today
-// (defaults to `{}`, zero behavior change), only the group-28/35/37/41/43
-// conformance leaves in test/conformance.test.ts do.
+// The page supplies receipt transparency with its pinned log configuration,
+// plus transfer, compromise and revocation evidence from the user's dropped
+// files. Conformance tests also exercise grantView and authorityView, which
+// the page does not currently expose as drop inputs.
 /** The four rails as the page holds them, one slot each (v0.1 §14.3). */
 export interface Rails {
   revocation: JsonValue[] | null

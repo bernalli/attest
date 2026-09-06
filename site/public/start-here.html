@@ -133,14 +133,13 @@ store no longer exists.</li>
 <li><strong>It is not the game, film or book.</strong> If you never downloaded the
 file and the store is gone, no receipt can bring it back. Download what you buy,
 and keep it next to the receipt.</li>
-<li><strong>It protects you from a store that disappears, not from one that is still
-open and turns on you.</strong> A live seller can declare one of its own signing
-keys compromised, and that cancels the receipts signed with that key. The standard
-describes a shield against this — a receipt publicly logged and anchored before the
-declaration — and the verifiers already honour it when they are shown one. But
-nothing makes such a receipt yet: no store logs or anchors what it signs, and the
-verifier on this site holds no anchor to check against. So for now there is nothing
-you can do about it.</li>
+<li><strong>A live seller can declare its signing key compromised.</strong> That
+can invalidate receipts signed with the key. The standard provides a rescue for a
+receipt with qualifying proof that it was logged and anchored before the declaration.
+An operator can prepare that proof with the log commands and an external timestamp,
+and a verifier with matching trusted log keys and anchors can check it. The bridge
+does not automate this work, and the verifier on this site currently pins no
+anchors. Keeping only an unlogged receipt leaves it without that protection.</li>
 <li><strong>It doesn't unlock anything</strong> and it doesn't remove copy protection.</li>
 <li><strong>Almost no store issues one yet.</strong> Stores that sell files without copy
 protection can start today. Closed platforms are a longer road: when you buy from
