@@ -37,15 +37,14 @@ from datetime import UTC
 from typing import Any
 
 from attest import anchor, canon, manifests, pq, revocation, tlog, transfer, verify
+from attest.ulid import RECEIPT_ID_RE
 
 # Predicates and bounds borrowed from sibling modules, most of them private.
 # The precedent is `cli.py:107`, which reads
 # `verify._MAX_TRANSPARENCY_EVIDENCE_LEN` for exactly this reason: the
 # alternative is a second spelling of a rule that already has one. Bound at
-# import time so a rename over there breaks HERE, out loud, instead of leaving
-# a silently divergent copy behind — which is not a hypothetical: while this
-# module was being written `revocation._RECEIPT_ID_RE` was promoted to the
-# public `RECEIPT_ID_RE`, and this line is where that surfaced.
+# import time so a rename over there breaks here instead of leaving a divergent
+# copy behind. The receipt-id predicate has a public owner in `ulid`.
 # `tests/test_views.py::test_verify_private_predicates_exist` pins the list.
 _MAX_COMPROMISE_CLAIMS = verify._MAX_COMPROMISE_CLAIMS
 _materialize_compromise_view = verify._materialize_compromise_view
@@ -53,7 +52,6 @@ _authenticated_compromise_claims = verify._authenticated_compromise_claims
 _cutoff_denying_manifests = verify._cutoff_denying_manifests
 _claim_has_cutoff_signer = verify._claim_has_cutoff_signer
 _resolve_compromise_cutoff = verify._resolve_compromise_cutoff
-_RECEIPT_ID_RE = revocation.RECEIPT_ID_RE
 _valid_holder_authorization_shape = transfer._valid_holder_authorization_shape
 _strict_b64u_decode = transfer._strict_b64u_decode
 
@@ -508,7 +506,7 @@ def build_transfer_claim(record: dict[str, Any], evidence: dict[str, Any]) -> di
     _closed_object(own_record, _TRANSFER_RECORD_MEMBERS, (), "transfer record")
     for member in ("receipt_id", "new_receipt_id"):
         value = own_record[member]
-        if not isinstance(value, str) or not _RECEIPT_ID_RE.fullmatch(value):
+        if not isinstance(value, str) or not RECEIPT_ID_RE.fullmatch(value):
             raise ViewError(f"transfer record '{member}' must be a ULID: {value!r}")
     if _strict_b64u_decode(own_record["new_holder_pubkey"], _ED25519_PUB_LEN) is None:
         raise ViewError(
@@ -591,7 +589,7 @@ def build_revocation_view(
             raise ViewError(f"{what} must be an object, got {type(record).__name__}")
         _closed_object(record, _REVOCATION_RECORD_MEMBERS, (), what)
         receipt_id = record["receipt_id"]
-        if not isinstance(receipt_id, str) or not _RECEIPT_ID_RE.fullmatch(receipt_id):
+        if not isinstance(receipt_id, str) or not RECEIPT_ID_RE.fullmatch(receipt_id):
             raise ViewError(f"{what} 'receipt_id' must be a ULID: {receipt_id!r}")
         status = record["status"]
         # `isinstance` FIRST and not as a formality: `x in frozenset` hashes

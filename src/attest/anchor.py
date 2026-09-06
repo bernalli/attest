@@ -69,6 +69,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from attest import tlog
+from attest.dates import MAX_REPRESENTABLE_UNIX_SECONDS
 
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 _HEX_RE = re.compile(r"^[0-9a-f]*$")
@@ -106,9 +107,6 @@ _MAX_OP_HEX_LEN = 16384  # hex chars (8192 bytes) per append/prepend operand
 # attacker-chosen bytes per proof, twice what this allows. What genuinely does
 # grow is the op COUNT per bundle (4x) and the peak single concatenation (8x).
 _MAX_TOTAL_OP_HEX_LEN = 65536
-# `datetime` can render through 9999-12-31T23:59:59Z, but no later Unix
-# timestamp. Keep pinned and untrusted proof times inside that shared bound.
-_MAX_RENDERABLE_UNIX_TIME = 253402300799
 
 _KNOWN_OTS_OPS = frozenset({"sha256", "append", "prepend"})
 
@@ -261,11 +259,11 @@ def _validate_policy(policy: object) -> AnchorPolicy:
         if (
             not isinstance(header.time, int)
             or isinstance(header.time, bool)
-            or not 0 < header.time <= _MAX_RENDERABLE_UNIX_TIME
+            or not 0 < header.time <= MAX_REPRESENTABLE_UNIX_SECONDS
         ):
             raise AnchorError(
                 "PinnedHeader.time must be a positive int no later than "
-                f"{_MAX_RENDERABLE_UNIX_TIME}: {header.time!r}"
+                f"{MAX_REPRESENTABLE_UNIX_SECONDS}: {header.time!r}"
             )
     if policy.crqc_horizon is not None and (
         not isinstance(policy.crqc_horizon, int) or isinstance(policy.crqc_horizon, bool)
@@ -391,13 +389,13 @@ def _verify_ots_proof(
     if (
         not isinstance(header_time, int)
         or isinstance(header_time, bool)
-        or not 0 < header_time <= _MAX_RENDERABLE_UNIX_TIME
+        or not 0 < header_time <= MAX_REPRESENTABLE_UNIX_SECONDS
     ):
         return (
             False,
             0,
             "ots proof 'header_time' must be a positive int no later than "
-            f"{_MAX_RENDERABLE_UNIX_TIME}",
+            f"{MAX_REPRESENTABLE_UNIX_SECONDS}",
         )
 
     assert accumulator is not None  # `warning is None` above guarantees this

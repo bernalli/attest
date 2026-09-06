@@ -642,7 +642,7 @@ def _one_bitcoin_path(seed: bytes, height: int = 42) -> ots.OtsFile:
         (ots.OperatorHeader(42, "aa" * 32, "bb" * 32, 1.5), "time must be a positive int"),
         (ots.OperatorHeader(42, "aa" * 32, "bb" * 32, "1"), "time must be a positive int"),
         (
-            ots.OperatorHeader(42, "aa" * 32, "bb" * 32, anchor._MAX_RENDERABLE_UNIX_TIME + 1),
+            ots.OperatorHeader(42, "aa" * 32, "bb" * 32, anchor.MAX_REPRESENTABLE_UNIX_SECONDS + 1),
             "time must be a positive int",
         ),
     ],

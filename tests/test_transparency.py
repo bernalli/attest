@@ -598,7 +598,7 @@ def test_iso8601_kat_pins_the_helper_independent_of_the_brief_arithmetic() -> No
 
 
 def test_iso8601_renders_the_max_supported_pinned_header_time() -> None:
-    assert transparency._iso8601(anchor._MAX_RENDERABLE_UNIX_TIME) == "9999-12-31T23:59:59Z"
+    assert transparency._iso8601(anchor.MAX_REPRESENTABLE_UNIX_SECONDS) == "9999-12-31T23:59:59Z"
 
 
 def test_evaluate_transparency_flags_explicit_none_anchors() -> None:

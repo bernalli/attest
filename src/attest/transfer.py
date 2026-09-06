@@ -25,17 +25,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from attest import anchor, canon, keys, manifests, pq, revocation, tlog
 from attest import transparency as transparency_module
+from attest.ulid import RECEIPT_ID_RE
 
 _DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
-_RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 _TRANSFER_RECORD_MEMBERS = frozenset(
     {
         "receipt_id",
@@ -253,9 +252,9 @@ def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]
         transferred_at_value = record["transferred_at"]
         if (
             not isinstance(receipt_id, str)
-            or _RECEIPT_ID_RE.fullmatch(receipt_id) is None
+            or RECEIPT_ID_RE.fullmatch(receipt_id) is None
             or not isinstance(new_receipt_id, str)
-            or _RECEIPT_ID_RE.fullmatch(new_receipt_id) is None
+            or RECEIPT_ID_RE.fullmatch(new_receipt_id) is None
             or _strict_b64u_decode(new_holder_pubkey, 32) is None
             or not _valid_utc_timestamp(transferred_at_value)
             or not _valid_holder_authorization_shape(record["holder_authorization"])

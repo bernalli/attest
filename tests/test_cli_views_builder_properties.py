@@ -456,9 +456,9 @@ def test_the_transfer_record_shape_agrees_with_the_transfer_module(env: Env) -> 
         shape_ok = (
             set(record) == transfer._TRANSFER_RECORD_MEMBERS
             and isinstance(record["receipt_id"], str)
-            and transfer._RECEIPT_ID_RE.fullmatch(record["receipt_id"]) is not None
+            and transfer.RECEIPT_ID_RE.fullmatch(record["receipt_id"]) is not None
             and isinstance(record["new_receipt_id"], str)
-            and transfer._RECEIPT_ID_RE.fullmatch(record["new_receipt_id"]) is not None
+            and transfer.RECEIPT_ID_RE.fullmatch(record["new_receipt_id"]) is not None
             and transfer._strict_b64u_decode(record["new_holder_pubkey"], 32) is not None
             and transfer._valid_utc_timestamp(record["transferred_at"])
             and transfer._valid_holder_authorization_shape(record["holder_authorization"])

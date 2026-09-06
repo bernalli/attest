@@ -61,6 +61,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from attest import buyer_surface, canon, container, keys, manifests, verify
+from attest.ulid import RECEIPT_ID_RE
 
 _PROVENANCE_BUNDLE = "bundle"
 _SECRET_FILE_MODE = 0o600  # disclose output carries delivery.salt (a bearer secret)
@@ -75,7 +76,6 @@ _MAX_TOTAL_BYTES = 256 * 1024 * 1024  # 256 MiB decompressed across one import
 _MAX_ENTRIES = 10_000  # central-directory entry count
 _MAX_CONTAINER_BYTES = 1024 * 1024 * 1024  # 1 GiB stored per container
 _SNAPSHOT_CHUNK = 1024 * 1024  # bytes copied per read while snapshotting a container
-_RECEIPT_ID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 #: The placeholders `_render_readme` substitutes, matched in a single pass.
 _PLACEHOLDER_RE = re.compile("__BUNDLE_NAME__|__PRIVATE_WARNING__")
@@ -173,7 +173,7 @@ def _proof_member_receipt_id(filename: str) -> str:
     if not relative.endswith(".json"):
         raise BundleError(f"invalid proof member path {filename!r}; expected proofs/<ULID>.json")
     receipt_id = relative.removesuffix(".json")
-    if relative != f"{receipt_id}.json" or _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+    if relative != f"{receipt_id}.json" or RECEIPT_ID_RE.fullmatch(receipt_id) is None:
         raise BundleError(f"invalid proof member path {filename!r}; expected proofs/<ULID>.json")
     return receipt_id
 
@@ -189,7 +189,7 @@ def _receipt_payload_id(envelope: object, filename: str) -> str:
     """
     payload = envelope.get("payload") if isinstance(envelope, dict) else None
     receipt_id = payload.get("receipt_id") if isinstance(payload, dict) else None
-    if not isinstance(receipt_id, str) or _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+    if not isinstance(receipt_id, str) or RECEIPT_ID_RE.fullmatch(receipt_id) is None:
         raise BundleError(
             f"receipt entry {filename!r} has invalid receipt_id; expected uppercase ULID"
         )
@@ -419,7 +419,7 @@ def export(
         if not isinstance(payload, dict):
             raise BundleError("receipt envelope missing object member 'payload'")
         receipt_id = payload.get("receipt_id")
-        if not isinstance(receipt_id, str) or _RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+        if not isinstance(receipt_id, str) or RECEIPT_ID_RE.fullmatch(receipt_id) is None:
             raise BundleError("receipt payload has invalid receipt_id; expected uppercase ULID")
         seen_ids[receipt_id] = seen_ids.get(receipt_id, 0) + 1
         for digest in _referenced_legal_hashes(payload):
@@ -959,10 +959,10 @@ def import_bundle(
                 raise BundleError(f"{_PRIVATE_MEMBER} must be an object mapping receipt_id to salt")
             for salt_id, encoded in raw_salts.items():
                 # v0.1 §14.2 keys this map by `receipt_id`, and §5.1 pins a
-                # receipt_id to the ULID shape `_RECEIPT_ID_RE` already holds —
+                # receipt_id to the ULID shape `RECEIPT_ID_RE` already holds —
                 # the same shape an imported receipt must carry, since these
                 # two maps are joined on it.
-                if _RECEIPT_ID_RE.fullmatch(salt_id) is None or not isinstance(encoded, str):
+                if RECEIPT_ID_RE.fullmatch(salt_id) is None or not isinstance(encoded, str):
                     raise BundleError(
                         f"{_PRIVATE_MEMBER} must map uppercase ULID receipt ids "
                         "to base64url strings"

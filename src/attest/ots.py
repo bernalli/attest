@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from attest import anchor
+from attest.dates import MAX_REPRESENTABLE_UNIX_SECONDS
 
 _MAGIC: Final = b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94"
 _VERSION: Final = 0x01
@@ -416,12 +417,12 @@ def _validate_operator_headers(headers: Sequence[OperatorHeader]) -> dict[int, O
         if (
             not isinstance(header.time, int)
             or isinstance(header.time, bool)
-            or not 0 < header.time <= anchor._MAX_RENDERABLE_UNIX_TIME
+            or not 0 < header.time <= MAX_REPRESENTABLE_UNIX_SECONDS
         ):
             raise OtsError(
                 "operator header "
                 f"{index} time must be a positive int no later than "
-                f"{anchor._MAX_RENDERABLE_UNIX_TIME}"
+                f"{MAX_REPRESENTABLE_UNIX_SECONDS}"
             )
 
         by_height[header.height] = header
