@@ -26,7 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from attest import anchor, bundle, cli, dates, revocation, transfer, ulid, views, witness
+from attest import anchor, bundle, cli, dates, revocation, transfer, ulid, validate, views, witness
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TS_SRC = REPO_ROOT / "verifiers" / "ts" / "src"
@@ -156,3 +156,8 @@ def test_the_unrepresentable_window_error_is_byte_identical_across_cores() -> No
         r"export const REFUND_WINDOW_UNREPRESENTABLE = '(.+)'", "messages.ts"
     )
     assert declared == EXPECTED_UNREPRESENTABLE_ERROR
+
+
+@pytest.mark.parametrize("member", ["receipt_id", "supersedes"])
+def test_payload_schema_uses_the_owned_receipt_id_pattern(member: str) -> None:
+    assert validate.SCHEMA["properties"][member]["pattern"] is ulid.RECEIPT_ID_RE.pattern

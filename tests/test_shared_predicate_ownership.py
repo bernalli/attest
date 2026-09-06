@@ -11,6 +11,7 @@ import ast
 import os
 import re
 from collections import Counter
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -27,26 +28,71 @@ def _sources(suffixes: tuple[str, ...]) -> list[Path]:
         dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in _EXCLUDED_DIRS)
         for name in sorted(files):
             if name.endswith(suffixes) and not name.endswith(
-                (".test.ts", ".spec.ts", ".test.mjs", ".spec.mjs")
+                tuple(
+                    f".{kind}{suffix}" for kind in ("test", "spec") for suffix in _SCRIPT_SUFFIXES
+                )
             ):
                 paths.append(Path(directory) / name)
     return paths
 
 
-def _python_literals(source: str) -> list[str | int]:
+def _python_literals(source: str) -> list[str | int | float]:
     tree = ast.parse(source)
     prose = {
         id(node.value)
         for node in ast.walk(tree)
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
     }
-    return [
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant)
-        and id(node) not in prose
-        and type(node.value) in (str, int)
-    ]
+
+    def literal(node: ast.AST) -> str | int | float | None:
+        if isinstance(node, ast.Constant):
+            value = node.value
+            if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                return value
+        if isinstance(node, ast.BinOp):
+            left, right = literal(node.left), literal(node.right)
+            if isinstance(node.op, ast.Add):
+                if isinstance(left, str) and isinstance(right, str):
+                    return left + right
+                if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                    return left + right
+            if isinstance(node.op, ast.Sub):
+                if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                    return left - right
+        return None
+
+    values = []
+    for node in ast.walk(tree):
+        if id(node) not in prose and (value := literal(node)) is not None:
+            values.append(value)
+    return values
+
+
+_SCRIPT_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
+# Quoted text must win over comment delimiters: an URL is not a line comment.
+_SCRIPT_COMMENTS = re.compile(
+    r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)"
+    r"|/\*.*?\*/|//[^\n]*",
+    re.DOTALL,
+)
+_SCRIPT_NUMBERS = re.compile(
+    r"(?<![\w.])(?:0[xX][0-9a-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|"
+    r"[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?n?)(?![\w.])"
+)
+
+
+def _script_source(source: str) -> str:
+    return _SCRIPT_COMMENTS.sub(lambda match: match.group(1) or " ", source)
+
+
+def _script_numbers(source: str) -> list[int | Decimal]:
+    values: list[int | Decimal] = []
+    for token in _SCRIPT_NUMBERS.findall(source):
+        token = token.replace("_", "").removesuffix("n")
+        values.append(
+            int(token, 0) if token.lower().startswith(("0x", "0b", "0o")) else Decimal(token)
+        )
+    return values
 
 
 @pytest.mark.parametrize("language", ["python", "typescript"])
@@ -71,7 +117,7 @@ def test_shared_predicate_definitions_do_not_multiply(language: str, predicate: 
     }
     found: Counter[str] = Counter()
     needle = EXPECTED_ULID_PATTERN.removeprefix("^").removesuffix("$")
-    for path in _sources((".py",) if language == "python" else (".ts", ".mjs")):
+    for path in _sources((".py",) if language == "python" else _SCRIPT_SUFFIXES):
         source = path.read_text(encoding="utf-8")
         if language == "python":
             literals = _python_literals(source)
@@ -82,16 +128,11 @@ def test_shared_predicate_definitions_do_not_multiply(language: str, predicate: 
                 for value in literals
             )
         else:
-            source = re.sub(r"/\*.*?\*/|//[^\n]*", "", source, flags=re.DOTALL)
+            source = _script_source(source)
             if predicate == "receipt_id":
                 count = source.count(needle)
             else:
-                # `n?`: this core reads JSON integers as `bigint`, so a
-                # restated bound can carry a BigInt suffix and must still count.
-                count = sum(
-                    int(number.replace("_", "").removesuffix("n")) == EXPECTED_BOUND
-                    for number in re.findall(r"(?<![\w.])\d[\d_]*n?(?![\w.])", source)
-                )
+                count = sum(number == EXPECTED_BOUND for number in _script_numbers(source))
         if count:
             found[path.relative_to(REPO_ROOT).as_posix()] = count
     assert dict(found) == owners[language, predicate], (
