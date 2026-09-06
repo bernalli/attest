@@ -177,8 +177,17 @@ signing; everything else follows from there, or not at all.
 Verification needs two things, and both travel inside the bundle: the receipt bytes
 and the issuer's key material. Neither implementation contains an HTTP client —
 there is no network code in the Python package or the TypeScript verifier, and the
-browser verifier fetches nothing beyond its own demo sample from its own site. So
-offline is not a mode you switch on. It is the only mode there is.
+only thing the browser page fetches for itself is the demo sample it serves from its
+own site. So offline is not a mode you switch on. It is the only mode there is.
+
+The page also offers a deliberate request to another host. When you press "Try to reach
+another host", it attempts a fetch to an address under the reserved `.example` domain
+and shows what your browser answered. The request contains no receipt data. The page's
+security policy permits same-origin connections and blocks this fetch to another origin.
+The demonstration reports whether the browser recorded a policy violation; a failed
+request without that violation is not evidence that the policy blocked it. If the fetch
+succeeds, the page says so. This demonstrates the restriction on that cross-origin fetch;
+same-origin connections remain permitted by the policy.
 
 With the same receipt bytes and the same local verification material, the signature
 and schema checks are reproducible. A later trusted manifest can change the signing
@@ -187,7 +196,12 @@ immutable with respect to every future input. The Python and TypeScript
 implementations were built separately and are both exercised against the same shared
 conformance corpus. Anyone can run the verifier; nobody has to be asked.
 
-Four things offline verification cannot tell you, and they matter.
+Four things offline verification does not tell you on its own, and they matter.
+Authenticating the store's keys and deciding whether a feed is too old are structural
+limits of the shipped tools. Revocation and transfer instead depend on evidence supplied
+by the verifier operator: the verifier evaluates that evidence under the receipt's rules.
+An absent feed, or evidence that cannot establish a transfer, is not proof that neither
+revocation nor transfer has happened.
 
 **Whether the keys are really that store's.** The specification reserves its strongest
 trust level, `verified`, for key material fetched over TLS from the issuer's own
@@ -202,8 +216,10 @@ not evidence that the shop is real.
 `unknown`, and `unknown` does not fail the receipt. A green verdict means "the
 signature is genuine and nothing I was shown says otherwise." That is the honest
 reading, and it is not the same sentence as "this receipt is valid today." The
-browser verifier does not consult a revocation feed at all, so on that page the
-revocation answer is always `unknown`.
+browser verifier consults a revocation feed only if you give it one: drop the store's
+`revocation-view.json` onto the page alongside the receipt and the answer becomes what
+that feed says. With no feed dropped the answer is `unknown`, which is the ordinary case
+and not a failure.
 
 **Whether the feed you do have is stale.** A revocation feed two years out of date is
 not flagged as old. The verifier reports the most recent date it found inside the
@@ -212,10 +228,14 @@ to rely on is left to whoever is relying on it.
 
 **Whether the receipt has already been sold on.** A transfer retires the old receipt
 through a record that is honoured only when the countersigned transfer evidence is
-supplied alongside it, and the packaged `attest verify` command has no option for
-supplying that evidence. From the command line, a receipt that has already changed
-hands still reports as valid. Reading that case correctly today means writing code
-against the library rather than running the tool.
+supplied alongside it. `attest verify` now takes that evidence on the command line —
+`--transfer-view`, with `--compromise-view` and `--revocation-evidence` for the other two
+caller-supplied files, the last of which needs `--revocations` because it exists to prove
+something about a record in it. What has not changed is where the evidence comes from: it
+is the verifier operator's own, never taken from the bundle the presenter handed over. So
+a receipt checked without it still reports as valid — not because the tool cannot read the
+case, but because nothing was shown to say otherwise, and a verifier that assumed a
+transfer it was never shown would be inventing one.
 
 ## Who can revoke my receipt, and what would I see?
 
@@ -289,6 +309,25 @@ pledge at all unless it names such a key. So a receipt bound only to your email
 address cannot carry a pledge. Whoever inherits a pledge-bearing receipt without its
 corresponding private key cannot redeem the pledge after it activates. The only fix
 is to be re-issued with a key while the issuer is still there to do it.
+
+A third loss can arise when somebody inherits the two exported files without knowing
+the identifier used at checkout. Inheritance itself changes neither the signature nor
+the schema result: with the same bytes and verification material, those checks give the
+same answer whoever holds the files. Binding is a separate check.
+
+For the salt-based binding proof, the private file produced by the exporter carries
+salts indexed by receipt ID. The buyer field in the receipt carries the commitment and
+identifier type, not the identifier itself. You still need the original email address
+or issuer-account identifier to recompute the commitment. If an heir knows or obtains
+that identifier and holds the salt, they can produce the same binding proof as the
+original holder. The verifier does not check control of an email inbox: losing access
+to that inbox alone does not lose the identifier string or prevent the proof.
+
+Without the identifier, the salt path cannot be completed. A receipt that names a buyer
+public key also permits a challenge-response proof by whoever holds the matching private
+key; the exporter does not supply that private key. Either path proves possession of
+binding material, not who bought the work. Keep the identifier as well as the private
+file, and any separately held binding key, if you want that proof to remain available.
 
 ## Can I sell what I bought, or pass it on?
 
@@ -428,14 +467,16 @@ signed with that key. The standard defines a rescue for a receipt logged and anc
 before the declaration, and both implementations evaluate it: shown a receipt with
 that standing, they let it survive; the command line has options for the evidence
 and for the log keys and block headers it is checked against; and the conformance
-corpus carries a rescued receipt to hold them to it. What is missing is the evidence
-itself, and an anchor to check it against. No shipped tool produces it for you — the
-bridge does not log what it issues, and though the command line can run a log, no
-command turns a receipt into an entry for it — and nothing pins an anchor by
-default: the browser verifier pins no Bitcoin block header, and the command line and
-both libraries run with no anchoring policy at all unless you hand them one, as the
-answer about Bitcoin above spells out. So for a receipt you hold today the
-declaration is final, and the rule on any DRM-free store is simple and unglamorous:
+corpus carries a rescued receipt to hold them to it. What is missing by default is the evidence
+itself and an anchor to check it against. The bridge does not log what it issues.
+The command line can now turn a receipt into an entry with `attest log entry --type receipt`,
+and its log commands can append that entry and produce an inclusion proof under a signed
+checkpoint. Getting an external timestamp and configuring trusted anchors remain separate
+steps. Nothing pins an anchor by default: the browser verifier pins no Bitcoin block
+header, and the command line and both libraries run with no anchoring policy at all unless
+you hand them one, as the answer about Bitcoin above spells out. With those default inputs,
+there is no dated evidence to rescue a receipt from the declaration. The rule on any
+DRM-free store is simple and unglamorous:
 download what you buy, and keep the file next to the receipt. Content plus proof,
 both in your hands.
 
