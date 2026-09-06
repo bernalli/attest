@@ -4,7 +4,26 @@ All notable changes to `attest-verifier` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.3] — 2026-09-06
+
+### Fixed
+
+- **Refund-window deadlines beyond year 9999 fail closed, matching Python.**
+  When revocation evaluation reaches such a deadline, `verify` records
+  `refund window is outside the representable timestamp range` and `isOk`
+  returns false. Previously JavaScript evaluated deadlines Python could not
+  represent. The transfer branch may change the revocation label, but the
+  error remains. This changes outcomes for existing inputs.
+
+- **Revocation authentication requires a well-formed receipt identifier.**
+  A record with a non-ULID `receipt_id` is refused before signature checking,
+  even if its signature is genuine. Such a record can no longer supply the
+  timestamp in another receipt's `not_revoked_as_of:<T>` result. This matches
+  the existing Python check.
+
+The package's root exports are unchanged. Evidence-file producers and the
+new command-line options are additions to the Python package; the site and
+desktop file-intake changes are separate consumers of this verifier.
 
 ## [0.9.2] — 2026-09-05
 

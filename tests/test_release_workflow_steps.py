@@ -357,6 +357,23 @@ def test_build_refuses_a_second_verifier_tarball(tmp_path: Path) -> None:
     assert "expected exactly 1 verifier tarball" in result.stdout
 
 
+def test_build_refuses_python_distributions_from_another_version(tmp_path: Path) -> None:
+    """Reject before npm can publish concurrently with the PyPI job's refusal."""
+    (tmp_path / "dist").mkdir()
+    for name in (
+        "dist/attest_receipts-9.9.8-py3-none-any.whl",
+        "dist/attest_receipts-9.9.8.tar.gz",
+        "sbom-python.cdx.json",
+        "sbom-npm.cdx.json",
+        "attest-verifier-9.9.9.tgz",
+    ):
+        (tmp_path / name).write_bytes(b"x")
+    script = str(_step("build", "Assert the artifact is complete")["run"])
+    result = _run(script, tmp_path, {"GITHUB_REF_NAME": "v9.9.9"})
+    assert result.returncode != 0, "stale Python distributions must not leave the build job"
+    assert "Python distributions must match" in result.stdout
+
+
 def test_build_completeness_refuses_a_tag_it_cannot_read(tmp_path: Path) -> None:
     """An unset GITHUB_REF_NAME must not degrade into "any verifier will do"."""
     (tmp_path / "dist").mkdir()

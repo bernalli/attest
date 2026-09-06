@@ -251,6 +251,12 @@ jobs:
           shipped=(dist/*)
           test "${#shipped[@]}" -eq 2 \
             || { echo "dist/ must hold only the wheel and the sdist before the manifest is written, found ${#shipped[@]}: ${shipped[*]}"; exit 1; }
+          # Bind both Python filenames here too: a later PyPI refusal cannot
+          # stop the concurrent npm job from publishing its half of the release.
+          sdist="dist/attest_receipts-${VERSION}.tar.gz"
+          wheels=(dist/attest_receipts-"${VERSION}"-*.whl)
+          test -f "$sdist" && test "${#wheels[@]}" -eq 1 && test -f "${wheels[0]}" \
+            || { echo "Python distributions must match ${VERSION}: ${shipped[*]}"; exit 1; }
           sha256sum dist/* sbom-python.cdx.json sbom-npm.cdx.json attest-verifier-*.tgz \
             | tee gated-artifacts.sha256
           # Same idiom as the desktop job: prove the file we ship is one that
