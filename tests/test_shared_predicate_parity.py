@@ -164,6 +164,14 @@ def test_payload_schema_uses_the_owned_receipt_id_pattern(member: str) -> None:
     assert validate.SCHEMA["properties"][member]["pattern"] is ulid.RECEIPT_ID_RE.pattern
 
 
+def _unique_schema_members(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    members: dict[str, object] = {}
+    for key, value in pairs:
+        assert key not in members, f"duplicate schema member: {key!r}"
+        members[key] = value
+    return members
+
+
 @pytest.mark.parametrize("member", ["receipt_id", "supersedes"])
 def test_the_schema_artifact_on_disk_still_declares_the_owned_pattern(member: str) -> None:
     """Binding the runtime validator to the Python owner makes the JSON artifact
@@ -175,6 +183,8 @@ def test_the_schema_artifact_on_disk_still_declares_the_owned_pattern(member: st
         REPO_ROOT / "docs" / "spec" / "schema" / "attest-receipt.schema.json",
         REPO_ROOT / "src" / "attest" / "schema" / "attest-receipt.schema.json",
     ):
-        schema = json.loads(path.read_text(encoding="utf-8"))
+        schema = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_unique_schema_members
+        )
         declared = schema["properties"][member]["pattern"]
         assert declared == ulid.RECEIPT_ID_RE.pattern, path.name
