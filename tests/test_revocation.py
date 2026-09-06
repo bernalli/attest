@@ -202,10 +202,10 @@ def test_record_nonstr_revoked_at_false_no_raise() -> None:
 def _signed_record_with_receipt_id(receipt_id: Any) -> dict[str, Any]:
     """A record genuinely signed by the issuer's active key, malformed in one field.
 
-    Built by signing the canonical body directly rather than through
-    `build_record`, which would reject the malformed id before signing: the
-    point is that only the ISSUER can produce this, and that a real signature
-    over a malformed id must still not authenticate.
+    Sign the canonical body directly so the same helper can also omit
+    `receipt_id` entirely. `build_record` signs the supplied id without
+    validating its shape; `verify_record_signature` performs that check.
+    A genuine issuer signature over a malformed id must not authenticate.
     """
     body: dict[str, Any] = {"status": "revoked", "revoked_at": "2026-07-03T00:00:00Z"}
     if receipt_id is not _ABSENT:

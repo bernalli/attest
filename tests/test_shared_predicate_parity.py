@@ -23,6 +23,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from attest import anchor, bundle, cli, revocation, transfer, views, witness
 
@@ -80,17 +83,47 @@ def test_no_typescript_module_restates_the_bound_as_a_literal() -> None:
 
 
 def _receipt_id_pattern(module: object) -> str:
-    """The module's ULID pattern, whatever it chose to call it.
+    """Check every supported spelling, including regex flags that change meaning."""
+    found = [
+        (name, getattr(module, name))
+        for name in ("RECEIPT_ID_RE", "_RECEIPT_ID_RE")
+        if hasattr(module, name)
+    ]
+    assert found, f"{module.__name__} declares no receipt-id pattern"
+    expected_flags = re.compile(EXPECTED_ULID_PATTERN).flags
+    for name, pattern in found:
+        label = f"{module.__name__}.{name}"
+        assert isinstance(pattern, re.Pattern), label
+        assert pattern.pattern == EXPECTED_ULID_PATTERN, label
+        assert pattern.flags == expected_flags, label
+    return str(found[0][1].pattern)
 
-    `revocation` exports it publicly and `views` imports that one; the rest
-    still keep a private copy. Which name a module uses is its own business and
-    changes over time — what this file guards is that the PATTERN is the same
-    everywhere, so looking it up by exact name would make this test fail for a
-    rename while staying silent on the drift it exists to catch.
-    """
-    pattern = getattr(module, "RECEIPT_ID_RE", None) or getattr(module, "_RECEIPT_ID_RE", None)
-    assert pattern is not None, f"{module.__name__} declares no receipt-id pattern"
-    return str(pattern.pattern)
+
+@pytest.mark.parametrize("name", ["RECEIPT_ID_RE", "_RECEIPT_ID_RE"])
+def test_receipt_id_guard_accepts_either_name(name: str) -> None:
+    module = SimpleNamespace(__name__="fixture", **{name: re.compile(EXPECTED_ULID_PATTERN)})
+    assert _receipt_id_pattern(module) == EXPECTED_ULID_PATTERN
+
+
+@pytest.mark.parametrize("name", ["RECEIPT_ID_RE", "_RECEIPT_ID_RE"])
+def test_receipt_id_guard_checks_both_names_when_they_coexist(name: str) -> None:
+    module = SimpleNamespace(
+        __name__="fixture",
+        RECEIPT_ID_RE=re.compile(EXPECTED_ULID_PATTERN),
+        _RECEIPT_ID_RE=re.compile(EXPECTED_ULID_PATTERN),
+    )
+    setattr(module, name, re.compile(EXPECTED_ULID_PATTERN.replace("[0-7]", "[0-8]")))
+    with pytest.raises(AssertionError, match=name):
+        _receipt_id_pattern(module)
+
+
+@pytest.mark.parametrize("name", ["RECEIPT_ID_RE", "_RECEIPT_ID_RE"])
+def test_receipt_id_guard_rejects_flag_drift(name: str) -> None:
+    module = SimpleNamespace(
+        __name__="fixture", **{name: re.compile(EXPECTED_ULID_PATTERN, re.IGNORECASE)}
+    )
+    with pytest.raises(AssertionError, match=name):
+        _receipt_id_pattern(module)
 
 
 def test_every_python_declaration_of_the_receipt_id_pattern_agrees() -> None:

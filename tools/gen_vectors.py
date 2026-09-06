@@ -51,8 +51,10 @@ above, following the same fixed-input determinism discipline:
     `revocation_view=[record]` (vectors 15, 16). Per the Task 9 hardening, a
     record only authenticates if signed by a key that is `active` in the
     issuer manifest with a `[valid_from, valid_to]` window covering the
-    record's own `revoked_at` — every revocation.json shipped here satisfies
-    that, checked with a generator-time `revocation.verify_record()` assert.
+    record's own `revoked_at`. Positive fixtures such as groups 15/16/23
+    assert authentication at generation time. Deliberately malformed fixtures
+    may assert rejection instead: group 45c carries a genuine issuer signature
+    over a non-ULID `receipt_id` and must not authenticate.
   - optional `revocation-view.json` — the WHOLE untrusted revocation view as
     an array (group 47), fed to the replay test as `revocation_view=<array>`
     unchanged. Alternative spelling to `revocation.json`, for leaves that need

@@ -48,7 +48,7 @@ non-passing leaf, then exactly one summary line:
 
 ```
 CONFORMANT (v0.2): 223/223 leaves pass — corpus revision <hex12>
-NOT CONFORMANT (v0.1): 60/63 leaves pass — 3 failing
+NOT CONFORMANT (v0.1): 62/65 leaves pass — 3 failing
 ```
 
 Exit code: `0` if conformant, `1` if not, `2` on a usage/environment error
