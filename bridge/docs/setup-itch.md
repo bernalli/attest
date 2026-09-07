@@ -135,6 +135,18 @@ has to confirm each one against the live itch API before anything is
 signed. A CSV row for someone who never actually bought the game simply
 never resolves (its claim keeps retrying, then exhausts).
 
+**When a claim stalls on a purchase that exists.** The poller issues only for
+a purchase whose `status` it recognizes as a completed sale (`complete`,
+`settled`), and refuses every other one rather than signing on a guess:
+`refunded` and `canceled` are ordinary reversals and stay quiet, while
+anything else is logged as `purchase status ... is not issuable` and, once the
+claim exhausts, named in its dead letter. That is the fail-closed side of a
+rail with no webhook: itch.io does not publish the full set of statuses this
+endpoint can return, so a status nobody has seen before costs a stalled claim
+instead of a receipt for a sale that may have been reversed. If you see one,
+`attest-bridge retry-failed` will not help until the status is understood --
+report it, and the buyer can re-claim once the bridge accepts it.
+
 ## 4. Test locally: a dry run on your own machine first
 
 Unlike the Stripe and Shopify rails, itch has no webhook you can replay

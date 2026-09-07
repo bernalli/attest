@@ -709,6 +709,223 @@ def test_canceled_purchase_is_skipped_same_as_refunded(ledger: Ledger, core: Iss
     assert ledger.get_receipt("itch", "6002") is None
 
 
+@pytest.mark.parametrize("status", ["complete", "settled"])
+def test_every_accepted_status_issues_a_receipt(
+    ledger: Ledger, core: IssuingCore, status: str
+) -> None:
+    """Both members of the allow-list are covered, independently. `"complete"`
+    is the only value the itch.io API reference actually shows for this
+    endpoint; `"settled"` is this bridge's own fixture value, never falsified
+    against a live response. Parametrizing here is what stops the pair from
+    degenerating back into "whatever the fixture happens to say": with one
+    test per member, dropping either from `_ISSUABLE_STATUSES` turns a test
+    red instead of passing on the strength of the other."""
+    now = datetime(2026, 7, 24, 10, 0, 0, tzinfo=UTC)
+    token = ledger.enqueue_claim("buyer@example.com", "123456", now=now.strftime(_RFC3339))
+    purchases = [_purchase_json(id=6200, game_id=123456, status=status)]
+    fake_http_get, _ = _fake_http_get(purchases)
+    adapter = ItchAdapter(api_key="key", http_get=fake_http_get)
+    poller = ItchPoller(adapter=adapter, ledger=ledger, core=core)
+
+    poller.tick(now=now)
+
+    assert ledger.get_receipt("itch", "6200") is not None
+    claim = ledger.get_claim(token)
+    assert claim is not None
+    assert claim.status == "confirmed"
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "totally-unknown-state",
+        "chargeback",
+        "disputed",
+        "pending",
+        "SETTLED",
+        " settled",
+        "settled ",
+        "",
+    ],
+)
+def test_a_status_the_poller_does_not_recognize_is_never_issued(
+    ledger: Ledger, core: IssuingCore, status: str
+) -> None:
+    """The issuance decision is an ALLOW-list, so a status itch.io introduces
+    tomorrow -- or one this poller simply does not know -- never becomes a
+    signed receipt. None of these values is one of the two reversed states the
+    poller already knew about: a test that only re-enumerated `refunded` and
+    `canceled` could not tell a deny-list from an allow-list."""
+    now = datetime(2026, 7, 24, 10, 0, 0, tzinfo=UTC)
+    token = ledger.enqueue_claim("buyer@example.com", "123456", now=now.strftime(_RFC3339))
+    purchases = [_purchase_json(id=6100, game_id=123456, status=status)]
+    fake_http_get, _ = _fake_http_get(purchases)
+    adapter = ItchAdapter(api_key="key", http_get=fake_http_get)
+    poller = ItchPoller(adapter=adapter, ledger=ledger, core=core, backoff_base_seconds=60)
+
+    poller.tick(now=now)
+
+    assert ledger.get_receipt("itch", "6100") is None
+    claim = ledger.get_claim(token)
+    assert claim is not None
+    # Same retry posture as `refunded`/`canceled`: the purchase is treated as
+    # though it did not exist, so the claim stays pending instead of being
+    # confirmed on a purchase the poller refused to read.
+    assert claim.status == "pending"
+    assert claim.attempts == 1
+
+
+def test_a_purchase_with_no_status_field_at_all_is_never_issued(
+    ledger: Ledger, core: IssuingCore
+) -> None:
+    """`status` absent is not `status` recognized. Under a deny-list the
+    missing key read as `None`, which was in no exclusion list and therefore
+    issued."""
+    now = datetime(2026, 7, 24, 10, 0, 0, tzinfo=UTC)
+    token = ledger.enqueue_claim("buyer@example.com", "123456", now=now.strftime(_RFC3339))
+    raw = _purchase_json(id=6101, game_id=123456)
+    del raw["status"]
+    fake_http_get, _ = _fake_http_get([raw])
+    adapter = ItchAdapter(api_key="key", http_get=fake_http_get)
+    poller = ItchPoller(adapter=adapter, ledger=ledger, core=core, backoff_base_seconds=60)
+
+    poller.tick(now=now)
+
+    assert ledger.get_receipt("itch", "6101") is None
+    claim = ledger.get_claim(token)
+    assert claim is not None
+    assert claim.status == "pending"
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        pytest.param(["complete"], id="json-array"),
+        pytest.param({"state": "complete"}, id="json-object"),
+        pytest.param(1, id="number"),
+        pytest.param(True, id="boolean"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_a_status_of_the_wrong_json_type_is_refused_without_costing_the_claim(
+    ledger: Ledger, core: IssuingCore, status: Any
+) -> None:
+    """A `status` is only a status if it is a string. Two of these values are
+    UNHASHABLE, and `x in frozenset` hashes its left operand: testing
+    membership before the type raised TypeError out of `_drain_claim`, so one
+    malformed row took the whole response with it -- the valid purchase beside
+    it never issued, and the claim exhausted with nothing but a traceback to
+    say why. A refusal has to cost one row, never the claim."""
+    now = datetime(2026, 7, 24, 10, 0, 0, tzinfo=UTC)
+    token = ledger.enqueue_claim("buyer@example.com", "123456", now=now.strftime(_RFC3339))
+    malformed = _purchase_json(id=6300, game_id=123456)
+    malformed["status"] = status
+    good = _purchase_json(id=6301, game_id=123456, status="settled")
+    fake_http_get, _ = _fake_http_get([malformed, good])
+    adapter = ItchAdapter(api_key="key", http_get=fake_http_get)
+    poller = ItchPoller(adapter=adapter, ledger=ledger, core=core, backoff_base_seconds=60)
+
+    poller.tick(now=now)
+
+    assert ledger.get_receipt("itch", "6300") is None
+    # The valid purchase beside it is unaffected -- per-row isolation.
+    assert ledger.get_receipt("itch", "6301") is not None
+    claim = ledger.get_claim(token)
+    assert claim is not None
+    assert claim.status == "confirmed"
+
+
+def test_a_refused_status_is_scrubbed_and_bounded_before_it_is_logged_or_stored(
+    ledger: Ledger, core: IssuingCore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The refusal detail is logged AND persisted in a dead letter, and its
+    content is remote input: the poller sends the buyer's address to the API,
+    so an API that echoes it back into a field would put it in both. `_scrub`
+    runs where the message is built, exactly as it does for the
+    retryable-failure detail beside it, and the rendering is bounded so one
+    pathological value cannot fill an operator's log or a Ledger row."""
+    now = datetime(2026, 7, 24, 10, 0, 0, tzinfo=UTC)
+    token = ledger.enqueue_claim("buyer@example.com", "123456", now=now.strftime(_RFC3339))
+    echoed = f"no purchase for {'z' * 300} buyer@example.com"
+    purchases = [_purchase_json(id=6302, game_id=123456, status=echoed)]
+    fake_http_get, _ = _fake_http_get(purchases)
+    adapter = ItchAdapter(api_key="key", http_get=fake_http_get)
+    poller = ItchPoller(adapter=adapter, ledger=ledger, core=core, max_attempts=1)
+
+    with caplog.at_level(logging.WARNING, logger="attest_bridge.itch"):
+        poller.tick(now=now)
+
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "buyer@example.com" not in logged
+    dead_letters = ledger.unresolved_dead_letters()
+    assert len(dead_letters) == 1
+    assert "buyer@example.com" not in dead_letters[0].reason
+    # Bounded: the reason stays readable rather than carrying 300 z's.
+    assert len(dead_letters[0].reason) < 300
+    claim = ledger.get_claim(token)
+    assert claim is not None
+    assert claim.status == "exhausted"
+
+
+def test_an_unrecognized_status_is_logged_by_name_while_a_known_reversal_is_quiet(
+    ledger: Ledger, core: IssuingCore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A silent fail-closed is a merchant whose receipts stopped for reasons
+    nobody can see. The status that stalls the claim is named in the log --
+    and `refunded`/`canceled` stay quiet, so the warning keeps meaning
+    "something new happened" instead of firing on every ordinary refund."""
+    now = datetime(2026, 7, 24, 10, 0, 0, tzinfo=UTC)
+    ledger.enqueue_claim("buyer@example.com", "123456", now=now.strftime(_RFC3339))
+    purchases = [_purchase_json(id=6102, game_id=123456, status="chargeback")]
+    fake_http_get, _ = _fake_http_get(purchases)
+    adapter = ItchAdapter(api_key="key", http_get=fake_http_get)
+    poller = ItchPoller(adapter=adapter, ledger=ledger, core=core)
+
+    with caplog.at_level(logging.WARNING, logger="attest_bridge.itch"):
+        poller.tick(now=now)
+    unknown_records = [r for r in caplog.records if "chargeback" in r.getMessage()]
+    assert len(unknown_records) == 1
+    # The buyer's address is never a log field here.
+    assert "buyer@example.com" not in unknown_records[0].getMessage()
+
+    caplog.clear()
+    ledger.enqueue_claim("other@example.com", "123456", now=now.strftime(_RFC3339))
+    refunded = [_purchase_json(id=6103, game_id=123456, status="refunded")]
+    refunded_http_get, _ = _fake_http_get(refunded)
+    quiet_poller = ItchPoller(
+        adapter=ItchAdapter(api_key="key", http_get=refunded_http_get),
+        ledger=ledger,
+        core=core,
+    )
+    with caplog.at_level(logging.WARNING, logger="attest_bridge.itch"):
+        quiet_poller.tick(now=now)
+    assert [r for r in caplog.records if "refunded" in r.getMessage()] == []
+
+
+def test_an_exhausted_claim_names_the_status_it_refused_in_its_dead_letter(
+    ledger: Ledger, core: IssuingCore
+) -> None:
+    """A claim stalled by an unrecognized status exhausts like any other. The
+    dead letter has to say WHICH status, or the operator is left reading
+    "issuance/storage failures" about something that was never an issuance
+    failure."""
+    now = datetime(2026, 7, 24, 10, 0, 0, tzinfo=UTC)
+    token = ledger.enqueue_claim("buyer@example.com", "123456", now=now.strftime(_RFC3339))
+    purchases = [_purchase_json(id=6104, game_id=123456, status="chargeback")]
+    fake_http_get, _ = _fake_http_get(purchases)
+    adapter = ItchAdapter(api_key="key", http_get=fake_http_get)
+    poller = ItchPoller(adapter=adapter, ledger=ledger, core=core, max_attempts=1)
+
+    poller.tick(now=now)
+
+    claim = ledger.get_claim(token)
+    assert claim is not None
+    assert claim.status == "exhausted"
+    dead_letters = ledger.unresolved_dead_letters()
+    assert len(dead_letters) == 1
+    assert "itch purchase status not issuable: 'chargeback'" in dead_letters[0].reason
+
+
 def test_only_pending_due_claims_are_processed_confirmed_ones_are_untouched(
     ledger: Ledger, core: IssuingCore
 ) -> None:
