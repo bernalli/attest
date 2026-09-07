@@ -435,9 +435,12 @@ Now the part that limits it, and it is large. As things ship today, nothing is
 anchored, and not even this project's own verifier has the clock switched on. The
 list of block summaries in the browser verifier is empty. Both libraries default to
 no anchoring policy at all, and with no policy the rescue is off: a key declared
-compromised sinks every receipt it signed, without exception. Issuing a receipt has
-no anchoring option; putting one in a log and anchoring it is a separate sequence of
-commands, with the timestamp itself obtained from tools outside this project. So
+compromised sinks every receipt it signed, without exception. `attest issue --log-dir`
+logs a receipt in the issuer's own log as it is issued, in the same command; the
+checkpoint that a receipt's evidence is proven under is still signed separately, and
+evidence for a given receipt can only be produced once that signed checkpoint covers
+every entry appended so far. The
+timestamp itself is still obtained from tools outside this project. So
 "anchor what you buy" is advice almost nobody can currently follow. The mechanism is
 specified and exercised by the conformance suite. It is not yet a protection real
 buyers have, and until it is, the limit stated in the next answer is the plain truth
@@ -471,8 +474,10 @@ corpus carries a rescued receipt to hold them to it. What is missing by default 
 itself and an anchor to check it against. The bridge does not log what it issues.
 The command line can now turn a receipt into an entry with `attest log entry --type receipt`,
 and its log commands can append that entry and produce an inclusion proof under a signed
-checkpoint. Getting an external timestamp and configuring trusted anchors remain separate
-steps. Nothing pins an anchor by default: the browser verifier pins no Bitcoin block
+checkpoint — or, with `attest issue --log-dir`, append it in the same command that signs
+the receipt, opt-in and never touching the network either way. Getting an external
+timestamp and configuring trusted anchors remain separate steps. Nothing pins an anchor
+by default: the browser verifier pins no Bitcoin block
 header, and the command line and both libraries run with no anchoring policy at all unless
 you hand them one, as the answer about Bitcoin above spells out. With those default inputs,
 there is no dated evidence to rescue a receipt from the declaration. The rule on any

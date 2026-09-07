@@ -49,17 +49,19 @@ invalidates the receipts signed with that key. v0.2 defines a rescue for a
 receipt logged and anchored before the declaration, and both verifier
 implementations evaluate that evidence; what is missing sits upstream of them. A
 verifier looks for it only once it has been given trusted log keys and an anchor
-policy, and nothing in the issuing path puts a receipt in a log: neither `attest
-issue` nor the bridge writes one. What changed is that deriving the entry no
+policy, and `attest issue --log-dir` appends a receipt's entry to the issuer's own
+log as it signs; the bridge does not. What changed is that deriving the entry no
 longer means writing code — `attest log entry --type receipt` computes it from
 the signed envelope, always by rehashing the document rather than trusting a hash
-it declares, and `attest log append` takes it from there. The log commands can
-produce an inclusion proof under a signed checkpoint. An operator must still
+it declares, and `attest log append` takes it from there (or, with `issue
+--log-dir`, both in the one command). The log commands can produce an inclusion
+proof under a signed checkpoint, by receipt or by index. An operator must still
 obtain an external timestamp and supply the evidence and matching trusted log
 keys and anchors to a capable verifier. A receipt with qualifying anchored
-standing can be rescued; an unlogged one cannot. The bridge and `attest issue`
-do not automate these steps, and the browser and desktop currently pin no block
-headers. And `ok` never includes `trust` (v0.1 §11.1, conformance vector 14b):
+standing can be rescued; an unlogged one cannot. The bridge does not automate
+these steps, and `attest issue` automates only the logging half, and the browser
+and desktop currently pin no block headers. And `ok` never includes `trust`
+(v0.1 §11.1, conformance vector 14b):
 a verifier that must refuse a receipt reached through a discontinuous key
 rotation has to name that level itself, with `attest verify --reject-trust`,
 which takes the exact values to refuse rather than a threshold. Here's how:

@@ -39,7 +39,9 @@ import shutil
 import stat
 import sys
 import tempfile
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -72,8 +74,28 @@ EXIT_USAGE_ERROR = 2
 
 _SECRET_FILE_MODE = 0o600
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+
+# POSIX-only, and the log's advisory lock is its only user (D-4). Imported
+# defensively for the same reason `_O_NOFOLLOW`/`_O_CLOEXEC` are read with
+# `getattr`: this module also carries `verify`, `issue` and every other verb,
+# and the package ships as `Operating System :: OS Independent`. A hard
+# top-level `import fcntl` would make the whole CLI unimportable where it is
+# missing, to protect one verb. Absent, the lock fails CLOSED (below) rather
+# than appending unlocked.
+try:
+    import fcntl
+except ModuleNotFoundError:  # pragma: no cover - exercised only off POSIX
+    fcntl = None  # type: ignore[assignment]
 _PROVENANCE_BUNDLE = "bundle"  # local trust material is unauthenticated TOFU (design §5)
 _REDACTED_SALT = "<redacted: run on the .private material to see it>"
+
+# `attest issue --log-dir`/`attest log append` advisory lock (D-4): how long
+# a caller waits for a concurrent append to release LOG/config.json's flock
+# before giving up, and how often it polls while waiting. A module-level
+# name (not a function default) so a test can `monkeypatch.setattr` it.
+_LOG_APPEND_LOCK_TIMEOUT_SECONDS = 5.0
+_LOG_APPEND_LOCK_POLL_SECONDS = 0.05
 
 # --- `attest log` on-disk layout (Stage 2, offline-signer split) -------------
 #
@@ -128,6 +150,17 @@ class _OverwritePlan:
     existed: bool
     stat_result: os.stat_result | None
     require_unchanged: bool
+
+
+@dataclass(frozen=True)
+class _AppendOutcome:
+    """What `_append_entry` (D-3) did: shared by `log append`'s report and
+    the `log` member `issue --log-dir` adds to its own report (§5.3.7)."""
+
+    size: int
+    leaf_index: int
+    candidate: Path
+    duplicate: bool
 
 
 def _manifest_version_arg(value: str) -> int:
@@ -727,6 +760,131 @@ def _log_tile_dir(log_dir: Path) -> Path:
     return log_dir / _LOG_TILE_DIRNAME
 
 
+def _log_owned_paths(log_dir: Path) -> tuple[Path, ...]:
+    """Every path this log reserves for its own on-disk state — the ONE
+    place that enumerates them. A receipt output (`attest issue`'s `--out`
+    or `--salt-out`) must never be, or land inside, any of these (see
+    `_reject_if_under_log_owned_path`). Four are files, one — the tile
+    cache, installed by replacing `LOG/tile` wholesale — is a directory;
+    callers must not distinguish between them, and adding a sixth reserved
+    path/directory to the log format means adding ONE entry here, never a
+    second hand-written list next to whatever guards this."""
+    return (
+        _log_config_path(log_dir),
+        _log_entries_path(log_dir),
+        _log_candidate_path(log_dir),
+        _log_checkpoint_path(log_dir),
+        _log_tile_dir(log_dir),
+    )
+
+
+def _resolve_or_reject(path: Path, *, flag_name: str) -> tuple[Path, Path]:
+    """The TWO views of `path` the log-ownership guard has to compare, because
+    there are two distinct ways this command can break an output it has just
+    reported writing:
+
+    * RESOLVED (`Path.resolve(strict=False)`: `..` normalized, symlinks
+      followed all the way down, a not-yet-existing path tolerated) — where
+      the BYTES land. Bytes landing inside an owned path are deleted outright
+      when that path is replaced.
+    * LEXICAL (`os.path.abspath`: `..` normalized, symlinks NOT followed) —
+      the ROUTE the caller will use to read the receipt back, and the route
+      this command prints in its report. An output reached THROUGH a symlink
+      that itself sits inside an owned path keeps its bytes when that path is
+      replaced, but the ROUTE dies with the link, and the command exits 0
+      naming a path that no longer exists. Measured before this check existed:
+      `--out LOG/tile/0/escape/r.json` with `escape -> /elsewhere` exited 0
+      with `Path(report["out"]).exists()` already False.
+
+    A path that cannot be turned into either view is REFUSED rather than
+    treated as 'not owned': on a command that signs, a doubt the guard could
+    not resolve must never silently become a yes. That is deliberately not
+    just `OSError` — `Path.resolve(strict=False)` raises `RuntimeError` on a
+    symlink cycle (measured on CPython 3.12, this project's floor; 3.13
+    instead returns the path unresolved, which the LEXICAL view then judges)
+    and `ValueError` on a NUL byte, while `os.path.abspath` raises `OSError`
+    when a relative path is given with the cwd deleted."""
+    try:
+        return path.resolve(strict=False), Path(os.path.abspath(path))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CliUsageError(
+            f"{flag_name}: could not resolve {path} to check it against the log's own state: {exc}"
+        ) from exc
+
+
+def _reject_if_under_log_owned_path(flag_name: str, flag_value: Path, log_dir: Path) -> None:
+    """Refuse `flag_value` if it IS, or resolves to somewhere INSIDE, one of
+    `_log_owned_paths(log_dir)` — file and directory alike, via the
+    identical containment check: a file can never be an ancestor of a
+    distinct real path, so for a file-owned entry only the equality branch
+    can ever fire, while for the tile-cache directory the containment
+    branch also catches every output nested arbitrarily deep beneath it
+    (`_replace_staged_tiles` replaces that whole subtree wholesale, AFTER
+    the receipt has already been written — the defect this guard closes).
+
+    Both sides go through `_resolve_or_reject`, which yields TWO views of
+    each path — fully resolved and merely absolute — and containment is
+    tested view against matching view, never as a string comparison, so
+    neither a `..` component nor a symlink can make the check disagree with
+    what the path denotes. This guard therefore has no special-case branch
+    for symlinks and needs none: one whose real target lands inside an owned
+    path is refused even when its own location is nowhere near `--log-dir`
+    (the RESOLVED view), and one that merely SITS inside an owned path is
+    refused even when it points cleanly outside (the LEXICAL view) — because
+    replacing that owned path destroys the route, leaving this command
+    reporting, at exit 0, a receipt path that no longer exists.
+    `--log-dir` as a whole is still not reserved: only the five paths
+    above are, so an output elsewhere under `--log-dir` stays legal."""
+    views = _resolve_or_reject(flag_value, flag_name=flag_name)
+    for owned in _log_owned_paths(log_dir):
+        owned_views = _resolve_or_reject(owned, flag_name=flag_name)
+        for value, owned_value in zip(views, owned_views, strict=True):
+            if value == owned_value or owned_value in value.parents:
+                raise CliUsageError(
+                    f"{flag_name} must not be, or be inside, the log's own state path {owned}"
+                )
+
+
+# `_log_owned_paths` is the single enumeration of PATHS this guard covers.
+# There was no equivalent for VERBS: nothing stopped a future `_cmd_*` from
+# combining a `--dir`/`--log-dir` argument with an `--out`/`--salt-out`
+# argument and never calling `_reject_if_under_log_owned_path` at all --
+# which is exactly how `_cmd_log_anchor` went unguarded (measured: it named
+# two of the five owned paths by hand instead of using the shared guard).
+# A hand-written "these are the guarded commands" list would have the same
+# blind spot the path list had: it only knows about what someone remembered
+# to add. This instead walks the SAME parser `main()` dispatches every
+# invocation through (`build_parser()`, never a second copy of it) and
+# reports every subcommand PATH shaped like a write target this guard must
+# cover -- so a future verb combining those two flags shows up here whether
+# or not its own body remembers to call the guard.
+_LOG_DIR_FLAG_NAMES = frozenset({"--dir", "--log-dir"})
+_LOG_DIR_OUTPUT_FLAG_NAMES = frozenset({"--out", "--salt-out"})
+
+
+def _log_dir_output_commands() -> tuple[tuple[str, ...], ...]:
+    """Every subcommand path (e.g. `("issue",)`, `("log", "anchor")`) whose
+    argparse definition carries both a `--dir`/`--log-dir` argument and an
+    `--out`/`--salt-out` argument -- read from `build_parser()` itself."""
+    found: list[tuple[str, ...]] = []
+
+    def walk(node: argparse.ArgumentParser, path: tuple[str, ...]) -> None:
+        option_strings = {opt for action in node._actions for opt in action.option_strings}
+        if (
+            path
+            and option_strings & _LOG_DIR_FLAG_NAMES
+            and option_strings & _LOG_DIR_OUTPUT_FLAG_NAMES
+        ):
+            found.append(path)
+        for action in node._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for name, subparser in action.choices.items():
+                    walk(subparser, (*path, name))
+
+    walk(build_parser(), ())
+    return tuple(found)
+
+
 def _validate_cli_origin(origin: str) -> str:
     """Require a non-empty printable-ASCII origin, mirroring `tlog`'s own
     checkpoint-origin grammar (kept local rather than reaching into `tlog`'s
@@ -1237,6 +1395,48 @@ def _cmd_issue(args: argparse.Namespace) -> int:
     delivery = envelope.get("delivery")
     salt_bearing = isinstance(delivery, dict) and "salt" in delivery
 
+    # `--log-dir` (D-1, opt-in): with it absent this function's behavior
+    # and stdout are BYTE-IDENTICAL to before this flag existed (§5.3.1) —
+    # every statement below runs only inside `if log_dir is not None`. This
+    # validation runs BEFORE the overwrite guards just below, precisely so
+    # that a `--out`/`--salt-out` aliased with a log state file is refused
+    # with ITS OWN message even when that state file's existing content
+    # happens to differ from what would be written — a plain
+    # `_prepare_overwrite` "already exists with different content" would
+    # otherwise fire first and misname the actual mistake.
+    log_dir: Path | None = args.log_dir
+    log_entry: dict[str, Any] | None = None
+    if log_dir is not None:
+        # Fail fast, before any write: the log must already exist (P25;
+        # message is `_read_log_origin`'s own, introducing no new one), and
+        # neither receipt output may alias — or land inside — any path the
+        # log reserves for its own state. That set is `_log_owned_paths`,
+        # checked uniformly by `_reject_if_under_log_owned_path`: not four
+        # files plus a directory special-cased on the side, because the
+        # latter shape is exactly what let an `--out`/`--salt-out` inside
+        # the tile cache slip past this guard, get deleted by
+        # `_replace_staged_tiles` (installed AFTER the receipt is written),
+        # and still exit 0 reporting a receipt no longer on disk. Adding a
+        # sixth reserved path to the log format only ever means adding one
+        # entry to `_log_owned_paths` — never a second list here.
+        _read_log_origin(log_dir)
+        for flag_name, flag_value in (("--out", args.out), ("--salt-out", args.salt_out)):
+            if flag_value is None:
+                continue
+            _reject_if_under_log_owned_path(flag_name, flag_value, log_dir)
+        # The same builder `attest log entry --type receipt` uses (P11): the
+        # entry's hash is recomputed from the envelope just signed, never
+        # read from a member of it. `tlog.encode_entry` is the same schema
+        # guard `_cmd_log_entry` applies, run here too so a malformed entry
+        # is refused before the receipt is ever written (§5.3.3).
+        try:
+            log_entry = _LOG_ENTRY_BUILDERS[tlog._TYPE_RECEIPT](envelope, args.out)
+            tlog.encode_entry(log_entry)
+        except tlog.TlogError as exc:
+            raise CliUsageError(
+                f"the receipt entry for {args.out} is not a valid log entry: {exc}"
+            ) from exc
+
     # Two-phase: build both contents, guard both paths, only then write, so a
     # refusal on the second output cannot leave the first one on disk.
     envelope_text = _json_text(envelope)
@@ -1248,25 +1448,80 @@ def _cmd_issue(args: argparse.Namespace) -> int:
             args.salt_out, salt_out_text, label="--salt-out", force=args.force
         )
 
-    _write_json_text(
-        args.out,
-        envelope_text,
-        secret=salt_bearing,
-        exclusive=not envelope_plan.existed,
-        label="--out",
-        overwrite_plan=envelope_plan,
-    )
-    if salt_out_text is not None:
-        assert salt_out_plan is not None
-        _write_secret_text(
-            args.salt_out,
-            salt_out_text,
-            exclusive=not salt_out_plan.existed,
-            label="--salt-out",
-            overwrite_plan=salt_out_plan,
-        )
+    envelope_written = False
+    salt_out_written = False
 
-    _print_json({"out": str(args.out), "receipt_id": payload.get("receipt_id")})
+    def _write_receipt_outputs() -> None:
+        nonlocal envelope_written, salt_out_written
+        _write_json_text(
+            args.out,
+            envelope_text,
+            secret=salt_bearing,
+            exclusive=not envelope_plan.existed,
+            label="--out",
+            overwrite_plan=envelope_plan,
+        )
+        # The envelope is a valid, disclosable receipt from this line on:
+        # nothing past it may ever delete or leave it half-written, even if
+        # appending to the log fails (§5.3.5).
+        envelope_written = True
+        if salt_out_text is not None:
+            assert salt_out_plan is not None
+            _write_secret_text(
+                args.salt_out,
+                salt_out_text,
+                exclusive=not salt_out_plan.existed,
+                label="--salt-out",
+                overwrite_plan=salt_out_plan,
+            )
+            salt_out_written = True
+
+    log_report: dict[str, Any] | None = None
+    if log_dir is None:
+        _write_receipt_outputs()
+    else:
+        assert log_entry is not None
+        # Order (§5.3.4): hold the lock across reading the log's state,
+        # computing+staging the append, writing the receipt (the callback,
+        # run once staging has succeeded and before anything is installed),
+        # and finally committing the log — so the only failure window left
+        # once the receipt is on disk is the log's own commit (§5.3.5).
+        with _log_append_lock(log_dir):
+            try:
+                outcome = _append_entry(log_dir, log_entry, before_commit=_write_receipt_outputs)
+            except (CliUsageError, OSError) as exc:
+                if envelope_written:
+                    # `before_commit` writes --salt-out too, so this handler
+                    # can be reached by a failure that is not the append's at
+                    # all. Naming only the log would send the operator to log
+                    # a receipt whose salt copy is the thing that is missing.
+                    salt_note = (
+                        ""
+                        if salt_out_text is None or salt_out_written
+                        else (
+                            f" --salt-out {args.salt_out} was NOT written either; the salt is "
+                            f"still inside {args.out} under `delivery.salt`."
+                        )
+                    )
+                    raise CliUsageError(
+                        f"receipt written to {args.out} but NOT appended to {log_dir}: {exc}."
+                        f"{salt_note} Log it later with `attest log entry --type receipt "
+                        f"--in {args.out} --out ENTRY` and `attest log append --dir {log_dir} "
+                        "--entry-json ENTRY`."
+                    ) from exc
+                raise
+        log_report = {
+            "dir": str(log_dir),
+            "size": outcome.size,
+            "leaf_index": outcome.leaf_index,
+            "candidate": str(outcome.candidate),
+            "duplicate": outcome.duplicate,
+        }
+
+    report: dict[str, Any] = {"out": str(args.out), "receipt_id": payload.get("receipt_id")}
+    if log_report is not None:
+        report["log"] = log_report
+    _print_json(report)
     return EXIT_OK
 
 
@@ -2526,25 +2781,94 @@ def _cmd_log_entry(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _cmd_log_append(args: argparse.Namespace) -> int:
-    log_dir: Path = args.dir
+@contextmanager
+def _log_append_lock(log_dir: Path) -> Iterator[None]:
+    """Advisory mutual exclusion around one append to `log_dir` (D-4).
+
+    Locks the OPEN FILE DESCRIPTION of `LOG/config.json` — a file `log init`
+    writes once and nothing else ever rewrites (P25) — rather than a
+    dedicated lock file: the log this protects may be a committed, published
+    tree (e.g. `site/public/log/`), where an extra file would leak into the
+    deploy, and an unlinked-then-recreated lock file would let two holders
+    coexist on it (the same reasoning the bridge's own sweep lock documents,
+    `bridge/src/attest_bridge/delivery.py`). A fresh descriptor is opened for
+    every acquisition because `flock` locks the open file description, not
+    the path or the inode by itself — a cached descriptor would be
+    re-entrant within one process and silently stop excluding anyone.
+
+    `attest issue --log-dir` is naturally concurrent (a script issuing in
+    parallel); `attest log append` was, before this, only ever run by hand
+    or in series by CI. Without this lock two appends racing the same
+    entries.jsonl/checkpoint.candidate silently lose one of them (P12).
+
+    Absent `LOG/config.json` (the log was never `log init`-ed), there is no
+    shared state to protect: this yields WITHOUT locking, so the caller's
+    very next `_read_log_origin` call raises its own "is not an attest log"
+    message instead of a raw `FileNotFoundError` from this function's own
+    `open`.
+
+    An `OSError` from `flock` itself (e.g. a filesystem without locking
+    support) PROPAGATES rather than falling back to an unlocked append —
+    the same choice the bridge's own lock makes, for the same reason: the
+    deployments that cannot lock are the ones most likely to need to.
+    """
+    if fcntl is None:  # pragma: no cover - exercised only off POSIX
+        raise CliUsageError(
+            f"{log_dir} cannot be locked on this platform (no fcntl.flock); refusing to "
+            "append without the lock"
+        )
+    config_path = _log_config_path(log_dir)
+    try:
+        fd = os.open(config_path, os.O_RDONLY | _O_CLOEXEC)
+    except FileNotFoundError:
+        yield
+        return
+    try:
+        deadline = time.monotonic() + _LOG_APPEND_LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise CliUsageError(
+                        f"{log_dir} is busy: another append holds the lock on "
+                        f"{config_path} (waited {_LOG_APPEND_LOCK_TIMEOUT_SECONDS}s); retry"
+                    ) from exc
+                time.sleep(_LOG_APPEND_LOCK_POLL_SECONDS)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _append_entry(
+    log_dir: Path,
+    entry: dict[str, Any],
+    *,
+    before_commit: Callable[[], None] | None = None,
+) -> _AppendOutcome:
+    """Validate+append one already-built entry (D-3): everything
+    `_cmd_log_append` used to do itself, from reading `origin` to
+    committing the log's on-disk state, minus the argument validation
+    (`--entry-json` aliasing, reading the file, the `isinstance dict`
+    check) and the report printing, which stay with each caller.
+
+    `before_commit`, if given, runs once the tree for this append has been
+    computed and every output STAGED (so a failure past this point can no
+    longer be caused by anything about the append itself) but before any of
+    it is INSTALLED — the sole hook `issue --log-dir` uses to write the
+    receipt envelope (§5.3.4) at the one point where its own failure cannot
+    leave a partially-committed log, and where the log's own commit is the
+    only thing left that can still fail once it has run (§5.3.5). It also
+    runs on the idempotent-duplicate return, so a byte-identical rerun still
+    (re)writes that caller's other outputs. `log append` passes none.
+    """
+    origin = _read_log_origin(log_dir)
     entries_path = _log_entries_path(log_dir)
     candidate_path = _log_candidate_path(log_dir)
-    if _same_file_target(args.entry_json, entries_path):
-        raise CliUsageError("--entry-json must not be the log's own entries file")
-    if _same_file_target(args.entry_json, candidate_path):
-        raise CliUsageError("--entry-json must not be the log's own checkpoint candidate")
-
-    origin = _read_log_origin(log_dir)
-    new_entry = _read_json(
-        args.entry_json, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--entry-json"
-    )
-    if not isinstance(new_entry, dict):
-        raise CliUsageError(f"{args.entry_json} must contain a JSON object")
-    try:
-        new_entry_bytes = tlog.encode_entry(new_entry)
-    except tlog.TlogError as exc:
-        raise CliUsageError(f"{args.entry_json} is not a valid log entry: {exc}") from exc
+    new_entry_bytes = tlog.encode_entry(entry)
 
     # Compute everything fallible BEFORE writing anything: a rejected append
     # must leave the log's on-disk state byte-identical to before the call.
@@ -2555,24 +2879,22 @@ def _cmd_log_append(args: argparse.Namespace) -> int:
             # Canonically identical leaves are an idempotent append: do not
             # touch any state, so a retry after an authoritative commit stays
             # a no-op instead of growing the tree a second time.
-            _print_json(
-                {
-                    "dir": str(log_dir),
-                    "size": len(existing_entries),
-                    "leaf_index": leaf_index,
-                    "candidate": str(candidate_path),
-                    "duplicate": True,
-                }
+            if before_commit is not None:
+                before_commit()
+            return _AppendOutcome(
+                size=len(existing_entries),
+                leaf_index=leaf_index,
+                candidate=candidate_path,
+                duplicate=True,
             )
-            return EXIT_OK
 
-    updated_entries = [*existing_entries, new_entry]
+    updated_entries = [*existing_entries, entry]
     encoded = [*existing_encoded, new_entry_bytes]
     leaf_hashes = [tlog.leaf_hash(e) for e in encoded]
     root = tlog.build_tree(encoded)
     tree_size = len(updated_entries)
     candidate_text = _candidate_text(origin, tree_size, root)
-    entries_text = "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in updated_entries)
+    entries_text = "".join(json.dumps(e, sort_keys=True) + "\n" for e in updated_entries)
 
     # Stage every output before changing visible state.  The tile cache is
     # committed first because it is derived only; then commit the candidate
@@ -2588,6 +2910,8 @@ def _cmd_log_append(args: argparse.Namespace) -> int:
         staged_candidate = _stage_text(candidate_path, candidate_text)
         staged_entries = _stage_text(entries_path, entries_text)
         staged_tiles = _stage_tiles(log_dir, leaf_hashes)
+        if before_commit is not None:
+            before_commit()
         _replace_staged_tiles(log_dir, staged_tiles)
         _replace_staged_file(staged_candidate, candidate_path)
         _replace_staged_file(staged_entries, entries_path)
@@ -2599,14 +2923,42 @@ def _cmd_log_append(args: argparse.Namespace) -> int:
         if staged_tiles is not None:
             shutil.rmtree(staged_tiles, ignore_errors=True)
 
-    _print_json(
-        {
-            "dir": str(log_dir),
-            "size": tree_size,
-            "leaf_index": tree_size - 1,
-            "candidate": str(candidate_path),
-        }
+    return _AppendOutcome(
+        size=tree_size, leaf_index=tree_size - 1, candidate=candidate_path, duplicate=False
     )
+
+
+def _cmd_log_append(args: argparse.Namespace) -> int:
+    log_dir: Path = args.dir
+    entries_path = _log_entries_path(log_dir)
+    candidate_path = _log_candidate_path(log_dir)
+    if _same_file_target(args.entry_json, entries_path):
+        raise CliUsageError("--entry-json must not be the log's own entries file")
+    if _same_file_target(args.entry_json, candidate_path):
+        raise CliUsageError("--entry-json must not be the log's own checkpoint candidate")
+
+    new_entry = _read_json(
+        args.entry_json, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--entry-json"
+    )
+    if not isinstance(new_entry, dict):
+        raise CliUsageError(f"{args.entry_json} must contain a JSON object")
+    try:
+        tlog.encode_entry(new_entry)
+    except tlog.TlogError as exc:
+        raise CliUsageError(f"{args.entry_json} is not a valid log entry: {exc}") from exc
+
+    with _log_append_lock(log_dir):
+        outcome = _append_entry(log_dir, new_entry)
+
+    report: dict[str, Any] = {
+        "dir": str(log_dir),
+        "size": outcome.size,
+        "leaf_index": outcome.leaf_index,
+        "candidate": str(outcome.candidate),
+    }
+    if outcome.duplicate:
+        report["duplicate"] = True
+    _print_json(report)
     return EXIT_OK
 
 
@@ -2714,13 +3066,37 @@ def _cmd_log_sign_checkpoint(args: argparse.Namespace) -> int:
 def _cmd_log_prove(args: argparse.Namespace) -> int:
     log_dir: Path = args.dir
     checkpoint_path = _log_checkpoint_path(log_dir)
-    entries_path = _log_entries_path(log_dir)
-    candidate_path = _log_candidate_path(log_dir)
-    if any(
-        _same_file_target(args.out, target)
-        for target in (checkpoint_path, entries_path, candidate_path)
-    ):
+    # Derived from `_log_owned_paths` -- the ONE place that enumerates what a
+    # log reserves -- not from a second list beside it. This used to name
+    # three of the five, so `log prove --out LOG/config.json` exited 0 while
+    # overwriting the log's origin with inclusion evidence; `log init` then
+    # refuses to recreate it ("already has a config.json"), leaving the log
+    # unusable by `issue --log-dir`, `log append` AND `sign-checkpoint`
+    # (measured). `--out` here is written unguarded, by design, because
+    # inclusion evidence is derivable -- which is exactly why the paths it
+    # must not be allowed to land on have to be the complete set.
+    _reject_if_under_log_owned_path("--out", args.out, log_dir)
+    if any(_same_file_target(args.out, owned) for owned in _log_owned_paths(log_dir)):
+        # `_same_file_target` adds the one thing comparing resolved paths
+        # cannot see: a HARD LINK to a state file. Unlike `issue`, this
+        # command has no `st_nlink > 1` refusal downstream (measured: a hard
+        # link to config.json is destroyed at exit 0 without this).
         raise CliUsageError("--out must not be one of the log's own state files")
+
+    # POST-PARSE, not an argparse mutually-exclusive group (D-5, §5.6.0):
+    # `main()` never catches `SystemExit`, so argparse's own usage error
+    # would take a different message and a different exit path than every
+    # other refusal in this command.
+    if (args.receipt is None) == (args.leaf_index is None):
+        raise CliUsageError("give exactly one of --leaf-index or --receipt")
+
+    # Input-vs-output aliasing, the refusal `log anchor` already makes for
+    # each of its own inputs (`--out must not be the same path as {label}`).
+    # `--out` here is written UNGUARDED because inclusion evidence is
+    # derivable; the receipt is not, so aliasing the two would overwrite the
+    # buyer's signed artefact with the evidence about it, at exit 0.
+    if args.receipt is not None and _same_file_target(args.receipt, args.out):
+        raise CliUsageError("--out must not be the same path as --receipt")
 
     if not checkpoint_path.is_file():
         raise CliUsageError(
@@ -2740,11 +3116,55 @@ def _cmd_log_prove(args: argparse.Namespace) -> int:
             "again before proving"
         )
 
-    leaf_index = args.leaf_index
-    if not 0 <= leaf_index < len(entries):
-        raise CliUsageError(f"--leaf-index {leaf_index} is out of range for {len(entries)} entries")
-
+    # Every row is well-formed from here on (P24): the malformed-row
+    # messages of `_read_log_entries`/`_encoded_entries` above are the ONLY
+    # ones a bad `entries.jsonl` can produce — there is no "skip it"
+    # branch, in either selector below, because none would be reachable.
     encoded = _encoded_entries(entries)
+
+    if args.receipt is not None:
+        # Same reader and bound `_cmd_log_entry` applies to a receipt input
+        # (P11); the same builder §5.3.3 uses to compute what `issue
+        # --log-dir` appends, so the entry this looks for is the entry that
+        # path would have produced.
+        receipt_doc = _read_strict_json(
+            args.receipt, max_bytes=validate.MAX_ENVELOPE_BYTES, input_name="--receipt"
+        )
+        if not isinstance(receipt_doc, dict):
+            raise CliUsageError(f"--receipt {args.receipt} must contain a JSON object")
+        wanted_entry = _LOG_ENTRY_BUILDERS[tlog._TYPE_RECEIPT](receipt_doc, args.receipt)
+        wanted = wanted_entry["core_sha256"]
+        # `entries[i]["core_sha256"]` only evaluates once `entries[i]["type"]`
+        # is confirmed "receipt" — every OTHER §8 entry type has no such
+        # member, and every entry here already passed `_encoded_entries`'
+        # schema guard, so this is direct indexing, never `.get` (§5.6.3).
+        candidates = [
+            i
+            for i, e in enumerate(entries)
+            if e["type"] == tlog._TYPE_RECEIPT and e["core_sha256"] == wanted
+        ]
+        if not candidates:
+            raise CliUsageError(
+                f"{args.receipt} is not logged in {log_dir}: no receipt entry with "
+                f"core_sha256 {wanted}"
+            )
+        if len(candidates) > 1:
+            # `entries.jsonl` does not guarantee unique `core_sha256` (P13):
+            # the lowest index wins, the same rule §17.4 uses for a log index.
+            indices = ",".join(str(i) for i in candidates)
+            print(
+                f"warning: {len(candidates)} entries carry core_sha256 {wanted} "
+                f"(indices {indices}); proving the earliest, index {candidates[0]}",
+                file=sys.stderr,
+            )
+        leaf_index = candidates[0]
+    else:
+        leaf_index = args.leaf_index
+        if not 0 <= leaf_index < len(entries):
+            raise CliUsageError(
+                f"--leaf-index {leaf_index} is out of range for {len(entries)} entries"
+            )
+
     proof = tlog.inclusion_proof(encoded, leaf_index)
 
     evidence = {
@@ -2761,16 +3181,38 @@ def _cmd_log_prove(args: argparse.Namespace) -> int:
 
 def _cmd_log_anchor(args: argparse.Namespace) -> int:
     log_dir: Path = args.dir
-    checkpoint_path = _log_checkpoint_path(log_dir)
-    entries_path = _log_entries_path(log_dir)
     read_paths = [("--evidence", args.evidence), ("--ots-proof", args.ots_proof)]
     if args.rfc3161_token is not None:
         read_paths.append(("--rfc3161-token", args.rfc3161_token))
-    if _same_file_target(args.out, checkpoint_path) or _same_file_target(args.out, entries_path):
-        raise CliUsageError("--out must not be one of the log's own state files")
-    for label, path in read_paths:
-        if _same_file_target(path, checkpoint_path) or _same_file_target(path, entries_path):
+
+    # Derived from `_log_owned_paths` -- the ONE place that enumerates what a
+    # log reserves -- not from a second, hand-written pair living beside it.
+    # This used to name only `checkpoint` and `entries`, two of the five:
+    # measured, `--out LOG/config.json` and an `--out`/`--evidence`/
+    # `--ots-proof` nested under the tile cache all slipped past this
+    # command (the property had been applied to a VERB, not to the log --
+    # `issue --log-dir` and `log prove` already went through the shared
+    # guard; this one never did). `--out` is written UNGUARDED here, exactly
+    # like `log prove`'s (no `st_nlink > 1` refusal downstream), so
+    # `_same_file_target` still adds the one thing
+    # `_reject_if_under_log_owned_path`'s resolve-based comparison cannot
+    # see: a HARD LINK to a state file. The read paths get the identical
+    # pair of checks this command already ran for them before this
+    # conversion -- only the enumeration grows from two owned paths to all
+    # five.
+    for label, path in (("--out", args.out), *read_paths):
+        _reject_if_under_log_owned_path(label, path, log_dir)
+        if any(_same_file_target(path, owned) for owned in _log_owned_paths(log_dir)):
             raise CliUsageError(f"{label} must not be one of the log's own state files")
+
+    # Input-vs-output aliasing this command still owns ON TOP of the shared
+    # guard above -- these two are not about the log's own reserved paths,
+    # they are about the relationship between this command's OWN flags:
+    # `--out` must not equal any read path (the evidence/proof inputs are
+    # not derivable the way `log prove`'s `--out` is, so aliasing one with
+    # `--out` would overwrite it), and the read paths must differ from each
+    # other.
+    for label, path in read_paths:
         if _same_file_target(args.out, path):
             raise CliUsageError(f"--out must not be the same path as {label}")
     for i, (label_a, path_a) in enumerate(read_paths):
@@ -4150,6 +4592,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="ML-DSA-65 key file (from `keygen --hybrid`); required with --attest-version 0.2",
     )
     p.add_argument("--out", required=True, type=Path, help="output envelope JSON path")
+    p.add_argument(
+        "--log-dir",
+        type=Path,
+        default=None,
+        help="opt-in (D-1): append this receipt's entry to the issuer's own transparency "
+        "log (`attest log init` first) as it is signed, in the same command. Omit for "
+        "today's behavior, byte-for-byte; never touches the network either way",
+    )
     _add_force_flag(p)
     p.set_defaults(func=_cmd_issue)
 
@@ -4521,7 +4971,20 @@ def build_parser() -> argparse.ArgumentParser:
         "prove", help="Emit inclusion evidence (Task 4 schema) for one logged entry, no anchors"
     )
     p.add_argument("--dir", required=True, type=Path)
-    p.add_argument("--leaf-index", required=True, type=int)
+    p.add_argument(
+        "--leaf-index",
+        type=int,
+        default=None,
+        help="the index to prove; exactly one of this or --receipt is required",
+    )
+    p.add_argument(
+        "--receipt",
+        type=Path,
+        default=None,
+        help="a receipt envelope to look up by core_sha256 (D-5); exactly one of this or "
+        "--leaf-index is required. The earliest-indexed match wins if more than one entry "
+        "carries that hash",
+    )
     p.add_argument("--out", required=True, type=Path)
     p.set_defaults(func=_cmd_log_prove)
 
