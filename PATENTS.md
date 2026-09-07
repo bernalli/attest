@@ -135,7 +135,8 @@ contributor has promised; this Section describes that promise and does not enlar
 from Sections 3, 4, 6 and 10 in the following respects:
 
 - **Claims.** It reaches only claims infringed by implementing the part of the Specification that
-  contributor's own contribution Describes in Detail, not the Specification as a whole.
+  contributor's own contribution describes in detail — the phrase carrying the meaning Section 2
+  gives to Described in Detail — and not the Specification as a whole.
 - **Beneficiaries.** It is made to those who implement the Specification. Section 3 runs further,
   to anyone exercising a Permitted Use, so someone who distributes, sells, imports or runs an
   Implementation without implementing anything themselves has the Author's promise and does not,
@@ -157,9 +158,9 @@ patents beyond the commitment that contributor has made.
 
 - It says nothing about patents held by third parties. The Author has made no patent search, makes
   no representation that implementing the Specification infringes no patent of anyone else, and
-  could not give such an assurance if asked. Functionality the Specification does not Describe in
-  Detail — including the normative references it cites to other standards — is outside the
-  definition of Covered Claims.
+  could not give such an assurance if asked. Functionality that is not Described in Detail —
+  including anything reached only through the normative references the Specification cites to
+  other standards — is outside the definition of Covered Claims.
 - It grants no trademark rights and no copyright rights. Copyright in the code and in the
   documentation is licensed separately; see `LICENSE`, `LICENSE-docs`, and the naming note in
   `README.md`.
