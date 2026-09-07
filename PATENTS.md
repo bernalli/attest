@@ -77,11 +77,10 @@ The Author irrevocably promises, except as stated in Section 4, not to assert an
 against You for Your Permitted Uses.
 
 This promise is perpetual except as stated in Section 4, and is worldwide, non-exclusive,
-no-charge, and royalty-free. It requires no
-signature, no registration, no notice to the Author, and no agreement of any kind: it takes effect
-automatically in favour of anyone who makes a Permitted Use, whether or not they are aware of this
-document. No fee has ever been charged to implement the Specification, and under this covenant
-none can be.
+no-charge, and royalty-free. It requires no signature, no registration, no notice to the Author,
+and no agreement of any kind: it takes effect automatically in favour of anyone who makes a
+Permitted Use, whether or not they are aware of this document. No fee has ever been charged to
+implement the Specification, and under this covenant none can be.
 
 The promise covers every version of the Specification, including versions published after the date
 of this document.
@@ -109,12 +108,13 @@ infringes, rather than who is being sued. They differ in two respects where this
 further — it covers an action You join as well as one You bring, and its subject is the Project
 and the Specification rather than a single repository's code. Apache-2.0 also confines itself to
 allegations of direct or contributory infringement, where this Section names no theory of
-infringement at all. They differ in two respects where this one reaches less far.
-Apache-2.0 exempts no defensive action at all, while this Section does. And Apache-2.0's "You" is
-the union of an acting entity with everyone that controls it, is controlled by it, or is under
-common control with it, so a subsidiary's suit ends the parent's patent license there; "You" here
-is the single person or legal entity that exercises a Permitted Use, and this Section reaches no
-further than that entity.
+infringement at all.
+
+They differ in two respects where this one reaches less far. Apache-2.0 exempts no defensive
+action at all, while this Section does. And Apache-2.0's "You" is the union of an acting entity
+with everyone that controls it, is controlled by it, or is under common control with it, so a
+subsidiary's suit ends the parent's patent license there; "You" here is the single person or legal
+entity that exercises a Permitted Use, and this Section reaches no further than that entity.
 
 ## 5. Relationship to the licenses of this project
 
@@ -156,8 +156,8 @@ from Sections 3, 4, 6 and 10 in the following respects:
   any RFC published from them. These are not the same body of text, and this Section does not read
   the one as the other.
 - **Acts.** A contributor promises against claims infringed by implementing. Section 3 covers any
-  Permitted Use, which also includes selling, importing, distributing and transferring — so even a
-  party that does implement has narrower cover from a contributor than from the Author.
+  Permitted Use, which also includes selling, importing, distributing and transferring — so even
+  a party that does implement has narrower cover from a contributor than from the Author.
 - **Beneficiaries.** It is made to those who implement. Someone who distributes, sells, imports or
   runs an Implementation without implementing anything themselves has the Author's promise and
   does not, on the face of `CONTRIBUTING.md`, have a contributor's.
