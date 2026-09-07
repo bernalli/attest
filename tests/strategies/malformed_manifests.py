@@ -369,30 +369,39 @@ def non_canonical_timestamp(draw: st.DrawFn, manifest: dict[str, Any]) -> dict[s
 
     DELIBERATELY OUT OF `malformed_manifests()`. It was in the union, and the
     green it produced there proved nothing about the parser. Measured
-    2026-09-07, driving all 68 mutants this class can build (three
-    `TIMESTAMP_TARGETS` x each entry x the corpus) through exactly what each
+    2026-09-07, driving every mutant this class can build (each
+    `TIMESTAMP_TARGETS` field that actually carries a canonical timestamp, on
+    each entry, in each spelling of the shared corpus) through exactly what each
     consumer calls, with `attest.dates.parse_strict_utc` instrumented:
 
-        test_views_properties (build_compromise_claim)          0/68 parsed
-        test_cli_views_builder_properties (ENTRY_CASES)         0/68 parsed
-        test_cli_views_builder_properties (CLAIM_41A)           0/68 parsed
-        test_manifest_mutation_properties (five entry points)   0/68 parsed
+        test_views_properties (build_compromise_claim)          none parsed
+        test_cli_views_builder_properties (ENTRY_CASES)         none parsed
+        test_cli_views_builder_properties (CLAIM_41A)           none parsed
+        test_manifest_mutation_properties (five entry points)   none parsed
 
-    Zero, everywhere: the signature this module deliberately leaves stale stops
-    every mutant before any timestamp is read, so the class was only ever a
-    seventh spelling of "a manifest whose signature no longer matches" —
+    Zero, everywhere, and for a reason that does not depend on how many
+    spellings there are: the signature this module deliberately leaves stale
+    stops every mutant before any timestamp is read, so the class was only ever
+    a seventh spelling of "a manifest whose signature no longer matches" —
     diluting the six classes that do discriminate by a seventh of every
     consumer's example budget.
+
+    The absolute counts of that measurement are deliberately NOT restated here.
+    `non_canonical_spellings` derives the corpus from what the installed
+    CPython's `strptime` accepts, so its size is an output, not a constant, and
+    a count written down in prose goes stale the next time it moves — which it
+    did, on 2026-09-08.
 
     And re-signing would not rescue it here. Measured the same day:
     `manifests.verify_key_manifest` parses NO timestamp at all, signature valid
     or not — it checks shape and signature, never windows. Through
-    `verify.verify()` a re-signed mutant reaches the parser 17/68 times, all of
-    them `key_entry.valid_from` on the entry that actually signs the receipt;
-    the other 51 stay `signature=valid`, correctly, because `manifest.issued_at`
-    and a non-signing entry's bounds are not window bounds for that receipt.
-    Two of the three `TIMESTAMP_TARGETS` are therefore not targets of this
-    property at all, by construction.
+    `verify.verify()` a re-signed mutant reaches the parser only through
+    `key_entry.valid_from` on the entry that actually signs the receipt — one
+    of the four (entry, field) pairs a two-entry manifest offers. The rest stay
+    `signature=valid`, correctly, because `manifest.issued_at` and a
+    non-signing entry's bounds are not window bounds for that receipt. Two of
+    the three `TIMESTAMP_TARGETS` are therefore not targets of this property at
+    all, by construction.
 
     WHERE THE PARSING PATH IS ACTUALLY COVERED — deterministically, by name,
     so nobody has to rediscover this:
@@ -433,8 +442,12 @@ def malformed_manifests(manifest: dict[str, Any]) -> st.SearchStrategy[dict[str,
     """Every malformation class that DISCRIMINATES here, drawn from uniformly.
 
     `non_canonical_timestamp` is deliberately absent — see its docstring for
-    the measurement (0/68 mutants reach the parser through any consumer, and
-    two of its three targets are not targets of this property at all).
+    the measurement (no mutant this class can build reaches the parser through
+    any consumer, and two of its three targets are not targets of this property
+    at all). No absolute count is restated here, for the same reason it is not
+    restated there: the corpus size is an output of the installed CPython, so
+    `0/68` was a true measurement on 2026-09-07 and a false one on 2026-09-08,
+    when the same class began building 120 mutants on the same base manifest.
 
     The real consumers of this union are three, not the five the Task 2 plan
     lists at `docs/plans/2026-09-07-timestamp-predicate-owner.md:480-482`:

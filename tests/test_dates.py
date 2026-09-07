@@ -9,8 +9,14 @@ malformed inputs that `strptime` already rejects.
 
 from __future__ import annotations
 
+import _strptime
+import functools
+import itertools
+import re
 import sys
 import unicodedata
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
 
 import pytest
@@ -289,111 +295,383 @@ def test_strict_utc_fmt_is_the_wire_shape() -> None:
 
 # --- the shared corpus is complete, and stays complete ------------------------
 
-# `tests.helpers.non_canonical_spellings` is the hostile corpus four test
-# modules parametrize over. Its predecessor was a hand-written list of ten
-# forms, and it missed two whole families — a day written with a LEADING SPACE
-# (`%d` is `3[0-1]|[1-2]\d|0[1-9]|[1-9]| [1-9]`; the last branch exists so
-# `asctime` output parses) and a non-ASCII digit anywhere outside the year. A
-# guard weak enough to admit those passed the whole suite, because no case
-# named them.
+# `tests.helpers.non_canonical_spellings` is the hostile corpus five test
+# modules parametrize over. Three successive attempts to establish that it was
+# complete failed the same way, and the third was itself a brute-force
+# derivation written to audit the second: each applied a non-ASCII digit only
+# to the zero-padded spelling of a field, so none of them ever produced
+# `2026-06-05T\uff14:07:09Z` — an hour written without its leading zero, in one
+# non-ASCII character. `%H`, `%M` and `%S` end their alternation with a bare
+# `\d`, so `strptime` takes it, it names the same instant, and no case named it.
 #
-# So the corpus is not asserted against a list here. The family is RE-DERIVED
-# from the bare parser by brute force, and the corpus must cover everything the
-# derivation finds. A future CPython that widens a field pattern fails this
-# test instead of silently opening a hole.
+# What that costs is not three missing entries. It is that a derivation written
+# from the corpus inherits the corpus's blind spots, and then reports green.
+#
+# So the check below does not derive anything and shares nothing with the
+# generator. It reads `_strptime.TimeRE()` for itself, by a deliberately
+# different route — the generator hands each alternative to the `re` module's
+# own parser and compiler, while this file splits the alternation as TEXT and
+# then treats each branch as a BLACK BOX, probing it character by character to
+# learn what it accepts where. Neither imports the other's machinery, and the
+# duplicated eight lines that read the authority are the price of that.
+#
+# What it demands is COVERAGE, not a count:
+#
+#   * every branch the parser declares for every field of the format, unless
+#     the branch is witnessed unusable (`%S` accepts `60` and `61`, and
+#     `datetime` then refuses the leap second — so that branch can appear in no
+#     timestamp at all, and the witness is exhaustive, not an opinion);
+#   * for every position of every usable branch, both script classes the
+#     position admits — an ASCII decimal digit, and a non-ASCII one. This is
+#     the cell the old corpus left empty three times: `%H` branch `\d`,
+#     position 0, non-ASCII;
+#   * for every literal separator, the opposite case, because `TimeRE` compiles
+#     the format with `IGNORECASE`;
+#   * for every position of every usable branch, each NON-DIGIT character of
+#     `_PROBE_ALPHABET` it accepts in a spelling that really parses. Today that
+#     is one cell — the space `%d` pads a short day with — and it exists so that
+#     a position widened to a second whitespace character cannot pass unseen:
+#     the generator builds field spellings out of a hand-written alphabet
+#     (`helpers._INT_ALPHABET`), so a widening it does not know about would
+#     shrink the corpus in silence. Measured: without this cell, teaching
+#     `%d` to accept U+00A0 leaves every test in this section green while
+#     `strptime` starts taking a spelling the corpus does not carry.
+#
+# A future CPython that adds a branch, or widens an existing position to accept
+# any character of `_PROBE_ALPHABET` it did not accept before, turns this test
+# red instead of silently opening a hole — the alarm is only as wide as that
+# alphabet, which is why it is broad. A future CPython that changes a field
+# into something that is not a flat run of single-character items fails the
+# shape assertion in `_branches`, which is the same alarm one level up.
 
-_ND_SAMPLE_SCRIPTS = (
-    0xFF10,
-    0x0966,
-    0x0660,
-    0x1C50,
-)  # fullwidth, devanagari, arabic-indic, ol chiki
-_WHITESPACE = (" ", "\t", "\n", "\r", "\v", "\f", "\u00a0", "\u2007", "\u202f")
 _CORPUS_PROBES = (
+    # Chosen so that between them they realise every branch the parser declares:
+    # months 01/06/10/12, days 01/05/15/25/31, hours 00/04/14/20/23, and the
+    # minutes and seconds that reach both `[0-5]\d` and the bare `\d`. A branch
+    # no probe realises makes the coverage test red, naming it — the list is
+    # held to that, it is not trusted.
     "2026-06-05T04:07:09Z",  # every two-digit field zero-padded
     "2026-06-15T14:37:59Z",  # day 10-29, hour 10-19
     "2026-12-31T23:59:59Z",  # upper edges, where most `\d` branches vanish
     "2026-10-25T20:50:50Z",  # month 10-12, hour 20-23
     "0001-01-01T00:00:00Z",  # lower edge
 )
-_NUMERIC_FIELDS = (
-    ("year", 0, 4),
-    ("month", 5, 2),
-    ("day", 8, 2),
-    ("hour", 11, 2),
-    ("minute", 14, 2),
-    ("second", 17, 2),
+
+# Any timestamp whose fields can be replaced one at a time without hitting a
+# calendar edge: January has 31 days, so every day branch is testable on it.
+_REALISABILITY_BASE = "0001-01-01T00:00:00Z"
+
+_WHITESPACE = (" ", "\t", "\n", "\r", "\v", "\f", "\u00a0", "\u2007", "\u202f")
+
+# The characters this file offers a branch to find out what it accepts. Broad on
+# purpose: every printable ASCII character, decimal digits from five scripts,
+# and a couple of non-digit non-ASCII characters. A branch that accepted a
+# letter or a sign would show up here.
+_PROBE_ALPHABET = tuple(
+    dict.fromkeys(
+        [chr(c) for c in range(0x20, 0x7F)]
+        + [chr(base + d) for base in (0xFF10, 0x0966, 0x0660, 0x1C50, 0x0E50) for d in range(10)]
+        + ["\u00e9", "\u00a0", "\t"]
+    )
 )
-_SEPARATOR_OFFSETS = (4, 7, 10, 13, 16, 19)
+_ASCII_DIGITS = frozenset("0123456789")
+# Every printable ASCII character, so that a branch built out of something that
+# is not a digit still gets its usability decided by enumeration instead of
+# being waved through as unreachable.
+_ASCII_CHARS = frozenset(chr(code) for code in range(0x20, 0x7F))
+# Small enough to enumerate at four positions, wide enough to contain a member
+# of every branch the format declares: ASCII digits, the space `%d` pads a short
+# day with, and the sign and underscore `int()` would tolerate around a numeral.
+# A branch built from anything else finds no member here — which is not silence,
+# it is the first assertion in `_probe_branch`, and it says so.
+_SEED_ALPHABET = "0123456789 +-_"
+
+_OWN_TIME_RE = _strptime.TimeRE()
+_OWN_FORMAT_RE = _OWN_TIME_RE.compile(STRICT_UTC_FMT)
 
 
-def _skeleton(value: str) -> str:
-    """A spelling reduced to its SHAPE: every non-ASCII decimal digit becomes
-    one sentinel. Which `Nd` script fills a slot is not a separate risk — the
-    corpus carries two scripts at the year to keep that evidence — so coverage
-    is judged per shape, not per byte."""
-    return "".join("#" if not c.isascii() and unicodedata.category(c) == "Nd" else c for c in value)
+def _is_non_ascii_digit(char: str) -> bool:
+    return not char.isascii() and unicodedata.category(char) == "Nd"
 
 
-def _every_accepted_mutation(canonical: str) -> set[str]:
-    """Every single mutation of `canonical` that raw `strptime` accepts as the
-    same instant. This is the ground truth the corpus is measured against."""
-    expected = datetime.strptime(canonical, STRICT_UTC_FMT)
+def _split_alternation(pattern: str) -> tuple[str, ...]:
+    """The top-level `|` alternatives of the body of a `(?P<x>...)` group.
 
-    def accepted(value: str) -> bool:
-        if value == canonical:
-            return False
+    Text-level on purpose: the generator asks `re._parser` for the same split,
+    and two readings of one authority that share a mechanism share its failures.
+    Depth-aware, so a future `(?:a|b)|c` splits into two branches and not three.
+    """
+    outer = re.fullmatch(r"\(\?P<\w+>(.*)\)", pattern, re.DOTALL)
+    assert outer is not None, f"unexpected directive shape: {pattern!r}"
+    body = outer.group(1)
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char == "\\":
+            current.append(body[index : index + 2])
+            index += 2
+            continue
+        if char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+        if char == "|" and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    parts.append("".join(current))
+    return tuple(parts)
+
+
+@dataclass(frozen=True)
+class _Branch:
+    """One alternative of one field, learned by probing rather than by parsing."""
+
+    directive: str
+    index: int
+    text: str
+    matcher: re.Pattern[str]
+    accepted: tuple[frozenset[str], ...]  # per position, from the probe alphabet
+    usable: bool  # some spelling of it survives into a real timestamp
+
+    @property
+    def label(self) -> str:
+        return f"%{self.directive} branch {self.index} {self.text!r}"
+
+
+def _probe_branch(directive: str, index: int, text: str) -> _Branch:
+    matcher = re.compile(text, re.IGNORECASE)
+    widths = {
+        width
+        for width in range(1, 5)
+        if any(
+            matcher.fullmatch("".join(combo))
+            for combo in itertools.product(_SEED_ALPHABET, repeat=width)
+        )
+    }
+    assert widths, (
+        f"%{directive} branch {text!r} matches nothing built from {_SEED_ALPHABET!r} at "
+        "widths 1-4: this probe cannot see it, so its coverage cannot be judged — widen "
+        "_SEED_ALPHABET, and read what the field now accepts before trusting anything below"
+    )
+    assert len(widths) == 1, f"%{directive} branch {text!r} is not fixed-width: {widths}"
+    width = widths.pop()
+    seed = next(
+        "".join(combo)
+        for combo in itertools.product(_SEED_ALPHABET, repeat=width)
+        if matcher.fullmatch("".join(combo))
+    )
+    accepted = tuple(
+        frozenset(c for c in _PROBE_ALPHABET if matcher.fullmatch(seed[:i] + c + seed[i + 1 :]))
+        for i in range(width)
+    )
+    # Usable = some ASCII member of this branch survives into a timestamp the
+    # parser accepts. ASCII is enough to decide it: on every class the format
+    # declares today, a position that takes a non-ASCII decimal digit takes an
+    # ASCII one too, so replacing them keeps both the match and the value — a
+    # branch with a live member therefore has a live ASCII member. A future
+    # class that accepted non-ASCII digits and no ASCII one would break that,
+    # and would be reported unusable; the pin in
+    # `test_every_branch_is_either_usable_or_witnessed_unusable` turns that into
+    # a red rather than a silent skip.
+    start, end = _OWN_FORMAT_RE.match(_REALISABILITY_BASE).span(directive)  # type: ignore[union-attr]
+    ascii_positions = [sorted(a & _ASCII_CHARS) for a in accepted]
+    space = 1
+    for position in ascii_positions:
+        space *= len(position)
+    assert space <= 250_000, (
+        f"%{directive} branch {text!r} spans {space} ASCII members: too many to decide "
+        "usability by enumeration — read what the field now accepts"
+    )
+    ascii_members = itertools.product(*ascii_positions)
+    usable = False
+    for member in ascii_members:
+        candidate = _REALISABILITY_BASE[:start] + "".join(member) + _REALISABILITY_BASE[end:]
         try:
-            return datetime.strptime(value, STRICT_UTC_FMT) == expected
+            datetime.strptime(candidate, STRICT_UTC_FMT)
         except ValueError:
-            return False
+            continue
+        usable = True
+        break
+    return _Branch(directive, index, text, matcher, accepted, usable)
 
-    found: set[str] = set()
-    for _, start, width in _NUMERIC_FIELDS:
-        raw = canonical[start : start + width]
-        bare = str(int(raw))
-        replacements: list[str] = [bare, "+" + bare, "-" + bare, "0" + bare, "00" + bare, "0" + raw]
-        for ws in _WHITESPACE:
-            replacements += [
-                ws + bare,
-                ws + ws + bare,
-                bare + ws,
-                ws + bare + ws,
-                ws + raw,
-                raw + ws,
-            ]
-        for base in _ND_SAMPLE_SCRIPTS:
-            table = str.maketrans("0123456789", "".join(chr(base + d) for d in range(10)))
-            replacements.append(raw.translate(table))
-            replacements += [raw[:i] + raw[i].translate(table) + raw[i + 1 :] for i in range(width)]
-        found |= {
-            canonical[:start] + r + canonical[start + width :]
-            for r in replacements
-            if accepted(canonical[:start] + r + canonical[start + width :])
-        }
-    for offset in _SEPARATOR_OFFSETS:
-        literal = canonical[offset]
-        for repl in (literal.lower(), literal.upper(), "", *_WHITESPACE):
-            candidate = canonical[:offset] + repl + canonical[offset + 1 :]
-            if accepted(candidate):
-                found.add(candidate)
-    for position in range(len(canonical) + 1):
-        for ws in _WHITESPACE:
-            candidate = canonical[:position] + ws + canonical[position:]
-            if accepted(candidate):
-                found.add(candidate)
+
+@functools.cache
+def _branches() -> dict[str, tuple[_Branch, ...]]:
+    found: dict[str, tuple[_Branch, ...]] = {}
+    for directive in _OWN_FORMAT_RE.groupindex:
+        texts = _split_alternation(_OWN_TIME_RE[directive])
+        found[directive] = tuple(
+            _probe_branch(directive, index, text) for index, text in enumerate(texts)
+        )
     return found
 
 
-@pytest.mark.parametrize("canonical", _CORPUS_PROBES)
-def test_the_shared_corpus_covers_every_shape_strptime_accepts(canonical: str) -> None:
-    derived = _every_accepted_mutation(canonical)
-    assert derived, "the derivation itself found nothing — it would prove nothing"
-    covered = {_skeleton(value) for _, value in non_canonical_spellings(canonical)}
-    missing = {_skeleton(value) for value in derived} - covered
-    assert not missing, (
-        f"raw strptime accepts shapes the shared corpus never offers: {sorted(missing)}"
+def _realisable_with(branch: _Branch, position: int, char: str) -> bool:
+    """Whether some member of `branch` carrying `char` at `position` parses.
+
+    A branch may accept a character that no whole timestamp can carry — `%S`
+    takes `60`, `datetime` does not — and requiring the corpus to cover such a
+    cell would be a red nobody can clear. So the requirement is gated on a
+    spelling that the real parser takes."""
+    start, end = _OWN_FORMAT_RE.match(_REALISABILITY_BASE).span(branch.directive)  # type: ignore[union-attr]
+    positions = [sorted(a & _ASCII_CHARS) for a in branch.accepted]
+    positions[position] = [char]
+    for member in itertools.product(*positions):
+        candidate = _REALISABILITY_BASE[:start] + "".join(member) + _REALISABILITY_BASE[end:]
+        try:
+            datetime.strptime(candidate, STRICT_UTC_FMT)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _required_cells() -> set[str]:
+    required: set[str] = set()
+    for branches in _branches().values():
+        for branch in branches:
+            if not branch.usable:
+                continue
+            required.add(branch.label)
+            for position, allowed in enumerate(branch.accepted):
+                if allowed & _ASCII_DIGITS:
+                    required.add(f"{branch.label} position {position} ASCII digit")
+                if any(_is_non_ascii_digit(c) for c in allowed):
+                    required.add(f"{branch.label} position {position} non-ASCII digit")
+                for char in sorted(c for c in allowed if not c.isdigit()):
+                    if _realisable_with(branch, position, char):
+                        required.add(f"{branch.label} position {position} {char!r}")
+    return required
+
+
+def _covered_cells(values: Iterable[str]) -> set[str]:
+    covered: set[str] = set()
+    for value in values:
+        match = _OWN_FORMAT_RE.match(value)
+        if match is None or match.end() != len(value):
+            continue
+        for directive, branches in _branches().items():
+            field = match.group(directive)
+            # The engine picks the first alternative that matches the field: a
+            # later one could only match the same characters and continue the
+            # same way, so first-fullmatch is the branch that actually ran.
+            branch = next((b for b in branches if b.matcher.fullmatch(field)), None)
+            if branch is None:
+                continue
+            covered.add(branch.label)
+            for position, char in enumerate(field):
+                if char in _ASCII_DIGITS:
+                    covered.add(f"{branch.label} position {position} ASCII digit")
+                elif _is_non_ascii_digit(char):
+                    covered.add(f"{branch.label} position {position} non-ASCII digit")
+                else:
+                    covered.add(f"{branch.label} position {position} {char!r}")
+    return covered
+
+
+def _corpus_values() -> tuple[str, ...]:
+    return tuple(_CORPUS_PROBES) + tuple(
+        value for probe in _CORPUS_PROBES for _, value in non_canonical_spellings(probe)
     )
+
+
+def test_the_branch_split_agrees_with_the_parser_it_came_from() -> None:
+    """This file splits the alternation by text; the field regex is the whole
+    truth. If the two ever disagree on a string, the split is wrong and every
+    verdict below it is worthless — so it is checked against the parser's own
+    compiled field, not assumed."""
+    samples = (
+        *("0", "5", "05", "09", "31", " 5", "60", "23", "2026", "0000"),
+        *("\uff14", "0\uff14", "202\uff16", "\uff10\uff10\uff10\uff10", " 0", "x", ""),
+    )
+    for directive, branches in _branches().items():
+        whole = re.compile(_OWN_TIME_RE[directive], re.IGNORECASE)
+        for sample in samples:
+            assert bool(whole.fullmatch(sample)) == any(
+                b.matcher.fullmatch(sample) for b in branches
+            ), (directive, sample)
+
+
+def test_the_corpus_covers_every_branch_the_parser_declares() -> None:
+    """The corpus is held to the STRUCTURE `strptime` publishes, not to a list
+    and not to a count: every usable branch of every field, both script classes
+    at every position that admits them."""
+    required = _required_cells()
+    assert required, "the probe found no branch at all — it would prove nothing"
+    missing = required - _covered_cells(_corpus_values())
+    assert not missing, (
+        "the parser declares spellings the shared corpus never offers "
+        f"(add a probe to _CORPUS_PROBES, or the generator misses a dimension): {sorted(missing)}"
+    )
+
+
+def test_every_branch_is_either_usable_or_witnessed_unusable() -> None:
+    """A branch nothing can reach is skipped above, and this test is the record
+    of which and why — so that "skipped" never becomes a place to hide a branch
+    the corpus simply does not cover. `%S` accepting `60`/`61` is the one case
+    on CPython 3.12: the regex takes the leap second, `datetime` refuses it."""
+    unusable = {b.label for bs in _branches().values() for b in bs if not b.usable}
+    for label in unusable:
+        directive = label[1]
+        branch = next(b for b in _branches()[directive] if b.label == label)
+        start, end = _OWN_FORMAT_RE.match(_REALISABILITY_BASE).span(directive)  # type: ignore[union-attr]
+        members = itertools.product(*[sorted(a & _ASCII_CHARS) for a in branch.accepted])
+        for member in members:
+            candidate = _REALISABILITY_BASE[:start] + "".join(member) + _REALISABILITY_BASE[end:]
+            with pytest.raises(ValueError):
+                datetime.strptime(candidate, STRICT_UTC_FMT)
+    assert unusable == {"%S branch 0 '6[0-1]'"}, (
+        "the set of unreachable branches moved; read the new one before trusting "
+        f"the coverage test above: {sorted(unusable)}"
+    )
+
+
+def test_the_corpus_covers_the_case_of_every_literal_separator() -> None:
+    """`TimeRE` compiles the format with `IGNORECASE`, so each literal has a
+    second spelling. Derived from the compiled pattern's flags, not asserted:
+    a CPython that dropped `IGNORECASE` would drop the requirement with it."""
+    match = _OWN_FORMAT_RE.match(_CORPUS_PROBES[0])
+    assert match is not None
+    numeric = {i for d in _OWN_FORMAT_RE.groupindex for i in range(*match.span(d))}
+    literals = [i for i in range(len(_CORPUS_PROBES[0])) if i not in numeric]
+    assert literals, "the format has no literal separators — the probe is wrong"
+    required = set()
+    if _OWN_FORMAT_RE.flags & re.IGNORECASE:
+        for probe in _CORPUS_PROBES:
+            for index in literals:
+                if probe[index].swapcase() != probe[index]:
+                    required.add((index, probe[index].swapcase()))
+    covered = {
+        (index, value[index])
+        for value in _corpus_values()
+        if len(value) == len(_CORPUS_PROBES[0])
+        for index in literals
+    }
+    assert not required - covered, sorted(required - covered)
+
+
+def test_no_whitespace_can_be_smuggled_into_the_wire_shape() -> None:
+    """The branch model above covers what each FIELD accepts; this covers the
+    format around them. A directive separated by whitespace, or a literal
+    compiled as `\\s*`, would let a spelling in through a dimension no branch
+    describes — so the property is measured directly, on every probe.
+
+    What the corpus would need is the weaker "no insertion names the same
+    instant"; what holds today, and what is asserted, is the stronger "no
+    insertion parses at all". If a future parser ever accepts one, this fails
+    and the weaker property has to be looked at on its own."""
+    for canonical in _CORPUS_PROBES:
+        for position in range(len(canonical) + 1):
+            for space in _WHITESPACE:
+                candidate = canonical[:position] + space + canonical[position:]
+                with pytest.raises(ValueError):
+                    datetime.strptime(candidate, STRICT_UTC_FMT)
 
 
 @pytest.mark.parametrize("canonical", _CORPUS_PROBES)
@@ -401,11 +679,15 @@ def test_every_corpus_case_is_hostile_and_refused(canonical: str) -> None:
     """Both halves, per case: raw `strptime` ACCEPTS it as the same instant (so
     the case is not vacuous) and the owner REFUSES it (so the guard holds).
     A corpus entry the parser already rejects would make its consumers green
-    for the wrong reason — which is the failure this whole section is about."""
+    for the wrong reason — which is the failure this whole section is about.
+
+    No floor on the count: how many spellings a value has is measured, and the
+    coverage test above is what keeps the corpus from shrinking."""
     expected = datetime.strptime(canonical, STRICT_UTC_FMT)
     spellings = non_canonical_spellings(canonical)
-    assert len(spellings) >= 10, f"corpus shrank to {len(spellings)} cases for {canonical!r}"
+    assert spellings, f"empty corpus for {canonical!r}"
     assert len({name for name, _ in spellings}) == len(spellings), "duplicate case names"
+    assert len({value for _, value in spellings}) == len(spellings), "duplicate spellings"
     for name, value in spellings:
         assert value != canonical, name
         assert datetime.strptime(value, STRICT_UTC_FMT) == expected, name
@@ -414,15 +696,34 @@ def test_every_corpus_case_is_hostile_and_refused(canonical: str) -> None:
         assert is_strict_utc(value) is False, name
 
 
-def test_the_corpus_names_the_two_families_the_hand_written_list_missed() -> None:
-    """Pinned by name, because a regression here is invisible: both families
-    are ordinary-looking strings that `strptime` takes and the wire shape does
-    not define."""
-    by_name = dict(non_canonical_spellings("2026-06-05T04:07:09Z"))
-    assert by_name["space_padded_day"] == "2026-06- 5T04:07:09Z"
-    assert by_name["non_ascii_digit_hour_1"] == "2026-06-05T0\uff14:07:09Z"
-    assert by_name["non_ascii_digit_minute_1"] == "2026-06-05T04:0\uff17:09Z"
-    assert by_name["non_ascii_digit_second_1"] == "2026-06-05T04:07:0\uff19Z"
-    assert dict(non_canonical_spellings("2026-06-15T14:37:59Z"))["non_ascii_digit_day_1"] == (
-        "2026-06-1\uff15T14:37:59Z"
-    )
+def test_the_corpus_carries_the_family_three_constructions_missed() -> None:
+    """Pinned by VALUE, not by case name: an unpadded time field written with
+    one non-ASCII digit is the spelling that a hand-written list, a generative
+    rewrite of it, and a brute-force audit of that all failed to produce. It is
+    an ordinary-looking string `strptime` takes and the wire shape does not
+    define, so a regression here is invisible without a pin.
+
+    Its neighbours are pinned with it: the padded form of the same family, the
+    space-padded day, and the second-position digit of a two-digit day — the
+    forms whose absence made earlier corpora green for the wrong reason."""
+    padded = {value for _, value in non_canonical_spellings("2026-06-05T04:07:09Z")}
+    assert {
+        "2026-06-05T\uff14:07:09Z",  # hour, no leading zero, one fullwidth digit
+        "2026-06-05T04:\uff17:09Z",  # minute, same family
+        "2026-06-05T04:07:\uff19Z",  # second, same family
+        "2026-06-05T0\uff14:07:09Z",  # the padded form the earlier corpora had
+        "2026-06- 5T04:07:09Z",  # `%d` pads a short day with a SPACE
+    } <= padded
+    teens = {value for _, value in non_canonical_spellings("2026-06-15T14:37:59Z")}
+    assert "2026-06-1\uff15T14:37:59Z" in teens
+
+
+def test_the_corpus_size_moves_with_the_value_and_is_never_asserted() -> None:
+    """The corpus is not a fixed set of N forms, and writing N down anywhere is
+    how the last three versions of this file went stale. What IS true, and what
+    this pins, is the shape of the dependency: a value whose fields have
+    droppable leading zeros carries strictly more spellings than one whose
+    fields are all two significant digits."""
+    sizes = {probe: len(non_canonical_spellings(probe)) for probe in _CORPUS_PROBES}
+    assert sizes["2026-06-05T04:07:09Z"] > sizes["2026-12-31T23:59:59Z"]
+    assert sizes["0001-01-01T00:00:00Z"] > sizes["2026-12-31T23:59:59Z"]

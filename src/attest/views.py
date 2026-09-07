@@ -183,8 +183,19 @@ def _round_trips(value: object) -> bool:
     Both sides of that comparison are plain strings. `str.__str__` is the
     own-data spelling (`canon.own_data_copy`): without it the `==` asks the
     VALUE whether it matches, because Python prefers a `str` subclass's
-    reflected operator, and an `__eq__` that raises escapes as a `RuntimeError`
-    where the two callers below expect a `ViewError` or nothing at all.
+    reflected operator, so an `__eq__` that raises answers with a
+    `RuntimeError` and one that denies calls a canonical timestamp invalid.
+    Both callers below hand this predicate values already copied by
+    `_own_list`/`_own_object`, so today only a direct caller can do that: the
+    line is defence in depth, kept because the predicate is private but not
+    local, and because a builder that stopped materializing would make it the
+    only defence overnight.
+
+    That division is measured, not assumed, and each half is pinned to the
+    guard that holds it in `tests/test_views.py`: removing this line reddens
+    only the predicate's own test, and removing a caller's copy reddens only
+    that caller's. With BOTH open — the state this module was never in — a
+    `RuntimeError` does escape `build_revocation_view`.
     """
     if not isinstance(value, str):
         return False

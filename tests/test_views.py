@@ -745,10 +745,37 @@ def test_revocation_view_refuses_an_empty_kid() -> None:
 # --- the round-trip guard reads characters, not operators --------------------
 
 # `_round_trips` ends in `== value`, and Python gives a `str` subclass's
-# reflected operator the first word. The two callers — the `transferred_at` of
-# a transfer record and the `revoked_at` of a revocation record — expect a
-# `ViewError` or nothing; before the fix an `__eq__` that raises came out of
-# `build_revocation_view` as a `RuntimeError`, on a CANONICAL timestamp.
+# reflected operator the first word: an `__eq__` that raises makes the
+# predicate answer with an exception instead of a bool, and one that denies
+# makes it call a genuine canonical timestamp invalid.
+#
+# TWO guards stand on this path, and they are pinned SEPARATELY below because
+# they protect different things and fail differently. Measured on the pre-fix
+# code, with `_round_trips` spied on:
+#
+#   own-data line    materialization   build_revocation_view(hostile record)
+#   -------------    ---------------   -------------------------------------
+#   present          present           no exception; guard sees `str`
+#   ABSENT           present           no exception; guard sees `str`
+#   ABSENT           ABSENT            RuntimeError escapes the builder
+#   present          ABSENT            no exception; guard sees the subclass
+#                                      and still answers correctly
+#
+# Read the second row: with the own-data line removed — that is, the code
+# exactly as it shipped — NOTHING escapes `build_revocation_view`, because
+# `_own_list` (`build_revocation_view`) and `_own_object`
+# (`build_transfer_claim`) copy the input's own data before any predicate runs,
+# so a subclass never reaches `_round_trips` through either public caller. An
+# earlier version of this comment said a `RuntimeError` came out of the builder
+# before the fix; that was written without being run, and it is false.
+#
+# What each guard is therefore worth, and what pins it:
+#   * the materialization is what keeps a subclass away from the predicate —
+#     pinned at the builders, by spying on what the predicate is handed;
+#   * the own-data line is what makes the predicate correct once a subclass
+#     does reach it (row four) — pinned at the predicate, directly.
+# A single test asserting only that the builder does not raise would stay green
+# with either guard removed on its own, which is what made the old one vacuous.
 
 
 class _RaisingEqStr(str):
@@ -779,13 +806,64 @@ def test_round_trips_judges_a_subclass_by_its_own_characters(hostile: type[str])
     assert views._round_trips(hostile("２０２６-01-01T00:00:00Z")) is False  # noqa: RUF001
 
 
-def test_a_hostile_comparison_does_not_escape_the_revocation_view_builder() -> None:
-    """The reachability: `_round_trips` is not a leaf, and this builder is the
-    untrusted §12 boundary. A `RuntimeError` here is not a refusal, it is an
-    exception crossing a boundary documented to raise `ViewError` or nothing."""
+def _spy_on_round_trips(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the type of every value the round-trip guard is handed."""
+    seen: list[str] = []
+    original = views._round_trips
+
+    def spy(value: object) -> bool:
+        seen.append(type(value).__name__)
+        return original(value)
+
+    monkeypatch.setattr(views, "_round_trips", spy)
+    return seen
+
+
+def test_the_revocation_view_builder_materializes_before_the_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What actually keeps a hostile subclass away from the predicate on this
+    path: `_own_list` copies the input's own data BEFORE any member is read, so
+    the guard is handed a plain `str` whatever the caller passed. Asserting only
+    that the call does not raise would name neither guard — it stays green with
+    the own-data line removed from the predicate, and green with the
+    materialization removed from the builder."""
+    seen = _spy_on_round_trips(monkeypatch)
     record = _revocation_record()
     record["revoked_at"] = _RaisingEqStr(record["revoked_at"])
     assert views.build_revocation_view([record]) is not None
+    assert seen == ["str"], f"the builder handed {seen} to the round-trip guard"
+
+
+def test_the_transfer_claim_builder_materializes_before_the_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same property on the OTHER caller the predicate's docstring names,
+    measured on it rather than inferred from the first: `build_transfer_claim`
+    copies the record with `_own_object` before reading `transferred_at`.
+
+    It is driven DIRECTLY, and that is the whole point of the test. Going
+    through `build_transfer_view` proves nothing about this guard, because the
+    view materializes the entire claim list first (`_own_list`), so the
+    subclass is already gone by the time the claim builder runs — measured: a
+    version of this test that called `build_transfer_view` stayed green with
+    `_own_object` removed. `build_transfer_claim` is public, so the direct call
+    is the real boundary, not a contrivance."""
+    seen = _spy_on_round_trips(monkeypatch)
+    claim = _transfer_claim()
+    claim["record"]["transferred_at"] = _RaisingEqStr(claim["record"]["transferred_at"])
+    assert views.build_transfer_claim(claim["record"], claim["evidence"]) is not None
+    assert seen == ["str"], f"the claim builder handed {seen} to the round-trip guard"
+
+
+# There is deliberately NO test here for the copy `build_transfer_view` makes
+# before it builds each claim. That path carries TWO copies — `_own_list` at the
+# view and `_own_object` inside `build_transfer_claim` — so removing either one
+# alone still hands the predicate a plain `str`, and a test driven through
+# `build_transfer_view` stays green under both single mutations. Measured, both
+# ways. It could only die with both removed at once, which is the shape of the
+# vacuous test this section replaced; so the guard that IS attributable on the
+# transfer side is `_own_object`, pinned directly above.
 
 
 def test_revocation_view_refuses_a_malformed_sig() -> None:
