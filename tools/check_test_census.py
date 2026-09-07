@@ -111,6 +111,15 @@ def read_report(report_path: Path, suite_root: Path) -> tuple[dict[str, int], in
         raise SystemExit("testResults: expected an array")
     counts: dict[str, int] = {}
     statuses = dict.fromkeys(("passed", "failed", "pending", "todo"), 0)
+    # vitest's own JsonReporter (site/node_modules/vitest/dist/chunks/index.*.js,
+    # StatusMap + numPendingTests filter) emits the per-assertion status "skipped"
+    # for a `.skip()`'d test, but counts that same test toward the aggregate
+    # numPendingTests field -- "pending" and "skipped" are the same event under two
+    # different names at two different levels of the same report. Recognize both,
+    # bucket "skipped" under "pending" so the tie-check against numPendingTests below
+    # holds for the report vitest actually produces.
+    _STATUS_BUCKET = {"passed": "passed", "failed": "failed", "pending": "pending",
+                       "skipped": "pending", "todo": "todo"}
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             raise SystemExit("testResults: expected an object with a string name")
@@ -128,9 +137,10 @@ def read_report(report_path: Path, suite_root: Path) -> tuple[dict[str, int], in
             if not isinstance(assertion, dict):
                 raise SystemExit(f"{relative}: an assertion must be an object")
             status = assertion.get("status")
-            if not isinstance(status, str) or status not in statuses:
+            bucket = _STATUS_BUCKET.get(status) if isinstance(status, str) else None
+            if bucket is None:
                 raise SystemExit(f"{relative}: invalid assertion status")
-            statuses[status] += 1
+            statuses[bucket] += 1
         counts[relative] = len(assertions)
     total = _count(report.get("numTotalTests"), "numTotalTests")
     if total != sum(counts.values()):
