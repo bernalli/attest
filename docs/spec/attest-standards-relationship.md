@@ -48,10 +48,11 @@ unknown top-level payload field as valid-with-warning, never as a schema
 error. The closedness is in canonicalization and semantics, not in what
 fields a payload may carry: attest's signing step is not a choice among
 proof suites but one mandatory canonicalization profile, attest-JCS (v0.1
-§9), whose output is byte-exact across the Python and TypeScript reference
-implementations by construction of the 223-leaf conformance corpus — a
-verifier that does not reproduce attest-JCS exactly cannot verify an attest
-receipt at all. Choosing a purpose-built envelope over a Verifiable
+§9), whose canonical bytes are checked by dedicated fixtures and signature
+verification in both reference implementations. The 224-leaf corpus tests
+the specified results for its inputs; it does not prove equality on every
+possible input. A canonical-byte mismatch prevents verification of the
+affected signature. Choosing a purpose-built envelope over a Verifiable
 Credential is choosing that fixed-core, single-canonicalization,
 no-remote-context determinism over the VC model's open-world extensibility,
 `@context`-driven semantics, and proof-suite plurality; the two are trading
@@ -160,9 +161,10 @@ is that trading that no-canonicalization simplicity for a strict, narrow,
 corpus-enforced canonicalizer is the safer engineering trade-off when the
 signed bytes must be recoverable from a parsed JSON object in any language,
 rather than preserved from whichever producer happened to serialize the
-wire form — and the 223-leaf conformance corpus, exercised byte-identically
-by the Python and TypeScript reference verifiers, is what makes that bet
-checkable rather than merely asserted.
+wire form. The 224-leaf conformance corpus makes this choice testable by
+replaying shared fixtures through both reference verifiers; dedicated
+canonical-byte fixtures test serialization, while the result comparisons
+follow each leaf's exact or substring expectations.
 
 What is given up is real and worth naming: JOSE's mature multi-language
 tooling ecosystem (JWK sets, negotiable `alg`/`kid` headers, broad library

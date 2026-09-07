@@ -1,0 +1,9 @@
+{
+  "receipt_id": "01JZ5PDHT054MJJA9954MJJA99",
+  "revoked_at": "2025-08-01T00:00:00Z",
+  "signature": {
+    "kid": "store.example.com/keys/2025-01#ed25519-1",
+    "sig": "MubGvONiM7o7wKT3g3EbsPhntjZU0eKa9GNg6rqVdG_wy1zqxkmHu7W52N5D_5FBaEjZD2A4uTQkn4Kw8-FsBQ"
+  },
+  "status": "revoked"
+}

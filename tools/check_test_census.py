@@ -41,6 +41,7 @@ import json
 import sys
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CENSUS = REPO_ROOT / "tools" / "test-census.json"
@@ -71,23 +72,93 @@ def disk_files(suite_root: Path) -> set[str]:
     return found
 
 
+def _json_object(path: Path) -> dict[str, Any]:
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON member {key!r}")
+            result[key] = value
+        return result
+
+    def invalid_constant(value: str) -> None:
+        raise ValueError(f"non-JSON number {value}")
+
+    try:
+        data = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=unique,
+            parse_constant=invalid_constant,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"{path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"{path}: expected an object")
+    return data
+
+
+def _count(value: object, label: str) -> int:
+    if type(value) is not int or value < 0:
+        raise SystemExit(f"{label}: expected a non-negative integer")
+    return value
+
+
 def read_report(report_path: Path, suite_root: Path) -> tuple[dict[str, int], int, int, int]:
-    """Per-file test counts, the run's own total, and its pending/todo counts."""
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    """Admit the report before comparing counts; never coerce malformed input."""
+    report = _json_object(report_path)
+    entries = report.get("testResults")
+    if not isinstance(entries, list):
+        raise SystemExit("testResults: expected an array")
     counts: dict[str, int] = {}
-    for entry in report["testResults"]:
+    statuses = dict.fromkeys(("passed", "failed", "pending", "todo"), 0)
+    # vitest's own JsonReporter (site/node_modules/vitest/dist/chunks/index.*.js,
+    # StatusMap + numPendingTests filter) emits the per-assertion status "skipped"
+    # for a `.skip()`'d test, but counts that same test toward the aggregate
+    # numPendingTests field -- "pending" and "skipped" are the same event under two
+    # different names at two different levels of the same report. Recognize both,
+    # bucket "skipped" under "pending" so the tie-check against numPendingTests below
+    # holds for the report vitest actually produces.
+    _STATUS_BUCKET = {
+        "passed": "passed",
+        "failed": "failed",
+        "pending": "pending",
+        "skipped": "pending",
+        "todo": "todo",
+    }
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            raise SystemExit("testResults: expected an object with a string name")
         name = Path(entry["name"])
         try:
             relative = name.relative_to(suite_root).as_posix()
         except ValueError:
             relative = name.as_posix()
-        counts[relative] = len(entry["assertionResults"])
-    return (
-        counts,
-        int(report["numTotalTests"]),
-        int(report.get("numPendingTests", 0)),
-        int(report.get("numTodoTests", 0)),
-    )
+        if relative in counts:
+            raise SystemExit(f"duplicate test file {relative!r}")
+        assertions = entry.get("assertionResults")
+        if not isinstance(assertions, list):
+            raise SystemExit(f"{relative}: assertionResults must be an array")
+        for assertion in assertions:
+            if not isinstance(assertion, dict):
+                raise SystemExit(f"{relative}: an assertion must be an object")
+            status = assertion.get("status")
+            bucket = _STATUS_BUCKET.get(status) if isinstance(status, str) else None
+            if bucket is None:
+                raise SystemExit(f"{relative}: invalid assertion status")
+            statuses[bucket] += 1
+        counts[relative] = len(assertions)
+    total = _count(report.get("numTotalTests"), "numTotalTests")
+    if total != sum(counts.values()):
+        raise SystemExit("numTotalTests disagrees with assertionResults")
+    for status, field in (
+        ("passed", "numPassedTests"),
+        ("failed", "numFailedTests"),
+        ("pending", "numPendingTests"),
+        ("todo", "numTodoTests"),
+    ):
+        if _count(report.get(field), field) != statuses[status]:
+            raise SystemExit(f"{field} disagrees with assertion statuses")
+    return counts, total, statuses["pending"], statuses["todo"]
 
 
 def compare(
@@ -149,15 +220,25 @@ def compare(
 
 
 def load_census(census_path: Path, suite: str) -> dict[str, int]:
-    data = json.loads(census_path.read_text(encoding="utf-8"))
-    suites = data["suites"]
-    if suite not in suites:
+    data = _json_object(census_path)
+    suites = data.get("suites")
+    if not isinstance(suites, dict) or suite not in suites:
         raise SystemExit(f"{census_path}: no census for suite {suite!r}")
-    return {str(k): int(v) for k, v in suites[suite]["files"].items()}
+    selected = suites[suite]
+    if not isinstance(selected, dict) or set(selected) != {"total", "files"}:
+        raise SystemExit(f"{suite}: expected exactly total and files")
+    files = selected["files"]
+    if not isinstance(files, dict):
+        raise SystemExit(f"{suite}: files must be an object")
+    counts = {name: _count(value, name) for name, value in files.items()}
+    total = _count(selected["total"], f"{suite}.total")
+    if total != sum(counts.values()):
+        raise SystemExit(f"{suite}: census total {total} disagrees with its file counts")
+    return counts
 
 
 def write_census(census_path: Path, suite: str, run: dict[str, int], run_total: int) -> None:
-    data = json.loads(census_path.read_text(encoding="utf-8"))
+    data = _json_object(census_path)
     data["suites"][suite] = {
         "total": run_total,
         "files": {name: run[name] for name in sorted(run)},
@@ -244,14 +325,17 @@ def main(argv: list[str] | None = None) -> int:
     run, run_total, pending, todo = read_report(args.report, suite_root)
 
     if args.update:
-        missing = sorted(on_disk - set(run))
-        if missing:
-            raise SystemExit(
-                "refusing to update the census while these files were not collected: "
-                + ", ".join(missing)
-                + ". Fix the collection first -- recording an absence is what this check "
-                "exists to prevent."
-            )
+        problems = compare(
+            suite=args.suite,
+            disk=on_disk,
+            run=run,
+            census=run,
+            run_total=run_total,
+            pending=pending,
+            todo=todo,
+        )
+        if problems:
+            raise SystemExit("refusing to update the census: " + "; ".join(problems))
         write_census(args.census, args.suite, run, run_total)
         print(f"census updated for {args.suite}: {len(run)} file(s), {run_total} test(s)")
         return 0

@@ -84,6 +84,45 @@ def _to_bytes(envelope: dict[str, Any]) -> bytes:
     return json.dumps(envelope).encode("utf-8")
 
 
+@settings(max_examples=80, deadline=None, derandomize=True)
+@given(
+    nine=st.characters(categories=("Nd",), min_codepoint=128).filter(lambda c: int(c) == 9),
+    matching=st.booleans(),
+)
+def test_non_ascii_timestamp_digits_cannot_bypass_refund_evaluation(
+    nine: str, matching: bool
+) -> None:
+    payload = make_payload(
+        issued_at=nine * 4 + "-12-20T00:00:00Z",
+        license={"revocability": "refund_window", "revocation_window_days": 14},
+    )
+    envelope = {
+        "payload": payload,
+        "signatures": [
+            {
+                "alg": "Ed25519",
+                "kid": KID,
+                "sig": keys.b64u(keys.sign(canon.canonical_bytes(payload), KP)),
+            }
+        ],
+    }
+    record = revocation.build_record(
+        payload["receipt_id"] if matching else "01J1V5B4M9Z8QWERTY99999999",
+        "revoked",
+        "9999-12-20T00:00:00Z",
+        KP,
+        KID,
+    )
+    result = verify.verify(
+        _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[record]
+    )
+    assert result.signature == "invalid"
+    assert result.schema == "not_checked"
+    assert result.revocation == "unknown"
+    assert not result.ok
+    assert result.errors
+
+
 # --- happy path --------------------------------------------------------------
 
 

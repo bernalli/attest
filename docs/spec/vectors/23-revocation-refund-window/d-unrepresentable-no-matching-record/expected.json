@@ -1,0 +1,12 @@
+{
+  "binding": "not_checked",
+  "errors": [
+    "refund window is outside the representable timestamp range"
+  ],
+  "ok": false,
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "trust": "verified",
+  "warnings": []
+}
