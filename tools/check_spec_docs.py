@@ -1683,7 +1683,11 @@ class _ClaimShape(NamedTuple):
 
 _CLAIM_SHAPES: tuple[_ClaimShape, ...] = (
     _ClaimShape("leaf-corpus", r"\b(\d+)[- ]leaf conformance corpus\b", ((1, "corpus_total"),)),
-    _ClaimShape("leaf-corpus-short", r"\b(\d+)[- ]leaf corpus\b", ((1, "corpus_total"),)),
+    _ClaimShape(
+        "leaf-corpus-short",
+        r"\b(\d+)[- ]leaf (?:shared |full |whole )?corpus\b",
+        ((1, "corpus_total"),),
+    ),
     _ClaimShape("leaf-vectors", r"\b(\d+) leaf vectors\b", ((1, "corpus_total"),)),
     _ClaimShape("all-leaves", r"\ball (\d+) conformance vector leaves\b", ((1, "corpus_total"),)),
     _ClaimShape("not-all", r"\bnot all (\d+)\b", ((1, "corpus_total"),)),
