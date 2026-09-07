@@ -12,7 +12,10 @@ by calling `GET /games/{game_id}/purchases?email=...` and treats THE API
 RESPONSE AS THE SOLE ISSUANCE AUTHORITY.
 
 This is the load-bearing invariant of this whole module: a claim or a CSV row
-NEVER causes issuance on its own — only an itch-API-confirmed purchase does.
+NEVER causes issuance on its own — only an itch-API-confirmed purchase does,
+and only one whose `status` the poller RECOGNIZES as a completed sale
+(`_ISSUABLE_STATUSES`, an allow-list — an unrecognized status is refused, not
+issued for).
 The one line that gates every `core.process` call in `ItchPoller.tick` is
 inside the `for raw in purchases` loop, where `purchases` is exactly what
 `ItchAdapter.fetch_purchases` returned for THIS tick. In production `serve`
@@ -64,10 +67,40 @@ _RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 # offset, including a trailing "Z") is accepted via `datetime.fromisoformat`
 # as a fallback — see `_parse_itch_created_at`.
 _ITCH_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+# The ALLOW-list that decides issuance: a purchase is issuable only if its
+# status is one this poller recognizes as a completed sale. Everything else —
+# a state that reverses a sale, a state that has not settled yet, a state
+# itch.io introduces after this line was written, a `status` key that is
+# absent or not a string — is not issued.
+#
+# The polarity is the point, and it is the same one `ShopifyAdapter.wants`
+# uses (`financial_status != "paid"` → not actionable). A deny-list answers
+# "is this one of the two reversals I happen to know about?", so every status
+# outside its enumeration — including every status that does not exist yet —
+# falls through to the branch that mints a SIGNED receipt. An allow-list
+# answers "did itch.io tell me this sale completed?", and an unrecognized
+# answer is a refusal. This module signs; it fails closed on doubt like the
+# rest of the project.
+#
+# The set of statuses itch.io can return for a completed sale is NOT
+# documented exhaustively: the API reference shows only `"complete"` in the
+# sample output of this very endpoint, while `"settled"` has been this
+# bridge's fixture value since 2026-07-24 without ever being falsified
+# against a live response. Both are accepted; anything else is refused
+# loudly (see below) rather than issued for. Narrowing this set requires a
+# real call against a live account, not another reading of the docs.
+_ISSUABLE_STATUSES = frozenset({"complete", "settled"})
+# Not a decision — `_ISSUABLE_STATUSES` above is the only decision. This set
+# exists so the log can tell "an ordinary refund" from "a status nobody has
+# seen before": both are refused identically, but only the second is worth
+# waking someone for. A warning that fires on every refund is a warning
+# operators learn to skip past.
+#
 # A purchase in either of these states was reversed after the fact: it must
 # never be issued, and — per `ItchPoller.tick` — is treated as though it
-# doesn't exist at all for retry purposes (the claim stays pending).
-_SKIP_STATUSES = frozenset({"refunded", "canceled"})
+# doesn't exist at all for retry purposes (the claim stays pending). Every
+# unrecognized status now shares exactly that treatment.
+_KNOWN_REVERSED_STATUSES = frozenset({"refunded", "canceled"})
 
 
 class ItchApiError(BridgeError):
@@ -89,6 +122,23 @@ def _scrub(text: str, *, email: str, api_key: str) -> str:
         if secret:
             text = text.replace(secret, placeholder)
     return text
+
+
+# A `status` arrives inside the API response: this module controls neither its
+# type nor its length, and the rendering below is both logged and PERSISTED in
+# a dead letter. `repr` keeps the value unambiguous for an operator (`''`,
+# `None` and `'None'` stay distinguishable); `_scrub` runs BEFORE the bound, so
+# a truncation can never leave half a buyer address behind; the bound keeps a
+# pathological value from filling the log and the Ledger row it lands in.
+_MAX_STATUS_IN_MESSAGE = 120
+
+
+def _status_for_message(status: Any, *, email: str) -> str:
+    """A scrubbed, bounded rendering of an API-supplied `status`."""
+    text = _scrub(repr(status), email=email, api_key="")
+    if len(text) <= _MAX_STATUS_IN_MESSAGE:
+        return text
+    return f"{text[:_MAX_STATUS_IN_MESSAGE]}... ({len(text)} chars)"
 
 
 def _parse_itch_created_at(raw: Any) -> str:
@@ -190,9 +240,9 @@ class ItchAdapter:
 
         `buyer_pubkey` is ALWAYS `None` — design decision 3: itch has no
         metadata/custom-field carrier like Stripe's checkout session, so
-        every itch receipt is email-bound only, never transferable. Refund/
-        cancel filtering is `ItchPoller.tick`'s job, not this method's — this
-        only maps fields, it never decides whether a purchase is issuable.
+        every itch receipt is email-bound only, never transferable. Status
+        filtering is `ItchPoller.tick`'s job, not this method's — this only
+        maps fields, it never decides whether a purchase is issuable.
         """
         if not isinstance(raw, dict):
             raise PurchaseRejected(f"itch purchase is not an object: {raw!r}")
@@ -293,8 +343,9 @@ class ItchPoller:
         Every API-confirmed purchase is independently processed, so one
         malformed purchase cannot prevent a later purchase in the same
         response from being issued and emailed.
-        Returns `(completed, retryable_detail)`: the detail is the reason a
-        retryable issuance/storage failure happened, carried out of here so an
+        Returns `(completed, detail)`: the detail is the reason this claim did
+        not complete — a retryable issuance/storage failure, or a purchase
+        status this poller will not issue for — carried out of here so an
         exhausted claim's dead letter says WHY instead of only that something
         failed.
         Raises ItchApiError on API failure."""
@@ -302,6 +353,11 @@ class ItchPoller:
         completed = False
         retryable_failure = False
         retryable_detail: str | None = None
+        # Why a claim that never completes did not complete, when the reason
+        # was a status this poller would not issue for. Without it an
+        # exhausted claim's dead letter says only "issuance/storage failures",
+        # which is not what happened and leaves the operator nothing to act on.
+        unissuable_detail: str | None = None
         for raw in purchases:
             if not isinstance(raw, dict):
                 _log.warning(
@@ -309,7 +365,34 @@ class ItchPoller:
                     purchase_id_for_log(claim.token),
                 )
                 continue
-            if raw.get("status") in _SKIP_STATUSES:
+            status = raw.get("status")
+            # `x in frozenset` HASHES x, so a `status` that decoded to a JSON
+            # array or object raises TypeError on the membership test itself.
+            # That exception leaves `_drain_claim` entirely: every later
+            # purchase in the same response is dropped, and the claim defers —
+            # and finally exhausts — with no reason recorded anywhere but a
+            # traceback. Testing the type first keeps one malformed row costing
+            # one row, which is the isolation this loop exists to provide, and
+            # routes a non-string status through the same loud refusal as an
+            # unknown one.
+            issuable = isinstance(status, str) and status in _ISSUABLE_STATUSES
+            if not issuable:
+                reversed_sale = isinstance(status, str) and status in _KNOWN_REVERSED_STATUSES
+                if not reversed_sale:
+                    # Named, so that a status itch.io adds tomorrow costs the
+                    # merchant a visible stall and a dead letter rather than a
+                    # silent one. Scrubbed and bounded on the way out: `status`
+                    # is normally API vocabulary, but it is remote input this
+                    # module does not control, and this string is both logged
+                    # and stored — the same posture `retryable_detail` below
+                    # already takes.
+                    safe_status = _status_for_message(status, email=claim.email)
+                    _log.warning(
+                        "itch poller: purchase status %s is not issuable; skipping it for claim %s",
+                        safe_status,
+                        purchase_id_for_log(claim.token),
+                    )
+                    unissuable_detail = f"itch purchase status not issuable: {safe_status}"
                 continue
             try:
                 normalized = self._adapter.normalize(raw, email=claim.email)
@@ -367,7 +450,9 @@ class ItchPoller:
             completed = True
             if not outcome.duplicate:
                 self._ledger.add_claim_receipts(claim.token, 1)
-        return (completed and not retryable_failure), retryable_detail
+        # A real issuance/storage failure outranks an unissuable status: it is
+        # the more actionable of the two, and the caller shows only one.
+        return (completed and not retryable_failure), (retryable_detail or unissuable_detail)
 
     def _defer_or_exhaust(
         self, claim: Claim, now: datetime, *, api_failure: bool = False, detail: str | None = None

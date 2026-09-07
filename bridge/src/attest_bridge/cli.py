@@ -193,9 +193,13 @@ def _resolve_itch_dry_run_product(catalog: ProductCatalog, game_id: str | None) 
 def _itch_dry_run_purchase(game_id: str, *, now: datetime) -> dict[str, Any]:
     """One synthetic itch purchase row, in the API's documented shape.
 
-    `status` is `"settled"` on purpose: the poller skips only `refunded` and
-    `canceled` (`itch_adapter._SKIP_STATUSES`), so this row must be one the
-    real filter processes.
+    `status` is `"settled"` because the poller issues only for a status in its
+    allow-list (`itch_adapter._ISSUABLE_STATUSES`) and refuses everything else,
+    so this row must carry a status the real filter recognizes — and the dry
+    run goes red if the allow-list and this fixture ever disagree. Note that
+    the value is this bridge's own, not one the API reference attests: the
+    published sample for this endpoint shows `"complete"`, which the allow-list
+    also accepts. Neither is confirmed against a live account.
     """
     return {
         "id": _DRY_RUN_PURCHASE_ID,

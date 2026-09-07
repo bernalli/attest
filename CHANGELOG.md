@@ -8,6 +8,16 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The itch poller issues only for a purchase status it recognizes as a
+  completed sale. It previously skipped two known reversals and issued for
+  everything else, so a status itch.io had not yet introduced -- a chargeback,
+  a dispute, a sale still in escrow -- would have produced a signed receipt for
+  a purchase that was not one. An unrecognized status is now refused, named in
+  a warning, and named again in the claim's dead letter if it keeps recurring
+  until the claim exhausts; `refunded` and `canceled` keep their existing quiet
+  retry posture. A merchant who sees such a dead letter should report the
+  status: the accepted set is not attested exhaustively by itch.io's reference.
+
 - Timestamps whose digits are not ASCII are refused at the temporal check. The
   receipt schema's `\d` classes match Unicode decimal digits under Python's
   regex engine, so an `issued_at` written with fullwidth or other non-ASCII
