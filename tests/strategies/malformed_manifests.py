@@ -25,6 +25,9 @@ from typing import Any
 
 from hypothesis import strategies as st
 
+from attest.dates import is_strict_utc
+from tests.helpers import non_canonical_spellings
+
 # --- §7.1 field inventories --------------------------------------------------
 
 MANIFEST_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -40,6 +43,15 @@ MANIFEST_REQUIRED_FIELDS: tuple[str, ...] = (
 KEY_ENTRY_REQUIRED_FIELDS: tuple[str, ...] = ("kid", "pub", "valid_from", "status")
 
 SIGNATURE_BLOCK_REQUIRED_FIELDS: tuple[str, ...] = ("kid", "sig")
+
+# The timestamps the code PARSES to reach a verdict. `valid_to` is optional and
+# may be absent or null, so a target is only a target when it actually holds a
+# canonical string — which the strategy checks rather than assumes.
+TIMESTAMP_TARGETS: tuple[tuple[str, str], ...] = (
+    ("manifest", "issued_at"),
+    ("key_entry", "valid_from"),
+    ("key_entry", "valid_to"),
+)
 
 KEY_STATUSES: tuple[str, ...] = ("active", "retired", "compromised")
 
@@ -342,8 +354,102 @@ def wrong_typed_field(draw: st.DrawFn, manifest: dict[str, Any]) -> dict[str, An
     return mutated
 
 
+@st.composite
+def non_canonical_timestamp(draw: st.DrawFn, manifest: dict[str, Any]) -> dict[str, Any]:
+    """A parsed timestamp is spelled in a way `strptime` accepts and the
+    canonical wire shape does not.
+
+    This class is not "a wrong type" and not "a truncation": the value is a
+    string, it parses, and it names the right instant — it simply is not the
+    spelling the format defines. That is what made it dangerous: the mutation
+    survives every shape check and only the parser can refuse it. Because the
+    TypeScript core refuses these spellings outright, a Python path that
+    accepts one is a cross-core disagreement on a signed field, not a cosmetic
+    difference.
+
+    DELIBERATELY OUT OF `malformed_manifests()`. It was in the union, and the
+    green it produced there proved nothing about the parser. Measured
+    2026-09-07, driving all 68 mutants this class can build (three
+    `TIMESTAMP_TARGETS` x each entry x the corpus) through exactly what each
+    consumer calls, with `attest.dates.parse_strict_utc` instrumented:
+
+        test_views_properties (build_compromise_claim)          0/68 parsed
+        test_cli_views_builder_properties (ENTRY_CASES)         0/68 parsed
+        test_cli_views_builder_properties (CLAIM_41A)           0/68 parsed
+        test_manifest_mutation_properties (five entry points)   0/68 parsed
+
+    Zero, everywhere: the signature this module deliberately leaves stale stops
+    every mutant before any timestamp is read, so the class was only ever a
+    seventh spelling of "a manifest whose signature no longer matches" —
+    diluting the six classes that do discriminate by a seventh of every
+    consumer's example budget.
+
+    And re-signing would not rescue it here. Measured the same day:
+    `manifests.verify_key_manifest` parses NO timestamp at all, signature valid
+    or not — it checks shape and signature, never windows. Through
+    `verify.verify()` a re-signed mutant reaches the parser 17/68 times, all of
+    them `key_entry.valid_from` on the entry that actually signs the receipt;
+    the other 51 stay `signature=valid`, correctly, because `manifest.issued_at`
+    and a non-signing entry's bounds are not window bounds for that receipt.
+    Two of the three `TIMESTAMP_TARGETS` are therefore not targets of this
+    property at all, by construction.
+
+    WHERE THE PARSING PATH IS ACTUALLY COVERED — deterministically, by name,
+    so nobody has to rediscover this:
+
+        tests/test_verify.py::test_non_canonical_valid_from_never_admits_a_receipt
+        tests/test_verify.py::test_non_canonical_valid_to_never_admits_a_receipt
+        tests/test_verify.py::test_non_canonical_revoked_at_never_authenticates_a_record
+        tests/test_manifests.py::test_within_window_refuses_a_non_canonical_lower_bound
+        tests/test_manifests.py::test_within_window_refuses_a_non_canonical_upper_bound
+        tests/test_manifests.py::test_within_window_refuses_a_non_canonical_issued_at
+        tests/test_revocation.py::test_non_canonical_revoked_at_does_not_verify
+        tests/test_transfer.py::test_non_canonical_transferred_at_does_not_verify
+        tests/test_dates.py  (the owner, plus the corpus-completeness sweep)
+
+    Keep the class: it names a real malformation and a caller that DOES re-sign
+    (a hostile issuer publishing an ambiguity, rather than a hostile relay
+    editing bytes in flight) can compose it deliberately. Putting it back into
+    the union without such a caller re-creates a vacuous green.
+    """
+    mutated = copy.deepcopy(manifest)
+    entries = _entries_of(mutated)
+    entry_index = draw(st.integers(min_value=0, max_value=len(entries) - 1))
+    targets = [
+        (level, field)
+        for level, field in TIMESTAMP_TARGETS
+        if is_strict_utc(_container(mutated, level, entry_index).get(field))
+    ]
+    if not targets:
+        raise TypeError("base manifest must carry at least one canonical timestamp")
+    level, field = draw(st.sampled_from(targets))
+    container = _container(mutated, level, entry_index)
+    _, spelling = draw(st.sampled_from(non_canonical_spellings(container[field])))
+    container[field] = spelling
+    return mutated
+
+
 def malformed_manifests(manifest: dict[str, Any]) -> st.SearchStrategy[dict[str, Any]]:
-    """Every malformation class above, drawn from uniformly."""
+    """Every malformation class that DISCRIMINATES here, drawn from uniformly.
+
+    `non_canonical_timestamp` is deliberately absent — see its docstring for
+    the measurement (0/68 mutants reach the parser through any consumer, and
+    two of its three targets are not targets of this property at all).
+
+    The real consumers of this union are three, not the five the Task 2 plan
+    lists at `docs/plans/2026-09-07-timestamp-predicate-owner.md:480-482`:
+
+        tests/test_manifest_mutation_properties.py   yes
+        tests/test_views_properties.py               yes
+        tests/test_cli_views_builder_properties.py   yes  (3 call sites)
+        tests/test_manifests.py                      NO — uses only the
+                                                     NON_DICT_ENTRIES and
+                                                     NON_LIST_KEYS constants
+        tests/test_views.py                          NO — imports nothing here
+
+    The miscount mattered: it sized the plan's Gate B, so the "before" numbers
+    were read partly off two files this fixture never touches.
+    """
     return st.one_of(
         duplicate_kid(manifest),
         noninteger_manifest_version(manifest),

@@ -179,11 +179,18 @@ def _round_trips(value: object) -> bool:
     `strptime` alone accepts `2025-8-1T0:0:0Z` (P34), which no conforming
     producer emits and which re-serializes to different bytes; comparing the
     reformatted string against the original is what refuses it.
+
+    Both sides of that comparison are plain strings. `str.__str__` is the
+    own-data spelling (`canon.own_data_copy`): without it the `==` asks the
+    VALUE whether it matches, because Python prefers a `str` subclass's
+    reflected operator, and an `__eq__` that raises escapes as a `RuntimeError`
+    where the two callers below expect a `ViewError` or nothing at all.
     """
     if not isinstance(value, str):
         return False
+    own = str.__str__(value)
     try:
-        return manifests._parse_date(value).strftime(_DATE_FMT) == value
+        return manifests._parse_date(own).strftime(_DATE_FMT) == own
     except (TypeError, ValueError):
         return False
 

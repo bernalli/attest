@@ -742,6 +742,52 @@ def test_revocation_view_refuses_an_empty_kid() -> None:
         views.build_revocation_view([record])
 
 
+# --- the round-trip guard reads characters, not operators --------------------
+
+# `_round_trips` ends in `== value`, and Python gives a `str` subclass's
+# reflected operator the first word. The two callers — the `transferred_at` of
+# a transfer record and the `revoked_at` of a revocation record — expect a
+# `ViewError` or nothing; before the fix an `__eq__` that raises came out of
+# `build_revocation_view` as a `RuntimeError`, on a CANONICAL timestamp.
+
+
+class _RaisingEqStr(str):
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("comparison invoked")
+
+    def __hash__(self) -> int:
+        return str.__hash__(self)
+
+
+class _DenyingEqStr(str):
+    def __eq__(self, other: object) -> bool:
+        return False
+
+    def __ne__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return str.__hash__(self)
+
+
+@pytest.mark.parametrize("hostile", [_RaisingEqStr, _DenyingEqStr], ids=lambda c: c.__name__)
+def test_round_trips_judges_a_subclass_by_its_own_characters(hostile: type[str]) -> None:
+    """`_DenyingEqStr` is why this is a correctness fix and not only a
+    never-raise fix: before it, a genuine canonical timestamp read as invalid
+    because the object said so."""
+    assert views._round_trips(hostile("2026-01-01T00:00:00Z")) is True
+    assert views._round_trips(hostile("２０２６-01-01T00:00:00Z")) is False  # noqa: RUF001
+
+
+def test_a_hostile_comparison_does_not_escape_the_revocation_view_builder() -> None:
+    """The reachability: `_round_trips` is not a leaf, and this builder is the
+    untrusted §12 boundary. A `RuntimeError` here is not a refusal, it is an
+    exception crossing a boundary documented to raise `ViewError` or nothing."""
+    record = _revocation_record()
+    record["revoked_at"] = _RaisingEqStr(record["revoked_at"])
+    assert views.build_revocation_view([record]) is not None
+
+
 def test_revocation_view_refuses_a_malformed_sig() -> None:
     """The other half of the same rule: a builder that stopped validating `sig`
     would emit an artifact no verifier could ever authenticate."""

@@ -20,10 +20,10 @@ lives in `verify.py` (§6 step 6), the one module that has both.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
 from typing import Any
 
 from attest import canon, keys, manifests, pq
+from attest.dates import parse_strict_utc
 
 # Re-exported, not owned: `ulid` holds the one Python declaration of the §5.1
 # receipt-id grammar. The name stays here because it is published API (a
@@ -47,8 +47,9 @@ _DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
 
 
-def _parse_date(value: str) -> datetime:
-    return datetime.strptime(value, _DATE_FMT)
+# The strict wire shape is owned by `attest.dates`, for the whole package.
+# TEMPORARY name: the call sites below still say `_parse_date`.
+_parse_date = parse_strict_utc
 
 
 def build_record(

@@ -26,11 +26,11 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from attest import anchor, canon, keys, manifests, pq, revocation, tlog
 from attest import transparency as transparency_module
+from attest.dates import parse_strict_utc
 from attest.ulid import RECEIPT_ID_RE
 
 _DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -80,8 +80,9 @@ MAX_TRANSFER_CLAIMS = 64
 _ANCHORED_BEFORE_PREFIX = "anchored_before:"
 
 
-def _parse_date(value: str) -> datetime:
-    return datetime.strptime(value, _DATE_FMT)
+# The strict wire shape is owned by `attest.dates`, for the whole package.
+# TEMPORARY name: the call sites below still say `_parse_date`.
+_parse_date = parse_strict_utc
 
 
 def _strict_b64u_decode(value: object, expected_length: int) -> bytes | None:
@@ -98,11 +99,20 @@ def _strict_b64u_decode(value: object, expected_length: int) -> bytes | None:
 
 
 def _valid_utc_timestamp(value: object) -> bool:
-    """Whether `value` has the signed UTC wire shape used by side-documents."""
+    """Whether `value` has the signed UTC wire shape used by side-documents.
+
+    The comparison is between two plain strings. `str.__str__` is the own-data
+    spelling (`canon.own_data_copy`): without it the final `==` asks the VALUE
+    whether it matches, because Python prefers a `str` subclass's reflected
+    operator, and an `__eq__` that raises turns this fail-closed predicate into
+    an exception escaping sixteen call sites across `transfer`, `authority`,
+    `grant` and `cli`.
+    """
     if not isinstance(value, str):
         return False
+    own = str.__str__(value)
     try:
-        return _parse_date(value).strftime(_DATE_FMT) == value
+        return _parse_date(own).strftime(_DATE_FMT) == own
     except ValueError:
         return False
 

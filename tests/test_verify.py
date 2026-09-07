@@ -35,7 +35,7 @@ from attest import (
     validate,
     verify,
 )
-from tests.helpers import make_payload
+from tests.helpers import make_payload, non_canonical_spellings
 
 ISSUER = "store.example.com"
 SERIES = "store.example.com/works/EXG-001"  # matches make_payload()'s default work.artifact_series
@@ -121,6 +121,139 @@ def test_non_ascii_timestamp_digits_cannot_bypass_refund_evaluation(
     assert result.revocation == "unknown"
     assert not result.ok
     assert result.errors
+
+
+# --- non-canonical timestamps: every window check refuses them ----------------
+
+# `strptime` accepts far more than the wire shape `%Y-%m-%dT%H:%M:%SZ` names,
+# and each extra spelling renders back to the same instant, so a round trip is
+# the only thing that tells them apart. The TypeScript core refuses all of
+# them: until every window check in this package refuses them too, one core
+# certifies what the other rejects, on bytes an issuer chooses.
+
+_REFUND_LICENSE = {"revocability": "refund_window", "revocation_window_days": 30}
+_REVOKED_AT = "2026-07-03T00:00:00Z"
+_KEY_VALID_FROM = "2026-01-01T00:00:00Z"
+_KEY_VALID_TO = "2026-12-31T00:00:00Z"
+
+
+def _refund_window_receipt() -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = make_payload(license=_REFUND_LICENSE)
+    return payload, issue.issue(payload, KP, KID)
+
+
+def test_canonical_revoked_at_revokes_the_receipt() -> None:
+    """The control the tests below are read against: a genuine record whose
+    `revoked_at` IS the canonical spelling revokes. Green today and after —
+    without it, a fix that refused every record would look like a success."""
+    payload, envelope = _refund_window_receipt()
+    record = revocation.build_record(payload["receipt_id"], "revoked", _REVOKED_AT, KP, KID)
+    result = verify.verify(
+        _to_bytes(envelope), _trust_store(_key_manifest()), revocation_view=[record]
+    )
+    assert result.revocation == "revoked"
+    assert not result.ok
+
+
+@pytest.mark.parametrize("name,revoked_at", non_canonical_spellings(_REVOKED_AT))
+def test_non_canonical_revoked_at_never_authenticates_a_record(name: str, revoked_at: str) -> None:
+    """A genuine, correctly signed record whose `revoked_at` is a non-canonical
+    spelling of the instant. Python used to authenticate it and evaluate the
+    refund window on it; the TypeScript core refused it — the same signed bytes,
+    two verdicts.
+
+    Post-fix the record is UNAUTHENTICATED, and `ok` stays True on purpose:
+    v0.1 §12.1 step 3 admits a record only if its `revoked_at` falls inside the
+    signing key's window, which a spelling that names no canonical instant
+    cannot do, and §12.2 says an unauthenticated record is ignored with a
+    warning. Asserted explicitly so the next reader does not "fix" it into a
+    revocation.
+    """
+    assert datetime.strptime(revoked_at, "%Y-%m-%dT%H:%M:%SZ") == datetime(2026, 7, 3)
+    payload, envelope = _refund_window_receipt()
+    manifest = _key_manifest()
+    record = revocation.build_record(payload["receipt_id"], "revoked", revoked_at, KP, KID)
+    assert revocation.verify_record(record, manifest) is False
+    result = verify.verify(_to_bytes(envelope), _trust_store(manifest), revocation_view=[record])
+    assert not any("outside refund window" in w for w in result.warnings)
+    assert any("failed verification, ignored" in w for w in result.warnings)
+    assert result.revocation != "invalid_revocation_ignored"
+    assert result.ok
+
+
+@pytest.mark.parametrize("name,valid_from", non_canonical_spellings(_KEY_VALID_FROM))
+def test_non_canonical_valid_from_never_admits_a_receipt(name: str, valid_from: str) -> None:
+    """A key entry whose lower bound is not a canonical instant admits nothing.
+    The ASCII members (`t`, `z`, dropped leading zeros) are the ones the
+    2026-09 ASCII-digit guard left open; the non-ASCII ones prove that guard's
+    reach survived being moved into the owner."""
+    assert datetime.strptime(valid_from, "%Y-%m-%dT%H:%M:%SZ") == datetime(2026, 1, 1)
+    result = verify.verify(
+        _to_bytes(issue.issue(make_payload(), KP, KID)),
+        _trust_store(_key_manifest(valid_from=valid_from)),
+    )
+    assert result.signature == "invalid"
+    assert not result.ok
+
+
+@pytest.mark.parametrize("name,valid_to", non_canonical_spellings(_KEY_VALID_TO))
+def test_non_canonical_valid_to_never_admits_a_receipt(name: str, valid_to: str) -> None:
+    """The upper bound, same rule. The instant itself is after the receipt's
+    `issued_at`, so only the spelling can decide the verdict — which is the
+    point: it must decide it the same way in both cores."""
+    assert datetime.strptime(valid_to, "%Y-%m-%dT%H:%M:%SZ") == datetime(2026, 12, 31)
+    result = verify.verify(
+        _to_bytes(issue.issue(make_payload(), KP, KID)),
+        _trust_store(_key_manifest(valid_to=valid_to)),
+    )
+    assert result.signature == "invalid"
+    assert not result.ok
+
+
+# --- a trust store built from hostile str subclasses --------------------------
+
+# The window bounds do not always arrive from `json.loads`, which only ever
+# builds exact `str`. An embedding application assembles its own trust store,
+# and until the strict predicate took the string's own data, a `str` subclass
+# placed there decided the window check itself: `canonical != value` consults
+# the subclass's reflected `__ne__` before anything else. Both halves of that
+# are asserted here, because they fail differently — one certifies, the other
+# breaks the "verify() never raises" contract this module's property test
+# defends.
+
+
+class _LyingBound(str):
+    def __ne__(self, other: object) -> bool:
+        return False
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return str.__hash__(self)
+
+
+class _RaisingBound(str):
+    def __ne__(self, other: object) -> bool:
+        raise RuntimeError("comparison invoked")
+
+    def __hash__(self) -> int:
+        return str.__hash__(self)
+
+
+@pytest.mark.parametrize("hostile", [_LyingBound, _RaisingBound], ids=lambda c: c.__name__)
+def test_a_hostile_str_subclass_bound_never_admits_a_receipt(hostile: type[str]) -> None:
+    """The bound names the right instant in the wrong spelling, and the object
+    is built to answer the guard's question for it. `verify()` must reach a
+    verdict of its own — and reach it without raising."""
+    non_canonical = "\uff12\uff10\uff12\uff16-01-01T00:00:00Z"  # fullwidth year, same instant
+    assert datetime.strptime(non_canonical, "%Y-%m-%dT%H:%M:%SZ") == datetime(2026, 1, 1)
+    result = verify.verify(
+        _to_bytes(issue.issue(make_payload(), KP, KID)),
+        _trust_store(_key_manifest(valid_from=hostile(non_canonical))),
+    )
+    assert result.signature == "invalid"
+    assert not result.ok
 
 
 # --- happy path --------------------------------------------------------------

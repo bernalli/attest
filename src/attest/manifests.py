@@ -20,10 +20,10 @@ model key lifecycle honestly at the manifest level.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime
 from typing import Any
 
 from attest import canon, keys, pq
+from attest.dates import parse_strict_utc
 
 _DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
@@ -39,13 +39,18 @@ MAX_ARTIFACT_ENTRIES = 4096
 _ED25519_PUB_LEN = 32
 
 
-def _parse_date(value: str) -> datetime:
-    return datetime.strptime(value, _DATE_FMT)
+# The strict wire shape is owned by `attest.dates`, for the whole package.
+# TEMPORARY name: the call sites below still say `_parse_date`.
+_parse_date = parse_strict_utc
 
 
 def _within_window(issued_at: object, entry: dict[str, Any]) -> bool:
     """Fail-closed: `issued_at` (a str) falls within the key entry's
-    [valid_from, valid_to] window. Any malformed/missing bound → False."""
+    [valid_from, valid_to] window. `parse_strict_utc` refuses both what
+    `strptime` cannot parse and what it would parse WRONGLY (non-ASCII digits,
+    unpadded fields, lowercase `t`/`z`), so a bound that is not the canonical
+    spelling of an instant is never inside the window here and outside it in
+    the TypeScript core."""
     if not isinstance(issued_at, str):
         return False
     try:

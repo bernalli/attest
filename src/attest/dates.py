@@ -65,11 +65,24 @@ def parse_strict_utc(value: str) -> datetime:
     the spelling differs — on anything else; a non-`str` raises `TypeError`,
     as `strptime` always did. Mirror of `parseStrictUtc` in
     `verifiers/ts/src/dates.ts`: the two accept the same set of strings.
+
+    The verdict is read from the CHARACTERS, never from the object carrying
+    them. `str.__str__` is this package's own-data spelling for a string
+    (`canon.own_data_copy`): a `str` subclass reaching an embedding
+    application's trust store would otherwise decide this guard from three
+    different seats — `__ne__` (the round-trip comparison prefers the
+    subclass's reflected operator), `__getitem__`/`__len__` (`strptime` reads
+    the input through them) and `__repr__` (the message below formats it). All
+    three are answered once, here, by taking the own data first; the plain
+    `str` is what the rest of the function ever sees. `str.__str__` on a
+    non-`str` raises `TypeError` on its own, so the contract above needs no
+    branch of its own.
     """
-    parsed = datetime.strptime(value, STRICT_UTC_FMT)
+    own = str.__str__(value)
+    parsed = datetime.strptime(own, STRICT_UTC_FMT)
     canonical = _render_strict_utc(parsed)
-    if canonical != value:
-        raise NonCanonicalTimestamp(value, canonical)
+    if canonical != own:
+        raise NonCanonicalTimestamp(own, canonical)
     return parsed
 
 
