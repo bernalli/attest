@@ -52,6 +52,7 @@ from attest import (
     bundle,
     canon,
     commitment,
+    dates,
     grant,
     issue,
     keys,
@@ -121,7 +122,6 @@ _LOG_CANDIDATE_FILENAME = "checkpoint.candidate"
 _LOG_CHECKPOINT_FILENAME = "checkpoint"
 _LOG_TILE_DIRNAME = "tile"
 _TILE_FULL_WIDTH = 256  # C2SP tlog-tiles: leaves per level-0 tile
-_ISO8601_UTC_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 # Stage-2 inputs are parsed from untrusted files, so cap them before decoding
 # or base64 expansion. JSON feeds `verify`'s 10M-character evidence
@@ -1612,19 +1612,24 @@ def _cmd_revoke(args: argparse.Namespace) -> int:
 
     # `strptime` alone accepts unpadded components (`2025-8-1T0:0:0Z`) and would
     # sign a spelling no verifier re-serializes the same way; the round trip is
-    # what pins the byte form the signature commits to.
+    # what pins the byte form the signature commits to. `attest.dates` owns that
+    # round trip for the package and renders the year explicitly: a `strftime`
+    # round trip refuses EVERY canonical year below 1000 on this libc, and names
+    # a three-digit remedy the same command then cannot parse.
+    # Neither the parsed instant nor its canonical spelling is bound: what gets
+    # signed below is `args.revoked_at`, which this check has just proved to be
+    # the canonical form.
     try:
-        revoked_at = datetime.datetime.strptime(args.revoked_at, revocation._DATE_FMT)
+        dates.parse_strict_utc(args.revoked_at)
+    except dates.NonCanonicalTimestamp as exc:
+        raise CliUsageError(
+            f"--revoked-at {args.revoked_at!r} is not the canonical spelling of that "
+            f"instant: write it exactly as {exc.canonical!r}"
+        ) from exc
     except ValueError as exc:
         raise CliUsageError(
             f"--revoked-at must be an ISO-8601 UTC instant spelled YYYY-MM-DDTHH:MM:SSZ: {exc}"
         ) from exc
-    canonical_revoked_at = revoked_at.strftime(revocation._DATE_FMT)
-    if canonical_revoked_at != args.revoked_at:
-        raise CliUsageError(
-            f"--revoked-at {args.revoked_at!r} is not the canonical spelling of that "
-            f"instant: write it exactly as {canonical_revoked_at!r}"
-        )
 
     manifest = _read_strict_json(
         args.manifest, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--manifest"
@@ -3642,9 +3647,16 @@ def _load_log_keys(path: Path) -> list[tlog.LogKey]:
 def _parse_crqc_horizon(value: str) -> int:
     """Parse `--crqc-horizon` as an ISO-8601 UTC timestamp (the same
     `%Y-%m-%dT%H:%M:%SZ` shape `transparency.py`'s `_iso8601` renders) into
-    unix seconds for `anchor.AnchorPolicy.crqc_horizon`."""
+    unix seconds for `anchor.AnchorPolicy.crqc_horizon`.
+
+    Canonical spellings only, through the package's owner. `strptime` alone
+    accepted thirty spellings of this flag that no producer writes — Unicode
+    digits, dropped zeros, lowercase `t`/`z` — and turned each into a horizon
+    the operator had not asked for. Stricter than before, and noted in the
+    changelog: an operator flag on trusted configuration may be strict.
+    """
     try:
-        parsed = datetime.datetime.strptime(value, _ISO8601_UTC_FMT).replace(tzinfo=datetime.UTC)
+        parsed = dates.parse_strict_utc(value).replace(tzinfo=datetime.UTC)
     except ValueError as exc:
         raise CliUsageError(
             f"--crqc-horizon must be an ISO-8601 UTC timestamp like 2030-01-01T00:00:00Z: {value!r}"

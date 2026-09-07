@@ -23,6 +23,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from attest import dates
 from attest.dates import (
     MAX_REPRESENTABLE_UNIX_SECONDS,
     STRICT_UTC_FMT,
@@ -727,3 +728,28 @@ def test_the_corpus_size_moves_with_the_value_and_is_never_asserted() -> None:
     sizes = {probe: len(non_canonical_spellings(probe)) for probe in _CORPUS_PROBES}
     assert sizes["2026-06-05T04:07:09Z"] > sizes["2026-12-31T23:59:59Z"]
     assert sizes["0001-01-01T00:00:00Z"] > sizes["2026-12-31T23:59:59Z"]
+
+
+# --- the rendering half: the owner must EXPOSE what it renders with ---------
+
+
+@pytest.mark.parametrize("year", [1, 99, 100, 999, 1000, 2026, 9999])
+def test_render_strict_utc_pads_every_year_the_format_admits(year: int) -> None:
+    """`strftime` is not the renderer of this format. glibc writes `%Y` below
+    the year 1000 without padding, so a module that renders wire text with it
+    emits `999-…` for the instant `0999-…` — a string its own parser refuses.
+
+    The owner rendered correctly all along, privately. Three modules still
+    render wire text on their own; the first of them can only stop guessing if
+    the owner offers the rendering it already performs.
+    """
+    rendered = dates.render_strict_utc(datetime(year, 6, 15, 12, 30, 45))
+    assert rendered == f"{year:04d}-06-15T12:30:45Z"
+    assert dates.is_strict_utc(rendered)
+    assert parse_strict_utc(rendered) == datetime(year, 6, 15, 12, 30, 45)
+
+
+def test_render_strict_utc_is_the_inverse_of_the_parser() -> None:
+    """Whatever the parser admits, the renderer reproduces byte for byte."""
+    for probe in ("0001-01-01T00:00:00Z", "0999-12-31T23:59:59Z", "9999-12-31T23:59:59Z"):
+        assert dates.render_strict_utc(parse_strict_utc(probe)) == probe

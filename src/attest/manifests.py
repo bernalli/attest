@@ -25,7 +25,6 @@ from typing import Any
 from attest import canon, keys, pq
 from attest.dates import parse_strict_utc
 
-_DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
 _RETIRED = "retired"
 _COMPROMISED = "compromised"

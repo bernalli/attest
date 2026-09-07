@@ -30,10 +30,9 @@ from typing import Any
 
 from attest import anchor, canon, keys, manifests, pq, revocation, tlog
 from attest import transparency as transparency_module
-from attest.dates import parse_strict_utc
+from attest.dates import is_strict_utc, parse_strict_utc
 from attest.ulid import RECEIPT_ID_RE
 
-_DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
 _TRANSFER_RECORD_MEMBERS = frozenset(
     {
@@ -112,7 +111,7 @@ def _valid_utc_timestamp(value: object) -> bool:
         return False
     own = str.__str__(value)
     try:
-        return _parse_date(own).strftime(_DATE_FMT) == own
+        return is_strict_utc(own)
     except ValueError:
         return False
 

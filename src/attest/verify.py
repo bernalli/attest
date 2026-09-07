@@ -65,7 +65,6 @@ _KNOWN_EOL_VALUES = frozenset({"artifacts-remain-redownloadable", "escrow", "non
 # the same members, and guessing is exactly how two conforming implementations
 # reach different verdicts on identical input.
 _KNOWN_PLEDGE_TYPES = frozenset({"sunset-grant-v1"})
-_DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 _STATUS_ACTIVE = "active"
 _STATUS_COMPROMISED = "compromised"

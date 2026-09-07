@@ -43,7 +43,6 @@ from attest.ulid import RECEIPT_ID_RE as RECEIPT_ID_RE
 # Mirrored by the TS verifier's MAX_REVOCATION_RECORDS.
 MAX_REVOCATION_RECORDS = 10_000
 
-_DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
 
 

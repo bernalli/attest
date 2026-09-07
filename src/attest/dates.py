@@ -38,7 +38,14 @@ class NonCanonicalTimestamp(ValueError):
         self.canonical = canonical
 
 
-def _render_strict_utc(parsed: datetime) -> str:
+def render_strict_utc(parsed: datetime) -> str:
+    """The canonical wire text of an instant, for the whole package.
+
+    Public because three modules render wire text of their own, and a module
+    that has to guess how reaches for `strftime` — which is the defect this
+    function exists to avoid. A renderer nobody can call is a renderer
+    everybody rewrites.
+    """
     # NOT `strftime(STRICT_UTC_FMT)`: glibc renders `%Y` for years below 1000
     # without zero padding ("999"), so a strftime round trip would refuse
     # `0999-...` on Linux and accept it on a libc that pads — a verdict that
@@ -80,7 +87,7 @@ def parse_strict_utc(value: str) -> datetime:
     """
     own = str.__str__(value)
     parsed = datetime.strptime(own, STRICT_UTC_FMT)
-    canonical = _render_strict_utc(parsed)
+    canonical = render_strict_utc(parsed)
     if canonical != own:
         raise NonCanonicalTimestamp(own, canonical)
     return parsed
