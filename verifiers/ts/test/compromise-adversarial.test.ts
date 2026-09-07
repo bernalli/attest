@@ -34,7 +34,7 @@ vi.mock('../src/transparency.js', async (importOriginal) => {
   }
 })
 
-import { verify } from '../src/verify.js'
+import { isOk, verify } from '../src/verify.js'
 
 const enc = (value: string) => new TextEncoder().encode(value)
 const parse = (value: unknown): JsonObject => loadsStrict(enc(JSON.stringify(value))) as JsonObject
@@ -483,7 +483,17 @@ describe('v0.1 §7.3 retraction provenance', () => {
     )
     expect(withWarning.warnings).toContain(RETRACTED)
     expect(without.warnings).not.toContain(RETRACTED)
-    expect(withWarning.ok).toBe(without.ok)
+    // `ok` is a FUNCTION in this core (`isOk`), not a field — only the Python
+    // reference exposes it as `Result.ok`. Read as a field it was `undefined`
+    // on both sides, so this line compared undefined with undefined and could
+    // not fail for any change of the overall verdict, which is the one thing
+    // the test's name promises. Nothing reported it: `tsconfig.json` includes
+    // only `src`, so no type checker ever reads this file.
+    expect(isOk(withWarning)).toBe(isOk(without))
+    // `errors` is the fourth input of `isOk`, and it was the only one this
+    // test never compared: signature, schema and revocation were pinned while
+    // an error appended on the retraction path would have passed unseen.
+    expect(withWarning.errors).toEqual(without.errors)
     expect(withWarning.signature).toBe(without.signature)
     expect(withWarning.schema).toBe(without.schema)
     expect(withWarning.trust).toBe(without.trust)
