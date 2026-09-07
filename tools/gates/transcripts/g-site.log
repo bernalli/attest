@@ -1,7 +1,7 @@
 === GATE G-SITE ===
 tree:  <tree>
-head:  1448f39
-utc:   2026-09-07T21:45:24Z
+head:  006f273
+utc:   2026-09-07T23:17:39Z
 
 precondition ok: site/node_modules present (run: npm ci --prefix <tree>/site)
 precondition ok: npm available
@@ -9,84 +9,74 @@ precondition ok: jq available
 precondition ok: tools/test-census.json present
 precondition ok: tools/check_test_census.py present
 --- npm test (site, default + json reporters)
-$ npm --prefix <tree>/site test -- --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/20260907T214524Z-site.json
+$ npm --prefix <tree>/site test -- --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/20260907T231739Z-site.json
 
 > attest-site@0.1.0 test
-> vitest run --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/20260907T214524Z-site.json
+> vitest run --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/20260907T231739Z-site.json
 
 
  RUN  v2.1.9 <tree>/site
 
- ✓ test/explain.test.ts (44 tests) 106ms
- ✓ test/bundle.test.ts (71 tests) 800ms
- ✓ test/tamper.test.ts (19 tests) 329ms
- ✓ test/pixels.test.ts (26 tests) 29ms
- ✓ test/intake-views.property.test.ts (12 tests) 404ms
- ✓ test/diagnostic.test.ts (38 tests) 20ms
- ✓ test/intake.test.ts (54 tests) 5438ms
-   ✓ intake: the size bound is a floor, not a ceiling (§14.3) > admits a revocation view well past 10,000,000 bytes, because §12.4 admits it 3140ms
-   ✓ intake: the size bound is a floor, not a ceiling (§14.3) > admits an evidence bundle under 10,000,000 CODE POINTS however many bytes it encodes to 1708ms
+ ✓ test/explain.test.ts (44 tests) 91ms
+ ✓ test/bundle.test.ts (71 tests) 728ms
+ ✓ test/tamper.test.ts (19 tests) 317ms
+ ✓ test/pixels.test.ts (26 tests) 26ms
+ ✓ test/intake-views.property.test.ts (12 tests) 374ms
+ ✓ test/diagnostic.test.ts (38 tests) 19ms
+ ✓ test/intake.test.ts (54 tests) 3810ms
+   ✓ intake: the size bound is a floor, not a ceiling (§14.3) > admits a revocation view well past 10,000,000 bytes, because §12.4 admits it 2347ms
+   ✓ intake: the size bound is a floor, not a ceiling (§14.3) > admits an evidence bundle under 10,000,000 CODE POINTS however many bytes it encodes to 1076ms
  ✓ test/page-claims.test.ts (6 tests) 8ms
- ✓ test/probe.test.ts (11 tests) 41ms
- ✓ test/exhibits.test.ts (21 tests) 2241ms
-   ✓ the exhibits carry the corpus, not a retelling of it > 41-compromise-cutoff/a-rescued-anchored-before-cutoff reproduces the result its expected.json demands 410ms
-   ✓ the comparison covers every field a fixture can state > compares every component the result contract names 827ms
- ✓ test/container.test.ts (15 tests) 32ms
- ✓ test/deflate.test.ts (9 tests) 90ms
- ✓ test/untrusted-text.test.ts (16 tests) 28ms
- ✓ test/container-properties.test.ts (6 tests) 606ms
-   ✓ container properties > P2 never produces a second reading under a single-byte mutation of the directory 480ms
+ ✓ test/probe.test.ts (11 tests) 13ms
+ ✓ test/exhibits.test.ts (21 tests) 1177ms
+   ✓ the comparison covers every field a fixture can state > compares every component the result contract names 381ms
+ ✓ test/container.test.ts (15 tests) 17ms
+ ✓ test/deflate.test.ts (9 tests) 60ms
+ ✓ test/untrusted-text.test.ts (16 tests) 12ms
+ ✓ test/container-properties.test.ts (6 tests) 187ms
 stderr | test/dev-server.test.ts > the dev server serves the page a contributor opens > still refuses a file outside both the root and the named directory
 The request url "<tree>/pyproject.toml" is outside of Vite serving allow list.
 
- ✓ test/dev-server.test.ts (6 tests) 1198ms
-   ✓ the dev server serves the page a contributor opens > serves index.html itself 486ms
+ ✓ test/dev-server.test.ts (6 tests) 435ms
  ✓ test/vectors-loader.test.ts (7 tests) 10ms
- ✓ test/container-corpus.test.ts (94 tests) 112ms
- ✓ test/vl6-duplicate-members-adversarial.test.ts (4 tests) 18ms
+ ✓ test/container-corpus.test.ts (94 tests) 56ms
+ ✓ test/conformance.test.ts (251 tests) 6989ms
+   ✓ conformance corpus through the site adapter > 09-commitment/a-ascii-email 318ms
+ ✓ test/vl6-duplicate-members-adversarial.test.ts (4 tests) 21ms
  ✓ test/b64u.test.ts (3 tests) 6ms
- ✓ test/conformance.test.ts (251 tests) 12632ms
-   ✓ conformance corpus through the site adapter > 09-commitment/a-ascii-email 573ms
-   ✓ conformance corpus through the site adapter > 09-commitment/b-unicode-email 400ms
-   ✓ conformance corpus through the site adapter > 09-commitment/c-issuer-account 318ms
-   ✓ conformance corpus through the site adapter > 17-binding-proven/a-salt-disclosure 417ms
- ✓ test/smoke.test.ts (2 tests) 11ms
- ✓ test/diagnostic-rendering-adversarial.test.ts (25 tests) 382ms
- ✓ test/stored-floor.test.ts (29 tests) 1085ms
-   ✓ the page refuses an oversized file without copying it first > still reads a file at exactly the floor 355ms
- ✓ test/unsigned-label-adversarial.test.ts (15 tests) 113ms
- ✓ test/main.test.ts (25 tests) 2712ms
-   ✓ initApp wiring > renders a verified result for an envelope with embedded manifest 629ms
-   ✓ the salted-envelope notice in the page > keeps the notice after a re-render from applyDisclosure 644ms
- ✓ test/render.test.ts (15 tests) 227ms
- ✓ test/render-demo.test.ts (15 tests) 118ms
- ✓ test/demo-wiring.test.ts (15 tests) 2048ms
-   ✓ the bench opens on a receipt, and never before one > needs no file of the visitor’s own: the sample opens it 464ms
-   ✓ breaking the receipt moves the verdict, and says why > every button the bench offers actually breaks the receipt 322ms
- ✓ test/main-verify-throws.test.ts (3 tests) 546ms
- ✓ test/sample-transparency.test.ts (4 tests) 1553ms
-   ✓ the committed sample, checked against the pinned log > reaches logged — the page proves the log it pins actually holds this receipt 955ms
- ✓ test/rail-state.property.test.ts (8 tests) 6168ms
-   ✓ site: rail transitions > refuses an oversized evidence file (40000001 bytes) without cancelling the current receipt 683ms
-   ✓ site: rail transitions > preserves each receipt across arbitrary rejected rail drops, then accepts a valid replacement 2857ms
-   ✓ site: rail transitions > keeps a container refusal across rail gestures, then replaces it on a valid receipt drop 1840ms
- ✓ test/diagnostic-corpus.test.ts (6 tests) 10792ms
-   ✓ every diagnostic the corpus really produces > shows a benign diagnostic exactly as the library composed it 444ms
+ ✓ test/smoke.test.ts (2 tests) 5ms
+ ✓ test/diagnostic-rendering-adversarial.test.ts (25 tests) 273ms
+ ✓ test/stored-floor.test.ts (29 tests) 524ms
+ ✓ test/unsigned-label-adversarial.test.ts (15 tests) 179ms
+ ✓ test/render.test.ts (15 tests) 137ms
+ ✓ test/main.test.ts (25 tests) 1892ms
+   ✓ the salted-envelope notice in the page > keeps the notice after a re-render from applyDisclosure 443ms
+ ✓ test/render-demo.test.ts (15 tests) 83ms
+ ✓ test/demo-wiring.test.ts (15 tests) 1709ms
+   ✓ the bench opens on a receipt, and never before one > needs no file of the visitor’s own: the sample opens it 322ms
+ ✓ test/main-verify-throws.test.ts (3 tests) 382ms
+ ✓ test/sample-transparency.test.ts (4 tests) 779ms
+   ✓ the committed sample, checked against the pinned log > reaches logged — the page proves the log it pins actually holds this receipt 433ms
+ ✓ test/rail-state.property.test.ts (8 tests) 4213ms
+   ✓ site: rail transitions > refuses an oversized evidence file (40000001 bytes) without cancelling the current receipt 558ms
+   ✓ site: rail transitions > preserves each receipt across arbitrary rejected rail drops, then accepts a valid replacement 1690ms
+   ✓ site: rail transitions > keeps a container refusal across rail gestures, then replaces it on a valid receipt drop 1184ms
+ ✓ test/diagnostic-corpus.test.ts (6 tests) 7516ms
 
  Test Files  32 passed (32)
       Tests  875 passed (875)
-   Start at  23:45:25
-   Duration  33.22s (transform 2.31s, setup 0ms, collect 10.97s, tests 49.90s, environment 10.52s, prepare 5.84s)
+   Start at  01:17:40
+   Duration  20.76s (transform 1.88s, setup 0ms, collect 7.48s, tests 32.05s, environment 7.68s, prepare 3.46s)
 
-JSON report written to <tree>/tools/gates/transcripts/20260907T214524Z-site.json
+JSON report written to <tree>/tools/gates/transcripts/20260907T231739Z-site.json
 exit: 0
 ok: npm test (site) exits 0 (exit 0)
-precondition ok: site test report was written: <tree>/tools/gates/transcripts/20260907T214524Z-site.json
+precondition ok: site test report was written: <tree>/tools/gates/transcripts/20260907T231739Z-site.json
 ok: tools/test-census.json declares at least one file for suite site (32 lines collected — derived, not written down)
 ok: the run's JSON report names at least one file (32 lines collected — derived, not written down)
 ok: the file set the census declares for site == the file set this run's report names (the two sets coincide)
 --- check_test_census.py site
-$ <tree>/.venv/bin/python <tree>/tools/check_test_census.py site --report <tree>/tools/gates/transcripts/20260907T214524Z-site.json
+$ <tree>/.venv/bin/python <tree>/tools/check_test_census.py site --report <tree>/tools/gates/transcripts/20260907T231739Z-site.json
 site: 32 test file(s), 875 test(s) -- matches the census
 exit: 0
 ok: check_test_census.py site exits 0 (exit 0)
@@ -120,7 +110,7 @@ computing gzip size...
 dist/index.html                  19.29 kB │ gzip:  7.20 kB
 dist/assets/index-DE74FUDc.css   11.34 kB │ gzip:  3.00 kB
 dist/assets/index-DLnL0xC3.js   281.94 kB │ gzip: 99.67 kB
-✓ built in 1.96s
+✓ built in 1.45s
 exit: 0
 ok: npm run build (site) exits 0 (tsc --noEmit over src+test+e2e, then vite build) (exit 0)
 

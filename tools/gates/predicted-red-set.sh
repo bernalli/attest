@@ -201,8 +201,23 @@ TEXT = {rel: open(os.path.join(REPO_ROOT, rel), encoding="utf-8").read() for rel
 CRIT_A = re.compile(r'\bTrustStore\(|\b_trust_store\(|\b_store\(|\btrust_store=')
 
 # --- Criterion B ---------------------------------------------------------
+# The door NAME, not the call spelling. An earlier version required `NAME(` --
+# the name immediately followed by a parenthesis -- which recognises one GRAFIA
+# of reaching a door rather than the reaching itself. Two live evasions in this
+# tree walked past it: `monkeypatch.setattr("...manifests.verify_key_manifest",
+# ...)` reaches the door through a STRING, and `assert_view_outcome(rc, out,
+# captured, views.build_revocation_view, ...)` passes it as an OBJECT to a helper
+# that calls it.
+#
+# Measured before widening, on this tree: dropping the parenthesis adds exactly
+# those two files and nothing else -- zero false positives. The trade is worth
+# taking even where it is less clean, because the two failure modes are not
+# symmetric: a false negative here means T2 stops on a file the plan promised
+# would be green, which is the same damage as a false positive plus a wrong
+# explanation. A mention inside a comment would be a false positive; today there
+# are none, and one costs a STOP to explain, while a missed door costs a task.
 door_names = os.environ["PORTS_PY_DOORS"].split("|")
-CRIT_B = re.compile(r'\b(' + '|'.join(re.escape(n) for n in door_names) + r')\(')
+CRIT_B = re.compile(r'\b(' + '|'.join(re.escape(n) for n in door_names) + r')\b')
 
 # --- Criterion C: taint through a shared conftest.py fixture -------------
 def conftest_fixture_bodies(text):
@@ -214,14 +229,47 @@ def conftest_fixture_bodies(text):
         yield name, text[bounds[i]:bounds[i + 1]]
 
 
+# CRITERION D — the shared material whose TYPE the flip changes, one link
+# earlier in the fixture chain than Criterion A looks.
+#
+# Criterion C taints a fixture whose OWN BODY builds a TrustStore the old way.
+# That is not the only shared thing T2 re-types: D-A1 changes the contract of
+# manifests.{find_key, verify_key_manifest, manifest_signature_is_authentic,
+# check_continuity} to require a KeyManifest, so a session fixture handing out a
+# raw `dict` key manifest breaks exactly the way `trust_store` does. In this tree
+# `bridge/tests/conftest.py` defines precisely that (`key_manifest`, session
+# scope, `-> dict[str, object]`), and `trust_store` is built FROM it.
+#
+# Measured: without this criterion the derivation omits bridge/tests/
+# test_bridge_signing.py and bridge/tests/test_bridge_docs_onboarding.py, which
+# request `key_manifest` and never mention a TrustStore. test_bridge_signing.py
+# monkeypatches "attest_bridge.signing.manifests.verify_key_manifest" by string,
+# i.e. the module under test calls one of the four re-typed primitives on that
+# very dict.
+CRIT_D = re.compile(r'\bbuild_key_manifest\(|\bkey_manifest=')
+
 tainted = {}  # fixture name -> (defining conftest.py rel path, its scope dir)
 for rel in FILES:
     if os.path.basename(rel) != "conftest.py":
         continue
     scope_dir = os.path.dirname(rel)
-    for name, body in conftest_fixture_bodies(TEXT[rel]):
-        if CRIT_A.search(body):
+    bodies = dict(conftest_fixture_bodies(TEXT[rel]))
+    for name, body in bodies.items():
+        if CRIT_A.search(body) or CRIT_D.search(body):
             tainted[name] = (rel, scope_dir)
+    # A fixture that REQUESTS a tainted fixture inherits its breakage, and so do
+    # that fixture's own requesters. One hop is not the transitive closure: the
+    # taint is iterated to a fixpoint over this conftest's fixture graph.
+    changed = True
+    while changed:
+        changed = False
+        for name, body in bodies.items():
+            if name in tainted:
+                continue
+            params = body.split(")", 1)[0]
+            if any(re.search(r'(?<![.\w])' + re.escape(t) + r'\b', params) for t in tainted):
+                tainted[name] = (rel, scope_dir)
+                changed = True
 
 setA, setB, setC = set(), set(), set()
 for rel in FILES:

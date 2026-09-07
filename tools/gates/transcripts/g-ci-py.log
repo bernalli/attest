@@ -1,7 +1,7 @@
 === GATE G-CI-PY ===
 tree:  <tree>
-head:  1448f39
-utc:   2026-09-07T21:43:29Z
+head:  006f273
+utc:   2026-09-07T23:16:35Z
 
 precondition ok: python present in .venv
 precondition ok: 'import attest' resolves
@@ -21,35 +21,35 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 
 --- Step 1: the store generates its signing key and first key manifest ---
 {
-  "pub": "gYW68e_G6J_6MAuYPWnNuLo_f2WTwF6I7tgxbnClzM8",
-  "pub_out": "/tmp/attest-store-dies-m8i7hv_d/store/issuer.pub",
-  "seed_out": "/tmp/attest-store-dies-m8i7hv_d/store/issuer.seed"
+  "pub": "xFtKME5mo4wknWqCgs9UeJu_ttO_e_EW0sxR0pZsukQ",
+  "pub_out": "/tmp/attest-store-dies-c2pj92f5/store/issuer.pub",
+  "seed_out": "/tmp/attest-store-dies-c2pj92f5/store/issuer.seed"
 }
 {
   "issuer": "store.dies.example",
   "manifest_version": 1,
-  "out": "/tmp/attest-store-dies-m8i7hv_d/store/manifest.json"
+  "out": "/tmp/attest-store-dies-c2pj92f5/store/manifest.json"
 }
 
 --- Step 2: the store publishes a DRM-free game artifact and its manifest ---
 {
   "issuer": "store.dies.example",
   "manifest_version": 1,
-  "out": "/tmp/attest-store-dies-m8i7hv_d/store/artifact-manifest.json",
+  "out": "/tmp/attest-store-dies-c2pj92f5/store/artifact-manifest.json",
   "series": "store.dies.example/works/INDIE-001",
   "version": 1
 }
 
 --- Step 3: the store issues an irrevocable receipt to casey@example.com ---
 {
-  "out": "/tmp/attest-store-dies-m8i7hv_d/buyer/receipt.attest.json",
-  "receipt_id": "01M1YX71R6664D3C23MG87D5SH"
+  "out": "/tmp/attest-store-dies-c2pj92f5/buyer/receipt.attest.json",
+  "receipt_id": "01M1Z2HH10E3R6X4BKC43KANCC"
 }
 
 --- Step 4: the store exports a shareable bundle — Casey's copy of the deal ---
 {
-  "attest": "/tmp/attest-store-dies-m8i7hv_d/export/casey-library.attest",
-  "private": "/tmp/attest-store-dies-m8i7hv_d/export/casey-library.private.attest"
+  "attest": "/tmp/attest-store-dies-c2pj92f5/export/casey-library.attest",
+  "private": "/tmp/attest-store-dies-c2pj92f5/export/casey-library.private.attest"
 }
 
 --- Step 5: the store is deleted — keys, manifests, everything ---
@@ -59,7 +59,7 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
   "issuers": [
     "store.dies.example"
   ],
-  "out_dir": "/tmp/attest-store-dies-m8i7hv_d/import",
+  "out_dir": "/tmp/attest-store-dies-c2pj92f5/import",
   "proofs": 0,
   "receipts": 1
 }
@@ -110,7 +110,7 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
     "size_bytes": 9216
   },
   "authenticated": false,
-  "file": "/tmp/attest-store-dies-m8i7hv_d/mirror/indie-game-1.0-setup.bin",
+  "file": "/tmp/attest-store-dies-c2pj92f5/mirror/indie-game-1.0-setup.bin",
   "match": true,
   "sha256": "0f35cfca3b9bc37e93e123a5ab21711312b32094064b30b79b0be5749ae67a7d"
 }
@@ -119,7 +119,7 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 
 === Summary ===
 {
-  "receipt_id": "01M1YX71R6664D3C23MG87D5SH",
+  "receipt_id": "01M1Z2HH10E3R6X4BKC43KANCC",
   "store_dir_deleted": true,
   "verify": {
     "ok": true,
@@ -139,60 +139,60 @@ warning: reading .private.attest — it carries buyer-binding secrets; handle it
 
 --- Step 1: the rights holder generates keys of its own — separate from the store's, which is the whole reason a cessation can still be signed after the store is gone ---
 {
-  "mldsa_out": "/tmp/attest-pledge-publisher-declaration-083aw873/publisher/publisher.mldsa.json",
-  "mldsa_pub": "5spZjjIndT3Hr-gfDyS_XzaU14VeN1_fUruejjbYsUxVCkiSfzBSxshVEljmHqRhQsfWraAthT8dzhkTng7d3x89QkUnZKXDxSx_2-Gz13We8wmdIjL9KOShKePU7KF6hO1c3omg0FWjyiJWAEkV-QwWdHJppUzdqM2miEiPg4sSuA0YkD9lY7u1p9gitzOTz3APkEXH7oEr1QS4MpafitfWbNW0UdPOKX2xQ6yiCu8GFnrr8kaLbpHzRxN7HAV1utAyU0j4geh4Z11F0rX6rFcUJkCxjAJ1PtxyDdtBhWiTI3EwBUsSy_VvzcCS32tmepD9fhCcGlmLJJIDnssBBGyu_k7Al0dg7epL_sbOC_mWcoAqs7z_taTZ6khln5jjWeeaqtm5zXF6lfId_5Lh-B8uR1ajzOiX2-qeApRW8WiqR7xWzHwbgVHlxhvMuC6SOKHhV-gzsvz9L6BD--pz9VnOUuJYYyOy_f6QE9kAjLhZT1_tHoilfaanACULsno1_3q7S-B0MofTD7SLV_bXvoE5roJfvSGGjR57q4xFxCPh3KEchaN5FE_KCyKINyy2fPWzzkE3pEjZKzU-nqLYVZggh_ZDNtWxLTJlsbGy3d112fqEyZUyflya1HYlOxJ8qbvoby6kyLyzYbhScjJqm15iwvpPTdA04uGksjbMt0iprY5UbSGu3C-mA2bRlQD6Vh4SiXucxOgwOJW6AJGCa21Nsh56L41QutbUJ-Hcfd5kxi8YRntONMO6GW8qzkaRUvVoFV6DzLk0qg5KsYKf4mTKYyY9TNkxsLSExYNLJn23AAlmblOpZJhL3qpxvAM_LVPwiM3bMIXKXMMP9k9nzQKsc92_Twfbu9OAHT-oZ5Yvsnsof0Pz6_9mk0yYkHC_QdtMtx3Uj1-u0jxKVu0hpnxhHNtHY7OyZfe2cwjgQqNJeE8vDhL9k44TBL0IzlZA554NRk3dC41OkT27yLh2W3PGUN2ITz5AOqVSU5y5TILggiaymj6MSexlsRvtbWbBOwkOUDTY1hQhFMSAY6BbM6bM0Cdv3e4dHkS8kskdXoEj4IW47RNfQuAQ6pwCsb9aNjO_wrf6AWe1eUmOXYxPlix3mpTXQfsqhd60jG491lUkVMKljZ_Kq-IRDM6G9pcRS0FKBntKT4yU2OO4drAmGdOGN6Y6889OV0eqK44krxc5KUa2CaM5DW6fuabt_7GSWIYp74aH6zbY2I5DrD45tbPiQkbXwtl-TB0eRHI0k1GSSnWrqIrjZm9CSpvh61uF83sSUFWvVpoF9ooIfCtP638CABfXHHzXUfaS6BGVUpxD2sJiQsl8sYPZPMZcgplS0UR7rL-WBYueBBqf44s4D8uzvKFqjURQIldUEad_CCd8G7MvKIgGnq5fNz9Dw5XqgLu9NEKzqELj12-1vwKZM4sfRTjFv-dsQdttK-kXXaBN8k2auTAutZvvvzpo-8ZsXamVFY3bSEqudmVuLwrsMYAPOVR8u43UgeQwrB1WLn6-hPzMnBsOX0BMVqjrYwwbE5CKxuVJFFhQnD0mlvo0-FZaDahJNDBgRXFLVW0LOYnDxkDKV0Ktj13Mz88sCm_Tb7XpNoTk0Si0jlHTxCaWeijXwwTtiTABZ5Xik-ODB4Pamz5dawdhXzKVE67a1vEpQ_AuDTu_ZLY3RJe-rGZpNYG3siB1AOyc7BGDa0gd3IORhTdB9EmfSsvQkCObw7mhoQIn0Tfor7E4pev39dmzhZuBEUjDCVT5rKoVNkqLKuKA7Ge-UHFwEONzHQZu4t1nNHoJ2l5iP1pUYPK8Un3yMrdIeg6B4WmUZkDKBTIRpDExz8mXlQMEGh_G942R0Pm--S95cqLmpmzWfAGeM-hd5h3ooZJfydCxbmaYRHRZx5pcHqLXpQRfRnl2cY1UPdU9M80giSZhaxKHTQyfxvGX12WyLRRe7PhjPsxG697qfmGIPcMHNLgSGIVzHhgBM_PmEW6jpRtKv0G0P9jr9Lg8VRrs9zr14vh1Fgnu0TjG-NK0NwvAwwR3WfABOwI7UA0uHXZ4NsYdBn1u4tGjL1K4G2YMxWC5DLWpZMiVpuXHB84vQJLXixj3kYTP1cxm2x6atMAhKwe-b6kAxyP2Afa8WEJiIv4la82-aZTzmhmsWZJuLE_Z5_e_dcMVayEBBgUy7IQy6CDTZ92MIpWjzfK6PEwRSTFGqu5hyNXwnRVs2wZCEfoxvA0__oOlppKaJfBPPWnuAEQdHt2g1e-sgp8SrLSSsQ3csmX6KflMNyKnKQUDyiCUv8uvDjJD8XOb5MUogdtmwVKLQ8EUovE2KZ0E-DYHtRg2zPXLYkdc23vcFhADueIA_V2pSnTFB41xjhelhlwOLdjep7Mew1Vg-5wSeiF5H3XB6a1JFuB7meScC9VT75QDIBGQ0t8b7uXLF6KtQbDsHnptbJ6G7W43b8FQ2ALvHspoJC47iJf_gMFCMJYGB4bPJiWfpfw6WuVqChdnAzMx9Q-4R8_6p2jaqTZnboeShZhndmBRXa6ZF6m0pOqC_M61wiX5G7NqhpIMUC-ZDZrraT8zfcCUChwFh92ZemvwWy4kDn927tfJqhD3Ugc",
-  "pub": "qz-MLUgeEq8KpdlN0_F9WbXU1do8N5PUtgHx3si0DU0",
-  "pub_out": "/tmp/attest-pledge-publisher-declaration-083aw873/publisher/publisher.pub",
-  "seed_out": "/tmp/attest-pledge-publisher-declaration-083aw873/publisher/publisher.seed"
+  "mldsa_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/publisher/publisher.mldsa.json",
+  "mldsa_pub": "xaKCRmVwQiIb3v1CaWTJ4RmTf6m0uz48onCF3ClI5WC_B_nP2qnPkuzW0UEwRLDGAGyT9WiiW5dNVdJs2zVfVa3xspOvH86k13mIZdJ-RZaI_vkvr1q4OT0WPVx0-yD-fZATccIW_gYerN4HXS0AeGQzykL8tSCIOrxuX2fbcMk-S0nWM37e1GOtGMfksxcsEbZRqw7AhtB5NQHfu9PO_BdfRThNx-PgPaMXzhc7JHh6kcMeOzKMBgIr3DLa5MLu_ABfUgayoWEGyJk4L4zS74NFObl9Ifad-RfU-PMge8gYt6AUrKyZNbWXX9-dyee3vh6u9kRyvpVOCLG9AkLM_8nnUrMHXc7JN24fAka7TQ0nXsjy_0UMtF79jwc1ie9cekeQeQTlI1XA-b_uh4AW0hw_rOcmVZw3DsgAmFILhQyze0AY-qfLk9OQg-QMabEvisqKr8AEFqYsuo84e2uLZinVvjMm6uef3bLFk5OZMnQak_PY7ykOJ2JEgbr_BJ8zxqIDyXpr40kjl1U7Ayo3Rb7EjBfZr2oOozvgVU1euWTBoWErj2FcSk5Ecy9GogSNEctJTcckyLH6Zf3SnanxlcA7CNBJcJsDex4m-qInz3c6aOW98g5qnYvc67OYvosnb7mYZXs2b96QjxwrOI6CZXS1m6k6XJkzVKYDlqQSmIhgvOW2PJSmSlRV8COZK6THP7MQCHhGt8JfAhd8CNBevKhf2kfxbHjUeg4agL4ckA3dA7nyEFebpEzGoz4VNwjVCWt55VtnFIFFMrepD2ZZg9Duv9Kl1_-nqLEE2_K7ms8oMIA7K37fAgMupvGc2Fju4IoCtoi3XIlftC_I-T7U7NDvb6Hbqhv-_dBQd2D70Mqeh-DinZdNHKGOgwbtfYJ2UHR5ATqHZSDsyARJzjvfFDEyYibmv6lqigK_eIjunSxKhJc3PQdqyrW01K3APnyTM74kokqDXOkNtPDDNfdgSw1jpRoYLC6UAdugMHA9pdGZf4ZlBz70V_XFdOe_zIXIxCuV3rHBhENlYLuN0tv6us7YPPMuB93z8sOEkfgRrqOhjOsgF_1FolZ2zZ-MHe8eVu42U8v2UGH7fqau7o2diS_nSN_qNI4_mM5ULuAtE3fN3o9KFTM-EtVu8Os0J-vx1z90dYawB_Ul8gvV3Eq_uzal2BitUt73oDvu-YBistlTx0DG9FoaN9N3aJT7eHEn7imDIxOK92fsRAVAEbFlUbx7f2g2w1xaaVj802v2k883ODLg0Z39Ew98QaRJXYmhgywMocyVNC2M5am2Fc8FRK5Na5XBfe5DKn7guU6K4MnfHTkpV9nLRGuywG7nD6LK8XCAxstWBApqgK53MBs5GErt-jv9Uy8xCshBIKGFLSpIUpEKN2HwtD1yAB3SPj86xt73aBIRsQT3lsRPL1UQnwCCJz4Tiom3zh7BpryuvVKMIm79VE6lt_s_NCnJpB2tzt02pF57scSnfk61wDP1HmVtDCLru90xp3PZWLC6knG7xFvEwVRwuH1oHHle1zVzdwMqCjIWj8139p8HqjVCFPfdhv3xwY22diHcqrQ-ifRrHiQOlnM_lG2JlUFJrNxz8A7tnL6WwJKJccxfO7XO9xoyDkmSsb1aI9iwzU-VmE97oaxS-hOeig8yHNbds6pIcl6OW0FfaBg5-Qqr5AwatQf9BTgCgi2P0XFROL6Cj5mpqCk-NYa10Eaaie8Ucg2y9ysoZ_KVppm47W-F0j94pUYZUzadGNpy1Qe77L4-ZFcHRaOswmxY7pRPGPyUieduskEIsMkGVRL72UWvOavp2Krx2buC_-9PPlUBCnwnqFv7fhoYiNHJ6uhl0QkRZKlk4zfKkt0CG_PGTtzPfo1GvfDIkxfpXTlmeAl4rxV3BINmlmCTiqkyqGlHg44ak4R3xge42HfnLbez4HYQCpdOM1h4iG5ZIb0qaO2c0mVJM5p1wUvDYRZxXn-Q8JKbkp11z9ITMpXYHlfvNHo6AJakLCvmu9-HjsZNc0msYxa5KDWvyp8KBw7K2Py87pfiwkEuZDxa4Oi77zr6_hHPiXB8TeJEz53_y7YeXxlc55zjJd4FKv6SDwKa9xvQlSDYvoowh8qiAPTNPPpe-qlqK6-YzLJlxXAmtXMCz4n3T2vETA8qYw64-rIEOxJEOjGTf_w9c5KOhRgIXO8TiduNvC10tCY7Olbulc_ZVNrgBIz-_UkUp-92jQOhn0j9kGKFn3qxk2PHxNC1SrN0OSYeghb0anjAWa6ABAewIVMNqDEObHKrl3AtwWRiEqfHkSWoOAjM_-AAqDVHvsP1zzuR8qtD7TgONF10REJbYramfTBazMqfJgUOvIMTMKhFB7BUoYEZ7jsRrdR9xYu_MqS4VKnLElLgEg6vkXKDNbYSi_izViWKTOwZCE-6ndJuWKtn81qhClvfnwxLpHi-3vAa4DxdhhM1fuoSRLbfQNlMKm7QTP_xu99nxaeNR8e8ZMnFRn-TXT8iOTiZ4v0DPxWRynvv6SM4GxaJ12qwup8XZmVGzMXHpkjSVQVmSNSzGUPwjizXpL--PQcw1w9AXLpNSPttOw9bfYqVrk7_pj0mQ-Nstbc",
+  "pub": "dCXBdpJOGbmuWRf7_iqq8T9Jy_DW0ji2gL1mE080UOA",
+  "pub_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/publisher/publisher.pub",
+  "seed_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/publisher/publisher.seed"
 }
 {
   "issuer": "pub.dies.example",
   "manifest_version": 1,
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/publisher/manifest.json"
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/publisher/manifest.json"
 }
 
 --- Step 2: the store generates its signing key and first key manifest ---
 {
-  "mldsa_out": "/tmp/attest-pledge-publisher-declaration-083aw873/store/issuer.mldsa.json",
-  "mldsa_pub": "YUg9pH2ufnWX4SSpq0akw9ME2rNsozTFquQpE0CUqiOED6OKSouKXzill9ZR9dGLmWNgIJ5DhBz64mxS_7PkqBLvDEoDIT9910ih_-alHYMWV0HA7AXLQxT7EvfagLKZStcVck-iFkUW55zByN3I8Ii7TXWhvFOHZMwaGPnoAxfKKiEeluVF5xW-OYp99kDIMLfl3vHlwlJIBM3fOSUEDg1SvlYG-6kuk9_SlewfSBhvsu-XgZDGq4I0UD0JgVXlkKm9g9HHiheTX76497yqv0yVCg3iy0uZcSrkayOoR7bhFoOvF5Xr0pJO2C7teB_bFvI-Lsa99x0GReHfBVvvpeYgrn2nEKa9r626myqn3wmsECgLCg_Y824u0PS6km4JHOLYKdVRcCvEWcmCBRquoUy_r6Ls7co5FFx5UQEOOlVzNv9pJVZMXkiIXKdjOADVNC44w1tTVel7olydwvnJML7angJM6OUJKzQwWoTqxbE1_S47XCH11TbKYqSWPfCRJNiFoghYcWVwxrBNDIeajiNf8XHnPAZnFeDUrE5jyVpTJHcI9w3ZjcefUk3z5MzWA7U2z6N44BWXTCArCmE6Mf50M37s8mOKZmnzv_NYTxNYoqoutmz_6oU2FDIPL_TgF8oRcuAFqZmmHti8UZpoCOpbbMT32iZLqpX997qRdSy4FoHwTOzV9txVzh38Msq6dpdKFZcSCa45td-5c9bA1yy-9zq08CCqRQEiYW7uD1Ffbh_y68S8S-kiNF3CftawKJbfE1JDN7k1UohL67Tw1hIruB9XDO19ml2oL70oNjni7QOZZo4xn3WtXea7vGPREw0qJvsxiCIr5EhopLWmc_GwbKmo5djK_lpry2i5Wu1Wmt_jMybXxT-HHKouy1XAj_6Vc-teyXebcfvIehItMnUR9QbmkBG0-TR2XzGsmvhyQB31rXBWIu5T35bRywa--i3ldLQuxKQW6t_ytbhFITZjfJ73iXlb1ApBw7bOP5fTu6YvRMtUCaaVtf5qiBNx2jDSbueKoYok4_RcYrZVsSXD9o1QLK9DEu1RpaP_h1MlSTFFbfc5J7od-h10ZZNtGOV0gMEbt8WU_6kEdOE4q5KUX8-I5_KZYelUGEGp3-17-q_7MgFesTuO8vNLmhhycNTxf87BC8z06l7jJQr-mnTlH_nXeYmBQLS4XOIGp-8YtnqIypCgcxiUXY588ylB_zgXLx0-65nX29msrxqCHFIZvAyEi3kahpJIybFTiXKZ6mMtxHoPuEJlqvSGGlrVB324l-jc1e9O1McWsum1-OVOSbwZxB_NR21mgkzusunwX2Jq9IGBxm4LKfAfyCXUj2KB_DR6SXsb37ZQKjEs7CGzuftyEDJHaLuM4Z_b5ggkYpPHQ6hlm7V6xG9aVnlPp-uNxwslW1ZFA0pp_EoHgnl6IwTcsmQOd3-7xah5RBBvLMjSbxQmMyGWLFXt423NDQSls5WmwC_Lf9_DO_B0sghqwyk8ffdP853D3zNEb-Ci7xyWyLyvwfy8vUfNZr9G6tGR3mL26tFjnPUmbssAxt8xKalLB6dLTe5Vc3fnsD6yh82U-Tppb0bf9tSuGvm32mthNyTjxEnnLP2VNCEXonnjJdRAhooXMiQfHxiqHQodm_g3pnSUA4LKCKLsqZ_bPPwZeBBsPhL2zMEfRv92nnF6B4X5qIY6BPwblKCMHa0-zPd8kwu9HmABRz1PEP41o8-yOTn_ZL5eN797FpikWgyMMFxsILKpH9vdkukc7x5F418R7m1Yp1aAb-v5BPrkKATjuT0YNm5b7BJVHEh0uAdozFkwl7zWLeI17OowtgK02W9GuqyBWRr4whis_g0D3dNl4mU-cvvvY0uFFu-rMf8uvBYJhINPDvsaS_MCBNFUy3SyfTyQ9PrScycooPXcDqHPeGIp2f2rJfPXXdhLx2yssYf_5A-vkdN5bgolrut9jSkv4q16s2PNA0bu4gz1jxr6v4XJCkUHzagn0jgUmyIVGzfQuwVAX680f-wQ9kJ95IkSV-Qb4v4PWIO_yKn1CEZiBRe8RPBWRgzM3lb9DlvOLVeycdlKQNB-OlLTbkQ7qub7_1HgYr8GgMBEzcVeVjBIg5ypxOtV1gBOPL0y2rL_WUt-2yaeoBv62uLQ1L5kZDZwsP_FjFlKmiul15VqTWbiazquLpvv8X9zjGrgs1l8U2Kq3qX_DUl07aaHhmlGLEWBx3bcBc4euVkg5tbOraNJ4RpCRXN3iiiSpGNAB095ulVM-B3gp2oEXZUSSacMaYnQpK1l4eW1txGuxpBwd8h7XUY5EfBq3BEfTRpKrCQXxriYEDJFirYc2ahKS1jmA_gTtK0AGW9kzJCDItfXeFq69eio9qvkQTHd-nxaNg6_lmIL6ArmrMetSnfpw2y9JywtbkwldwcAaaajcVpvzgDeKby72R5yfT7fgXaW0WbYmhbewRDJplzt2lzNL_A7vo_p_9D-DoJ0WkWZ_R6JKDBEB0wteHYP_XdlrGLpIvEzipEMEEHq4NmGb0V0FWVDOHtVa8RfYis0eG89HQPbxe7Nv6xfWBp3EFZWAxXZ5aVKS5lvt66dYlkSIkXXDtA",
-  "pub": "_dbMDenyu1XQIV9KbcwJxPNTbAvUuYpV8DwvAD-DqPU",
-  "pub_out": "/tmp/attest-pledge-publisher-declaration-083aw873/store/issuer.pub",
-  "seed_out": "/tmp/attest-pledge-publisher-declaration-083aw873/store/issuer.seed"
+  "mldsa_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/store/issuer.mldsa.json",
+  "mldsa_pub": "lp_h1wUc2lRD6F1bLyFmS7xcdqLDNzEWjcUGLq7X-tqgwsIhMn17wJBYY-L2LZbpLb5ItDodwmtHhg2uDnOxEWGSnE9PBFSUdTi0kV2JgT-s9sy6fXtNMwVkY-z7DjY7ioZ6-mH3DO-Q-krJRS-Rk9N8HvBSuAk-JGb89rLV2XixxSrbcGcxPmNhmfq6XSvmmpbIc_l9zOuEDTZDNDkmW4k4TUwYTRajMHgjEFG8aE-n4QFmL-xePrHhmfTZKX_rIC7JBoxPdDMP4JHKr-m141VyxOnswDx1I_tHS9hD0g7AlKUWdZYIjMj38n3x8scFCxxsHv3fRpMyYbjI80DAVVlUH2F5FnfZYbP8QqAGxS2qjtdVhO80VxOWvZvJ7Kx4e5KqUSPF2tMbw3-R7MdHUzXFl1mukimODZM33g7Aums9WgehZehU0GUgaOHPjYOTsuzbcvlX3kL66CToldq_Cct3jW_ghIs8RYhtXC7zOOkgr5rMrUpElgOATJgj5byzgE5Tkdu2Bv0p-fio0TE7Hi6-zv7NJJMe5TkrD3VmhKG2d6AcUvZeE4YwQJlTuRghL5LiOjcvGVgW4k_z9hr0JdkGjZYs50UEPR1F3a2Zekoop2Iji139zcd2zxBFCOCGACHcIziZ6BRDtU1WJFBkxCeTuL6_IqMMZgdseaq9gNzZ5CWRDLjgu-9u1NavSqV6Q4X1Ogj5PtEtHxvzxAIXYBmTkCWxLIj_gjb_5m7lMlzXDX3FzFFdDslBul8BIzDiAernQixE5k5kF9XDSwVpOgPLOw0kBrksxKFIUdXRAQ77mCttlhr_FfNgPGUG1MRYIXNCEUdvbif2CGvA2ewKEZ319ca22kqi6-LN2o7DbTUFrL-_vogiwVevPBkGWo6K6ee_mCvPpM6KJRLgmtNrpvfG98B2m9hydWMbIzDfCNQaH39qiPaIPxN_2THtaLa9XgLWqSRHXF3ddymbyUKLnN92HZiiPMlz0vIS7BQVW9yP5YhLnfMNAuDDJ7MWrY3Ee_VVls_REutgVE26zBq2m-HsCotEFP0sIKvQz-FJovkdcGucE5oMK8wMeRbw8IvVfRLPd818banNsjOcO2tYtcpjR9b5qykRtb3NKj1PxzWOla40s6O-X_dw_XIIfXB2NJlEkR5lin2OkfZQ4ZJ_U76zpJrxoEFiWSJQKni6ljxvJkhLMpMeQnKZrp3oGP8TjloEN3DXO0YxefqdRmkyXNvPazi_uA3-qlnPClSvtSyPVcB10Ekllz4gfT9oGR8ZGh4WToN_FSX_u2am-Uk97GmC_TpiilhvpcD7bJ1jV4xYSLWDuk5XRSNpdTwMZvZGW2PIqiSMal-sFjDqoBhsxO8P0FWYkHxpkZCLts-ohOj9spWu1sr5YXeuZY1OBYqdFUGZmgivkQ7oGA0R1l-bZdDop7kN8W6hilJANtmcsDj2KZyqK9ISJJw76fvO87CKViWePSsWhE_AsqDK2k3l-YM8_Oc7s4ROSpS47YPsLoJKnUO_cF_I49eBKLggRWbx6_c3PGO5GuuVFkJmKOFGV1EXhVF-FT7jaV3pKjFz1sWip2bipMqBvltrIPnMYrUTkMN0C-n1ZaqkiiyOY40SnWk2FUFTZHdcTI0uwlNvWC4DIKraXY2_QMUMF_CsdwdHB0LudfHMqa4CNx61CaIPy1DUfELwKZRlQtCkyOuj3pcYENBti1_IB3vsynMAf0ntWKFyxDXYNQQIIQ0VQ44LG890HFgyFcvVwJI4YhreMN_Owj-eXEMa7HAdNtYxfO_yNpT3yB-lpNdSkvTi1VyFTYn8zbp-IIgCjLqqSjbW3STzfMH8cN5WxjXOCqdkCPmsTXxrS4FV372X0rCRGBYuVD3x8ja3UM4fwQZ4W9Co5qaJL2GNqSNiCqhztplbAOUsUuuXv_26hY31gAkeGsKym0LRCKuwkjwKnNk8l1se4Cg9NTP620tvFcJZAfj7Kptyk1K1YU5936zuaqvK5W0aeNWYtAa7b2a1nXfoXs_VDybm-Eh7ZqfITkIe-Hx0Fjb44aEuLSY8QYF41C3WtQFOpF0olHbjslArB4EjR_ckp0beFj9RkMw2bDChTVHSav0-huyDfdbSn6OiqZSvW52u_ieN4bEw7sWyT6yyod74xoi57-eVzjnnfiXh2751c2zJTXSZHbXD33M4BjsrLq4S_RSrmI18oWnk333dqzMqcbtt9ijt4UZiwDJT2Ilbt-34DiBoh4t56tc87CALaTW_pvDpcOdqqZEEDZw3WMZRqyC-iR-Rf8_Z5QK7Ystpf9ks4I5qHFUqIjDckAX67eqN3aMvMdxT_DHE8O6bofwxU9LLS20hZQbUr4XhE3c95VMYhiG-OD4UhrO9tOCrLhVGX2dXbSCoaSmQxlKk1yMgMPW1HYscj74S2QawMJOcfuZnwWkMuwpC2MWKgqRDtk7FiJcqg8ijy16ouw1wUweovx2Et04PEZJbX8iP-o721F5B9Kyqo3wJ1N0gC-enkmYbMMGLGidIG5UOZu43YGhZmBrdHGlbRNYd6QpOLclprs8VxtHPs0NAsLuKicUGzbMeJgxZzHANs9T_Qq6aAxU3C7M",
+  "pub": "pko2R024sFPcdBXbaGn0gxcLFWMkVRMpy5h1Himp1Nc",
+  "pub_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/store/issuer.pub",
+  "seed_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/store/issuer.seed"
 }
 {
   "issuer": "store.pledge.example",
   "manifest_version": 1,
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/store/manifest.json"
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/store/manifest.json"
 }
 
 --- Step 3: the store publishes the work, and an archive keeps an independent copy — no network anywhere in this demo, the archive is a directory ---
 {
   "issuer": "store.pledge.example",
   "manifest_version": 1,
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/store/artifact-manifest.json",
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/store/artifact-manifest.json",
   "series": "store.pledge.example/works/PLEDGE-001",
   "version": 1
 }
 
 --- Step 4: the rights holder signs the sunset grant — the promise, in a document, hash-bound to prose a lawyer has to write for real ---
 {
-  "grant_sha256": "1db1c9d0a569ec8c1756b78c954d3cd6bef7303caa96875300831cd1a1ada855",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/publisher/grant.json"
+  "grant_sha256": "958c755a23ec5e1bd595b823ba83a90b59e5b45e2e6ed72d58cfcdbb1da7794f",
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/publisher/grant.json"
 }
 
 --- Step 5: the store issues a receipt to casey@example.com, who holds a signing key of their own — without it there is nobody the archive could later answer to ---
 {
-  "pub": "b9jpOZHxZkj3_56RW1n-FItNs5UmUKnQWyb1Sf6F1hU",
-  "pub_out": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/buyer.pub",
-  "seed_out": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/buyer.seed"
+  "pub": "zAlGbV9vNvES7FbhwdEmNXWlJ1KsrYKDAtJq3oMK2gM",
+  "pub_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/buyer.pub",
+  "seed_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/buyer.seed"
 }
 {
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/receipt.attest.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/receipt.attest.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
-  "attest": "/tmp/attest-pledge-publisher-declaration-083aw873/export/casey-library.attest",
-  "private": "/tmp/attest-pledge-publisher-declaration-083aw873/export/casey-library.private.attest"
+  "attest": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/export/casey-library.attest",
+  "private": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/export/casey-library.private.attest"
 }
 
 --- Step 6: the store is deleted — keys, manifests, hosted copy, everything ---
@@ -200,7 +200,7 @@ warning: reading .private.attest — it carries buyer-binding secrets; handle it
   "issuers": [
     "store.pledge.example"
   ],
-  "out_dir": "/tmp/attest-pledge-publisher-declaration-083aw873/import",
+  "out_dir": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/import",
   "proofs": 0,
   "receipts": 1
 }
@@ -232,14 +232,14 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 --- Step 8: Casey turns up at the archive anyway. REFUSED: the grant is dormant ---
 {
   "audience": "archive.holders.example",
-  "nonce": "ciUUssSr2enSqsCV9Dx1f1i0c2-HqcHun0YEWgIuxk8",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/gate/01M1YX72BHY8NRAW6C5C5ENMPJ.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "nonce": "Fryl-K7KUekwhZU0LRJY0oR8jz2M-L12lvgB1um_Mbg",
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/gate/01M1Z2HHJPNG6S6A1VTR2GGV8Y.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
   "audience": "archive.holders.example",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/response.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/response.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
   "binding": "not_checked",
@@ -264,8 +264,8 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 
 --- Step 9: the rights holder signs the cessation declaration — the trigger the grant named. The store is gone; the person who made the promise is not ---
 {
-  "declaration_sha256": "9194bbb23baac7f86f794f9e6404b4aa5c31cad6c657bdd7bf9b48b948f664c8",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/publisher/declaration.json"
+  "declaration_sha256": "037ff35f8a684d236bd75308f59e6ee00b3952c1867174c4357d01743223a772",
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/publisher/declaration.json"
 }
 {
   "binding": "not_checked",
@@ -308,20 +308,20 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
   "warnings": []
 }
 {
-  "pub": "Orc_ksapm4TzVHedvNQMj1mdZFd9H_tgV_sXOAyJLHo",
-  "pub_out": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/thief.pub",
-  "seed_out": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/thief.seed"
+  "pub": "0gNS4XXmSjVv03Fhv0wUQQxADHA2MzZOw0g8plL1jDY",
+  "pub_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/thief.pub",
+  "seed_out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/thief.seed"
 }
 {
   "audience": "archive.holders.example",
-  "nonce": "IZqASA6jzxZGiTri-V3tWiSeWvMnHl3Me69VAHobfDE",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/gate/01M1YX72BHY8NRAW6C5C5ENMPJ.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "nonce": "DHOZatsWEdMCjvjwdIIWmvAhNKOODt-1dkw1dcmRe40",
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/gate/01M1Z2HHJPNG6S6A1VTR2GGV8Y.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
   "audience": "archive.holders.example",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/forged-response.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/forged-response.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
   "binding": "not_checked",
@@ -347,20 +347,20 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 }
 {
   "audience": "other-archive.example",
-  "nonce": "jLgzJy-8WPJRPvrwWb_Tgj06RknX_s6obP1tnAdPfwc",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/gate/elsewhere/01M1YX72BHY8NRAW6C5C5ENMPJ.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "nonce": "BiknrMhcZdQB2dXZsuDRtBSVowQHE7DTyMFJ1Y_TgeM",
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/gate/elsewhere/01M1Z2HHJPNG6S6A1VTR2GGV8Y.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
   "audience": "other-archive.example",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/replayed-response.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/replayed-response.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
   "audience": "archive.holders.example",
-  "nonce": "Ffk6GVLSEe8xD5xV6mzRRQTMJLCXOgGHhkjQnIyKoZY",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/gate/01M1YX72BHY8NRAW6C5C5ENMPJ.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "nonce": "mF6nNajIYsLUBNeZTdZZ68r69hal5dnz0k7HVwQKRis",
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/gate/01M1Z2HHJPNG6S6A1VTR2GGV8Y.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
   "binding": "not_checked",
@@ -388,14 +388,14 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 --- Step 11: a fresh challenge, Casey's own signature over it, and the archive hands the file across ---
 {
   "audience": "archive.holders.example",
-  "nonce": "w5OisU9FgmuC1VncTuwG-78dGXxcCihSixV6UnNc5yM",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/gate/01M1YX72BHY8NRAW6C5C5ENMPJ.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "nonce": "DQWL8qt9TJUEAxF27ZPV6dAFA_rg1w2CTi_Eqh3V-rM",
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/gate/01M1Z2HHJPNG6S6A1VTR2GGV8Y.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
   "audience": "archive.holders.example",
-  "out": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/final-response.json",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ"
+  "out": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/final-response.json",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y"
 }
 {
   "binding": "not_checked",
@@ -428,7 +428,7 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
     "size_bytes": 52
   },
   "authenticated": false,
-  "file": "/tmp/attest-pledge-publisher-declaration-083aw873/archive/pledged-game-1.0-setup.bin",
+  "file": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/archive/pledged-game-1.0-setup.bin",
   "match": true,
   "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
 }
@@ -441,7 +441,7 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
     "size_bytes": 52
   },
   "authenticated": false,
-  "file": "/tmp/attest-pledge-publisher-declaration-083aw873/delivered/pledged-game-1.0-setup.bin",
+  "file": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/delivered/pledged-game-1.0-setup.bin",
   "match": true,
   "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
 }
@@ -450,8 +450,8 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 
 --- outcomes (publisher-declaration) ---
 {
-  "archived_copy": "/tmp/attest-pledge-publisher-declaration-083aw873/archive/pledged-game-1.0-setup.bin",
-  "buyer_seed_path": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/buyer.seed",
+  "archived_copy": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/archive/pledged-game-1.0-setup.bin",
+  "buyer_seed_path": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/buyer.seed",
   "check_artifact": {
     "artifact": {
       "filename": "pledged-game-1.0-setup.bin",
@@ -461,21 +461,21 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
       "size_bytes": 52
     },
     "authenticated": false,
-    "file": "/tmp/attest-pledge-publisher-declaration-083aw873/delivered/pledged-game-1.0-setup.bin",
+    "file": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/delivered/pledged-game-1.0-setup.bin",
     "match": true,
     "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
   },
   "check_artifact_exit_code": 0,
   "declaration_existed_at_dormant_refusal": false,
   "declaration_minted": true,
-  "delivered": "/tmp/attest-pledge-publisher-declaration-083aw873/delivered/pledged-game-1.0-setup.bin",
-  "receipt_id": "01M1YX72BHY8NRAW6C5C5ENMPJ",
+  "delivered": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/delivered/pledged-game-1.0-setup.bin",
+  "receipt_id": "01M1Z2HHJPNG6S6A1VTR2GGV8Y",
   "refusal_bad_proof": "redemption_proof_invalid",
   "refusal_bad_receipt": "receipt_not_ok",
   "refusal_dormant": "grant_not_activated",
   "refusal_replayed_proof": "redemption_proof_invalid",
   "refusal_salt": "salt_disclosure_rejected",
-  "salt_path": "/tmp/attest-pledge-publisher-declaration-083aw873/buyer/receipt.salt",
+  "salt_path": "/tmp/attest-pledge-publisher-declaration-oz8o6j0n/buyer/receipt.salt",
   "served": "served",
   "store_dir_deleted": true,
   "trigger": "publisher-declaration",
@@ -527,60 +527,60 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 
 --- Step 1: the rights holder generates keys of its own — separate from the store's, which is the whole reason a cessation can still be signed after the store is gone ---
 {
-  "mldsa_out": "/tmp/attest-pledge-fixed-date-dictiert/publisher/publisher.mldsa.json",
-  "mldsa_pub": "x4UVxkfDXWsdNULla7J9d1EhkZojtmPr5f0udw9IgQBRGBBZpyRkTng9kZ_AkR4H2G2gFcwRvNZcaf0Su6GKwmcaC1GL6keAUQZljqcy0qPOu11JVOVvPAHBdm0yiNTkj_qQVV8Lm-vm1tYszJXvLeDpRu9K-wvASWNxcYvVvzsxvyOxyLmMCHHUydssr_KVEYJbFIZ2_Ng1TtgfNFUg0V85UYhU5oYgwvuc3FZcmasx94kXimpaU_qMP8D_VdXvS8n6E6VsKhZxW0AmNHqo6YNpJVY-jN_cXeoaFByx0tvkqgRi4coulGCvF1dTwnitN44TuqJFx5czPBLZue0A2eCJK2B2WZ6w9fZWfWxht4WNq2avkV9P4QG5HpEHD53GgMncjSXG_-iRFfmTY6IAOsfw3KtGd0LOTJK6xQSwVdm_8_dfDjsoanKtQ4KrGlP5SFAKWI0mCCXEdY3751wU1ug-jH2stkpyTnLDGB7l8GB0TyuJbavzZ_QprNIR8wkqZAKbdKe1JvlJfyZWYah0VYuHz7VGabfFDrbGLnUK9lg_AzEhx-lbB1JrgEvGNpFdRj8XJ32fXiBl44aBdX_LJEI2TN81_9FcWqQSax9RuNtyv8Q-C1c8u4U45rYMmceDiVEg-Ac1sTe-wIjYW38W9ghjK4CYv_WvgcUI-OfyA74hf-e91Fp0ZUyrXfz8QZE16EgOBZKiw_3K_u1eDeIWLWwo487k8DlFQf_ZIcF53sxoASlWfAyrPjA4vbexS4GBHYQsWUDxoxqLO1JWQn1UWYBlsldBlHpmuZkJmk2O4ZlMIGVzKctL-7EitSrH1KME_O6Z8TWuYMkXUnoI98B_ste_fvNMgdnr6-l6y-wJIJItHU_HklTc8N7L-zmW2CXCuaZmhBb1MY8W8jfDqDF2PVqFaMNvRuGIrqL-rRFjdydGKvr3BijSDe9D_vRRCG3x_ZZyV6STah6ilLqb9s01VqnVuB14aiyfm5MdyiXMKomu-lGrw9DvsCkniLn3sLD_jYXPkMEJxi1k6hbp1lX5PjDpBZICnNcF8PksXx6H2jUKx7g_2SHDhvIQ0Q3qG31jEWXCyi9QUuSRulsxKH1MVUfzGHHsv8dGEtzIXqG9RlCkYctZhxR-LVpDU9dHlEteUDWVZTY9P74frDdIDZBTWikc3gIjpEWQd_tRtKuBrgVnkMmxhVIFjRX06hM9fKxsOtlBVumXk_Xlz5xB1TzKvw9R6arjJmaMDtFUKoKxRrS2GmiSqqY1N3g6PnXX7IqCmvZ86QUFpMHOzUKNCKWDfc29-JcaghoBIRs-QmDpOz5tfpP2vf728Y9TDGhWVVDI3CuPoOmLPTs9-R5XdtNBjozz8uHTzT-HnFKjwqD5-ddtPFV1w_9cXOBIGv8ZMwxvxUlbzdTNwHavvRf8qOu5VRJSvX203LcOZsARuIG1xcOPuB9gkoBkeoddKCcK3HQq5jy_F6NzaRGLtHeN-RZ5-yu-97yC8p8xdhlBdlaBVLvbhAsID8Xn7lkFeDDdN-iCqAeMhwdT4F9Vcrh3TmNSEAQ739pmiPmmMivWWX2iCJH6TjvRSmd2d9yhH0LrFOjqWXudilpBYjSIrs4CNV5YRreb3m4zdej5MPczGKIFD3hFRjBiTsGmJuVl2TDpHT3KSSBHBr8eyVJ6b1kUpCSPq9GXtXTRhZi96vtUW6CNTR7QbuQBhfpUWbUWnwveKFXgezffnBtMLU0uDHD63tdM8v_wgEUR5dUjFXM_5Bf3jlLYv4KF9rYh15BoIES5wME4ru319N8eOTpj3hVYT9HL__HQk2T0W4n3LjsaLHAbtUYX3cgESrBSzbkn75QeLKm8Y9nfOkJgBNoEueQyfw3jabFHcZqw_fAEKpGOqWRDJMg2Krq-TzopV0yvZyN4o8fbQNsPsklF_yv1-tN-x8GAXt2DDaTpgJ8CGgTKG0UvuP8GiLyLgB-ngw-Ft2OnVDGD5lWuUSZX8MXpO5W7fcs1VB7JH4PrCrOYkE0Z4kwJjxdWKbyEIL6YBczKBdP-_oixp_uE0UkcgNhFo9Ru5Y0Tstn2ELFP_Dp6mMAWviKUJtscaS6ltwHj803yZIAG5Fkx_p48taMY4rYwlP0IxBcD1DNFHrtPPl8toGsR8YR19dRWIa9IS_TB-MV7CjBNGXUynl5Nc_Zowg2TBN_3wAD_UeIsUJqE4bi8IyP6sKn3DCghnJCQKXHXDp8yUo24cYk4Vy0Xw33H9fhaFI8E3gJRfJs-ciklIMldp4boNBlOn8LOE8d25QFpO4JKjsIKgmcRfMaOrFr6O3qHVWhSGpqJSfiyTk8C8X9PhFsTnOyi7j7KCtgPc29nPqfYXfGYEdantkQJDDEcThrdeELtleDnuj0ueXHy00kaaZ28AJWD_rrfRDznqaLQaIFafhG9F5C1hRFFGAecBoJUAYOf9ppkapoIFhdd5E-mopnWwJNki4taz1gF2yOXU30D3SS6UCS7b8S27WqtfRI_JgyyTRDxOmeOyyEPRckNitQYcvYquSrtLP6_E0vbEgZqMrobKNP7pzQmgmBcBg7CF6szPSw-qbsQPs4OFVEgzXqWu6uXJcY",
-  "pub": "obg2F7vfJkGyGqRsbC009Jv2Pwti2CpknTO_oeToiBs",
-  "pub_out": "/tmp/attest-pledge-fixed-date-dictiert/publisher/publisher.pub",
-  "seed_out": "/tmp/attest-pledge-fixed-date-dictiert/publisher/publisher.seed"
+  "mldsa_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/publisher/publisher.mldsa.json",
+  "mldsa_pub": "Dzg1-y8tDJtmRLWFp0bFH2W4MnKO1LHROxlcF9t7E8rkULBQiuRtd3EIqo-UaYykD1oeLMuAsjtRzCmVghU7zxE5Me2aVD9uyiUiAYIDG3BBXWw67D18ZoT7njQ1TmiTn_R8jQM8kGwCNV1ATQOYZ2KimFUsS-Z55tM8x1kZV1xfsgyfnUW3pgfKE0fCud4KGtUAVRgNV4gVvQQQDT7lgWkmDJjA0W-4cvlFxQlQhinBd644fg5E8vq2yUvwkLGZlz4SWpHAtSWs0ZTaH5dGbu_CyChfJLsg4DpPVhKB9zoYT7hqt0Hu9vwIQc0Ln9ltbH1C4uhi9BnNdr3cZ9-4Mu9Q53j1n_9QX5ckqDzVqOWBlUI2xAVXVvlclTHbdE07sEQF5wKxDr3W90b7fTN7QMAW62q9xn9_OLRz-0EZlYTYCeldGupVYleSeD0iLz3UGeDGgEnSHwouFXXKYj5wIGOAPoieiKdb2NHB62AnNPQzGRxCtCEJg9eoPX8TMtAzQY02jI0W5NL7TDEH3gMO6kFn7rEHa2mRR1uQd6LDj6I7KcRcHNcS6e3o_CECMj0gTlaS1pCKgjheUxkspxrwmIr3EHKKajLgGwMCdUyg2nOX8syWIRx36FQscgczLo1-oLdgTXtLyOXg8ZNwMvTYdFQ-B1OxXQxf_OnAi75TkEfwDxKtpdcmt4UAzsHMqnhVMGmfOo841sIkdO891FK84mKdI5RJm1qiv6SaPk9PRwyKkcKP1VgkzXPSHrvEakjMNkBhXtvIoresQ6K-q3gGKSNudaCwPlNfjkffqOrlEJA7ubbf646RS1bpb-7CtVox3TkQ-utor5kjhC_mEEbo-uNnwJPFKakJps9IVJ0OMb-8ABDwtSR_eEUhAYxzLcj9F77mNWVb-sSyrK3XkRkOudd0Ry3r2C181SOua-OQ9eClrrtwjTB3_-mc5YvcLob8h7mnT0kaorgh5x0G5sP7Pc0bXUnDatYcrwrVLTtHhwEZnco-36VBaDzqF8mADM2C_F2WWfD99xy3rfRaMQbWQHMqpTnuC2T-wj3wGL4WFzYikjQVVFkrfauOeYXOz4x2wHhFYV9bXvKl-EwXA_abchA9Ug8RTWZvJFiMwZuhtzLD-DANaKMngXlUiP7k-Gznag2l2MtUoBdmHQ_GjL8umPlAcvX51955wzXBNTFnqB-q_NuKeEvfcEdaJRJzJ39OWdEL3HMjonzaPra2mRXic717igtcBzx0DB_LLh0u_Omeqx_0JHPfC9Z41kIV9rXWRobIQs0pgqKeDl1w84-TnLlfodw2mr3reZkbmYKeFTqmm4yN7GtdhYWZ5444IZKJxOYVwO4yl86twvMLtiSLsC_7cDFt8_zvP5PCcs2wghq0q-yhNPtmzaagrEkRcRn9HNeEe4tbNgcGu4920gGvK3Mc-vyLUVw89ITJhbOVPeRnG1xKqhup4o79QI83frP8DbtQ18VI9_LgZefFP4qad08tDDniJrttDe74ey-SNY_NuMo8M-e6zUQTDEPU3ASkxffB1w8rdHSxFya3MbUUGhDigPiYBDGc_9N2rHfy-gHEa6rA4r1sgZkJOXhOrhYCK066CSoM1_Em5lpGIQDI3Ah9-7bLYtvVWNplkq6cX_nMxEXd7CQmKTZIZBZGNGWSrwcgu080PvXZ314Ktt-kKnpUH62LskVBvpa47O8emmvkZFvarQ5nWFgiWpZae6-H3Ch0vU5Vk7gpr1L5rRhgBWmN7HYzpdIWnqlKA8BcDzKT9ey7uyff-jDKtwIoQK2FUF6oXrrKkB2cdO2r5OqVxoZKwR_9ig3cuBhN1s6fBZmr3FD-31T5DYLqVnN6XxLKjEEXnuPMyLyLiboxV48z6LPdVppp3ggKkxpxroM34C7DzVucIKy98mkGe56t0eaXWWTANULMi6LDvqv-he2obnzZ0aVuElx3Az7tAGT-4soSmra2cjTba6Gaa_Nuf2eEHihXnhni-5jSiB0zVm-9r2cjhxAN9whSF7wqF8dCg_P5HfwQXYuNsY-ss-7pp3oGCZLLuRwImd2cxXUl4paBG0v1IcVEWZ3L-us-6hRUChGHTU8Q2W-JIt4LsdgDqLPm4wPbyl88SYsD0GGPZRGJY2hkpeUr8sygNKcSxonkbuO02CsKY9kM89DJsr9FE4MD6T4ahb6WVkZ9n361tevKlBb4HPz8jd--8-Et0YC5NkbVSk8xoIzhsXKjSzefrVpfImYBCZIjI782PhCP7To5NgOGvJzD1vib9txVZ62emKlTI5MNagajG2wgBGJDyPqQ7BBFCFydNg_hH8-HSr6RA5rh3-DxtnuvpmHw46em7EXmHq9m_THcq9thac7HDlYnSqmNZo6z24LuLkNO77h5VqaEuvIiCR8wtzoIqdzhDfOR0-A2O6TDJIn9Z-iKhvHIhAD3Kfj6qvbhjxHDCynVAksuFhBdxu2Z_ZXVvVxQPeaqU3n4JGhrdupID0YdFCRHn-n_pJxRlwbPnZMpGk92JUH33AYmI_98IsZhC2TCPjtmK6cetyT3Sj2w8PtfaH8Va_ervJg4K45EpOJyZo4iy8zKinIQgJcp5F_u27IiNwk",
+  "pub": "RSl5xlnyewIz4ROa1jTW0JQTcALKmFsMW0ItDJgOKYs",
+  "pub_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/publisher/publisher.pub",
+  "seed_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/publisher/publisher.seed"
 }
 {
   "issuer": "pub.dies.example",
   "manifest_version": 1,
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/publisher/manifest.json"
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/publisher/manifest.json"
 }
 
 --- Step 2: the store generates its signing key and first key manifest ---
 {
-  "mldsa_out": "/tmp/attest-pledge-fixed-date-dictiert/store/issuer.mldsa.json",
-  "mldsa_pub": "9hBdw_vVlqBQ8tgWxpeENQOKp5SsGOWX38xIeAr7ujQxF6D8Kn00talQxLyS7ki7NbF7ZjmxsS5FEkUj1oZYFn0bGcfdTp0PtHsWBG9ZX5P16rW0PQ_cE0qTBLBQ9XInIlKYIXtXl0GnIoaKxcp3tVyJB2FBrPASFo0EodKyE-xxIywLibJ_6sBq6XRafnsSduaqhy1vbePHk4xx_ieklk_pV_MT4oCDZpPH7TVmSpX7FH_J-jSiD4izyyVXIXYl04FRRiS3QViprsEO0_sUQbR9gr4HGzTNQdLvHQVDZG1ez6lprce_x2ZIlELJsk2ZU_TAPkB3TtRPFwKn5trDuAAniKVqx6wt1FkoZbsAavXugCT817R9JTNMKXpQONAijJEub2RT_rPRiN1jfNX0qAUnqmlF8_UludWKmSKxm8-MB4qEHeP94d87G9O541l-iVWvk_4dxB04M-4y2rys4dyGh4OBhZbbLpxiJ73L_ktza2_3PjdBvQ2bH4ho9wtCzhRUK_z10_rMhZ5t5DZsQV4-nkRxtVqkJtzNPh05EEr6I9UdNVcfx0bl_0c0ogknb4I-5txNWGv_rOERECDgBzXmKGAWmR7HXoLMbyTaU6ZdfbFtZq4gw-u5Uq46mgIZj3kohepWqvn-nGUK9SZU9NgvfyALvKzrsLyHlnQX1oc0EUX2IRlwPJA0upaV49Ac2gaQ7tGRowfNpzF9iKSSt9MfMXvwhnxVxtlYl0AQifoINOXvgnoyPAgy4ui887VbYPLTJStqGjEf5whBxmq2mNeeU5Ki6_WoqX9HraUbCla4j8UrG0Zx40BAjpfZIiAHaPwtkyH7I_TM3Hdzamfc6-AGb6T6ktl9X1c_-UpXzm-dGIEys0dqiSaRyy6-0u5qAD_JZNobQd8A6k-KZwMjmrMpzm73PFU0H-XlGiIj1x3U8irlIX-1-XHUbcpztvYa9MpMyi9PwJCYYAxpNzX3YugV35EVcxH87v2NXsfFaVj-10SPG3bdYfcLRkQ0KBl9SfNvAyl2cJerMqXtv9N19Ps82ZH22VhO7pmwHWD9Uj0xKAHrE116G_6sxN9kUfLPZRLQRMj1orE-ue3cJhrDhdmQecaPEyRfFTSjHulpu8EQanhPfl8OMg2_6icpPtTIWMoVTgF349HIDHJkGf7tfPGf8FBNuqM74zQjE3vcQwuPbnPeo2f3LxwQ5Qf50xzK1QE3smAaQwsld1hdYZPJo97Ud4yZHzP5ovt0QMkJVY0j4cXSEfynagVOA_WXXiXEqfNKzB4N-8_irkwRi3bJVL-HoLeC6wquyxJS1govHNWdChc5I--aRgIrlqQKcPzGUL5uGWQ9iw-4ZrFA6Yy-meyu0DrbUzyowGVPh7HhGA6obAPeMZNqteg7f6BpV1Mjr5K2wfK1PvQL5EIYIm8XaVPLe5NOL5hmd52VGANxvL7VO0KlGRlG1kAIS2y0HJ-SrkrLYrYADBq3-z8bUdszw1JctX35xOAj4zmyIjqCZTWbDC6KaJ86MZo0jeGHRBBeHo-hs5LAiJLhMJBswWydxguUjg30hTgwu-Evq3_yY7LtbutfGcT72gQiYM7mFeIQW_bgZec8wfmpcTmGbAPhMckytLksMYhwoXaBb9iQj6RuTTY-EdYj56DukScZMIDASZir0J6uCLxLag5ILVxybSpRtWHcfGEgxSMrkp5JsFHcBT86yK9oJ5p4wUh5p9y8OTv-E2Vb7BCe3NOsAYuD_0uHHqPgbmtNsjn2Rj6iXI0Mr6O5Pi4j2X3EBoGhBWiY7rZtMvUtUylrx7YdGBDUglq6vqF6MK4GWb_QHL33aXO3oEAncibZmfd3hFX9aEIiaUMpa8ncVJKAwq5LYu-0ssjOX4FVOTs0JK1XdSCjJPGBv7WswrpX0bT2xSSnlOkCPW1xu3keDnprG4hhc4Kqk_ZH9zuKLtyR5mMP2Pe1rkWfGvi0DTRAL4rVPxnVMlejpHhHoo9SBQbYJR8CiTqZp36Z-ynigJZSLPY5kmCwOVJHfltAc5UXbCoe1CwjlPRZo9YrfwMMgy__POe_diSae9ZkowG3u6-N3Prr6kVsTHFMZm44hWcCRTEX8tXTcG8xw1EZAVh9lQdftlM2PIjVwmzWo7Ofaotq05A3YPtLJEYrKYuyZ1WW4fARWCr_YDknQWYUjCwqktNhaijX7zmrtd3ousfRNM-KhwrlZJTRDmH601boN1LiaDz6EsQgj6E8f-4bkzqEIwXw7TC2Y3_N_OIA7MIzVXGJOs3iFUHXZhFb5cAxkwoDnv49tjwZqxZB3Nxw_G8oSyCJkp_WiBvNlFeRXODoV2tl0JX3awXUygyFMcvMAa8qYWvYMli3WEljFe66DuJEOr4b3aThBvZ9EYWoMT4Nonl8nv9ElE63GrlfYtjfg9P9YL9QjB6q2XQaG-uuMvEI6QXZol_I0k7tD9RmWPJO0uaq0BEA7PwMiv3Fr-5Jir960MxvhmULwDY5sTNmKbfYCaRvDh0EGlDYLc8sWnx9AxTaj4hXig3wym52WvOjSw3zo5U6mZNWNI7lNyd55kA_ARkUSTeOKVjktFNePL9Fir3SodDS31RNUP4",
-  "pub": "l9EflUhJo7cR8QETu_vyXLKPPJz_oCTEmJhKofGn77Y",
-  "pub_out": "/tmp/attest-pledge-fixed-date-dictiert/store/issuer.pub",
-  "seed_out": "/tmp/attest-pledge-fixed-date-dictiert/store/issuer.seed"
+  "mldsa_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/store/issuer.mldsa.json",
+  "mldsa_pub": "a88DvideTsecC-PAJVE4TG2WxZKenXDTE32L2EnUMi-vn3_T2G5_uuL4F_Xi0JIn7ucicr0tBKArXjicilEurkN3ZnAR9eHw3mohl_zXp4xzLjqth-p2Jir2Pa-v_CR_Wj3o0dyNn_75JqS2frXTwdArZBwyon8m0TZaI_89b3IuacqMkdhdXHZPjYFEMjrrfnww7tg7pWiF7jEkI9Hhxa6JnyPWaH5emBZ4nL0a-YMbkABi6slz0Zmw2EnyJmhUrmPQPmlhDNVpiElYeq1rBxE__jY2MxepYyN1Ws5Xkvbg1Ozwsc2x-pMbvhBcX_txpsrqnf8OPezTe3IK3DOQWGkdJIOG9T-9rNvrt_BEza0kUenZlI5H50KqcxLPxzAgFwk6Tk9PkaR-wG4IukqVjGNqMhTYaCNJBOQeyLHTvFfR9QWzIYguJRmnOW0Q0cV4HED02OGsjI3KkU4rCD32-KEU5un6uDqX0QL12BOFDtS1qe355917851v4Uw8wxpN3bIypCTXq4vVyknOQDqKPu9BAcW2cjZs6bLZp6iP1XU4gSKcZwYW4Lefi4nNO8cHu8baEgrgzLRwWkX38yKqS7LUaayH0x-OiMkGYXB4swj1-K3GDsjVhTgZb4aP80BRJSSImWsiih_NurMmnXlUADMJx9RknxjjshryklpVCwFYnxkXbJhROYNIxuFtAf7m-GpAevg0g99j-DI_5qaV7O7FMPT5MKdZBYgwNSX1b7FTGGIoGsju4AMJ0CmWvS_VjDxZUQiBKLhn-5E06NSZHSzNpzv_pHlpHcBvSlIj25APze4cWevzQStsLGbCJm1evLAO4MfYItd-HS8ijAQYFrPQ0azxxnpC4VVPhILP7IRkUsR9DU6XY-qVljR_HgJSvSYE_9e7YOnWqwCxpE5aTJ2uw_ZpXsebZ9M-alNCOIdRxUxg6g04YNllDdK6ykRPCDB4vOFLdtarHEf-dXBMXGdNBWYuMG4KQwTqHTLBOzxf-uLZqxrsY2VEkZD9dC9V4J-hRBl9_pwlCZbcl-MxpMkUp1mTOE5p_kgC1UoJgdsuD_v2-KUZddosjPsTObjbgQWdw7nSMlLst4g6IYqqIjUXwBIBJQgYndT4FQ6X5ClNXSMp6vG5LjmmHFtPmSy_Hv86HeV_P5iMy6Sh9OeFChnuB-0ctZIZQx5bLVsD2LSRlwJcPT_ckNl6mLjvVj54zIPfAqOmqVz_44a5uliL1642MTl7kmWNowso3G8EjYWusA-wrxOhJYwy5qv9t_TjGisT0ZNcqEXGbIjC6IKVwjSZJLM-1sDrXeIQmb3Bi6uR84PtnaEsFvp7Rhe8-eTNfzYA1Ecf01svLnxpj4lacQW9nwIJVRI9-uFoGsF6ZMsnsl4KrOY0inNsgLlGwinh41nGChCZgCDJ2l3B9OfyeCFVMEFS7DeQS1ZTuJsU726MmYEODmF6ynAW0c3TS2IovU5vq83CB9h_OH01QdIXKeL9I1C9xpGptlW7vIFG6TAv7TP7CNC-YCsqWTbfYaF3emALCBnC1F76XXPbu4HTVT1W65L1eqX7EMZwsHMqh4cNNx59tPvVMnAEl-Etg-rGyFmNX4T_okF6_jFIjp7wRpv3r-qr-glpPX52-f27_yrydS-YWMNRl8sBbHcuzLs_z_T5fGEsN65nXidQT5_EEnmjqya5kMXrainQKpxwde_OAp4w43-TmNjHuDSk_odFVWGNZF-aG_6NmwELrObGF9MZ96BcGjp9hWnKbO7hLAtMor1vPj9YWDXJnd7Znp6K06BuvRJUoDQ7oYim5gNS2eFtOLadAM-iJkPrfp4R8fcRez_epVlvKDtOBNdmAaOjoxqtdV2dUsk6eJIewgzohXMcto9GvQBr3TbwNXiW9SdprwLI-I_NaRIXj5JPTXhMXhWMeiKmMJFGP2yQMhcusH3Z-9_a3H2GyjosKKB2W7tvFqimqsHfDL2Aiw3XBUPQcnE07VPf00TTY5JAHC0F6fBmjm9pCJ2Iz4dn2zZfIsCvRlphtmW_243ZsCsg16L03OkXo1Ft0qgeyCVtylUr1RfLJx4i4UN3PLIsZ5adAllmGH3Vz6enxtV2qW1-6Q5mrMbHd6xff7wAizJJQV1QXB7r53mI5cnJrLIKMwWhnzhqGTkvzkpIOqAGnh83NWdrVjmP1uV2v9ey1I2T65dltUzvAjA8VKrjP_xpD_Gs4e_BEV7Zg3bfPBvrqVyqXAv0NTT1CA383q_MD-OEDWBx4kvMqY_DX3JLrwiPCFFhdwyvJ1VhvBgpSRsL5bxvytOzhaRGL1GSX7kCqzmng-2KtZDLSa-wdbzM24C4dWWJFwnVo-7IxPXrTiQKJPP1-g4fIslSwDhxF_wrU4jiq9B-iTmj6wr2fWyxAuZVbpsHShLusDiVe7bSYqyECHp39c7VzOh-g8UUL-FmpbbnZ9sA8TdAkMGN56rFgtLA0wmNKRQFFN9VOmq2srpw-7YEV4JiAQhGVXES6JBl0rr4FpdMzqGri5DlTILxaaY0BDUgINq6MrGpAF5MKRosazV8KDQ4mCO9LJT_P3q8l_HYCIH9cVWe4wEz6UJ2-L6z53UimcE",
+  "pub": "FC6PsXWpjylxxd9E5dUBNdytAc2eStpBuapbCBLK2hM",
+  "pub_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/store/issuer.pub",
+  "seed_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/store/issuer.seed"
 }
 {
   "issuer": "store.pledge.example",
   "manifest_version": 1,
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/store/manifest.json"
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/store/manifest.json"
 }
 
 --- Step 3: the store publishes the work, and an archive keeps an independent copy — no network anywhere in this demo, the archive is a directory ---
 {
   "issuer": "store.pledge.example",
   "manifest_version": 1,
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/store/artifact-manifest.json",
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/store/artifact-manifest.json",
   "series": "store.pledge.example/works/PLEDGE-001",
   "version": 1
 }
 
 --- Step 4: the rights holder signs the sunset grant — the promise, in a document, hash-bound to prose a lawyer has to write for real ---
 {
-  "grant_sha256": "01516f4a4f2e30c8980e744a87f181d982942cadb0b90e7e296d0512441a46ae",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/publisher/grant.json"
+  "grant_sha256": "9e6f6f55eeccd23d1680c251922672234f42078bb536cb79bec3ae31e21c47b4",
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/publisher/grant.json"
 }
 
 --- Step 5: the store issues a receipt to casey@example.com, who holds a signing key of their own — without it there is nobody the archive could later answer to ---
 {
-  "pub": "deNZrxjT3HoTQPJVyUr1__ObNUkz1Jn6kS0oI4CvajY",
-  "pub_out": "/tmp/attest-pledge-fixed-date-dictiert/buyer/buyer.pub",
-  "seed_out": "/tmp/attest-pledge-fixed-date-dictiert/buyer/buyer.seed"
+  "pub": "nw3ycpDMaLKRQnC6L7BfoBtkR3t7a_6O8YBCvncRN0o",
+  "pub_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/buyer.pub",
+  "seed_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/buyer.seed"
 }
 {
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/buyer/receipt.attest.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/receipt.attest.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
-  "attest": "/tmp/attest-pledge-fixed-date-dictiert/export/casey-library.attest",
-  "private": "/tmp/attest-pledge-fixed-date-dictiert/export/casey-library.private.attest"
+  "attest": "/tmp/attest-pledge-fixed-date-vsnwirsy/export/casey-library.attest",
+  "private": "/tmp/attest-pledge-fixed-date-vsnwirsy/export/casey-library.private.attest"
 }
 
 --- Step 6: the store is deleted — keys, manifests, hosted copy, everything ---
@@ -588,7 +588,7 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
   "issuers": [
     "store.pledge.example"
   ],
-  "out_dir": "/tmp/attest-pledge-fixed-date-dictiert/import",
+  "out_dir": "/tmp/attest-pledge-fixed-date-vsnwirsy/import",
   "proofs": 0,
   "receipts": 1
 }
@@ -620,14 +620,14 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 --- Step 8: Casey turns up at the archive anyway. REFUSED: the grant is dormant ---
 {
   "audience": "archive.holders.example",
-  "nonce": "0bLn3FnW1Wvi7ZqPzDM6y7T-yfA7LKFQYexjSDMeiLw",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/gate/01M1YX730XW5GFE7XXX65RFKGA.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "nonce": "TvuorqBRL9HSTeHcUK4n8utzX5OzU9RHrSCtc1ccUZM",
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/gate/01M1Z2HJ75APHTTSDJNE7X4MCF.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
   "audience": "archive.holders.example",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/buyer/response.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/response.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
   "binding": "not_checked",
@@ -692,20 +692,20 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
   "warnings": []
 }
 {
-  "pub": "mor_0bQCH4Zh18l2KU0O34DqL9jwtyOuN0EaRyCc34Y",
-  "pub_out": "/tmp/attest-pledge-fixed-date-dictiert/buyer/thief.pub",
-  "seed_out": "/tmp/attest-pledge-fixed-date-dictiert/buyer/thief.seed"
+  "pub": "QlemLEDpcYgDCJke7NwL3jVsEvh_U4s5QMKoIYX6Pzk",
+  "pub_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/thief.pub",
+  "seed_out": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/thief.seed"
 }
 {
   "audience": "archive.holders.example",
-  "nonce": "fMYkn-xLXPQ_BoYLf20qLNuD9WHO2f5sKfg7prSidaQ",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/gate/01M1YX730XW5GFE7XXX65RFKGA.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "nonce": "XWHhuKJ8_oYnGktp1Q3gOX2j2ZdAYAx2tsjpt3HEMJc",
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/gate/01M1Z2HJ75APHTTSDJNE7X4MCF.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
   "audience": "archive.holders.example",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/buyer/forged-response.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/forged-response.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
   "binding": "not_checked",
@@ -731,20 +731,20 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 }
 {
   "audience": "other-archive.example",
-  "nonce": "BglAXcSB_29utcSsYlDsOuofo_TaMhv51FXsWWpwRxY",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/gate/elsewhere/01M1YX730XW5GFE7XXX65RFKGA.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "nonce": "UQis1TIyfLo8mEe1lCW-GwCE3qNb2SPQq8zOc1RfbbA",
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/gate/elsewhere/01M1Z2HJ75APHTTSDJNE7X4MCF.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
   "audience": "other-archive.example",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/buyer/replayed-response.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/replayed-response.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
   "audience": "archive.holders.example",
-  "nonce": "-QrlvBIki04Bt7tGREEJ4KjlyRuDh0UbDYqh8pSwcCk",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/gate/01M1YX730XW5GFE7XXX65RFKGA.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "nonce": "UYu9-lcNSz9lMssiRFvZc11eyJNZvgNRH820GxoBZUk",
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/gate/01M1Z2HJ75APHTTSDJNE7X4MCF.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
   "binding": "not_checked",
@@ -772,14 +772,14 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
 --- Step 11: a fresh challenge, Casey's own signature over it, and the archive hands the file across ---
 {
   "audience": "archive.holders.example",
-  "nonce": "-ieSBtMz2z6fDUjkdcE4A9sSAe30wCbDGftqHNxzJUI",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/gate/01M1YX730XW5GFE7XXX65RFKGA.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "nonce": "3yqWb7UddzcmyxopfTKWfKBvJeegpFBypFMaX0T7pW8",
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/gate/01M1Z2HJ75APHTTSDJNE7X4MCF.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
   "audience": "archive.holders.example",
-  "out": "/tmp/attest-pledge-fixed-date-dictiert/buyer/final-response.json",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA"
+  "out": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/final-response.json",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF"
 }
 {
   "binding": "not_checked",
@@ -812,7 +812,7 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
     "size_bytes": 52
   },
   "authenticated": false,
-  "file": "/tmp/attest-pledge-fixed-date-dictiert/archive/pledged-game-1.0-setup.bin",
+  "file": "/tmp/attest-pledge-fixed-date-vsnwirsy/archive/pledged-game-1.0-setup.bin",
   "match": true,
   "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
 }
@@ -825,7 +825,7 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
     "size_bytes": 52
   },
   "authenticated": false,
-  "file": "/tmp/attest-pledge-fixed-date-dictiert/delivered/pledged-game-1.0-setup.bin",
+  "file": "/tmp/attest-pledge-fixed-date-vsnwirsy/delivered/pledged-game-1.0-setup.bin",
   "match": true,
   "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
 }
@@ -873,8 +873,8 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
       "grant_unanchored"
     ]
   },
-  "archived_copy": "/tmp/attest-pledge-fixed-date-dictiert/archive/pledged-game-1.0-setup.bin",
-  "buyer_seed_path": "/tmp/attest-pledge-fixed-date-dictiert/buyer/buyer.seed",
+  "archived_copy": "/tmp/attest-pledge-fixed-date-vsnwirsy/archive/pledged-game-1.0-setup.bin",
+  "buyer_seed_path": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/buyer.seed",
   "check_artifact": {
     "artifact": {
       "filename": "pledged-game-1.0-setup.bin",
@@ -884,21 +884,21 @@ warning: check-artifact compares hashes only and does NOT verify the receipt sig
       "size_bytes": 52
     },
     "authenticated": false,
-    "file": "/tmp/attest-pledge-fixed-date-dictiert/delivered/pledged-game-1.0-setup.bin",
+    "file": "/tmp/attest-pledge-fixed-date-vsnwirsy/delivered/pledged-game-1.0-setup.bin",
     "match": true,
     "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
   },
   "check_artifact_exit_code": 0,
   "declaration_existed_at_dormant_refusal": false,
   "declaration_minted": false,
-  "delivered": "/tmp/attest-pledge-fixed-date-dictiert/delivered/pledged-game-1.0-setup.bin",
-  "receipt_id": "01M1YX730XW5GFE7XXX65RFKGA",
+  "delivered": "/tmp/attest-pledge-fixed-date-vsnwirsy/delivered/pledged-game-1.0-setup.bin",
+  "receipt_id": "01M1Z2HJ75APHTTSDJNE7X4MCF",
   "refusal_bad_proof": "redemption_proof_invalid",
   "refusal_bad_receipt": "receipt_not_ok",
   "refusal_dormant": "grant_not_activated",
   "refusal_replayed_proof": "redemption_proof_invalid",
   "refusal_salt": "salt_disclosure_rejected",
-  "salt_path": "/tmp/attest-pledge-fixed-date-dictiert/buyer/receipt.salt",
+  "salt_path": "/tmp/attest-pledge-fixed-date-vsnwirsy/buyer/receipt.salt",
   "served": "served",
   "store_dir_deleted": true,
   "trigger": "fixed-date",

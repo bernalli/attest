@@ -97,6 +97,18 @@ def iter_report_lines(path: Path) -> Iterator[dict[str, Any]]:
             if not isinstance(obj, dict):
                 continue
             if "nodeid" in obj and "when" in obj and "outcome" in obj:
+                # A `nodeid` of the wrong type is a malformed report line, not a
+                # line to read further and let fail somewhere downstream: it
+                # gets the same treatment as an unrecognized `outcome` --
+                # `MalformedRunError`, with the location and the observed type
+                # in the message, instead of a bare TypeError once this value
+                # reaches something that assumes a string (e.g. joining the
+                # report into text).
+                if not isinstance(obj["nodeid"], str):
+                    raise MalformedRunError(
+                        f"{path}:{line_no}: 'nodeid' is not a string "
+                        f"(got {type(obj['nodeid']).__name__}): {obj['nodeid']!r}"
+                    )
                 yield obj
 
 
@@ -117,7 +129,14 @@ def load_report_records(path: Path) -> dict[str, dict[str, ReportRecord]]:
             nodeid=nodeid,
             when=when,
             outcome=outcome,
-            wasxfail="wasxfail" in obj,
+            # `wasxfail` is read for TRUTH, not presence: a report-log line can
+            # carry `"wasxfail": null` (pytest-reportlog serializes the
+            # attribute whenever it exists on the TestReport, even when its
+            # value is empty/None), and `null` is not an xfail that fired. A
+            # presence check (`"wasxfail" in obj`) would classify that line as
+            # xpassed/xfailed -- exactly the passed/xpassed distinction this
+            # module exists to get right (see module docstring).
+            wasxfail=obj.get("wasxfail") is not None,
         )
         by_nodeid.setdefault(nodeid, {})[when] = record
     return by_nodeid

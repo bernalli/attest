@@ -1,7 +1,7 @@
 === GATE G-TS-TC-F6 ===
 tree:  <tree>
-head:  1448f39
-utc:   2026-09-07T21:56:24Z
+head:  006f273
+utc:   2026-09-07T23:19:15Z
 
 precondition ok: verifiers/ts/node_modules present
 precondition ok: verifiers/ts/node_modules/@types present
@@ -9,4 +9,5 @@ precondition ok: git available on GATE_TREE
 test files in scope for this phase (diff + untracked + script args), derived now: 0
 
 NO TS TEST FILE TOUCHED IN THIS PHASE — there is no object for this gate to measure
+(the pathspec verifiers/ts/test exists and is populated, so this empty set is the phase's, not the derivation's)
 GATE G-TS-TC-F6 SKIPPED precondition=no-object

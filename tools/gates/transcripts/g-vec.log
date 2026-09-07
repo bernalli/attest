@@ -1,7 +1,7 @@
 === GATE G-VEC ===
 tree:  <tree>
-head:  1448f39
-utc:   2026-09-07T21:32:21Z
+head:  006f273
+utc:   2026-09-07T23:15:37Z
 
 precondition ok: gen_vectors.py present
 precondition ok: docs/spec/vectors present
@@ -14,8 +14,8 @@ $ <tree>/.venv/bin/python <tree>/tools/gen_vectors.py --check
 exit: 0
 ok: gen_vectors.py --check: no drift from the committed tree (exit 0)
 --- negative: gen_vectors.py --check --out <empty directory>
-$ <tree>/.venv/bin/python <tree>/tools/gen_vectors.py --check --out /tmp/tmp.DfbES2FXXR
-vector drift under /tmp/tmp.DfbES2FXXR:
+$ <tree>/.venv/bin/python <tree>/tools/gen_vectors.py --check --out /tmp/tmp.l3smc8sE4q
+vector drift under /tmp/tmp.l3smc8sE4q:
   01-valid-minimal/envelope.json
   01-valid-minimal/expected.json
   01-valid-minimal/manifests.json

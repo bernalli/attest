@@ -42,9 +42,44 @@ does dissolve F-08 — but only when the execution happens in the environment th
 gate will actually run in. This is what D-G1c was added for, and why a missing
 precondition exits **78** rather than passing or failing.
 
+## The third dummy: a defect that satisfies EVERY rule and still proves nothing
+
+`negctl-f10-tautology.sh` asks a different question from the first two. They asked
+whether a known defect survived a rule. This one asks whether the rules, all of
+them together, are enough — and the answer is no.
+
+It is conformant on every count: an executable rather than a table row, its outcome
+produced by running it, no count written down (both sides derived at run time), the
+collection asserted non-empty, the precondition checked with 78 on absence, and a
+negative control that demands a marker rather than a bare non-zero exit. Run it:
+
+```
+ok: the collector reached some files (4 lines collected — derived, not written down)
+ok: every file the segment owns was collected (the two sets coincide)
+ok: negative 'a missing argument is caught' failed at the guarded path (exit 4)
+GATE G-TAUTOLOGY PASS
+```
+
+That PASS is worth more than any explanation of the defect, because it is what the
+defect looks like from outside: indistinguishable from a gate that works. The two
+sides of its invariant come out of **the same command** — it compares the collector
+with itself. Every rule governs how a side is OBTAINED; none said the two sides must
+be obtained INDEPENDENTLY.
+
+Hence the rule that closes it: *the two sides of an invariant have independent
+provenances — one from the artefact that executes, the other from the structure that
+declares it. An invariant is non-tautological only if a mutant exists that breaks one
+side and not the other; if you cannot build that mutant, the two sides are the same
+datum written twice.* The mutant clause is the part that makes it checkable rather
+than wise: "independent" is something anyone will conclude about their own gate.
+
 ## The part worth remembering
 
 The second dummy confirmed the expectation on its first run and was wrong. A dummy
 that tells you what you expected deserves the same suspicion as one that does not:
 here it took a second run, in a different environment, to find out that a green and
 a red had swapped places for a reason neither the rule nor the script mentioned.
+
+And the third was found by building something that obeys every rule, not by applying
+one. A set of rules can be complete on each and incomplete together, and that gap is
+only visible from a thing that satisfies them all.

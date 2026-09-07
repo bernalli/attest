@@ -17,18 +17,44 @@ in no bucket and turns this red, instead of quietly leaving a hole.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore[import-untyped]  # dev-only; PyYAML ships no py.typed
 
 # The tree is overridable so the gate's negative control can run this against a
 # copy of the workflows carrying an unknown command, without touching the real
 # ones. A checker that cannot be pointed at a mutated input cannot be shown to
 # fail, and a check nobody has seen fail is a check nobody has tested.
 TREE = Path(os.environ.get("CI_COVERAGE_TREE", Path(__file__).resolve().parents[2]))
-WORKFLOWS = ("ci.yml", "pages.yml")
+
+# A workflow may be declared out of F6's perimeter AS A WHOLE, by name and with a
+# reason -- but the LIST of workflows is never written down. Naming the two to read
+# is the same defect one level up from the one this module prevents: a workflow
+# added tomorrow would be exempt by construction (C-222). Measured: this tree holds
+# THREE workflows, and release.yml was invisible to the pair named here.
+WORKFLOWS_OUT_OF_SCOPE: dict[str, str] = {
+    "release.yml": (
+        "tag-triggered publish pipeline: builds, signs and publishes artefacts to "
+        "PyPI/npm/GitHub Releases. F6 changes no packaging, no dependency and no "
+        "released byte, and this workflow runs no test surface F6 can influence."
+    ),
+}
+
+
+def workflow_files() -> tuple[list[Path], list[str]]:
+    """(workflows to parse, workflows declared out of scope), derived now."""
+    present = sorted((TREE / ".github" / "workflows").glob("*.y*ml"))
+    parse, skipped = [], []
+    for path in present:
+        if path.name in WORKFLOWS_OUT_OF_SCOPE:
+            skipped.append(path.name)
+        else:
+            parse.append(path)
+    return parse, skipped
+
 
 # substring -> the gate that measures the same thing locally
 COVERED: dict[str, str] = {
@@ -93,13 +119,30 @@ OUT_OF_SCOPE: dict[str, str] = {
     "cp ": "runner plumbing",
     "test -s": "runner plumbing",
     "echo ": "runner plumbing",
+    "cd ": "runner plumbing: directory change",
 }
+
+# A `run:` line is a shell LINE, not a command: `mkdir -p out && python tool.py` is
+# two commands, and classifying the line as a whole lets the first needle that
+# matches anywhere absorb everything after it. Measured: three gate-less steps
+# injected into a copy of ci.yml, only ONE was named -- the other two carried
+# `&& echo done` and `mkdir -p out &&`, and the plumbing bucket swallowed them
+# silently while the out-of-scope COUNT moved. So the line is split into the simple
+# commands it runs and EVERY fragment must classify. `|` is deliberately not a
+# separator: `curl ... | sh -s -- -b ...` is one installation, and splitting it
+# would report the `sh` half as unknown.
+_SEPARATORS = re.compile(r"\s*(?:&&|\|\||;)\s*")
+
+
+def fragments(command: str) -> list[str]:
+    """Split a run: line into the simple commands it actually executes."""
+    return [part for part in _SEPARATORS.split(command) if part.strip()]
 
 
 def commands() -> Iterator[tuple[str, str, str]]:
     """Yield (workflow, job, command) for every run: line, joining continuations."""
-    for name in WORKFLOWS:
-        path = TREE / ".github" / "workflows" / name
+    for path in workflow_files()[0]:
+        name = path.name
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         for job, spec in (data.get("jobs") or {}).items():
             for step in spec.get("steps") or []:
@@ -137,13 +180,21 @@ def main() -> int:
     total = 0
     covered = 0
     unclassified: list[tuple[str, str, str]] = []
+    parsed_workflows, skipped_workflows = workflow_files()
+    print(f"workflows parsed: {', '.join(p.name for p in parsed_workflows) or '<none>'}")
+    for name in skipped_workflows:
+        print(f"workflow out of scope: {name} -- {WORKFLOWS_OUT_OF_SCOPE[name]}")
+    if not parsed_workflows:
+        print("ERROR: no workflow left to parse -- every workflow is declared out of scope")
+        return 1
     for workflow, job, command in commands():
-        total += 1
-        verdict = classify(command)
-        if verdict is None:
-            unclassified.append((workflow, job, command))
-        elif verdict[0] == "covered":
-            covered += 1
+        for fragment in fragments(command):
+            total += 1
+            verdict = classify(fragment)
+            if verdict is None:
+                unclassified.append((workflow, job, fragment))
+            elif verdict[0] == "covered":
+                covered += 1
     if total == 0:
         print("ERROR: parsed 0 commands -- the workflows were not read")
         return 1

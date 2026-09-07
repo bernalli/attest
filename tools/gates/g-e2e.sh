@@ -60,6 +60,36 @@ PW_CACHE="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
 gate_head
 gate_say "suite: $SUITE"
 gate_say "browser types this suite launches under CI=1 (from $SUITE/playwright.config.ts): ${BROWSER_TYPES[*]}"
+
+# The BUILD ID of each browser is derived at run time -- that is the part that
+# matters and it is done below. The SET of browsers above is enumerated, and an
+# enumeration is exempt by construction from whatever is added after it (C-222):
+# if this suite's config acquired a browser not listed here, the gate would launch
+# it without checking its precondition and report "executable doesn't exist" as a
+# RED OF THE PRODUCT -- the exact lie the 78 exists to prevent.
+#
+# Deriving the set properly means reading the config's `projects`, which is a
+# design choice about HOW to derive it. Until that is made, the enumeration stops
+# being silent: the config is read now, and any browser name in it that this gate
+# does not know about stops the gate by name. The exemption stays enumerated; it
+# no longer hides.
+PW_CONFIG="$SUITE_DIR/playwright.config.ts"
+if [ -r "$PW_CONFIG" ]; then
+  for known in chromium firefox webkit; do
+    if grep -qE "(^|[^a-zA-Z])$known([^a-zA-Z]|$)" "$PW_CONFIG"; then
+      case " ${BROWSER_TYPES[*]} " in
+        *" $known "*) ;;
+        *)
+          gate_say "PRECONDITION MISSING: $SUITE/playwright.config.ts names the browser"
+          gate_say "  '$known', which this gate's enumeration for '$SUITE' does not include."
+          gate_say "  Launching it unchecked would report a missing executable as a product failure."
+          gate_say "GATE $GATE_ID SKIPPED precondition=enumeration-stale"
+          exit 78
+          ;;
+      esac
+    fi
+  done
+fi
 gate_say ""
 
 gate_need "$SUITE/node_modules present (run: npm ci --prefix $SUITE_DIR)" -- test -d "$SUITE_DIR/node_modules"

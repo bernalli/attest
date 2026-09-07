@@ -60,7 +60,24 @@ for f in "${FILES[@]}"; do gate_say "  $f"; done
 gate_say ""
 
 if [ "${#FILES[@]}" -eq 0 ]; then
+  # "No object" and "the derivation is broken" both produce an empty set, and
+  # without this check they produce the SAME text and the SAME 78 — measured: a
+  # single-character typo in the pathspec below yields output byte-identical to
+  # a healthy T0. One reads as "nothing to do here yet" and resolves itself; the
+  # other never becomes green and nobody is told. So the derivation's own input
+  # is asserted before its empty output is believed (D-G1b applied to the 78).
+  if [ ! -d "$GATE_TREE/verifiers/ts/test" ]; then
+    gate_say "PRECONDITION MISSING: verifiers/ts/test is not a directory — the pathspec this gate derives from does not exist, so its empty result says nothing about the phase"
+    gate_say "GATE $GATE_ID SKIPPED precondition=absent"
+    exit 78
+  fi
+  if ! compgen -G "$GATE_TREE/verifiers/ts/test/*.test.ts" > /dev/null; then
+    gate_say "PRECONDITION MISSING: verifiers/ts/test holds no *.test.ts — there is nothing this gate could ever derive"
+    gate_say "GATE $GATE_ID SKIPPED precondition=absent"
+    exit 78
+  fi
   gate_say "NO TS TEST FILE TOUCHED IN THIS PHASE — there is no object for this gate to measure"
+  gate_say "(the pathspec verifiers/ts/test exists and is populated, so this empty set is the phase's, not the derivation's)"
   gate_say "GATE $GATE_ID SKIPPED precondition=no-object"
   exit 78
 fi

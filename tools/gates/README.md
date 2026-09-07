@@ -55,6 +55,21 @@ each rule in the comments. In short:
 - **Pin the tree.** Absolute paths, `--prefix`/`--root`/`-p`/`--rootdir`, and no `cd` inside compound
   commands. A green that does not name the tree it ran on is not a measurement.
 
+## Rerun a gate when the set it covers changes — including when you are the one changing it
+
+`tools/gates/run-all.sh` runs them all in dependency order and reports three NAMED sets: green, red,
+and *did not measure*. Use it. Running one gate is how the following happens.
+
+Measured on this front, twice, one level apart. First: seven transcripts had been produced under an
+earlier `_lib.sh`, and a transcript produced under a different library certifies a different system —
+they were all redone. Then, later, `ruff check` came out red on a defect nobody had introduced,
+because G-LINT's last green predated three Python files added to `tools/gates/` **while working on
+the gates themselves**. The green was true and described a smaller tree than the one that existed.
+
+Both are the same shape: the verdict is honest and its object has moved. The first is the library
+under the transcript; the second is the covered set under the gate. Neither shows up as a failure —
+they show up as a green that answers a question nobody is asking any more.
+
 ## Preconditions are not steps
 
 If a gate needs `npm ci`, a built `dist`, or a synced virtualenv, it **checks** for it with

@@ -13,12 +13,21 @@
 # class) and no `file` attribute — measured. `--collect-only` prints node
 # IDs, so the file is a datum, not a reconstruction.
 #
-# Three checks together, not any one alone (see tools/gates/_lib.sh): a
-# missing argument, a file with no tests, and a glob that fails to expand
-# all leave the affected side with ZERO collected files — and an empty set
+# Three checks together, not any one alone (see tools/gates/_lib.sh): (1)
+# collect-only exits 0, (2) each census is non-empty, (3) the union equals
+# the disk-derived universe. A file with no tests and a glob that fails to
+# expand leave the affected side with ZERO collected files, and an empty set
 # compares equal to an empty set, so `comm -3` alone would be green for
-# absence. Hence: (1) collect-only exits 0, (2) each census is non-empty,
-# (3) the union equals the disk-derived universe.
+# absence.
+#
+# A MISSING ARGUMENT is NOT in that family, and saying so here was wrong: a
+# segment stripped of its arguments does not collect zero files, it falls back
+# to `testpaths` and collects the WHOLE universe (measured; negative 2 below
+# says the same thing 130 lines down). The union then still equals the
+# universe and this gate stays GREEN. The per-segment invariant that does
+# catch it — census(segment) == definition(segment) — lives in
+# tools/gates/g-py-suite.sh, which runs alongside; this gate covers the gap
+# between segments, not the identity of each one.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

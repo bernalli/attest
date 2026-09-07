@@ -1,7 +1,7 @@
 === GATE G-E2E-SITE ===
 tree:  <tree>
-head:  1448f39
-utc:   2026-09-07T21:47:36Z
+head:  006f273
+utc:   2026-09-07T23:18:48Z
 
 suite: site
 browser types this suite launches under CI=1 (from site/playwright.config.ts): chromium
@@ -59,7 +59,7 @@ $ env CI=1 npm --prefix <tree>/site run e2e
 [WebServer] dist/index.html                  19.29 kB │ gzip:  7.20 kB
 [WebServer] dist/assets/index-DE74FUDc.css   11.34 kB │ gzip:  3.00 kB
 [WebServer] dist/assets/index-DLnL0xC3.js   281.94 kB │ gzip: 99.67 kB
-[WebServer] ✓ built in 1.23s
+[WebServer] ✓ built in 1.06s
 [WebServer] 
 [WebServer] > attest-site@0.1.0 preview
 [WebServer] > vite preview --port 4173 --strictPort --host 127.0.0.1
@@ -151,7 +151,7 @@ measured on rendered pixels, 720px viewport:
 14.63:1 (needs 4.5)  h3 rgb(36, 31, 24) 16px                        scroll 9100px, background rgb(248, 242, 226)
 
 ·
-  10 passed (20.2s)
+  10 passed (17.9s)
 exit: 0
 ok: CI=1 npm run e2e (site) exits 0 (exit 0)
 passed count, read off Playwright's own summary line just now (never written down here): 10

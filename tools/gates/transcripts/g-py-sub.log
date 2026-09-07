@@ -1,7 +1,7 @@
 === GATE G-PY-SUB ===
 tree:  <tree>
-head:  1448f39
-utc:   2026-09-07T21:48:17Z
+head:  006f273
+utc:   2026-09-07T23:13:01Z
 
 segment: sub
 args:    <tree>/tests/tools
@@ -12,11 +12,11 @@ precondition ok: import attest (workspace member)
 precondition ok: import attest_bridge (workspace member)
 precondition ok: import attest_witness (workspace member)
 --- pytest run (sub)
-$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260907T214817Z-sub.xml <tree>/tests/tools
-........................................................................ [ 41%]
-........................................................................ [ 83%]
-............................                                             [100%]
-172 passed in 113.51s (0:01:53)
+$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260907T231301Z-sub.xml <tree>/tests/tools
+........................................................................ [ 38%]
+........................................................................ [ 77%]
+..........................................                               [100%]
+186 passed in 104.49s (0:01:44)
 exit: 0
 ok: pytest run (sub) exits 0 (exit 0)
 --- collect files (sub)
@@ -182,6 +182,20 @@ tests/tools/test_conformance_runner.py::test_report_shape_exact_member_set_and_s
 tests/tools/test_conformance_runner.py::test_main_exit_code_0_for_conformant_mini_corpus
 tests/tools/test_conformance_runner.py::test_main_exit_code_1_for_failing_mini_corpus
 tests/tools/test_conformance_runner.py::test_main_writes_report_file_with_expected_shape
+tests/tools/test_gate_tools.py::test_two_empty_report_logs_compare_nothing_and_fail
+tests/tools/test_gate_tools.py::test_invalid_json_line_reports_path_and_line_not_a_traceback
+tests/tools/test_gate_tools.py::test_lines_missing_report_shape_are_ignored_not_errored
+tests/tools/test_gate_tools.py::test_unrecognized_call_outcome_raises_malformed_run_error
+tests/tools/test_gate_tools.py::test_nodeid_wrong_type_raises_malformed_run_error_with_location_and_type
+tests/tools/test_gate_tools.py::test_nodeid_wrong_type_end_to_end_is_a_clean_error_not_a_traceback
+tests/tools/test_gate_tools.py::test_wasxfail_null_is_not_treated_as_xfail
+tests/tools/test_gate_tools.py::test_wasxfail_present_and_truthy_is_still_xpassed
+tests/tools/test_gate_tools.py::test_fence_indented_up_to_three_spaces_is_extracted_and_linted
+tests/tools/test_gate_tools.py::test_fence_without_language_is_named_and_fails_the_gate
+tests/tools/test_gate_tools.py::test_fence_with_tilde_marker_is_extracted_and_linted
+tests/tools/test_gate_tools.py::test_plan_with_no_blocks_at_all_fails_instead_of_declaring_clean
+tests/tools/test_gate_tools.py::test_composite_run_line_is_classified_per_fragment_not_per_line
+tests/tools/test_gate_tools.py::test_workflows_to_read_are_derived_and_named_exemption_is_excluded_unparsed
 tests/tools/test_test_census.py::test_counts_are_integers_without_coercion
 tests/tools/test_test_census.py::test_totals_are_bound_to_the_entries
 tests/tools/test_test_census.py::test_order_is_irrelevant_but_duplicate_files_are_refused
@@ -194,17 +208,17 @@ tests/tools/test_test_census.py::test_report_requires_consumed_fields_and_typed_
 tests/tools/test_test_census.py::test_update_refuses_skipped_transitions_without_writing[pending-numPendingTests]
 tests/tools/test_test_census.py::test_update_refuses_skipped_transitions_without_writing[todo-numTodoTests]
 
-172 tests collected in 0.29s
+186 tests collected in 0.31s
 exit: 0
 ok: collect-only (sub) exits 0 (exit 0)
-ok: collected files (sub) non-empty (4 lines collected — derived, not written down)
+ok: collected files (sub) non-empty (5 lines collected — derived, not written down)
 ok: collected files (sub) match the segment's own definition (the two sets coincide)
 --- negative: nonexistent argument is reported by name, not silently absorbed
 $ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra <tree>/tests/test_nonexistent.py
 ERROR: file or directory not found: <tree>/tests/test_nonexistent.py
 
 
-no tests ran in 0.16s
+no tests ran in 0.15s
 exit: 4
 ok: negative 'nonexistent argument is reported by name, not silently absorbed' failed at the guarded path (exit 4)
 

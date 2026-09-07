@@ -1,7 +1,7 @@
 === GATE G-TS ===
 tree:  <tree>
-head:  1448f39
-utc:   2026-09-07T21:56:34Z
+head:  006f273
+utc:   2026-09-07T23:07:29Z
 
 precondition ok: verifiers/ts/node_modules present
 precondition ok: GATE_PY available
@@ -10,76 +10,78 @@ $ npx --prefix <tree>/verifiers/ts vitest run --root <tree>/verifiers/ts --repor
 
  RUN  v2.1.9 <tree>/verifiers/ts
 
- ✓ test/tlog.test.ts (173 tests) 502ms
- ✓ test/grant.test.ts (145 tests) 871ms
- ✓ test/transparency.test.ts (74 tests) 4705ms
-   ✓ verify(): Stage 2 integration > caps oversized transparency evidence 2004ms
-   ✓ verify(): Stage 2 integration > counts transparency evidence caps by Unicode code points, not UTF-16 units 1486ms
-   ✓ verify(): Stage 2 integration > accepts evaluator max-scale anchor evidence (harmonization boundary) 493ms
- ✓ test/anchor.test.ts (96 tests) 132ms
- ✓ test/evaluate-grant.test.ts (96 tests) 6731ms
-   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array one past its ceiling truncates evaluation, never activating 828ms
-   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array exactly at its ceiling is still evaluated 1748ms
- ✓ test/revocation.test.ts (24 tests) 270ms
- ✓ test/verify-unit.test.ts (43 tests) 3104ms
-   ✓ verify(): Stage 3 transferred-class backing (§17.3) > warns unbacked when the resolver never engages (oversized) 1836ms
- ✓ test/transfer.test.ts (57 tests) 1238ms
- ✓ test/authority.test.ts (100 tests) 883ms
- ✓ test/anchor-seeded.test.ts (73 tests) 77ms
- ✓ test/blind-rail-admission.test.ts (24 tests) 2244ms
-   ✓ blind caller-rail admission boundary > H permissive: a refused transfer evidence unit must not neutralize genuine backed transfer evidence 330ms
- ✓ test/blind-integer-representation.test.ts (31 tests) 1208ms
- ✓ test/authority-adversarial.test.ts (77 tests) 753ms
-   ✓ authorized_issuers shape (v0.2 section 20.2) > accepts exactly MAX_AUTHORIZED_ISSUERS entries and rejects one more 351ms
- ✓ test/manifests.test.ts (37 tests) 752ms
- ✓ test/witness-quorum.test.ts (58 tests) 2181ms
- ✓ test/compromise-adversarial.test.ts (42 tests) 737ms
- ✓ test/trust-material-boundary.test.ts (11 tests) 661ms
- ✓ test/compromise-retraction-provenance.test.ts (34 tests) 667ms
- ✓ test/verify-compromise.test.ts (13 tests) 581ms
- ✓ test/witness.test.ts (68 tests) 67ms
- ✓ test/hybrid.test.ts (13 tests) 610ms
- ✓ test/evaluate-authority.test.ts (27 tests) 1550ms
- ✓ test/schema.test.ts (39 tests) 32ms
- ✓ test/witness-cosignature.test.ts (25 tests) 619ms
- ✓ test/vl3-duplicate-kid-adversarial.test.ts (19 tests) 141ms
- ✓ test/revocation-parity.test.ts (17 tests) 209ms
- ✓ test/revocation-bound.test.ts (12 tests) 246ms
- ✓ test/canon-depth-profile-adversarial.test.ts (23 tests) 299ms
- ✓ test/sibling-hybrid.test.ts (11 tests) 425ms
- ✓ test/artifact-manifest-currency.test.ts (9 tests) 258ms
- ✓ test/verify-ceilings.test.ts (2 tests) 315ms
- ✓ test/vl3-duplicate-kid.test.ts (13 tests) 77ms
- ✓ test/conformance.test.ts (229 tests) 6629ms
-   ✓ attest conformance vectors > 09-commitment/a-ascii-email 330ms
-   ✓ attest conformance vectors > 09-commitment/c-issuer-account 401ms
- ✓ test/blind-authority-evaluation.test.ts (67 tests) 26402ms
-   ✓ blind publisher authority evaluation > [PERMISSIVA] exactly 4096 authorized_issuers entries remain within the document ceiling 390ms
-   ✓ blind publisher authority evaluation > [PERMISSIVA] an authorization document exactly at the evidence code-point ceiling remains admissible 14305ms
-   ✓ blind publisher authority evaluation > [RESTRITTIVA] an authorization document one code point over the evidence code-point ceiling is set aside alone 9167ms
- ✓ test/canon-serialize.test.ts (16 tests) 39ms
- ✓ test/vl5-anchor-status-adversarial.test.ts (13 tests) 334ms
- ✓ test/review-fixes.test.ts (5 tests) 46ms
- ✓ test/witness-quorum-cost.test.ts (4 tests) 266ms
- ✓ test/shouldfix.test.ts (2 tests) 57ms
- ✓ test/c57-findkey-type-guard.test.ts (7 tests) 30ms
+ ✓ test/tlog.test.ts (173 tests) 652ms
+ ✓ test/grant.test.ts (145 tests) 1304ms
+ ✓ test/transparency.test.ts (74 tests) 8792ms
+   ✓ verify(): Stage 2 integration > caps oversized transparency evidence 3007ms
+   ✓ verify(): Stage 2 integration > counts transparency evidence caps by Unicode code points, not UTF-16 units 3076ms
+   ✓ verify(): Stage 2 integration > accepts evaluator max-scale anchor evidence (harmonization boundary) 1635ms
+ ✓ test/anchor.test.ts (96 tests) 270ms
+ ✓ test/evaluate-grant.test.ts (96 tests) 12388ms
+   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a proxy answering with a DATA descriptor is admitted, and buys nothing it did not already have 354ms
+   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array one past its ceiling truncates evaluation, never activating 2301ms
+   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array exactly at its ceiling is still evaluated 2932ms
+ ✓ test/revocation.test.ts (24 tests) 308ms
+ ✓ test/transfer.test.ts (57 tests) 1359ms
+ ✓ test/verify-unit.test.ts (43 tests) 4117ms
+   ✓ verify(): Stage 3 transferred-class backing (§17.3) > reports transferred (not ok) with full backing 353ms
+   ✓ verify(): Stage 3 transferred-class backing (§17.3) > warns unbacked when the resolver never engages (oversized) 2352ms
+ ✓ test/authority.test.ts (100 tests) 1124ms
+   ✓ publisher authorization shape > enforces the 4096-entry document ceiling before entry validation 359ms
+ ✓ test/anchor-seeded.test.ts (73 tests) 107ms
+ ✓ test/blind-rail-admission.test.ts (24 tests) 2616ms
+   ✓ blind caller-rail admission boundary > H permissive: a refused transfer evidence unit must not neutralize genuine backed transfer evidence 387ms
+ ✓ test/blind-integer-representation.test.ts (31 tests) 1575ms
+ ✓ test/authority-adversarial.test.ts (77 tests) 988ms
+   ✓ authorized_issuers shape (v0.2 section 20.2) > accepts exactly MAX_AUTHORIZED_ISSUERS entries and rejects one more 430ms
+ ✓ test/manifests.test.ts (37 tests) 790ms
+ ✓ test/witness-quorum.test.ts (58 tests) 2474ms
+ ✓ test/compromise-adversarial.test.ts (42 tests) 562ms
+ ✓ test/trust-material-boundary.test.ts (11 tests) 326ms
+ ✓ test/compromise-retraction-provenance.test.ts (34 tests) 645ms
+ ✓ test/witness.test.ts (68 tests) 31ms
+ ✓ test/verify-compromise.test.ts (13 tests) 508ms
+ ✓ test/hybrid.test.ts (13 tests) 631ms
+ ✓ test/evaluate-authority.test.ts (27 tests) 1061ms
+ ✓ test/schema.test.ts (39 tests) 53ms
+ ✓ test/witness-cosignature.test.ts (25 tests) 552ms
+ ✓ test/vl3-duplicate-kid-adversarial.test.ts (19 tests) 136ms
+ ✓ test/revocation-parity.test.ts (17 tests) 121ms
+ ✓ test/revocation-bound.test.ts (12 tests) 222ms
+ ✓ test/canon-depth-profile-adversarial.test.ts (23 tests) 370ms
+ ✓ test/sibling-hybrid.test.ts (11 tests) 419ms
+ ✓ test/artifact-manifest-currency.test.ts (9 tests) 291ms
+ ✓ test/blind-authority-evaluation.test.ts (67 tests) 30520ms
+   ✓ blind publisher authority evaluation > [PERMISSIVA] exactly 4096 authorized_issuers entries remain within the document ceiling 811ms
+   ✓ blind publisher authority evaluation > [RESTRITTIVA] 4097 authorized_issuers entries exceed the document ceiling and are ignored safely 467ms
+   ✓ blind publisher authority evaluation > [PERMISSIVA] an authorization document exactly at the evidence code-point ceiling remains admissible 17994ms
+   ✓ blind publisher authority evaluation > [RESTRITTIVA] an authorization document one code point over the evidence code-point ceiling is set aside alone 8271ms
+ ✓ test/verify-ceilings.test.ts (2 tests) 375ms
+ ✓ test/vl3-duplicate-kid.test.ts (13 tests) 120ms
+ ✓ test/conformance.test.ts (229 tests) 6517ms
+ ✓ test/vl5-anchor-status-adversarial.test.ts (13 tests) 355ms
+ ✓ test/canon-serialize.test.ts (16 tests) 66ms
+ ✓ test/review-fixes.test.ts (5 tests) 49ms
+ ✓ test/witness-quorum-cost.test.ts (4 tests) 416ms
+ ✓ test/shouldfix.test.ts (2 tests) 126ms
+ ✓ test/c57-findkey-type-guard.test.ts (7 tests) 47ms
+ ✓ test/ed25519.test.ts (5 tests) 26ms
  ✓ test/canon-parse.test.ts (11 tests) 12ms
- ✓ test/ed25519.test.ts (5 tests) 21ms
- ✓ test/vl5-anchor-status.test.ts (13 tests) 161ms
+ ✓ test/vl5-anchor-status.test.ts (13 tests) 197ms
  ✓ test/index.test.ts (6 tests) 7ms
  ✓ test/messages.test.ts (2 tests) 4ms
  ✓ test/dates.test.ts (4 tests) 5ms
  ✓ test/canon-admission-ceiling.test.ts (2 tests) 5ms
+ ✓ test/commitment.test.ts (7 tests) 802ms
+   ✓ commitment > reproduces the reference commitments (09a/09b/09c) 789ms
+ ✓ test/mldsa.test.ts (5 tests) 21ms
  ✓ test/b64u.test.ts (3 tests) 5ms
- ✓ test/commitment.test.ts (7 tests) 698ms
-   ✓ commitment > reproduces the reference commitments (09a/09b/09c) 692ms
- ✓ test/mldsa.test.ts (5 tests) 38ms
  ✓ test/smoke.test.ts (3 tests) 3ms
 
  Test Files  51 passed (51)
       Tests  1890 passed (1890)
-   Start at  23:56:35
-   Duration  32.66s (transform 1.70s, setup 0ms, collect 12.77s, tests 67.91s, environment 13ms, prepare 4.91s)
+   Start at  01:07:29
+   Duration  39.68s (transform 2.14s, setup 0ms, collect 14.92s, tests 84.47s, environment 13ms, prepare 6.08s)
 
 JSON report written to <tree>/tools/gates/transcripts/g-ts.vitest-full.json
 exit: 0
@@ -97,8 +99,8 @@ $ npx --prefix <tree>/verifiers/ts vitest run --root <tree>/verifiers/ts test/me
 
  Test Files  1 passed (1)
       Tests  2 passed (2)
-   Start at  23:57:08
-   Duration  348ms (transform 70ms, setup 0ms, collect 65ms, tests 4ms, environment 0ms, prepare 67ms)
+   Start at  01:08:10
+   Duration  409ms (transform 84ms, setup 0ms, collect 84ms, tests 4ms, environment 0ms, prepare 71ms)
 
 JSON report written to <tree>/tools/gates/transcripts/g-ts.vitest-filter.json
 exit: 0

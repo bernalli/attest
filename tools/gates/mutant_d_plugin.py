@@ -33,4 +33,4 @@ def _mutated(store: object) -> dict[str, Any]:
 
 
 def pytest_configure(config: object) -> None:
-    trust_material.trust_store_fields = _mutated  # type: ignore[assignment]
+    trust_material.trust_store_fields = _mutated

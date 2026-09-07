@@ -99,7 +99,14 @@ gate_expect_rc() {
 # The output must carry something only a completed measurement can print.
 gate_expect_marker() {
   local re="$1" label="$2"
-  if printf '%s\n' "$GATE_OUT" | grep -Eq -- "$re"; then
+  # A here-string, never `printf ... | grep -q`. With `set -o pipefail` -- which
+  # this file sets -- grep -q exits at the FIRST match and closes the pipe, printf
+  # takes SIGPIPE, and the pipeline's status becomes 141: "marker absent" for a
+  # marker that is present. It only bites when the output is long enough that
+  # printf has not finished writing, and when the marker is near the TOP, so it
+  # hides until a gate whose tool prints thousands of lines. Measured: G-VEC went
+  # red on a negative whose marker sat on line 18 of ~1170.
+  if grep -Eq -- "$re" <<< "$GATE_OUT"; then
     gate_say "ok: $label (marker /$re/ present)"
   else
     gate_say "FAIL: $label — marker /$re/ absent from output"
@@ -130,7 +137,24 @@ gate_expect_nonempty() {
 # The invariant, never the figure: what the census names must equal what the
 # collector actually reaches. Both sides are derived at runtime.
 gate_expect_same_set() {
-  local a="$1" b="$2" label="$3" diff_out
+  local a="$1" b="$2" label="$3" diff_out side
+  # Two empty sets coincide, and so do two unreadable ones: `sort` on a missing
+  # path writes to stderr, which comm never sees, so a path typo in a gate reads
+  # as "the two sets coincide". Measured on this library. The non-emptiness
+  # property is the one the header claims, so it is enforced HERE rather than
+  # left to the caller remembering a separate gate_expect_nonempty.
+  for side in "$a" "$b"; do
+    if [ ! -r "$side" ]; then
+      gate_say "FAIL: $label — $side is not readable; an unreadable set coincides with anything"
+      _gate_failures=$((_gate_failures + 1))
+      return 0
+    fi
+  done
+  if ! grep -q . "$a" && ! grep -q . "$b"; then
+    gate_say "FAIL: $label — both sides are empty; an empty set compares equal to an empty set"
+    _gate_failures=$((_gate_failures + 1))
+    return 0
+  fi
   diff_out=$(comm -3 <(sort -u "$a") <(sort -u "$b"))
   if [ -z "$diff_out" ]; then
     gate_say "ok: $label (the two sets coincide)"
@@ -161,7 +185,9 @@ gate_negative() {
     _gate_failures=$((_gate_failures + 1))
     return 0
   fi
-  if [ -n "$re" ] && ! printf '%s\n' "$out" | grep -Eq -- "$re"; then
+  # Here-string, for the same reason as gate_expect_marker above: through a pipe,
+  # pipefail turns an early grep -q match into 141 and reports the marker missing.
+  if [ -n "$re" ] && ! grep -Eq -- "$re" <<< "$out"; then
     gate_say "FAIL: negative '$label' failed BEFORE reaching the guarded path"
     gate_say "      (marker /$re/ absent: this proves the argument/schema layer, not the property)"
     _gate_failures=$((_gate_failures + 1))

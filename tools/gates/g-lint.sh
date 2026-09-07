@@ -17,7 +17,7 @@ source "$SCRIPT_DIR/_lib.sh"
 
 RUFF="$GATE_TREE/.venv/bin/ruff"
 MYPY="$GATE_TREE/.venv/bin/mypy"
-MYPY_ROOTS=("$GATE_TREE/src" "$GATE_TREE/bridge/src" "$GATE_TREE/witness/src")
+MYPY_ROOTS=("$GATE_TREE/src" "$GATE_TREE/bridge/src" "$GATE_TREE/witness/src" "$GATE_TREE/tools/gates")
 
 gate_head
 

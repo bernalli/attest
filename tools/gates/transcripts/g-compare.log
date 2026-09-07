@@ -1,7 +1,7 @@
 === GATE G-COMPARE ===
 tree:  <tree>
-head:  1448f39
-utc:   2026-09-07T21:56:24Z
+head:  006f273
+utc:   2026-09-07T23:19:10Z
 
 precondition ok: python present
 precondition ok: pytest importable
@@ -10,7 +10,7 @@ precondition ok: compare_runs.py present
 ok: flip: baseline run produced report-log lines (3 lines collected — derived, not written down)
 ok: flip: after run produced report-log lines (3 lines collected — derived, not written down)
 --- property: passed -> xpassed is visible
-$ compare /tmp/tmp.9bfUmr8Hn1/flip.base.jsonl /tmp/tmp.9bfUmr8Hn1/flip.after.jsonl
+$ compare /tmp/tmp.uhqfgJ5Ut1/flip.base.jsonl /tmp/tmp.uhqfgJ5Ut1/flip.after.jsonl
 === outcome counts (baseline) ===
 passed: 1
 failed: 0
@@ -36,7 +36,7 @@ ok: flip: changed entry names both outcomes (marker /test_flip\.py::test_thing: 
 ok: vanish: baseline run produced report-log lines (6 lines collected — derived, not written down)
 ok: vanish: after run produced report-log lines (3 lines collected — derived, not written down)
 --- negative: vanished test id is named, and fails the gate
-$ compare /tmp/tmp.9bfUmr8Hn1/vanish.base.jsonl /tmp/tmp.9bfUmr8Hn1/vanish.after.jsonl
+$ compare /tmp/tmp.uhqfgJ5Ut1/vanish.base.jsonl /tmp/tmp.uhqfgJ5Ut1/vanish.after.jsonl
 === outcome counts (baseline) ===
 passed: 2
 failed: 0
@@ -61,7 +61,7 @@ ok: negative 'vanished test id is named, and fails the gate' failed at the guard
 ok: new: baseline run produced report-log lines (3 lines collected — derived, not written down)
 ok: new: after run produced report-log lines (6 lines collected — derived, not written down)
 --- property: a new test alone does not fail the gate
-$ compare /tmp/tmp.9bfUmr8Hn1/new.base.jsonl /tmp/tmp.9bfUmr8Hn1/new.after.jsonl
+$ compare /tmp/tmp.uhqfgJ5Ut1/new.base.jsonl /tmp/tmp.uhqfgJ5Ut1/new.after.jsonl
 === outcome counts (baseline) ===
 passed: 1
 failed: 0
@@ -87,7 +87,7 @@ ok: new: the new node id is recorded in after-only (marker /test_new\.py::test_c
 ok: worse: baseline run produced report-log lines (3 lines collected — derived, not written down)
 ok: worse: after run produced report-log lines (3 lines collected — derived, not written down)
 --- negative: outcome regression is named, and fails the gate
-$ compare /tmp/tmp.9bfUmr8Hn1/worse.base.jsonl /tmp/tmp.9bfUmr8Hn1/worse.after.jsonl
+$ compare /tmp/tmp.uhqfgJ5Ut1/worse.base.jsonl /tmp/tmp.uhqfgJ5Ut1/worse.after.jsonl
 === outcome counts (baseline) ===
 passed: 1
 failed: 0
@@ -110,7 +110,7 @@ compared 1 node id(s) across baseline and after
 exit: 1
 ok: negative 'outcome regression is named, and fails the gate' failed at the guarded path (exit 1)
 --- negative: an empty comparison is a failure, not a pass by absence
-$ compare /tmp/tmp.9bfUmr8Hn1/empty.base.jsonl /tmp/tmp.9bfUmr8Hn1/empty.after.jsonl
+$ compare /tmp/tmp.uhqfgJ5Ut1/empty.base.jsonl /tmp/tmp.uhqfgJ5Ut1/empty.after.jsonl
 === outcome counts (baseline) ===
 passed: 0
 failed: 0

@@ -9,10 +9,19 @@
 # transcribes that block, not by reading the block.
 #
 # DO NOT ADD A FORMAT CHECK HERE. It is easy, it looks like an improvement, and it
-# was tried: `ruff format --check` flags four of the five normative blocks, because
-# a block written to stay readable in prose is not a block written by the
-# formatter. None of those four can ever reach G-LINT — the repository formats on
-# commit, so the transcription is reformatted before it is measured. Adding them
+# was tried: `ruff format --check` flags four of the five normative blocks (re-measured
+# against this repo's own pyproject.toml: blocks at plan lines 455, 493, 520 and 564;
+# 449 is already formatted), because a block written to stay readable in prose is not a
+# block written by the formatter.
+#
+# The reason those four are tolerable is NOT that "the repository formats on commit":
+# this repository has no .pre-commit-config.yaml and no commit hook that formats
+# (core.hooksPath points at a leak scanner). What reformats a transcription is the
+# editing harness's own post-write hook, which fires on a file WRITE and not on a
+# `cat >` heredoc — so an executor that writes the file some other way will meet
+# `ruff format --check` red inside the task. That failure costs one `ruff format` run,
+# which is why the trade is still worth taking; a lint RULE is the thing no formatter
+# fixes, and it is what this gate checks. Adding them
 # would make this gate four parts noise to one part signal, and a gate that is
 # mostly noise is a gate people learn to skim; at that point it stops protecting
 # even the one line that mattered. What the executor genuinely cannot see coming is
