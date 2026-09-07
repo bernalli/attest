@@ -398,6 +398,7 @@ _FAQ_DESCRIPTION = (
 #: prevent, arriving through a different door.
 _FAQ_LINK_REWRITES: Final = {
     "../README.md": f"{_GITHUB}/blob/main/README.md",
+    "../PATENTS.md": f"{_GITHUB}/blob/main/PATENTS.md",
 }
 
 _MD_CODE_SPAN = re.compile(r"(`[^`]+`)")

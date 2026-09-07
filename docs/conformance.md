@@ -24,7 +24,10 @@ written from the specification text alone, using no code from this
 repository. Neither license reaches that far by itself: the Apache-2.0 patent
 grant covers this repository's code, and CC BY 4.0, which licenses the
 specification, grants no patent rights at all. That gap is what the covenant
-closes, and it is the gap an independent implementer stands in.
+closes, and it is the gap an independent implementer stands in. The promise
+carries one condition, in §4 of that document: it ends for a party who brings
+patent litigation of their own claiming that attest infringes. Nothing an
+implementer does in the course of implementing engages it.
 
 ## 2. Run it: one command
 

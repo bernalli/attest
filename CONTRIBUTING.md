@@ -14,10 +14,12 @@ new conformance vectors, and additional independent implementations.
 - Patents: by contributing to the specification or to any other document in this repository, you
   irrevocably promise not to assert, against anyone implementing the attest specification, any
   patent claim you own or control that is infringed by implementing the part of the specification
-  your contribution describes in detail. This mirrors the commitment the project's author makes in
-  `PATENTS.md`, and exists because CC BY 4.0 — the license on the specification — grants no patent
-  rights at all. Contributions of code remain covered by the patent grant in Section 3 of the
-  Apache License 2.0.
+  your contribution describes in detail — "describes in detail" carrying the meaning `PATENTS.md`
+  defines for it. This is the contributor's counterpart to the commitment the project's author
+  makes in `PATENTS.md`: it has the same purpose and narrower terms, and §7 of that document sets
+  out where the two differ. It exists because CC BY 4.0 — the license on the specification —
+  grants no patent rights at all. Contributions of code remain covered by the patent grant in
+  Section 3 of the Apache License 2.0.
 - Be precise about security: this is a crypto project. If a change could affect
   verification, canonicalization, key handling, or revocation, say so explicitly.
 
