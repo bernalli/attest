@@ -81,6 +81,7 @@ import shutil
 import sys
 import tempfile
 import unicodedata
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -271,6 +272,22 @@ CHAIN_HOLDER_2_KP = keys.from_seed(CHAIN_HOLDER_2_SEED)
 CHAIN_MISMATCH_HOLDER_SEED = bytes([38]) * 32  # 36b: a holder distinct from TR1's new_holder_pubkey
 CHAIN_MISMATCH_HOLDER_KP = keys.from_seed(CHAIN_MISMATCH_HOLDER_SEED)
 
+# 35l (TM-80, threat-model.md): a second hybrid issuer key K2 that countersigns
+# the OLD receipt's transfer record and revocation and is marked `compromised`
+# in a later manifest version, while K1 (ISSUER_KP) stays `active`. Seed bytes
+# 40/41 — where this group's own numbering above would continue — turn out to
+# be already taken: 40 is group 36's `CHAIN_PHANTOM_RECEIPT` ULID randomness,
+# and 41 is `WITNESS_ED_KPS[0]`'s Ed25519 seed (`bytes([41 + index])`,
+# computed from `_WITNESS_SLOTS`, so a literal grep for `bytes([41])` misses
+# it — verified live 2026-09-07 by evaluating the range, not by re-grepping
+# the literal). This continues instead from the highest byte actually taken
+# in the file, 139 (`PLEDGE_MARKETPLACE_MLDSA_*`).
+TRANSFER_SIGNER_SEED = bytes([140]) * 32
+TRANSFER_SIGNER_KP = keys.from_seed(TRANSFER_SIGNER_SEED)
+TRANSFER_SIGNER_MLDSA_PK, TRANSFER_SIGNER_MLDSA_SK = ML_DSA_65.key_derive(bytes([141]) * 32)
+TRANSFER_SIGNER_KID = f"{ISSUER_ID}/keys/2025-06#hybrid-2"
+TRANSFER_SIGNER_COMPROMISED_AT = "2025-08-05T00:00:00Z"  # v2's issued_at, after TRANSFERRED_AT
+
 TRANSFERRED_AT = "2025-07-20T00:00:00Z"  # generic transferred_at, after ISSUED_AT (2025-07-02)
 NOT_TRANSFERABLE_BEFORE_AFTER = "2025-08-01T00:00:00Z"  # after TRANSFERRED_AT (35g)
 
@@ -425,12 +442,20 @@ def _hybrid_manifest(
     version: int = 1,
     issued_at: str = MANIFEST_ISSUED_AT,
     status: str = "active",
+    extra_keys: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """`extra_keys` appends already-built `keys[]` entries after the primary
+    signer's own — every existing single-key caller omits it and gets the
+    same one-entry list as before. Used by leaf 35l (TM-80) to list a SECOND
+    hybrid key (K2, built with `manifests.key_entry` directly since its
+    `pub_ml_dsa_65` is `TRANSFER_SIGNER_MLDSA_PK`, not the shared
+    `HYBRID_MLDSA_PK` `_hybrid_key_entry` always uses) in the same
+    manifest, still signed by K1 (`ed_kp`) like every other call here."""
     body: dict[str, Any] = {
         "issuer": issuer_id,
         "manifest_version": version,
         "issued_at": issued_at,
-        "keys": [_hybrid_key_entry(kid, ed_kp, status)],
+        "keys": [_hybrid_key_entry(kid, ed_kp, status)] + (extra_keys or []),
     }
     signable = manifests._signable(body)
     body["manifest_signature"] = {
@@ -462,26 +487,48 @@ def _flip_sig_byte(sig_b64u: str) -> str:
     return keys.b64u(bytes(raw))
 
 
-def _hybrid_sign_record(body: dict[str, Any], kid: str = ISSUER_KID) -> dict[str, Any]:
+def _hybrid_sign_record(
+    body: dict[str, Any],
+    kid: str = ISSUER_KID,
+    ed_kp: keys.SigningKeyPair = ISSUER_KP,
+    mldsa_sign: Callable[[bytes], bytes] = _oracle_sign,
+) -> dict[str, Any]:
     """Manually hybrid-sign a v0.2 side-document body (transfer/revocation
     record) — the same oracle-sign-then-splice technique `_hybrid_manifest`
-    uses above (`ISSUER_KP`'s Ed25519 leg + the deterministic `_oracle_sign`
-    ML-DSA-65 dev oracle, `HYBRID_MLDSA_SK`/`HYBRID_MLDSA_PK`), needed because
-    `manifests.sign_signature_block`'s hybrid path would otherwise route the
-    ML-DSA-65 leg through non-deterministic `pq.sign`/pqcrypto (this module's
-    `gen_26_hybrid` docstring). Used by group 35, whose OLD receipts are
-    `attest_version: "0.2"` and therefore need a hybrid issuer manifest to
-    authenticate their own envelope signature (v0.2's step-1 hybrid gate) —
-    every transfer/revocation side-document that must authenticate against
-    that SAME manifest needs the matching hybrid signature shape."""
+    uses above (by default `ISSUER_KP`'s Ed25519 leg + the deterministic
+    `_oracle_sign` ML-DSA-65 dev oracle, `HYBRID_MLDSA_SK`/`HYBRID_MLDSA_PK`),
+    needed because `manifests.sign_signature_block`'s hybrid path would
+    otherwise route the ML-DSA-65 leg through non-deterministic
+    `pq.sign`/pqcrypto (this module's `gen_26_hybrid` docstring). Used by
+    group 35, whose OLD receipts are `attest_version: "0.2"` and therefore
+    need a hybrid issuer manifest to authenticate their own envelope
+    signature (v0.2's step-1 hybrid gate) — every transfer/revocation
+    side-document that must authenticate against that SAME manifest needs
+    the matching hybrid signature shape.
+
+    `ed_kp`/`mldsa_sign` default to K1's own material, so every existing
+    caller (which passes neither) is byte-for-byte unaffected. Leaf 35l
+    (TM-80) passes K2's own (`TRANSFER_SIGNER_KP`,
+    `_transfer_signer_oracle_sign`) to countersign a transfer record and
+    revocation with a DIFFERENT issuer key than the one that signed the
+    receipt."""
     signable = canon.canonical_bytes(body)
     record = dict(body)
     record["signature"] = {
         "kid": kid,
-        "sig": keys.b64u(keys.sign(signable, ISSUER_KP)),
-        "sig_ml_dsa_65": keys.b64u(_oracle_sign(signable)),
+        "sig": keys.b64u(keys.sign(signable, ed_kp)),
+        "sig_ml_dsa_65": keys.b64u(mldsa_sign(signable)),
     }
     return record
+
+
+def _transfer_signer_oracle_sign(msg: bytes) -> bytes:
+    """DEV-ONLY deterministic ML-DSA-65 signing under K2's own key material —
+    `_oracle_sign` above is hard-wired to `HYBRID_MLDSA_SK`, which is K1's.
+    Used only by leaf 35l, whose transfer record and revocation are
+    countersigned by a second issuer key distinct from the receipt's own
+    signer (mirrors `_compromise_oracle_sign`'s own note, group 41)."""
+    return ML_DSA_65.sign(TRANSFER_SIGNER_MLDSA_SK, msg, deterministic=True)
 
 
 def _transfer_record_body(
@@ -4922,6 +4969,118 @@ def gen_35_transfer() -> None:
             "errors_contains": ["pubkey"],
             "warnings": [],
         },
+    )
+
+    # --- (l) countersigner-compromised-old-receipt-revives (TM-80,
+    # threat-model.md): the OLD receipt is (a)'s own `envelope_a` — signed by
+    # K1 (`ISSUER_KID`), which stays `active` throughout. Its transfer record
+    # and `transferred` revocation are genuinely issuer-signed AND
+    # holder-authorized (same shape as `record_valid`/`rev_transferred`
+    # above), but countersigned by a SECOND hybrid issuer key K2
+    # (`TRANSFER_SIGNER_KID`) that manifest v2 marks `compromised` while K1
+    # stays `active` — v1 has both `active`, so the side-documents authored
+    # under K2 authenticate against v1 but not against v2, the manifest the
+    # trust store actually resolves (chain `[v1, v2]`, current = v2). Both
+    # side-documents therefore lose authentication (v0.1 §12.1 item 2, v0.2
+    # §17.1): the revocation is set aside with its own `..., ignored`
+    # warning, the transfer claim is never consulted, and the OLD receipt
+    # revives — `revocation: "unknown"` (no other authenticated
+    # statement-status record admits into this view), `ok: true`. This pins
+    # TM-80's deliberate exclusion as intended; it is not a behaviour change
+    # — §19.5 already fails every side-document closed on its signer's
+    # CURRENT key status, whichever key that is. ---
+    k2_entry_active = manifests.key_entry(
+        TRANSFER_SIGNER_KID,
+        TRANSFER_SIGNER_KP.pub,
+        KEY_VALID_FROM,
+        None,
+        "active",
+        pub_ml_dsa_65=TRANSFER_SIGNER_MLDSA_PK,
+    )
+    k2_entry_compromised = manifests.key_entry(
+        TRANSFER_SIGNER_KID,
+        TRANSFER_SIGNER_KP.pub,
+        KEY_VALID_FROM,
+        None,
+        "compromised",
+        pub_ml_dsa_65=TRANSFER_SIGNER_MLDSA_PK,
+    )
+    manifest_l_v1 = _hybrid_manifest(
+        ISSUER_ID, ISSUER_KID, ISSUER_KP, version=1, extra_keys=[k2_entry_active]
+    )
+    manifest_l_v2 = _hybrid_manifest(
+        ISSUER_ID,
+        ISSUER_KID,
+        ISSUER_KP,
+        version=2,
+        issued_at=TRANSFER_SIGNER_COMPROMISED_AT,
+        extra_keys=[k2_entry_compromised],
+    )
+    assert manifests.verify_key_manifest(manifest_l_v1) is True
+    assert manifests.check_continuity(manifest_l_v1, manifest_l_v2) is True
+
+    record_l = _hybrid_sign_record(
+        _transfer_record_body(
+            RECEIPT_ID, NEW_RECEIPT_ID, new_holder_pub_b64u, TRANSFERRED_AT, BUYER_KP
+        ),
+        kid=TRANSFER_SIGNER_KID,
+        ed_kp=TRANSFER_SIGNER_KP,
+        mldsa_sign=_transfer_signer_oracle_sign,
+    )
+    rev_l = _hybrid_sign_record(
+        {"receipt_id": RECEIPT_ID, "status": "transferred", "revoked_at": TRANSFERRED_AT},
+        kid=TRANSFER_SIGNER_KID,
+        ed_kp=TRANSFER_SIGNER_KP,
+        mldsa_sign=_transfer_signer_oracle_sign,
+    )
+    # Precondition (§8.4 step 0 of the plan): both side-documents authenticate
+    # against v1 (K2 still `active`) and NOT against v2 (K2 `compromised`) —
+    # the fixture must exercise the gate this leaf pins, not some other
+    # failure.
+    assert transfer.verify_record(record_l, manifest_l_v1) is True
+    assert transfer.verify_authorization(record_l, keys.b64u(BUYER_KP.pub)) is True
+    assert transfer.verify_record(record_l, manifest_l_v2) is False
+    assert revocation.verify_record(rev_l, manifest_l_v1) is True
+    assert revocation.verify_record(rev_l, manifest_l_v2) is False
+
+    entry_l = {
+        "type": "transfer-record",
+        "issuer": ISSUER_ID,
+        "record_sha256": transfer.record_hash(record_l),
+    }
+    entry_l_bytes = tlog.encode_entry(entry_l)
+    root_l = tlog.build_tree([entry_l_bytes])
+    checkpoint_l = _sign_checkpoint_oracle(LOG_ORIGIN, 1, root_l)
+    evidence_l = {
+        "entry": entry_l,
+        "leaf_index": 0,
+        "tree_size": 1,
+        "inclusion_proof": _hex_proof(tlog.inclusion_proof([entry_l_bytes], 0)),
+        "checkpoint": checkpoint_l,
+    }
+    write_vector(
+        "35-transfer/l-countersigner-compromised-old-receipt-revives",
+        payload=None,
+        envelope=envelope_a,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, manifest_l_v2, "tls"),
+            chains={ISSUER_ID: [manifest_l_v1, manifest_l_v2]},
+        ),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": [f"revocation record for '{RECEIPT_ID}' failed verification, ignored"],
+        },
+        revocation_record=rev_l,
+        transfer_view=[{"record": record_l, "evidence": evidence_l}],
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
     )
 
 

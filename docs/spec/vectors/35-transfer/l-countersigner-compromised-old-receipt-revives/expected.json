@@ -1,0 +1,12 @@
+{
+  "binding": "not_checked",
+  "errors": [],
+  "ok": true,
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "trust": "verified",
+  "warnings": [
+    "revocation record for '01JZ5PDHT0000G40R40M30E209' failed verification, ignored"
+  ]
+}

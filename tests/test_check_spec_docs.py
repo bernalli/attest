@@ -2558,6 +2558,9 @@ def test_an_oversized_numeric_claim_is_reported_not_allowed_to_crash(
     [
         # The shapes that shipped stale, verbatim in form.
         "The 130-leaf conformance corpus is the gate.",
+        # TM-25's own shape, which shipped uncovered: an adjective between
+        # "leaf" and "corpus" made the count invisible to every shape.
+        "The 130-leaf shared corpus is the gate.",
         "reproduce all 130 of them",
         "`v0.2` (all leaves, currently 156)",
         # README.md's own sentence, which shipped stale while the sentence one
