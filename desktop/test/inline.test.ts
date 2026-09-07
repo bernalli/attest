@@ -237,8 +237,19 @@ describe('the shell policy is what --check now enforces', () => {
 
   // Every one of these exits 0 against the rules this replaces, measured before the
   // change: only the meta refresh and the literal `javascript:` spelling were caught.
+  //
+  // Row 40 carries its own timeout, not the table's: it is the first row to call
+  // mutant(), which builds the artifact lazily and pays for it alone (~4.5-5.2s measured
+  // here), while its siblings replay work already cached and finish in ~0.1-0.25s.
+  // `test.each` takes one bound for the whole table, so giving the table 60_000 would
+  // grant it to all six rows instead of the one that needs it.
+  test('row 40 (a meta refresh inside the select, which no tree parser sees) is refused, and the refusal names a rule', () => {
+    const run = check(copy(mutant(40).bytes))
+    expect(run.status).not.toBe(0)
+    expect(`${run.stderr}`).toMatch(/R-[A-Z-]+/)
+  }, 60_000)
+
   test.each([
-    [40, 'a meta refresh inside the select, which no tree parser sees'],
     [47, 'a javascript href'],
     [48, 'a data href carrying a document'],
     [67, 'the allowed link with its first letter as a character reference'],
