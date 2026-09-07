@@ -23,7 +23,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
-from attest import canon, keys, pq
+from attest import canon, keys, pq, trust_material
 
 _DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _ACTIVE = "active"
@@ -829,6 +829,34 @@ def verify_artifact_manifest(manifest: dict[str, Any], key_manifest: dict[str, A
     `MAX_ARTIFACT_ENTRIES` — the G1 ceiling (attest-versioning.md §5
     amendment) on the sibling array this function is the self-consistency
     gate for, mirroring `verify_key_manifest`'s `MAX_MANIFEST_KEYS` check.
+
+    `key_manifest` — never `manifest`, which is the document UNDER
+    EXAMINATION rather than trusted material — is MATERIALIZED here, at the
+    public boundary, through `trust_material.materialized_key_manifest`, the
+    same boundary `verify.py` applies to the trust store and every sibling
+    side-document module (`revocation`, `transfer`, `grant`, `authority`)
+    applies to its own `key_manifest` parameter. The entry predicates below
+    (`entry.get("status")`, `entry.get("valid_to")`) are shadowable, so
+    without the boundary a manifest can be authentic and lying at the same
+    time. Callers that already hold a materialized manifest use
+    `_verify_artifact_manifest`, so the cost is one pass per public call and
+    never one per artifact/loop iteration.
+    """
+    materialized = trust_material.materialized_key_manifest(key_manifest)
+    if materialized is None:
+        return False
+    return _verify_artifact_manifest(manifest, materialized)
+
+
+def _verify_artifact_manifest(manifest: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_artifact_manifest`'s body, over an ALREADY MATERIALIZED `key_manifest`.
+
+    Second precondition on top of the public one: `key_manifest` is the
+    output of `trust_material.materialized_key_manifest`, so every value it
+    holds is of exact built-in type and the `.get` reads below cannot be
+    shadowed. Calling this with a raw caller object reopens the class the
+    boundary exists to close. `manifest` (the document under examination) is
+    NOT materialized here, unchanged from before this boundary existed.
     """
     manifest_version = manifest.get("manifest_version")
     if "manifest_version" in manifest and (

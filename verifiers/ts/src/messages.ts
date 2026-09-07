@@ -110,6 +110,15 @@ export const WARN = {
 export const unsupportedAttestVersion = (v: unknown) => `unsupported attest_version: ${pyRepr(v)}`
 export const signaturesCount = (n: number) => `signatures must contain exactly one entry, got ${n}`
 export const unsupportedSigAlg = (alg: unknown) => `unsupported signature algorithm: ${pyRepr(alg)}`
+// Python parity: verify.py's `_ERR_TRUST_STORE_UNREADABLE`. Byte-identical on
+// purpose — a caller comparing the two verifiers' errors must not see a
+// difference where there is none. It names the member that ACTUALLY failed:
+// the earlier wording said "its manifests" whatever had failed, which sent an
+// embedder whose artifact manifests were malformed to debug their key
+// manifests. A refusal that accuses the wrong thing is worse than a vague one.
+export const trustStoreUnreadable = (member: string | null) =>
+  `trust store could not be materialized: ${member === null ? 'the store' : pyRepr(member)} is not readable as data`
+
 export const manifestNotSelfConsistent = (issuer: string) =>
   `issuer manifest for ${pyRepr(issuer)} is not self-consistent: its own signature does not verify`
 

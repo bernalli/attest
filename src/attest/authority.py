@@ -55,7 +55,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, cast
 
-from attest import canon, grant, keys, manifests, pq, transfer
+from attest import canon, grant, keys, manifests, pq, transfer, trust_material
 
 # Registry-governed vocabulary (attest-versioning.md §6.11). Named constants
 # rather than inline literals so a registration is one edit here.
@@ -459,6 +459,27 @@ def verify_authorization_signature(document: dict[str, Any], key_manifest: dict[
     PRECONDITION: the caller has already established
     `manifests.verify_key_manifest(key_manifest)`. Callers checking many
     documents against ONE manifest hoist that call out of their loop.
+
+    `key_manifest` is MATERIALIZED here, at the public boundary, through
+    `trust_material.materialized_key_manifest` — the same boundary
+    `grant.verify_grant_signature` applies to its own `key_manifest`
+    parameter. Callers that already hold a materialized manifest use
+    `_verify_authorization_signature`, so the cost is one pass per public call
+    and never one per document.
+    """
+    materialized = trust_material.materialized_key_manifest(key_manifest)
+    if materialized is None:
+        return False
+    return _verify_authorization_signature(document, materialized)
+
+
+def _verify_authorization_signature(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_authorization_signature`'s body, over an ALREADY MATERIALIZED manifest.
+
+    Second precondition on top of the public one: `key_manifest` is the
+    output of `trust_material.materialized_key_manifest`, so every value it
+    holds is of exact built-in type. Calling this with a raw caller object
+    reopens the class the boundary exists to close.
     """
     try:
         if not _valid_authorization_shape(document):
@@ -484,12 +505,18 @@ def verify_authorization(document: dict[str, Any], key_manifest: dict[str, Any])
     Defense-in-depth: `key_manifest` itself must be self-consistent, so a
     fabricated publisher manifest paired with a matching fabricated signature
     cannot verify. Fails closed on every malformed input, never raises.
+
+    The manifest is materialized ONCE here and both halves run against that
+    one reconstruction, mirroring `grant.verify_grant`.
     """
     try:
         if not _valid_authorization_shape(document):
             return False
-        return manifests.verify_key_manifest(key_manifest) and verify_authorization_signature(
-            document, key_manifest
+        materialized = trust_material.materialized_key_manifest(key_manifest)
+        if materialized is None:
+            return False
+        return manifests.verify_key_manifest(materialized) and _verify_authorization_signature(
+            document, materialized
         )
     except Exception:  # see verify_authorization_signature
         return False

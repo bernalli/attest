@@ -3,6 +3,10 @@ import { verifyStrict } from './ed25519.js'
 import { verifyStrict as verifyMldsaStrict } from './mldsa.js'
 import { b64uDecode } from './b64u.js'
 import { parseStrictUtc } from './dates.js'
+// Value import only — `trustMaterial.ts`'s own import of this module (`TrustStore`)
+// is `import type`, which TypeScript always elides from emitted JS, so this does
+// not close a runtime cycle between the two modules.
+import { materializeKeyManifest } from './trustMaterial.js'
 
 export type KeyStatus = 'active' | 'retired' | 'compromised'
 export interface KeyEntry {
@@ -343,7 +347,34 @@ export function artifactChainContinuous(chain: JsonObject[]): boolean {
 // an Ed25519-only entry with a stray sig_ml_dsa_65 leg likewise fails closed
 // (see verifySignatureBlock). Ed25519-only signers keep v0.1 behavior
 // byte-for-byte (Stage 2 Task 6/8 sibling-patch parity).
+// `keyManifest` is MATERIALIZED here, at the public boundary, before any
+// predicate reads it: `entry['status']`/`entry['valid_from']`/`entry['valid_to']`
+// (reached through `findKey`/`withinReleaseWindow`) and `keyManifest['issuer']`
+// go through whatever accessor the caller's trust-store object defines, so
+// without the boundary the same manifest is authentic and lying at once, the
+// same class `verifyRecordSignature` (revocation.ts) and `verifyGrant`
+// (grant.ts) close. `manifest` — the artifact manifest UNDER EXAMINATION — is
+// deliberately NOT materialized here: it is the document a caller's own trust
+// store already holds as data (`TrustStore.artifact_manifests`, itself covered
+// by `materializeTrustStore`'s boundary), and it authenticates through its own
+// signature below, not through a read of `keyManifest`.
 export function verifyArtifactManifest(manifest: JsonObject, keyManifest: JsonObject): boolean {
+  try {
+    const materialized = materializeKeyManifest(keyManifest)
+    if (materialized === null) return false
+    return verifyArtifactManifestMaterialized(manifest, materialized)
+  } catch { return false }
+}
+
+// `verifyArtifactManifest`'s body, over an ALREADY MATERIALIZED `keyManifest`.
+// PRECONDITION: `keyManifest` is the output of `materializeKeyManifest` (or is
+// otherwise known to hold only own data — no getter, no Proxy). A caller that
+// already holds such a `keyManifest` and calls this in a loop — one issuer
+// manifest checked against several artifact-manifest chain members — pays the
+// materialization once instead of once per member; `verifyArtifactManifest`
+// itself remains the safe default for a caller holding only the raw,
+// possibly-accessor-backed object.
+export function verifyArtifactManifestMaterialized(manifest: JsonObject, keyManifest: JsonObject): boolean {
   try {
     const manifestVersion = manifest['manifest_version']
     if ('manifest_version' in manifest && (typeof manifestVersion !== 'bigint' || manifestVersion < 1n)) {

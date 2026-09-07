@@ -287,12 +287,17 @@ class TrustStore:
 # exception: `verify()` answers malformed trust material the same way it
 # answers a manifest that fails its self-consistency check — `ok` false, the
 # reason named — rather than crashing an embedder's request handler.
+# `{member}` is the trust-store field that actually failed. The message used to
+# say "its manifests" whatever failed, which sent an embedder whose artifact
+# manifests were malformed to debug their key manifests — a refusal that
+# accuses the wrong thing is worse than a vague one, because it is actionable
+# and wrong. Kept byte-identical with the TypeScript twin (see messages.ts).
 _ERR_TRUST_STORE_UNREADABLE = (
-    "trust store could not be materialized: its manifests are not readable as data"
+    "trust store could not be materialized: {member} is not readable as data"
 )
 
 
-def _materialized_trust_store(trust_store: TrustStore) -> TrustStore | None:
+def _materialized_trust_store(trust_store: TrustStore) -> tuple[TrustStore | None, str | None]:
     """The caller's trust store as DATA, or `None` if it cannot be read as data.
 
     This is the ONE boundary between the embedding application's objects and
@@ -314,19 +319,24 @@ def _materialized_trust_store(trust_store: TrustStore) -> TrustStore | None:
     fields are admitted and what a refusal means, this function owns nothing
     but the two-line rebuild.
 
-    Cost is proportional to the trust store, and each public entry point pays
-    it once. `verify()` pays it always; `evaluate_grant` and
-    `evaluate_publisher_authority` pay it only below their capability gates,
-    so a caller that supplies no §18/§20 evidence pays nothing extra and the
-    duplicate pass exists only on the rails that do supply it. Measured on a
-    one-issuer store the pass is a fraction of the Ed25519 work already being
-    done; on a store at `manifests.MAX_MANIFEST_KEYS` it is comparable to it, so an
-    embedder holding a very large store should scope what it hands in.
+    Cost is LINEAR IN THE SIZE OF THE STORE, and each public entry point pays
+    it once — `verify()` always, the grant and authority evaluators only below
+    their capability gates and only when `verify()` did not already pay
+    (`_already_materialized`). Measured here, one receipt, the same manifest
+    replicated per issuer, boundary off against on in the same process: **+11%
+    at one issuer, 6.9x at 50, 52x at 500** — the factor grows with the store
+    because the pass is linear in it. The earlier claim that the cost is
+    "comparable to the Ed25519 work at `manifests.MAX_MANIFEST_KEYS`" was wrong
+    twice over: the measured factor is far larger, and that constant bounds
+    KEYS PER MANIFEST, not manifests per store — the store has no ceiling at
+    all. An embedder holding a large multi-issuer store must hand in the
+    manifests it means the verifier to trust, not a catalogue.
     """
     try:
-        return TrustStore(**trust_material.trust_store_fields(trust_store))
-    except trust_material.TrustMaterialError:
-        return None
+        return TrustStore(**trust_material.trust_store_fields(trust_store)), None
+    except trust_material.TrustMaterialError as exc:
+        # The member NAME, not a guess.
+        return None, exc.member
 
 
 @dataclass(frozen=True)
@@ -1484,6 +1494,12 @@ def _resolve_transfer_backing(
     (`{"record": <transfer record>, "evidence": <§10.2 evidence bundle>}`),
     or `None` if no claim survives every gate below.
 
+    PRECONDITION: `issuer_manifest` is ALREADY MATERIALIZED — it came out of
+    `_materialized_trust_store`. This function reaches the hoisted
+    `transfer._verify_record_signature`, which does not re-apply the boundary,
+    so a raw caller object handed in here would reopen the class that boundary
+    closes. Private for exactly that reason.
+
     `transfer_view` is materialized once at the untrusted boundary — the
     SAME `canon.dumps`/size-bound/`except Exception` confinement
     `_revocation_deadline_satisfied` already applies to `revocation_evidence`
@@ -1494,7 +1510,7 @@ def _resolve_transfer_backing(
 
     1. `record` is a dict whose `receipt_id` equals `payload`'s own — else
        the claim is irrelevant to this receipt and is skipped silently.
-    2. `transfer.verify_record_signature(record, issuer_manifest)` — the
+    2. `transfer._verify_record_signature(record, issuer_manifest)` — the
        issuer's own signature (hoisting `manifests.verify_key_manifest` once
        here, mirroring `_classify_revocation`'s own hoisting of the same
        check — this function is called at most once per classification).
@@ -1563,7 +1579,11 @@ def _resolve_transfer_backing(
         if not isinstance(record, dict) or record.get("receipt_id") != receipt_id:
             continue
 
-        if not manifest_ok or not transfer.verify_record_signature(record, issuer_manifest):
+        # The MATERIALIZED variant, deliberately: `issuer_manifest` came out of
+        # `_materialized_trust_store` before this function was reached, and the
+        # public entry point would re-materialize it once PER RECORD instead of
+        # once per call. The boundary is not skipped here, it is hoisted.
+        if not manifest_ok or not transfer._verify_record_signature(record, issuer_manifest):
             _append_once(_WARN_TRANSFERRED_REVOCATION_UNBACKED)
             continue
 
@@ -1633,6 +1653,11 @@ def _classify_revocation(
     transfer_view: list[dict[str, Any]] | None = None,
 ) -> str:
     """§6 step 6 / §3.1: revocation-by-class.
+
+    PRECONDITION: `issuer_manifest` is ALREADY MATERIALIZED, exactly as in
+    `_resolve_transfer_backing` above and for the same reason — the per-record
+    loop below uses `revocation._verify_record_signature`, the variant that
+    does not re-apply the boundary.
 
     A record is a candidate revocation for THIS receipt only if it (a)
     matches the payload's `receipt_id`, (b) authenticates against
@@ -1792,7 +1817,10 @@ def _classify_revocation(
     authenticated: list[dict[str, Any]] = []
     if manifest_ok:
         for record in admitted_view:
-            if isinstance(record, dict) and revocation.verify_record_signature(
+            # Materialized variant, hoisted for the same reason as the
+            # transfer rail above: this loop runs up to
+            # `MAX_REVOCATION_RECORDS` times against ONE manifest.
+            if isinstance(record, dict) and revocation._verify_record_signature(
                 record, issuer_manifest
             ):
                 authenticated.append(record)
@@ -2123,6 +2151,7 @@ def evaluate_grant(
     grant_view: dict[str, Any] | None,
     *,
     anchor_policy: anchor.AnchorPolicy | None = None,
+    _already_materialized: bool = False,
 ) -> GrantVerdict:
     """§18.4's deterministic, short-circuiting evaluation order, steps 1-11.
 
@@ -2169,10 +2198,16 @@ def evaluate_grant(
     # and this pass is redundant but harmless — every public entry point being
     # independently fail-closed is worth one extra copy on a rail that is
     # exercised only when §18 evidence is actually supplied.
-    materialized_store = _materialized_trust_store(trust_store)
-    if materialized_store is None:
-        return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED)
-    trust_store = materialized_store
+    # `_already_materialized` is set ONLY by `verify()`, which materialized the
+    # store at its own boundary. A second pass over a store that is already
+    # exact built-in types cannot change a verdict, and it is measurably not
+    # free: the pass is linear in the SIZE of the store, so on a large
+    # multi-issuer store the redundant copies dominate the call.
+    if not _already_materialized:
+        materialized_store, _unreadable = _materialized_trust_store(trust_store)
+        if materialized_store is None:
+            return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED)
+        trust_store = materialized_store
     materialized_grant_view = _materialize_grant_view(grant_view)
 
     # --- Step 1: the pledge itself, from the signed payload alone.
@@ -2342,8 +2377,23 @@ def _resolve_effective_grant(
     what §18.3 rejects, and a replayed copy is not a second document.
     """
     candidates: dict[str, dict[str, Any]] = {floor_hash: floor}
+    # `verify_key_manifest` is hoisted out of the loop and the signature check
+    # uses the MATERIALIZED variant: `manifest` came from the already
+    # materialized trust store, and the public `verify_grant` would repeat both
+    # halves — including a fresh materialization — once per later grant.
+    # `isinstance` first: the public `verify_grant` wrapped BOTH halves in a
+    # try/except returning False, and hoisting the manifest check out of the
+    # loop took it out of that guard. The caller does validate `manifest`
+    # before reaching here, so this is belt rather than fix — but a hoist that
+    # silently narrows a fail-closed path is the kind of change that is only
+    # noticed later, by something else.
+    manifest_ok = isinstance(manifest, dict) and manifests.verify_key_manifest(manifest)
     for later in later_grants if isinstance(later_grants, list) else []:
-        if not isinstance(later, dict) or not grant_module.verify_grant(later, manifest):
+        if (
+            not manifest_ok
+            or not isinstance(later, dict)
+            or not grant_module._verify_grant_signature(later, manifest)
+        ):
             continue
         if not _member_equals(later, "publisher", _own_member(floor, "publisher")):
             continue
@@ -2648,6 +2698,8 @@ def evaluate_publisher_authority(
     payload: dict[str, Any],
     trust_store: TrustStore,
     authority_view: dict[str, Any] | None,
+    *,
+    _already_materialized: bool = False,
 ) -> AuthorityVerdict:
     """Section 20.4's deterministic, short-circuiting evaluation order."""
     if authority_view is not None and not isinstance(authority_view, dict):
@@ -2657,10 +2709,12 @@ def evaluate_publisher_authority(
     if authority_view is None:
         return AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
     # Same boundary, same placement rule, as `evaluate_grant` above.
-    materialized_store = _materialized_trust_store(trust_store)
-    if materialized_store is None:
-        return AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
-    trust_store = materialized_store
+    # Same reason as `evaluate_grant` above.
+    if not _already_materialized:
+        materialized_store, _unreadable = _materialized_trust_store(trust_store)
+        if materialized_store is None:
+            return AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
+        trust_store = materialized_store
     materialized_authority_view = _materialize_authority_view(authority_view)
 
     # --- Step 1.
@@ -2976,9 +3030,9 @@ def verify(
     # the verdict and the message it has always had: a well-formed store
     # materializes, so no existing outcome moves, and a store that does not
     # materialize is refused before one bit of it has steered a decision.
-    materialized_trust_store = _materialized_trust_store(trust_store)
+    materialized_trust_store, unreadable_member = _materialized_trust_store(trust_store)
     if materialized_trust_store is None:
-        return _invalid(_ERR_TRUST_STORE_UNREADABLE)
+        return _invalid(_ERR_TRUST_STORE_UNREADABLE.format(member=unreadable_member or "the store"))
     trust_store = materialized_trust_store
 
     # Resolve trust as soon as we can identify the claimed issuer, even if a
@@ -3085,10 +3139,16 @@ def verify(
             members = [candidate_artifact_manifest]
             if am_chain:
                 members.extend(am_chain)
+            # `_verify_artifact_manifest`, the MATERIALIZED variant: this
+            # `all(...)` runs once per chain member against ONE manifest, and
+            # `issuer_manifest` came out of `_materialized_trust_store` above.
+            # The public door would re-materialize it per member. The boundary
+            # is hoisted, not skipped — same shape as the transfer and
+            # revocation loops.
             authenticated = (
                 isinstance(issuer_manifest, dict)
                 and all(
-                    manifests.verify_artifact_manifest(member, issuer_manifest)
+                    manifests._verify_artifact_manifest(member, issuer_manifest)
                     for member in members
                     if isinstance(member, dict)
                 )
@@ -3433,9 +3493,15 @@ def verify(
         # evaluating a grant against a payload that failed that conditional
         # would be reasoning about a receipt the verifier has already rejected.
         grant_verdict = evaluate_grant(
-            payload, trust_store, grant_view, anchor_policy=anchor_policy
+            payload,
+            trust_store,
+            grant_view,
+            anchor_policy=anchor_policy,
+            _already_materialized=True,
         )
-        authority_verdict = evaluate_publisher_authority(payload, trust_store, authority_view)
+        authority_verdict = evaluate_publisher_authority(
+            payload, trust_store, authority_view, _already_materialized=True
+        )
     else:
         revocation_result = _REVOCATION_UNKNOWN
         binding_result = _BINDING_NOT_CHECKED

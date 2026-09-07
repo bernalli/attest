@@ -23,7 +23,7 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
-from attest import canon, keys, manifests, pq
+from attest import canon, keys, manifests, pq, trust_material
 
 # Re-exported, not owned: `ulid` holds the one Python declaration of the §5.1
 # receipt-id grammar. The name stays here because it is published API (a
@@ -96,6 +96,15 @@ def record_hash(record: dict[str, Any]) -> str:
 def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
     """Verify `record`'s own signature against an ALREADY self-verified `key_manifest`.
 
+    `key_manifest` is MATERIALIZED here, at the public boundary, before any
+    predicate reads it (`trust_material.materialized_key_manifest`, the same
+    boundary `verify()` applies to the trust store); a manifest that cannot be
+    read as data verifies nothing. In-package callers that hold an
+    already-materialized manifest — `verify.py`, which materializes the whole
+    trust store once per call, and `transfer.audit_chain`, which materializes
+    once per audit — call `_verify_record_signature` instead, so the boundary
+    stays one pass per public call and never one per record.
+
     Exactly `verify_record` minus the `manifests.verify_key_manifest`
     self-consistency check: the signer key must be **active** in
     `key_manifest`, with its `[valid_from, valid_to]` window covering the
@@ -117,6 +126,21 @@ def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]
     one manifest self-verify per classification, not per record (review
     improvement #17). To verify a single record, use `verify_record`,
     which composes both halves.
+    """
+    materialized = trust_material.materialized_key_manifest(key_manifest)
+    if materialized is None:
+        return False
+    return _verify_record_signature(record, materialized)
+
+
+def _verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_record_signature`'s body, over an ALREADY MATERIALIZED manifest.
+
+    Second precondition on top of the public one: `key_manifest` is the output
+    of `trust_material.materialized_key_manifest`, so every value it holds is
+    of exact
+    built-in type and the `.get` reads below cannot be shadowed. Calling this
+    with a raw caller object reopens the class the boundary exists to close.
     """
     try:
         if not isinstance(record, dict):
@@ -185,10 +209,18 @@ def verify_record(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
     out-of-window input — never raises (Task 6's fix, extended by the Task 9
     hardening review). Composes `manifests.verify_key_manifest` +
     `verify_record_signature`; loop-over-records callers hoist the former.
+
+    The manifest is materialized ONCE here and both halves run against that
+    one reconstruction — never against a second read of the caller's object,
+    which is what would let a manifest be self-consistent for the first half
+    and something else for the second.
     """
     try:
-        return manifests.verify_key_manifest(key_manifest) and verify_record_signature(
-            record, key_manifest
+        materialized = trust_material.materialized_key_manifest(key_manifest)
+        if materialized is None:
+            return False
+        return manifests.verify_key_manifest(materialized) and _verify_record_signature(
+            record, materialized
         )
     except Exception:
         return False

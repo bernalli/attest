@@ -50,7 +50,7 @@ import hashlib
 from collections.abc import Callable
 from typing import Any, cast
 
-from attest import canon, keys, manifests, pq, tlog, transfer
+from attest import canon, keys, manifests, pq, tlog, transfer, trust_material
 
 _ACTIVE = "active"
 _MAX_JCS_INTEGER = 2**53 - 1
@@ -391,6 +391,32 @@ def verify_grant_signature(document: dict[str, Any], key_manifest: dict[str, Any
     PRECONDITION: the caller has already established
     `manifests.verify_key_manifest(key_manifest)`. Callers checking many
     documents against ONE manifest hoist that call out of their loop.
+
+    `key_manifest` is MATERIALIZED here, at the public boundary, through the
+    ONE spelling of it, `trust_material.materialized_key_manifest`, the same
+    boundary `transfer.verify_record_signature`/`revocation.verify_record_signature`
+    apply to their own `key_manifest` parameter. The entry predicates this
+    composes down to (`entry.get("status")`, `entry.get("valid_to")` inside
+    `_verify_signed_document`) are shadowable and the signature check reads
+    own data, so without the boundary a manifest can be authentic and lying at
+    the same time. Callers that already hold a materialized manifest use
+    `_verify_grant_signature`, so the cost is one pass per public call and
+    never one per document.
+    """
+    materialized = trust_material.materialized_key_manifest(key_manifest)
+    if materialized is None:
+        return False
+    return _verify_grant_signature(document, materialized)
+
+
+def _verify_grant_signature(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_grant_signature`'s body, over an ALREADY MATERIALIZED manifest.
+
+    Second precondition on top of the public one: `key_manifest` is the output
+    of `trust_material.materialized_key_manifest`, so every value it holds is
+    of exact built-in type and the `.get` reads it feeds cannot be shadowed.
+    Calling this with a raw caller object reopens the class the boundary
+    exists to close.
     """
     try:
         if not _valid_grant_shape(document):
@@ -410,10 +436,19 @@ def verify_grant(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool
     fabricated publisher manifest paired with a matching fabricated grant
     signature cannot verify. Fails closed on every malformed input, never
     raises.
+
+    The manifest is materialized ONCE here and both halves run against that
+    one reconstruction — never against a second read of the caller's object,
+    which is what would let a manifest be self-consistent for the first half
+    and something else for the second (mirrors
+    `transfer.verify_record`/`revocation.verify_record`).
     """
     try:
-        return manifests.verify_key_manifest(key_manifest) and verify_grant_signature(
-            document, key_manifest
+        materialized = trust_material.materialized_key_manifest(key_manifest)
+        if materialized is None:
+            return False
+        return manifests.verify_key_manifest(materialized) and _verify_grant_signature(
+            document, materialized
         )
     except Exception:  # see the never-raise note on `signer_domain`
         return False
@@ -427,6 +462,26 @@ def verify_declaration_signature(declaration: dict[str, Any], key_manifest: dict
     Authentication only — whether this signer was ENTITLED to declare
     cessation for a given grant is `declaration_signer_role`, and whether the
     declaration reaches that grant's scope is `declaration_covers_grant`.
+
+    `key_manifest` is MATERIALIZED here, at the public boundary, through
+    `trust_material.materialized_key_manifest` — the same boundary
+    `verify_grant_signature` applies. Callers that already hold a
+    materialized manifest use `_verify_declaration_signature`.
+    """
+    materialized = trust_material.materialized_key_manifest(key_manifest)
+    if materialized is None:
+        return False
+    return _verify_declaration_signature(declaration, materialized)
+
+
+def _verify_declaration_signature(
+    declaration: dict[str, Any], key_manifest: dict[str, Any]
+) -> bool:
+    """`verify_declaration_signature`'s body, over an ALREADY MATERIALIZED manifest.
+
+    Second precondition on top of the public one: `key_manifest` is the
+    output of `trust_material.materialized_key_manifest`. Calling this with a
+    raw caller object reopens the class the boundary exists to close.
     """
     try:
         if not _valid_declaration_shape(declaration):
@@ -438,10 +493,17 @@ def verify_declaration_signature(declaration: dict[str, Any], key_manifest: dict
 
 def verify_declaration(declaration: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
     """`verify_grant` for a cessation declaration: self-consistent manifest
-    plus `verify_declaration_signature`. Fails closed, never raises."""
+    plus `verify_declaration_signature`. Fails closed, never raises.
+
+    The manifest is materialized ONCE here and both halves run against that
+    one reconstruction, mirroring `verify_grant`.
+    """
     try:
-        return manifests.verify_key_manifest(key_manifest) and verify_declaration_signature(
-            declaration, key_manifest
+        materialized = trust_material.materialized_key_manifest(key_manifest)
+        if materialized is None:
+            return False
+        return manifests.verify_key_manifest(materialized) and _verify_declaration_signature(
+            declaration, materialized
         )
     except Exception:  # see the never-raise note on `signer_domain`
         return False

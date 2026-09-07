@@ -7,9 +7,12 @@ import {
 import {
   TrustStore, findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
   duplicateKids,
-  artifactChainContinuous, verifyArtifactManifest, signableManifestBytes, verifySignatureBlock,
+  artifactChainContinuous, verifyArtifactManifest, verifyArtifactManifestMaterialized,
+  signableManifestBytes, verifySignatureBlock,
   manifestSignatureIsAuthentic,
 } from './manifests.js'
+import { materializeTrustStoreDetailed } from './trustMaterial.js'
+import { trustStoreUnreadable } from './messages.js'
 import { verifyStrict, Ed25519LengthError } from './ed25519.js'
 import { verifyStrict as verifyMldsaStrict, ML_DSA_65_ALG } from './mldsa.js'
 import { b64uDecode } from './b64u.js'
@@ -197,9 +200,20 @@ function obj(v: JsonValue | undefined): JsonObject | null {
 // false }` → every revocation record is treated as forged → a genuinely REVOKED receipt
 // reports not_revoked (silent fail-open). Fail fast at the public boundary instead. Walks
 // arrays and plain objects only; non-plain values (e.g. Uint8Array) are not walked.
+/**
+ * The ONE failure `assertCanonParsed` is allowed to throw for: a trust store
+ * built with `JSON.parse`. That is a programming error in the embedder's own
+ * code and the loud failure is the right one. It is a distinct class so that
+ * `verify()` can let it through while turning every OTHER throw raised during
+ * that walk — a hostile accessor's, say — into a verdict, which is what the
+ * Python twin returns for the same store. `extends TypeError` keeps every
+ * existing `instanceof TypeError` caller working.
+ */
+class CanonParseContractError extends TypeError {}
+
 function assertCanonParsed(value: unknown, label: string): void {
   if (typeof value === 'number')
-    throw new TypeError(`${label} must be parsed with loadsStrict (bigint integers), not JSON.parse — found a JS number`)
+    throw new CanonParseContractError(`${label} must be parsed with loadsStrict (bigint integers), not JSON.parse — found a JS number`)
   if (Array.isArray(value)) {
     for (const item of value) assertCanonParsed(item, label)
     return
@@ -967,8 +981,24 @@ export function verify(
   // configuration, so a wrong parse there is a programming error and the loud
   // failure is the right one. Does NOT walk envelopeBytes (parsed internally)
   // or disclosure (holds raw Uint8Array fields).
-  assertCanonParsed(trustStore.manifests, 'trustStore.manifests')
-  if (trustStore.chains != null) assertCanonParsed(trustStore.chains, 'trustStore.chains')
+  // F5: this walk runs the caller's own accessors, and a member that THREW
+  // used to propagate out of `verify()` — where the Python twin returns a
+  // verdict for the same store. An embedder porting between the two cores got
+  // a different failure MODE for the same input, while the boundary's own
+  // documentation sells it on "rather than crashing an embedder's request
+  // handler". Only the JSON.parse contract violation stays a throw.
+  // The verdict is DEFERRED rather than returned here: `invalid` does not
+  // exist yet at this point, and deferring also puts the refusal at the same
+  // position the Python twin puts it — after the envelope checks — so a
+  // malformed envelope still reports its own reason first, in both cores.
+  let trustStoreUnreadableEarly = false
+  try {
+    assertCanonParsed(trustStore.manifests, 'trustStore.manifests')
+    if (trustStore.chains != null) assertCanonParsed(trustStore.chains, 'trustStore.chains')
+  } catch (error) {
+    if (error instanceof CanonParseContractError) throw error
+    trustStoreUnreadableEarly = true
+  }
   // The revocation view is NOT checked here any more, and its absence is the
   // point. This guard existed to stop a JSON.parse'd view from failing open in
   // silence, and it did it by THROWING out of a public surface for a property
@@ -1097,6 +1127,18 @@ export function verify(
   const signatures = envelope['signatures']
   if (!Array.isArray(signatures)) return invalid(ERR.MISSING_SIGNATURES)
 
+  // The trust-store boundary, immediately before the FIRST read of it, so
+  // every envelope refusal above keeps the verdict and the message it has
+  // always had. AFTER `assertCanonParsed` above, deliberately: that guard is a
+  // caller-contract check that must stay LOUD (a JSON.parse'd store is a
+  // programming error, not a verdict), and materializing first would turn its
+  // throw into an `invalid` result. See ./trustMaterial.ts for why the
+  // boundary and not a defensive spelling at every read.
+  if (trustStoreUnreadableEarly) return invalid(trustStoreUnreadable(null))
+  const materialized = materializeTrustStoreDetailed(trustStore)
+  if (materialized.store === null) return invalid(trustStoreUnreadable(materialized.member))
+  trustStore = materialized.store
+
   // Trust resolution — AFTER payload/signatures checks, BEFORE step 1. Never reset later.
   const issuerBlock = obj(payload['issuer'])
   const issuerId = issuerBlock ? issuerBlock['id'] : undefined
@@ -1175,7 +1217,11 @@ export function verify(
       const amChain = trustStore.artifact_manifest_chains?.[issuerId]?.[artifactSeries]
       const members = [candidateArtifactManifest, ...(amChain ?? [])]
       const authenticated = issuerManifestForTransparency != null && members.every(
-        member => verifyArtifactManifest(member, issuerManifestForTransparency!),
+        // The MATERIALIZED twin: this runs once per chain member against ONE
+        // manifest, and `issuerManifestForTransparency` came out of
+        // `materializeTrustStoreDetailed` above. The public door would
+        // re-materialize it per member. Python parity: verify.py's same loop.
+        member => verifyArtifactManifestMaterialized(member, issuerManifestForTransparency!),
       )
       if (candidateArtifactManifest['issuer'] !== issuerId) {
         warnings.push(WARN.ARTIFACT_MANIFEST_ISSUER_MISMATCH)
