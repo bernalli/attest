@@ -9,7 +9,9 @@ RAISES — it signals a caller/configuration bug, never adversarial input
 from __future__ import annotations
 
 import copy
+import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -246,6 +248,60 @@ def test_two_digit_year_rejected_for_cross_core_parity() -> None:
     """
     with pytest.raises(witness.WitnessError):
         witness.parse_policy(_policy(epochs=[_epoch(not_before="0001-01-01T00:00:00Z")]))
+
+
+@pytest.mark.parametrize("year", ["0100", "0500", "0999"])
+def test_three_digit_years_are_admissible_as_in_the_typescript_core(year: str) -> None:
+    """The other side of the boundary above, and it is a boundary the two cores
+    have to agree on rather than one this core gets to pick.
+
+    Measured through the public entry point of both cores: `parsePolicy` in
+    `verifiers/ts/src/witness.ts` refuses `0000`-`0099` by an explicit rule and
+    admits everything from `0100` up, while this core refused up to `0999` —
+    900 years in which the same policy document was valid for one verifier and
+    not for the other. The cause was a `strftime` round trip: glibc renders
+    `%Y` below 1000 without padding, so `0999` came back as `999` and the
+    comparison failed. `attest.dates` renders with an explicit format instead,
+    which is why adopting it closes this.
+    """
+    witness.parse_policy(_policy(epochs=[_epoch(not_before=f"{year}-01-01T00:00:00Z")]))
+
+
+def test_the_low_year_boundary_sits_exactly_where_the_typescript_core_puts_it() -> None:
+    """`0099` out, `0100` in — asserted as one fact, because a boundary that
+    moves on one side only is how the two cores drift apart again."""
+    with pytest.raises(witness.WitnessError):
+        witness.parse_policy(_policy(epochs=[_epoch(not_before="0099-12-31T23:59:59Z")]))
+    witness.parse_policy(_policy(epochs=[_epoch(not_before="0100-01-01T00:00:00Z")]))
+
+
+def test_the_typescript_witness_gate_states_the_same_low_year_rule() -> None:
+    """The boundary above is a claim about the OTHER core, and this suite cannot
+    execute that core. Read its rule as source data and pin it, the way
+    `tests/test_shared_predicate_parity.py` pins the representable bound.
+
+    Not decoration. `requireTimestamp` sits ABOVE `parseStrictUtc`, so
+    `dates.test.ts` accepting `0999` says nothing about the witness gate, and
+    the only witness-level low-year assertion over there (`witness.test.ts`,
+    'rejects a two-digit year in both cores') uses `0001`, which keeps passing
+    if the rule widens. Measured: replacing the rule with `/^0\\d\\d\\d-/` leaves
+    both TypeScript assertions green and every test in this file green, while
+    the TypeScript core starts refusing the 0100-0999 this core admits — C-217
+    reopened mirrored, by one character, in silence.
+
+    Counting the matches is half the test: a SECOND anchored year rule appearing
+    beside this one is the same drift.
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "verifiers" / "ts" / "src" / "witness.ts"
+    ).read_text(encoding="utf-8")
+    found = re.findall(r"/\^[^/\n]+-/", source)
+    assert found == ["/^00\\d\\d-/"], (
+        "the TypeScript witness gate must refuse exactly years 0000-0099, the "
+        "boundary this core enforces with `parsed.year < 100`; found "
+        f"{found}. If the rule moved deliberately, move `_require_timestamp` "
+        "in `src/attest/witness.py` with it."
+    )
 
 
 # --- witness pin shape -----------------------------------------------------
