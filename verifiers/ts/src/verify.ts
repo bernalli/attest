@@ -174,6 +174,9 @@ export interface VerifyTransparencyOptions {
 // verify.py's `_KNOWN_EOL_VALUES`.
 const KNOWN_EOL = new Set(['artifacts-remain-redownloadable', 'escrow', 'none', 'sunset-grant'])
 
+/**
+ * trust is deliberately NOT part of isOk (v0.1 §11.1, vector 14b): read result.trust alongside it when you need identity assurance
+ */
 export function isOk(r: VerificationResult): boolean {
   return (
     r.signature === 'valid' && r.schema === 'valid' &&

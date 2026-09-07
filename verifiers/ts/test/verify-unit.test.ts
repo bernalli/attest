@@ -42,7 +42,12 @@ describe('verify unit', () => {
     expect(r.errors.some((e) => e.includes('envelope exceeds'))).toBe(true)
     expect(isOk(r)).toBe(false)
   })
-  it('isOk is the 4-gate rule', () => {
+  // trust is excluded from isOk on purpose, not by omission: the decision is
+  // documented in this package's README (after the `isOk` line) and in the
+  // JSDoc on `isOk` itself, and pinned by conformance vector 14b. Widening
+  // isOk to cover trust is a spec amendment (v0.1 §11.1), not a code change —
+  // it would flip every receipt that verifies today at `unauthenticated_tofu`.
+  it('isOk is the four-gate rule of v0.1 §11.1 (as amended by v0.2 §17.3) and deliberately excludes trust (README, vector 14b)', () => {
     expect(isOk({ signature: 'valid', schema: 'valid', revocation: 'revoked', binding: 'not_checked', trust: 'verified', warnings: [], errors: [] })).toBe(false)
     expect(isOk({ signature: 'valid', schema: 'valid', revocation: 'unknown', binding: 'not_checked', trust: 'unverified_rotation', warnings: [], errors: [] })).toBe(true)
   })

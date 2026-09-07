@@ -368,7 +368,12 @@ class VerificationResult:
         tell "sold" from "revoked" on the same feed. Reachable only under
         Stage-3-capable verification (a caller that evaluates
         `transfer_view`); a verifier that never does keeps v0.1's `ok`
-        formula unchanged."""
+        formula unchanged.
+
+        `trust` is deliberately NOT a component: a receipt reached through a
+        discontinuous rotation or with no provenance still reports `ok:
+        true`. Callers that need identity assurance read `trust` alongside
+        `ok`; the CLI exposes this as `--reject-trust`."""
         return (
             self.signature == _SIG_VALID
             and self.schema == _SCHEMA_VALID

@@ -5937,3 +5937,224 @@ def test_compromise_view_refuses_evidence_for_another_manifest(
     assert rc == cli.EXIT_USAGE_ERROR
     assert "does not commit to this document" in captured.err
     assert not view.exists()
+
+
+# --- verify --reject-trust -----------------------------------------------------
+
+
+def _discontinuous_rotation_envelope(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a receipt whose trust store resolves to `trust: "unverified_rotation"`.
+
+    Mirrors `test_verify.py::test_rotation_discontinuous_chain_yields_unverified_rotation`
+    at the CLI layer: v1 has the sole active key KID; v2 adds a second key and is
+    signed by IT instead of by a key that was active in v1, so the rotation is
+    discontinuous. The receipt is still signed with the original KID, which v2
+    still lists as active, so signature verification succeeds and only the
+    chain continuity check fails. Both manifest versions are written to a
+    `--trust-dir` as separate `keys[]`-bearing files, which `cli._load_trust_dir`
+    groups by issuer and orders by `manifest_version` into a chain. Returns
+    (envelope_path, trust_dir).
+    """
+    seed, pub_out = _keygen(tmp_path, "issuer")
+    manifest_v1 = _manifest_init(tmp_path, seed, "manifest-v1.json")
+    pub = keys.b64u_decode(pub_out.read_text(encoding="utf-8").strip())
+
+    stranger_seed, stranger_pub_out = _keygen(tmp_path, "stranger")
+    stranger_kp = keys.from_seed(
+        keys.b64u_decode(stranger_seed.read_text(encoding="utf-8").strip())
+    )
+    stranger_pub = keys.b64u_decode(stranger_pub_out.read_text(encoding="utf-8").strip())
+    stranger_kid = f"{ISSUER}/keys/test-2#ed25519-1"
+
+    entries_v2 = [
+        manifests.key_entry(KID, pub, VALID_FROM, None, "active"),
+        manifests.key_entry(stranger_kid, stranger_pub, "2026-02-01T00:00:00Z", None, "active"),
+    ]
+    # v2 signed by the stranger key, never active in v1 -> discontinuous rotation.
+    v2 = manifests.build_key_manifest(
+        ISSUER, 2, "2026-02-01T00:00:00Z", entries_v2, stranger_kp, stranger_kid
+    )
+
+    trust_dir = tmp_path / "rotation-trust"
+    trust_dir.mkdir()
+    (trust_dir / "issuer-v1.json").write_text(
+        manifest_v1.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    _write_json(trust_dir / "issuer-v2.json", v2)
+
+    payload_path = _write_payload(tmp_path)
+    envelope_path = _issue(tmp_path, seed, payload_path)
+    return envelope_path, trust_dir
+
+
+def test_verify_reject_trust_fails_exit_on_listed_value(tmp_path: Path, capsys: CapSys) -> None:
+    envelope_path, trust_dir = _discontinuous_rotation_envelope(tmp_path)
+
+    capsys.readouterr()
+    rc = cli.main(["verify", str(envelope_path), "--trust-dir", str(trust_dir)])
+    baseline = capsys.readouterr()
+    assert rc == cli.EXIT_OK
+    baseline_report = json.loads(baseline.out)
+    assert baseline_report["ok"] is True
+    assert baseline_report["trust"] == "unverified_rotation"
+
+    rc = cli.main(
+        [
+            "verify",
+            str(envelope_path),
+            "--trust-dir",
+            str(trust_dir),
+            "--reject-trust",
+            "unverified_rotation",
+        ]
+    )
+    rejected = capsys.readouterr()
+    assert rc == cli.EXIT_VERIFICATION_FAILED
+    assert rejected.out == baseline.out
+    assert "rejected by --reject-trust" in rejected.err
+
+    rc = cli.main(
+        [
+            "verify",
+            str(envelope_path),
+            "--trust-dir",
+            str(trust_dir),
+            "--reject-trust",
+            "bogus",
+        ]
+    )
+    bogus = capsys.readouterr()
+    assert rc == cli.EXIT_USAGE_ERROR
+    assert "--reject-trust: unknown trust value" in bogus.err
+
+    # A trust value not in the requested set never trips the flag. The control
+    # names a value this CLI can actually PRODUCE: `verified` is unreachable
+    # here — `_load_trust_dir` loads every manifest at provenance "bundle", so
+    # `verify` never reports it (docs/faq.md says so twice) — and a control that
+    # names an impossible value cannot tell a working membership test from a
+    # broken one.
+    tofu_dir = tmp_path / "tofu"
+    tofu_dir.mkdir()
+    tofu_seed, _tofu_pub = _keygen(tofu_dir, "issuer")
+    tofu_manifest = _manifest_init(tofu_dir, tofu_seed)
+    tofu_envelope_path = _issue(tofu_dir, tofu_seed, _write_payload(tofu_dir))
+    tofu_trust_dir = _trust_dir(tofu_dir, tofu_manifest)
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "verify",
+            str(tofu_envelope_path),
+            "--trust-dir",
+            str(tofu_trust_dir),
+            "--reject-trust",
+            "unverified_rotation",
+        ]
+    )
+    tofu = json.loads(capsys.readouterr().out)
+    assert rc == cli.EXIT_OK
+    assert tofu["trust"] == "unauthenticated_tofu"
+
+
+def test_verify_reject_trust_stays_silent_for_a_receipt_that_already_failed(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """A refused receipt keeps its own reason on stderr.
+
+    `--reject-trust` and a failed verification both exit 1. If the trust line
+    fired for a receipt whose signature does not verify, an operator reading
+    stderr would take a tampered receipt for a provenance problem — the weaker
+    reason reported for a receipt refused by the stronger one.
+    """
+    seed, _pub = _keygen(tmp_path, "issuer")
+    manifest = _manifest_init(tmp_path, seed)
+    envelope_path = _issue(tmp_path, seed, _write_payload(tmp_path))
+    trust_dir = _trust_dir(tmp_path, manifest)
+
+    doc = json.loads(envelope_path.read_text(encoding="utf-8"))
+    doc["payload"]["work"]["title"] = "Tampered Title"
+    tampered = tmp_path / "tampered.json"
+    tampered.write_text(json.dumps(doc), encoding="utf-8")
+
+    capsys.readouterr()
+    rc = cli.main(["verify", str(tampered), "--trust-dir", str(trust_dir)])
+    baseline = capsys.readouterr()
+    assert rc == cli.EXIT_VERIFICATION_FAILED
+    baseline_report = json.loads(baseline.out)
+    assert baseline_report["ok"] is False
+    assert baseline_report["trust"] == "unauthenticated_tofu"
+
+    rc = cli.main(
+        [
+            "verify",
+            str(tampered),
+            "--trust-dir",
+            str(trust_dir),
+            "--reject-trust",
+            "unauthenticated_tofu",
+        ]
+    )
+    rejected = capsys.readouterr()
+    assert rc == cli.EXIT_VERIFICATION_FAILED
+    assert rejected.out == baseline.out
+    assert rejected.err == baseline.err
+    assert "rejected by --reject-trust" not in rejected.err
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param("", id="empty-string"),
+        pytest.param(",", id="lone-separator"),
+        pytest.param("verified,", id="trailing-separator"),
+        pytest.param("verified,,unverified_rotation", id="empty-entry-between-two-valid"),
+        pytest.param("   ", id="whitespace-only"),
+        pytest.param("VERIFIED", id="wrong-case"),
+        pytest.param("unverified rotation", id="space-for-underscore"),
+        pytest.param("ok", id="a-result-component-that-is-not-a-trust-value"),
+        pytest.param("not_checked", id="a-literal-belonging-to-grant_trust"),
+        pytest.param("verified;unverified_rotation", id="wrong-separator"),
+    ],
+)
+def test_reject_trust_refuses_every_degenerate_value_list(raw: str) -> None:
+    """The flag's only job is to refuse, so its parser must fail closed too.
+
+    The dangerous direction is a later "cleanup" that drops empty entries:
+    `--reject-trust ""` would stop raising and become a gate that matches
+    nothing, silently. Nothing but this test stands between that edit and a
+    green suite.
+    """
+    with pytest.raises(cli.CliUsageError, match="unknown trust value"):
+        cli._parse_reject_trust(raw)
+
+
+def test_reject_trust_names_every_unknown_value_it_found() -> None:
+    """One typo per run, against a message that names only one offender and a
+    different one from run to run, is not a usable error."""
+    with pytest.raises(cli.CliUsageError) as excinfo:
+        cli._parse_reject_trust("bogus1,verified,bogus2")
+    message = str(excinfo.value)
+    assert "'bogus1'" in message
+    assert "'bogus2'" in message
+    assert "unverified_rotation" in message  # the valid names are still listed
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("verified", {"verified"}, id="one-value"),
+        pytest.param(" verified ", {"verified"}, id="surrounding-whitespace-stripped"),
+        pytest.param("verified,verified", {"verified"}, id="duplicate-entry-collapses"),
+        pytest.param(
+            "unauthenticated_tofu,unverified_rotation",
+            {"unauthenticated_tofu", "unverified_rotation"},
+            id="two-values",
+        ),
+        pytest.param(
+            "unverified_rotation, unauthenticated_tofu ,verified",
+            {"unverified_rotation", "unauthenticated_tofu", "verified"},
+            id="all-three-with-ragged-whitespace",
+        ),
+    ],
+)
+def test_reject_trust_accepts_well_formed_value_lists(raw: str, expected: set[str]) -> None:
+    assert cli._parse_reject_trust(raw) == expected

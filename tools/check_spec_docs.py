@@ -2480,6 +2480,59 @@ def collect_errors(
     return errors
 
 
+# TM-80 names conformance leaf 35l, and the leaf ships in a later change than
+# the entry: the entry documents behaviour both cores ALREADY have, while the
+# leaf is what pins it as intended. So for one interval TM-80 must speak of the
+# leaf in the future tense, and the moment the leaf lands that tense is false.
+# Tense here is a claim about the repository, not a style choice, and both
+# directions mislead: a future-tense sentence once the leaf exists tells a
+# reader the outcome is unpinned when the corpus pins it, and a present-tense
+# sentence while the leaf is absent cites a fixture no runner can execute. A
+# promise to correct it by hand is the same instrument that has already left
+# sentences claiming more than the code supported, so it is checked instead.
+_TM80_LEAF_GROUP = _VECTORS_PATH / "35-transfer"
+_TM80_LEAF_PREFIX = "l-"
+_TM80_FUTURE_FORMS = ("leaf 35l is to pin", "to be pinned by leaf 35l")
+_TM80_PRESENT_FORMS = ("leaf 35l pins", "pinned by new leaf 35l")
+
+
+def check_tm80_leaf_tense() -> list[str]:
+    """TM-80's tense about leaf 35l MUST match whether that leaf is on disk.
+
+    Fail-closed: a missing `35-transfer` group is an error rather than a silent
+    pass, because a guard whose input has vanished reports green for the wrong
+    reason. Not wired into `collect_errors()` -- like
+    `check_standards_relationship()` it reads the filesystem rather than
+    cross-referencing another document's parsed structure, so `main()` calls it
+    directly.
+    """
+    if not _TM80_LEAF_GROUP.is_dir():
+        return [f"attest-threat-model.md: vector group {_TM80_LEAF_GROUP.name!r} is missing"]
+    leaves = sorted(
+        child.name
+        for child in _TM80_LEAF_GROUP.iterdir()
+        if child.is_dir() and child.name.startswith(_TM80_LEAF_PREFIX)
+    )
+    # Illustrative fences read exactly like the real entry; same rationale as
+    # collect_errors().
+    text = _strip_fenced_blocks(_THREAT_MODEL_PATH.read_text(encoding="utf-8"))
+    future = [form for form in _TM80_FUTURE_FORMS if form in text]
+    present = [form for form in _TM80_PRESENT_FORMS if form in text]
+
+    errors: list[str] = []
+    if leaves and future:
+        errors.append(
+            f"attest-threat-model.md: leaf {leaves[0]!r} is on disk, so TM-80 must stop "
+            f"speaking of leaf 35l in the future tense (found {future!r})"
+        )
+    if not leaves and present:
+        errors.append(
+            "attest-threat-model.md: TM-80 speaks of leaf 35l in the present tense but no "
+            f"{_TM80_LEAF_PREFIX!r} leaf exists in {_TM80_LEAF_GROUP.name!r} (found {present!r})"
+        )
+    return errors
+
+
 def main() -> int:
     threat_model = _THREAT_MODEL_PATH.read_text(encoding="utf-8")
     privacy = _PRIVACY_PATH.read_text(encoding="utf-8")
@@ -2495,6 +2548,7 @@ def main() -> int:
     errors += check_conformance_doc()
     errors += check_conformance_self_certification()
     errors += check_corpus_counts()
+    errors += check_tm80_leaf_tense()
     errors += check_coined_terms()
     errors += check_package_version_lockstep()
     for error in errors:

@@ -57,6 +57,7 @@ export function verify(
 ): VerificationResult
 
 export function isOk(r: VerificationResult): boolean // signature=valid && schema=valid && revocation!=='revoked' && revocation!=='transferred' && errors.length===0
+// trust is deliberately NOT part of isOk (v0.1 §11.1, vector 14b): read result.trust alongside it when you need identity assurance
 ```
 
 `maxRevocationRecords` bounds the untrusted `revocationView` (default 10000); a view larger than the cap is not evaluated and fails closed (an `errors` entry, so `isOk()` is `false`) for a revocable receipt, or warns for an irrevocable one.
