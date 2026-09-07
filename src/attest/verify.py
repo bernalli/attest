@@ -386,6 +386,8 @@ class _CompromiseClaim:
 
 
 def _parse_date(value: str) -> datetime:
+    if not isinstance(value, str) or not value.isascii():
+        raise ValueError("timestamp must use ASCII digits")
     return datetime.strptime(value, _DATE_FMT)
 
 

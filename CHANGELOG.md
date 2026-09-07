@@ -8,6 +8,17 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Timestamps whose digits are not ASCII are refused at the temporal check. The
+  receipt schema's `\d` classes match Unicode decimal digits under Python's
+  regex engine, so an `issued_at` written with fullwidth or other non-ASCII
+  digits validated, passed the key-validity check through `strptime`, and then
+  failed to parse for the refund-window deadline — leaving a receipt carrying a
+  genuine, authenticated, matching revocation record to verify green. The
+  TypeScript verifier already refused the same bytes, so this closes a
+  cross-language divergence on an input the validator admitted. Covered by a
+  generative regression over the Unicode digit-nine family, not by the single
+  example that found it.
+
 - Release retries reuse gated artifacts, check registry byte identity before each
   publish, and verify PyPI before npm; identical npm versions skip publication.
 
