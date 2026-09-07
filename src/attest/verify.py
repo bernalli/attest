@@ -38,6 +38,7 @@ from attest import (
     revocation,
     tlog,
     transfer,
+    trust_material,
     validate,
 )
 from attest import (
@@ -279,6 +280,53 @@ class TrustStore:
     artifact_manifest_chains: dict[str, dict[str, list[dict[str, Any]]]] = field(
         default_factory=dict
     )
+
+
+# The refusal a public entry point reports when the caller's trust store
+# cannot be read as data. Deliberately a verification ERROR and not an
+# exception: `verify()` answers malformed trust material the same way it
+# answers a manifest that fails its self-consistency check — `ok` false, the
+# reason named — rather than crashing an embedder's request handler.
+_ERR_TRUST_STORE_UNREADABLE = (
+    "trust store could not be materialized: its manifests are not readable as data"
+)
+
+
+def _materialized_trust_store(trust_store: TrustStore) -> TrustStore | None:
+    """The caller's trust store as DATA, or `None` if it cannot be read as data.
+
+    This is the ONE boundary between the embedding application's objects and
+    the verifier's decisions. Everything downstream — `find_key`, the validity
+    window, v0.1 §7.3's absorbing `compromised` floor, rotation continuity —
+    reads key entries with `.get`, `==` and `in`, all of which a mapping or
+    string SUBCLASS can answer differently from the data it serializes. The
+    trust store never passes through `canon.loads_strict` (it is not wire
+    data), so without this call such an object arrives intact at the point of
+    decision: an entry that denies its own `valid_to` makes an expired key
+    immortal, and a `status` that answers `== "active"` yes and
+    `== "compromised"` no resurrects a key the issuer buried.
+
+    After this call every value the verifier can reach is of exact built-in
+    type — the guarantee `attest.trust_material` states and `canon`'s
+    admission boundary provides. The reconstruction happens HERE rather than
+    in that module only because `trust_material` must not import `verify`
+    (the cycle is why `TrustStore` stays where it is); the module owns which
+    fields are admitted and what a refusal means, this function owns nothing
+    but the two-line rebuild.
+
+    Cost is proportional to the trust store, and each public entry point pays
+    it once. `verify()` pays it always; `evaluate_grant` and
+    `evaluate_publisher_authority` pay it only below their capability gates,
+    so a caller that supplies no §18/§20 evidence pays nothing extra and the
+    duplicate pass exists only on the rails that do supply it. Measured on a
+    one-issuer store the pass is a fraction of the Ed25519 work already being
+    done; on a store at `manifests.MAX_MANIFEST_KEYS` it is comparable to it, so an
+    embedder holding a very large store should scope what it hands in.
+    """
+    try:
+        return TrustStore(**trust_material.trust_store_fields(trust_store))
+    except trust_material.TrustMaterialError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -2114,6 +2162,17 @@ def evaluate_grant(
     warnings: list[str] = []
     if grant_view is None:
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED)
+    # The trust-store boundary for the callers who enter HERE (§18.7's
+    # custodian asks this question without re-verifying the receipt). Below
+    # the capability gate, so a caller that supplies no Stage 4 evidence pays
+    # nothing; when `verify()` is the caller the store is already materialized
+    # and this pass is redundant but harmless — every public entry point being
+    # independently fail-closed is worth one extra copy on a rail that is
+    # exercised only when §18 evidence is actually supplied.
+    materialized_store = _materialized_trust_store(trust_store)
+    if materialized_store is None:
+        return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED)
+    trust_store = materialized_store
     materialized_grant_view = _materialize_grant_view(grant_view)
 
     # --- Step 1: the pledge itself, from the signed payload alone.
@@ -2597,6 +2656,11 @@ def evaluate_publisher_authority(
     warnings: list[str] = []
     if authority_view is None:
         return AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
+    # Same boundary, same placement rule, as `evaluate_grant` above.
+    materialized_store = _materialized_trust_store(trust_store)
+    if materialized_store is None:
+        return AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
+    trust_store = materialized_store
     materialized_authority_view = _materialize_authority_view(authority_view)
 
     # --- Step 1.
@@ -2743,6 +2807,13 @@ def verify(
     one status, `compromised`; a Stage-2-capable verifier may then spare a
     receipt whose own receipt claim was anchored strictly before the earliest
     anchored compromise declaration for the signing key.
+
+    `trust_store` is MATERIALIZED before it is read (see
+    `_materialized_trust_store`): the verifier decides from the store's own
+    DATA, in exact built-in types, never from an embedder's object whose
+    `.get`/`__eq__` can answer differently from what it serializes. A store
+    that cannot be read as data is a verification error naming itself, not an
+    exception; a well-formed store is unaffected.
     """
     # Caller-contract enforcement (security): a non-list `revocation_view`
     # must fail loud. If a lone record OBJECT slipped through here,
@@ -2899,6 +2970,16 @@ def verify(
     signatures_obj = envelope.get("signatures")
     if not isinstance(signatures_obj, list):
         return _invalid("envelope missing array member 'signatures'")
+
+    # --- The trust-store boundary, immediately before the FIRST read of it.
+    # Placed here and not earlier so that every envelope refusal above keeps
+    # the verdict and the message it has always had: a well-formed store
+    # materializes, so no existing outcome moves, and a store that does not
+    # materialize is refused before one bit of it has steered a decision.
+    materialized_trust_store = _materialized_trust_store(trust_store)
+    if materialized_trust_store is None:
+        return _invalid(_ERR_TRUST_STORE_UNREADABLE)
+    trust_store = materialized_trust_store
 
     # Resolve trust as soon as we can identify the claimed issuer, even if a
     # later step rejects the receipt — a failed verification still reports
