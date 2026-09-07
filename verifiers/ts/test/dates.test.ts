@@ -29,10 +29,13 @@ describe('dates', () => {
     expect(parseIsoLenient('2025-08-01T12:00:00Z')).toBe(Date.UTC(2025, 7, 1, 12, 0, 0))
     expect(parseIsoLenient('nope')).toBeNull()
   })
-  // The Python owner (`attest.dates.parse_strict_utc`) accepts exactly what
-  // these three tests pin. `strptime` alone accepts all of them, so without an
+  // The Python owner (`attest.dates.parse_strict_utc`) must agree with these
+  // cases. `strptime` alone accepts all of them, so without an
   // explicit guard on that side the two cores disagree on `ok` for the same
   // bytes — which is the split these tests exist to keep closed.
+  // Unicode rejection has two defenses: STRICT excludes Nd outside ASCII,
+  // and Number(non-ASCII digits) yields NaN. A regex-only mutation therefore
+  // survives; admitting these strings requires mutating numeric conversion too.
   it('strict rejects every non-ASCII decimal digit in each year position', () => {
     const nd = /^\p{Nd}$/u
     let seen = 0
@@ -48,6 +51,15 @@ describe('dates', () => {
     // Non-vacuity: if the category ever came back empty the loop above would
     // assert nothing at all.
     expect(seen).toBeGreaterThan(600)
+  })
+  it('strict rejects Unicode time digits Python strptime accepts', () => {
+    for (const value of [
+      '2025-07-02T1\uff13:50:00Z',
+      '2025-07-02T13:5\uff10:00Z',
+      '2025-07-02T13:50:0\uff10Z',
+    ]) {
+      expect(parseStrictUtc(value)).toBeNull()
+    }
   })
   it('strict rejects ASCII spellings Python strptime would accept', () => {
     for (const value of [

@@ -1,10 +1,10 @@
 """The strict UTC timestamp predicate, owned by `attest.dates`.
 
 `strptime` alone accepts spellings no conforming producer emits and the
-TypeScript core refuses: Unicode decimal digits in the year, unpadded fields,
-lowercase `t`/`z`. Every rejection test here first asserts that raw `strptime`
-ACCEPTS the input — a case `strptime` already refuses would prove nothing
-about the guard.
+TypeScript core refuses: Unicode decimal digits in year/time fields, unpadded fields,
+lowercase `t`/`z`. Guard regressions establish acceptance by raw `strptime`
+per case or by an aggregate non-vacuity check. Contract tests also cover
+malformed inputs that `strptime` already rejects.
 """
 
 from __future__ import annotations
@@ -38,10 +38,9 @@ _NON_ASCII_DECIMAL_DIGITS = tuple(
 def _year_with(char: str, position: int) -> str:
     """`_CANONICAL` with one character of the year replaced — the rest canonical.
 
-    The mutation is confined to the year on purpose: `strptime` tolerates
-    non-ASCII digits ONLY in `%Y`, so a generator that scattered them across the
-    whole timestamp would produce almost only strings `strptime` already
-    refuses, and would never reach the case that matters.
+    The mutation is confined to the year to exercise the original exploit
+    in every year position. `strptime` also accepts non-ASCII digits in some
+    time-field positions; those have dedicated regression cases below.
     """
     year = "2025"
     return year[:position] + char + year[position + 1 :] + _CANONICAL[4:]
@@ -95,6 +94,23 @@ def test_raw_strptime_accepts_the_fullwidth_year_the_guard_refuses() -> None:
     assert hostile.isascii() is False
     with pytest.raises(NonCanonicalTimestamp):
         parse_strict_utc(hostile)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2025-07-02T1\uff13:50:00Z",
+        "2025-07-02T13:5\uff10:00Z",
+        "2025-07-02T13:50:0\uff10Z",
+    ],
+)
+def test_parse_strict_utc_rejects_unicode_time_digits_strptime_accepts(value: str) -> None:
+    assert datetime.strptime(value, STRICT_UTC_FMT) == datetime(2025, 7, 2, 13, 50, 0)
+    assert value.isascii() is False
+    with pytest.raises(NonCanonicalTimestamp) as excinfo:
+        parse_strict_utc(value)
+    assert excinfo.value.canonical == _CANONICAL
+    assert is_strict_utc(value) is False
 
 
 @pytest.mark.parametrize(
