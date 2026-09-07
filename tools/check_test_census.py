@@ -118,8 +118,13 @@ def read_report(report_path: Path, suite_root: Path) -> tuple[dict[str, int], in
     # different names at two different levels of the same report. Recognize both,
     # bucket "skipped" under "pending" so the tie-check against numPendingTests below
     # holds for the report vitest actually produces.
-    _STATUS_BUCKET = {"passed": "passed", "failed": "failed", "pending": "pending",
-                       "skipped": "pending", "todo": "todo"}
+    _STATUS_BUCKET = {
+        "passed": "passed",
+        "failed": "failed",
+        "pending": "pending",
+        "skipped": "pending",
+        "todo": "todo",
+    }
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             raise SystemExit("testResults: expected an object with a string name")
