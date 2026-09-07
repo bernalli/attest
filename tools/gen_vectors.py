@@ -281,6 +281,9 @@ CHAIN_RECEIPT_0 = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=bytes
 CHAIN_RECEIPT_1 = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=bytes([36] * 10))
 CHAIN_RECEIPT_2 = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=bytes([37] * 10))
 CHAIN_PHANTOM_RECEIPT = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=bytes([40] * 10))
+# Vector 23d: a receipt_id that belongs to NO receipt in the corpus, so a record
+# built for it authenticates fully while matching nothing.
+UNRELATED_RECEIPT_ID = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=bytes([41] * 10))
 
 
 # --- groups 39/40 (v0.2 §11.4, witness federation) additional fixed inputs ---
@@ -2565,6 +2568,43 @@ def gen_23_revocation_refund_window() -> None:
         trust=trust,
         expected=expected_c,
         revocation_record=record_overflow,
+    )
+
+    # 23d: the SAME unrepresentable-window receipt, with a non-empty view that
+    # concerns a DIFFERENT receipt. It is the leaf that tells the two readings
+    # of 12.2's fourth row apart. A verifier that owes the diagnostic only
+    # where a matching record exists answers `not_revoked_as_of:<T>` here (the
+    # record is authenticated, so it sets `T`) and certifies the receipt; one
+    # that owes it wherever the deadline had to be computed answers `unknown`
+    # with the error and certifies nothing. 23c cannot separate them: its
+    # record matches, so both readings refuse there.
+    record_unrelated = revocation.build_record(
+        UNRELATED_RECEIPT_ID,
+        "revoked",
+        REVOKED_AT,
+        ISSUER_KP,
+        ISSUER_KID,
+    )
+    assert revocation.verify_record(record_unrelated, issuer_manifest) is True
+    assert record_unrelated["receipt_id"] != overflow_payload["receipt_id"]
+    expected_d = {
+        "signature": "valid",
+        "schema": "valid",
+        "revocation": "unknown",
+        "binding": "not_checked",
+        "trust": "verified",
+        "ok": False,
+        "errors": ["refund window is outside the representable timestamp range"],
+        "warnings": [],
+    }
+    write_vector(
+        "23-revocation-refund-window/d-unrepresentable-no-matching-record",
+        payload=None,
+        envelope=overflow_envelope,
+        envelope_raw=None,
+        trust=trust,
+        expected=expected_d,
+        revocation_record=record_unrelated,
     )
 
 
