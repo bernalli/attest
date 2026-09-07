@@ -3175,3 +3175,127 @@ def test_a_surface_may_not_be_listed_as_both_glossable_and_term_free() -> None:
         check_spec_docs._compile_coined_terms(
             (_term("both", glossable=("README.md",), term_free=("README.md",)),)
         )
+
+
+class TestTm80LeafTense:
+    """The tense TM-80 uses about leaf 35l must track the corpus on disk.
+
+    Both directions are defects, and each is proven by reintroducing it.
+    """
+
+    @staticmethod
+    def _group(tmp_path: Path, *leaves: str) -> Path:
+        group = tmp_path / "35-transfer"
+        group.mkdir()
+        for leaf in leaves:
+            (group / leaf).mkdir()
+        return group
+
+    @staticmethod
+    def _doc(tmp_path: Path, body: str) -> Path:
+        path = tmp_path / "attest-threat-model.md"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_real_tree_is_clean(self) -> None:
+        assert check_spec_docs.check_tm80_leaf_tense() == []
+
+    def test_future_tense_is_refused_once_the_leaf_exists(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # The defect the guard exists for: leaf shipped, entry never updated.
+        monkeypatch.setattr(
+            check_spec_docs,
+            "_TM80_LEAF_GROUP",
+            self._group(tmp_path, "a-transferred-with-backing", "l-countersigner-compromised"),
+        )
+        monkeypatch.setattr(
+            check_spec_docs,
+            "_THREAT_MODEL_PATH",
+            self._doc(tmp_path, "Conformance leaf 35l is to pin the outcome above."),
+        )
+        errors = check_spec_docs.check_tm80_leaf_tense()
+        assert len(errors) == 1
+        assert "future tense" in errors[0]
+        assert "l-countersigner-compromised" in errors[0]
+
+    def test_present_tense_is_refused_while_the_leaf_is_absent(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # The mirror defect: an entry citing a fixture no runner can execute.
+        monkeypatch.setattr(
+            check_spec_docs, "_TM80_LEAF_GROUP", self._group(tmp_path, "k-not-transferable-before")
+        )
+        monkeypatch.setattr(
+            check_spec_docs,
+            "_THREAT_MODEL_PATH",
+            self._doc(tmp_path, "Out of scope, pinned by new leaf 35l, which exists because..."),
+        )
+        errors = check_spec_docs.check_tm80_leaf_tense()
+        assert len(errors) == 1
+        assert "present tense" in errors[0]
+
+    def test_the_two_matching_states_are_accepted(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Negative controls: the guard must not fire on either honest state,
+        # or it would just be noise that gets silenced.
+        absent = tmp_path / "absent"
+        absent.mkdir()
+        monkeypatch.setattr(
+            check_spec_docs, "_TM80_LEAF_GROUP", self._group(absent, "k-not-transferable-before")
+        )
+        monkeypatch.setattr(
+            check_spec_docs,
+            "_THREAT_MODEL_PATH",
+            self._doc(absent, "Conformance leaf 35l is to pin the outcome above."),
+        )
+        assert check_spec_docs.check_tm80_leaf_tense() == []
+
+        present = tmp_path / "present"
+        present.mkdir()
+        monkeypatch.setattr(
+            check_spec_docs, "_TM80_LEAF_GROUP", self._group(present, "l-countersigner-compromised")
+        )
+        monkeypatch.setattr(
+            check_spec_docs,
+            "_THREAT_MODEL_PATH",
+            self._doc(present, "Conformance leaf 35l pins the outcome above."),
+        )
+        assert check_spec_docs.check_tm80_leaf_tense() == []
+
+    def test_a_missing_vector_group_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # A guard whose input vanished must not report green.
+        monkeypatch.setattr(check_spec_docs, "_TM80_LEAF_GROUP", tmp_path / "35-transfer")
+        errors = check_spec_docs.check_tm80_leaf_tense()
+        assert len(errors) == 1
+        assert "is missing" in errors[0]
+
+    def test_a_fenced_example_does_not_satisfy_the_guard(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # An illustrative fence reads exactly like the real entry; if fences
+        # counted, a code sample could trip or silence the guard.
+        monkeypatch.setattr(
+            check_spec_docs, "_TM80_LEAF_GROUP", self._group(tmp_path, "k-not-transferable-before")
+        )
+        monkeypatch.setattr(
+            check_spec_docs,
+            "_THREAT_MODEL_PATH",
+            self._doc(tmp_path, "```markdown\nOut of scope, pinned by new leaf 35l.\n```\n"),
+        )
+        assert check_spec_docs.check_tm80_leaf_tense() == []
+
+    def test_main_calls_the_guard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Pins the wiring: a guard main() never calls is not a guard.
+        called: list[bool] = []
+
+        def _spy() -> list[str]:
+            called.append(True)
+            return []
+
+        monkeypatch.setattr(check_spec_docs, "check_tm80_leaf_tense", _spy)
+        main()
+        assert called == [True]
