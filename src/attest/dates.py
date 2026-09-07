@@ -45,6 +45,19 @@ def render_strict_utc(parsed: datetime) -> str:
     that has to guess how reaches for `strftime` — which is the defect this
     function exists to avoid. A renderer nobody can call is a renderer
     everybody rewrites.
+
+    PRECONDITION: `parsed` carries UTC wall-clock fields. This reads
+    `.year`…`.second` and appends `Z`; it does NOT convert. An aware datetime
+    in another zone is rendered with ITS OWN fields and labelled `Z`, which
+    names a different instant — `2026-07-03T00:00:00+09:00` comes back as
+    `2026-07-03T00:00:00Z`, nine hours away. Callers holding an aware value
+    convert first (`resolved.astimezone(UTC)`), as `views._cutoff_axis` does.
+    Sub-second precision is dropped: the wire shape has no place for it.
+
+    The precondition was harmless while this was private — its one caller
+    passed `strptime` output, which is always naive. It stops being harmless
+    the moment the whole package is invited to call it, which is the point of
+    making it public.
     """
     # NOT `strftime(STRICT_UTC_FMT)`: glibc renders `%Y` for years below 1000
     # without zero padding ("999"), so a strftime round trip would refuse

@@ -753,3 +753,33 @@ def test_render_strict_utc_is_the_inverse_of_the_parser() -> None:
     """Whatever the parser admits, the renderer reproduces byte for byte."""
     for probe in ("0001-01-01T00:00:00Z", "0999-12-31T23:59:59Z", "9999-12-31T23:59:59Z"):
         assert dates.render_strict_utc(parse_strict_utc(probe)) == probe
+
+
+def test_render_strict_utc_states_its_timezone_precondition() -> None:
+    """The renderer reads wall-clock fields and appends `Z`; it does not
+    convert. Pinned because the function is newly public and the precondition
+    is invisible at the call site: an aware value in another zone renders to a
+    `Z` string naming a different instant, and the docstring is the only thing
+    standing between a caller and a mislabelled signed timestamp."""
+    from datetime import UTC, timedelta, timezone
+
+    tokyo = datetime(2026, 7, 3, 0, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+    assert dates.render_strict_utc(tokyo) == "2026-07-03T00:00:00Z"
+    assert dates.render_strict_utc(tokyo.astimezone(UTC)) == "2026-07-02T15:00:00Z"
+    assert dates.render_strict_utc(tokyo) != dates.render_strict_utc(tokyo.astimezone(UTC))
+
+
+def test_render_strict_utc_drops_sub_second_precision() -> None:
+    """The wire shape has no place for microseconds, so they are dropped rather
+    than rounded or refused. Pinned so the choice is a decision, not a
+    coincidence of the format string."""
+    assert dates.render_strict_utc(datetime(2026, 7, 3, 0, 0, 0, 999999)) == "2026-07-03T00:00:00Z"
+
+
+@pytest.mark.parametrize("hostile", [None, 0, "2026-07-03T00:00:00Z", object()])
+def test_render_strict_utc_refuses_what_is_not_a_datetime(hostile: object) -> None:
+    """A non-datetime raises rather than rendering something plausible: every
+    field read below is an attribute access, and a duck-typed object with the
+    right attribute names would otherwise mint wire text."""
+    with pytest.raises((AttributeError, TypeError)):
+        dates.render_strict_utc(hostile)  # type: ignore[arg-type]

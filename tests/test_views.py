@@ -1037,3 +1037,45 @@ def test_capabilities_refuses_a_claim_that_is_not_an_object() -> None:
     head, chain = _trust("41a")
     with pytest.raises(views.ViewError):
         views.claim_capabilities(["not", "a", "claim"], head, chain)
+
+
+# --- the cutoff axis renders through the owner, not through strftime --------
+
+
+@pytest.mark.parametrize(
+    ("year", "expected"),
+    [(1, "0001"), (99, "0099"), (999, "0999"), (1000, "1000"), (2026, "2026")],
+)
+def test_the_cutoff_axis_renders_every_year_the_format_admits(
+    monkeypatch: pytest.MonkeyPatch, year: int, expected: str
+) -> None:
+    """`established:<T>` must be a spelling this package's own parsers accept.
+
+    glibc renders `%Y` below the year 1000 without padding, so a cutoff in that
+    range came back as `established:999-…` — text no verifier here or in the
+    TypeScript core can read back. Nothing pinned this: measured, reverting the
+    renderer to `f"established:{resolved:%Y-%m-%dT%H:%M:%SZ}"` left 421 tests
+    green, including every test in this file.
+
+    The resolver is stubbed on purpose. What is under test is the RENDERING of
+    a resolved cutoff, and reaching year 999 through real anchored evidence
+    would need a corpus that cannot exist; a stub keeps the test on the step
+    that was broken.
+    """
+    from datetime import datetime as _datetime
+
+    from attest import dates
+
+    monkeypatch.setattr(
+        views, "_resolve_compromise_cutoff", lambda *a, **k: _datetime(year, 6, 15, 12, 30, 45)
+    )
+    axis = views._cutoff_axis(
+        ("claim",),
+        _manifest(),
+        None,
+        "store.example.com",
+        [],
+        anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
+    )
+    assert axis == f"established:{expected}-06-15T12:30:45Z"
+    assert dates.is_strict_utc(axis.removeprefix("established:"))
