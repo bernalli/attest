@@ -225,7 +225,7 @@ transparency and anchoring), Stage 3 issuer-mediated transfer (§17), Stage 4
 the preservation pledge (§18), the time-boxed compromise rescue (§19) and
 publisher authority (§20).
 
-Seven pieces of work go beyond what a test suite can show. All of them are on
+Eight pieces of work go beyond what a test suite can show. All of them are on
 `main`, and they are linked here rather than left invisible:
 
 - **[Formal verification](formal/attest.spthy).** A Tamarin model of the wire
@@ -241,6 +241,12 @@ Seven pieces of work go beyond what a test suite can show. All of them are on
   across the whole receipt lifecycle, each either mitigated or recorded as out of
   scope with a reason, a traceability matrix, and the protocol gaps the exercise
   found left tracked in the open instead of quietly fixed.
+- **[Incident runbook](docs/incident-runbook.md).** What an issuer does the day a
+  signing key is stolen or lost, in a shopkeeper's language rather than a
+  cryptographer's: why the two cases call for opposite messages to buyers, why
+  securing the domain comes before rotating a stolen key, how to back up the seed,
+  and what one signing key per period can and cannot protect. Read before it is
+  needed, not during.
 - **[Privacy considerations](docs/spec/attest-privacy.md).** Every field
   classified by what it reveals to which observer, twenty testable privacy claims,
   and a GDPR annex covering what a receipt deliberately does not record.
