@@ -7,6 +7,7 @@ Fixture-driven: each case builds minimal doc strings and asserts on
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import shutil
@@ -14,6 +15,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from tools import check_spec_docs
 from tools.check_spec_docs import REQUIRED_SECTIONS, collect_errors, main
@@ -3302,3 +3305,667 @@ class TestTm80LeafTense:
         monkeypatch.setattr(check_spec_docs, "check_tm80_leaf_tense", _spy)
         main()
         assert called == [True]
+
+
+class TestPrivacyCorpusArtifactCounts:
+    """The corpus's OTHER counting scheme: how many files of each kind it ships.
+
+    Nothing checked it until 2026-09-08, when two claims sitting in the same
+    table as a checked one were measured stale -- 17 revocation records where
+    the tree had 24, 92 envelopes where it had 197 -- while the one claim
+    carrying an automated check had stayed correct. Both sentences were still
+    true; only their figures had rotted, which is how they survived re-reading.
+    Each case below is written as the wrong number in the shape a real row
+    used, so a rule that stops binding fails here and not in the next release.
+    """
+
+    @staticmethod
+    def _vectors(tmp_path: Path) -> Path:
+        """A corpus whose counts look nothing like the real ones, so a rule
+        that hardcodes 24 or 197 cannot pass here by accident."""
+        vectors = tmp_path / "vectors"
+        leaves = (
+            ("07-alpha", "a", {"expected.json": "{}", "revocation.json": "{}"}),
+            ("07-alpha", "b", {"expected.json": "{}", "revocation.json": "{}"}),
+            ("07-alpha", "c", {"expected.json": "{}", "revocation.json": "{}"}),
+            ("21-beta", "a", {"expected.json": "{}", "envelope.json": '{"payload": {}}'}),
+            ("21-beta", "b", {"expected.json": "{}", "envelope.raw.json": '{"payload": {}}'}),
+        )
+        for group, leaf, files in leaves:
+            (vectors / group / leaf).mkdir(parents=True, exist_ok=True)
+            for name, body in files.items():
+                (vectors / group / leaf / name).write_text(body, encoding="utf-8")
+        return vectors
+
+    @staticmethod
+    def _rows(detail: str, *, check_type: str = "corpus") -> list[check_spec_docs.PcRow]:
+        return [
+            check_spec_docs.PcRow(pc_id=19, claim="a claim", check_type=check_type, detail=detail)
+        ]
+
+    def _run(self, tmp_path: Path, detail: str, **kwargs: str) -> list[str]:
+        return check_spec_docs.check_privacy_corpus_artifact_counts(
+            self._rows(detail, **kwargs), self._vectors(tmp_path)
+        )
+
+    def test_a_true_artifact_count_is_clean(self, tmp_path: Path) -> None:
+        assert self._run(tmp_path, "Each of the 3 `revocation.json` files carries the set.") == []
+
+    def test_a_stale_artifact_count_is_reported(self, tmp_path: Path) -> None:
+        # The exact shape, and the exact wrong number, that sat on main.
+        errors = self._run(tmp_path, "Each of the 17 `revocation.json` files carries the set.")
+        assert len(errors) == 1
+        assert "is not a figure this gate generated" in errors[0]
+        assert "'17'" in errors[0] and "the corpus ships 3 revocation.json" in errors[0]
+
+    def test_the_artifact_vocabulary_comes_off_the_disk(self, tmp_path: Path) -> None:
+        # No name is listed in the tool: a side-document the corpus starts
+        # shipping is covered the moment the file lands. `expected.json` is
+        # never mentioned by any rule, and is bound here all the same.
+        errors = self._run(tmp_path, "The 4 `expected.json` files define the outcomes.")
+        assert len(errors) == 1
+        assert "'4'" in errors[0] and "the corpus ships 5 expected.json" in errors[0]
+
+    def test_a_corpus_row_states_no_figure_of_its_own(self, tmp_path: Path) -> None:
+        # The accepted cost of removing the total rule, pinned so nobody
+        # "restores" it: a total is reported even when its arithmetic is RIGHT.
+        # Two rounds of review died inside the code that tried to recognise
+        # one; the figure belongs in the reader's head, not in the row.
+        true_total = (
+            "Across the 2 JSON envelope inputs under the corpus "
+            "— 1 `envelope.json` files and 1 `envelope.raw.json` files — none carries it."
+        )
+        errors = self._run(tmp_path, true_total)
+        assert len(errors) == 1 and "'2'" in errors[0]
+        assert "cannot be stated here" in errors[0]
+        assert self._run(tmp_path, true_total.replace("the 2 JSON", "the JSON")) == []
+
+    def test_a_part_that_drifts_reddens_the_part(self, tmp_path: Path) -> None:
+        errors = self._run(
+            tmp_path,
+            "Across the 2 JSON envelope inputs under the corpus "
+            "— 7 `envelope.json` files and 1 `envelope.raw.json` files — none carries it.",
+        )
+        # Reported in document order, so the leading figure comes first.
+        assert len(errors) == 2
+        assert "'2'" in errors[0]
+        assert "'7'" in errors[1] and "the corpus ships 1 envelope.json" in errors[1]
+
+    def test_a_lone_count_is_not_its_own_total(self, tmp_path: Path) -> None:
+        # One part is not a sum: a rule that allowed it would bless any figure
+        # that happened to equal the count beside it.
+        errors = self._run(
+            tmp_path, "Of the 3 `revocation.json` files under the corpus, 3 are signed."
+        )
+        assert len(errors) == 1 and "'3'" in errors[0]
+
+    def test_a_figure_nothing_measures_is_reported(self, tmp_path: Path) -> None:
+        # Fail-closed is the whole point: a `corpus`-typed row declares itself
+        # mechanically checkable, so an unbindable figure is not a pass.
+        errors = self._run(
+            tmp_path, "Each of the 3 `revocation.json` files, of which 7 are stale, carries it."
+        )
+        assert len(errors) == 1 and "'7'" in errors[0]
+
+    def test_digits_welded_into_a_word_are_not_figures(self, tmp_path: Path) -> None:
+        # `UTF-8` and `ml-dsa-65` name things; naming is not counting. This is
+        # the false positive that would make the gate noise and get it ignored.
+        assert (
+            self._run(
+                tmp_path,
+                "Reading each file as UTF-8 with an optional BOM, and treating ml-dsa-65 "
+                "keys as hybrid, all 3 `revocation.json` files agree.",
+            )
+            == []
+        )
+
+    def test_a_named_group_is_checked_for_existence(self, tmp_path: Path) -> None:
+        assert self._run(tmp_path, "Group 7's 3 `revocation.json` files carry the set.") == []
+        errors = self._run(tmp_path, "Group 99's 3 `revocation.json` files carry the set.")
+        assert (
+            len(errors) == 1
+            and "'99'" in errors[0]
+            and "is not a figure this gate generated" in errors[0]
+        )
+
+    def test_a_padded_group_prefix_is_the_same_group(self, tmp_path: Path) -> None:
+        # The corpus pads its prefixes (`07-alpha`) and prose does not.
+        assert self._run(tmp_path, "Group 07 ships 3 `revocation.json` files.") == []
+
+    def test_a_figure_inside_a_code_span_is_not_a_claim(self, tmp_path: Path) -> None:
+        assert (
+            self._run(
+                tmp_path,
+                "The 3 `revocation.json` files, one per leaf under "
+                "`07-alpha/{a, b, c}` and none under `21-beta/2024`, carry the set.",
+            )
+            == []
+        )
+
+    def test_only_corpus_typed_rows_are_scanned(self, tmp_path: Path) -> None:
+        # A `manual` or `spec-text` row is prose about the specification, not a
+        # promise that the vectors can settle it.
+        assert self._run(tmp_path, "Roughly 40 buyers were surveyed.", check_type="manual") == []
+        assert len(self._run(tmp_path, "Roughly 40 buyers were surveyed.")) == 1
+
+    def test_a_span_another_check_rebuilds_live_is_not_reported_twice(self, tmp_path: Path) -> None:
+        vectors = self._vectors(tmp_path)
+        pinned = check_spec_docs._pc08_pinned_detail(vectors)
+        assert "payload objects" in pinned
+        errors = check_spec_docs.check_privacy_corpus_artifact_counts(
+            self._rows(f"Across the corpus — {pinned}, reading each as UTF-8 — none differs."),
+            vectors,
+        )
+        assert errors == []
+
+    def test_a_corpus_that_cannot_be_read_is_not_measured(self, tmp_path: Path) -> None:
+        # "Could not measure" is a THIRD outcome, and must not read like either
+        # of the other two: a guard whose input vanished has not passed.
+        errors = check_spec_docs.check_privacy_corpus_artifact_counts(
+            self._rows("Each of the 3 `revocation.json` files carries the set."),
+            tmp_path / "absent",
+        )
+        assert len(errors) == 1 and "NOT MEASURED" in errors[0]
+
+    def test_an_empty_corpus_is_not_measured(self, tmp_path: Path) -> None:
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        errors = check_spec_docs.check_privacy_corpus_artifact_counts(
+            self._rows("Each of the 3 `revocation.json` files carries the set."), empty
+        )
+        assert len(errors) == 1 and "NOT MEASURED" in errors[0]
+
+    def test_the_real_privacy_rows_are_clean(self) -> None:
+        privacy = (SPEC_DIR / "attest-privacy.md").read_text(encoding="utf-8")
+        rows = check_spec_docs.parse_pc_rows(privacy)
+        assert [row.pc_id for row in rows if row.check_type == "corpus"] != []
+        assert (
+            check_spec_docs.check_privacy_corpus_artifact_counts(rows, SPEC_DIR / "vectors") == []
+        )
+
+    def test_the_two_measured_drifts_would_now_be_caught(self) -> None:
+        """The regression this guard was written for, in the real document.
+
+        Derived from the live corpus, never hardcoded: a literal here would
+        turn the mutation into a no-op the day the corpus grows, and the test
+        would pass while proving nothing.
+        """
+        privacy = (SPEC_DIR / "attest-privacy.md").read_text(encoding="utf-8")
+        vectors = SPEC_DIR / "vectors"
+        revocations = len(list(vectors.rglob("revocation.json")))
+        envelopes = len(list(vectors.rglob("envelope.json"))) + len(
+            list(vectors.rglob("envelope.raw.json"))
+        )
+
+        stale_records = privacy.replace(
+            f"Each of the {revocations} `revocation.json` files",
+            f"Each of the {revocations - 7} `revocation.json` files",
+        )
+        assert stale_records != privacy
+        errors = check_spec_docs.check_privacy_corpus_artifact_counts(
+            check_spec_docs.parse_pc_rows(stale_records), vectors
+        )
+        assert any(
+            "is not a figure this gate generated" in error and "'17'" in error for error in errors
+        )
+
+        # The second drift was a TOTAL -- "92 JSON envelope inputs" where the
+        # tree held 197. It cannot drift again because it is no longer written:
+        # the document states its two parts and the reader adds. Pinned from
+        # both sides, so neither half can be undone quietly.
+        assert f"{envelopes} JSON envelope inputs" not in privacy
+        reintroduced = privacy.replace(
+            "Across the JSON envelope inputs", f"Across the {envelopes} JSON envelope inputs"
+        )
+        assert reintroduced != privacy
+        errors = check_spec_docs.check_privacy_corpus_artifact_counts(
+            check_spec_docs.parse_pc_rows(reintroduced), vectors
+        )
+        assert any(
+            "is not a figure this gate generated" in error and f"'{envelopes}'" in error
+            for error in errors
+        )
+
+    def test_collect_errors_calls_the_guard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Pins the wiring: a guard nothing calls is not a guard.
+        called: list[bool] = []
+
+        def _spy(rows: list[check_spec_docs.PcRow], vectors: Path) -> list[str]:
+            called.append(True)
+            return []
+
+        monkeypatch.setattr(check_spec_docs, "check_privacy_corpus_artifact_counts", _spy)
+        docs = _base_docs()
+        collect_errors(**docs)
+        assert called == [True]
+
+
+# --- ungenerated totals and inherited regressions -----------------------------
+#
+# Aggregates across artifacts have no generator in the current contract.
+# These tests reject ungenerated figures; a future aggregate generator must
+# derive its measurement from disk and preserve the same isolation properties.
+
+_CORPUS_ROW_ID = 19
+
+
+def _corpus_rows(detail: str, claim: str = "a claim") -> list[check_spec_docs.PcRow]:
+    return [
+        check_spec_docs.PcRow(pc_id=_CORPUS_ROW_ID, claim=claim, check_type="corpus", detail=detail)
+    ]
+
+
+def _corpus_errors(vectors: Path, detail: str, claim: str = "a claim") -> list[str]:
+    return check_spec_docs.check_privacy_corpus_artifact_counts(
+        _corpus_rows(detail, claim), vectors
+    )
+
+
+def test_an_independent_quantity_equal_to_a_sum_is_still_unmeasured(tmp_path: Path) -> None:
+    """The property, over every ordered pair: equality is not a relation.
+
+    Twelve of twelve such sentences passed before the grammar existed. Derived
+    from the fixture rather than written out, so a corpus that grows a new
+    artifact widens the family instead of leaving it behind.
+    """
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    counts = check_spec_docs._corpus_artifact_counts(vectors)
+    pairs = [
+        (first, second)
+        for first in counts
+        for second in counts
+        if first != second and first.endswith(".json") and second.endswith(".json")
+    ]
+    assert len(pairs) >= 6, pairs
+    for first, second in pairs:
+        total = counts[first] + counts[second]
+        detail = (
+            f"The {counts[first]} `{first}` files and {counts[second]} `{second}` files "
+            f"exist, and {total} are stale."
+        )
+        errors = _corpus_errors(vectors, detail)
+        assert len(errors) == 1, (detail, errors)
+        assert f"'{total}'" in errors[0], (detail, errors)
+
+
+def test_each_group_is_named_once_and_in_full(tmp_path: Path) -> None:
+    """The declared shape is `Group N`, one per group, and that is a cost.
+
+    A shared "Groups 7 and 21" is refused, because the gate generates the text
+    it accepts and will not generate a list. It is the price of never inferring
+    from a number's surroundings: the previous design read the list, and a
+    figure that merely FOLLOWED one -- "Groups 7 and 21, 189 `envelope.json`" --
+    was taken for a third group.
+    """
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    assert _corpus_errors(vectors, "Group 7 and Group 21 hold 3 `revocation.json` files.") == []
+    shared = _corpus_errors(vectors, "Groups 7 and 21 hold 3 `revocation.json` files.")
+    assert {error.split("'")[1] for error in shared} == {"7", "21"}
+    swallowed = _corpus_errors(vectors, "Groups 7 and 21, 1 `envelope.json` files are present.")
+    assert {error.split("'")[1] for error in swallowed} == {"7", "21"}
+    missing = _corpus_errors(vectors, "Group 99 holds 3 `revocation.json` files.")
+    assert len(missing) == 1 and "'99'" in missing[0]
+
+
+def test_a_partial_walk_is_not_a_measurement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # rglob swallows a descent error, so an unreadable subtree used to measure
+    # FEWER files and agree with a smaller claim: green for having read less.
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+
+    def denied_walk(self: Path, *, on_error: object) -> object:
+        yield vectors, [], ["expected.json"]
+        on_error(PermissionError("blocked subtree"))  # type: ignore[operator]
+
+    (vectors / "expected.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(Path, "walk", denied_walk)
+    errors = _corpus_errors(vectors, "The 1 `expected.json` files exist.")
+    assert len(errors) == 1 and "NOT MEASURED" in errors[0]
+
+
+@pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        ("{", "Expecting property name"),
+        ("[]", "has no attribute 'get'"),
+        ('{"payload": null}', "has no object payload"),
+        ("{}", "has no object payload"),
+        ('{"payload": []}', "has no object payload"),
+    ],
+)
+def test_an_unreadable_payload_source_is_not_a_measurement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, marker: str
+) -> None:
+    """And it must fail for the REASON it names.
+
+    The fixture is pointed at the repository root on purpose. Without that, it
+    sits outside `_REPO_ROOT`, `path.relative_to` raises `ValueError` while
+    composing the message, and the guard reports NOT MEASURED for an accident
+    of the fixture rather than for the malformed payload. The test then passes
+    while a mutant that deletes the real defence also passes -- measured: four
+    green. An inherited regression is not a regression until it has been run
+    against the mutant it claims to catch.
+    """
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    next(vectors.rglob("envelope.json")).write_text(body, encoding="utf-8")
+    errors = _corpus_errors(vectors, "The 3 `revocation.json` files exist.")
+    assert len(errors) == 1
+    assert "NOT MEASURED" in errors[0] and marker in errors[0]
+
+
+def test_rows_of_other_types_do_not_open_the_payload_sources(tmp_path: Path) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    next(vectors.rglob("envelope.json")).write_text("{", encoding="utf-8")
+    manual = [check_spec_docs.PcRow(19, "claim", "manual", "999 files")]
+    assert check_spec_docs.check_privacy_corpus_artifact_counts(manual, vectors) == []
+
+
+def test_a_failed_walk_cannot_supply_a_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(check_spec_docs, "_REPO_ROOT", tmp_path)
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    next(vectors.rglob("envelope.json")).write_text('{"payload": null}', encoding="utf-8")
+    with pytest.raises(ValueError, match="has no object payload"):
+        check_spec_docs._pc08_pinned_detail(vectors)
+
+
+@given(width=st.integers(1, 8), number=st.integers(100, 10000))
+def test_code_span_masking_holds_for_every_delimiter_length(width: int, number: int) -> None:
+    ticks = "`" * width
+    code = f"{ticks}{number} unknown figures{ticks}"
+    assert check_spec_docs._pc_mask_code_spans(
+        code, check_spec_docs._pc_code_spans(code)
+    ) == " " * len(code)
+    for broken in (f"{ticks}{number} unknown figures", f"{ticks}{number} unknown figures{ticks}`"):
+        masked = check_spec_docs._pc_mask_code_spans(broken, check_spec_docs._pc_code_spans(broken))
+        assert str(number) in masked
+
+
+@pytest.mark.parametrize("width", range(1, 7))
+def test_artifact_binding_reads_the_same_code_spans_as_the_mask(tmp_path: Path, width: int) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    ticks = "`" * width
+    assert _corpus_errors(vectors, f"The 3 {ticks}revocation.json{ticks} files exist.") == []
+    assert _corpus_errors(vectors, f"Example: {ticks}999 unknown figures{ticks}.") == []
+
+
+def test_escaped_ticks_do_not_hide_prose(tmp_path: Path) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    assert _corpus_errors(vectors, r"Example: \`999 unknown figures\`.")
+
+
+@pytest.mark.parametrize("sign", ["-", "+", "\N{MINUS SIGN}"])
+def test_a_sign_cannot_turn_a_count_into_its_magnitude(tmp_path: Path, sign: str) -> None:
+    # Every count and every basename in the fixture, derived: -3 read as 3.
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    for name, count in check_spec_docs._corpus_artifact_counts(vectors).items():
+        errors = _corpus_errors(vectors, f"The {sign}{count} `{name}` files exist.")
+        assert errors and "signed corpus figure" in errors[0], (name, errors)
+
+
+def test_an_overlong_integer_is_a_diagnosis_not_an_exception(tmp_path: Path) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    errors = _corpus_errors(vectors, "The " + "9" * 4400 + " `revocation.json` files exist.")
+    assert errors and "too large" in errors[0]
+
+
+@pytest.mark.parametrize("in_claim", [False, True])
+def test_moving_a_stale_figure_between_cells_cannot_hide_it(tmp_path: Path, in_claim: bool) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    stale = "The 999 `revocation.json` files exist."
+    true = "The 3 `revocation.json` files exist."
+    errors = _corpus_errors(vectors, true if in_claim else stale, claim=stale if in_claim else true)
+    assert (
+        len(errors) == 1
+        and "'999'" in errors[0]
+        and "is not a figure this gate generated" in errors[0]
+    )
+
+
+def test_parts_in_another_cell_do_not_measure_a_total(tmp_path: Path) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    errors = _corpus_errors(
+        vectors,
+        "The 3 `revocation.json` files and 1 `envelope.json` files exist.",
+        claim="Across 4 inputs.",
+    )
+    assert len(errors) == 1 and "'4'" in errors[0]
+
+
+# --- generate, do not bind ----------------------------------------------------
+#
+# Three rounds of review killed three ways of deciding what a figure counts by
+# reading what surrounds it. These pin the replacement: a figure is accepted
+# only when it sits inside a string the gate itself produced. Every case below
+# is an evasion that a previous design accepted, executed against the current
+# one.
+
+
+def test_a_false_total_cannot_borrow_a_nearby_artifact_count(tmp_path: Path) -> None:
+    """The evasion that ended the previous design, and its mirror.
+
+    "Across 4 inputs including `revocation.json` — 3 ... and 1 ..." was GREEN
+    with a total of 4 where the parts sum to 5, because the 4 bound itself to
+    the artifact named two words later; the same sentence carrying the TRUE
+    total was REPORTED. A gate that rewards the false figure and punishes the
+    true one is not strict or loose, it is pointed the wrong way. Both are
+    refused now, and the second one is the half that proves the first is not
+    an accident of arithmetic.
+    """
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    counts = check_spec_docs._corpus_artifact_counts(vectors)
+    false_total = (
+        f"Across {counts['revocation.json']} inputs including `revocation.json` "
+        f"— {counts['revocation.json']} `revocation.json` files "
+        f"and {counts['envelope.json']} `envelope.json` files — ok."
+    )
+    assert len(_corpus_errors(vectors, false_total)) == 1
+    true_total = false_total.replace(
+        f"Across {counts['revocation.json']} inputs",
+        f"Across {counts['revocation.json'] + counts['envelope.json']} inputs",
+        1,
+    )
+    assert len(_corpus_errors(vectors, true_total)) == 1
+
+
+def test_a_figure_cannot_borrow_the_count_of_an_excluded_artifact(tmp_path: Path) -> None:
+    # The same hole read backwards: the figure was certified by the count of
+    # the file the sentence says it does NOT count. No vocabulary of verbs
+    # fixes this; not reading the verbs does.
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    counts = check_spec_docs._corpus_artifact_counts(vectors)
+    errors = _corpus_errors(
+        vectors, f"Across {counts['revocation.json']} inputs excluding `revocation.json`, fine."
+    )
+    assert len(errors) == 1 and f"'{counts['revocation.json']}'" in errors[0]
+
+
+def test_an_independent_quantity_equal_to_a_count_is_still_unmeasured(tmp_path: Path) -> None:
+    # The property over every ordered pair, kept from the previous rounds
+    # because the family survived two redesigns and may survive a third.
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    counts = check_spec_docs._corpus_artifact_counts(vectors)
+    names = sorted(name for name in counts if name.endswith(".json"))
+    pairs = [(a, b) for a in names for b in names if a != b]
+    assert len(pairs) >= 6, pairs
+    for first, second in pairs:
+        total = counts[first] + counts[second]
+        detail = (
+            f"The {counts[first]} `{first}` files and {counts[second]} `{second}` files "
+            f"exist, and {total} are stale."
+        )
+        errors = _corpus_errors(vectors, detail)
+        assert len(errors) == 1, (detail, errors)
+        assert f"'{total}'" in errors[0], (detail, errors)
+
+
+def test_a_sign_in_front_of_a_generated_span_does_not_buy_it(tmp_path: Path) -> None:
+    # "-3 `revocation.json` files" CONTAINS "3 `revocation.json` files": the
+    # generated string is a substring of the signed one, so coverage alone
+    # would have accepted it. The sign is judged first, and this pins that
+    # order rather than the behaviour it happens to produce today.
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    for name, count in check_spec_docs._corpus_artifact_counts(vectors).items():
+        errors = _corpus_errors(vectors, f"The -{count} `{name}` files exist.")
+        assert errors and "signed corpus figure" in errors[0], (name, errors)
+
+
+@pytest.mark.parametrize("width", range(1, 7))
+def test_a_generated_span_quotes_back_the_delimiter_the_row_uses(
+    tmp_path: Path, width: int
+) -> None:
+    # Markdown allows any number of backticks. A gate that only generated one
+    # would redden honest prose that used two -- refusing the true figure,
+    # which is the failure mode that gets a gate switched off.
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    count = check_spec_docs._corpus_artifact_counts(vectors)["revocation.json"]
+    ticks = "`" * width
+    assert _corpus_errors(vectors, f"The {count} {ticks}revocation.json{ticks} files exist.") == []
+    assert _corpus_errors(vectors, f"The {count + 1} {ticks}revocation.json{ticks} files.") != []
+
+
+@pytest.mark.parametrize(
+    "figure",
+    [
+        "13",  # a leading digit: "13 `x` files" CONTAINS "3 `x` files"
+        "3.5",
+        "1-3",
+        "3,000",
+        "03",
+        "\N{ARABIC-INDIC DIGIT THREE}",
+    ],
+)
+def test_nothing_may_be_welded_onto_a_generated_span(tmp_path: Path, figure: str) -> None:
+    """The family the sign belonged to, swept rather than sampled.
+
+    Coverage is substring containment, so anything that can sit against a
+    generated string while leaving it intact changes the meaning and keeps the
+    match. The sign was one member and the delimiter another; these are the
+    rest -- a leading digit, a decimal point, a range, a thousands separator, a
+    padded zero, a digit from another script.
+    """
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    assert _corpus_errors(vectors, f"The {figure} `revocation.json` files exist.") != []
+
+
+@pytest.mark.parametrize("in_claim", [False, True])
+def test_generated_occurrences_have_token_boundaries(tmp_path: Path, in_claim: bool) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    counts = check_spec_docs._corpus_artifact_counts(vectors)
+    for name, count in counts.items():
+        for sentence in (
+            f"The .{count} `{name}` files exist.",
+            *(
+                f"The {count} `{name}` {word} exist."
+                for word in ("filenames", "filesets", "file-pairs", "file_sizes")
+            ),
+        ):
+            errors = _corpus_errors(
+                vectors,
+                "a detail" if in_claim else sentence,
+                claim=sentence if in_claim else "a claim",
+            )
+            assert len(errors) == 1, (sentence, errors)
+            assert f"PC-19: '{count}' is not a figure this gate generated" in errors[0]
+    pin = check_spec_docs._pc08_pinned_detail(vectors)
+    for sentence in ("." + pin, pin + "%", "Group 7% are stale."):
+        errors = _corpus_errors(vectors, sentence)
+        assert errors and all("is not a figure this gate generated" in e for e in errors)
+    for sentence in ("Group 7's files exist.", "**3 `revocation.json` files** exist."):
+        assert _corpus_errors(vectors, sentence) == []
+
+
+@pytest.mark.parametrize("width", range(1, 7))
+@pytest.mark.parametrize("donor_first", [False, True])
+def test_coverage_cannot_cross_actual_code_boundaries(
+    tmp_path: Path, width: int, donor_first: bool
+) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    (vectors / "123").write_text("", encoding="utf-8")
+    ticks = "`" * width
+    attack = f"{ticks}example 1 {ticks}123{ticks} files{ticks}"
+    donor = f"1 {ticks}123{ticks} files"
+    detail = donor + " ; " + attack if donor_first else attack + " ; " + donor
+    assert _corpus_errors(vectors, donor) == []
+    for claim, cell in (("a claim", detail), (detail, "a detail"), (donor, attack)):
+        errors = _corpus_errors(vectors, cell, claim=claim)
+        assert len(errors) == 1, (detail, errors)
+        assert errors[0].startswith("PC-19: '123' is not a figure this gate generated")
+
+
+@pytest.mark.parametrize("in_claim", [False, True])
+def test_scientific_numbers_are_not_technical_identifiers(tmp_path: Path, in_claim: bool) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    for name, count in check_spec_docs._corpus_artifact_counts(vectors).items():
+        for mantissa in (str(count), f"{count}.5", f".{count}"):
+            for exponent in ("e3", "E+3", "e-3"):
+                number = mantissa + exponent
+                sentence = f"The {number} `{name}` files exist."
+                errors = _corpus_errors(
+                    vectors,
+                    "a detail" if in_claim else sentence,
+                    claim=sentence if in_claim else "a claim",
+                )
+                assert errors == [f"PC-19: unsupported corpus numeric literal {number!r}"]
+    assert _corpus_errors(vectors, "UTF-8 and ml-dsa-65 remain identifiers.") == []
+    assert _corpus_errors(vectors, "Example: `1e3`.") == []
+
+
+@pytest.mark.parametrize("prefix", ["²", "³", "¹", "①", "⑨", "፩"])
+def test_nondecimal_digit_prefix_is_not_a_group(tmp_path: Path, prefix: str) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    assert prefix.isdigit() and not prefix.isdecimal()
+    (vectors / f"{prefix}-side-document").mkdir()
+    assert check_spec_docs._corpus_group_numbers(vectors) == {7, 21}
+    assert _corpus_errors(vectors, "Group 7 and Group 21 exist.") == []
+    errors = _corpus_errors(vectors, "Group 99 exists.")
+    assert len(errors) == 1
+    assert errors[0].startswith("PC-19: '99' is not a figure this gate generated")
+
+
+@pytest.mark.parametrize("in_claim", [False, True])
+@pytest.mark.parametrize("layout", ["— {parts} —", "({parts})", ": {parts}", "— note. {parts} —"])
+def test_ungenerated_totals_across_arity_order_and_cells(
+    tmp_path: Path, in_claim: bool, layout: str
+) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    counts = check_spec_docs._corpus_artifact_counts(vectors)
+    for arity in range(2, len(counts) + 1):
+        for names in itertools.permutations(counts, arity):
+            total = sum(counts[name] for name in names)
+            parts = " and ".join(f"{counts[name]} `{name}` files" for name in names)
+            sentence = f"Across {total} inputs {layout.format(parts=parts)} all are present."
+            errors = _corpus_errors(
+                vectors,
+                "a detail" if in_claim else sentence,
+                claim=sentence if in_claim else "a claim",
+            )
+            assert errors == [
+                f"PC-19: '{total}' is not a figure this gate generated -- run the checker "
+                "and paste what it prints; an aggregate over several artifacts "
+                "cannot be stated here"
+            ], sentence
+
+
+def test_duplicate_and_unknown_parts_do_not_generate_totals(tmp_path: Path) -> None:
+    vectors = TestPrivacyCorpusArtifactCounts._vectors(tmp_path)
+    for name, count in check_spec_docs._corpus_artifact_counts(vectors).items():
+        for sentence, figures in (
+            (f"Across {2 * count} inputs — {count} `{name}` files twice — all agree.", [2 * count]),
+            (
+                f"Across {2 * count} inputs — {count} `{name}` files and "
+                f"{count} `{name}` files — all agree.",
+                [2 * count],
+            ),
+            (
+                f"Across {count + 5} inputs — {count} `{name}` files and 5 stale ones.",
+                [count + 5, 5],
+            ),
+        ):
+            assert _corpus_errors(vectors, sentence) == [
+                f"PC-19: '{number}' is not a figure this gate generated -- run the checker "
+                "and paste what it prints; an aggregate over several artifacts "
+                "cannot be stated here"
+                for number in figures
+            ]

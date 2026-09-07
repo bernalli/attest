@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tomllib
@@ -566,18 +567,23 @@ def check_schema_pins(pc_rows: list[PcRow], schema: dict[str, object]) -> list[s
     return errors
 
 
-def check_pc08_corpus_claim(pc_rows: list[PcRow], vectors_path: Path) -> list[str]:
-    """PC-08's buyer-field claim covers filename-addressable payloads and
-    transfer-chain payloads embedded in ``chain.json``.
+class _Pc08Walk(NamedTuple):
+    """Every payload object PC-08 covers, the per-source counts it pins, and
+    what made either untrustworthy."""
 
-    The former are found mechanically by filename; the latter deliberately are
-    not, so parse the four chain fixtures' ``payloads`` arrays as JSON.  Keep
-    the prose pin explicit about both the count and that distinction.
+    payloads: list[dict[str, object]]
+    counts: list[int]
+    errors: list[str]
+
+
+def _pc08_walk(vectors_path: Path) -> _Pc08Walk:
+    """One walk of the payload sources PC-08 names.
+
+    Split out of the check below so the artifact-count scan can ask for the
+    same string without a second copy of the arithmetic: the sentence PC-08
+    must state is rebuilt from a live measurement, and a number inside a span
+    that a live measurement rebuilds is already pinned.
     """
-    pc08_rows = [row for row in pc_rows if row.pc_id == 8]
-    if not pc08_rows:
-        return []
-
     errors: list[str] = []
     filename_payloads: list[dict[str, object]] = []
     filename_counts: list[int] = []
@@ -603,17 +609,44 @@ def check_pc08_corpus_claim(pc_rows: list[PcRow], vectors_path: Path) -> list[st
         chain_counts.append(len(payloads))
         chain_payloads.extend(payloads)
 
-    payloads = filename_payloads + chain_payloads
+    return _Pc08Walk(filename_payloads + chain_payloads, filename_counts + chain_counts, errors)
+
+
+def _pc08_detail_from_walk(walk: _Pc08Walk) -> str:
+    """The count sentence PC-08 must state. One definition, two callers."""
+    return (
+        f"{len(walk.payloads)} payload objects ({' + '.join(str(count) for count in walk.counts)})"
+    )
+
+
+def _pc08_pinned_detail(vectors_path: Path) -> str:
+    walk = _pc08_walk(vectors_path)
+    if walk.errors:
+        raise ValueError("; ".join(walk.errors))
+    return _pc08_detail_from_walk(walk)
+
+
+def check_pc08_corpus_claim(pc_rows: list[PcRow], vectors_path: Path) -> list[str]:
+    """PC-08's buyer-field claim covers filename-addressable payloads and
+    transfer-chain payloads embedded in ``chain.json``.
+
+    The former are found mechanically by filename; the latter deliberately are
+    not, so parse the four chain fixtures' ``payloads`` arrays as JSON.  Keep
+    the prose pin explicit about both the count and that distinction.
+    """
+    pc08_rows = [row for row in pc_rows if row.pc_id == 8]
+    if not pc08_rows:
+        return []
+
+    walk = _pc08_walk(vectors_path)
+    errors: list[str] = list(walk.errors)
     expected_buyer_keys = {"commitment", "identifier_type", "pubkey"}
-    for index, payload in enumerate(payloads, start=1):
+    for index, payload in enumerate(walk.payloads, start=1):
         buyer = payload.get("buyer")
         if not isinstance(buyer, dict) or set(buyer) != expected_buyer_keys:
             errors.append(f"PC-08: payload object {index} has unexpected buyer member set")
 
-    counts = filename_counts + chain_counts
-    expected_detail = (
-        f"{len(payloads)} payload objects ({' + '.join(str(count) for count in counts)})"
-    )
+    expected_detail = _pc08_detail_from_walk(walk)
     required_note = "`chain.json` payloads are counted via JSON parse, not filename scan"
     for row in pc08_rows:
         if expected_detail not in row.detail:
@@ -623,6 +656,323 @@ def check_pc08_corpus_claim(pc_rows: list[PcRow], vectors_path: Path) -> list[st
         if required_note not in row.detail:
             errors.append(f"PC-08: check detail must state that {required_note}")
     return errors
+
+
+# --- the corpus's OTHER counting scheme ---------------------------------------
+#
+# `check_corpus_counts` further down defends ONE number: how many leaves the
+# corpus ships. The privacy model counts something else entirely -- how many
+# files of each kind those leaves contain -- and nothing checked that scheme.
+#
+# Measured 2026-09-08, and it is the experiment rather than the argument: of
+# the four `corpus`-typed claims in attest-privacy.md, the only one carrying an
+# automated check (PC-08) was the only one that had NOT drifted. Two of the
+# others, in the same table, said 17 revocation records where the tree had 24
+# and 92 envelopes where it had 197. Every one of those sentences was still
+# true; it was the figures inside them that had gone stale, which is exactly
+# how they survive being re-read.
+#
+# So the scheme is bound to the disk here, and bound FAIL-CLOSED: inside a row
+# the table itself types `corpus` -- a row declaring itself mechanically
+# checkable against the vectors -- a number this gate cannot bind to a
+# measurement is an error, not a pass. Judging every figure in free prose was
+# tried for the leaf count and abandoned (see `check_corpus_counts`): technical
+# writing is dense with numbers beside these nouns. The table is where the
+# scheme actually lives -- measured across the whole tracked tree, the shape
+# "N `<artifact>.json` files" occurs in this table and nowhere else -- and it
+# is the one surface that declares its own rows checkable.
+
+
+_PC_BACKTICK_RUN_RE = re.compile(r"`+")
+_PC_INT_RE = re.compile(r"\d+")
+# Spans some other check rebuilds from a live walk. A number inside one of
+# these is pinned already, byte for byte, by the check that produces it.
+_LIVE_PINNED_DETAILS: tuple[Callable[[Path], str], ...] = (_pc08_pinned_detail,)
+
+
+def _pc_code_spans(text: str) -> list[tuple[int, int, str]]:
+    """Match equal backtick runs; unmatched runs remain literal prose."""
+    runs = list(_PC_BACKTICK_RUN_RE.finditer(text))
+    spans: list[tuple[int, int, str]] = []
+    index = 0
+    while index < len(runs):
+        opener = runs[index]
+        slash = opener.start()
+        while slash > 0 and text[slash - 1] == "\\":
+            slash -= 1
+        if (opener.start() - slash) % 2:
+            index += 1
+            continue
+        width = len(opener.group())
+        closer_index = next(
+            (j for j in range(index + 1, len(runs)) if len(runs[j].group()) == width),
+            None,
+        )
+        if closer_index is None:
+            index += 1
+            continue
+        closer = runs[closer_index]
+        content = text[opener.end() : closer.start()].replace("\n", " ")
+        if content.startswith(" ") and content.endswith(" ") and content.strip(" "):
+            content = content[1:-1]
+        spans.append((opener.start(), closer.end(), content))
+        index = closer_index + 1
+    return spans
+
+
+def _pc_mask_code_spans(text: str, spans: list[tuple[int, int, str]]) -> str:
+    masked = list(text)
+    for start, stop, _ in spans:
+        masked[start:stop] = " " * (stop - start)
+    return "".join(masked)
+
+
+def _corpus_artifact_counts(vectors_path: Path) -> dict[str, int]:
+    """How many files of each basename the corpus ships, counted on disk.
+
+    The vocabulary is the tree's own: a side-document the corpus starts
+    shipping is covered the moment the file lands. A hand-written list of
+    artifact names would have to be extended by the same person who forgot to
+    update the count -- the failure this check exists to catch.
+    """
+
+    def unreadable(exc: OSError) -> None:
+        raise exc
+
+    counts: dict[str, int] = {}
+    for directory, _, filenames in vectors_path.walk(on_error=unreadable):
+        for name in filenames:
+            if stat.S_ISREG((directory / name).stat().st_mode):
+                counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _corpus_group_numbers(vectors_path: Path) -> set[int]:
+    """The numeric prefix of every vector group directory.
+
+    Parsed rather than compared as text so `Group 9` and `09-commitment` are
+    the same group: the corpus pads its prefixes and prose does not.
+    """
+    numbers: set[int] = set()
+    for child in vectors_path.iterdir():
+        if not child.is_dir():
+            continue
+        head = child.name.split("-", 1)[0]
+        if head.isdecimal():
+            numbers.add(int(head))
+    return numbers
+
+
+def _pc_generated_spans(
+    cell: str,
+    code_spans: list[tuple[int, int, str]],
+    artifacts: dict[str, int],
+    groups: set[int],
+    pinned: list[str],
+) -> list[str]:
+    """Every figure-bearing string this gate is willing to see in a corpus row.
+
+    Each one is BUILT here, from the corpus on disk. That is the whole design:
+    a figure is not judged by what surrounds it, it is judged by whether the
+    gate itself produced the text it sits in.
+
+    The one thing taken from the cell is the WIDTH of the backticks around an
+    artifact name -- markdown lets a code span be delimited by any number of
+    them, and a gate that only ever generated one would redden honest prose
+    that used two. The figure still has to sit directly against the name; only
+    the delimiter is quoted back.
+    """
+    spans = list(pinned)
+    for group in groups:
+        spans.append(f"Group {group}")
+        spans.append(f"Group {group:02d}")
+    for start, stop, name in code_spans:
+        count = artifacts.get(name)
+        if count is None:
+            continue
+        delimited = cell[start:stop]
+        spans.append(f"{count} {delimited} files")
+        spans.append(f"{count} {delimited} file")
+    return spans
+
+
+def _pc_covered_ranges(text: str, spans: list[str]) -> list[tuple[int, int]]:
+    """Cover complete tokens without crossing the actual code-span boundaries."""
+    covered: list[tuple[int, int]] = []
+    code_spans = _pc_code_spans(text)
+    for span in spans:
+        if not span:
+            continue
+        start = text.find(span)
+        while start != -1:
+            stop = start + len(span)
+            left = text[start - 1 : start] if start else ""
+            right = text[stop : stop + 1]
+            joined_left = bool(left) and (left.isalnum() or left in "_.,/%^+-\N{MINUS SIGN}")
+            joined_right = bool(right) and (right.isalnum() or right in "_/%^+-\N{MINUS SIGN}")
+            crosses_code = any(
+                first < stop and start < last and not (start <= first and last <= stop)
+                for first, last, _ in code_spans
+            )
+            if not joined_left and not joined_right and not crosses_code:
+                covered.append((start, stop))
+            start = text.find(span, start + 1)
+    return covered
+
+
+def check_privacy_corpus_artifact_counts(pc_rows: list[PcRow], vectors_path: Path) -> list[str]:
+    """Every figure a `corpus`-typed claim states is one this gate generated.
+
+    GENERATE, DO NOT BIND -- and that sentence is the whole of it, arrived at
+    the hard way. A figure is accepted only when it sits inside a string this
+    gate built from the corpus on disk: "24 `revocation.json` files", "Group
+    36", or the payload pin. Every other digit is reported. Nothing is inferred
+    from what surrounds a number, because that is what failed:
+
+    * a rule that accepted any figure EQUAL to the sum of the counts nearby --
+      twelve of twelve independent quantities passed;
+    * a rule that made the total open a delimited list of its parts -- a total
+      in one sentence was certified by parts in another;
+    * a rule that bound a figure to the artifact NAMED within two words of it
+      -- "24 inputs including `revocation.json`", where the parts sum to 26,
+      passed, while the same sentence with the TRUE total was reported. A gate
+      that rewards the false figure and punishes the true one is not strict or
+      loose: it is pointed the wrong way.
+
+    All three are one mistake: a syntactic coincidence cannot establish a
+    semantic relation, because the relation lives in words ("including",
+    "excluding", "inputs") that no parser of this shape models. Narrowing the
+    window would be the fourth round of it. String equality with generated text
+    has no such gap -- there is nothing left to infer.
+
+    The mechanism is not new here; it is the one part of this file that three
+    rounds of review never dented, PC-08's pin, promoted from special case to
+    the rule.
+
+    Cost, stated plainly: an author cannot hand-write a figure in a `corpus`
+    row. They run the checker and paste what it prints. That is the discipline
+    this whole check exists to impose.
+
+    KNOWN GAP, chosen rather than overlooked: a row cannot state an AGGREGATE
+    over several artifacts -- "197 JSON envelope inputs", "26 revocation
+    inputs". Such sentences are legitimate and a review wrote three of them,
+    so this is a real loss and not a claim that they are wrong.
+
+    A declaration syntax for them was built and then removed unreviewed. Two
+    holes turned up in it within the hour: a one-file "total" was a renaming,
+    which would have let a row call the revocation count "leaves" and be
+    blessed for it, and a name declared twice generated two figures for one
+    word, so a row could state both and contradict itself in green. Neither
+    had been looked for. That is the signature of a surface nothing has
+    attacked yet, and no row in the document needs it -- so it went out rather
+    than in, and the perimeter left standing is the part four designs never
+    dented.
+
+    What would reopen it, and what would not: MEASURE the aggregate -- give
+    the quantity to the inventory above, off the same walk, so the figure is
+    generated like every other one. Do NOT teach this to read the sentence
+    around a number. That was tried three times and failed three times, and
+    the third failure accepted a false total while reporting the true one.
+
+    Fail-closed on its own precondition, and audibly: a corpus this cannot read
+    is reported as a gate that could not measure, in different words from a
+    figure that drifted. A guard whose input vanished has not passed.
+    """
+    pc_rows = [row for row in pc_rows if row.check_type == "corpus"]
+    if not pc_rows:
+        return []
+    try:
+        artifacts = _corpus_artifact_counts(vectors_path)
+        groups = _corpus_group_numbers(vectors_path)
+    except OSError as exc:
+        return [f"corpus artifact counts: cannot read {vectors_path} ({exc}) -- NOT MEASURED"]
+    if not artifacts:
+        return [f"corpus artifact counts: no files under {vectors_path} -- NOT MEASURED"]
+
+    try:
+        pinned = [pin(vectors_path) for pin in _LIVE_PINNED_DETAILS]
+    except (OSError, ValueError, AttributeError) as exc:
+        return [f"corpus artifact counts: cannot measure payload sources ({exc}) -- NOT MEASURED"]
+
+    errors: list[str] = []
+    for row in pc_rows:
+        for cell in (row.detail, row.claim):
+            # Code spans are masked so a path or an identifier is not read as a
+            # claim; offsets are preserved, so a message still points at the
+            # text as written.
+            code_spans = _pc_code_spans(cell)
+            spans = _pc_generated_spans(cell, code_spans, artifacts, groups, pinned)
+            covered = _pc_covered_ranges(cell, spans)
+            masked = _pc_mask_code_spans(cell, code_spans)
+            scientific = list(
+                re.finditer(
+                    r"(?<![\w-])(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)[eE][+-]?[0-9]+(?![\w-])",
+                    masked,
+                )
+            )
+
+            for match in _PC_INT_RE.finditer(masked):
+                start, stop = match.span()
+                raw = match.group(0)
+                before = masked[:start]
+                literal = next(
+                    (item for item in scientific if item.start() <= start < item.end()), None
+                )
+                if literal is not None:
+                    if start == literal.start() or (
+                        masked[literal.start()] == "." and start == literal.start() + 1
+                    ):
+                        errors.append(
+                            f"PC-{row.pc_id:02d}: unsupported corpus numeric literal "
+                            f"{literal.group()!r}"
+                        )
+                    continue
+                # Digits welded into a word (`UTF-8`, `ml-dsa-65`) name a thing.
+                # Naming is not counting.
+                if before[-1:].isalpha() or (before[-1:] == "-" and before[-2:-1].isalpha()):
+                    continue
+                if masked[stop : stop + 1].isalpha():
+                    continue
+                # The sign is judged BEFORE coverage, and that order is load
+                # bearing: "-3 `revocation.json` files" CONTAINS the generated
+                # string "3 `revocation.json` files", so a minus in front used
+                # to buy the whole span. A test of the previous design caught
+                # it -- an inherited regression paying for itself twice.
+                if before[-1:] in {"-", "+", "\N{MINUS SIGN}"}:
+                    errors.append(f"PC-{row.pc_id:02d}: signed corpus figure {before[-1:] + raw!r}")
+                    continue
+                if any(first <= start and stop <= last for first, last in covered):
+                    continue
+                if len(raw) > _MAX_CORPUS_CLAIM_DIGITS:
+                    errors.append(f"PC-{row.pc_id:02d}: corpus figure is too large to parse")
+                    continue
+                errors.append(
+                    f"PC-{row.pc_id:02d}: {raw!r} is not a figure this gate generated"
+                    f"{_pc_figure_hint(cell, stop, artifacts)} -- run the checker and paste "
+                    f"what it prints; an aggregate over several artifacts cannot be stated here"
+                )
+    return errors
+
+
+def _pc_figure_hint(cell: str, after: int, artifacts: dict[str, int]) -> str:
+    """A hint for the author, and only a hint.
+
+    It reads the artifact named after an unaccepted figure so the message can
+    say what the corpus actually ships. It NEVER decides: the figure was
+    already rejected before this is called, so a wrong guess here costs a
+    confusing sentence, not a wrong verdict. That separation is deliberate --
+    reading the prose to DECIDE is precisely the mistake this check is built to
+    avoid, and it is easy to reintroduce inside a message.
+    """
+    # Only the artifact the figure DIRECTLY precedes, never one further down
+    # the sentence: a hint that reaches is a hint that misleads, and it was
+    # doing so -- "Groups 7 and 21, 189 `envelope.json`" offered the envelope
+    # count as help with the 7. Wrong here costs a confusing sentence rather
+    # than a wrong verdict, which is the only reason this may read prose at all.
+    match = re.match(r"\s*`([^`]+)`", cell[after:])
+    if match is not None and match.group(1) in artifacts:
+        return f" (the corpus ships {artifacts[match.group(1)]} {match.group(1)})"
+    return ""
 
 
 def check_versioning_sections(versioning: str) -> list[str]:
@@ -2459,6 +2809,10 @@ def collect_errors(
     errors += [f"attest-privacy.md: {e}" for e in check_claims(pc_rows)]
     errors += [f"attest-privacy.md: {e}" for e in check_schema_pins(pc_rows, schema)]
     errors += [f"attest-privacy.md: {e}" for e in check_pc08_corpus_claim(pc_rows, _VECTORS_PATH)]
+    errors += [
+        f"attest-privacy.md: {e}"
+        for e in check_privacy_corpus_artifact_counts(pc_rows, _VECTORS_PATH)
+    ]
     errors += [f"attest-versioning.md: {e}" for e in check_versioning_sections(versioning)]
     errors += [f"attest-versioning.md: {e}" for e in check_versioning_suite_names(versioning)]
     errors += [f"attest-versioning.md: {e}" for e in check_versioning_lifecycle_states(versioning)]
