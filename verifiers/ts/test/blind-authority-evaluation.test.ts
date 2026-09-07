@@ -702,6 +702,13 @@ describe('blind publisher authority evaluation', () => {
     })
   })
 
+  // The two cases below build a document at the evidence ceiling, so they run for seconds
+  // where the rest of this file runs for milliseconds. The suite keeps vitest's 5000ms
+  // default and the exception is stated here, next to the code that earns it: whoever makes
+  // these cases cheap should delete the number rather than leave a whole suite loosened.
+  // They were over the default long before it was enforceable -- a synchronous body blocks
+  // the worker's event loop, so vitest 2's timer could not fire until the test had already
+  // returned, and both reported passes at 17.3s and 12.0s.
   it('[PERMISSIVA] an authorization document exactly at the evidence code-point ceiling remains admissible', () => {
     const exact = authorizationWithCanonicalSize(EVIDENCE_BYTE_CEILING)
     expectAuthority(payload(), trustStore(), view([exact]), {
@@ -709,7 +716,7 @@ describe('blind publisher authority evaluation', () => {
       publisher_authority_trust: 'verified',
       warnings: [],
     })
-  })
+  }, 60_000)
 
   it('[RESTRITTIVA] an authorization document one code point over the evidence code-point ceiling is set aside alone', () => {
     const over = authorizationWithCanonicalSize(EVIDENCE_BYTE_CEILING + 1)
@@ -721,7 +728,7 @@ describe('blind publisher authority evaluation', () => {
         // publisher_claim_unattested is verify()'s, not evaluateAuthority's (WARN_CLAIM note above).
       ],
     })
-  })
+  }, 60_000)
 
   it('[RESTRITTIVA] number and bigint current version representations compare equal for step 10 denial', () => {
     expectSameVerdictForStrictAndManualNumbers([authorization(5, [])], 5, {

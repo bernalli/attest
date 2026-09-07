@@ -532,11 +532,16 @@ describe('intake: the size bound is a floor, not a ceiling (§14.3)', () => {
     expect(HYBRID_RECORD.length).toBeGreaterThan(4_000)
   })
 
+  // Builds and parses a view past ten million bytes, so it is the slowest case in this
+  // suite by an order of magnitude -- 2.0-2.8s against a 5000ms default that vitest 3
+  // enforces for the first time. The suite keeps that default and the exception is stated
+  // here, next to the code that earns it, because under a factor of two of margin on a CI
+  // runner whose speed we do not control is a flake waiting for a busy afternoon.
   it('admits a revocation view well past 10,000,000 bytes, because §12.4 admits it', () => {
     const view = `[${new Array(2_500).fill(HYBRID_RECORD).join(',')}]`
     expect(view.length).toBeGreaterThan(10_000_000)
     expect(intake('revocation-view.json', bytesOf(view)).kind).toBe('view')
-  })
+  }, 60_000)
 
   it('admits an evidence bundle under 10,000,000 CODE POINTS however many bytes it encodes to', () => {
     // Two UTF-8 bytes per code point: the bundle is under §6.3's admission unit
