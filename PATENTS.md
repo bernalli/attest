@@ -28,10 +28,16 @@ implementing attest carries no patent risk from its author.
 
 ## 2. Definitions
 
+**"attest"** means the project published in the attest source repository at
+<https://github.com/bernalli/attest>, taken as a whole: the Specification, the implementations of
+it published in that repository, and the name under which they are published.
+
 **"Specification"** means the attest specification as published in the attest source repository at
 <https://github.com/bernalli/attest>, including `docs/spec/attest-v0.1.md`,
-`docs/spec/attest-v0.2.md`, the JSON Schema and conformance vectors under `docs/spec/`, every
-later revision and version of those documents, the Internet-Draft
+`docs/spec/attest-v0.2.md`, `docs/spec/attest-privacy.md`, `docs/spec/attest-threat-model.md`,
+`docs/spec/attest-standards-relationship.md`, `docs/spec/attest-transfer-economics.md`,
+`docs/spec/attest-versioning.md`, the JSON Schema and conformance vectors under `docs/spec/`,
+every later revision and version of those documents, the Internet-Draft
 `draft-martinalli-open-purchase-receipts` and its successor drafts, and any RFC published from
 them.
 
@@ -73,10 +79,20 @@ Specification, or any Implementation infringes a patent, unless that action is a
 to patent litigation first brought against You concerning attest, the Specification, or an
 Implementation.
 
-This trigger is deliberately narrow, and is no broader than the one Apache-2.0 Section 3 already
-contains. Asserting a patent against the Author over something unrelated to attest does not
-terminate this covenant. Nothing You do outside the subject matter of attest can cost You the
-rights promised here.
+This trigger is not the same as the one Apache-2.0 Section 3 contains, and the differences run in
+both directions. It reaches further in three respects: it covers joining someone else's patent
+suit as well as bringing Your own; it is not confined to allegations against this repository's
+code, but extends to attest and to any Implementation, including one published by someone with no
+connection to the Author; and it is not confined to allegations of direct or contributory
+infringement. It reaches less far in one respect, and this is a protection Apache-2.0 does not
+offer at all: an action brought in direct response to patent litigation started against You first
+is exempt, so defending Yourself never costs You this covenant.
+
+The wider reach is deliberate, and it runs in favour of implementers rather than the Author: an
+implementer sued over their own attest implementation is exactly the person this document exists
+to protect, so attacking one forfeits its protection. Asserting a patent against the Author over
+something unrelated to attest does not terminate this covenant. Nothing You do outside the
+subject matter of attest can cost You the rights promised here.
 
 ## 5. Relationship to the licenses of this project
 
@@ -100,9 +116,11 @@ a Covered Claim has since been transferred to a third party.
 ## 7. Contributors
 
 Contributions to the Specification are governed by `CONTRIBUTING.md`, under which each contributor
-makes the same non-assertion commitment for their own patent claims with respect to their
-contribution. Contributions of code remain governed by the patent grant in Section 3 of the Apache
-License 2.0.
+makes an equivalent non-assertion commitment, limited to their own patent claims and to the part
+of the Specification their own contribution describes in detail. It is equivalent, not identical:
+a contributor's promise carries no defensive-termination clause of its own, does not bind their
+successors or transferees, and is not versioned the way Section 10 versions this document.
+Contributions of code remain governed by the patent grant in Section 3 of the Apache License 2.0.
 
 This covenant speaks only for the Author. It does not, and cannot, speak for any contributor's
 patents beyond the commitment that contributor has made.
@@ -124,9 +142,9 @@ patents beyond the commitment that contributor has made.
 
 As of the date of this version, the Author holds no patents and has filed no patent applications
 relating to attest or to any technology described in the Specification. This statement is a
-statement of present fact, not a limit on the covenant: Section 3 applies to Covered Claims
-"now or hereafter owned or controlled by the Author", so any patent the Author might obtain in the
-future is bound by it from the moment it exists.
+statement of present fact, not a limit on the covenant: Section 2 defines Covered Claims as those
+"now or hereafter owned or controlled by the Author", and Section 3 promises not to assert them,
+so any patent the Author might obtain in the future is bound from the moment it exists.
 
 ## 10. Changes to this document
 

@@ -17,6 +17,15 @@ subset — a single mismatch fails the whole subset. There is no partial credit
 and no central certifying authority: conformance is measured by running the
 public runner below against your own implementation and reporting the result.
 
+Writing one carries no patent risk from this project's author. `PATENTS.md`
+is an irrevocable, royalty-free promise not to assert his patent claims
+against anyone who implements the specification — including an implementation
+written from the specification text alone, using no code from this
+repository. Neither license reaches that far by itself: the Apache-2.0 patent
+grant covers this repository's code, and CC BY 4.0, which licenses the
+specification, grants no patent rights at all. That gap is what the covenant
+closes, and it is the gap an independent implementer stands in.
+
 ## 2. Run it: one command
 
 ```
