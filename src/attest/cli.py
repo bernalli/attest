@@ -3458,7 +3458,40 @@ def _cmd_binding_respond(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _parse_reject_trust(raw: str) -> frozenset[str]:
+    """Parse `--reject-trust`'s comma-separated value list against verify.py's
+    three trust literals.
+
+    Validated here, POST-PARSE, rather than via argparse `choices=`: `main()`
+    does not catch `SystemExit` (see `main()` below), so `choices=` would exit
+    through argparse's own usage message and exit path instead of a clean
+    `CliUsageError` / `EXIT_USAGE_ERROR`.
+
+    Every degenerate form fails CLOSED, and the message names every value it
+    did not recognise. An empty entry is a typo, never an opt-out: a later
+    "cleanup" that filtered empty entries out would turn `--reject-trust ""`
+    into a gate matching nothing — fail-OPEN on the one flag whose whole job
+    is to refuse. The valid names come from `verify`, never from a second copy
+    of them in the message, so renaming a literal cannot leave the message
+    stale.
+    """
+    valid = (verify._TRUST_VERIFIED, verify._TRUST_TOFU, verify._TRUST_UNVERIFIED_ROTATION)
+    requested = [v.strip() for v in raw.split(",")]
+    # Order-preserving and de-duplicated. Iterating the frozenset instead named
+    # ONE arbitrary offender, and a different one from run to run (string
+    # hashing is seeded per process): an operator fixing typos one per run
+    # against a message they cannot reproduce.
+    unknown = list(dict.fromkeys(v for v in requested if v not in valid))
+    if unknown:
+        raise CliUsageError(
+            "--reject-trust: unknown trust value(s) "
+            f"{', '.join(repr(v) for v in unknown)}; valid: {', '.join(valid)}"
+        )
+    return frozenset(requested)
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
+    reject_trust = _parse_reject_trust(args.reject_trust) if args.reject_trust is not None else None
     try:
         envelope_bytes = args.envelope.read_bytes()
     except FileNotFoundError as exc:
@@ -3596,7 +3629,22 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         authority_view=authority_view,
     )
     _print_json(_result_to_dict(result))
-    return EXIT_OK if result.ok else EXIT_VERIFICATION_FAILED
+    if not result.ok:
+        # The receipt already fails on its own terms, and both outcomes exit 1.
+        # Naming trust here would report the WEAKER reason for a receipt
+        # refused by the stronger one: a tampered receipt whose trust happens
+        # to be listed would tell an operator reading stderr that it has a
+        # provenance problem, while `errors` on stdout says the signature does
+        # not verify. `--reject-trust` speaks only for receipts that are
+        # otherwise `ok` — that is the entire case it exists for.
+        return EXIT_VERIFICATION_FAILED
+    if reject_trust is not None and result.trust in reject_trust:
+        print(
+            f"error: trust is '{result.trust}', rejected by --reject-trust",
+            file=sys.stderr,
+        )
+        return EXIT_VERIFICATION_FAILED
+    return EXIT_OK
 
 
 # --- disclose -----------------------------------------------------------------------
@@ -4637,6 +4685,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="JSON publisher authority evidence object "
         "{authorizations[,current_authorization_version]}; supplying it opts into §20.4",
+    )
+    p.add_argument(
+        "--reject-trust",
+        metavar="VALUE[,VALUE...]",
+        default=None,
+        help="comma-separated trust values to refuse — verified, "
+        "unauthenticated_tofu, unverified_rotation — exiting 1 when the "
+        "result's trust is one of them even if ok is true. ok never includes "
+        "trust (v0.1 §11.1), so an integration that gates on the exit code "
+        "alone must name here the levels it does not accept. This is a set of "
+        "values, not a threshold: naming unverified_rotation still accepts "
+        "unauthenticated_tofu. Note this command's ceiling: --trust-dir "
+        "material is loaded at provenance 'bundle', so verify never reports "
+        "'verified' (naming it can never fire) and rejecting "
+        "'unauthenticated_tofu' rejects every receipt it can produce",
     )
     p.set_defaults(func=_cmd_verify)
 

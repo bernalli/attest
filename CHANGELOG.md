@@ -6,6 +6,18 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `attest verify --reject-trust VALUE[,VALUE...]` refuses a receipt whose
+  `trust` component is one of the named values by exiting 1, even when `ok` is
+  true. `ok` never includes `trust` (v0.1 §11.1, conformance vector 14b), so an
+  integration gating on the exit code alone had no way to say "not through a
+  discontinuous rotation". The flag changes only the exit code: the JSON on
+  stdout is byte-identical with and without it, and a receipt that fails
+  verification keeps its own reason. It is a set of values, not a threshold —
+  and this command loads `--trust-dir` material at provenance `bundle`, so
+  `verify` never reports `verified`.
+
 ### Fixed
 
 - Timestamps whose digits are not ASCII are refused at the temporal check. The

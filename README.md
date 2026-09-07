@@ -59,7 +59,10 @@ obtain an external timestamp and supply the evidence and matching trusted log
 keys and anchors to a capable verifier. A receipt with qualifying anchored
 standing can be rescued; an unlogged one cannot. The bridge and `attest issue`
 do not automate these steps, and the browser and desktop currently pin no block
-headers. Here's how:
+headers. And `ok` never includes `trust` (v0.1 §11.1, conformance vector 14b):
+a verifier that must refuse a receipt reached through a discontinuous key
+rotation has to name that level itself, with `attest verify --reject-trust`,
+which takes the exact values to refuse rather than a threshold. Here's how:
 
 ## What attest is
 
