@@ -1,0 +1,61 @@
+=== GATE G-PLAN-CODE ===
+tree:  <tree>
+head:  1448f39
+utc:   2026-09-07T21:56:03Z
+
+precondition ok: python interpreter present
+precondition ok: ruff present
+precondition ok: plan present
+precondition ok: extractor present
+--- lint every normative python block
+$ <tree>/.venv/bin/python <tree>/tools/gates/plan_code.py
+extracted 5 normative python block(s) from 2026-09-08-trust-material-serialized-entry.md
+  ok: block at plan line 449 (1 lines)
+  ok: block at plan line 455 (30 lines)
+  ok: block at plan line 493 (21 lines)
+  ok: block at plan line 520 (31 lines)
+  ok: block at plan line 564 (13 lines)
+PLAN_CODE_CLEAN: every normative block passes the fragment-applicable rules
+exit: 0
+ok: no normative block violates a lint rule the executor cannot see coming (exit 0)
+ok: the checker reached its verdict (marker /PLAN_CODE_CLEAN/ present)
+ok: blocks were actually extracted (marker /extracted [1-9][0-9]* normative python block/ present)
+--- negative: an unsorted __slots__ in a normative block is caught
+$ env PLAN_CODE_PLAN=/tmp/tmp.2pQi0lT6vQ/plan-with-defect.md <tree>/.venv/bin/python <tree>/tools/gates/plan_code.py
+extracted 5 normative python block(s) from plan-with-defect.md
+  ok: block at plan line 449 (1 lines)
+  ok: block at plan line 455 (30 lines)
+  FAIL: block at plan line 493 (21 lines)
+      RUF023 [*] `KeyManifest.__slots__` is not sorted
+       --> /tmp/tmpacleac3s/block_line_493.py:2:17
+        |
+      1 | class KeyManifest:
+      2 |     __slots__ = ("_data", "_canonical")            # sorted: ruff RUF023 is on in this repo
+        |                 ^^^^^^^^^^^^^^^^^^^^^^^
+      3 |
+      4 |     def __init__(self, token: object, data: dict[str, Any], canonical: bytes) -> None:
+        |
+      help: Apply a natural sort to `KeyManifest.__slots__`
+      Found 1 error.
+      [*] 1 fixable with the `--fix` option.
+  ok: block at plan line 520 (31 lines)
+  ok: block at plan line 564 (13 lines)
+
+1 normative block(s) would not survive the repo's own linters
+exit: 1
+ok: negative 'an unsorted __slots__ in a normative block is caught' failed at the guarded path (exit 1)
+--- negative: a fence in an unchecked language is named
+$ env PLAN_CODE_PLAN=/tmp/tmp.2pQi0lT6vQ/plan-unknown-fence.md <tree>/.venv/bin/python <tree>/tools/gates/plan_code.py
+extracted 5 normative python block(s) from plan-unknown-fence.md
+  FAIL: fence at plan line 1773 is in an unrecognised language ('ruby') -- nobody is checking its contents
+  ok: block at plan line 449 (1 lines)
+  ok: block at plan line 455 (30 lines)
+  ok: block at plan line 493 (21 lines)
+  ok: block at plan line 520 (31 lines)
+  ok: block at plan line 564 (13 lines)
+
+1 fence(s) in a language this gate does not check
+exit: 1
+ok: negative 'a fence in an unchecked language is named' failed at the guarded path (exit 1)
+
+GATE G-PLAN-CODE PASS property=every python block the executor transcribes verbatim passes the repo's lint rules

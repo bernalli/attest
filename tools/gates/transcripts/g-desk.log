@@ -1,0 +1,116 @@
+=== GATE G-DESK ===
+tree:  <tree>
+head:  1448f39
+utc:   2026-09-07T21:46:23Z
+
+precondition ok: desktop/node_modules present (run: npm ci --prefix <tree>/desktop)
+precondition ok: npm available
+precondition ok: jq available
+precondition ok: tools/test-census.json present
+precondition ok: tools/check_test_census.py present
+--- npm run typecheck (desktop: tsconfig.json then tsconfig.e2e.json)
+$ npm --prefix <tree>/desktop run typecheck
+
+> attest-desktop-verifier@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.e2e.json
+exit: 0
+ok: npm run typecheck (desktop) exits 0 (exit 0)
+--- npm test (desktop, default + json reporters)
+$ npm --prefix <tree>/desktop test -- --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/20260907T214623Z-desktop.json
+
+> attest-desktop-verifier@0.1.0 test
+> vitest run --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/20260907T214623Z-desktop.json
+
+
+ RUN  v2.1.9 <tree>/desktop
+
+ ✓ test/card.test.ts (14 tests) 678ms
+ ✓ test/card-hostile.test.ts (35 tests) 1137ms
+ ✓ test/container-inherited.test.ts (66 tests) 74ms
+ ✓ test/app.test.ts (57 tests) 6464ms
+   ✓ a receipt this app cannot render never becomes a blank page > the job that throws becomes a fault card; the reason is shown, not buried 542ms
+   ✓ the four evidence rails: one slot each, replaced never merged, refused independently > a rail drop and clear preserve binding proven 1477ms
+   ✓ the four evidence rails: one slot each, replaced never merged, refused independently > a rail drop and clear preserve binding not_proven 1075ms
+   ✓ the four evidence rails: one slot each, replaced never merged, refused independently > a NEW receipt drops the previous binding proven 589ms
+   ✓ the four evidence rails: one slot each, replaced never merged, refused independently > a NEW receipt drops the previous binding not_proven 521ms
+ ✓ test/rail-state.property.test.ts (8 tests) 5513ms
+   ✓ desktop: rail transitions > refuses an oversized evidence file (40000001 bytes) without cancelling the current receipt 543ms
+   ✓ desktop: rail transitions > preserves each receipt across arbitrary rejected rail drops, then accepts a valid replacement 2169ms
+   ✓ desktop: rail transitions > keeps a container refusal across rail gestures, then replaces it on a valid receipt drop 2186ms
+ ✓ test/provenance-characterization.test.ts (4 tests) 542ms
+   ✓ every provenance the app can reach lands short of green > a bundle takes provenance 'bundle' — not 'embedded' 419ms
+ ✓ test/inherited-copy.test.ts (11 tests) 832ms
+   ✓ gate G1 — no inherited sentence promises a fetch no shipped tool performs > the catalogue this artifact inlines does not contain the sentence 404ms
+ ✓ test/verdict.test.ts (13 tests) 8ms
+ ✓ test/shell-policy.test.ts (300 tests) 17829ms
+   ✓ the rules do not depend on where a construct sits > an event handler is refused on every element the allowlist names 973ms
+   ✓ the rules do not depend on where a construct sits > every attribute that names a resource is refused on every allowlisted element 1234ms
+   ✓ the rules do not depend on where a construct sits > every element the corpus refuses is still refused inside the select 1097ms
+   ✓ a stylesheet that fetches is refused however the token is spelled > every spelling of url( in the stylesheet is refused 831ms
+ ✓ test/inline.test.ts (39 tests) 32316ms
+   ✓ the inliner refuses rather than copes > a dist with two scripts is refused, and nothing is written 409ms
+   ✓ the inliner refuses rather than copes > a planted EventSource is caught by the scanner 300ms
+   ✓ the inliner refuses rather than copes > a planted importScripts is caught by the scanner 343ms
+   ✓ the inliner refuses rather than copes > a planted serviceWorker is caught by the scanner 304ms
+   ✓ the inliner refuses rather than copes > a planted new Worker is caught by the scanner 406ms
+   ✓ the inliner refuses rather than copes > a planted import( is caught by the scanner 346ms
+   ✓ the inliner refuses rather than copes > a meta refresh reaches the shell: refused, and nothing is written 310ms
+   ✓ the inliner refuses rather than copes > an SVG use addressed with xlink:href reaches the shell: refused, and nothing is written 330ms
+   ✓ the inliner refuses rather than copes > an anchor with a javascript: href reaches the shell: refused, and nothing is written 300ms
+   ✓ the inliner refuses rather than copes > the footer anchor the artifact really carries is NOT refused 447ms
+   ✓ the artifact the build actually produces > --check passes on the artifact and fails on a tampered copy 494ms
+   ✓ the shell policy is what --check now enforces > row 40 (a meta refresh inside the select, which no tree parser sees) is refused, and the refusal names a rule 6373ms
+
+ Test Files  10 passed (10)
+      Tests  547 passed (547)
+   Start at  23:46:31
+   Duration  42.62s (transform 2.32s, setup 0ms, collect 18.76s, tests 65.39s, environment 5.47s, prepare 1.72s)
+
+JSON report written to <tree>/tools/gates/transcripts/20260907T214623Z-desktop.json
+exit: 0
+ok: npm test (desktop) exits 0 (exit 0)
+precondition ok: desktop test report was written: <tree>/tools/gates/transcripts/20260907T214623Z-desktop.json
+ok: tools/test-census.json declares at least one file for suite desktop (10 lines collected — derived, not written down)
+ok: the run's JSON report names at least one file (10 lines collected — derived, not written down)
+ok: the file set the census declares for desktop == the file set this run's report names (the two sets coincide)
+--- check_test_census.py desktop
+$ <tree>/.venv/bin/python <tree>/tools/check_test_census.py desktop --report <tree>/tools/gates/transcripts/20260907T214623Z-desktop.json
+desktop: 10 test file(s), 547 test(s) -- matches the census
+exit: 0
+ok: check_test_census.py desktop exits 0 (exit 0)
+--- check_test_census.py --selftest
+$ <tree>/.venv/bin/python <tree>/tools/check_test_census.py --selftest
+  ok   healthy input reports nothing
+  ok   a file on disk that the run never collected -> named ('test/b.test.ts')
+  ok   a file collected with zero tests -> named ('ran 0 tests')
+  ok   a file whose count drifted -> named ('the census records 5')
+  ok   a new file nobody registered -> named ('not in the census')
+  ok   a skipped test -> named ('pending')
+selftest: 6/6
+exit: 0
+ok: check_test_census.py --selftest exits 0 (exit 0)
+ok: selftest names: a file on disk the run never collected (marker /a file on disk that the run never collected -> named/ present)
+ok: selftest names: a file collected with zero tests (marker /a file collected with zero tests -> named/ present)
+ok: selftest names: a per-file count that drifted from the census (marker /a file whose count drifted -> named/ present)
+ok: selftest names: a file the run reports that is missing from the census (marker /a new file nobody registered -> named/ present)
+ok: selftest names: a pending/skipped test (marker /a skipped test -> named/ present)
+--- npm run build (desktop)
+$ npm --prefix <tree>/desktop run build
+
+> attest-desktop-verifier@0.1.0 build
+> tsc --noEmit -p tsconfig.json && vite build && node tools/inline.mjs
+
+vite v6.4.3 building for production...
+transforming...
+✓ 63 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   4.85 kB │ gzip:  2.23 kB
+dist/assets/index-B4Az_iuR.css   11.01 kB │ gzip:  3.00 kB
+dist/assets/index-xRH3Tk6I.js   221.41 kB │ gzip: 77.28 kB
+✓ built in 1.18s
+inline: wrote <tree>/desktop/dist/attest-verifier.html (236912 bytes)
+exit: 0
+ok: npm run build (desktop) exits 0 (tsc --noEmit, vite build, then the inliner) (exit 0)
+
+GATE G-DESK PASS property=desktop typechecks (src and e2e), its suite passes, the census names exactly what the run collected, and the build succeeds

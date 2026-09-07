@@ -1,0 +1,12 @@
+=== GATE G-TS-TC-F6 ===
+tree:  <tree>
+head:  1448f39
+utc:   2026-09-07T21:56:24Z
+
+precondition ok: verifiers/ts/node_modules present
+precondition ok: verifiers/ts/node_modules/@types present
+precondition ok: git available on GATE_TREE
+test files in scope for this phase (diff + untracked + script args), derived now: 0
+
+NO TS TEST FILE TOUCHED IN THIS PHASE — there is no object for this gate to measure
+GATE G-TS-TC-F6 SKIPPED precondition=no-object
