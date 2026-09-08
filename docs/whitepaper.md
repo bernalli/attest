@@ -1,10 +1,10 @@
-<!-- @whitepaper-sync v0.1-rev=17 v0.2-rev=12 package=0.9.1 -->
+<!-- @whitepaper-sync v0.1-rev=18 v0.2-rev=13 package=0.9.3 -->
 # Own what you buy
 
 *A whitepaper on durable digital possession: the seller signs a receipt, you hold the file, anyone
 can verify it offline — even after the store is gone.*
 
-> **Status: complete draft, fourth round (September 2026).** Every section of the outline in
+> **Status: complete draft, fifth round (September 2026).** Every section of the outline in
 > Part A is written in full in Part B. Part C is a short note for the project's owner, listing
 > the decisions that remain genuinely theirs, each with the text chosen in the meantime; it is
 > removed before publication. Every factual claim in Part B was checked against the specification,
@@ -13,7 +13,11 @@ can verify it offline — even after the store is gone.*
 > of section 15, or in the outline. Nothing in this document is a promise the repository cannot
 > keep. The comment at the top of this file names the specification revisions and the package
 > version the text describes; a test in the repository fails when they move, so the document
-> cannot fall behind what it describes without someone noticing.
+> cannot fall behind what it describes without someone noticing. It did move, and the test did
+> fail: the fifth round exists because the tooling this document reports on changed under it, and
+> several sentences that were true when they were written had stopped being true. They are marked
+> nowhere, because a document that annotates its own corrections is harder to read than one that
+> is simply correct; what is annotated instead is the repository, whose history holds both states.
 
 ---
 
@@ -48,16 +52,16 @@ Conventions that hold for every section:
 | 1 | **The thesis** | What is this, in one sentence — and why should I care? | canonical project sentence; `README.md` opening; `docs/faq.md` "What is attest?"; the named limit from `docs/faq.md` "The store that signed my receipts shut down" | 9 paragraphs |
 | 2 | Someone paid, and has nothing | Has this actually happened to people like me? | four verified cases, one per market — Amazon/*1984* (2009), Microsoft ebook store (2019), Sony/StudioCanal on PlayStation (1 September 2026, seller's own notice), Ubisoft/*The Crew* (2023–24); `README.md` opening; the verified case notes of 1 September | 10 paragraphs |
 | 3 | **What you actually bought** | What exactly is the thing I am missing? | `README.md` "What attest is"; v0.1 §2 "What a receipt is" (quoted), §4–§6 (the envelope, the fields, immutability and the irrevocability conditional), §8.1 (the commitment), §14 (the two files) | 7 paragraphs |
-| 4 | **How it works** | What does the seller give me, and how does a stranger check it? | `README.md` "How it works, for humans"; `docs/faq.md` "What does 'verify offline' actually check, and what can't it tell me?", "Who can revoke my receipt, and what would I see?", "Is this centralized?"; v0.1 §7 (keys), §8 (buyer binding), §11 (the algorithm and its vocabulary), §12 (revocation records), §13–§14 (disclose and the two files); `site/index.html` CSP and `site/e2e/site.spec.ts` for the browser verifier, `desktop/README.md` for the downloadable one. Revocation is described as a mechanism the verifier evaluates, never as something a seller can do today: the command-line tool on `main` has no `revoke` verb at any level (its top-level verbs, read from the tool's own definition, are `authority`, `check-artifact`, `disclose`, `export`, `grant`, `import`, `inspect`, `issue`, `keygen`, `log`, `manifest`, `transfer`, `verify`), the bridge has no refund handling, and the web and downloadable verifiers consult no revocation feed and pin no block headers. Every input `verify` accepts is listed with its producer, or the absence of one (`src/attest/cli.py`, `src/attest/verify.py`, `site/src/trusted-log.ts`) | 13 paragraphs + In detail |
-| 5 | **The trilemma** | If a file can be copied perfectly, how can it be *mine*? | the internal analysis of duplication and the free-copying/exclusivity/survival contradiction (research notes of 24 August, formalised in the research record of 5 September: the three poles named precisely, the two arguments for why the triple fails, the verdict "not resolvable as stated, declare the perimeter, no specification change"); v0.1 §8 (the two bindings); v0.2 §17 (issuer-mediated transfer, log-required honouring, earliest-logged-wins, holder binding); `docs/faq.md` "Is attest a DRM system…"; `src/attest/cli.py` on `main` for which side of each mechanism has a shipped command (the holder's transfer authorization, the issuer's transfer record and pledge redemption do; the ordinary binding challenge does not); the two measured limits on transfer — a record authenticates only while its key is `active`, and `license.transferable` is not read on the honouring path — stated as limits, not guarantees | 12 paragraphs + In detail |
-| 6 | **The clock** | Why is Bitcoin in here, if this is not a blockchain thing? | v0.2 §11.1–§11.3 (anchoring), §19 (the anchored-cutoff rescue); `src/attest/cli.py` (no anchoring flag on `issue`), `src/attest/verify.py` and `verifiers/ts/src/verify.ts` (anchoring off by default), `site/src/trusted-log.ts` (empty header set); `docs/faq.md` "Why not blockchain / NFT?" | 13 paragraphs + In detail |
+| 4 | **How it works** | What does the seller give me, and how does a stranger check it? | `README.md` "How it works, for humans"; `docs/faq.md` "What does 'verify offline' actually check, and what can't it tell me?", "Who can revoke my receipt, and what would I see?", "Is this centralized?"; v0.1 §7 (keys), §8 (buyer binding), §11 (the algorithm and its vocabulary), §12 (revocation records), §13–§14 (disclose and the two files); `site/index.html` CSP and `site/e2e/site.spec.ts` for the browser verifier, `desktop/README.md` for the downloadable one. Revocation is described as a mechanism the verifier evaluates and a seller can now perform: the command-line tool's top-level verbs, read from the tool's own definition, are `authority`, `binding`, `check-artifact`, `disclose`, `export`, `grant`, `import`, `inspect`, `issue`, `keygen`, `log`, `manifest`, `revocation-view`, `revoke`, `transfer`, `verify`, and the `revoke` → `revocation-view` → `verify` chain was run end to end before the paragraph was written (the verifier reports `revocation: "revoked"`, `ok: false`). The checkout service declines an order already marked refunded and does nothing about a refund arriving after issuance; the web and downloadable verifiers fetch no revocation feed, though both read one a visitor drops on them, and pin no block headers. Every input `verify` accepts is listed with its producer, or the absence of one (`src/attest/cli.py`, `src/attest/verify.py`, `site/src/trusted-log.ts`) | 13 paragraphs + In detail |
+| 5 | **The trilemma** | If a file can be copied perfectly, how can it be *mine*? | the internal analysis of duplication and the free-copying/exclusivity/survival contradiction (research notes of 24 August, formalised in the research record of 5 September: the three poles named precisely, the two arguments for why the triple fails, the verdict "not resolvable as stated, declare the perimeter, no specification change"); v0.1 §8 (the two bindings); v0.2 §17 (issuer-mediated transfer, log-required honouring, earliest-logged-wins, holder binding); `docs/faq.md` "Is attest a DRM system…"; `src/attest/cli.py` for which side of each mechanism has a shipped command (the holder's transfer authorization, the issuer's transfer record, its packaging for a verifier, pledge redemption and the ordinary binding challenge all do; what the last one lacks is a receipt carrying a buyer key to run against); the two measured limits on transfer — a record authenticates only while its key is `active`, so a retirement or a compromise marking un-honours it and leaves one purchase with two green receipts (threat model TM-80, pinned by a leaf of the corpus), and `license.transferable` is read only as a schema cross-check, never on the honouring path — stated as limits, not guarantees | 12 paragraphs + In detail |
+| 6 | **The clock** | Why is Bitcoin in here, if this is not a blockchain thing? | v0.2 §11.1–§11.3 (anchoring), §19 (the anchored-cutoff rescue); `src/attest/cli.py` (`issue --log-dir` enters a receipt in the seller's log as it signs it; there is still no anchoring flag on `issue`, and `log anchor` attaches material obtained outside the tool, which never touches a network), `src/attest/verify.py` and `verifiers/ts/src/verify.ts` (anchoring off by default), `site/src/trusted-log.ts` (`pinnedHeaders: {}`); `docs/faq.md` "Why not blockchain / NFT?" | 13 paragraphs + In detail |
 | 7 | **Two tracks, one standard** | Who would ever issue one of these? | `README.md` "What attest is" (both tracks); `docs/faq.md` "Nobody forces a seller…"; `bridge/src/attest_bridge/` (the three checkout adapters; refunded orders skipped); Directive 2011/83/EU of 25 October 2011, Article 8(7) and Article 2(10), read on the published text; the European Commission's reply of 16 June 2026 to the *Stop Destroying Videogames* citizens' initiative, read on press release IP/26/1369; California AB 2426 (Chapter 513, Statutes of 2024; in force 1 January 2025), Business and Professions Code section 17500.6 read on the codified text | 12 paragraphs + In detail |
-| 8 | **What it does not do** | Where is the catch? | v0.1 §7.3, §7.4; v0.2 §15, §18.6, §18.7, §19.5, §19.6, §20; `docs/spec/attest-threat-model.md` §6.2, §7, TM-44, TM-68, TM-74; measured behaviour of `demo/store_dies.py`; `docs/faq.md` limits paragraph | 20 paragraphs + In detail |
+| 8 | **What it does not do** | Where is the catch? | v0.1 §7.3, §7.4; v0.2 §15, §18.6, §18.7, §19.5, §19.6, §20; `docs/spec/attest-threat-model.md` §6.2, §7, TM-44, TM-68, TM-74, TM-78, TM-80; measured behaviour of `demo/store_dies.py`; `docs/faq.md` limits paragraph | 20 paragraphs + In detail |
 | 9 | Copying, piracy, and what this is not for | Is this DRM? Does it stop piracy? Does it help pirates? | v0.1 §2 (out of scope: DRM, hosting, resale); `docs/faq.md` "Is attest a DRM system, a store, or a way to pirate games?"; the evidence review on second-hand markets and piracy in the September paper (hostile studies first, then the applicability limit, then the ceiling, then the unmeasured gap) | 7 paragraphs |
 | 10 | Why it is worth having anyway | What does each party actually gain? | `README.md` seller paragraph; `docs/faq.md` "Nobody forces a seller…"; v0.1 §6.1 (the irrevocable-goods conditional and AB 2426); v0.2 §18 (the preservation pledge as a zero-cost signature) | 7 paragraphs |
-| 11 | After the store is gone | Practically, what do I do with the receipt on the day it matters? | `docs/faq.md` "The store that signed my receipts shut down…"; v0.2 §18 (preservation pledge, activation modes); `demo/README.md`; both demonstrations, run. Every seller-side act named here (revoking, declaring a compromise, re-issuing) is stated with whether a shipped tool performs it — today only issuing and transfer are | 8 paragraphs |
+| 11 | After the store is gone | Practically, what do I do with the receipt on the day it matters? | `docs/faq.md` "The store that signed my receipts shut down…"; v0.2 §18 (preservation pledge, activation modes); `demo/README.md`; both demonstrations, run. Every seller-side act named here (revoking, declaring a compromise, re-issuing) is stated with whether a shipped tool performs it — today all of them do, and dating any of them does not | 8 paragraphs |
 | 12 | Where this actually is | What exists today, and what is only designed? | `README.md` "Status"; `docs/conformance.md`; the IETF Datatracker entry for `draft-martinalli-open-purchase-receipts-00` (individual submission, Informational, no standing), read on the Datatracker; the name is given because the repository's `ietf/` source and the Datatracker now carry the same one | 4 paragraphs |
-| 13 | Open problems | What is still unsolved, with a name? | `docs/spec/attest-threat-model.md` §6.3; TM-68; the adversarial question list of 1 September (long-term custody of block headers; re-attestation with no signer; the domain as a lease); the provenance of the buyer's key (research record of 5 September); the two measured transfer limits; and the general fact, measured on the command-line tool and the bridge: **the defences exist in the specification and in the verifier; the tools that would let a seller exercise most of them are not shipped** — no revocation command, no receipt log entry, no packaged compromise declaration, no anchoring flow | 9 paragraphs |
+| 13 | Open problems | What is still unsolved, with a name? | `docs/spec/attest-threat-model.md` §6.3; TM-68; the adversarial question list of 1 September (long-term custody of block headers; re-attestation with no signer; the domain as a lease); the provenance of the buyer's key (research record of 5 September); the two measured transfer limits; and the general fact, measured on the command-line tool and the checkout service: **the defences exist in the specification and in the verifier, and the seller's tools for all but one of them now exist too** — revocation, a receipt's log entry and a packaged compromise declaration all ship; *dating* any of them does not, because the attestation is obtained outside these tools by design and no curated block headers ship with anything | 9 paragraphs |
 | 14 | What is needed now, and colophon | What should I do, and on what terms is all this offered? | `README.md` seller and contact paragraphs; `LICENSE`, `LICENSE-docs`; `docs/faq.md` on the patent boundary | 5 paragraphs |
 | 15 | Notes | Where does each external fact come from? | numbered sources for the external facts of sections 2, 5, 6, 7, 8, 9, 10 and 11; internal facts link to the live surface instead | as needed |
 
@@ -529,9 +533,10 @@ chain is the subject of the next paragraph and of section 6. Beside the tool, th
 next to a checkout refuses to issue for an order already marked refunded or cancelled, which is the
 easy half of a refund; it has no path at all for a refund that arrives *after* a receipt has gone
 out, which is the half that would need the command above. And on the verifier's side: the browser
-page and the downloadable file never go and fetch a seller's withdrawal records — nothing in either
-reaches out to a network at all — though either will consult a revocation file you drop onto it
-yourself. Unless somebody hands one over, the answer there stays "unknown"; and even handed one, a
+page and the downloadable file never go and *fetch* a seller's withdrawal records, and could not —
+the policy described earlier in this section forbids them any host but the one the page came from
+— though either will consult a revocation file you drop onto it yourself. Unless somebody hands one
+over, the answer there stays "unknown"; and even handed one, a
 verifier configured as those two are — one public log key pinned, no block headers pinned — could
 not honour a refund-window withdrawal, for exactly the reason the tool's own warning gives. Read
 every sentence about revocation in this document, then, as a rule the verifier enforces and a seller
@@ -608,9 +613,10 @@ from here the second list is short enough to hold in mind.
 > `bundle` unconditionally, so `verified` is unreachable from it. `--revocations`: the array a
 > verifier reads — `revocation-view`, shipped; `transfer record --revocation-out` still emits the
 > `status: "transferred"` member of the same family. `--transfer-view`: `transfer view` — shipped.
-> `--compromise-view`: `manifest compromise-view` — shipped, and it reports for each claim whether
-> the claim establishes the status floor, whether its signer could date a cutoff, and whether it
-> carries any anchor material at all. `--disclose-identifier`,
+> `--compromise-view`: `manifest compromise-view` — shipped, and for every claim and every key it
+> marks stolen it reports whether the claim establishes the status floor, whether its signer could
+> date a cutoff, whether it carries any anchor material, and whether a cutoff is established — the
+> last answerable only by a caller who supplies log keys and a header policy. `--disclose-identifier`,
 > `--disclose-type`, `--disclose-salt`: the salt comes from `issue --salt-out` or the exported
 > `salts.json` — shipped. `--disclose-challenge-nonce`, `--disclose-challenge-sig`: `binding
 > challenge` and `binding respond` — shipped, the second being the buyer's side of the exchange
@@ -798,9 +804,11 @@ written down.
 > (`transfer view`), the log operator's commands (`log`), and the redemption
 > challenge for a preservation pledge (`grant challenge`, `grant respond`, `grant verify`, §18.7).
 > The ordinary binding challenge for a receipt — the "prove this is yours" exchange described in
-> section 4 — has both its halves as commands now, `binding challenge` and `binding respond`; what
-> it lacks is not a command but a receipt carrying a non-null `buyer.pubkey` to run against, which
-> no issued receipt does. "One legitimate holder at a time" is therefore a licence term enforced by honest
+> section 4 — has both its halves as commands now, `binding challenge` and `binding respond`, and
+> the second refuses a seed that is not the key the receipt names rather than producing a proof
+> that verifies against nothing; what the exchange lacks is not a command but a receipt carrying a
+> non-null `buyer.pubkey`, and that field is null by default wherever there is no buyer-side app,
+> which is everywhere. "One legitimate holder at a time" is therefore a licence term enforced by honest
 > clients, and by issuers and markets refusing a receipt that fails it; the protocol supplies the
 > evidence and never the enforcement. Two measured facts bound the profile as shipped:
 > `license.transferable` is not read on the path that honours a transfer record (every combination
@@ -943,10 +951,13 @@ There used to be a further gap on the seller's side, and it has closed — which
 remaining one rather than removing it. To use the rule above, a verifier has to be shown the
 seller's compromise declaration in a particular authenticated form. Both implementations know how
 to consume that form, and a shipped command now produces it: it pairs the declaring manifest with
-its log evidence and reports, claim by claim, what that claim is actually capable of — whether it
-sets the status floor, whether its signer could date a cutoff, whether it carries any anchor
-material at all. Run it without log keys and a header policy and it tells you, in as many words,
-that no cutoff can be established. Which is the same missing link again: a seller who discovers a
+its log evidence and reports, for every claim and every key that claim marks stolen, what that
+claim is actually capable of — whether it sets the status floor, whether its signer could date a
+cutoff, whether it carries any anchor material at all, and whether a cutoff is in fact
+established. Those four are independent on purpose, and the fourth is answerable only by a caller
+who supplies log keys and a header policy; without them the command answers three questions out of
+four, and the fourth is not a question anyone can answer today. Which is the same missing link: a
+seller who discovers a
 theft can package the declaration and cannot date it, so the cutoff the rule needs never comes into
 existence. And the order in which these gaps are closed matters: honouring
 timestamped receipts before anyone has timestamped a declaration would not protect buyers, it would
@@ -1599,15 +1610,17 @@ order — the buyer's salt offered as proof, because handing the salt to an arch
 holder gives away the ability to be impersonated everywhere. Redemption therefore requires a key
 of the buyer's to have been written into the receipt at the time of sale, and the specification
 forbids the easier proof as a normative prohibition; section 8 said what that costs an heir.
-Since no shipped tool lets a buyer answer an ordinary binding challenge, the pledge is today the
-one place where a buyer-side key has a shipped command on both sides: the archive mints the
-challenge and the buyer's tool answers it.
+The pledge was for a time the one place where a buyer-side key had a shipped command on both sides
+— the archive minting the challenge, the buyer's tool answering it — and the ordinary binding
+challenge of section 4 has since caught up. What neither has is a receipt in the world carrying a
+buyer key to be challenged over.
 
 Every seller-side and publisher-side act in this section is stated with whether a shipped tool
 performs it. Issuing a receipt, signing a pledge, declaring a cessation, minting and answering the
-redemption challenge, and counter-signing a transfer have shipped commands. Withdrawing a receipt,
-logging one, timestamping one, and packaging a compromise declaration in the form a verifier
-needs do not. What is missing from the pledge, above all, is not the mechanism: it is a publisher
+redemption challenge, counter-signing a transfer, withdrawing a receipt, logging one, and packaging
+a compromise declaration all have shipped commands. Putting a date on any of them does not, and
+that single absence is what section 6 is about: it is why a backstop date written into a pledge
+cannot yet be proved to have arrived. What is missing from the pledge, above all, is not the mechanism: it is a publisher
 who has signed one, an archive that holds anything, and licence prose written by a lawyer instead
 of the placeholder the demonstration carries — which says of itself that it is a reference gate,
 not a production one, and lists the three things it does not do. One detail from running both
@@ -1651,9 +1664,10 @@ production. No publisher has signed a preservation pledge. No archive holds anyt
 no external reviews. The clock of section 6 is switched on for nobody, this project's own
 verifier included, and no independently operated witness co-signs the log. The strong trust
 level is unreachable with the tools anyone can install. And of the defences the specification
-writes for the seller — withdrawing a receipt, logging and timestamping one, packaging a
-compromise declaration so that a verifier can bound it — none has a shipped producer, as section
-4 measured and section 13 lists.
+writes for the seller — withdrawing a receipt, logging one, timestamping one, packaging a
+compromise declaration so that a verifier can bound it — all but the third now have a shipped
+producer, as section 4 measured. The third is the one the others lean on, and it heads the list in
+section 13.
 
 The absence of a first adopter is a fact about adoption. It is not a measure of whether the
 standard is finished or worth building, and the work does not wait on it: a format that does not
@@ -1666,15 +1680,16 @@ exist cannot be adopted in the week it is needed, and the week it is needed keep
 These are stated as problems, not as roadmap promises. Each has a name, none has a date, and the
 first is the one a reader of this document has already met several times.
 
-**The seller's defences have no shipped producer.** This is a fact about tooling, measured on the
-command-line tool and the checkout service rather than inferred, and it is listed first because
-it qualifies most of the others. The specification defines, and both implementations evaluate,
-revocation records, log entries for receipts, timestamp proofs, and the authenticated form of a
-compromise declaration. No shipped tool produces any of them: there is no command that withdraws
-a receipt, none that computes a receipt's log entry, no timestamping option on issuance, and no
-packaging of a compromise declaration in the form the rescue of section 6 needs. Until those
-exist, every defence built on them protects nobody, and every sentence in this document that
-begins "the seller can" describes the specification and the verifier, not a product.
+**Nothing can be dated.** This is a fact about tooling, measured on the command-line tool and the
+checkout service rather than inferred, and it is listed first because it qualifies most of the
+others. The specification defines, and both implementations evaluate, revocation records, log
+entries for receipts, timestamp proofs, and the authenticated form of a compromise declaration.
+Three of those four now have a shipped producer. The fourth does not, and it is the one the other
+three lean on: a timestamp needs a public attestation obtained outside these tools — deliberately
+so, because a tool that went and fetched one would be a tool that touches a network — and a
+curated set of block headers to check it against, which nothing distributes. Until that link
+exists, every defence that turns on the order of two events protects nobody, and every sentence in
+this document that begins "the seller can" should be read with "and cannot prove when" after it.
 
 **Witness federation.** Until parties independent of the log co-sign what they have seen, an
 unwitnessed operator can maintain divergent views of history, and detection of a duplicated
@@ -1746,8 +1761,9 @@ anyone. Signing a receipt is one operation at the moment you already send a conf
 the buyer has to do nothing; nothing about how you sell has to change. What you take on is real
 and worth knowing first: a signing key, a small key file published on your own domain, and the
 duty to keep that key safe for as long as the receipts matter. Declaring it compromised is the
-one act that reaches back and invalidates what you have already signed, and today no tool of
-yours can withdraw a single receipt or enter one in a log; section 12 said what ships. A seller
+one act that reaches back and invalidates what you have already signed. You can withdraw a single
+receipt, and you can enter one in your own log as you sign it; what you cannot do with these tools
+is prove *when* you did either, and section 12 said why that is the one gap left. A seller
 who cannot carry a key is a seller this does not work for. Start there, and say where it hurts.
 
 If you buy digital content, download what you buy and keep the file. Where a receipt exists,
@@ -1917,16 +1933,19 @@ written, the note says so.
 testo diverso. Per ciascuna, la mia raccomandazione e il testo scelto nel frattempo. Le decisioni
 prese e chiuse in questo giro stanno in coda, una riga ciascuna, perché nessuno le ridomandi.*
 
-1. **Il marcatore di sincronizzazione descrive due revisioni che su questo branch non ci sono
-   ancora: v0.1 rev 17 e v0.2 rev 12.** Entrambe vivono su altri branch non mergiati (rev 17: §8
-   riclassifica il binding, `proven` = possesso di una chiave; rev 12: due frasi in §17.3 e §18.7
-   sulla provenienza issuer-asserted di `buyer.pubkey`, più TM-78 nel threat model). Il testo di
-   §4, §5, §8 e §13 è già scritto in quel lessico, quindi il marcatore dice ciò che il testo
-   descrive davvero. Conseguenza voluta: su questo branch `tests/test_whitepaper_sync.py` è
-   **rosso** (16 ≠ 17, 11 ≠ 12), e diventa verde senza altre modifiche appena il branch è
-   rebasato sopra quelle due revisioni — cioè il test impone l'ordine di merge giusto (prima le
-   spec, poi il whitepaper che le descrive). **Raccomando di lasciarlo così** e mergiare dopo le
-   due revisioni. Alternativa: marcatore a 16/11 subito (verde qui), da rialzare a mano dopo.
+1. ~~**Il marcatore descrive due revisioni che su questo branch non ci sono ancora.**~~ **Chiusa,
+   e il modo in cui si è chiusa merita due righe.** Il giro precedente aveva messo il marcatore a
+   v0.1 rev 17 / v0.2 rev 12 su un branch che stava a 16/11, di proposito, per costringere
+   l'ordine di merge: prima le spec, poi il whitepaper che le descrive. La previsione allegata —
+   «diventa verde senza altre modifiche appena il branch è rebasato sopra quelle due revisioni» —
+   **non si è avverata**, ed è la stessa famiglia di errore che il gate esiste per intercettare.
+   `main` non si è fermato a 17/12: è arrivato a **18/13**, e il pacchetto da 0.9.1 a **0.9.3**.
+   Dopo il rebase il gate segnava tre disallineamenti, non zero. Alzare il marcatore non era
+   quindi un adempimento ma un'affermazione — dire che il testo descrive quelle revisioni e quel
+   pacchetto — e il grosso di questo giro è stato renderla vera. La parte cara non erano le due
+   revisioni di spec ma la 0.9.3: ha spedito le leve del venditore che il documento dichiarava
+   assenti, e la tesi «specificate, non spedite» reggeva otto sezioni. Ora il marcatore è a
+   18/13/0.9.3 e il gate è verde. **Niente da decidere qui.**
 2. **Titolo e sottotitolo.** «Own what you buy» resta (tagline ratificata). Il sottotitolo dice
    ora «durable digital possession» e la tesi «layer of possession»: la spec dice testualmente che
    una ricevuta «is not a claim of "ownership"». **Raccomando così.** Alternativa: un sottotitolo
@@ -1935,6 +1954,12 @@ prese e chiuse in questo giro stanno in coda, una riga ciascuna, perché nessuno
    punti ciechi dei tetti), perché la sequenza decisa è fix → release → advisory e il whitepaper li
    pubblicherebbe prima. Il testo ne dice la famiglia. **La sequenza è tua**: se il whitepaper esce
    dopo l'advisory, le due voci rientrano in §8.
+   **Nota di questo giro, che rende la voce più pesante di prima e non la cambia**: §6 e §8 ora
+   dicono che la dichiarazione di compromissione *si può impacchettare*, perché il comando esiste
+   e l'ho verificato. Il documento è quindi più affermativo su quel percorso di quanto fosse
+   quando questa decisione è stata presa, mentre i difetti vivi stanno proprio lì. Non ho cambiato
+   la decisione — non è mia — ma la finestra fra pubblicazione e advisory è ora meno innocua:
+   prima il documento diceva «non spedito» e nessuno andava a guardare.
 4. **Nomi di prodotti e di archivi.** Il corpo nomina le tre integrazioni del servizio di checkout
    (Stripe, itch.io, Shopify) perché la FAQ pubblica lo fa già; i due archivi accademici sono
    descritti nel corpo e nominati solo nelle note (§15, nota 20). **Raccomando così.** Alternativa:
@@ -1957,6 +1982,23 @@ prese e chiuse in questo giro stanno in coda, una riga ciascuna, perché nessuno
    va tolta nello stesso atto.
 
 *Decisioni prese in questo giro, chiuse (una riga ciascuna):*
+
+- **La superficie spedita è stata rimisurata, non riletta**, ed è il grosso del giro: la 0.9.3 ha
+  aggiunto `revoke`, `revocation-view`, `binding {challenge,respond}`, `log entry`,
+  `manifest compromise-view`, `transfer view` e `issue --log-dir`, più un flag di `verify` per
+  ciascuno dei tre input che non ne avevano. Le catene che il testo ora afferma sono state
+  ESEGUITE, non lette da un help: revoca fino a `revocation: "revoked"`/`ok: false`; i due rifiuti
+  di `revoke` (ricevuta irrevocabile, data fuori finestra); la sfida di binding fino a
+  `"binding": "proven"` con controllo negativo; `issue --log-dir` fino a `leaf_index 0`; e
+  `log prove --receipt` fino al bundle `{checkpoint, entry, inclusion_proof, leaf_index,
+  tree_size}` — che è la forma richiesta **meno** il membro `anchors`. Il link mancante è quindi
+  mostrato, non asserito, ed è uno solo: la datazione.
+- **Tre difetti miei, trovati dal mandato d'attacco e non dalla rilettura**, tutti nella stessa
+  direzione: correggendo un documento troppo negativo l'ho reso, in tre punti, più affermativo
+  dell'evidenza (una frase sulla rete che contraddiceva il documento stesso; un «te lo dice in
+  tante parole» su un testo che non avevo letto; una verità vacua). Tutti e tre corretti. Il
+  dettaglio delle quattordici domande e del loro esito sta nel registro di ricerca del progetto,
+  fuori da questo repo.
 
 - **B2: perimetro dichiarato, nessun cambio di spec.** Il fronte B1 ha chiuso il 5 settembre con
   verdetto «non risolvibile come posto»; §5 rende i due argomenti (i fatti che restano veri; la
