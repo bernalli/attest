@@ -137,7 +137,15 @@ def _reject_duplicate_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _loads_strict(body: bytes) -> Any:
-    return json.loads(body, object_pairs_hook=_reject_duplicate_members)
+    parsed = json.loads(body, object_pairs_hook=_reject_duplicate_members)
+    # A lone-surrogate `str` is legal JSON syntax and survives every isinstance
+    # check a caller can write, then raises `UnicodeEncodeError` at the first
+    # sink that encodes it (sqlite3, purchase_id_for_log, SMTP) - outside every
+    # handler contract. Same guard `model.loads_utf8_strict` gives the Stripe
+    # and Shopify rails; `UnicodeEncodeError` is a `ValueError`, so every
+    # existing `except ValueError` here already covers it.
+    json.dumps(parsed, ensure_ascii=False).encode("utf-8")
+    return parsed
 
 
 def _loads_authenticated_body(body: bytes) -> Any:
@@ -174,7 +182,11 @@ def _parse_create_time(raw: Any, order_id: str) -> str:
         ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC).strftime(_RFC3339)
+    # `strftime("%Y")` does not zero-pad below year 1000 on glibc, so a year-1
+    # timestamp would leave here as "1-01-01T00:00:00Z", which is not RFC 3339.
+    # `isoformat()` always pads to four digits - the same fix the Paddle,
+    # Shopify, itch and `model.rfc3339_from_unix` twins already carry.
+    return parsed.astimezone(UTC).replace(microsecond=0, tzinfo=None).isoformat() + "Z"
 
 
 class PayPalAdapter:

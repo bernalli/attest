@@ -44,6 +44,7 @@ from attest_bridge.model import (
     NormalizedPurchase,
     PurchaseRejected,
     decode_buyer_pubkey,
+    loads_utf8_strict,
     purchase_id_for_log,
 )
 
@@ -155,9 +156,8 @@ def _parse_billed_at(raw: Any, purchase_id: str) -> str:
         parsed = parsed.replace(tzinfo=UTC)
     # `strftime("%Y")` does not zero-pad below year 1000 on glibc, so a year-1
     # timestamp would leave here as "1-01-01T00:00:00Z", which is not RFC 3339.
-    # `isoformat()` always pads to four digits. The Shopify twin
-    # (`_parse_shopify_created_at`) and `model.rfc3339_from_unix` share the same
-    # edge and are a separate follow-up.
+    # `isoformat()` always pads to four digits. The Shopify, itch and
+    # `model.rfc3339_from_unix` twins already carry the same fix.
     return parsed.astimezone(UTC).replace(microsecond=0, tzinfo=None).isoformat() + "Z"
 
 
@@ -201,11 +201,18 @@ class PaddleAdapter:
         """
         verify_paddle_signature(payload, sig_header, self._webhook_secret, now=now)
         try:
-            event: dict[str, Any] = json.loads(payload)
+            event: dict[str, Any] = loads_utf8_strict(payload)
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise
         except RecursionError as exc:
             raise json.JSONDecodeError("paddle webhook body nests too deeply", "", 0) from exc
+        except ValueError as exc:
+            # A >4300-digit integer literal leaves `json.loads` as a bare
+            # `ValueError`, and `loads_utf8_strict` signals a lone surrogate as
+            # `UnicodeEncodeError`; neither is a `JSONDecodeError`, so without
+            # this both would answer 500 and Paddle would redeliver a body that
+            # can never parse. Mirrors `paypal_adapter._loads_authenticated_body`.
+            raise json.JSONDecodeError(str(exc), "", 0) from exc
         return event
 
     def wants(self, event: dict[str, Any]) -> bool:

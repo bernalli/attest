@@ -1385,3 +1385,52 @@ def test_a_signed_body_that_can_never_parse_is_400_not_a_three_day_retry_loop(
 
     assert status.startswith("400")
     assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_a_signed_body_with_a_lone_surrogate_is_400_not_an_escaping_encode_error(
+    paddle_deps: BridgeDeps,
+) -> None:
+    """A `\\udXXX` escape is legal JSON syntax and `json.loads` answers it with
+    a `str` Python can hold but cannot encode. It survives every `isinstance`
+    the adapter writes and fails at the first sink that encodes it — here
+    `Ledger.seen_event`, which the handler calls OUTSIDE every `try`. So the
+    failure did not land on the policy table's 500 row: it escaped
+    `_handle_paddle_webhook`, escaped `app()`, and reached the WSGI server.
+    Stripe and Shopify never had this hole because they parse through
+    `loads_utf8_strict`; this rail has to use the same door."""
+    body = json.dumps(make_transaction_completed()).encode()
+    body = body.replace(b'"event_id": "evt', b'"event_id": "\\ud800evt')
+
+    status, _, _ = call_app(
+        make_app(paddle_deps),
+        "POST",
+        "/paddle/webhook",
+        body=body,
+        headers={"Paddle-Signature": sign_paddle(body, _WEBHOOK_SECRET, _T)},
+    )
+
+    assert status.startswith("400")
+    assert paddle_deps.ledger.unresolved_dead_letters() == []
+
+
+def test_a_signed_body_whose_integer_literal_is_too_long_is_400_not_a_retry_loop(
+    paddle_deps: BridgeDeps,
+) -> None:
+    """CPython refuses to build an int from a literal of more than 4300 digits
+    and says so with a BARE `ValueError`, not a `JSONDecodeError`. Unnormalised
+    it reaches the handler's 500 row, and Paddle redelivers a body that can
+    never parse 60 times over three days. The boundary is exact: 4300 digits
+    parse, 4301 do not — and it sits far under the route's body cap, so the cap
+    does not cover it. The PayPal twin already answers 400 on the same input."""
+    body = b'{"event_id": "evt_1", "data": {"amount": ' + b"1" * 4301 + b"}}"
+
+    status, _, _ = call_app(
+        make_app(paddle_deps),
+        "POST",
+        "/paddle/webhook",
+        body=body,
+        headers={"Paddle-Signature": sign_paddle(body, _WEBHOOK_SECRET, _T)},
+    )
+
+    assert status.startswith("400")
+    assert paddle_deps.ledger.unresolved_dead_letters() == []

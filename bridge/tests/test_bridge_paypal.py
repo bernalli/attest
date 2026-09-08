@@ -1635,3 +1635,22 @@ def test_every_local_allow_list_refusal_reads_as_update_the_bridge_not_as_an_att
     assert messages.count("paypal webhook: unsupported auth algorithm") == 1
     assert messages.count("paypal webhook: certificate url outside the pinned paypal.com host") == 1
     assert messages.count("paypal webhook: signature verification failed") == 1
+
+
+def test_an_authenticated_body_with_a_lone_surrogate_is_400_not_an_escaping_encode_error(
+    paypal_deps: BridgeDeps,
+) -> None:
+    """The Paddle twin of this test explains the family; this rail reaches it
+    by a different door. PayPal authenticates the body through the postback, so
+    the surrogate is already past the trust boundary when `_loads_strict` runs:
+    the `str` Python can hold but cannot encode then fails at
+    `Ledger.seen_event`, which the handler calls outside every `try`, and the
+    UnicodeEncodeError leaves the WSGI app instead of landing on the policy
+    table's 400 row."""
+    body = json.dumps(make_capture_completed()).encode()
+    body = body.replace(b'"id": "WH-', b'"id": "\\ud800WH-')
+
+    status, _, _ = _post_paypal_webhook(paypal_deps, None, body=body)
+
+    assert status.startswith("400")
+    assert paypal_deps.ledger.unresolved_dead_letters() == []
