@@ -20,7 +20,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from attest import anchor, issue, keys, manifests, pq, revocation, tlog, transfer, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest, make_payload, store
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#ed25519-1"
@@ -128,7 +128,7 @@ def _key_manifest() -> dict[str, Any]:
 
 
 def _trust_store() -> verify.TrustStore:
-    return verify.TrustStore(manifests={ISSUER: _key_manifest()}, provenance={ISSUER: "tls"})
+    return store({ISSUER: _key_manifest()}, {ISSUER: "tls"})
 
 
 def _receipt_payload() -> dict[str, Any]:
@@ -427,7 +427,7 @@ def test_audit_chain_rejects_chameleon_transfer_link_and_preserves_later_valid_l
             _chain_transferred_revocation(CHAIN_OLD_ID, TRANSFER_AT),
             _chain_transferred_revocation(CHAIN_TARGET_ID, TRANSFER_AT_2),
         ],
-        _key_manifest(),
+        key_manifest(_key_manifest()),
         [_transfer_log_key(hk)],
         _no_horizon_policy(),
     )
@@ -449,7 +449,7 @@ def test_audit_chain_sets_aside_hostile_revocation_record_and_honors_genuine_bac
         [p0, p1],
         [{"record": record, "evidence": evidence}],
         [hostile_revocation, genuine_revocation],
-        _key_manifest(),
+        key_manifest(_key_manifest()),
         [_transfer_log_key(hk)],
         _no_horizon_policy(),
     )

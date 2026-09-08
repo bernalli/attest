@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from attest import bundle, canon, cli, issue, keys, manifests, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest, make_payload, store
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#ed25519-1"
@@ -32,9 +32,7 @@ def _key_manifest(status: str = "active", valid_to: str | None = None) -> dict[s
 
 
 def _trust_store(manifest: dict[str, Any], chains: Any = None) -> verify.TrustStore:
-    return verify.TrustStore(
-        manifests={ISSUER: manifest}, provenance={ISSUER: "tls"}, chains=chains or {}
-    )
+    return store({ISSUER: manifest}, {ISSUER: "tls"}, chains if chains is not None else {})
 
 
 def _to_bytes(envelope: dict[str, Any]) -> bytes:
@@ -72,9 +70,12 @@ def _rewrite_zip(
 
 
 def test_find_key_tolerates_non_dict_entries() -> None:
+    # `None`/`"x"` as `keys[]` members do not survive json.dumps + strict
+    # parsing as a document a caller could hand the library (R3): this
+    # exercises the corpus body, so it goes through the private twin.
     manifest = {"keys": [None, "x", {"kid": KID, "pub": "p"}]}
-    assert manifests.find_key(manifest, KID) == {"kid": KID, "pub": "p"}
-    assert manifests.find_key({"keys": [None]}, KID) is None
+    assert manifests._find_key(manifest, KID) == {"kid": KID, "pub": "p"}
+    assert manifests._find_key({"keys": [None]}, KID) is None
 
 
 # --- #12: continuity must also honour the signer key's validity window ---
@@ -102,7 +103,7 @@ def test_continuity_rejects_candidate_outside_signer_validity_window() -> None:
         KP,
         KID,
     )
-    assert manifests.check_continuity(trusted, candidate) is False
+    assert manifests.check_continuity(key_manifest(trusted), key_manifest(candidate)) is False
 
 
 # --- #8: continuity chain must lead to the manifest actually used ---

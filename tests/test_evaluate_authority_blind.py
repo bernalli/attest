@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from attest import authority, keys, manifests, pq, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest, make_payload, store
 
 ISSUER = "store.example"
 PUBLISHER = "pub.example"
@@ -200,11 +200,7 @@ def _trust_store(
     resolved.update(manifests_by_domain or {})
     resolved_provenance = {domain: "tls" for domain in resolved}
     resolved_provenance.update(provenance or {})
-    return verify.TrustStore(
-        manifests=resolved,
-        provenance=resolved_provenance,
-        chains=chains or {},
-    )
+    return store(resolved, resolved_provenance, chains or {})
 
 
 def _view(
@@ -292,7 +288,7 @@ def _version_pair(
 
 
 def _assert_authorized_fixture(document: dict[str, Any], manifest: dict[str, Any]) -> None:
-    assert authority.verify_authorization(document, manifest) is True
+    assert authority.verify_authorization(document, key_manifest(manifest)) is True
 
 
 def _valid_authorization_documents() -> list[tuple[str, dict[str, Any], dict[str, Any]]]:

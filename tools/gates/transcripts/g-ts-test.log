@@ -1,7 +1,7 @@
 === GATE G-TS ===
 tree:  <tree>
-head:  72c30c6
-utc:   2026-09-08T00:29:06Z
+head:  6742c53
+utc:   2026-09-08T12:38:40Z
 
 precondition ok: verifiers/ts/node_modules present
 precondition ok: GATE_PY available
@@ -10,95 +10,149 @@ $ npx --prefix <tree>/verifiers/ts vitest run --root <tree>/verifiers/ts --repor
 
  RUN  v2.1.9 <tree>/verifiers/ts
 
- ✓ test/tlog.test.ts (173 tests) 456ms
- ✓ test/grant.test.ts (145 tests) 851ms
- ✓ test/transparency.test.ts (74 tests) 5683ms
-   ✓ verify(): Stage 2 integration > caps oversized transparency evidence 2375ms
-   ✓ verify(): Stage 2 integration > counts transparency evidence caps by Unicode code points, not UTF-16 units 2002ms
-   ✓ verify(): Stage 2 integration > accepts evaluator max-scale anchor evidence (harmonization boundary) 608ms
- ✓ test/anchor.test.ts (96 tests) 174ms
- ✓ test/evaluate-grant.test.ts (96 tests) 9363ms
-   ✓ evaluateGrant — step 7: the ratchet > takes the MAXIMUM over the floor-relative filter, independent of presentation order 326ms
-   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array one past its ceiling truncates evaluation, never activating 1192ms
-   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array exactly at its ceiling is still evaluated 2647ms
- ✓ test/revocation.test.ts (24 tests) 340ms
- ✓ test/verify-unit.test.ts (43 tests) 4346ms
-   ✓ verify(): Stage 3 transferred-class backing (§17.3) > warns unbacked when the resolver never engages (oversized) 2633ms
- ✓ test/transfer.test.ts (57 tests) 1175ms
- ✓ test/authority.test.ts (100 tests) 1043ms
-   ✓ publisher authorization shape > enforces the 4096-entry document ceiling before entry validation 371ms
- ✓ test/anchor-seeded.test.ts (73 tests) 71ms
- ✓ test/blind-integer-representation.test.ts (31 tests) 1280ms
- ✓ test/blind-rail-admission.test.ts (24 tests) 2270ms
-   ✓ blind caller-rail admission boundary > H permissive: a refused transfer evidence unit must not neutralize genuine backed transfer evidence 378ms
- ✓ test/authority-adversarial.test.ts (77 tests) 790ms
-   ✓ authorized_issuers shape (v0.2 section 20.2) > accepts exactly MAX_AUTHORIZED_ISSUERS entries and rejects one more 360ms
- ✓ test/manifests.test.ts (37 tests) 686ms
- ✓ test/witness-quorum.test.ts (58 tests) 2269ms
- ✓ test/compromise-adversarial.test.ts (42 tests) 500ms
- ✓ test/trust-material-boundary.test.ts (11 tests) 258ms
- ✓ test/compromise-retraction-provenance.test.ts (34 tests) 529ms
- ✓ test/verify-compromise.test.ts (13 tests) 399ms
- ✓ test/witness.test.ts (68 tests) 29ms
- ✓ test/hybrid.test.ts (13 tests) 546ms
- ✓ test/evaluate-authority.test.ts (27 tests) 1007ms
- ✓ test/schema.test.ts (39 tests) 31ms
- ✓ test/witness-cosignature.test.ts (25 tests) 519ms
- ✓ test/vl3-duplicate-kid-adversarial.test.ts (19 tests) 133ms
- ✓ test/revocation-parity.test.ts (17 tests) 89ms
- ✓ test/revocation-bound.test.ts (12 tests) 165ms
- ✓ test/canon-depth-profile-adversarial.test.ts (23 tests) 257ms
- ✓ test/sibling-hybrid.test.ts (11 tests) 338ms
- ✓ test/artifact-manifest-currency.test.ts (9 tests) 236ms
- ✓ test/verify-ceilings.test.ts (2 tests) 324ms
- ✓ test/blind-authority-evaluation.test.ts (67 tests) 25522ms
-   ✓ blind publisher authority evaluation > [PERMISSIVA] exactly 4096 authorized_issuers entries remain within the document ceiling 490ms
-   ✓ blind publisher authority evaluation > [PERMISSIVA] an authorization document exactly at the evidence code-point ceiling remains admissible 14637ms
-   ✓ blind publisher authority evaluation > [RESTRITTIVA] an authorization document one code point over the evidence code-point ceiling is set aside alone 7287ms
- ✓ test/vl3-duplicate-kid.test.ts (13 tests) 75ms
- ✓ test/conformance.test.ts (229 tests) 5628ms
- ✓ test/canon-serialize.test.ts (16 tests) 44ms
- ✓ test/vl5-anchor-status-adversarial.test.ts (13 tests) 305ms
- ✓ test/review-fixes.test.ts (5 tests) 48ms
- ✓ test/witness-quorum-cost.test.ts (4 tests) 224ms
- ✓ test/shouldfix.test.ts (2 tests) 54ms
- ✓ test/c57-findkey-type-guard.test.ts (7 tests) 33ms
- ✓ test/canon-parse.test.ts (11 tests) 11ms
- ✓ test/ed25519.test.ts (5 tests) 21ms
- ✓ test/vl5-anchor-status.test.ts (13 tests) 152ms
- ✓ test/index.test.ts (6 tests) 8ms
- ✓ test/messages.test.ts (2 tests) 4ms
- ✓ test/dates.test.ts (4 tests) 5ms
- ✓ test/canon-admission-ceiling.test.ts (2 tests) 5ms
- ✓ test/b64u.test.ts (3 tests) 5ms
- ✓ test/mldsa.test.ts (5 tests) 25ms
- ✓ test/commitment.test.ts (7 tests) 654ms
-   ✓ commitment > reproduces the reference commitments (09a/09b/09c) 646ms
- ✓ test/smoke.test.ts (3 tests) 3ms
+ ✓ test/trust-material-parse.test.ts (227 tests) 6283ms
+   ✓ INV-1b admissibility > the boundary admits exactly what the format admits 1083ms
+   ✓ INV-1b admissibility > the refusal CLASS the oracle predicts is the class the boundary reports 1381ms
+   ✓ INV-1b admissibility > a document of exactly the admission ceiling is admitted 931ms
+   ✓ INV-1b admissibility > the oversized document is refused without being copied 501ms
+   ✓ INV-1b admissibility > every truncation of a valid document is refused as unparsable 556ms
+ ✓ test/tlog.test.ts (173 tests) 952ms
+ ✓ test/transparency.test.ts (74 tests) 10623ms
+   ✓ verify(): Stage 2 integration > caps oversized transparency evidence 5209ms
+   ✓ verify(): Stage 2 integration > counts transparency evidence caps by Unicode code points, not UTF-16 units 3292ms
+   ✓ verify(): Stage 2 integration > accepts evaluator max-scale anchor evidence (harmonization boundary) 1004ms
+ ✓ test/grant.test.ts (145 tests) 1496ms
+ ✓ test/evaluate-grant.test.ts (96 tests) 13336ms
+   ✓ evaluateGrant — step 3: eol_commitment divergence > does not stop the evaluation 1528ms
+   ✓ evaluateGrant — step 7: the ratchet > reports the change when only the URI moved 325ms
+   ✓ verify() integration — Stage 4 takes NO exception (D6) > reports an activated grant without touching ok 379ms
+   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array one past its ceiling truncates evaluation, never activating 1401ms
+   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array exactly at its ceiling is still evaluated 2277ms
+ ✓ test/anchor.test.ts (96 tests) 242ms
+ ✓ test/revocation.test.ts (24 tests) 983ms
+ ✓ test/transfer.test.ts (57 tests) 3384ms
+   ✓ hybrid AND-rule > a classical-only record against a hybrid key fails closed 305ms
+   ✓ auditChain admission boundary > returns a verdict for a transfer view that is not an array (a mapping) 327ms
+ ✓ test/verify-unit.test.ts (43 tests) 8951ms
+   ✓ verify(): Stage 3 transferred-class backing (§17.3) > honors the key-authorization gate even for the irrevocable "none" class 496ms
+   ✓ verify(): Stage 3 transferred-class backing (§17.3) > warns unbacked when the resolver never engages (oversized) 5226ms
+ ✓ test/authority.test.ts (100 tests) 3257ms
+   ✓ publisher authorization document (v0.2 section 20.2) > accepts an empty authorized_issuers array on a first document 353ms
+   ✓ publisher authorization shape > enforces the 4096-entry document ceiling before entry validation 1024ms
+ ✓ test/anchor-seeded.test.ts (73 tests) 154ms
+ ✓ test/blind-rail-admission.test.ts (24 tests) 6810ms
+   ✓ blind caller-rail admission boundary > A permissive: a declaration proxy may not activate a grant on a scope the signature did not cover 386ms
+   ✓ blind caller-rail admission boundary > A permissive: a transfer claim proxy may not be honored for a receipt_id the signature did not cover 347ms
+   ✓ blind caller-rail admission boundary > E permissive: depth 256 is admitted but depth 257 is not; the bad sibling alone is lost 471ms
+   ✓ blind caller-rail admission boundary > G permissive: revocation sibling survival sets aside only a throwing bad record 305ms
+   ✓ blind caller-rail admission boundary > G permissive: transfer sibling survival sets aside only an inadmissible claim 483ms
+   ✓ blind caller-rail admission boundary > G restrictive: later_grants sibling survival keeps a genuine widening version and does not downgrade trust for the bad one 353ms
+   ✓ blind caller-rail admission boundary > H permissive: a refused revocation evidence unit must not report ok when a genuine sibling revokes 742ms
+   ✓ blind caller-rail admission boundary > H permissive: a refused transfer evidence unit must not neutralize genuine backed transfer evidence 710ms
+   ✓ blind caller-rail admission boundary > F permissive: compromise sibling survival still holds when the genuine claim is needed after receipt anchoring 1093ms
+ ✓ test/blind-integer-representation.test.ts (31 tests) 4226ms
+   ✓ blind integer representation admission across verify evidence rails > RESTRITTIVA grant_view: invalid live-number later_grant is isolated and genuine declaration still activates 379ms
+   ✓ blind grant-view admission is per member and getter-free > PERMISSIVA grant_view getter declaration does not synthesize activation 323ms
+   ✓ blind grant-view admission is per member and getter-free > PERMISSIVA proxy traps deliver whatever verdict the genuine grant they carry deserves 965ms
+   ✓ blind grant-view admission is per member and getter-free > PERMISSIVA a declarations element defined as a getter is not own data and does not activate 351ms
+ ✓ test/authority-adversarial.test.ts (77 tests) 2522ms
+   ✓ authorized_issuers shape (v0.2 section 20.2) > accepts exactly MAX_AUTHORIZED_ISSUERS entries and rejects one more 1518ms
+ ✓ test/manifests.test.ts (37 tests) 2113ms
+   ✓ manifests > hybrid manifest signature (AND rule) > a hybrid manifest missing the ML-DSA-65 leg is invalid 405ms
+   ✓ manifests > verifyArtifactManifest > accepts an artifact manifest at MAX_ARTIFACT_ENTRIES 592ms
+   ✓ manifests > verifyArtifactManifest > rejects an artifact manifest one entry over MAX_ARTIFACT_ENTRIES 369ms
+ ✓ test/witness-quorum.test.ts (58 tests) 6405ms
+   ✓ the valid shapes > accepts a bootstrap 1-of-1 408ms
+   ✓ the hybrid AND rule > does not count a leg transplanted from another checkpoint 388ms
+   ✓ the hybrid AND rule > does not accept the checkpoint signature type as a cosignature leg 353ms
+   ✓ one vote per control group > still counts the group when only the rotated key cosigned 656ms
+   ✓ temporal and lifecycle boundaries > refuses an anchor that does not verify 342ms
+ ✓ test/compromise-adversarial.test.ts (42 tests) 793ms
+ ✓ test/trust-material-boundary.test.ts (11 tests) 911ms
+   ✓ the trust store is read as data, not asked > refuses a receipt issued after the key expired, at every truthful-read count 317ms
+   ✓ the trust store is read as data, not asked > keeps a compromised key dead, at every truthful-read count 493ms
+ ✓ test/verify-compromise.test.ts (13 tests) 1229ms
+   ✓ verify(): anchored compromise cutoff (§19) > reads every duplicate key entry in a compromise declaration before deciding the floor 395ms
+ ✓ test/compromise-retraction-provenance.test.ts (34 tests) 1993ms
+   ✓ compromise retraction provenance > does not change rescuing verdict fields except for the retraction warning 306ms
+ ✓ test/witness.test.ts (68 tests) 40ms
+ ✓ test/evaluate-authority.test.ts (27 tests) 1806ms
+ ✓ test/hybrid.test.ts (13 tests) 565ms
+ ✓ test/schema.test.ts (39 tests) 78ms
+ ✓ test/witness-cosignature.test.ts (25 tests) 882ms
+ ✓ test/vl3-duplicate-kid-adversarial.test.ts (19 tests) 446ms
+ ✓ test/revocation-parity.test.ts (17 tests) 282ms
+ ✓ test/revocation-bound.test.ts (12 tests) 444ms
+ ✓ test/canon-depth-profile-adversarial.test.ts (23 tests) 731ms
+   ✓ attest-JCS depth profile adversarial coverage > accepts arrays at depth 255 302ms
+ ✓ test/sibling-hybrid.test.ts (11 tests) 647ms
+ ✓ test/artifact-manifest-currency.test.ts (9 tests) 665ms
+ ✓ test/conformance.test.ts (229 tests) 13706ms
+   ✓ attest conformance vectors > 09-commitment/a-ascii-email 1264ms
+   ✓ attest conformance vectors > 09-commitment/b-unicode-email 404ms
+   ✓ attest conformance vectors > 09-commitment/c-issuer-account 710ms
+   ✓ attest conformance vectors > 17-binding-proven/a-salt-disclosure 342ms
+   ✓ attest conformance vectors > 28-transparency/a-logged-trust-unchanged 329ms
+   ✓ attest conformance vectors > 43-publisher-authority/t-deauth-window-closed-past-receipt 361ms
+   ✓ attest conformance vectors: chain-of-title audit (group 36) > 36-transfer-chain/a-valid-chain 378ms
+ ✓ test/messages.test.ts (7 tests) 22ms
+ ✓ test/verify-ceilings.test.ts (2 tests) 1470ms
+   ✓ I1: key-manifest ceiling hoisted before canonicalization > rejects an oversized manifest without ever canonicalizing it 799ms
+   ✓ I1: key-manifest ceiling hoisted before canonicalization > rejects an oversized manifest before chain handling canonicalizes it (non-empty chain) 669ms
+ ✓ test/vl3-duplicate-kid.test.ts (13 tests) 405ms
+ ✓ test/blind-authority-evaluation.test.ts (67 tests) 58974ms
+   ✓ blind publisher authority evaluation > [RESTRITTIVA] step 7 unverified_rotation prevails over an appended signer_mismatch document 323ms
+   ✓ blind publisher authority evaluation > [PERMISSIVA] exactly 4096 authorized_issuers entries remain within the document ceiling 1251ms
+   ✓ blind publisher authority evaluation > [RESTRITTIVA] 4097 authorized_issuers entries exceed the document ceiling and are ignored safely 554ms
+   ✓ blind publisher authority evaluation > [PERMISSIVA] an authorization document exactly at the evidence code-point ceiling remains admissible 34461ms
+   ✓ blind publisher authority evaluation > [RESTRITTIVA] an authorization document one code point over the evidence code-point ceiling is set aside alone 16176ms
+   ✓ blind publisher authority evaluation > [RESTRITTIVA] number and bigint current version representations compare equal for step 10 denial 372ms
+   ✓ blind publisher authority evaluation > [RESTRITTIVA] spent window moved later excludes the successor 385ms
+   ✓ blind publisher authority evaluation > [PERMISSIVA] live window carried forward unchanged conforms 332ms
+   ✓ blind publisher authority evaluation > [PERMISSIVA] live window extended later conforms 862ms
+   ✓ blind publisher authority evaluation > [PERMISSIVA] live finite window extended to null conforms 446ms
+ ✓ test/canon-serialize.test.ts (16 tests) 129ms
+ ✓ test/vl5-anchor-status-adversarial.test.ts (13 tests) 691ms
+ ✓ test/review-fixes.test.ts (5 tests) 67ms
+ ✓ test/shouldfix.test.ts (2 tests) 80ms
+ ✓ test/c57-findkey-type-guard.test.ts (7 tests) 39ms
+ ✓ test/witness-quorum-cost.test.ts (4 tests) 807ms
+   ✓ the cost contract > refuses a committee of ten before any crypto 314ms
+ ✓ test/vl5-anchor-status.test.ts (13 tests) 325ms
+ ✓ test/canon-parse.test.ts (11 tests) 43ms
+ ✓ test/ed25519.test.ts (5 tests) 162ms
+ ✓ test/dates.test.ts (4 tests) 12ms
+ ✓ test/index.test.ts (6 tests) 16ms
+ ✓ test/canon-admission-ceiling.test.ts (2 tests) 15ms
+ ✓ test/mldsa.test.ts (5 tests) 42ms
+ ✓ test/commitment.test.ts (7 tests) 1813ms
+   ✓ commitment > reproduces the reference commitments (09a/09b/09c) 1791ms
+ ✓ test/b64u.test.ts (3 tests) 17ms
+ ✓ test/smoke.test.ts (3 tests) 7ms
 
- Test Files  51 passed (51)
-      Tests  1890 passed (1890)
-   Start at  02:29:07
-   Duration  32.21s (transform 1.76s, setup 0ms, collect 12.11s, tests 68.98s, environment 16ms, prepare 4.46s)
+ Test Files  52 passed (52)
+      Tests  2122 passed (2122)
+   Start at  14:38:42
+   Duration  83.10s (transform 5.27s, setup 0ms, collect 32.61s, tests 162.09s, environment 24ms, prepare 13.62s)
 
 JSON report written to <tree>/tools/gates/transcripts/g-ts.vitest-full.json
 exit: 0
 ok: vitest run exits 0 (exit 0)
 precondition ok: vitest wrote its JSON report
-ok: there is at least one *.test.ts file on disk (51 lines collected — derived, not written down)
-ok: vitest reports having run at least one test file (51 lines collected — derived, not written down)
+ok: there is at least one *.test.ts file on disk (52 lines collected — derived, not written down)
+ok: vitest reports having run at least one test file (52 lines collected — derived, not written down)
 ok: files vitest's JSON report names == files 'ls test/*.test.ts' finds now (the two sets coincide)
 --- vitest run --root ... test/messages.test.ts (filter narrows the run)
 $ npx --prefix <tree>/verifiers/ts vitest run --root <tree>/verifiers/ts test/messages.test.ts --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/g-ts.vitest-filter.json
 
  RUN  v2.1.9 <tree>/verifiers/ts
 
- ✓ test/messages.test.ts (2 tests) 4ms
+ ✓ test/messages.test.ts (7 tests) 18ms
 
  Test Files  1 passed (1)
-      Tests  2 passed (2)
-   Start at  02:29:40
-   Duration  352ms (transform 74ms, setup 0ms, collect 73ms, tests 4ms, environment 0ms, prepare 68ms)
+      Tests  7 passed (7)
+   Start at  14:40:07
+   Duration  1.04s (transform 388ms, setup 0ms, collect 388ms, tests 18ms, environment 0ms, prepare 156ms)
 
 JSON report written to <tree>/tools/gates/transcripts/g-ts.vitest-filter.json
 exit: 0

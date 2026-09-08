@@ -60,7 +60,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any
 
-from attest import buyer_surface, canon, container, keys, manifests, verify
+from attest import buyer_surface, canon, container, keys, manifests, trust_material, verify
 from attest.ulid import RECEIPT_ID_RE
 
 _PROVENANCE_BUNDLE = "bundle"
@@ -929,7 +929,29 @@ def import_bundle(
     for series, versions in artifact_manifests.items():
         artifact_manifests[series] = sorted(versions, key=lambda m: _version_key(m, "version"))
 
-    trust_store = verify.TrustStore(manifests=manifests_map, provenance=provenance, chains=chains)
+    # The importer hands the caller a SNAPSHOT, so it builds the store
+    # document and lets the library parse it — the same door an embedder uses
+    # (recipe B1). `canonical_bytes` and not `json.dumps`: the members here
+    # came out of `loads_strict`, so they can carry integers the JSON module
+    # would happily write and the verifier would then refuse downstream. This
+    # way an out-of-range integer is refused HERE, while the bundle that
+    # carried it is still the thing being blamed.
+    #
+    # `chains` is always present, as it has always been for an imported
+    # bundle, and ordered by manifest version.
+    try:
+        trust_store = trust_material.TrustStore.from_bytes(
+            canon.canonical_bytes(
+                {"manifests": manifests_map, "provenance": provenance, "chains": chains}
+            )
+        )
+    except (canon.CanonError, trust_material.TrustMaterialError) as exc:
+        # The whole import fails. A manifest the library cannot read is not
+        # dropped from the store and it does not become a store without that
+        # issuer: either the bundle's trust material is readable or the bundle
+        # is refused, because "imported successfully, minus the part I could
+        # not read" is the sentence this refusal exists to prevent.
+        raise BundleError(f"bundle trust material is not readable: {exc}") from exc
 
     salts: dict[str, bytes] = {}
     if private_path is not None:
@@ -1023,7 +1045,7 @@ def disclose(
     candidates = [
         m
         for m in key_manifests
-        if m.get("issuer") == issuer_id and manifests.find_key(m, kid) is not None
+        if m.get("issuer") == issuer_id and manifests._find_key(m, kid) is not None
     ]
     if not candidates:
         # Fail closed: a disclosure with no key manifest listing the signing

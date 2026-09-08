@@ -1,0 +1,62 @@
+# mutant t2b: the first member of every chain is dropped at admission
+# recorded 2026-09-08T12:22:47Z
+
+# injected into src/attest/trust_material.py
+$ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf tests/test_trust_material_parse.py tests/test_trust_store_boundary.py
+........................................................................ [ 25%]
+............F........................................................... [ 50%]
+....................................................x................... [ 75%]
+.................................................F...................    [100%]
+=================================== FAILURES ===================================
+___________ test_every_selector_hands_back_what_the_document_carried ___________
+
+    def test_every_selector_hands_back_what_the_document_carried() -> None:
+        tree = document(SPECIAL_ISSUERS, chain_length=2)
+        store = parse_store(serialize(tree))
+        for issuer in SPECIAL_ISSUERS:
+            held = store.manifest_for(issuer)
+            assert ordered(held.data()) == ordered(tree["manifests"][issuer])
+            chain = store.chain_for(issuer)
+>           assert [ordered(link.data()) for link in chain] == [
+                ordered(link) for link in tree["chains"][issuer]
+            ]
+E           assert ['{"issuer":"..._version":2}'] == ['{"issuer":"..._version":2}']
+E             
+E             At index 0 diff: '{"issuer":"__proto__","keys":[{"alg":"ed25519","kid":"__proto__/keys/manifest#ed25519-2","public_key":"3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29","status":"active","valid_from":"2026-01-01T00:00:00Z","valid_to":null}],"manifest_version":2}' != '{"issuer":"__proto__","keys":[{"alg":"ed25519","kid":"__proto__/keys/manifest#ed25519-1","public_key":"3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29","status":"active","valid_from":"2026-01-01T00:00:00Z","valid_to":null}],"manifest_version":1}'
+E             Right contains one more ite...
+E             
+E             ...Full output truncated (2 lines hidden), use '-vv' to show
+
+tests/test_trust_material_parse.py:970: AssertionError
+_______________ test_an_unreadable_chain_is_refused_not_deleted ________________
+
+    def test_an_unreadable_chain_is_refused_not_deleted() -> None:
+        """F1 (security review 2026-09-08): absence is MORE PERMISSIVE than presence.
+    
+        A rotation history the verifier never walks cannot mark anything
+        discontinuous, so a `chains` member that quietly became empty resurrects a
+        key a held manifest marks compromised. The old boundary COPIED what a
+        container stores, and a container that stores nothing was emptied rather
+        than refused. Through bytes there is nothing to empty: a document either
+        carries the chain or does not, and `to_bytes()` gives back what arrived.
+        """
+        v1 = _key_manifest_active()
+        document = store_bytes({ISSUER: v1}, chains={ISSUER: [v1]})
+        snapshot = trust_material.TrustStore.from_bytes(document)
+        assert snapshot.to_bytes() == canon.canonical_bytes(json.loads(document))
+>       assert [m.data() for m in snapshot.chain_for(ISSUER)] == [v1]
+E       AssertionError: assert [] == [{'issuer': '..., ...}], ...}]
+E         
+E         Right contains one more item: {'issuer': 'store.example.com', 'manifest_version': 1, 'issued_at': '2026-01-01T00:00:00Z', 'keys': [{'kid': 'store.ex...ub': '_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg', 'valid_from': '2026-01-01T00:00:00Z', 'valid_to': None, ...}], ...}
+E         Use -v to get more diff
+
+tests/test_trust_store_boundary.py:709: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_trust_material_parse.py::test_every_selector_hands_back_what_the_document_carried
+FAILED tests/test_trust_store_boundary.py::test_an_unreadable_chain_is_refused_not_deleted
+2 failed, 282 passed, 1 xfailed in 3.30s
+
+exit: 1
+
+RED: True
+VERDICT: KILLED

@@ -1,0 +1,19 @@
+# composite twins, regression proof — 2026-09-08T12:43:40Z
+
+## grant._verify_grant
+caller put back on the public door in src/attest/verify.py
+tests: tests/test_evaluate_grant.py
+result: RED — the regression is named by a test
+FAILED tests/test_evaluate_grant.py::test_a_proof_resolving_earlier_than_the_fixed_date_leaves_the_grant_dormant
+FAILED tests/test_evaluate_grant.py::test_the_mode_declared_with_no_proof_at_all_warns_unanchored
+FAILED tests/test_evaluate_grant.py::test_a_verifier_with_no_anchor_policy_cannot_open_a_grant_on_time
+FAILED tests/test_evaluate_grant.py::test_an_anchor_over_the_wrong_document_does_not_activate
+FAILED tests/test_evaluate_grant.py::test_a_declaration_that_activated_suppresses_the_backstop_warning
+FAILED tests/test_evaluate_grant.py::test_two_genuine_proofs_reduce_to_the_MAXIMUM_not_the_minimum
+FAILED tests/test_evaluate_grant.py::test_the_crqc_horizon_check_applies_to_the_fixed_date_proof
+FAILED tests/test_evaluate_grant.py::test_a_fixed_date_set_without_the_mode_never_activates
+FAILED tests/test_evaluate_grant.py::test_a_covered_authenticated_grant_with_no_trigger_evidence_is_dormant
+FAILED tests/test_evaluate_grant.py::test_verify_reports_an_activated_grant_without_touching_ok
+FAILED tests/test_evaluate_grant.py::test_an_invalid_grant_never_makes_a_receipt_not_ok
+39 failed, 43 passed in 1.78s
+

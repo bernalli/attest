@@ -20,7 +20,7 @@ from attest_bridge.model import ConfigError
 from attest_bridge.signing import IssuerIdentity, load_issuer
 from conftest import DISPLAY_NAME, ISSUER, KID, VALID_FROM
 
-from attest import keys, manifests, pq
+from attest import keys, manifests, pq, trust_material
 
 
 @pytest.fixture(scope="module")
@@ -475,7 +475,7 @@ def test_manifest_verification_recursion_error_is_mapped_to_config_error(
     # rather than with a fragile, env-dependent nesting depth.
     config = _write_issuer_files(tmp_path, hybrid_keys, key_manifest)
 
-    def _raise_recursion(_manifest: dict[str, object]) -> bool:
+    def _raise_recursion(_manifest: trust_material.KeyManifest) -> bool:
         raise RecursionError("maximum recursion depth exceeded")
 
     monkeypatch.setattr("attest_bridge.signing.manifests.verify_key_manifest", _raise_recursion)

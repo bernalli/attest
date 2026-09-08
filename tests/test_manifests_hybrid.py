@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from attest import keys, manifests, pq
+from tests.helpers import key_manifest as km
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#hybrid-1"
@@ -34,25 +35,25 @@ def test_hybrid_manifest_signature_has_both_legs() -> None:
 
 def test_hybrid_manifest_verifies() -> None:
     _, manifest = _hybrid_manifest()
-    assert manifests.verify_key_manifest(manifest)
+    assert manifests.verify_key_manifest(km(manifest))
 
 
 def test_hybrid_manifest_missing_mldsa_leg_invalid() -> None:
     hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
     entry = manifests.key_entry(KID, hk.ed.pub, VALID_FROM, pub_ml_dsa_65=hk.mldsa.pub)
     manifest = manifests.build_key_manifest("shop.example", 1, ISSUED_AT, [entry], hk, KID)
-    assert manifests.verify_key_manifest(manifest)
+    assert manifests.verify_key_manifest(km(manifest))
     del manifest["manifest_signature"]["sig_ml_dsa_65"]
-    assert not manifests.verify_key_manifest(manifest)
+    assert not manifests.verify_key_manifest(km(manifest))
 
 
 def test_nonhybrid_manifest_with_stray_mldsa_leg_invalid() -> None:
     ed_kp = keys.generate()
     entry = manifests.key_entry(KID, ed_kp.pub, VALID_FROM)
     manifest = manifests.build_key_manifest(ISSUER, 1, ISSUED_AT, [entry], ed_kp, KID)
-    assert manifests.verify_key_manifest(manifest)
+    assert manifests.verify_key_manifest(km(manifest))
     manifest["manifest_signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(pq.ML_DSA_65_SIG_LEN))
-    assert not manifests.verify_key_manifest(manifest)
+    assert not manifests.verify_key_manifest(km(manifest))
 
 
 def test_hybrid_manifest_tampered_mldsa_leg_invalid() -> None:
@@ -60,7 +61,7 @@ def test_hybrid_manifest_tampered_mldsa_leg_invalid() -> None:
     raw = bytearray(keys.b64u_decode(manifest["manifest_signature"]["sig_ml_dsa_65"]))
     raw[0] ^= 0xFF
     manifest["manifest_signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(raw))
-    assert not manifests.verify_key_manifest(manifest)
+    assert not manifests.verify_key_manifest(km(manifest))
 
 
 def test_continuity_hybrid_chain_ok() -> None:
@@ -69,7 +70,7 @@ def test_continuity_hybrid_chain_ok() -> None:
         manifests.key_entry(KID, hk.ed.pub, VALID_FROM, pub_ml_dsa_65=hk.mldsa.pub, status="active")
     ]
     candidate = manifests.build_key_manifest(ISSUER, 2, "2026-06-01T00:00:00Z", entries_v2, hk, KID)
-    assert manifests.check_continuity(trusted, candidate)
+    assert manifests.check_continuity(km(trusted), km(candidate))
 
 
 def test_continuity_rejects_candidate_missing_mldsa_leg() -> None:
@@ -79,4 +80,4 @@ def test_continuity_rejects_candidate_missing_mldsa_leg() -> None:
     ]
     candidate = manifests.build_key_manifest(ISSUER, 2, "2026-06-01T00:00:00Z", entries_v2, hk, KID)
     del candidate["manifest_signature"]["sig_ml_dsa_65"]
-    assert not manifests.check_continuity(trusted, candidate)
+    assert not manifests.check_continuity(km(trusted), km(candidate))

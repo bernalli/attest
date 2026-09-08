@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from attest import issue, keys, manifests, revocation, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#ed25519-1"
@@ -21,7 +21,7 @@ FUTURE = "2099-01-01T00:00:00Z"
 def _trust_store() -> verify.TrustStore:
     entries = [manifests.key_entry(KID, KP.pub, "2026-01-01T00:00:00Z", None, "active")]
     manifest = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP, KID)
-    return verify.TrustStore(manifests={ISSUER: manifest}, provenance={ISSUER: "tls"})
+    return store({ISSUER: manifest}, {ISSUER: "tls"})
 
 
 def _verify(records: list[dict[str, Any]], *, receipt_id: str | None = None) -> verify.Result:

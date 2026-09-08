@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from attest import anchor, grant, keys, tlog, transfer, verify, witness
+from attest import anchor, grant, keys, tlog, transfer, trust_material, verify, witness
 
 
 def _load_json(path: Path) -> Any:
@@ -47,15 +47,17 @@ def _envelope_bytes(leaf: Path) -> bytes:
     return json.dumps(envelope).encode("utf-8")
 
 
-def _trust_store(leaf: Path) -> verify.TrustStore:
-    data = _load_json(leaf / "manifests.json")
-    return verify.TrustStore(
-        manifests=data["manifests"],
-        provenance=data["provenance"],
-        chains=data.get("chains", {}),
-        artifact_manifests=data.get("artifact_manifests", {}),
-        artifact_manifest_chains=data.get("artifact_manifest_chains", {}),
-    )
+def _trust_store(leaf: Path) -> trust_material.TrustStore:
+    """Recipe V1: the FILE's own bytes, handed straight to the library.
+
+    The corpus already stores the store document in the format the boundary
+    parses (section 5.3), so there is nothing to reassemble — and reassembling
+    it was never free: reading the file into Python objects and building a
+    store out of them meant the fixture went through a second serializer, so a
+    document the corpus deliberately shaped one way could reach the verifier
+    shaped another. One `read_bytes` cannot do that.
+    """
+    return trust_material.TrustStore.from_bytes((leaf / "manifests.json").read_bytes())
 
 
 def _revocation_view(leaf: Path) -> list[dict[str, Any]] | None:
@@ -194,12 +196,23 @@ def _redemption_input(leaf: Path) -> dict[str, Any] | None:
     return _load_json(path)  # type: ignore[no-any-return]
 
 
-def _sole_key_manifest(leaf: Path) -> dict[str, Any]:
-    """Group 36 only: `audit_chain` takes ONE trusted `key_manifest`, not a
-    full `TrustStore` — every group 36 leaf's `manifests.json` trusts exactly
-    one issuer, so its sole `"manifests"` value is that manifest."""
-    data = _load_json(leaf / "manifests.json")
-    return next(iter(data["manifests"].values()))
+def _sole_key_manifest(leaf: Path) -> trust_material.KeyManifest:
+    """Group 36 only (recipe V2): `audit_chain` takes ONE trusted key manifest,
+    not a full store — every group 36 leaf's `manifests.json` trusts exactly
+    one issuer, so the store's sole issuer names it.
+
+    Selected THROUGH the parsed store rather than by reaching into the raw
+    JSON, and the assertion is what makes "sole" a checked fact instead of a
+    remembered one — checked on the same object the audit will read.
+    """
+    store = trust_material.TrustStore.from_bytes((leaf / "manifests.json").read_bytes())
+    issuers = store.issuers()
+    if len(issuers) != 1:
+        raise SystemExit(f"{leaf.name}: group 36 expects one issuer, got {issuers}")
+    manifest = store.manifest_for(issuers[0])
+    if manifest is None:  # pragma: no cover - issuers() lists what manifest_for resolves
+        raise SystemExit(f"{leaf.name}: issuer {issuers[0]!r} has no manifest")
+    return manifest
 
 
 def _verify_result_to_json(result: verify.VerificationResult) -> dict[str, Any]:

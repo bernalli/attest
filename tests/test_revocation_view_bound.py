@@ -25,7 +25,8 @@ from typing import Any
 import pytest
 
 from attest import issue, keys, manifests, revocation, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest as km
+from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#ed25519-1"
@@ -65,19 +66,23 @@ def test_manifest_self_verify_runs_once_per_classification(
     The hoisted call is `manifest_signature_is_authentic`, not
     `verify_key_manifest`: a manifest downgraded by deleting its PQ leg loses
     its trust level, never its power to revoke (v0.2 §4). What this test
-    pins is the COUNT, so it follows the function the hoist actually calls."""
+    pins is the COUNT, so it follows the function the hoist actually calls —
+    `verify.py` holds the manifest ALREADY MATERIALIZED and calls the private
+    twin `_manifest_signature_is_authentic` directly (T2), so that is the
+    name this monkeypatch has to target; the public door is never reached
+    from this internal call site."""
     manifest = _key_manifest()
     payload = make_payload(license={"revocability": "policy"})
     view = [_record(f"2026-07-0{i}T00:00:00Z") for i in range(1, 6)]
 
     calls = {"count": 0}
-    real = manifests.manifest_signature_is_authentic
+    real = manifests._manifest_signature_is_authentic
 
     def counting(m: dict[str, Any]) -> bool:
         calls["count"] += 1
         return real(m)
 
-    monkeypatch.setattr(manifests, "manifest_signature_is_authentic", counting)
+    monkeypatch.setattr(manifests, "_manifest_signature_is_authentic", counting)
     warnings: list[str] = []
     errors: list[str] = []
     result = verify._classify_revocation(payload, view, manifest, warnings, errors)
@@ -87,42 +92,42 @@ def test_manifest_self_verify_runs_once_per_classification(
 
 def test_verify_record_signature_accepts_valid_record() -> None:
     manifest = _key_manifest()
-    assert manifests.verify_key_manifest(manifest) is True  # documented precondition
-    assert revocation.verify_record_signature(_record(), manifest) is True
+    assert manifests.verify_key_manifest(km(manifest)) is True  # documented precondition
+    assert revocation.verify_record_signature(_record(), km(manifest)) is True
 
 
 def test_verify_record_signature_rejects_unlisted_signer() -> None:
     record = revocation.build_record(
         RECEIPT_ID, "revoked", "2026-07-03T00:00:00Z", GHOST_KP, GHOST_KID
     )
-    assert revocation.verify_record_signature(record, _key_manifest()) is False
+    assert revocation.verify_record_signature(record, km(_key_manifest())) is False
 
 
 def test_verify_record_signature_rejects_non_active_signer() -> None:
     record = revocation.build_record(
         RECEIPT_ID, "revoked", "2026-07-03T00:00:00Z", RETIRED_KP, RETIRED_KID
     )
-    assert revocation.verify_record_signature(record, _key_manifest()) is False
+    assert revocation.verify_record_signature(record, km(_key_manifest())) is False
 
 
 def test_verify_record_signature_rejects_revoked_at_before_valid_from() -> None:
     record = _record(revoked_at="2025-12-31T23:59:59Z")
-    assert revocation.verify_record_signature(record, _key_manifest()) is False
+    assert revocation.verify_record_signature(record, km(_key_manifest())) is False
 
 
 def test_verify_record_delegates_and_still_requires_manifest_self_consistency() -> None:
     manifest = _key_manifest()
-    assert revocation.verify_record(_record(), manifest) is True
+    assert revocation.verify_record(_record(), km(manifest)) is True
     tampered = dict(manifest)
     tampered["issued_at"] = "2027-01-01T00:00:00Z"  # breaks the manifest's own signature
-    assert revocation.verify_record(_record(), tampered) is False
+    assert revocation.verify_record(_record(), km(tampered)) is False
 
 
 # --- revocation-view size cap (Task 2) -----------------------------------------
 
 
 def _trust_store(manifest: dict[str, Any]) -> verify.TrustStore:
-    return verify.TrustStore(manifests={ISSUER: manifest}, provenance={ISSUER: "tls"})
+    return store({ISSUER: manifest}, {ISSUER: "tls"})
 
 
 def _to_bytes(envelope: dict[str, Any]) -> bytes:

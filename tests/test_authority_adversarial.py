@@ -17,6 +17,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from attest import authority, canon, keys, manifests, pq
+from tests.helpers import key_manifest as kmh
 from tests.helpers import make_payload
 
 PUBLISHER = "publisher.example"
@@ -180,9 +181,9 @@ def test_classical_authorization_roundtrips_and_empty_first_list_is_admitted() -
     empty_document = _authorization(kp, authorized_issuers=[])
 
     assert "sig_ml_dsa_65" not in document["signature"]
-    assert authority.verify_authorization_signature(document, key_manifest) is True
-    assert authority.verify_authorization(document, key_manifest) is True
-    assert authority.verify_authorization(empty_document, key_manifest) is True
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is True
+    assert authority.verify_authorization(document, kmh(key_manifest)) is True
+    assert authority.verify_authorization(empty_document, kmh(key_manifest)) is True
 
 
 def test_hybrid_authorization_requires_both_signature_legs() -> None:
@@ -191,12 +192,12 @@ def test_hybrid_authorization_requires_both_signature_legs() -> None:
 
     assert "sig" in document["signature"]
     assert "sig_ml_dsa_65" in document["signature"]
-    assert authority.verify_authorization(document, key_manifest) is True
+    assert authority.verify_authorization(document, kmh(key_manifest)) is True
 
     del document["signature"]["sig_ml_dsa_65"]
 
-    assert authority.verify_authorization_signature(document, key_manifest) is False
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 def test_stray_pq_signature_leg_against_classical_key_fails_closed() -> None:
@@ -208,8 +209,8 @@ def test_stray_pq_signature_leg_against_classical_key_fails_closed() -> None:
         pq.sign(canon.canonical_bytes(body), hk.mldsa)
     )
 
-    assert authority.verify_authorization_signature(document, key_manifest) is False
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 def test_authorization_hash_is_jcs_over_the_entire_signed_document() -> None:
@@ -243,8 +244,8 @@ def test_verify_authorization_composes_key_manifest_self_consistency() -> None:
     document = _authorization(kp)
     key_manifest["issued_at"] = "2026-06-01T00:00:00Z"
 
-    assert authority.verify_authorization_signature(document, key_manifest) is True
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is True
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 def test_authorization_signed_by_retired_key_is_rejected() -> None:
@@ -262,8 +263,8 @@ def test_authorization_signed_by_retired_key_is_rejected() -> None:
     )
     document = _authorization(kp)
 
-    assert authority.verify_authorization_signature(document, key_manifest) is False
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 @pytest.mark.parametrize(
@@ -279,8 +280,8 @@ def test_authorization_issued_outside_signer_key_window_is_rejected(
     kp, key_manifest = _ed_manifest(valid_from=valid_from, valid_to=valid_to)
     document = _authorization(kp)
 
-    assert authority.verify_authorization_signature(document, key_manifest) is False
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 @pytest.mark.parametrize(
@@ -297,6 +298,10 @@ def test_authorization_issued_outside_signer_key_window_is_rejected(
 def test_verify_authorization_fails_closed_on_malformed_key_manifest(
     key_manifest: Any,
 ) -> None:
+    """`key_manifest` here is deliberately NOT a parsed snapshot — this is the
+    door's own non-snapshot refusal (`type(x) is not KeyManifest`), so the raw
+    value is passed through unwrapped rather than via `kmh()`, which would
+    itself raise on the non-dict values before the door was ever reached."""
     kp, _ = _ed_manifest()
     document = _authorization(kp)
 
@@ -324,8 +329,8 @@ def test_authorization_and_entry_members_are_closed_even_with_matching_signature
     mutate(body)
     body["signature"] = manifests.sign_signature_block(canon.canonical_bytes(body), kp, PUB_KID)
 
-    assert authority.verify_authorization_signature(body, key_manifest) is False
-    assert authority.verify_authorization(body, key_manifest) is False
+    assert authority.verify_authorization_signature(body, kmh(key_manifest)) is False
+    assert authority.verify_authorization(body, kmh(key_manifest)) is False
 
 
 _JSON_LEAF = st.one_of(
@@ -394,8 +399,8 @@ def test_verify_authorization_never_raises_on_type_confusion_in_wire_fields(
     kp, key_manifest = _ed_manifest()
     document = _document_with_mutation(kp, path, value)
 
-    assert authority.verify_authorization_signature(document, key_manifest) is False
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 @pytest.mark.parametrize(
@@ -424,8 +429,8 @@ def test_empty_case_and_semantically_invalid_strings_are_shape_errors(
     kp, key_manifest = _ed_manifest()
     document = _document_with_mutation(kp, path, value)
 
-    assert authority.verify_authorization_signature(document, key_manifest) is False
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 @pytest.mark.parametrize(
@@ -450,8 +455,8 @@ def test_authorization_version_boundaries_are_enforced_on_signed_documents(
     else:
         document = _signed_body(kp, authorization_version=version)
 
-    assert authority.verify_authorization_signature(document, key_manifest) is expected
-    assert authority.verify_authorization(document, key_manifest) is expected
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is expected
+    assert authority.verify_authorization(document, kmh(key_manifest)) is expected
 
 
 @pytest.mark.parametrize(
@@ -483,8 +488,8 @@ def test_authorized_issuers_must_be_strictly_ascending_by_code_point(
     entries = [_entry(issuer_id) for issuer_id in issuers]
     document = _signed_body(kp, authorized_issuers=entries)
 
-    assert authority.verify_authorization_signature(document, key_manifest) is False
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 def test_code_point_sorted_numeric_looking_issuer_ids_are_accepted() -> None:
@@ -492,8 +497,8 @@ def test_code_point_sorted_numeric_looking_issuer_ids_are_accepted() -> None:
     entries = [_entry("issuer10.example"), _entry("issuer2.example")]
     document = _signed_body(kp, authorized_issuers=entries)
 
-    assert authority.verify_authorization_signature(document, key_manifest) is True
-    assert authority.verify_authorization(document, key_manifest) is True
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is True
+    assert authority.verify_authorization(document, kmh(key_manifest)) is True
 
 
 @pytest.mark.parametrize(
@@ -512,8 +517,8 @@ def test_permissions_must_be_non_empty_sorted_duplicate_free_strings(
     kp, key_manifest = _ed_manifest()
     document = _signed_body(kp, authorized_issuers=[_entry(permissions=permissions)])
 
-    assert authority.verify_authorization_signature(document, key_manifest) is False
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 def test_permission_vocabulary_is_open_but_still_code_point_sorted() -> None:
@@ -525,8 +530,8 @@ def test_permission_vocabulary_is_open_but_still_code_point_sorted() -> None:
         kp, authorized_issuers=[_entry(permissions=unsorted_permissions)]
     )
 
-    assert authority.verify_authorization(sorted_document, key_manifest) is True
-    assert authority.verify_authorization(unsorted_document, key_manifest) is False
+    assert authority.verify_authorization(sorted_document, kmh(key_manifest)) is True
+    assert authority.verify_authorization(unsorted_document, kmh(key_manifest)) is False
 
 
 def test_semantically_absurd_entry_window_does_not_authenticate() -> None:
@@ -544,8 +549,8 @@ def test_semantically_absurd_entry_window_does_not_authenticate() -> None:
         ],
     )
 
-    assert authority.verify_authorization_signature(document, key_manifest) is False
-    assert authority.verify_authorization(document, key_manifest) is False
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 @pytest.mark.parametrize(
@@ -573,8 +578,8 @@ def test_inverted_entry_window_authenticates_but_never_authorizes_any_receipt(
     entry = _entry(valid_from="2026-05-01T00:00:00Z", valid_to="2026-04-30T23:59:59Z")
     document = _signed_body(kp, authorized_issuers=[entry])
 
-    assert authority.verify_authorization_signature(document, key_manifest) is True
-    assert authority.verify_authorization(document, key_manifest) is True
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is True
+    assert authority.verify_authorization(document, kmh(key_manifest)) is True
     assert authority.entry_authorizes_receipt(entry, _payload(issued_at=issued_at)) is False
 
 
@@ -591,8 +596,8 @@ def test_authorized_issuers_ceiling_is_exact_on_signed_documents(
     kp, key_manifest = _ed_manifest()
     document = _signed_body(kp, authorized_issuers=_many_entries(count))
 
-    assert authority.verify_authorization_signature(document, key_manifest) is expected
-    assert authority.verify_authorization(document, key_manifest) is expected
+    assert authority.verify_authorization_signature(document, kmh(key_manifest)) is expected
+    assert authority.verify_authorization(document, kmh(key_manifest)) is expected
 
 
 def test_within_structural_ceiling_counts_only_and_never_inspects_documents() -> None:

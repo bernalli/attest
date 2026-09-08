@@ -12,7 +12,7 @@ import json
 from typing import Any
 
 from attest import canon, issue, keys, manifests, pq, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#hybrid-1"
@@ -36,7 +36,7 @@ def _non_hybrid_manifest() -> dict[str, Any]:
 
 
 def _trust_store(manifest: dict[str, Any]) -> verify.TrustStore:
-    return verify.TrustStore(manifests={ISSUER: manifest}, provenance={ISSUER: "tls"})
+    return store({ISSUER: manifest}, {ISSUER: "tls"})
 
 
 def _to_bytes(envelope: dict[str, Any]) -> bytes:

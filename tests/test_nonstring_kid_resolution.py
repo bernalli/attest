@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 
 from attest import grant, keys, manifests, revocation, transfer
+from tests.helpers import key_manifest as km
 
 ISSUER = "store.example.com"
 KP = keys.from_seed(bytes([82]) * 32)
@@ -76,29 +77,38 @@ def _cessation_declaration(kid: Any) -> dict[str, Any]:
 
 
 # Each entry: name, and a callable taking the kid and returning the verdict.
+# `_key_manifest(kid)` — even with a non-string kid inside `keys[]`/
+# `manifest_signature` — survives `canon.loads_strict`/`canonical_bytes`
+# unchanged (verified empirically: the boundary only requires a top-level
+# object), so every door below is exercised through the real parsed-snapshot
+# handle, exactly as an untrusted document arriving on the wire would be.
 PATHS = [
-    ("verify_key_manifest", lambda kid: manifests.verify_key_manifest(_key_manifest(kid))),
+    ("verify_key_manifest", lambda kid: manifests.verify_key_manifest(km(_key_manifest(kid)))),
     (
         "manifest_signature_is_authentic",
-        lambda kid: manifests.manifest_signature_is_authentic(_key_manifest(kid)),
+        lambda kid: manifests.manifest_signature_is_authentic(km(_key_manifest(kid))),
     ),
     (
         "verify_artifact_manifest",
-        lambda kid: manifests.verify_artifact_manifest(_artifact_manifest(kid), _key_manifest(kid)),
+        lambda kid: manifests.verify_artifact_manifest(
+            _artifact_manifest(kid), km(_key_manifest(kid))
+        ),
     ),
     (
         "transfer.verify_record_signature",
-        lambda kid: transfer.verify_record_signature(_transfer_record(kid), _key_manifest(kid)),
+        lambda kid: transfer.verify_record_signature(_transfer_record(kid), km(_key_manifest(kid))),
     ),
     (
         "grant.verify_declaration_signature",
         lambda kid: grant.verify_declaration_signature(
-            _cessation_declaration(kid), _key_manifest(kid)
+            _cessation_declaration(kid), km(_key_manifest(kid))
         ),
     ),
     (
         "revocation.verify_record_signature",
-        lambda kid: revocation.verify_record_signature(_revocation_record(kid), _key_manifest(kid)),
+        lambda kid: revocation.verify_record_signature(
+            _revocation_record(kid), km(_key_manifest(kid))
+        ),
     ),
 ]
 

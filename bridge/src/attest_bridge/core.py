@@ -86,7 +86,7 @@ class IssuingCore:
         duplicated at the HTTP layer so the two can never drift into
         disagreeing about whether this bridge can still issue.
         """
-        entry = manifests.find_key(self._issuer.manifest_snapshot, self._issuer.kid)
+        entry = manifests.find_key(self._issuer.manifest_handle, self._issuer.kid)
         return entry is not None and verifier._within_validity(at, entry)
 
     def issue_for(self, purchase: NormalizedPurchase) -> IssueOutcome:

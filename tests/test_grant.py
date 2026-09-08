@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from attest import canon, grant, keys, manifests, pq, verify
+from tests.helpers import key_manifest as kmh
 from tests.helpers import make_payload
 
 PUBLISHER = "pub.example"
@@ -137,7 +138,7 @@ def test_classical_grant_roundtrips() -> None:
     document = _grant(kp)
 
     assert "sig_ml_dsa_65" not in document["signature"]
-    assert grant.verify_grant(document, key_manifest)
+    assert grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_hybrid_grant_roundtrips_with_both_legs() -> None:
@@ -146,7 +147,7 @@ def test_hybrid_grant_roundtrips_with_both_legs() -> None:
 
     assert "sig" in document["signature"]
     assert "sig_ml_dsa_65" in document["signature"]
-    assert grant.verify_grant(document, key_manifest)
+    assert grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_grant_hash_is_over_the_entire_signed_document() -> None:
@@ -164,7 +165,7 @@ def test_tampered_grant_body_fails_verification() -> None:
     document = _grant(kp)
     document["jurisdiction"] = "FR"
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_grant_is_a_closed_object_unknown_member_rejected() -> None:
@@ -172,7 +173,7 @@ def test_grant_is_a_closed_object_unknown_member_rejected() -> None:
     document = _grant(hk)
     document["extra"] = "surprise"
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_grant_missing_member_rejected() -> None:
@@ -180,7 +181,7 @@ def test_grant_missing_member_rejected() -> None:
     document = _grant(hk)
     del document["jurisdiction"]
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_classical_only_grant_against_hybrid_key_fails_closed() -> None:
@@ -188,7 +189,7 @@ def test_classical_only_grant_against_hybrid_key_fails_closed() -> None:
     document = _grant(hk)
     del document["signature"]["sig_ml_dsa_65"]
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_stray_pq_leg_against_classical_key_fails_closed() -> None:
@@ -200,7 +201,7 @@ def test_stray_pq_leg_against_classical_key_fails_closed() -> None:
         pq.sign(canon.canonical_bytes(body), hk.mldsa)
     )
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_grant_signed_by_retired_key_rejected() -> None:
@@ -217,7 +218,7 @@ def test_grant_signed_by_retired_key_rejected() -> None:
     )
     document = _grant(kp)
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_grant_issued_outside_key_window_rejected() -> None:
@@ -228,7 +229,7 @@ def test_grant_issued_outside_key_window_rejected() -> None:
     )
     document = _grant(kp)  # issued_at 2026-02-01, before valid_from
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_grant_against_self_inconsistent_manifest_rejected() -> None:
@@ -236,10 +237,10 @@ def test_grant_against_self_inconsistent_manifest_rejected() -> None:
     document = _grant(kp)
     key_manifest["issued_at"] = "2026-06-01T00:00:00Z"
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
     # ...and the signature-only half, which presumes an already-checked
     # manifest, still accepts it: the two halves are distinct on purpose.
-    assert grant.verify_grant_signature(document, key_manifest)
+    assert grant.verify_grant_signature(document, kmh(key_manifest))
 
 
 @pytest.mark.parametrize(
@@ -300,7 +301,7 @@ def test_malformed_grant_members_fail_closed(overrides: dict[str, Any]) -> None:
     kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
     document = _grant(kp, **overrides)
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 @pytest.mark.parametrize(
@@ -310,7 +311,7 @@ def test_malformed_grant_members_fail_closed(overrides: dict[str, Any]) -> None:
 def test_verify_grant_never_raises_on_garbage(document: Any) -> None:
     _, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_grant_version_above_the_jcs_integer_ceiling_is_unrepresentable() -> None:
@@ -325,7 +326,7 @@ def test_grant_version_above_the_jcs_integer_ceiling_is_unrepresentable() -> Non
     document = _grant(kp)
     document["grant_version"] = 2**53
 
-    assert not grant.verify_grant(document, key_manifest)
+    assert not grant.verify_grant(document, kmh(key_manifest))
 
 
 def test_heartbeat_absence_mode_does_not_invalidate_a_grant() -> None:
@@ -337,7 +338,7 @@ def test_heartbeat_absence_mode_does_not_invalidate_a_grant() -> None:
         activation=_activation(modes=["fixed-date", "heartbeat-absence", "publisher-declaration"]),
     )
 
-    assert grant.verify_grant(document, key_manifest)
+    assert grant.verify_grant(document, kmh(key_manifest))
 
 
 # --- cessation declaration (§18.4) -------------------------------------------
@@ -354,7 +355,7 @@ def test_classical_declaration_roundtrips() -> None:
     kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
     declaration = grant.build_declaration(PUBLISHER, _scope(), DECLARED_AT, kp, PUB_KID)
 
-    assert grant.verify_declaration(declaration, key_manifest)
+    assert grant.verify_declaration(declaration, kmh(key_manifest))
 
 
 def test_hybrid_declaration_roundtrips_with_both_legs() -> None:
@@ -362,7 +363,7 @@ def test_hybrid_declaration_roundtrips_with_both_legs() -> None:
     declaration = grant.build_declaration(PUBLISHER, _scope(), DECLARED_AT, hk, PUB_KID)
 
     assert "sig_ml_dsa_65" in declaration["signature"]
-    assert grant.verify_declaration(declaration, key_manifest)
+    assert grant.verify_declaration(declaration, kmh(key_manifest))
 
 
 def test_declaration_is_a_closed_object_unknown_member_rejected() -> None:
@@ -370,7 +371,7 @@ def test_declaration_is_a_closed_object_unknown_member_rejected() -> None:
     declaration = grant.build_declaration(PUBLISHER, _scope(), DECLARED_AT, hk, PUB_KID)
     declaration["reason"] = "bankruptcy"
 
-    assert not grant.verify_declaration(declaration, key_manifest)
+    assert not grant.verify_declaration(declaration, kmh(key_manifest))
 
 
 def test_classical_only_declaration_against_hybrid_key_fails_closed() -> None:
@@ -378,7 +379,7 @@ def test_classical_only_declaration_against_hybrid_key_fails_closed() -> None:
     declaration = grant.build_declaration(PUBLISHER, _scope(), DECLARED_AT, hk, PUB_KID)
     del declaration["signature"]["sig_ml_dsa_65"]
 
-    assert not grant.verify_declaration(declaration, key_manifest)
+    assert not grant.verify_declaration(declaration, kmh(key_manifest))
 
 
 def test_declaration_key_window_is_checked_against_declared_at() -> None:
@@ -389,7 +390,7 @@ def test_declaration_key_window_is_checked_against_declared_at() -> None:
     )
     declaration = grant.build_declaration(PUBLISHER, _scope(), DECLARED_AT, kp, PUB_KID)
 
-    assert not grant.verify_declaration(declaration, key_manifest)
+    assert not grant.verify_declaration(declaration, kmh(key_manifest))
 
 
 def test_tampered_declaration_scope_fails_verification() -> None:
@@ -397,7 +398,7 @@ def test_tampered_declaration_scope_fails_verification() -> None:
     declaration = grant.build_declaration(PUBLISHER, _scope(), DECLARED_AT, kp, PUB_KID)
     declaration["scope"]["artifacts"] = sorted([ART_A, ART_B, ART_C])
 
-    assert not grant.verify_declaration(declaration, key_manifest)
+    assert not grant.verify_declaration(declaration, kmh(key_manifest))
 
 
 @pytest.mark.parametrize(
@@ -407,7 +408,7 @@ def test_tampered_declaration_scope_fails_verification() -> None:
 def test_verify_declaration_never_raises_on_garbage(declaration: Any) -> None:
     _, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
 
-    assert not grant.verify_declaration(declaration, key_manifest)
+    assert not grant.verify_declaration(declaration, kmh(key_manifest))
 
 
 def test_declaration_hash_is_over_the_entire_signed_document() -> None:

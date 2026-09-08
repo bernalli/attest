@@ -19,7 +19,7 @@ from typing import Any, cast
 import pytest
 
 from attest import anchor, canon, issue, keys, manifests, pq, tlog, transparency, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, store
 
 ORIGIN = "log.attest.example/2026"
 LOG_NAME = "attest-log-1"
@@ -865,11 +865,7 @@ def _receipt_trust_store(
     provenance: str = "tls",
     chains: dict[str, list[dict[str, Any]]] | None = None,
 ) -> verify.TrustStore:
-    return verify.TrustStore(
-        manifests={_RECEIPT_ISSUER: manifest},
-        provenance={_RECEIPT_ISSUER: provenance},
-        chains=chains or {},
-    )
+    return store({_RECEIPT_ISSUER: manifest}, {_RECEIPT_ISSUER: provenance}, chains or {})
 
 
 def _envelope_bytes(envelope: dict[str, Any]) -> bytes:

@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from attest import anchor, canon, grant, issue, keys, manifests, pq, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
 PUBLISHER = "pub.example"
@@ -163,11 +163,8 @@ def _trust_store(
 ) -> verify.TrustStore:
     resolved = {PUBLISHER: PUB_MANIFEST, SUCCESSOR: SUCCESSOR_MANIFEST}
     resolved.update(extra_manifests or {})
-    return verify.TrustStore(
-        manifests=resolved,
-        provenance=provenance if provenance is not None else {PUBLISHER: "bundle"},
-        chains=chains or {},
-    )
+    resolved_provenance = provenance if provenance is not None else {PUBLISHER: "bundle"}
+    return store(resolved, resolved_provenance, chains or {})
 
 
 def _view(document: dict[str, Any] | None = None, **members: Any) -> dict[str, Any]:
@@ -420,7 +417,7 @@ def test_a_floor_that_does_not_authenticate_is_ignored() -> None:
 
 
 def test_an_unresolvable_publisher_manifest_leaves_the_grant_ignored() -> None:
-    trust_store = verify.TrustStore(manifests={}, provenance={})
+    trust_store = store({}, {})
 
     verdict = _evaluate(view=_view(), trust_store=trust_store)
 
@@ -1026,14 +1023,14 @@ def _envelope(payload: dict[str, Any]) -> bytes:
 def _verify_store(
     publisher_chains: dict[str, list[dict[str, Any]]] | None = None,
 ) -> verify.TrustStore:
-    return verify.TrustStore(
-        manifests={
+    return store(
+        {
             ISSUER: ISSUER_MANIFEST,
             PUBLISHER: PUB_MANIFEST,
             SUCCESSOR: SUCCESSOR_MANIFEST,
         },
-        provenance={ISSUER: "tls", PUBLISHER: "bundle"},
-        chains=publisher_chains or {},
+        {ISSUER: "tls", PUBLISHER: "bundle"},
+        publisher_chains or {},
     )
 
 

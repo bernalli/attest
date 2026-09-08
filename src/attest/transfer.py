@@ -212,7 +212,9 @@ def _valid_holder_authorization_shape(value: object) -> bool:
     )
 
 
-def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_record_signature(
+    record: dict[str, Any], key_manifest: trust_material.KeyManifest
+) -> bool:
     """Verify `record`'s own signature against an ALREADY self-verified `key_manifest`.
 
     Exactly `verify_record` minus the `manifests.verify_key_manifest`
@@ -253,10 +255,10 @@ def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]
     materialize once per call — use `_verify_record_signature`, so the cost is
     one pass per public call and never one per record.
     """
-    materialized = trust_material.materialized_key_manifest(key_manifest)
-    if materialized is None:
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
         return False
-    return _verify_record_signature(record, materialized)
+    return _verify_record_signature(record, data)
 
 
 def _verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
@@ -290,7 +292,7 @@ def _verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any
         kid = dict.get(sig_block, "kid")
         if not isinstance(kid, str):
             return False
-        entry = manifests.find_key(key_manifest, kid)
+        entry = manifests._find_key(key_manifest, kid)
         if entry is None or entry.get("status") != _ACTIVE:
             return False
         body = {key: value for key, value in record.items() if key != "signature"}
@@ -305,7 +307,7 @@ def _verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any
         return False
 
 
-def verify_record(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_record(record: dict[str, Any], key_manifest: trust_material.KeyManifest) -> bool:
     """Verify against `key_manifest`, mirroring `revocation.verify_record`
     exactly: the signer key must be **active** in a self-consistent
     `key_manifest`, with its `[valid_from, valid_to]` window covering the
@@ -323,12 +325,25 @@ def verify_record(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
     which is what would let a manifest be self-consistent for the first half
     and something else for the second.
     """
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return False
+    return _verify_record(record, data)
+
+
+def _verify_record(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_record`'s body, over a tree the snapshot already owns.
+
+    The public door opens the handle once and calls this; an internal
+    caller that already holds the tree calls this directly, instead of
+    going back out through a door that would only refuse it. Both halves
+    run against the SAME tree — never against a second read of anything —
+    which is what stops a manifest from being self-consistent for the
+    first half and something else for the second.
+    """
     try:
-        materialized = trust_material.materialized_key_manifest(key_manifest)
-        if materialized is None:
-            return False
-        return manifests.verify_key_manifest(materialized) and _verify_record_signature(
-            record, materialized
+        return manifests._verify_key_manifest(key_manifest) and _verify_record_signature(
+            record, key_manifest
         )
     except (AttributeError, KeyError, TypeError, ValueError, canon.CanonError):
         return False
@@ -572,7 +587,7 @@ def audit_chain(
     payloads: list[dict[str, Any]],
     transfer_view: list[dict[str, Any]],
     revocation_view: list[dict[str, Any]],
-    key_manifest: dict[str, Any],
+    key_manifest: trust_material.KeyManifest,
     log_keys: list[tlog.LogKey],
     anchor_policy: anchor.AnchorPolicy,
 ) -> ChainAuditResult:
@@ -648,14 +663,31 @@ def audit_chain(
     # The trust-material boundary, BEFORE the manifest's own self-verify —
     # unlike the view admission below, which deliberately runs after it. The
     # two are not the same trade: admitting the views costs up to 64 claims and
-    # 10000 records, so it waits behind a cheap refusal; materializing the
-    # manifest is bounded by the manifest itself, and the self-verify has to
-    # run on the SAME reconstruction every later predicate reads or the
-    # manifest can be self-consistent as an object and something else as data.
-    # A manifest that cannot be read as data is treated exactly like one that
-    # fails its self-verify: nothing it would sign can be trusted.
-    materialized_manifest = trust_material.materialized_key_manifest(key_manifest)
-    if materialized_manifest is None or not manifests.verify_key_manifest(materialized_manifest):
+    # 10000 records, so it waits behind a cheap refusal; opening the snapshot
+    # is a type check, and the self-verify has to run on the SAME tree every
+    # later predicate reads or the manifest can be self-consistent as an object
+    # and something else as data.
+    #
+    # THE TWO REFUSALS ARE NOT THE SAME, and this is where they part (D6). A
+    # non-snapshot is a CONTRACT failure: the caller handed this door something
+    # the library never parsed, so there is no manifest at all, and the answer
+    # is `valid=False` even with zero links — "I audited nothing successfully"
+    # is exactly the sentence a caller must not be able to read here. A
+    # manifest that IS a snapshot but fails its own self-verify is a VERDICT on
+    # real data, and at zero links it keeps today's `valid=True` (P-15): there
+    # were no links to invalidate.
+    manifest_data = trust_material._manifest_data(key_manifest)
+    if manifest_data is None:
+        return ChainAuditResult(
+            valid=False,
+            link_status=tuple("invalid" for _ in range(link_count)),
+            errors=(
+                trust_material._MSG_NOT_PARSED.format(what="key manifest"),
+                *(_ERR_ISSUER_SIGNATURE_INVALID.format(i=i) for i in range(1, link_count + 1)),
+            ),
+            warnings=(),
+        )
+    if not manifests._verify_key_manifest(manifest_data):
         manifest_invalid_errors = tuple(
             _ERR_ISSUER_SIGNATURE_INVALID.format(i=i) for i in range(1, link_count + 1)
         )
@@ -677,7 +709,7 @@ def audit_chain(
         revocation_view, revocation.MAX_REVOCATION_RECORDS
     )
 
-    manifest_issuer = materialized_manifest.get("issuer")
+    manifest_issuer = manifest_data.get("issuer")
     issuer_id_for_log = manifest_issuer if isinstance(manifest_issuer, str) else ""
 
     errors: list[str] = []
@@ -711,7 +743,7 @@ def audit_chain(
             errors.append(_ERR_NO_TRANSFER_RECORD.format(i=i))
             link_ok = False
         else:
-            sig_ok = _verify_record_signature(record, materialized_manifest)
+            sig_ok = _verify_record_signature(record, manifest_data)
             if not sig_ok:
                 errors.append(_ERR_ISSUER_SIGNATURE_INVALID.format(i=i))
                 link_ok = False
@@ -754,7 +786,7 @@ def audit_chain(
                         or candidate.get("receipt_id") != prev_receipt_id
                     ):
                         continue
-                    if not _verify_record_signature(candidate, materialized_manifest):
+                    if not _verify_record_signature(candidate, manifest_data):
                         continue
                     if not (
                         isinstance(prev_pubkey, str)
@@ -789,7 +821,7 @@ def audit_chain(
                 isinstance(rev_record, dict)
                 and rev_record.get("receipt_id") == prev_receipt_id
                 and rev_record.get("status") == _RECORD_STATUS_TRANSFERRED
-                and revocation._verify_record_signature(rev_record, materialized_manifest)
+                and revocation._verify_record_signature(rev_record, manifest_data)
             ):
                 backed = True
                 break

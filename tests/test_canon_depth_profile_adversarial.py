@@ -19,7 +19,7 @@ from hypothesis import HealthCheck, Phase, example, given, settings
 from hypothesis import strategies as st
 
 from attest import bundle, canon, issue, keys, manifests, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, store
 
 DEPTH_MESSAGE = "maximum nesting depth exceeded"
 ISSUER = "store.example.com"
@@ -190,7 +190,7 @@ def test_verify_rejects_uncanonicalizable_parsed_payload_inside_its_boundary() -
         extra_out_of_range=9_007_199_254_740_992,
     )
     envelope = {"payload": payload, "signatures": [{"kid": KID, "alg": "Ed25519", "sig": ""}]}
-    trust_store = verify.TrustStore(manifests={ISSUER: _key_manifest_with_extra({})}, provenance={})
+    trust_store = store({ISSUER: _key_manifest_with_extra({})}, {})
 
     result = verify.verify(json.dumps(envelope).encode("utf-8"), trust_store)
 

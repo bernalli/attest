@@ -356,7 +356,7 @@ def _verify_signed_document(
     kid = dict.get(sig_block, "kid")
     if not isinstance(kid, str):
         return False
-    entry = manifests.find_key(key_manifest, kid)
+    entry = manifests._find_key(key_manifest, kid)
     if entry is None or dict.get(entry, "status") != _ACTIVE:
         return False
     signed_at = transfer._parse_date(cast(str, dict.get(document, timestamp_member)))
@@ -369,7 +369,9 @@ def _verify_signed_document(
     return manifests.verify_signature_block(canon.canonical_bytes(body), sig_block, entry)
 
 
-def verify_grant_signature(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_grant_signature(
+    document: dict[str, Any], key_manifest: trust_material.KeyManifest
+) -> bool:
     """Verify a grant's own signature against an ALREADY self-verified
     `key_manifest` — exactly `verify_grant` minus the
     `manifests.verify_key_manifest` self-consistency check, mirroring
@@ -403,10 +405,10 @@ def verify_grant_signature(document: dict[str, Any], key_manifest: dict[str, Any
     `_verify_grant_signature`, so the cost is one pass per public call and
     never one per document.
     """
-    materialized = trust_material.materialized_key_manifest(key_manifest)
-    if materialized is None:
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
         return False
-    return _verify_grant_signature(document, materialized)
+    return _verify_grant_signature(document, data)
 
 
 def _verify_grant_signature(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
@@ -426,7 +428,7 @@ def _verify_grant_signature(document: dict[str, Any], key_manifest: dict[str, An
         return False
 
 
-def verify_grant(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_grant(document: dict[str, Any], key_manifest: trust_material.KeyManifest) -> bool:
     """Verify a grant against `key_manifest`, mirroring `revocation.verify_record`
     exactly: the signer key must be **active** in a SELF-CONSISTENT
     `key_manifest`, with its validity window covering the grant's own
@@ -443,18 +445,33 @@ def verify_grant(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool
     and something else for the second (mirrors
     `transfer.verify_record`/`revocation.verify_record`).
     """
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return False
+    return _verify_grant(document, data)
+
+
+def _verify_grant(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_grant`'s body, over a tree the snapshot already owns.
+
+    The public door opens the handle once and calls this; an internal
+    caller that already holds the tree calls this directly, instead of
+    going back out through a door that would only refuse it. Both halves
+    run against the SAME tree — never against a second read of anything —
+    which is what stops a manifest from being self-consistent for the
+    first half and something else for the second.
+    """
     try:
-        materialized = trust_material.materialized_key_manifest(key_manifest)
-        if materialized is None:
-            return False
-        return manifests.verify_key_manifest(materialized) and _verify_grant_signature(
-            document, materialized
+        return manifests._verify_key_manifest(key_manifest) and _verify_grant_signature(
+            document, key_manifest
         )
     except Exception:  # see the never-raise note on `signer_domain`
         return False
 
 
-def verify_declaration_signature(declaration: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_declaration_signature(
+    declaration: dict[str, Any], key_manifest: trust_material.KeyManifest
+) -> bool:
     """`verify_grant_signature` for a cessation declaration: the closed
     four-member shape, then the same active-key/window/AND-rule checks, with
     the window checked against the declaration's own `declared_at`.
@@ -468,10 +485,10 @@ def verify_declaration_signature(declaration: dict[str, Any], key_manifest: dict
     `verify_grant_signature` applies. Callers that already hold a
     materialized manifest use `_verify_declaration_signature`.
     """
-    materialized = trust_material.materialized_key_manifest(key_manifest)
-    if materialized is None:
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
         return False
-    return _verify_declaration_signature(declaration, materialized)
+    return _verify_declaration_signature(declaration, data)
 
 
 def _verify_declaration_signature(
@@ -491,19 +508,34 @@ def _verify_declaration_signature(
         return False
 
 
-def verify_declaration(declaration: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_declaration(
+    declaration: dict[str, Any], key_manifest: trust_material.KeyManifest
+) -> bool:
     """`verify_grant` for a cessation declaration: self-consistent manifest
     plus `verify_declaration_signature`. Fails closed, never raises.
 
     The manifest is materialized ONCE here and both halves run against that
     one reconstruction, mirroring `verify_grant`.
     """
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return False
+    return _verify_declaration(declaration, data)
+
+
+def _verify_declaration(declaration: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_declaration`'s body, over a tree the snapshot already owns.
+
+    The public door opens the handle once and calls this; an internal
+    caller that already holds the tree calls this directly, instead of
+    going back out through a door that would only refuse it. Both halves
+    run against the SAME tree — never against a second read of anything —
+    which is what stops a manifest from being self-consistent for the
+    first half and something else for the second.
+    """
     try:
-        materialized = trust_material.materialized_key_manifest(key_manifest)
-        if materialized is None:
-            return False
-        return manifests.verify_key_manifest(materialized) and _verify_declaration_signature(
-            declaration, materialized
+        return manifests._verify_key_manifest(key_manifest) and _verify_declaration_signature(
+            declaration, key_manifest
         )
     except Exception:  # see the never-raise note on `signer_domain`
         return False

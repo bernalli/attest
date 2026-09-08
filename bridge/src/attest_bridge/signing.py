@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from attest import keys, manifests, pq
+from attest import canon, keys, manifests, pq, trust_material
 from attest import verify as verifier
 from attest_bridge.config import IssuerConfig
 from attest_bridge.model import ConfigError
@@ -30,12 +30,24 @@ class IssuerIdentity:
     issuer_id: str
     display_name: str
     kid: str
-    # repr=False on both fields: SigningKeyPair.seed / MLDSAKeyPair.sk are secret,
-    # and manifest_snapshot carries (public but byte-encoded) key material — neither
+    # repr=False on all three: SigningKeyPair.seed / MLDSAKeyPair.sk are secret,
+    # and the manifest carries (public but byte-encoded) key material — none
     # belongs in repr()/"%r" output. field(repr=False) sets no default, so these
     # stay required positional fields.
     signing_keys: pq.HybridSigningKeys = field(repr=False)
+    # TWO fields for one manifest, because it plays two roles and the roles do
+    # not accept the same type. `manifest_snapshot` is the DOCUMENT: it is
+    # copied verbatim into every envelope this bridge issues
+    # (`delivery.issuer_manifest`), so it has to stay an ordinary tree that
+    # serializes. `manifest_handle` is the same manifest as trust material,
+    # parsed by the library, and it is what the ports take.
+    #
+    # Collapsing them was tried and is wrong in both directions: give the
+    # document to a port and the port refuses it; put the handle in an envelope
+    # and there is nothing to serialize. The two names say which is which at
+    # every call site.
     manifest_snapshot: dict[str, Any] = field(repr=False)
+    manifest_handle: trust_material.KeyManifest = field(repr=False)
 
 
 def _load_seed(path: Path) -> keys.SigningKeyPair:
@@ -104,9 +116,19 @@ def load_issuer(config: IssuerConfig) -> IssuerIdentity:
     ed = _load_seed(config.seed_path)
     mldsa = _load_mldsa(config.mldsa_key_path)
     manifest = _load_manifest(config.manifest_path)
+    # Trust material reaches the library as BYTES: the manifest is read from
+    # disk and handed over as the document it is, rather than as the dict this
+    # module happens to be holding. `canonical_bytes` and not `json.dumps`:
+    # `_load_manifest` may have produced integers a re-serializer would widen,
+    # and the refusal for one of those belongs HERE, where the file that
+    # carried it is still the thing being blamed.
+    try:
+        snapshot = trust_material.KeyManifest.from_bytes(canon.canonical_bytes(manifest))
+    except (trust_material.TrustMaterialError, canon.CanonError) as exc:
+        raise ConfigError(f"key manifest {config.manifest_path} could not be read: {exc}") from exc
 
     try:
-        manifest_ok = manifests.verify_key_manifest(manifest)
+        manifest_ok = manifests.verify_key_manifest(snapshot)
     except (ValueError, TypeError, KeyError, RecursionError) as exc:
         # A parseable-but-malformed manifest makes verification RAISE rather than
         # return False (e.g. a float, forbidden by the attest-JCS profile, reaches
@@ -127,7 +149,7 @@ def load_issuer(config: IssuerConfig) -> IssuerIdentity:
             f"{manifest.get('issuer')!r}, not configured issuer {config.id!r}"
         )
 
-    entry = manifests.find_key(manifest, config.kid)
+    entry = manifests.find_key(snapshot, config.kid)
     if entry is None:
         raise ConfigError(f"kid {config.kid!r} not found in key manifest {config.manifest_path}")
 
@@ -181,4 +203,5 @@ def load_issuer(config: IssuerConfig) -> IssuerIdentity:
         kid=config.kid,
         signing_keys=pq.HybridSigningKeys(ed=ed, mldsa=mldsa),
         manifest_snapshot=manifest,
+        manifest_handle=snapshot,
     )

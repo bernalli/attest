@@ -93,7 +93,9 @@ def record_hash(record: dict[str, Any]) -> str:
     return hashlib.sha256(canon.canonical_bytes(record)).hexdigest()
 
 
-def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_record_signature(
+    record: dict[str, Any], key_manifest: trust_material.KeyManifest
+) -> bool:
     """Verify `record`'s own signature against an ALREADY self-verified `key_manifest`.
 
     `key_manifest` is MATERIALIZED here, at the public boundary, before any
@@ -127,10 +129,10 @@ def verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]
     improvement #17). To verify a single record, use `verify_record`,
     which composes both halves.
     """
-    materialized = trust_material.materialized_key_manifest(key_manifest)
-    if materialized is None:
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
         return False
-    return _verify_record_signature(record, materialized)
+    return _verify_record_signature(record, data)
 
 
 def _verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
@@ -171,7 +173,7 @@ def _verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any
         kid = dict.get(sig_block, "kid")
         if not isinstance(kid, str):
             return False
-        entry = manifests.find_key(key_manifest, kid)
+        entry = manifests._find_key(key_manifest, kid)
         if entry is None or entry.get("status") != _ACTIVE:
             return False
         body = {
@@ -190,7 +192,7 @@ def _verify_record_signature(record: dict[str, Any], key_manifest: dict[str, Any
         return False
 
 
-def verify_record(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_record(record: dict[str, Any], key_manifest: trust_material.KeyManifest) -> bool:
     """Verify against `key_manifest`, mirroring `manifests.verify_artifact_manifest`
     exactly: the signer key must be **active** in a self-consistent
     `key_manifest`, with its `[valid_from, valid_to]` window covering the
@@ -215,12 +217,25 @@ def verify_record(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
     which is what would let a manifest be self-consistent for the first half
     and something else for the second.
     """
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return False
+    return _verify_record(record, data)
+
+
+def _verify_record(record: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_record`'s body, over a tree the snapshot already owns.
+
+    The public door opens the handle once and calls this; an internal
+    caller that already holds the tree calls this directly, instead of
+    going back out through a door that would only refuse it. Both halves
+    run against the SAME tree — never against a second read of anything —
+    which is what stops a manifest from being self-consistent for the
+    first half and something else for the second.
+    """
     try:
-        materialized = trust_material.materialized_key_manifest(key_manifest)
-        if materialized is None:
-            return False
-        return manifests.verify_key_manifest(materialized) and _verify_record_signature(
-            record, materialized
+        return manifests._verify_key_manifest(key_manifest) and _verify_record_signature(
+            record, key_manifest
         )
     except Exception:
         return False

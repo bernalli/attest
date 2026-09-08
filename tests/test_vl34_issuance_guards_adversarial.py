@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from attest import canon, issue, keys, manifests, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest, make_payload, store
 
 ISSUER = "store.example.com"
 KID1 = f"{ISSUER}/keys/vl34#one"
@@ -36,7 +36,7 @@ def _receipt_bytes() -> bytes:
 
 
 def _trust(manifest: dict[str, Any]) -> verify.TrustStore:
-    return verify.TrustStore(manifests={ISSUER: manifest}, provenance={ISSUER: "tls"})
+    return store({ISSUER: manifest}, {ISSUER: "tls"})
 
 
 def _self_signed_manifest(entries: list[Any], version: int = 1) -> dict[str, Any]:
@@ -78,8 +78,8 @@ def test_duplicate_kid_is_rejected_independently_of_order_or_status(
         manifests.build_key_manifest(ISSUER, 1, ISSUED_AT, entries, KP1, KID1)
 
     ambiguous = _self_signed_manifest(entries)
-    assert manifests.verify_key_manifest(ambiguous) is False
-    assert manifests.find_key(ambiguous, KID1) is None
+    assert manifests.verify_key_manifest(key_manifest(ambiguous)) is False
+    assert manifests.find_key(key_manifest(ambiguous), KID1) is None
 
 
 def test_three_duplicate_kids_fail_closed_without_position_selection() -> None:
@@ -95,8 +95,8 @@ def test_three_duplicate_kids_fail_closed_without_position_selection() -> None:
         manifests.build_key_manifest(ISSUER, 1, ISSUED_AT, entries, KP1, KID1)
 
     ambiguous = _self_signed_manifest(entries)
-    assert manifests.verify_key_manifest(ambiguous) is False
-    assert manifests.find_key(ambiguous, KID2) is None
+    assert manifests.verify_key_manifest(key_manifest(ambiguous)) is False
+    assert manifests.find_key(key_manifest(ambiguous), KID2) is None
 
 
 def test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest() -> None:
@@ -111,13 +111,13 @@ def test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest() -> None:
         manifests.build_key_manifest(ISSUER, 1, ISSUED_AT, entries, KP1, KID1)
 
     ambiguous = _self_signed_manifest(entries)
-    assert manifests.verify_key_manifest(ambiguous) is False
+    assert manifests.verify_key_manifest(key_manifest(ambiguous)) is False
     # `find_key` fails closed per KID, not per manifest: KID1 is unambiguous
     # here and still resolves. The whole-manifest refusal is delivered by
     # `verify_key_manifest` above and by `verify()`'s preflight below — every
     # consumer of a manifest passes through one of the two.
-    assert manifests.find_key(ambiguous, KID1) is not None
-    assert manifests.find_key(ambiguous, KID2) is None
+    assert manifests.find_key(key_manifest(ambiguous), KID1) is not None
+    assert manifests.find_key(key_manifest(ambiguous), KID2) is None
     result = verify.verify(_receipt_bytes(), _trust(ambiguous))
     assert result.ok is False
     assert any("duplicate kid" in error for error in result.errors)
@@ -136,10 +136,10 @@ def test_non_dict_entries_fail_every_manifest_consumer(invalid_entry: object) ->
     entries: list[Any] = [_entry(KID1, KP1), invalid_entry]
 
     built = manifests.build_key_manifest(ISSUER, 1, ISSUED_AT, entries, KP1, KID1)
-    assert manifests.verify_key_manifest(built) is True
+    assert manifests.verify_key_manifest(key_manifest(built)) is True
 
     malformed = _self_signed_manifest(entries)
-    assert manifests.find_key(malformed, KID1) is not None
+    assert manifests.find_key(key_manifest(malformed), KID1) is not None
     assert manifests.duplicate_kids(entries) == []
 
 
@@ -164,12 +164,12 @@ def test_non_string_kids_do_not_collide_through_python_equality() -> None:
     assert manifests.duplicate_kids(entries) == []
 
     built = manifests.build_key_manifest(ISSUER, 1, ISSUED_AT, entries, KP1, KID1)
-    assert manifests.verify_key_manifest(built) is True
-    assert manifests.find_key(built, "1") == string_kid
+    assert manifests.verify_key_manifest(key_manifest(built)) is True
+    assert manifests.find_key(key_manifest(built), "1") == string_kid
     # Neither the bool nor the int entry answers to the string form, and the
     # only kid still carrying a real string besides "1" is KID1.
-    assert manifests.find_key(built, KID1) is not None
-    assert manifests.find_key(built, KID2) is None
+    assert manifests.find_key(key_manifest(built), KID1) is not None
+    assert manifests.find_key(key_manifest(built), KID2) is None
 
 
 def test_continuity_rejects_duplicates_in_either_manifest() -> None:
@@ -187,8 +187,18 @@ def test_continuity_rejects_duplicates_in_either_manifest() -> None:
     ambiguous_predecessor = _self_signed_manifest(duplicate_entries)
     ambiguous_successor = _self_signed_manifest(duplicate_entries, version=2)
 
-    assert manifests.check_continuity(ambiguous_predecessor, valid_successor) is False
-    assert manifests.check_continuity(valid_predecessor, ambiguous_successor) is False
+    assert (
+        manifests.check_continuity(
+            key_manifest(ambiguous_predecessor), key_manifest(valid_successor)
+        )
+        is False
+    )
+    assert (
+        manifests.check_continuity(
+            key_manifest(valid_predecessor), key_manifest(ambiguous_successor)
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize("operation", ["retire", "compromise"])
@@ -213,8 +223,8 @@ def test_rotation_can_retire_the_last_active_key_when_an_active_replacement_exis
         retire_kids=[KID1],
     )
 
-    replacement = manifests.find_key(rotated, KID2)
-    assert manifests.verify_key_manifest(rotated) is True
+    replacement = manifests.find_key(key_manifest(rotated), KID2)
+    assert manifests.verify_key_manifest(key_manifest(rotated)) is True
     assert replacement is not None
     assert replacement["status"] == "active"
 
@@ -272,7 +282,7 @@ def test_existing_single_key_zero_active_manifests_remain_verifiable(status: str
         ISSUER, 1, ISSUED_AT, [_entry(KID1, KP1, status)], KP1, KID1
     )
 
-    resolved = manifests.find_key(degenerate, KID1)
-    assert manifests.verify_key_manifest(degenerate) is True
+    resolved = manifests.find_key(key_manifest(degenerate), KID1)
+    assert manifests.verify_key_manifest(key_manifest(degenerate)) is True
     assert resolved is not None
     assert resolved["status"] == status

@@ -1,21 +1,9 @@
-=== mutant T2(d) — which vectors move, measured ===
-utc:  2026-09-07T21:25:25Z
-head: 1448f39
-mutation: tools/gates/mutant_d_plugin.py — remaps every provenance entry to "tls" at trust_material.trust_store_fields (the place _store_data will occupy; sole caller verify.py:336)
+# mutant t2d: every provenance entry is remapped to tls at the boundary
+# recorded 2026-09-08T12:23:40Z
 
---- HONEST CONTROL (no mutant)
-........................................................................ [ 31%]
-........................................................................ [ 62%]
-........................................................................ [ 93%]
-................                                                         [100%]
-232 passed in 3.33s
-honest exit: 0
-
---- MUTANT ACTIVE
-......................................................F................. [ 31%]
-.........................................F......F....................... [ 62%]
-................................F....................................... [ 93%]
-................                                                         [100%]
+# injected through tools/gates/mutant_d_plugin.py (no source edit)
+$ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf -p tools.gates.mutant_d_plugin tests/test_vectors.py::test_vector_matches_spec_intended_result[28-transparency/a-logged-trust-unchanged] tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/q-tofu-publisher] tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/x-trust-not-borrowed-from-signer] tests/test_vectors.py::test_vector_matches_spec_intended_result[43-publisher-authority/o-tofu-authorized]
+FFFF                                                                     [100%]
 =================================== FAILURES ===================================
 _ test_vector_matches_spec_intended_result[28-transparency/a-logged-trust-unchanged] _
 
@@ -62,7 +50,7 @@ E
 E         - unauthenticated_tofu
 E         + verified
 
-tests/test_vectors.py:366: AssertionError
+tests/test_vectors.py:379: AssertionError
 _ test_vector_matches_spec_intended_result[37-preservation-pledge/q-tofu-publisher] _
 
 vector_dir = PosixPath('<tree>/docs/spec/vectors/37-preservation-pledge/q-tofu-publisher')
@@ -122,7 +110,7 @@ E
 E             - unauthenticated_tofu
 E             + verified
 
-tests/test_vectors.py:380: AssertionError
+tests/test_vectors.py:393: AssertionError
 _ test_vector_matches_spec_intended_result[37-preservation-pledge/x-trust-not-borrowed-from-signer] _
 
 vector_dir = PosixPath('<tree>/docs/spec/vectors/37-preservation-pledge/x-trust-not-borrowed-from-signer')
@@ -182,7 +170,7 @@ E
 E             - unauthenticated_tofu
 E             + verified
 
-tests/test_vectors.py:380: AssertionError
+tests/test_vectors.py:393: AssertionError
 _ test_vector_matches_spec_intended_result[43-publisher-authority/o-tofu-authorized] _
 
 vector_dir = PosixPath('<tree>/docs/spec/vectors/43-publisher-authority/o-tofu-authorized')
@@ -246,11 +234,16 @@ E
 E             - unauthenticated_tofu
 E             + verified
 
-tests/test_vectors.py:384: AssertionError
+tests/test_vectors.py:397: AssertionError
 =========================== short test summary info ============================
 FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[28-transparency/a-logged-trust-unchanged]
 FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/q-tofu-publisher]
 FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/x-trust-not-borrowed-from-signer]
 FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[43-publisher-authority/o-tofu-authorized]
-4 failed, 228 passed in 3.69s
-mutant exit: 1
+4 failed in 0.66s
+
+exit: 1
+
+RED: True
+MARKER 'unauthenticated_tofu' present: True
+VERDICT: KILLED

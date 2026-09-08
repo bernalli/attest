@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from attest import anchor, canon, issue, keys, manifests, pq, revocation, tlog, transfer, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#ed25519-1"
@@ -46,7 +46,7 @@ def _key_manifest() -> dict[str, Any]:
 
 
 def _trust_store() -> verify.TrustStore:
-    return verify.TrustStore(manifests={ISSUER: _key_manifest()}, provenance={ISSUER: "tls"})
+    return store({ISSUER: _key_manifest()}, {ISSUER: "tls"})
 
 
 def _to_bytes(envelope: dict[str, Any]) -> bytes:

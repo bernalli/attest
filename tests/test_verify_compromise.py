@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from attest import anchor, canon, issue, keys, manifests, pq, tlog, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
 OTHER_ISSUER = "other.example.com"
@@ -94,11 +94,7 @@ def _trust_store(
     *,
     chains: dict[str, list[dict[str, Any]]] | None = None,
 ) -> verify.TrustStore:
-    return verify.TrustStore(
-        manifests={ISSUER: manifest},
-        provenance={ISSUER: "tls"},
-        chains=chains or {},
-    )
+    return store({ISSUER: manifest}, {ISSUER: "tls"}, chains or {})
 
 
 def _hybrid_log_keys() -> pq.HybridSigningKeys:

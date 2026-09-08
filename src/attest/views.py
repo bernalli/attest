@@ -36,7 +36,7 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC
 from typing import Any
 
-from attest import anchor, canon, manifests, pq, revocation, tlog, transfer, verify
+from attest import anchor, canon, manifests, pq, revocation, tlog, transfer, trust_material, verify
 from attest.ulid import RECEIPT_ID_RE
 
 # Predicates and bounds borrowed from sibling modules, most of them private.
@@ -441,7 +441,7 @@ def build_compromise_claim(manifest: dict[str, Any], evidence: dict[str, Any]) -
             "verifier can date the declaration against a signer's validity window, and the "
             "claim authenticates for nobody (verify._vouching_signers)"
         )
-    if not manifests.verify_key_manifest(own_manifest):
+    if not manifests._verify_key_manifest(own_manifest):
         raise ViewError(
             "compromise declaration manifest is not self-consistent: its own "
             "signature does not verify against a key it lists"
@@ -557,7 +557,7 @@ def build_transfer_view(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def build_revocation_view(
-    records: list[dict[str, Any]], key_manifest: dict[str, Any] | None = None
+    records: list[dict[str, Any]], key_manifest: trust_material.KeyManifest | None = None
 ) -> list[dict[str, Any]]:
     """The `revocation-view.json` array every consumer already reads (D12).
 
@@ -572,6 +572,15 @@ def build_revocation_view(
     included. Without it the records are checked for SHAPE only — which is the
     right default for a holder assembling a view out of records they were
     handed and cannot yet authenticate.
+
+    It arrives as a SNAPSHOT, and the asymmetry with `records` is the point:
+    the records are EVIDENCE, admitted through `_own_list` on the §18.4 rail
+    because a holder is expected to hand over whatever they were given; the
+    manifest is TRUSTED MATERIAL, and trusted material enters this library as
+    bytes it parsed itself. Something that is not a snapshot raises `ViewError`
+    rather than quietly building a view that verified nothing — the caller
+    ASKED for authentication by passing this argument at all, so silently
+    downgrading to a shape check would answer a question they did not ask.
     """
     own_records = _own_list(records, "revocation view")
     if len(own_records) > revocation.MAX_REVOCATION_RECORDS:
@@ -579,9 +588,11 @@ def build_revocation_view(
             f"revocation view exceeds {revocation.MAX_REVOCATION_RECORDS} records: "
             f"{len(own_records)}"
         )
-    own_manifest = (
-        None if key_manifest is None else _own_object(key_manifest, "issuer key manifest")
-    )
+    manifest_data = None
+    if key_manifest is not None:
+        manifest_data = trust_material._manifest_data(key_manifest)
+        if manifest_data is None:
+            raise ViewError(trust_material._MSG_NOT_PARSED.format(what="key manifest"))
     built: list[dict[str, Any]] = []
     for index, record in enumerate(own_records):
         what = f"revocation record {index}"
@@ -606,7 +617,7 @@ def build_revocation_view(
                 f"({_DATE_FMT}): {record['revoked_at']!r}"
             )
         _signature_block_kid(record["signature"], what)
-        if own_manifest is not None and not revocation.verify_record(record, own_manifest):
+        if manifest_data is not None and not revocation._verify_record(record, manifest_data):
             raise ViewError(
                 f"{what} signature does not verify against the key manifest given: the "
                 "signer must be an active key of a self-consistent manifest, with its "
@@ -652,7 +663,7 @@ def _preflight_trust_material(trusted_manifest: dict[str, Any], chain: list[Any]
     duplicates = manifests.duplicate_kids(entries)
     if duplicates:
         raise ViewError(f"{ambiguous}: trusted manifest lists duplicate kid(s): {duplicates}")
-    if not manifests.manifest_signature_is_authentic(trusted_manifest):
+    if not manifests._manifest_signature_is_authentic(trusted_manifest):
         raise ViewError(f"{ambiguous}: the trusted manifest signature does not verify")
     for index, member in enumerate(chain or []):
         if not isinstance(member, dict):
@@ -684,7 +695,7 @@ def _declared_compromised_kids(
         kid = entry.get("kid")
         if not isinstance(kid, str) or kid in kids:
             continue
-        if manifests.find_key(trusted_manifest, kid) is not None:
+        if manifests._find_key(trusted_manifest, kid) is not None:
             kids.append(kid)
     return kids
 
@@ -726,8 +737,8 @@ def _cutoff_axis(
 
 def claim_capabilities(
     claim: dict[str, Any],
-    trusted_manifest: dict[str, Any],
-    chain: list[dict[str, Any]] | None,
+    trust_store: trust_material.TrustStore,
+    issuer_id: str,
     *,
     log_keys: list[tlog.LogKey] | None = None,
     anchor_policy: anchor.AnchorPolicy | None = None,
@@ -757,27 +768,52 @@ def claim_capabilities(
 
     Raises `ViewError` when the trusted material is ambiguous or inauthentic:
     such material yields no classification at all, not a lenient one.
+
+    The trusted manifest and its chain are SELECTED from the snapshot rather
+    than passed in as two separate arguments, which is what closes the gap the
+    old signature left open: a caller could hand a manifest from one issuer and
+    a chain from another, and this function had no way to notice. One snapshot
+    and one issuer id cannot disagree with each other.
+
+    `issuer_id` is the SELECTOR — the key under which the caller filed the
+    manifest — and `manifest_issuer` below is what the manifest itself
+    declares. This function does not require them to be equal, and that is
+    deliberate rather than overlooked: the snapshot boundary guarantees types
+    and shape, never that a manifest's contents agree with where it was filed,
+    and the classification has always been relative to what the MANIFEST says.
     """
     own_claim = _own_object(claim, "compromise claim")
-    own_trusted = _own_object(trusted_manifest, "trusted key manifest")
-    own_chain = None if chain is None else _own_list(chain, "manifest chain")
+    if type(issuer_id) is not str:
+        raise ViewError("trusted material is ambiguous or inauthentic: issuer id must be a string")
+    store = trust_material._store_data(trust_store)
+    if store is None:
+        raise ViewError(trust_material._MSG_NOT_PARSED.format(what="trust store"))
+    own_trusted = store.manifests.get(issuer_id)
+    if own_trusted is None:
+        # A constant, with the id NOT formatted into it: the id is the
+        # caller's string, and a message that echoes it back hands an attacker
+        # a channel out of a refusal.
+        raise ViewError(
+            "trusted material is ambiguous or inauthentic: no trusted manifest for issuer"
+        )
+    own_chain = store.chains.get(issuer_id)
     _preflight_trust_material(own_trusted, own_chain)
-    issuer_id = own_trusted.get("issuer")
-    if not isinstance(issuer_id, str):
+    manifest_issuer = own_trusted.get("issuer")
+    if not isinstance(manifest_issuer, str):
         raise ViewError("trusted material is ambiguous or inauthentic: 'issuer' must be a string")
     claim_manifest = own_claim.get("manifest")
     if not isinstance(claim_manifest, dict):
         raise ViewError("compromise claim 'manifest' must be an object")
     evidence = own_claim.get("evidence")
     materialized = _materialize_compromise_view([own_claim])
-    denying = _cutoff_denying_manifests(own_trusted, own_chain, issuer_id)
+    denying = _cutoff_denying_manifests(own_trusted, own_chain, manifest_issuer)
     report: dict[str, dict[str, str]] = {}
     for kid in _declared_compromised_kids(claim_manifest, own_trusted):
-        trusted_entry = manifests.find_key(own_trusted, kid)
+        trusted_entry = manifests._find_key(own_trusted, kid)
         if trusted_entry is None:  # pragma: no cover - excluded by the preflight
             continue
         authenticated = _authenticated_compromise_claims(
-            materialized, own_trusted, trusted_entry, own_chain, issuer_id, kid, []
+            materialized, own_trusted, trusted_entry, own_chain, manifest_issuer, kid, []
         )
         report[kid] = {
             "floor": "established" if authenticated else "ignored",

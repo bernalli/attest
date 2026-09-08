@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from attest import keys, manifests, pq, revocation, verify
+from tests.helpers import key_manifest as km
 from tests.helpers import make_payload
 
 ISSUER = "store.example.com"
@@ -47,15 +48,15 @@ def test_hybrid_revocation_record_has_both_legs() -> None:
 def test_hybrid_revocation_record_verifies() -> None:
     hk, key_manifest = _hybrid_key_manifest()
     record = revocation.build_record(RECEIPT_ID, "revoked", REVOKED_AT, hk, KID)
-    assert revocation.verify_record(record, key_manifest)
+    assert revocation.verify_record(record, km(key_manifest))
 
 
 def test_hybrid_revocation_record_missing_mldsa_leg_invalid() -> None:
     hk, key_manifest = _hybrid_key_manifest()
     record = revocation.build_record(RECEIPT_ID, "revoked", REVOKED_AT, hk, KID)
-    assert revocation.verify_record(record, key_manifest)
+    assert revocation.verify_record(record, km(key_manifest))
     del record["signature"]["sig_ml_dsa_65"]
-    assert not revocation.verify_record(record, key_manifest)
+    assert not revocation.verify_record(record, km(key_manifest))
 
 
 def test_hybrid_revocation_record_tampered_mldsa_leg_invalid() -> None:
@@ -64,21 +65,21 @@ def test_hybrid_revocation_record_tampered_mldsa_leg_invalid() -> None:
     raw = bytearray(keys.b64u_decode(record["signature"]["sig_ml_dsa_65"]))
     raw[0] ^= 0xFF
     record["signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(raw))
-    assert not revocation.verify_record(record, key_manifest)
+    assert not revocation.verify_record(record, km(key_manifest))
 
 
 def test_edonly_revocation_record_unchanged() -> None:
     ed_kp, key_manifest = _ed_only_key_manifest()
     record = revocation.build_record(RECEIPT_ID, "revoked", REVOKED_AT, ed_kp, KID)
     assert "sig_ml_dsa_65" not in record["signature"]
-    assert revocation.verify_record(record, key_manifest)
+    assert revocation.verify_record(record, km(key_manifest))
 
 
 def test_edonly_revocation_record_with_stray_mldsa_leg_invalid() -> None:
     ed_kp, key_manifest = _ed_only_key_manifest()
     record = revocation.build_record(RECEIPT_ID, "revoked", REVOKED_AT, ed_kp, KID)
     record["signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(pq.ML_DSA_65_SIG_LEN))
-    assert not revocation.verify_record(record, key_manifest)
+    assert not revocation.verify_record(record, km(key_manifest))
 
 
 # --- artifact manifests -------------------------------------------------------
@@ -102,7 +103,7 @@ def test_hybrid_artifact_manifest_verifies() -> None:
     manifest = manifests.build_artifact_manifest(
         ISSUER, "widget", 1, RELEASED_AT, _artifacts(), hk, KID
     )
-    assert manifests.verify_artifact_manifest(manifest, key_manifest)
+    assert manifests.verify_artifact_manifest(manifest, km(key_manifest))
 
 
 def test_hybrid_artifact_manifest_missing_mldsa_leg_invalid() -> None:
@@ -110,9 +111,9 @@ def test_hybrid_artifact_manifest_missing_mldsa_leg_invalid() -> None:
     manifest = manifests.build_artifact_manifest(
         ISSUER, "widget", 1, RELEASED_AT, _artifacts(), hk, KID
     )
-    assert manifests.verify_artifact_manifest(manifest, key_manifest)
+    assert manifests.verify_artifact_manifest(manifest, km(key_manifest))
     del manifest["manifest_signature"]["sig_ml_dsa_65"]
-    assert not manifests.verify_artifact_manifest(manifest, key_manifest)
+    assert not manifests.verify_artifact_manifest(manifest, km(key_manifest))
 
 
 def test_hybrid_artifact_manifest_tampered_mldsa_leg_invalid() -> None:
@@ -123,7 +124,7 @@ def test_hybrid_artifact_manifest_tampered_mldsa_leg_invalid() -> None:
     raw = bytearray(keys.b64u_decode(manifest["manifest_signature"]["sig_ml_dsa_65"]))
     raw[0] ^= 0xFF
     manifest["manifest_signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(raw))
-    assert not manifests.verify_artifact_manifest(manifest, key_manifest)
+    assert not manifests.verify_artifact_manifest(manifest, km(key_manifest))
 
 
 def test_edonly_artifact_manifest_unchanged() -> None:
@@ -132,7 +133,7 @@ def test_edonly_artifact_manifest_unchanged() -> None:
         ISSUER, "widget", 1, RELEASED_AT, _artifacts(), ed_kp, KID
     )
     assert "sig_ml_dsa_65" not in manifest["manifest_signature"]
-    assert manifests.verify_artifact_manifest(manifest, key_manifest)
+    assert manifests.verify_artifact_manifest(manifest, km(key_manifest))
 
 
 def test_edonly_artifact_manifest_with_stray_mldsa_leg_invalid() -> None:
@@ -141,7 +142,7 @@ def test_edonly_artifact_manifest_with_stray_mldsa_leg_invalid() -> None:
         ISSUER, "widget", 1, RELEASED_AT, _artifacts(), ed_kp, KID
     )
     manifest["manifest_signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(pq.ML_DSA_65_SIG_LEN))
-    assert not manifests.verify_artifact_manifest(manifest, key_manifest)
+    assert not manifests.verify_artifact_manifest(manifest, km(key_manifest))
 
 
 # --- §12.1 semantics through verify._classify_revocation ---------------------
