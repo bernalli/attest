@@ -14,7 +14,7 @@
 # fallisce, senza asserire DOVE fallisce.
 set -uo pipefail
 
-W=<tree>
+W="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd))"
 PY="$W/.venv/bin/python"
 
 echo "== controllo negativo di G-CI-PY (fantoccio) =="

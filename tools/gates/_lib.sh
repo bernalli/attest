@@ -44,16 +44,35 @@
 set -uo pipefail
 
 GATE_ID="${GATE_ID:-unnamed}"
-GATE_TREE="${GATE_TREE:-<tree>}"
+
+# The tree is DERIVED, never written down. A gate with a checkout path baked in
+# is not a gate: it is a measurement that only works on the machine of whoever
+# wrote it, and in CI or in a second worktree it either fails or -- far worse --
+# measures a tree that is not the one under examination. That second failure is
+# silent, and it is the same family of defect these gates exist to catch: a tool
+# answering about its own location instead of about its object.
+#
+# Anchored to the SCRIPT, not to the caller's cwd: `git rev-parse` from a
+# different directory would resolve a different repository. The env override
+# stays for a caller that means to point somewhere else on purpose.
+_gate_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GATE_TREE="${GATE_TREE:-$(git -C "$_gate_here" rev-parse --show-toplevel 2>/dev/null || (cd "$_gate_here/../.." && pwd))}"
 GATE_PY="$GATE_TREE/.venv/bin/python"
 _gate_failures=0
 
-gate_say() { printf '%s\n' "$*"; }
+# Everything a gate prints goes through here, and absolute paths are replaced by
+# tokens on the way out. Two reasons, and the second is the one that matters:
+# a transcript is a committed artifact, so a checkout path inside it would be
+# both a leak and a lie about portability. The tree a run measured is identified
+# instead by its NAME and its COMMIT, which is stronger than a path -- two
+# worktrees at the same commit are equivalent, while the same path at two
+# commits is not.
+gate_say() { local s="${*//$GATE_TREE/<tree>}"; printf '%s\n' "${s//$HOME/<home>}"; }
 
 gate_head() {
   gate_say "=== GATE $GATE_ID ==="
-  gate_say "tree:  $GATE_TREE"
-  gate_say "head:  $(git -C "$GATE_TREE" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  gate_say "tree:  $(basename "$GATE_TREE")"
+  gate_say "head:  $(git -C "$GATE_TREE" rev-parse --short HEAD 2>/dev/null || echo unknown) on $(git -C "$GATE_TREE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
   gate_say "utc:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   gate_say ""
 }
@@ -84,7 +103,7 @@ gate_run() {
   gate_say "\$ $*"
   GATE_OUT="$("$@" 2>&1)"
   GATE_RC=$?
-  printf '%s\n' "$GATE_OUT"
+  gate_say "$GATE_OUT"
   gate_say "exit: $GATE_RC"
   return 0
 }
@@ -224,7 +243,7 @@ gate_expect_same_set() {
     gate_say "ok: $label (the two sets coincide)"
   else
     gate_say "FAIL: $label — the two sets differ:"
-    printf '%s\n' "$diff_out"
+    gate_say "$diff_out"
     _gate_failures=$((_gate_failures + 1))
   fi
 }
@@ -242,7 +261,7 @@ gate_negative() {
   gate_say "\$ $*"
   local out rc
   out="$("$@" 2>&1)"; rc=$?
-  printf '%s\n' "$out"
+  gate_say "$out"
   gate_say "exit: $rc"
   if [ "$rc" -eq 0 ]; then
     gate_say "FAIL: negative '$label' did not fail — the gate cannot catch this defect"

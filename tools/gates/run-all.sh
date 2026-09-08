@@ -28,19 +28,19 @@
 # it is always listed with its reason, because a gate that did not measure has to
 # stay visible even when everything else is green.
 #
-# ON THIS MACHINE THE WHOLE RUN MAY NOT FIT IN MEMORY, and that is a fact about
-# the container, not about the gates. Measured twice in a row: killed by the OOM
-# killer partway through g-ts-test.sh (vitest over the whole TS suite), with three
-# other work resident. When that happens, do NOT relaunch
-# first: an OOM kill takes the small process that orchestrates and leaves the heavy
-# work it spawned alive, so hunt the orphans (`ps -eo pid,ppid,rss --sort=-rss`,
-# looking for PPID 1) before starting anything. Then run the gates in GROUPS -- the
-# light ones together, each suite on its own -- exactly as the project's rule for
+# THE WHOLE RUN MAY NOT FIT IN MEMORY on a small host, and that is a fact about
+# the machine, not about the gates. Measured twice in a row on a 8 GiB box with
+# other work resident: killed by the OOM killer partway through g-ts-test.sh
+# (vitest over the whole TS suite). When that happens, do NOT relaunch first: an
+# OOM kill takes the small process that orchestrates and leaves the heavy work it
+# spawned alive, so hunt the orphans (`ps -eo pid,ppid,rss --sort=-rss`, looking
+# for PPID 1) before starting anything. Then run the gates in GROUPS -- the light
+# ones together, each suite on its own -- exactly as the project's rule for
 # segmented suites already prescribes. Each gate writes its own transcript either
 # way, so a grouped run leaves the same evidence as a whole one.
 set -uo pipefail
 
-GATE_TREE="${GATE_TREE:-<tree>}"
+GATE_TREE="${GATE_TREE:-$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd))}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRANSCRIPTS="$HERE/transcripts"
 mkdir -p "$TRANSCRIPTS"

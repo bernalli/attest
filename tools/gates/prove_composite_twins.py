@@ -47,8 +47,18 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-TREE = Path("<tree>")
+TREE = Path(__file__).resolve().parents[2]
 PY = TREE / ".venv" / "bin" / "python"
+
+
+def _scrub(text: str) -> str:
+    """Absolute paths out of anything this script writes to a transcript.
+
+    A transcript is a committed artifact. A checkout path inside one is a leak,
+    and it is also a lie: it makes the evidence look tied to the machine that
+    produced it, when what identifies the tree is its name and its commit.
+    """
+    return text.replace(str(TREE), "<tree>").replace(str(Path.home()), "<home>")
 
 
 @dataclass(frozen=True)
@@ -195,7 +205,7 @@ def run(reg: Regression) -> tuple[bool, str]:
             env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
             timeout=900,
         )
-        tail = "\n".join(proc.stdout.splitlines()[-12:])
+        tail = _scrub("\n".join(proc.stdout.splitlines()[-12:]))
         return proc.returncode != 0, tail
     finally:
         shutil.copy2(backup, path)

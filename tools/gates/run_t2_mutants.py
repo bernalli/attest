@@ -32,8 +32,20 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-TREE = Path("<tree>")
+TREE = Path(__file__).resolve().parents[2]
 TRANSCRIPTS = TREE / "tools" / "gates" / "transcripts"
+
+
+def _scrub(text: str) -> str:
+    """Absolute paths out of anything this script writes to a transcript.
+
+    A transcript is a committed artifact. A checkout path inside one is a leak,
+    and it is also a lie: it makes the evidence look tied to the machine that
+    produced it, when what identifies the tree is its name and its commit.
+    """
+    return text.replace(str(TREE), "<tree>").replace(str(Path.home()), "<home>")
+
+
 PY = TREE / ".venv" / "bin" / "python"
 
 
@@ -188,8 +200,8 @@ def run_one(mutant: Mutant) -> bool:
         args += list(mutant.tests)
 
         rc, out = _run(args, env_extra)
-        lines.append(f"$ {' '.join(args)}")
-        lines.append(out)
+        lines.append(_scrub(f"$ {' '.join(args)}"))
+        lines.append(_scrub(out))
         lines.append(f"exit: {rc}")
 
         killed = rc != 0

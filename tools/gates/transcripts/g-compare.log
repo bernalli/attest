@@ -1,3 +1,7 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
 === GATE G-COMPARE ===
 tree:  <tree>
 head:  72c30c6

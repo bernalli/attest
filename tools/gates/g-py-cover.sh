@@ -34,7 +34,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATE_ID="G-PY-COVER"
-GATE_TREE="${GATE_TREE:-<tree>}"
+GATE_TREE="${GATE_TREE:-$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd))}"
 export GATE_ID GATE_TREE
 
 # shellcheck source=_lib.sh

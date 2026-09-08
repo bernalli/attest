@@ -5067,6 +5067,15 @@ def gen_35_transfer() -> None:
     # `authority.verify_authorization`, and only the latter takes trust
     # material. This one's second argument is a b64u PUBLIC KEY string.
     assert transfer.verify_authorization(record_l, keys.b64u(BUYER_KP.pub)) is True
+    # The two assertions against v2 are NEGATIVE, and a negative here cannot
+    # prove its own admission: measured, dropping `_snapshot` from either one
+    # leaves `--check` green, because the port answers False both for the reason
+    # this leaf pins (K2 is `compromised` in v2) and for having been handed a
+    # tree. Same colour, different reason. They are left as they are on purpose
+    # -- reshaping the corpus oracle to make two lines provable would be a large
+    # risk for a local gain -- and the class is closed upstream instead, by
+    # `tools/gates/g-port-calls.sh`, which fails if any port call under tools/
+    # loses its admission.
     assert transfer.verify_record(record_l, _snapshot(manifest_l_v2)) is False
     assert revocation.verify_record(rev_l, _snapshot(manifest_l_v1)) is True
     assert revocation.verify_record(rev_l, _snapshot(manifest_l_v2)) is False

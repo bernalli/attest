@@ -1,5 +1,5 @@
 # mutant t2c: KeyManifest.data() hands back its own tree instead of a fresh parse (aliasing)
-# recorded 2026-09-08T15:42:33Z
+# recorded 2026-09-08T16:24:35Z
 
 # injected into src/attest/trust_material.py
 $ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf tests/test_trust_material_parse.py
@@ -17,7 +17,7 @@ ________ test_mutating_a_held_manifest_changes_neither_it_nor_the_store ________
 >       assert first is not held.data()
 E       AssertionError: assert {'manifest_version': 1, 'issuer': 'store.example.com', 'keys': [{'kid': 'store.example.com/keys/manifest#ed25519-1', '...'ed25519', 'public_key': '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29', 'status': 'active', ...}]} is not {'manifest_version': 1, 'issuer': 'store.example.com', 'keys': [{'kid': 'store.example.com/keys/manifest#ed25519-1', '...'ed25519', 'public_key': '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29', 'status': 'active', ...}]}
 E        +  where {'manifest_version': 1, 'issuer': 'store.example.com', 'keys': [{'kid': 'store.example.com/keys/manifest#ed25519-1', '...'ed25519', 'public_key': '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29', 'status': 'active', ...}]} = data()
-E        +    where data = <attest.trust_material.KeyManifest object at 0x73da49fbb700>.data
+E        +    where data = <attest.trust_material.KeyManifest object at 0x784ee35a2c50>.data
 
 tests/test_trust_material_parse.py:1477: AssertionError
 _________ test_a_key_manifest_document_survives_the_snapshot_unchanged _________
@@ -29,15 +29,15 @@ _________ test_a_key_manifest_document_survives_the_snapshot_unchanged _________
 >       assert held.data() is not held.data()
 E       AssertionError: assert {'manifest_version': 1, 'issuer': 'store.example.com', 'keys': [{'kid': 'store.example.com/keys/manifest#ed25519-1', '...'ed25519', 'public_key': '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29', 'status': 'active', ...}]} is not {'manifest_version': 1, 'issuer': 'store.example.com', 'keys': [{'kid': 'store.example.com/keys/manifest#ed25519-1', '...'ed25519', 'public_key': '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29', 'status': 'active', ...}]}
 E        +  where {'manifest_version': 1, 'issuer': 'store.example.com', 'keys': [{'kid': 'store.example.com/keys/manifest#ed25519-1', '...'ed25519', 'public_key': '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29', 'status': 'active', ...}]} = data()
-E        +    where data = <attest.trust_material.KeyManifest object at 0x73da49fe4ee0>.data
+E        +    where data = <attest.trust_material.KeyManifest object at 0x784ee35349a0>.data
 E        +  and   {'manifest_version': 1, 'issuer': 'store.example.com', 'keys': [{'kid': 'store.example.com/keys/manifest#ed25519-1', '...'ed25519', 'public_key': '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29', 'status': 'active', ...}]} = data()
-E        +    where data = <attest.trust_material.KeyManifest object at 0x73da49fe4ee0>.data
+E        +    where data = <attest.trust_material.KeyManifest object at 0x784ee35349a0>.data
 
 tests/test_trust_material_parse.py:1550: AssertionError
 =========================== short test summary info ============================
 FAILED tests/test_trust_material_parse.py::test_mutating_a_held_manifest_changes_neither_it_nor_the_store
 FAILED tests/test_trust_material_parse.py::test_a_key_manifest_document_survives_the_snapshot_unchanged
-2 failed, 194 passed, 1 xfailed in 2.71s
+2 failed, 194 passed, 1 xfailed in 2.69s
 
 exit: 1
 

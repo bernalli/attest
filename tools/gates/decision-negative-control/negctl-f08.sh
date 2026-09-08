@@ -10,7 +10,7 @@
 # portandola.
 set -uo pipefail
 
-W=<tree>
+W="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd))"
 PY="$W/.venv/bin/python"
 
 echo "== negativo 'argomento tolto' di G-PY-COVER (fantoccio) =="

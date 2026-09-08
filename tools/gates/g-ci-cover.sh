@@ -9,7 +9,7 @@
 # and the hardest to notice going stale, so this one is derived from the workflow
 # files each time instead of being asserted once.
 GATE_ID="G-CI-COVER"
-GATE_TREE="${GATE_TREE:-<tree>}"
+GATE_TREE="${GATE_TREE:-$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd))}"
 source "$GATE_TREE/tools/gates/_lib.sh"
 
 CHECKER="$GATE_TREE/tools/gates/ci_coverage.py"

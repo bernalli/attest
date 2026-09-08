@@ -1,4 +1,4 @@
-# composite twins, regression proof — 2026-09-08T15:42:37Z
+# composite twins, regression proof — 2026-09-08T16:24:39Z
 # twins in scope for THIS run: all five (4 regressions + 1 watched premise)
 
 ## transfer._verify_record
@@ -23,7 +23,7 @@ FAILED tests/test_evaluate_grant.py::test_a_fixed_date_set_without_the_mode_neve
 FAILED tests/test_evaluate_grant.py::test_a_covered_authenticated_grant_with_no_trigger_evidence_is_dormant
 FAILED tests/test_evaluate_grant.py::test_verify_reports_an_activated_grant_without_touching_ok
 FAILED tests/test_evaluate_grant.py::test_an_invalid_grant_never_makes_a_receipt_not_ok
-39 failed, 43 passed in 1.80s
+39 failed, 43 passed in 1.71s
 
 ## grant._verify_declaration
 caller put back on the public door in src/attest/verify.py
@@ -40,7 +40,7 @@ FAILED tests/test_evaluate_grant.py::test_each_declaration_warning_is_emitted_at
 FAILED tests/test_evaluate_grant.py::test_the_successor_list_is_read_from_the_effective_grant
 FAILED tests/test_evaluate_grant.py::test_a_declaration_that_activated_suppresses_the_backstop_warning
 FAILED tests/test_evaluate_grant.py::test_verify_reports_an_activated_grant_without_touching_ok
-13 failed, 69 passed in 1.53s
+13 failed, 69 passed in 1.52s
 
 ## authority._verify_authorization
 caller put back on the public door in src/attest/verify.py
@@ -57,7 +57,7 @@ FAILED tests/test_evaluate_authority.py::test_valid_from_changed_on_a_shared_ent
 FAILED tests/test_evaluate_authority.py::test_non_admitted_documents_are_not_successor_witnesses
 FAILED tests/test_evaluate_authority.py::test_successor_exclusions_are_simultaneous_not_cascading
 FAILED tests/test_evaluate_authority.py::test_successor_discipline_uses_shared_window_helpers
-42 failed, 20 passed in 1.58s
+42 failed, 20 passed in 1.71s
 
 ## revocation._verify_record
 caller put back on the public door in src/attest/views.py
@@ -74,5 +74,5 @@ E               attest.views.ViewError: revocation record 0 signature does not v
 src/attest/views.py:621: ViewError
 =========================== short test summary info ============================
 FAILED tests/test_trust_store_boundary.py::test_build_revocation_view_accepts_a_record_its_manifest_authenticates
-1 failed, 191 passed in 0.99s
+1 failed, 191 passed in 1.06s
 

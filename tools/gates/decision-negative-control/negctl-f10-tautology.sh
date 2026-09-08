@@ -24,7 +24,7 @@
 set -uo pipefail
 
 GATE_ID="G-TAUTOLOGY"
-GATE_TREE="<tree>"
+GATE_TREE="${GATE_TREE:-$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd))}"
 source "$GATE_TREE/tools/gates/_lib.sh"
 
 WORK="$(mktemp -d)"
