@@ -164,6 +164,12 @@ _OWNERS_FOR_DATES = {
     "bridge/src/attest_bridge/http.py": "r = now().strftime(F)\n",
     "bridge/src/attest_bridge/signing.py": "r = now().strftime(F)\n",
     "tools/conformance_runner.py": "r = now().strftime(F)\n",
+    # Seeded in the spelling these two actually use — `time.strftime` on the
+    # module, not a method on a datetime — so the bench's baseline stands for
+    # what the guard counts in the real tree rather than for a convenient
+    # rewrite of it.
+    "tools/gates/prove_composite_twins.py": "r = time.strftime(F, gm())\n",
+    "tools/gates/run_t2_mutants.py": "r = time.strftime(F, gm())\n",
 }
 
 

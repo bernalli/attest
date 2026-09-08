@@ -1,0 +1,25 @@
+=== merit probe F-03 / F-09 ===
+utc:  2026-09-07T21:45:57Z
+head: 1448f39
+probe: tools/gates/merit_probe_f03_f09.py (normative block of 5.1.2 transcribed as the executor would)
+
+=== F-03: is `-0` admitted? ===
+grammar '-0'                     match=True
+grammar '0'                      match=True
+grammar '-1'                     match=True
+grammar '1e3'                    match=False
+grammar '1.0'                    match=False
+grammar '-0.0'                   match=False
+grammar '9007199254740990.1'     match=False
+json.loads('-0') -> 0 type=int is_integer_zero=True
+json.loads('0') -> 0 type=int is_integer_zero=True
+
+=== F-09: what does the OLD Python constructor call actually raise? ===
+OLD SHAPE   TrustStore(manifests=...) -> TypeError: TrustStore.__init__() got an unexpected keyword argument 'manifests'
+FORGED TOKEN TrustStore(object(), fields, b'') -> TypeError: TrustStore is built by TrustStore.from_bytes(data)
+REAL TOKEN  admitted, canonical=b'{}'
+python probe exit: 0
+
+--- TS core on the same token
+JSON.parse(-0) -> -0 Object.is(v,-0)= true Number.isInteger= true v===0 = true JSON.stringify(v) = 0
+node exit: 0

@@ -1221,15 +1221,22 @@ def python_projection(attest: Path, private: Path | None = None, **caps: int) ->
     except Exception as error:  # anything else has left the outcome vocabulary
         return {"outcome": CRASH, "error": f"{type(error).__name__}: {error}"}
 
+    # Recipe T2: read the snapshot through its own surface, not through the
+    # attributes the dataclass used to expose. `issuers()` is already in
+    # canonical order — the order the signed bytes use — so the `sorted()` that
+    # used to be here would now be a SECOND ordering rule sitting on top of the
+    # library's, and the two cannot be kept in agreement by anything.
     store = imported.trust_store
     issuers: list[dict[str, Any]] = []
-    for issuer in sorted(store.manifests):
-        chain = store.chains.get(issuer) or [store.manifests[issuer]]
+    for issuer in store.issuers():
+        selected = store.manifest_for(issuer)
+        assert selected is not None, issuer  # issuers() lists what manifest_for resolves
+        chain = [member.data() for member in store.chain_for(issuer)] or [selected.data()]
         issuers.append(
             {
                 "issuer": issuer,
-                "provenance": store.provenance.get(issuer),
-                "selected": _canonical_digest(store.manifests[issuer]),
+                "provenance": store.provenance_for(issuer),
+                "selected": _canonical_digest(selected.data()),
                 "chain": [_canonical_digest(manifest) for manifest in chain],
             }
         )

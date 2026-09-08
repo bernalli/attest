@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import _strptime
 import hashlib
+import json
 import re
 import unicodedata
 from datetime import datetime
@@ -14,6 +15,7 @@ from re import _parser as _re_parser
 from typing import Any
 
 from attest.keys import b64u
+from attest.trust_material import KeyManifest, TrustStore
 
 # Fixed 32 zero-bytes commitment/pubkey material — deterministic, test-only.
 _COMMITMENT = b64u(bytes(32))
@@ -93,6 +95,77 @@ def make_payload(**overrides: Any) -> dict[str, Any]:
     values (including lists) replace the base value outright.
     """
     return _deep_merge(_base_payload(), overrides)
+
+
+# ---------------------------------------------------------------------------
+# Trust material, built the way a caller builds it: as a serialized document.
+#
+# The three helpers below exist so that no test has to spell out the store
+# document grammar (section 5.3) by hand, and so that the bytes a test feeds the
+# library are produced by an ORACLE INDEPENDENT of the library: `json.dumps`
+# from the standard library, never `canon.canonical_bytes` (D11). A fixture
+# serialized by the same canonicalizer the parser reads back could agree with
+# it for a reason neither side would reveal.
+# ---------------------------------------------------------------------------
+
+
+def store_bytes(
+    manifests: dict[str, Any],
+    provenance: dict[str, Any] | None = None,
+    chains: dict[str, Any] | None = None,
+    artifact_manifests: dict[str, Any] | None = None,
+    artifact_manifest_chains: dict[str, Any] | None = None,
+) -> bytes:
+    """Serialize a trust store document (section 5.3) with the standard library.
+
+    `None` and `{}` are DIFFERENT, and the difference is the whole point of
+    D17: a member passed `None` is left ABSENT from the document, a member
+    passed `{}` is PRESENT and empty. `to_bytes()` has to give absence back
+    unchanged, so a helper that quietly wrote `"chains": {}` for an absent
+    member would make the property untestable from here.
+
+    `provenance` is the one asymmetry, and it is deliberate: the grammar
+    REQUIRES it, so `None` cannot mean absent. It means "derive the obvious
+    one" -- `tls` for every issuer in `manifests` -- which is what almost every
+    test wants. A test that needs provenance absent has to say so by building
+    the document itself; a test that needs it empty passes `{}`.
+    """
+    document: dict[str, Any] = {"manifests": manifests}
+    document["provenance"] = (
+        {issuer: "tls" for issuer in manifests} if provenance is None else provenance
+    )
+    for name, value in (
+        ("chains", chains),
+        ("artifact_manifests", artifact_manifests),
+        ("artifact_manifest_chains", artifact_manifest_chains),
+    ):
+        if value is not None:
+            document[name] = value
+    return json.dumps(document).encode()
+
+
+def store(
+    manifests: dict[str, Any],
+    provenance: dict[str, Any] | None = None,
+    chains: dict[str, Any] | None = None,
+    artifact_manifests: dict[str, Any] | None = None,
+    artifact_manifest_chains: dict[str, Any] | None = None,
+) -> TrustStore:
+    """The snapshot a caller gets after handing the library those bytes."""
+    return TrustStore.from_bytes(
+        store_bytes(
+            manifests,
+            provenance,
+            chains,
+            artifact_manifests,
+            artifact_manifest_chains,
+        )
+    )
+
+
+def key_manifest(manifest: dict[str, Any]) -> KeyManifest:
+    """The snapshot a caller gets after handing the library one manifest."""
+    return KeyManifest.from_bytes(json.dumps(manifest).encode())
 
 
 # --- non-canonical spellings of a strict UTC timestamp -----------------------

@@ -1,0 +1,25 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-TS-TC ===
+tree:  <tree>
+head:  6742c53
+utc:   2026-09-08T12:38:25Z
+
+precondition ok: verifiers/ts/node_modules present
+precondition ok: verifiers/ts/tsconfig.json present
+--- tsc --noEmit -p tsconfig.json
+$ npx --prefix <tree>/verifiers/ts tsc --noEmit -p <tree>/verifiers/ts/tsconfig.json
+
+exit: 0
+ok: typecheck of verifiers/ts/src exits 0 (exit 0)
+ok: verifiers/ts/src has at least one .ts file to typecheck (21 lines collected — derived, not written down)
+ok: files tsc --listFilesOnly reports under src == files find(src -name '*.ts') finds now (the two sets coincide)
+--- negative: type error injected into an out-of-tree copy of verifiers/ts/src
+$ npx --prefix /tmp/tmp.VC7ejoEfPw/ts tsc --noEmit -p /tmp/tmp.VC7ejoEfPw/ts/tsconfig.json
+../../../../../../tmp/tmp.VC7ejoEfPw/ts/src/b64u.ts(24,14): error TS2322: Type 'string' is not assignable to type 'number'.
+exit: 2
+ok: negative 'type error injected into an out-of-tree copy of verifiers/ts/src' failed at the guarded path (exit 2)
+
+GATE G-TS-TC PASS property=verifiers/ts/src typechecks clean, and tsc reads exactly the .ts files find(src) finds now

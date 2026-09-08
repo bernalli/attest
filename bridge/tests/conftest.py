@@ -11,8 +11,9 @@ from attest_bridge.core import IssuingCore
 from attest_bridge.ledger import Ledger
 from attest_bridge.signing import IssuerIdentity
 
-from attest import keys, manifests, pq
+from attest import keys, manifests, pq, trust_material
 from attest import verify as verify_mod
+from tests import helpers as trust_helpers
 
 ISSUER = "merchant.example.com"
 KID = f"{ISSUER}/keys/2026-07#hybrid-1"
@@ -43,8 +44,14 @@ def key_manifest(hybrid_keys: pq.HybridSigningKeys) -> dict[str, object]:
 
 
 @pytest.fixture(scope="session")
+def key_manifest_snapshot(key_manifest: dict[str, object]) -> trust_material.KeyManifest:
+    """The handle a caller gets after handing the library `key_manifest`'s bytes."""
+    return trust_helpers.key_manifest(key_manifest)
+
+
+@pytest.fixture(scope="session")
 def trust_store(key_manifest: dict[str, object]) -> verify_mod.TrustStore:
-    return verify_mod.TrustStore(manifests={ISSUER: key_manifest}, provenance={ISSUER: "tls"})
+    return trust_helpers.store({ISSUER: key_manifest}, {ISSUER: "tls"})
 
 
 @pytest.fixture
@@ -108,9 +115,21 @@ def legal_texts() -> dict[str, bytes]:
 
 @pytest.fixture
 def issuer_identity(
-    hybrid_keys: pq.HybridSigningKeys, key_manifest: dict[str, object]
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, object],
+    key_manifest_snapshot: trust_material.KeyManifest,
 ) -> IssuerIdentity:
-    return IssuerIdentity(ISSUER, DISPLAY_NAME, KID, hybrid_keys, key_manifest)
+    """The manifest arrives TWICE, because it plays two roles.
+
+    `key_manifest` is the document copied into every envelope this bridge
+    issues; `key_manifest_snapshot` is the same manifest as trust material,
+    which is what the ports take. The production loader does exactly this —
+    reads the file once, keeps the tree and parses the handle — so the fixture
+    mirrors it rather than inventing a shortcut the real code does not have.
+    """
+    return IssuerIdentity(
+        ISSUER, DISPLAY_NAME, KID, hybrid_keys, key_manifest, key_manifest_snapshot
+    )
 
 
 @pytest.fixture

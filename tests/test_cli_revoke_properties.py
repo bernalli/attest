@@ -34,6 +34,7 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from attest import canon, cli, dates, keys, manifests, revocation, validate
+from tests.helpers import key_manifest as km
 from tests.helpers import non_canonical_spellings
 from tests.test_cli import (
     ISSUER,
@@ -171,7 +172,7 @@ def assert_clean_outcome(rc: int, out: Path, captured: Captured, manifest_path: 
     assert rc == cli.EXIT_OK
     record = json.loads(out.read_text(encoding="utf-8"))
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert revocation.verify_record(record, manifest)
+    assert revocation.verify_record(record, km(manifest))
 
 
 # --- (a) --revoked-at ---------------------------------------------------------

@@ -15,6 +15,7 @@ import pytest
 
 from attest import authority, keys, manifests, pq, verify
 from tests.helpers import make_payload
+from tests.helpers import store as build_store
 
 ISSUER = "store.example.com"
 PUBLISHER = "pub.example"
@@ -123,7 +124,7 @@ def _store(
     }
     resolved.update(extra_manifests or {})
     provenance = {PUBLISHER: publisher_provenance, ISSUER: "tls", OTHER: "tls"}
-    return verify.TrustStore(manifests=resolved, provenance=provenance, chains=chains or {})
+    return build_store(resolved, provenance, chains or {})
 
 
 def _view(*documents: dict[str, Any], current: Any = _ABSENT) -> dict[str, Any]:

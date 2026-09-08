@@ -23,7 +23,8 @@ from typing import Any
 import pytest
 
 from attest import issue, keys, manifests, pq, revocation, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest as km
+from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
 
@@ -55,15 +56,13 @@ def _receipt(kp: keys.SigningKeyPair = KPA, kid: str = KID_A) -> bytes:
 
 
 def _store(manifest: dict[str, Any], provenance: str = "tls") -> verify.TrustStore:
-    return verify.TrustStore(
-        manifests={ISSUER: manifest}, provenance={ISSUER: provenance}, chains={}
-    )
+    return store({ISSUER: manifest}, {ISSUER: provenance}, {})
 
 
 def test_honest_manifest_still_certifies_its_own_receipt() -> None:
     """Control: the gate must not cost a good manifest its verdict."""
     manifest = _honest_manifest()
-    assert manifests.verify_key_manifest(manifest) is True
+    assert manifests.verify_key_manifest(km(manifest)) is True
     result = verify.verify(_receipt(), _store(manifest))
     assert result.ok is True
     assert result.signature == "valid"
@@ -79,7 +78,7 @@ def test_manifest_with_a_broken_self_signature_is_refused(provenance: str) -> No
     """
     manifest = _honest_manifest()
     manifest["manifest_signature"]["sig"] = keys.b64u(bytes(64))
-    assert manifests.verify_key_manifest(manifest) is False
+    assert manifests.verify_key_manifest(km(manifest)) is False
 
     result = verify.verify(_receipt(), _store(manifest, provenance))
 
@@ -100,7 +99,7 @@ def test_swapped_public_key_cannot_certify_a_forged_receipt(provenance: str) -> 
     for entry in manifest["keys"]:
         if entry["kid"] == KID_A:
             entry["pub"] = keys.b64u(KP_ATTACKER.pub)
-    assert manifests.verify_key_manifest(manifest) is False
+    assert manifests.verify_key_manifest(km(manifest)) is False
 
     result = verify.verify(_receipt(KP_ATTACKER, KID_A), _store(manifest, provenance))
 
@@ -117,7 +116,7 @@ def test_a_compromised_key_cannot_be_resurrected_by_editing_its_status() -> None
     must not bring the dead key's signatures back to life.
     """
     compromised = _manifest(2, [_entry(KID_A, KPA, "compromised"), _entry(KID_B, KPB)])
-    assert manifests.verify_key_manifest(compromised) is True
+    assert manifests.verify_key_manifest(km(compromised)) is True
     refused = verify.verify(_receipt(), _store(compromised))
     assert refused.ok is False
 
@@ -125,7 +124,7 @@ def test_a_compromised_key_cannot_be_resurrected_by_editing_its_status() -> None
     for entry in resurrected["keys"]:
         if entry["kid"] == KID_A:
             entry["status"] = "active"
-    assert manifests.verify_key_manifest(resurrected) is False
+    assert manifests.verify_key_manifest(km(resurrected)) is False
 
     result = verify.verify(_receipt(), _store(resurrected))
 
@@ -181,8 +180,8 @@ def test_absent_pq_leg_is_the_one_downgrade_the_gate_accepts() -> None:
     downgraded = _hybrid_manifest()
     del downgraded["manifest_signature"]["sig_ml_dsa_65"]
 
-    assert manifests.verify_key_manifest(downgraded) is False
-    assert manifests.manifest_signature_is_authentic(downgraded) is True
+    assert manifests.verify_key_manifest(km(downgraded)) is False
+    assert manifests.manifest_signature_is_authentic(km(downgraded)) is True
     assert verify.verify(_v02_receipt(), _store(downgraded)).signature == "valid"
 
 
@@ -194,7 +193,7 @@ def test_a_present_pq_leg_that_does_not_verify_is_not_a_downgrade() -> None:
     grafted = _hybrid_manifest()
     grafted["manifest_signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(pq.ML_DSA_65_SIG_LEN))
 
-    assert manifests.manifest_signature_is_authentic(grafted) is False
+    assert manifests.manifest_signature_is_authentic(km(grafted)) is False
 
 
 def test_a_stray_pq_leg_on_a_non_hybrid_signer_is_refused() -> None:
@@ -217,8 +216,8 @@ def test_a_stray_pq_leg_on_a_non_hybrid_signer_is_refused() -> None:
     )
     manifest["manifest_signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(pq.ML_DSA_65_SIG_LEN))
 
-    assert manifests.verify_key_manifest(manifest) is False
-    assert manifests.manifest_signature_is_authentic(manifest) is False
+    assert manifests.verify_key_manifest(km(manifest)) is False
+    assert manifests.manifest_signature_is_authentic(km(manifest)) is False
 
 
 @pytest.mark.parametrize(
@@ -234,7 +233,6 @@ def test_a_stray_pq_leg_on_a_non_hybrid_signer_is_refused() -> None:
         ),
         pytest.param(lambda m: m["keys"][0].pop("pub"), id="pub-absent"),
         pytest.param(lambda m: m["keys"][0].update(pub="@@@@"), id="pub-not-b64u"),
-        pytest.param(lambda m: m.update(extra=1.5), id="body-outside-the-jcs-profile"),
         pytest.param(lambda m: m["keys"].append({"kid": KID_H}), id="duplicate-kid"),
     ],
 )
@@ -243,11 +241,29 @@ def test_hostile_manifests_fail_closed_without_raising(mutate: Any) -> None:
 
     A promise in a docstring that no test drives is a promise the next
     refactor is free to break silently.
+
+    Every mutation here (wrong container types, absent/short/wrong-typed
+    fields, a duplicate kid) survives `canon.loads_strict`/`canonical_bytes`
+    unchanged — verified empirically — so each is a hostile-but-parseable
+    document that reaches the door as a real handle. The one mutation that
+    does NOT survive (a float) has its own test right below, on the private
+    twin.
     """
     manifest = _hybrid_manifest()
     mutate(manifest)
 
-    assert manifests.manifest_signature_is_authentic(manifest) is False
+    assert manifests.manifest_signature_is_authentic(km(manifest)) is False
+
+
+def test_hostile_manifest_with_a_float_fails_closed_without_raising() -> None:
+    """R3: `extra=1.5` puts a float in the document body, and `canon.loads_strict`
+    rejects floats outright (verified) — this manifest can never become a
+    parsed `KeyManifest` snapshot, so it is exercised on the private twin,
+    which operates on the raw dict directly."""
+    manifest = _hybrid_manifest()
+    manifest["extra"] = 1.5
+
+    assert manifests._manifest_signature_is_authentic(manifest) is False
 
 
 # --- one manifest, one answer --------------------------------------------------
@@ -290,8 +306,8 @@ def test_a_downgraded_manifest_keeps_its_power_to_revoke() -> None:
 
     downgraded = _hybrid_manifest()
     del downgraded["manifest_signature"]["sig_ml_dsa_65"]
-    assert manifests.verify_key_manifest(downgraded) is False
-    assert manifests.manifest_signature_is_authentic(downgraded) is True
+    assert manifests.verify_key_manifest(km(downgraded)) is False
+    assert manifests.manifest_signature_is_authentic(km(downgraded)) is True
 
     result = verify.verify(envelope, _store(downgraded), revocation_view=[record])
 

@@ -104,10 +104,17 @@ from attest import (
     revocation,
     tlog,
     transfer,
+    trust_material,
     ulid,
     validate,
     witness,
 )
+
+
+def _snapshot(manifest: dict[str, Any]) -> trust_material.KeyManifest:
+    """The document as trust material: the ports take snapshots, not trees."""
+    return trust_material.KeyManifest.from_bytes(canon.canonical_bytes(manifest))
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_VECTORS_DIR = REPO_ROOT / "docs" / "spec" / "vectors"
@@ -1711,8 +1718,8 @@ def gen_11_manifest_tamper() -> None:
     pristine_manifest = _manifest_material(ISSUER_ID, ISSUER_KID, ISSUER_KP, status="active")
     tampered_manifest = copy.deepcopy(pristine_manifest)
     tampered_manifest["keys"][0]["status"] = "compromised"  # post-signing tamper
-    assert manifests.verify_key_manifest(pristine_manifest) is True
-    assert manifests.verify_key_manifest(tampered_manifest) is False
+    assert manifests.verify_key_manifest(_snapshot(pristine_manifest)) is True
+    assert manifests.verify_key_manifest(_snapshot(tampered_manifest)) is False
 
     trust = _trust_material((ISSUER_ID, tampered_manifest, "tls"))
     expected = {
@@ -1796,7 +1803,9 @@ def gen_13_compromised_key() -> None:
     _assert_schema_valid(payload)
     envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)  # genuinely signed while active
     manifest = _manifest_material(ISSUER_ID, ISSUER_KID, ISSUER_KP, status="compromised")
-    assert manifests.verify_key_manifest(manifest) is True  # self-consistent, unlike vector 11
+    assert (
+        manifests.verify_key_manifest(_snapshot(manifest)) is True
+    )  # self-consistent, unlike vector 11
     trust = _trust_material((ISSUER_ID, manifest, "tls"))
     expected = {
         "signature": "invalid",
@@ -1834,7 +1843,7 @@ def _genuine_rotation_pair() -> tuple[dict[str, Any], dict[str, Any]]:
     v2 = manifests.build_key_manifest(
         ISSUER_ID, 2, ROTATION_ISSUED_AT, v2_entries, ISSUER_KP, ISSUER_KID
     )
-    assert manifests.check_continuity(v1, v2) is True
+    assert manifests.check_continuity(_snapshot(v1), _snapshot(v2)) is True
     return v1, v2
 
 
@@ -1898,7 +1907,9 @@ def gen_14b_rotation_discontinuous() -> None:
     v2_rogue = manifests.build_key_manifest(
         ISSUER_ID, 2, ROTATION_ISSUED_AT, rogue_entries, ROGUE_KP, ROGUE_KID
     )
-    assert manifests.check_continuity(v1, v2_rogue) is False  # signer absent from the trusted root
+    assert (
+        manifests.check_continuity(_snapshot(v1), _snapshot(v2_rogue)) is False
+    )  # signer absent from the trusted root
 
     payload = issue.build_payload(**_base_payload_kwargs(issued_at=RECEIPT_ISSUED_AFTER_ROTATION))
     _assert_schema_valid(payload)
@@ -1944,7 +1955,7 @@ def gen_15_revoked_policy() -> None:
     issuer_manifest = _manifest_material(ISSUER_ID, ISSUER_KID, ISSUER_KP)
     trust = _trust_material((ISSUER_ID, issuer_manifest, "tls"))
     record = revocation.build_record(RECEIPT_ID, "revoked", REVOKED_AT, ISSUER_KP, ISSUER_KID)
-    assert revocation.verify_record(record, issuer_manifest) is True
+    assert revocation.verify_record(record, _snapshot(issuer_manifest)) is True
     expected = {
         "signature": "valid",
         "schema": "valid",
@@ -1983,7 +1994,9 @@ def gen_16_revocation_against_none_ignored() -> None:
     issuer_manifest = _manifest_material(ISSUER_ID, ISSUER_KID, ISSUER_KP)
     trust = _trust_material((ISSUER_ID, issuer_manifest, "tls"))
     record = revocation.build_record(RECEIPT_ID, "revoked", REVOKED_AT, ISSUER_KP, ISSUER_KID)
-    assert revocation.verify_record(record, issuer_manifest) is True  # authenticated, but ignored
+    assert (
+        revocation.verify_record(record, _snapshot(issuer_manifest)) is True
+    )  # authenticated, but ignored
     expected = {
         "signature": "valid",
         "schema": "valid",
@@ -2149,8 +2162,12 @@ def gen_19_rotation_substituted_key() -> None:
     v2_evil = manifests.build_key_manifest(
         ISSUER_ID, 2, ROTATION_ISSUED_AT, evil_entries, SUBSTITUTED_KP, ISSUER_KID
     )
-    assert manifests.verify_key_manifest(v2_evil) is True  # self-consistent: that's the point
-    assert manifests.check_continuity(v1, v2_evil) is False  # but the trusted root unmasks it
+    assert (
+        manifests.verify_key_manifest(_snapshot(v2_evil)) is True
+    )  # self-consistent: that's the point
+    assert (
+        manifests.check_continuity(_snapshot(v1), _snapshot(v2_evil)) is False
+    )  # but the trusted root unmasks it
 
     payload = issue.build_payload(**_base_payload_kwargs(issued_at=RECEIPT_ISSUED_AFTER_ROTATION))
     _assert_schema_valid(payload)
@@ -2535,7 +2552,7 @@ def gen_23_revocation_refund_window() -> None:
     record_inside = revocation.build_record(
         RECEIPT_ID, "revoked", REVOKED_INSIDE_WINDOW_AT, ISSUER_KP, ISSUER_KID
     )
-    assert revocation.verify_record(record_inside, issuer_manifest) is True
+    assert revocation.verify_record(record_inside, _snapshot(issuer_manifest)) is True
     expected_a = {
         "signature": "valid",
         "schema": "valid",
@@ -2558,7 +2575,7 @@ def gen_23_revocation_refund_window() -> None:
 
     record_after = revocation.build_record(RECEIPT_ID, "revoked", REVOKED_AT, ISSUER_KP, ISSUER_KID)
     assert (
-        revocation.verify_record(record_after, issuer_manifest) is True
+        revocation.verify_record(record_after, _snapshot(issuer_manifest)) is True
     )  # authenticated, but ignored
     expected_b = {
         "signature": "valid",
@@ -2596,7 +2613,7 @@ def gen_23_revocation_refund_window() -> None:
         ISSUER_KP,
         ISSUER_KID,
     )
-    assert revocation.verify_record(record_overflow, issuer_manifest) is True
+    assert revocation.verify_record(record_overflow, _snapshot(issuer_manifest)) is True
     expected_c = {
         "signature": "valid",
         "schema": "valid",
@@ -2632,7 +2649,7 @@ def gen_23_revocation_refund_window() -> None:
         ISSUER_KP,
         ISSUER_KID,
     )
-    assert revocation.verify_record(record_unrelated, issuer_manifest) is True
+    assert revocation.verify_record(record_unrelated, _snapshot(issuer_manifest)) is True
     assert record_unrelated["receipt_id"] != overflow_payload["receipt_id"]
     expected_d = {
         "signature": "valid",
@@ -2773,7 +2790,9 @@ def gen_26_hybrid() -> None:
     `manifests.build_key_manifest`'s hybrid path are therefore never used
     to produce vector material; every hybrid envelope/manifest below is
     built by the local `_hybrid_envelope`/`_hybrid_manifest` helpers instead."""
-    assert manifests.verify_key_manifest(_hybrid_manifest(ISSUER_ID, ISSUER_KID, ISSUER_KP))
+    assert manifests.verify_key_manifest(
+        _snapshot(_hybrid_manifest(ISSUER_ID, ISSUER_KID, ISSUER_KP))
+    )
 
     payload = issue.build_payload(**_base_payload_kwargs(attest_version="0.2"))
     _assert_schema_valid(payload)
@@ -2922,7 +2941,9 @@ def gen_26_hybrid() -> None:
         "kid": ISSUER_KID,
         "sig": keys.b64u(keys.sign(v2_signable, ISSUER_KP)),  # ed-only: sig_ml_dsa_65 omitted
     }
-    assert manifests.check_continuity(v1, v2) is False  # downgrade breaks continuity
+    assert (
+        manifests.check_continuity(_snapshot(v1), _snapshot(v2)) is False
+    )  # downgrade breaks continuity
 
     payload_h = issue.build_payload(
         **_base_payload_kwargs(attest_version="0.2", issued_at=RECEIPT_ISSUED_AFTER_ROTATION)
@@ -2956,7 +2977,7 @@ def gen_27_valid_to_absent() -> None:
     manifest = manifests.build_key_manifest(
         ISSUER_ID, 1, MANIFEST_ISSUED_AT, [entry], ISSUER_KP, ISSUER_KID
     )
-    assert manifests.verify_key_manifest(manifest)  # self-consistent without valid_to
+    assert manifests.verify_key_manifest(_snapshot(manifest))  # self-consistent without valid_to
     payload = issue.build_payload(**_base_payload_kwargs())
     _assert_schema_valid(payload)
     envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)
@@ -3308,7 +3329,7 @@ def gen_28_transparency() -> None:
         ISSUER_KP,
         ISSUER_KID,
     )
-    assert manifests.verify_key_manifest(v2_manifest)
+    assert manifests.verify_key_manifest(_snapshot(v2_manifest))
     manifest_sha256_h = hashlib.sha256(canon.canonical_bytes(v2_manifest)).hexdigest()
     entry_h = {
         "type": "key-manifest",
@@ -3360,7 +3381,9 @@ def gen_28_transparency() -> None:
     manifest_compromised = _manifest_material(
         ISSUER_ID, ISSUER_KID, ISSUER_KP, status="compromised"
     )
-    assert manifests.verify_key_manifest(manifest_compromised)  # self-consistent, unlike vector 11
+    assert manifests.verify_key_manifest(
+        _snapshot(manifest_compromised)
+    )  # self-consistent, unlike vector 11
     trust_i = _trust_material((ISSUER_ID, manifest_compromised, "tls"))
     write_vector(
         "28-transparency/i-compromised-key-fail-closed",
@@ -3540,7 +3563,7 @@ def gen_28_transparency() -> None:
             ML_DSA_65.sign(VECTOR_28M_MLDSA_SK, m_signable, deterministic=True)
         ),
     }
-    assert manifests.verify_key_manifest(m_hybrid_manifest)
+    assert manifests.verify_key_manifest(_snapshot(m_hybrid_manifest))
 
     payload_m = issue.build_payload(
         **_base_payload_kwargs(attest_version="0.2", revocability="policy")
@@ -3577,7 +3600,7 @@ def gen_28_transparency() -> None:
     )
     assert "sig_ml_dsa_65" not in ed_only_record_m["signature"]
     assert (
-        revocation.verify_record(ed_only_record_m, m_hybrid_manifest) is False
+        revocation.verify_record(ed_only_record_m, _snapshot(m_hybrid_manifest)) is False
     )  # AND rule, fail-closed
 
     write_vector(
@@ -4379,7 +4402,7 @@ def gen_33_logged_revocation() -> None:
     record = revocation.build_record(
         RECEIPT_ID, "revoked", REVOKED_INSIDE_WINDOW_AT, ISSUER_KP, ISSUER_KID
     )
-    assert revocation.verify_record(record, issuer_manifest) is True
+    assert revocation.verify_record(record, _snapshot(issuer_manifest)) is True
 
     entry = {
         "type": "revocation-record",
@@ -4514,7 +4537,7 @@ def gen_33_logged_revocation() -> None:
     policy_record = revocation.build_record(
         policy_payload["receipt_id"], "revoked", REVOKED_AT, ISSUER_KP, ISSUER_KID
     )
-    assert revocation.verify_record(policy_record, issuer_manifest) is True
+    assert revocation.verify_record(policy_record, _snapshot(issuer_manifest)) is True
     write_vector(
         "33-logged-revocation/d-policy-class-unchanged",
         payload=policy_payload,
@@ -4561,7 +4584,7 @@ def gen_35_transfer() -> None:
     control pair, independent of everything else in this function.
     """
     hybrid_manifest = _hybrid_manifest(ISSUER_ID, ISSUER_KID, ISSUER_KP)
-    assert manifests.verify_key_manifest(hybrid_manifest) is True
+    assert manifests.verify_key_manifest(_snapshot(hybrid_manifest)) is True
     hybrid_trust = _trust_material((ISSUER_ID, hybrid_manifest, "tls"))
 
     payload_a = issue.build_payload(
@@ -4594,7 +4617,7 @@ def gen_35_transfer() -> None:
     rev_transferred = _hybrid_sign_record(
         {"receipt_id": RECEIPT_ID, "status": "transferred", "revoked_at": TRANSFERRED_AT}
     )
-    assert revocation.verify_record(rev_transferred, hybrid_manifest) is True
+    assert revocation.verify_record(rev_transferred, _snapshot(hybrid_manifest)) is True
 
     new_holder_pub_b64u = keys.b64u(TRANSFER_NEW_HOLDER_KP.pub)
     record_valid = _hybrid_sign_record(
@@ -4602,7 +4625,7 @@ def gen_35_transfer() -> None:
             RECEIPT_ID, NEW_RECEIPT_ID, new_holder_pub_b64u, TRANSFERRED_AT, BUYER_KP
         )
     )
-    assert transfer.verify_record(record_valid, hybrid_manifest) is True
+    assert transfer.verify_record(record_valid, _snapshot(hybrid_manifest)) is True
     assert transfer.verify_authorization(record_valid, keys.b64u(BUYER_KP.pub)) is True
 
     entry_valid = {
@@ -4702,7 +4725,9 @@ def gen_35_transfer() -> None:
             RECEIPT_ID, NEW_RECEIPT_ID, new_holder_pub_b64u, TRANSFERRED_AT, TRANSFER_FORGER_KP
         )
     )
-    assert transfer.verify_record(record_forged, hybrid_manifest) is True  # issuer sig fine
+    assert (
+        transfer.verify_record(record_forged, _snapshot(hybrid_manifest)) is True
+    )  # issuer sig fine
     assert transfer.verify_authorization(record_forged, keys.b64u(BUYER_KP.pub)) is False
     write_vector(
         "35-transfer/d-forged-holder-auth",
@@ -4759,7 +4784,7 @@ def gen_35_transfer() -> None:
             RECEIPT_ID, NEW_RECEIPT_ID_LOSING, new_holder_2_pub_b64u, TRANSFERRED_AT, BUYER_KP
         )
     )
-    assert transfer.verify_record(record_lose, hybrid_manifest) is True
+    assert transfer.verify_record(record_lose, _snapshot(hybrid_manifest)) is True
     entry_lose = {
         "type": "transfer-record",
         "issuer": ISSUER_ID,
@@ -4898,7 +4923,7 @@ def gen_35_transfer() -> None:
         ISSUER_KID,
     )
     assert transfer.verify_authorization(record_ed_only, keys.b64u(BUYER_KP.pub)) is True
-    assert transfer.verify_record_signature(record_ed_only, hybrid_manifest) is False
+    assert transfer.verify_record_signature(record_ed_only, _snapshot(hybrid_manifest)) is False
     write_vector(
         "35-transfer/h-classical-only-record-hybrid-key",
         payload=None,
@@ -5016,8 +5041,8 @@ def gen_35_transfer() -> None:
         issued_at=TRANSFER_SIGNER_COMPROMISED_AT,
         extra_keys=[k2_entry_compromised],
     )
-    assert manifests.verify_key_manifest(manifest_l_v1) is True
-    assert manifests.check_continuity(manifest_l_v1, manifest_l_v2) is True
+    assert manifests.verify_key_manifest(_snapshot(manifest_l_v1)) is True
+    assert manifests.check_continuity(_snapshot(manifest_l_v1), _snapshot(manifest_l_v2)) is True
 
     record_l = _hybrid_sign_record(
         _transfer_record_body(
@@ -5037,11 +5062,23 @@ def gen_35_transfer() -> None:
     # against v1 (K2 still `active`) and NOT against v2 (K2 `compromised`) —
     # the fixture must exercise the gate this leaf pins, not some other
     # failure.
-    assert transfer.verify_record(record_l, manifest_l_v1) is True
+    assert transfer.verify_record(record_l, _snapshot(manifest_l_v1)) is True
+    # NOT `_snapshot`: `transfer.verify_authorization` shares its name with
+    # `authority.verify_authorization`, and only the latter takes trust
+    # material. This one's second argument is a b64u PUBLIC KEY string.
     assert transfer.verify_authorization(record_l, keys.b64u(BUYER_KP.pub)) is True
-    assert transfer.verify_record(record_l, manifest_l_v2) is False
-    assert revocation.verify_record(rev_l, manifest_l_v1) is True
-    assert revocation.verify_record(rev_l, manifest_l_v2) is False
+    # The two assertions against v2 are NEGATIVE, and a negative here cannot
+    # prove its own admission: measured, dropping `_snapshot` from either one
+    # leaves `--check` green, because the port answers False both for the reason
+    # this leaf pins (K2 is `compromised` in v2) and for having been handed a
+    # tree. Same colour, different reason. They are left as they are on purpose
+    # -- reshaping the corpus oracle to make two lines provable would be a large
+    # risk for a local gain -- and the class is closed upstream instead, by
+    # `tools/gates/g-port-calls.sh`, which fails if any port call under tools/
+    # loses its admission.
+    assert transfer.verify_record(record_l, _snapshot(manifest_l_v2)) is False
+    assert revocation.verify_record(rev_l, _snapshot(manifest_l_v1)) is True
+    assert revocation.verify_record(rev_l, _snapshot(manifest_l_v2)) is False
 
     entry_l = {
         "type": "transfer-record",
@@ -5143,7 +5180,7 @@ def gen_36_transfer_chain() -> None:
         ISSUER_KP,
         ISSUER_KID,
     )
-    assert transfer.verify_record(tr1, plain_manifest) is True
+    assert transfer.verify_record(tr1, _snapshot(plain_manifest)) is True
 
     tr2_auth = transfer.sign_authorization(
         CHAIN_RECEIPT_1, keys.b64u(CHAIN_HOLDER_2_KP.pub), TRANSFERRED_AT, CHAIN_HOLDER_1_KP
@@ -5157,16 +5194,16 @@ def gen_36_transfer_chain() -> None:
         ISSUER_KP,
         ISSUER_KID,
     )
-    assert transfer.verify_record(tr2, plain_manifest) is True
+    assert transfer.verify_record(tr2, _snapshot(plain_manifest)) is True
 
     rev_r0 = revocation.build_record(
         CHAIN_RECEIPT_0, "transferred", TRANSFERRED_AT, ISSUER_KP, ISSUER_KID
     )
-    assert revocation.verify_record(rev_r0, plain_manifest) is True
+    assert revocation.verify_record(rev_r0, _snapshot(plain_manifest)) is True
     rev_r1 = revocation.build_record(
         CHAIN_RECEIPT_1, "transferred", TRANSFERRED_AT, ISSUER_KP, ISSUER_KID
     )
-    assert revocation.verify_record(rev_r1, plain_manifest) is True
+    assert revocation.verify_record(rev_r1, _snapshot(plain_manifest)) is True
 
     entry_tr1 = {
         "type": "transfer-record",
@@ -5268,7 +5305,7 @@ def gen_36_transfer_chain() -> None:
         ISSUER_KP,
         ISSUER_KID,
     )
-    assert transfer.verify_record(tr_phantom, plain_manifest) is True
+    assert transfer.verify_record(tr_phantom, _snapshot(plain_manifest)) is True
     entry_phantom = {
         "type": "transfer-record",
         "issuer": ISSUER_ID,
@@ -5604,7 +5641,7 @@ def gen_37_preservation_pledge() -> None:
         PLEDGE_PUBLISHER_MLDSA_PK,
         PLEDGE_PUBLISHER_MLDSA_SK,
     )
-    assert grant.verify_grant(floor, publisher_manifest) is True
+    assert grant.verify_grant(floor, _snapshot(publisher_manifest)) is True
     assert grant.grant_covers_receipt(floor, payload) is True
 
     declaration = _stage4_sign(
@@ -5613,7 +5650,7 @@ def gen_37_preservation_pledge() -> None:
         PLEDGE_PUBLISHER_KP,
         PLEDGE_PUBLISHER_MLDSA_SK,
     )
-    assert grant.verify_declaration(declaration, publisher_manifest) is True
+    assert grant.verify_declaration(declaration, _snapshot(publisher_manifest)) is True
     assert grant.declaration_covers_grant(declaration, floor) is True
 
     # --- (a) dormant-no-declaration: the grant authenticates, binds and
@@ -5678,7 +5715,7 @@ def gen_37_preservation_pledge() -> None:
     # after signing, so it authenticates against nothing. ---
     declaration_forged = dict(declaration)
     declaration_forged["declared_at"] = "2030-01-01T00:00:00Z"
-    assert grant.verify_declaration(declaration_forged, publisher_manifest) is False
+    assert grant.verify_declaration(declaration_forged, _snapshot(publisher_manifest)) is False
     write_vector(
         "37-preservation-pledge/d-declaration-forged-ignored",
         payload=payload,
@@ -6102,7 +6139,7 @@ def gen_37_preservation_pledge() -> None:
         signing_kp=PLEDGE_PUBLISHER_KP, kid=PLEDGE_PUBLISHER_KID, **_grant_body()
     )
     assert "sig_ml_dsa_65" not in floor_v["signature"]
-    assert grant.verify_grant(floor_v, publisher_manifest) is False
+    assert grant.verify_grant(floor_v, _snapshot(publisher_manifest)) is False
     payload_v = _pledge_payload(floor_v)
     _assert_schema_valid(payload_v)
     write_vector(
@@ -6135,7 +6172,7 @@ def gen_37_preservation_pledge() -> None:
         PLEDGE_PUBLISHER_KP,
         PLEDGE_PUBLISHER_MLDSA_SK,
     )
-    assert grant.verify_grant(floor_w, publisher_manifest) is False
+    assert grant.verify_grant(floor_w, _snapshot(publisher_manifest)) is False
     write_vector(
         "37-preservation-pledge/w-empty-legal-text-uri",
         payload=payload_w,
@@ -6178,7 +6215,7 @@ def gen_37_preservation_pledge() -> None:
     floor_x["jurisdiction"] = "ZZ"
     payload_x = _pledge_payload(floor_x)
     _assert_schema_valid(payload_x)
-    assert grant.verify_grant(floor_x, marketplace_manifest) is False
+    assert grant.verify_grant(floor_x, _snapshot(marketplace_manifest)) is False
     write_vector(
         "37-preservation-pledge/x-trust-not-borrowed-from-signer",
         payload=payload_x,
@@ -7305,15 +7342,15 @@ def gen_41_compromise_cutoff() -> None:
         manifest = manifests.build_key_manifest(
             ISSUER_ID, version, issued_at, entries, ROTATED_KP, ROTATED_KID
         )
-        assert manifests.verify_key_manifest(manifest) is True
+        assert manifests.verify_key_manifest(_snapshot(manifest)) is True
         return manifest
 
     v1 = _manifest(1, MANIFEST_ISSUED_AT, [k_active, k2_active])
     v2 = manifests.rotate_key_manifest(
         v1, ROTATED_KP, ROTATED_KID, COMPROMISE_DECLARED_AT, compromise_kids=[ISSUER_KID]
     )
-    assert manifests.check_continuity(v1, v2) is True
-    declared_entry = manifests.find_key(v2, ISSUER_KID)
+    assert manifests.check_continuity(_snapshot(v1), _snapshot(v2)) is True
+    declared_entry = manifests.find_key(_snapshot(v2), ISSUER_KID)
     assert declared_entry is not None and declared_entry["status"] == "compromised"
 
     # The three hostile successors. v3-reactivated is the un-compromise the
@@ -7329,7 +7366,7 @@ def gen_41_compromise_cutoff() -> None:
     # again. Legitimate today and legitimate after this amendment.
     w1 = _manifest(1, MANIFEST_ISSUED_AT, [k_retired, k2_active])
     w2 = _manifest(2, COMPROMISE_DECLARED_AT, [k_active, k2_active])
-    assert manifests.check_continuity(w1, w2) is True
+    assert manifests.check_continuity(_snapshot(w1), _snapshot(w2)) is True
 
     def _receipt_entry(env: dict[str, Any]) -> dict[str, Any]:
         return {"type": "receipt", "issuer": ISSUER_ID, "core_sha256": tlog.receipt_core_hash(env)}
@@ -7445,7 +7482,7 @@ def gen_41_compromise_cutoff() -> None:
             "sig": keys.b64u(keys.sign(manifests._signable(body), signing_kp)),
         }
         assert manifests.duplicate_kids(body["keys"]) == [ROTATED_KID]
-        signer_entry = manifests.find_key(body, signer)
+        signer_entry = manifests.find_key(_snapshot(body), signer)
         assert signer_entry is not None  # the duplicate is on another kid
         assert (
             manifests.verify_signature_block(
@@ -7453,7 +7490,7 @@ def gen_41_compromise_cutoff() -> None:
             )
             is True
         )
-        assert manifests.manifest_signature_is_authentic(body) is False
+        assert manifests.manifest_signature_is_authentic(_snapshot(body)) is False
         return body
 
     trust_v2 = _trust_material((ISSUER_ID, v2, "tls"))
@@ -7707,8 +7744,8 @@ def gen_41_compromise_cutoff() -> None:
         ROGUE_KP,
         ROGUE_KID,
     )
-    assert manifests.verify_key_manifest(rogue_declaration) is True
-    assert manifests.find_key(v2, ROGUE_KID) is None
+    assert manifests.verify_key_manifest(_snapshot(rogue_declaration)) is True
+    assert manifests.find_key(_snapshot(v2), ROGUE_KID) is None
     bundle = _log([_receipt_entry(envelope), _manifest_entry(rogue_declaration)], "i")
     receipt_i, header_i = bundle(0, 2, COMPROMISE_H1)
     claim_i, _ = bundle(1, 2, COMPROMISE_H1)
@@ -7763,7 +7800,7 @@ def gen_41_compromise_cutoff() -> None:
             "sig": keys.b64u(keys.sign(signable, ROTATED_KP)),
             "sig_ml_dsa_65": keys.b64u(_compromise_oracle_sign(signable)),
         }
-        assert manifests.verify_key_manifest(body) is True
+        assert manifests.verify_key_manifest(_snapshot(body)) is True
         return body
 
     hybrid_k_compromised = _hybrid_entry(ISSUER_KID, ISSUER_KP, HYBRID_MLDSA_PK, "compromised")
@@ -8234,8 +8271,8 @@ def gen_41_compromise_cutoff() -> None:
     )
     # The member is conformant AND self-authenticating: the leaf isolates
     # "vouched for by a stolen key" from every structural defect.
-    assert manifests.verify_key_manifest(v1_signed_by_stolen_key) is True
-    assert manifests.manifest_signature_is_authentic(v1_signed_by_stolen_key) is True
+    assert manifests.verify_key_manifest(_snapshot(v1_signed_by_stolen_key)) is True
+    assert manifests.manifest_signature_is_authentic(_snapshot(v1_signed_by_stolen_key)) is True
     assert manifests.duplicate_kids(v1_signed_by_stolen_key["keys"]) == []
     assert v1_signed_by_stolen_key["manifest_signature"]["kid"] == ISSUER_KID
     write_vector(
@@ -8492,7 +8529,7 @@ def gen_43_publisher_authority() -> None:
 
     open_authz = authorization(1, [entry()])
     open_entry = authority.entry_for_issuer(open_authz, ISSUER_ID)
-    assert authority.verify_authorization(open_authz, publisher_manifest) is True
+    assert authority.verify_authorization(open_authz, _snapshot(publisher_manifest)) is True
     assert authority.entry_authorizes_receipt(open_entry, payload) is True
 
     empty_authz = authorization(1, [])
@@ -8559,7 +8596,7 @@ def gen_43_publisher_authority() -> None:
         PLEDGE_SUCCESSOR_KP,
         PLEDGE_SUCCESSOR_MLDSA_SK,
     )
-    assert authority.verify_authorization(forged_authz, publisher_manifest) is False
+    assert authority.verify_authorization(forged_authz, _snapshot(publisher_manifest)) is False
     write_authority_vector(
         "e-forged-ignored",
         authority_view=view([forged_authz]),
@@ -8579,7 +8616,10 @@ def gen_43_publisher_authority() -> None:
         PLEDGE_MARKETPLACE_KP,
         PLEDGE_MARKETPLACE_MLDSA_SK,
     )
-    assert authority.verify_authorization(signer_mismatch_authz, marketplace_manifest) is True
+    assert (
+        authority.verify_authorization(signer_mismatch_authz, _snapshot(marketplace_manifest))
+        is True
+    )
     write_authority_vector(
         "f-signer-mismatch",
         authority_view=view([signer_mismatch_authz]),
@@ -8685,7 +8725,9 @@ def gen_43_publisher_authority() -> None:
         PLEDGE_PUBLISHER_KP,
         PLEDGE_PUBLISHER_KID,
     )
-    assert authority.verify_authorization(classical_only_authz, publisher_manifest) is False
+    assert (
+        authority.verify_authorization(classical_only_authz, _snapshot(publisher_manifest)) is False
+    )
     write_authority_vector(
         "q-classical-only-rejected",
         authority_view=view([classical_only_authz]),
@@ -8933,7 +8975,9 @@ def gen_45_revocation_anchor_status() -> None:
         "01JBQ0000000000000000OTHER", "revoked", REVOKED_AT, ISSUER_KP, ISSUER_KID
     )
     issuer_manifest = trust["manifests"][ISSUER_ID]
-    assert revocation.verify_record(malformed_receipt_id_record, issuer_manifest) is False
+    assert (
+        revocation.verify_record(malformed_receipt_id_record, _snapshot(issuer_manifest)) is False
+    )
     write_vector(
         "45-revocation-anchor-status/c-malformed-receipt-id-unknown-status",
         payload=payload,
@@ -8963,7 +9007,7 @@ def gen_46_manifest_unauthenticated() -> None:
     same receipt against the pristine manifest, which verifies.
     """
     pristine_manifest = _manifest_material(ISSUER_ID, ISSUER_KID, ISSUER_KP)
-    assert manifests.verify_key_manifest(pristine_manifest) is True
+    assert manifests.verify_key_manifest(_snapshot(pristine_manifest)) is True
 
     expected = {
         "signature": "invalid",
@@ -8986,7 +9030,7 @@ def gen_46_manifest_unauthenticated() -> None:
     envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)
     corrupted = copy.deepcopy(pristine_manifest)
     corrupted["manifest_signature"]["sig"] = keys.b64u(bytes(64))
-    assert manifests.verify_key_manifest(corrupted) is False
+    assert manifests.verify_key_manifest(_snapshot(corrupted)) is False
     write_vector(
         "46-manifest-unauthenticated/a-signature-corrupted",
         payload=payload,
@@ -9003,7 +9047,7 @@ def gen_46_manifest_unauthenticated() -> None:
     forged_envelope = issue.issue(forged_payload, EVIL_KP, ISSUER_KID)
     swapped = copy.deepcopy(pristine_manifest)
     swapped["keys"][0]["pub"] = keys.b64u(EVIL_KP.pub)
-    assert manifests.verify_key_manifest(swapped) is False
+    assert manifests.verify_key_manifest(_snapshot(swapped)) is False
     write_vector(
         "46-manifest-unauthenticated/b-key-swapped-forged-receipt",
         payload=forged_payload,
@@ -9041,7 +9085,7 @@ def gen_47_oversized_view_transfer() -> None:
     over.
     """
     hybrid_manifest = _hybrid_manifest(ISSUER_ID, ISSUER_KID, ISSUER_KP)
-    assert manifests.verify_key_manifest(hybrid_manifest) is True
+    assert manifests.verify_key_manifest(_snapshot(hybrid_manifest)) is True
     hybrid_trust = _trust_material((ISSUER_ID, hybrid_manifest, "tls"))
 
     payload_b = issue.build_payload(
@@ -9058,7 +9102,7 @@ def gen_47_oversized_view_transfer() -> None:
     rev_transferred = _hybrid_sign_record(
         {"receipt_id": RECEIPT_ID, "status": "transferred", "revoked_at": TRANSFERRED_AT}
     )
-    assert revocation.verify_record(rev_transferred, hybrid_manifest) is True
+    assert revocation.verify_record(rev_transferred, _snapshot(hybrid_manifest)) is True
 
     new_holder_pub_b64u = keys.b64u(TRANSFER_NEW_HOLDER_KP.pub)
     record_valid = _hybrid_sign_record(
@@ -9066,7 +9110,7 @@ def gen_47_oversized_view_transfer() -> None:
             RECEIPT_ID, NEW_RECEIPT_ID, new_holder_pub_b64u, TRANSFERRED_AT, BUYER_KP
         )
     )
-    assert transfer.verify_record(record_valid, hybrid_manifest) is True
+    assert transfer.verify_record(record_valid, _snapshot(hybrid_manifest)) is True
     assert transfer.verify_authorization(record_valid, keys.b64u(BUYER_KP.pub)) is True
 
     entry_valid = {

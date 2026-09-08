@@ -15,7 +15,7 @@ from attest_bridge.model import NormalizedPurchase, PurchaseRejected, UnmappedPr
 from attest_bridge.signing import load_issuer
 from conftest import ISSUER, KID
 
-from attest import anchor, bundle, cli, keys, pq, revocation, tlog, transfer
+from attest import anchor, bundle, cli, keys, pq, revocation, tlog, transfer, trust_material
 from attest import verify as verify_mod
 
 
@@ -129,7 +129,7 @@ def test_embedded_salt_proves_binding_via_real_verifier(
 
 
 def test_pubkey_bound_receipt_is_transferable_and_passes_chain_audit(
-    core: IssuingCore, trust_store: Any, key_manifest: dict[str, Any]
+    core: IssuingCore, trust_store: Any, key_manifest_snapshot: trust_material.KeyManifest
 ) -> None:
     buyer_kp = keys.generate()
     outcome = core.issue_for(
@@ -143,7 +143,7 @@ def test_pubkey_bound_receipt_is_transferable_and_passes_chain_audit(
         [payload],
         [],
         [],
-        key_manifest,
+        key_manifest_snapshot,
         [],
         anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
     )
@@ -152,7 +152,7 @@ def test_pubkey_bound_receipt_is_transferable_and_passes_chain_audit(
 
 
 def test_email_bound_receipt_has_trivially_valid_chain_audit_at_zero_links(
-    core: IssuingCore, trust_store: Any, key_manifest: dict[str, Any]
+    core: IssuingCore, trust_store: Any, key_manifest_snapshot: trust_material.KeyManifest
 ) -> None:
     # The bridge only ever EMITS receipts, never TRANSFERS them — that is the
     # normal case (no buyer_pubkey, license.transferable is False). A fresh
@@ -169,7 +169,7 @@ def test_email_bound_receipt_has_trivially_valid_chain_audit_at_zero_links(
         [payload],
         [],
         [],
-        key_manifest,
+        key_manifest_snapshot,
         [],
         anchor.AnchorPolicy(pinned_headers={}, crqc_horizon=None),
     )
@@ -470,7 +470,7 @@ def _logged(record: dict[str, Any], log_keys: pq.HybridSigningKeys) -> dict[str,
 def _audit_one_transfer(
     *,
     core: IssuingCore,
-    key_manifest: dict[str, Any],
+    key_manifest_snapshot: trust_material.KeyManifest,
     hybrid_keys: pq.HybridSigningKeys,
     log_keys: pq.HybridSigningKeys,
     purchase_id: str,
@@ -507,7 +507,7 @@ def _audit_one_transfer(
                 payload["receipt_id"], "transferred", _TRANSFERRED_AT, hybrid_keys, KID
             )
         ],
-        key_manifest,
+        key_manifest_snapshot,
         [
             tlog.LogKey(
                 origin=_TRANSFER_LOG_ORIGIN,
@@ -522,7 +522,7 @@ def _audit_one_transfer(
 
 def test_a_bridge_receipt_is_a_working_root_of_title(
     core: IssuingCore,
-    key_manifest: dict[str, Any],
+    key_manifest_snapshot: trust_material.KeyManifest,
     hybrid_keys: pq.HybridSigningKeys,
     transfer_log_keys: pq.HybridSigningKeys,
 ) -> None:
@@ -536,7 +536,7 @@ def test_a_bridge_receipt_is_a_working_root_of_title(
 
     audit = _audit_one_transfer(
         core=core,
-        key_manifest=key_manifest,
+        key_manifest_snapshot=key_manifest_snapshot,
         hybrid_keys=hybrid_keys,
         log_keys=transfer_log_keys,
         purchase_id="cs_test_chain_ok",
@@ -550,7 +550,7 @@ def test_a_bridge_receipt_is_a_working_root_of_title(
 
 def test_a_transfer_the_buyer_never_authorized_does_not_audit(
     core: IssuingCore,
-    key_manifest: dict[str, Any],
+    key_manifest_snapshot: trust_material.KeyManifest,
     hybrid_keys: pq.HybridSigningKeys,
     transfer_log_keys: pq.HybridSigningKeys,
 ) -> None:
@@ -563,7 +563,7 @@ def test_a_transfer_the_buyer_never_authorized_does_not_audit(
     """
     audit = _audit_one_transfer(
         core=core,
-        key_manifest=key_manifest,
+        key_manifest_snapshot=key_manifest_snapshot,
         hybrid_keys=hybrid_keys,
         log_keys=transfer_log_keys,
         purchase_id="cs_test_chain_forged",

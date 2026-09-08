@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from attest import authority, canon, grant, keys, manifests, pq
+from tests.helpers import key_manifest as kmh
 from tests.helpers import make_payload
 
 PUBLISHER = "pub.example"
@@ -141,7 +142,7 @@ def test_classical_authorization_roundtrips() -> None:
     document = _authorization(kp)
 
     assert "sig_ml_dsa_65" not in document["signature"]
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_hybrid_authorization_roundtrips_with_both_legs() -> None:
@@ -150,7 +151,7 @@ def test_hybrid_authorization_roundtrips_with_both_legs() -> None:
 
     assert "sig" in document["signature"]
     assert "sig_ml_dsa_65" in document["signature"]
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_an_empty_authorized_issuers_array_is_a_valid_first_document() -> None:
@@ -159,7 +160,7 @@ def test_an_empty_authorized_issuers_array_is_a_valid_first_document() -> None:
     hk, key_manifest = _hybrid_manifest(PUBLISHER, PUB_KID)
     document = _authorization(hk, authorized_issuers=[])
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_several_entries_sorted_by_issuer_id_roundtrip() -> None:
@@ -169,7 +170,7 @@ def test_several_entries_sorted_by_issuer_id_roundtrip() -> None:
     )
     document = _authorization(hk, authorized_issuers=entries)
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_authorization_hash_is_over_the_entire_signed_document() -> None:
@@ -213,7 +214,7 @@ def test_tampered_authorization_body_fails_verification() -> None:
     document = _authorization(kp)
     document["authorized_issuers"][0]["valid_to"] = "2030-01-01T00:00:00Z"
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_authorization_is_a_closed_object_unknown_member_rejected() -> None:
@@ -221,7 +222,7 @@ def test_authorization_is_a_closed_object_unknown_member_rejected() -> None:
     document = _authorization(hk)
     document["extra"] = "surprise"
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_authorization_missing_member_rejected() -> None:
@@ -229,7 +230,7 @@ def test_authorization_missing_member_rejected() -> None:
     document = _authorization(hk)
     del document["issued_at"]
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_classical_only_authorization_against_hybrid_key_fails_closed() -> None:
@@ -237,7 +238,7 @@ def test_classical_only_authorization_against_hybrid_key_fails_closed() -> None:
     document = _authorization(hk)
     del document["signature"]["sig_ml_dsa_65"]
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_stray_pq_leg_against_classical_key_fails_closed() -> None:
@@ -249,7 +250,7 @@ def test_stray_pq_leg_against_classical_key_fails_closed() -> None:
         pq.sign(canon.canonical_bytes(body), hk.mldsa)
     )
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_authorization_signed_by_retired_key_rejected() -> None:
@@ -266,7 +267,7 @@ def test_authorization_signed_by_retired_key_rejected() -> None:
     )
     document = _authorization(kp)
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_authorization_issued_outside_key_window_rejected() -> None:
@@ -277,7 +278,7 @@ def test_authorization_issued_outside_key_window_rejected() -> None:
     )
     document = _authorization(kp)  # issued_at 2026-02-01, before valid_from
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_authorization_issued_after_the_key_window_closed_rejected() -> None:
@@ -288,7 +289,7 @@ def test_authorization_issued_after_the_key_window_closed_rejected() -> None:
     )
     document = _authorization(kp)
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_authorization_against_self_inconsistent_manifest_rejected() -> None:
@@ -296,17 +297,17 @@ def test_authorization_against_self_inconsistent_manifest_rejected() -> None:
     document = _authorization(kp)
     key_manifest["issued_at"] = "2026-06-01T00:00:00Z"
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
     # ...and the signature-only half, which presumes an already-checked
     # manifest, still accepts it: the two halves are distinct on purpose.
-    assert authority.verify_authorization_signature(document, key_manifest)
+    assert authority.verify_authorization_signature(document, kmh(key_manifest))
 
 
 def test_authorization_signed_by_an_unknown_kid_rejected() -> None:
     kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
     document = _authorization(kp, kid=f"{PUBLISHER}/keys/authority#9")
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 # --- shape (§20.2) ------------------------------------------------------------
@@ -406,7 +407,7 @@ def test_malformed_authorization_members_fail_closed(overrides: dict[str, Any]) 
     kp, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
     document = _authorization(kp, **overrides)
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_a_non_object_signature_member_is_refused() -> None:
@@ -414,7 +415,7 @@ def test_a_non_object_signature_member_is_refused() -> None:
     document = _authorization(kp)
     document["signature"] = "not-an-object"
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_scope_covering_only_one_of_the_two_scope_members_is_accepted() -> None:
@@ -426,8 +427,8 @@ def test_scope_covering_only_one_of_the_two_scope_members_is_accepted() -> None:
         hk, authorized_issuers=[_entry(scope=_scope(artifact_series=None))]
     )
 
-    assert authority.verify_authorization(series_only, key_manifest)
-    assert authority.verify_authorization(artifacts_only, key_manifest)
+    assert authority.verify_authorization(series_only, kmh(key_manifest))
+    assert authority.verify_authorization(artifacts_only, kmh(key_manifest))
 
 
 def test_an_unregistered_permission_is_carried_never_fatal() -> None:
@@ -439,7 +440,7 @@ def test_an_unregistered_permission_is_carried_never_fatal() -> None:
         hk, authorized_issuers=[_entry(permissions=sorted(["issue", "resell-in-eu"]))]
     )
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 @pytest.mark.parametrize("version", [2**53, 1.0])
@@ -458,7 +459,7 @@ def test_an_unrepresentable_authorization_version_never_becomes_a_wire_document(
     document = _authorization(kp)
     document["authorization_version"] = version
 
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_the_four_thousand_ninety_six_entry_ceiling_is_enforced_on_shape() -> None:
@@ -468,17 +469,37 @@ def test_the_four_thousand_ninety_six_entry_ceiling_is_enforced_on_shape() -> No
     at_the_ceiling = _authorization(kp, authorized_issuers=entries[:4096])
     over_the_ceiling = _authorization(kp, authorized_issuers=entries)
 
-    assert authority.verify_authorization(at_the_ceiling, key_manifest)
-    assert not authority.verify_authorization(over_the_ceiling, key_manifest)
+    assert authority.verify_authorization(at_the_ceiling, kmh(key_manifest))
+    assert not authority.verify_authorization(over_the_ceiling, kmh(key_manifest))
 
 
 def test_verify_authorization_rejects_oversized_document_before_manifest_crypto(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The shape guard fires BEFORE any manifest cryptography runs.
+
+    Two things had to be corrected here for this test to measure that, and
+    both were silent:
+
+    * the sentinel sat on `manifests.verify_key_manifest`, the PUBLIC door.
+      `authority.py` holds a tree by then and calls the private twin, so the
+      sentinel could never fire — the test was not failing, it had stopped
+      being called at all.
+    * the key manifest was the literal `{"keys": []}`, which after the
+      boundary change is refused as a NON-SNAPSHOT before the shape guard is
+      ever reached. The `False` came from the wrong refusal, so the test would
+      have passed with the shape guard deleted.
+
+    A real handle and a sentinel on the twin the code actually calls: now the
+    only way to reach `False` is the shape guard, and the only way to reach
+    the sentinel is for the ordering to be wrong.
+    """
+
     def fail_if_called(_key_manifest: object) -> bool:
         raise AssertionError("key manifest verification ran before authorization shape")
 
-    monkeypatch.setattr(manifests, "verify_key_manifest", fail_if_called)
+    _, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
+    monkeypatch.setattr(manifests, "_verify_key_manifest", fail_if_called)
     document = {
         "authorization_version": 1,
         "publisher": PUBLISHER,
@@ -487,7 +508,7 @@ def test_verify_authorization_rejects_oversized_document_before_manifest_crypto(
         "signature": {},
     }
 
-    assert authority.verify_authorization(document, {"keys": []}) is False
+    assert authority.verify_authorization(document, kmh(key_manifest)) is False
 
 
 @pytest.mark.parametrize(
@@ -497,12 +518,16 @@ def test_verify_authorization_rejects_oversized_document_before_manifest_crypto(
 def test_verify_authorization_never_raises_on_garbage(document: Any) -> None:
     _, key_manifest = _ed_manifest(PUBLISHER, PUB_KID)
 
-    assert not authority.verify_authorization(document, key_manifest)
-    assert not authority.verify_authorization_signature(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
+    assert not authority.verify_authorization_signature(document, kmh(key_manifest))
 
 
 @pytest.mark.parametrize("key_manifest", [None, 42, "manifest", [], {}, {"keys": None}])
 def test_verify_authorization_never_raises_on_a_garbage_manifest(key_manifest: Any) -> None:
+    """`key_manifest` here is deliberately NOT a parsed snapshot — this is the
+    door's own non-snapshot refusal (`type(x) is not KeyManifest`), so the raw
+    garbage is passed through unwrapped rather than via `kmh()`, which would
+    itself raise on most of these values before the door was ever reached."""
     kp, _ = _ed_manifest(PUBLISHER, PUB_KID)
     document = _authorization(kp)
 
@@ -518,8 +543,8 @@ def test_a_hostile_signature_block_never_raises() -> None:
     document = _authorization(kp)
     document["signature"] = {"kid": {"nested": "object"}, "alg": None, "sig": 42}
 
-    assert not authority.verify_authorization(document, key_manifest)
-    assert not authority.verify_authorization_signature(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
+    assert not authority.verify_authorization_signature(document, kmh(key_manifest))
 
 
 # --- entry lookup (§20.4 step 9) ---------------------------------------------
@@ -814,7 +839,7 @@ def test_the_document_shape_and_the_view_member_share_one_predicate() -> None:
 
     for value in (0, True, 2**53 - 1):
         document = _authorization(kp, authorization_version=value)
-        assert authority.verify_authorization(document, key_manifest) is (
+        assert authority.verify_authorization(document, kmh(key_manifest)) is (
             authority.is_authorization_version(value)
         )
 
@@ -841,7 +866,7 @@ def test_a_successor_that_preserves_every_entry_is_signed() -> None:
         previous=previous,
     )
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_a_successor_may_add_a_new_entry() -> None:
@@ -854,7 +879,7 @@ def test_a_successor_may_add_a_new_entry() -> None:
         2, PUBLISHER, entries, LATER_ISSUED_AT, kp, PUB_KID, previous=previous
     )
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_a_successor_may_close_a_window_at_or_after_the_predecessors_issued_at() -> None:
@@ -883,8 +908,8 @@ def test_a_successor_may_close_a_window_at_or_after_the_predecessors_issued_at()
         previous=previous,
     )
 
-    assert authority.verify_authorization(tightest, key_manifest)
-    assert authority.verify_authorization(later, key_manifest)
+    assert authority.verify_authorization(tightest, kmh(key_manifest))
+    assert authority.verify_authorization(later, kmh(key_manifest))
 
 
 def test_a_version_not_above_the_predecessors_is_refused() -> None:
@@ -957,7 +982,7 @@ def test_a_spent_window_carried_forward_unchanged_is_signed() -> None:
         previous=previous,
     )
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_a_live_term_window_may_be_shortened_inside_successor_bounds() -> None:
@@ -974,7 +999,7 @@ def test_a_live_term_window_may_be_shortened_inside_successor_bounds() -> None:
         previous=previous,
     )
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 @pytest.mark.parametrize("renewed_to", ["2026-12-15T00:00:00Z", None])
@@ -992,7 +1017,7 @@ def test_a_live_term_window_may_be_extended(renewed_to: str | None) -> None:
         previous=previous,
     )
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_a_live_term_window_post_dated_shortening_is_refused_with_its_literal() -> None:
@@ -1064,7 +1089,7 @@ def test_a_live_term_window_may_be_shortened_exactly_at_either_bound(
         previous=previous,
     )
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 @pytest.mark.parametrize(
@@ -1091,7 +1116,7 @@ def test_a_predecessor_valid_to_equal_to_successor_issued_at_is_live(
         previous=previous,
     )
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 @pytest.mark.parametrize(
@@ -1173,7 +1198,7 @@ def test_a_closure_exactly_at_this_documents_issued_at_is_signed() -> None:
         previous=previous,
     )
 
-    assert authority.verify_authorization(document, key_manifest)
+    assert authority.verify_authorization(document, kmh(key_manifest))
 
 
 def test_a_live_term_window_shortened_below_the_predecessors_issued_at_is_refused() -> None:
@@ -1252,7 +1277,7 @@ def test_the_builder_does_not_validate_what_it_signs_without_a_predecessor() -> 
     document = _authorization(kp, publisher="NOT-A-DOMAIN", authorized_issuers=[_entry(), _entry()])
 
     assert document["publisher"] == "NOT-A-DOMAIN"
-    assert not authority.verify_authorization(document, key_manifest)
+    assert not authority.verify_authorization(document, kmh(key_manifest))
 
 
 # --- the never-raise promise, by PROPERTY rather than by example -------------
@@ -1312,13 +1337,22 @@ def test_authentication_never_raises_on_hostile_document_or_manifest(hostile: An
     with_hostile_entry["authorized_issuers"] = [hostile(_entry())]
 
     for call in (
-        lambda: authority.verify_authorization(hostile(document), key_manifest),
-        lambda: authority.verify_authorization_signature(hostile(document), key_manifest),
-        lambda: authority.verify_authorization(document, hostile(key_manifest)),
-        lambda: authority.verify_authorization_signature(document, hostile(key_manifest)),
-        lambda: authority.verify_authorization(with_hostile_entry, key_manifest),
+        lambda: authority.verify_authorization(hostile(document), kmh(key_manifest)),
+        lambda: authority.verify_authorization_signature(hostile(document), kmh(key_manifest)),
+        lambda: authority.verify_authorization(with_hostile_entry, kmh(key_manifest)),
     ):
         assert call() in (True, False)
+
+    # R4: the hostile wrapper here poisons the KEY MANIFEST, not the document.
+    # It is passed to a PORT, and it is not a `KeyManifest` — `type(x) is
+    # KeyManifest` refuses it before any dunder is ever touched, so the
+    # outcome is no longer merely "does not raise": it is deterministically
+    # `False`.
+    for call in (
+        lambda: authority.verify_authorization(document, hostile(key_manifest)),
+        lambda: authority.verify_authorization_signature(document, hostile(key_manifest)),
+    ):
+        assert call() is False
 
 
 @pytest.mark.parametrize("hostile", _HOSTILE_DICTS)

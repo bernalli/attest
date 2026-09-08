@@ -202,6 +202,21 @@ function serializeString(s: string): string {
   return out + '"'
 }
 
+/**
+ * Object member names in the order JCS (RFC 8785) signs them: by UTF-16 CODE
+ * UNITS, which JavaScript's default string comparison already is. Python's
+ * twin spells the same order `key.encode('utf-16-be')` and sorts the bytes.
+ *
+ * Exported so that anything needing to answer "which of these names comes
+ * first" answers it the way the signed bytes do -- `trustMaterial`'s refusal
+ * for an unknown member does, because the answer has to match the Python core
+ * and a JavaScript object does not preserve the document's own member order.
+ * One definition, so the serializer and every other reader cannot drift.
+ */
+export function canonicalKeyOrder(keys: readonly string[]): string[] {
+  return [...keys].sort()
+}
+
 function serialize(v: JsonValue, depth = 1): string {
   if (v === null) return 'null'
   if (typeof v === 'boolean') return v ? 'true' : 'false'
@@ -218,8 +233,7 @@ function serialize(v: JsonValue, depth = 1): string {
   }
   if (typeof v === 'object') {
     if (depth > MAX_DEPTH) throw new CanonError(ERR.MAX_NESTING_DEPTH)
-    // JS Array.prototype.sort default compares by UTF-16 code units == Python utf-16-be byte order.
-    const keys = Object.keys(v).sort()
+    const keys = canonicalKeyOrder(Object.keys(v))
     return '{' + keys.map((k) => serializeString(k) + ':' + serialize(v[k]!, depth + 1)).join(',') + '}'
   }
   throw new CanonError(ERR.TYPE_NOT_JSON)

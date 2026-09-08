@@ -154,7 +154,18 @@ from typing import Any, cast
 
 import pytest
 
-from attest import anchor, canon, grant, keys, manifests, tlog, transfer, verify, witness
+from attest import (
+    anchor,
+    canon,
+    grant,
+    keys,
+    manifests,
+    tlog,
+    transfer,
+    trust_material,
+    verify,
+    witness,
+)
 
 VECTORS_DIR = Path(__file__).resolve().parent.parent / "docs" / "spec" / "vectors"
 
@@ -205,15 +216,17 @@ def _envelope_bytes(vector_dir: Path) -> bytes:
     return json.dumps(envelope).encode("utf-8")
 
 
-def _trust_store(vector_dir: Path) -> verify.TrustStore:
-    data = _load_json(vector_dir / "manifests.json")
-    return verify.TrustStore(
-        manifests=data["manifests"],
-        provenance=data["provenance"],
-        chains=data.get("chains", {}),
-        artifact_manifests=data.get("artifact_manifests", {}),
-        artifact_manifest_chains=data.get("artifact_manifest_chains", {}),
-    )
+def _trust_store(vector_dir: Path) -> trust_material.TrustStore:
+    """Recipe V1: the FILE's own bytes, handed straight to the library.
+
+    The corpus already stores the store document in the format the boundary
+    parses (section 5.3), so there is nothing to reassemble — and reassembling
+    it was never free: reading the file into Python objects and building a
+    store out of them meant the fixture went through a second serializer, so a
+    document the corpus deliberately shaped one way could reach the verifier
+    shaped another. One `read_bytes` cannot do that.
+    """
+    return trust_material.TrustStore.from_bytes((vector_dir / "manifests.json").read_bytes())
 
 
 def _revocation_view(vector_dir: Path) -> list[dict[str, Any]] | None:
@@ -410,16 +423,32 @@ def test_manifest_tamper_breaks_self_consistency(vector_dir: Path) -> None:
     trust_data = _load_json(vector_dir / "manifests.json")
     tampered = trust_data["manifests"][pristine["issuer"]]
 
-    assert manifests.verify_key_manifest(pristine) is True
-    assert manifests.verify_key_manifest(tampered) is False
+    assert manifests.verify_key_manifest(_key_manifest_snapshot(pristine)) is True
+    assert manifests.verify_key_manifest(_key_manifest_snapshot(tampered)) is False
 
 
-def _sole_key_manifest(vector_dir: Path) -> dict[str, Any]:
-    """Group 36 only: `audit_chain` takes ONE trusted `key_manifest`, not a
-    full `TrustStore` — every group 36 leaf's `manifests.json` trusts
-    exactly one issuer, so its sole `"manifests"` value is that manifest."""
-    data = _load_json(vector_dir / "manifests.json")
-    return next(iter(data["manifests"].values()))
+def _key_manifest_snapshot(manifest: dict[str, Any]) -> trust_material.KeyManifest:
+    """A document read off disk, handed to the library the way a caller hands
+    it: as bytes. `canonical_bytes` and not `json.dumps` because the corpus
+    carries integers a re-serializer could widen."""
+    return trust_material.KeyManifest.from_bytes(canon.canonical_bytes(manifest))
+
+
+def _sole_key_manifest(vector_dir: Path) -> trust_material.KeyManifest:
+    """Group 36 only (recipe V2): `audit_chain` takes ONE trusted key manifest,
+    not a full store — every group 36 leaf's `manifests.json` trusts exactly
+    one issuer, so the store's sole issuer names it.
+
+    Selected THROUGH the parsed store rather than by reaching into the raw
+    JSON: the assertion below is what makes "sole" a checked fact instead of a
+    remembered one, and it is checked on the same object the audit will read.
+    """
+    store = trust_material.TrustStore.from_bytes((vector_dir / "manifests.json").read_bytes())
+    issuers = store.issuers()
+    assert len(issuers) == 1, f"{vector_dir.name}: group 36 expects one issuer, got {issuers}"
+    manifest = store.manifest_for(issuers[0])
+    assert manifest is not None
+    return manifest
 
 
 @pytest.mark.parametrize("vector_dir", _CHAIN_DIRS, ids=_CHAIN_IDS)

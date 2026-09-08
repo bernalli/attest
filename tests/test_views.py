@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from attest import anchor, canon, keys, manifests, revocation, tlog, transfer, verify, views
+from tests.helpers import key_manifest, store
 
 VECTORS = Path(__file__).resolve().parents[1] / "docs" / "spec" / "vectors"
 COMPROMISE = VECTORS / "41-compromise-cutoff"
@@ -57,6 +58,30 @@ def _trust(leaf: str) -> tuple[dict[str, Any], list[dict[str, Any]] | None]:
     data = _json(LEAF[leaf] / "manifests.json")
     issuer = next(iter(data["manifests"]))
     return data["manifests"][issuer], data.get("chains", {}).get(issuer)
+
+
+def _capabilities(
+    claim: dict[str, Any],
+    head: dict[str, Any],
+    chain: list[dict[str, Any]] | None = None,
+    **kwargs: Any,
+) -> dict[str, dict[str, str]]:
+    """`claim_capabilities` through the boundary it now takes.
+
+    The old signature took the head manifest and its chain as two separate
+    arguments, and nothing could notice when they came from different issuers.
+    The new one takes the snapshot and an issuer id, so this helper files the
+    head under the issuer it declares and asks for that issuer back — which is
+    exactly what a caller with a real trust store does.
+
+    A head with no string `issuer` is filed under a placeholder: the refusal
+    these tests are after comes from the manifest's own contents, and it has
+    to be reachable without the selector getting in the way first.
+    """
+    declared = head.get("issuer") if isinstance(head, dict) else None
+    issuer = declared if isinstance(declared, str) else "unnamed.example"
+    chains = None if chain is None else {issuer: chain}
+    return views.claim_capabilities(claim, store({issuer: head}, chains=chains), issuer, **kwargs)
 
 
 def _claims(leaf: str) -> list[dict[str, Any]]:
@@ -105,9 +130,14 @@ def test_preflight_refuses_oversized_trusted_manifest_before_canonicalizing(
     """(a) 257 keys — the ceiling fires before any canonicalization happens."""
     head, _ = _trust("29c")
     assert len(head["keys"]) == manifests.MAX_MANIFEST_KEYS + 1
+    # The snapshot is built FIRST: parsing a document canonicalizes it by
+    # definition, so a sentinel installed before this point would fire on the
+    # boundary rather than on the preflight, and the test would pass while
+    # measuring the wrong function.
+    snapshot = store({head["issuer"]: head})
     monkeypatch.setattr(canon, "canonical_bytes", _explode)
     with pytest.raises(views.ViewError) as excinfo:
-        views.claim_capabilities(_claim("41a"), head, None)
+        views.claim_capabilities(_claim("41a"), snapshot, head["issuer"])
     assert str(manifests.MAX_MANIFEST_KEYS) in str(excinfo.value)
     assert "ambiguous or inauthentic" in str(excinfo.value)
 
@@ -116,7 +146,7 @@ def test_preflight_refuses_duplicate_kid_in_trusted_manifest() -> None:
     """(b) an ambiguous head is refused whole — never resolved by position."""
     head, _ = _trust("44a")
     with pytest.raises(views.ViewError) as excinfo:
-        views.claim_capabilities(_claim("41a"), head, None)
+        _capabilities(_claim("41a"), head, None)
     assert "duplicate kid" in str(excinfo.value)
 
 
@@ -124,7 +154,7 @@ def test_preflight_refuses_unauthenticated_trusted_manifest() -> None:
     """(c) a head whose own signature does not verify certifies nothing."""
     head, _ = _trust("46a")
     with pytest.raises(views.ViewError) as excinfo:
-        views.claim_capabilities(_claim("41a"), head, None)
+        _capabilities(_claim("41a"), head, None)
     assert "signature" in str(excinfo.value)
 
 
@@ -133,7 +163,7 @@ def test_preflight_refuses_chain_member_with_duplicate_kid() -> None:
     head, chain = _trust("41x")
     assert chain is not None
     with pytest.raises(views.ViewError) as excinfo:
-        views.claim_capabilities(_claim("41x"), head, chain)
+        _capabilities(_claim("41x"), head, chain)
     assert "duplicate kid" in str(excinfo.value)
     assert "chain" in str(excinfo.value)
 
@@ -159,7 +189,7 @@ def test_preflight_does_not_invent_chain_refusals_the_verifier_lacks(
     here would refuse material the verifier admits — and the classifier would
     then answer about a chain no verifier would have rejected."""
     head, _ = _trust("41a")
-    report = views.claim_capabilities(_claim("41a"), head, [member])
+    report = _capabilities(_claim("41a"), head, [member])
     assert report[KID_1]["floor"] == "established"
 
 
@@ -167,7 +197,7 @@ def test_preflight_does_not_invent_chain_refusals_the_verifier_lacks(
 def test_preflight_admits_well_formed_material(leaf: str) -> None:
     """(e) the negative controls: well-formed material reaches classification."""
     head, chain = _trust(leaf)
-    report = views.claim_capabilities(_claim(leaf), head, chain)
+    report = _capabilities(_claim(leaf), head, chain)
     assert set(report) == {KID_1}
 
 
@@ -177,7 +207,7 @@ def test_preflight_uses_manifests_helpers(monkeypatch: pytest.MonkeyPatch) -> No
     head, _ = _trust("41a")
     monkeypatch.setattr(manifests, "duplicate_kids", lambda entries: ["sentinel-kid"])
     with pytest.raises(views.ViewError) as excinfo:
-        views.claim_capabilities(_claim("41a"), head, None)
+        _capabilities(_claim("41a"), head, None)
     assert "sentinel-kid" in str(excinfo.value)
 
 
@@ -190,15 +220,19 @@ def test_preflight_duplicate_verdict_comes_only_from_duplicate_kids(
     head, _ = _trust("44a")
     monkeypatch.setattr(manifests, "duplicate_kids", lambda entries: [])
     with pytest.raises(views.ViewError) as excinfo:
-        views.claim_capabilities(_claim("41a"), head, None)
+        _capabilities(_claim("41a"), head, None)
     assert "duplicate kid" not in str(excinfo.value)
 
 
 def test_preflight_uses_manifest_signature_is_authentic(monkeypatch: pytest.MonkeyPatch) -> None:
     head, _ = _trust("41a")
-    monkeypatch.setattr(manifests, "manifest_signature_is_authentic", lambda manifest: False)
+    # The sentinel goes on the PRIVATE twin: `views.py` holds a tree that came
+    # out of the snapshot, so it calls `_manifest_signature_is_authentic`
+    # directly. Pointed at the public door this test does not fail — it stops
+    # being called at all, which is worse, because a silent test looks green.
+    monkeypatch.setattr(manifests, "_manifest_signature_is_authentic", lambda manifest: False)
     with pytest.raises(views.ViewError) as excinfo:
-        views.claim_capabilities(_claim("41a"), head, None)
+        _capabilities(_claim("41a"), head, None)
     assert "signature" in str(excinfo.value)
 
 
@@ -521,7 +555,7 @@ def test_compromise_claim_accepts_a_declaration_signed_by_its_own_compromised_ke
         signer,
         signer_kid,
     )
-    assert manifests.verify_key_manifest(manifest)
+    assert manifests.verify_key_manifest(key_manifest(manifest))
     evidence = {
         "entry": {
             "type": "key-manifest",
@@ -907,7 +941,7 @@ def test_revocation_view_verifies_records_against_a_given_key_manifest() -> None
     )
     assert views.build_revocation_view([record]) == [record]
     with pytest.raises(views.ViewError, match="does not verify"):
-        views.build_revocation_view([record], manifest)
+        views.build_revocation_view([record], key_manifest(manifest))
 
 
 def test_revocation_view_refuses_canonically_identical_records() -> None:
@@ -921,7 +955,7 @@ def test_revocation_view_refuses_canonically_identical_records() -> None:
 
 def test_capabilities_of_41a_without_pins() -> None:
     head, chain = _trust("41a")
-    assert views.claim_capabilities(_claim("41a"), head, chain) == {
+    assert _capabilities(_claim("41a"), head, chain) == {
         KID_1: {
             "floor": "established",
             "cutoff_signer": "eligible",
@@ -933,7 +967,7 @@ def test_capabilities_of_41a_without_pins() -> None:
 
 def test_capabilities_of_41a_with_pins_resolve_the_cutoff() -> None:
     head, chain = _trust("41a")
-    report = views.claim_capabilities(
+    report = _capabilities(
         _claim("41a"),
         head,
         chain,
@@ -952,7 +986,7 @@ def test_capabilities_of_41a_with_pins_resolve_the_cutoff() -> None:
 @pytest.mark.parametrize("leaf", ["41p", "41r"])
 def test_capabilities_of_a_compromised_signer_floor_without_cutoff(leaf: str) -> None:
     head, chain = _trust(leaf)
-    report = views.claim_capabilities(_claim(leaf), head, chain)
+    report = _capabilities(_claim(leaf), head, chain)
     assert report[KID_1]["floor"] == "established"
     assert report[KID_1]["cutoff_signer"] == "ineligible"
 
@@ -961,7 +995,7 @@ def test_capabilities_report_absent_anchors() -> None:
     """41m's evidence carries no `anchors`; with pins, no cutoff is established."""
     head, chain = _trust("41m")
     assert "anchors" not in _claim("41m")["evidence"]
-    report = views.claim_capabilities(
+    report = _capabilities(
         _claim("41m"),
         head,
         chain,
@@ -979,7 +1013,7 @@ def test_capabilities_of_41c_report_the_declarations_own_anchor() -> None:
     which is why the leaf fails. `claim_capabilities` reports the claim's
     evidence and says nothing about the receipt."""
     head, chain = _trust("41c")
-    report = views.claim_capabilities(
+    report = _capabilities(
         _claim("41c"),
         head,
         chain,
@@ -992,7 +1026,7 @@ def test_capabilities_of_41c_report_the_declarations_own_anchor() -> None:
 
 def test_capabilities_of_an_unvouched_declaration_is_ignored() -> None:
     head, chain = _trust("41i")
-    report = views.claim_capabilities(_claim("41i"), head, chain)
+    report = _capabilities(_claim("41i"), head, chain)
     assert report[KID_1]["floor"] == "ignored"
     assert report[KID_1]["cutoff_signer"] == "ineligible"
 
@@ -1001,21 +1035,21 @@ def test_capabilities_under_delta_a_stolen_key_member_cannot_deny_the_cutoff() -
     """41z: the chain member is signed by the very key the head marks
     compromised, so it is NOT vouched for and does not join the denying set."""
     head, chain = _trust("41z")
-    report = views.claim_capabilities(_claim("41b"), head, chain)
+    report = _capabilities(_claim("41b"), head, chain)
     assert report[KID_1]["cutoff_signer"] == "eligible"
 
 
 def test_capabilities_never_names_a_cutoff_without_pins() -> None:
     """P12: `anchors` in the evidence does not imply an anchored declaration."""
     head, chain = _trust("41a")
-    report = views.claim_capabilities(_claim("41a"), head, chain, log_keys=_log_keys("41a"))
+    report = _capabilities(_claim("41a"), head, chain, log_keys=_log_keys("41a"))
     assert report[KID_1]["cutoff"] == "not_evaluated"
 
 
 def test_capabilities_confine_a_broken_anchor_policy_to_a_view_error() -> None:
     head, chain = _trust("41a")
     with pytest.raises(views.ViewError):
-        views.claim_capabilities(
+        _capabilities(
             _claim("41a"),
             head,
             chain,
@@ -1030,13 +1064,13 @@ def test_capabilities_ignores_a_kid_the_trusted_manifest_does_not_list() -> None
     manifest["keys"][0] = dict(manifest["keys"][0], kid="store.example.com/keys/other#ed25519-9")
     head, chain = _trust("41a")
     claim = {"manifest": manifest, "evidence": _evidence()}
-    assert views.claim_capabilities(claim, head, chain) == {}
+    assert _capabilities(claim, head, chain) == {}
 
 
 def test_capabilities_refuses_a_claim_that_is_not_an_object() -> None:
     head, chain = _trust("41a")
     with pytest.raises(views.ViewError):
-        views.claim_capabilities(["not", "a", "claim"], head, chain)
+        _capabilities(["not", "a", "claim"], head, chain)
 
 
 # --- the cutoff axis renders through the owner, not through strftime --------

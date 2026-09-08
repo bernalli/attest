@@ -19,6 +19,7 @@ from typing import Any, Literal, cast
 import pytest
 
 from attest import anchor, keys, manifests, pq, revocation, tlog, transfer
+from tests.helpers import key_manifest as kmh
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/audit-chain-blind#ed25519-1"
@@ -268,7 +269,7 @@ def _run_audit(
         args.payloads,
         cast(Any, args.transfer_view),
         cast(Any, args.revocation_view),
-        args.key_manifest,
+        kmh(args.key_manifest),
         args.log_keys,
         args.anchor_policy,
     )

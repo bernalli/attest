@@ -28,6 +28,7 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from attest import canon, keys, manifests, revocation, transfer, verify, views
+from tests.helpers import store
 from tests.strategies import malformed_manifests as malformed
 
 VECTORS = Path(__file__).resolve().parents[1] / "docs" / "spec" / "vectors"
@@ -427,11 +428,35 @@ def test_hostile_revocation_view_produces_the_clean_artifact() -> None:
 
 
 @pytest.mark.usefixtures("plain_only")
-def test_hostile_trust_material_reaches_the_preflight_not_the_serializer() -> None:
+def test_hostile_trust_material_has_no_way_in_at_all() -> None:
+    """The property survives the boundary change; what carries it moved.
+
+    It used to say: hostile TRUSTED material reaches the preflight rather than
+    the serializer — the shadowing subclasses do not steer the answer on their
+    way through. That sentence needed trusted material to have a way IN as an
+    object, and it no longer has one: `claim_capabilities` takes a snapshot,
+    and a snapshot is built from bytes. The class is closed at the entrance
+    instead of survived at the exit.
+
+    So the property is restated as what is now true, and it is stronger: the
+    hostile object is refused by the door WITHOUT BEING TOUCHED, and the honest
+    document classifies exactly as before. The CLAIM stays hostile throughout —
+    it is evidence, it still arrives as a live object, and that half of the
+    original test is unchanged.
+    """
     head = _json(
         VECTORS / "41-compromise-cutoff" / "a-rescued-anchored-before-cutoff" / "manifests.json"
     )["manifests"]["store.example.com"]
-    report = views.claim_capabilities(_hostile(CLAIM), _hostile(head), None)
+    issuer = "store.example.com"
+
+    # The hostile object at the door: refused, and its `items()` — which raises
+    # if anything reads it — is never reached. That is the assertion: the
+    # refusal is not "it blew up", it is "nobody asked it anything".
+    with pytest.raises(views.ViewError):
+        views.claim_capabilities(CLAIM, _hostile(head), issuer)
+
+    # The honest document, with the claim still hostile, still classifies.
+    report = views.claim_capabilities(_hostile(CLAIM), store({issuer: head}), issuer)
     assert report[MANIFEST["keys"][0]["kid"]]["floor"] == "established"
 
 

@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from attest import bundle, canon, commitment, issue, keys, manifests, validate, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest, make_payload, store
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#ed25519-1"
@@ -29,7 +29,7 @@ def _key_manifest(status: str = "active") -> dict[str, Any]:
 
 
 def _trust_store(manifest: dict[str, Any]) -> verify.TrustStore:
-    return verify.TrustStore(manifests={ISSUER: manifest}, provenance={ISSUER: "tls"})
+    return store({ISSUER: manifest}, {ISSUER: "tls"})
 
 
 def _to_bytes(envelope: dict[str, Any]) -> bytes:
@@ -60,8 +60,8 @@ def test_continuity_rejects_substituted_pub_under_reused_kid() -> None:
         KP_ATTACKER,
         KID,
     )
-    assert manifests.verify_key_manifest(candidate)  # self-consistent by design
-    assert manifests.check_continuity(trusted, candidate) is False
+    assert manifests.verify_key_manifest(key_manifest(candidate))  # self-consistent by design
+    assert manifests.check_continuity(key_manifest(trusted), key_manifest(candidate)) is False
 
 
 # --- Fix 2: .private.attest carries bearer salts and must be created 0600 ---

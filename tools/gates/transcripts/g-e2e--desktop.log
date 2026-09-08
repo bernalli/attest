@@ -1,0 +1,57 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-E2E-DESKTOP ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:32:20Z
+
+suite: desktop
+browser types this suite launches under CI=1 (from desktop/playwright.config.ts): chromium firefox webkit
+
+precondition ok: desktop/node_modules present (run: npm ci --prefix <tree>/desktop)
+precondition ok: npm available
+--- playwright install --dry-run (desktop), to read the pinned build IDs off
+Chrome for Testing 151.0.7922.34 (playwright chromium v1234)
+  Install location:    <home>/.cache/ms-playwright/chromium-1234
+  Download url:        https://cdn.playwright.dev/builds/cft/151.0.7922.34/linux64/chrome-linux64.zip
+
+Chrome Headless Shell 151.0.7922.34 (playwright chromium-headless-shell v1234)
+  Install location:    <home>/.cache/ms-playwright/chromium_headless_shell-1234
+  Download url:        https://cdn.playwright.dev/builds/cft/151.0.7922.34/linux64/chrome-headless-shell-linux64.zip
+
+Firefox 153.0 (playwright firefox v1538)
+  Install location:    <home>/.cache/ms-playwright/firefox-1538
+  Download url:        https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1538/firefox-debian-13.zip
+  Download fallback 1: https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/firefox/1538/firefox-debian-13.zip
+  Download fallback 2: https://cdn.playwright.dev/builds/firefox/1538/firefox-debian-13.zip
+
+WebKit 26.5 (playwright webkit v2336)
+  Install location:    <home>/.cache/ms-playwright/webkit-2336
+  Download url:        https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2336/webkit-debian-13.zip
+  Download fallback 1: https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/webkit/2336/webkit-debian-13.zip
+  Download fallback 2: https://cdn.playwright.dev/builds/webkit/2336/webkit-debian-13.zip
+
+FFmpeg (playwright ffmpeg v1011)
+  Install location:    <home>/.cache/ms-playwright/ffmpeg-1011
+  Download url:        https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip
+  Download fallback 1: https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip
+  Download fallback 2: https://cdn.playwright.dev/builds/ffmpeg/1011/ffmpeg-linux.zip
+
+exit: 0
+precondition ok: playwright install --dry-run (desktop) ran (its own manifest is how build IDs are read, not a version pinned in this script)
+precondition ok: playwright install --dry-run (desktop) named a build id for chromium
+checking: <home>/.cache/ms-playwright/chromium-1234/INSTALLATION_COMPLETE
+if missing, install with: npx --prefix <tree>/desktop playwright install chromium
+precondition ok: chromium (build 1234) is installed for desktop
+precondition ok: playwright install --dry-run (desktop) named a build id for firefox
+checking: <home>/.cache/ms-playwright/firefox-1538/INSTALLATION_COMPLETE
+if missing, install with: npx --prefix <tree>/desktop playwright install firefox
+precondition ok: firefox (build 1538) is installed for desktop
+precondition ok: playwright install --dry-run (desktop) named a build id for webkit
+checking: <home>/.cache/ms-playwright/webkit-2336/INSTALLATION_COMPLETE
+if missing, install with: npx --prefix <tree>/desktop playwright install webkit
+PRECONDITION MISSING: webkit (build 2336) is installed for desktop
+command: test -f <home>/.cache/ms-playwright/webkit-2336/INSTALLATION_COMPLETE
+GATE G-E2E-DESKTOP SKIPPED precondition=absent

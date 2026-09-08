@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from attest import issue, keys, manifests, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest, make_payload, store
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/adversarial#ed25519-1"
@@ -60,10 +60,10 @@ def _manifest(entries: list[dict[str, Any]], version: object = 1) -> dict[str, A
 def _trust(
     manifest: dict[str, Any], *, chain: list[dict[str, Any]] | None = None
 ) -> verify.TrustStore:
-    return verify.TrustStore(
-        manifests={ISSUER: manifest},
-        provenance={ISSUER: "tls"},
-        chains={} if chain is None else {ISSUER: chain},
+    return store(
+        {ISSUER: manifest},
+        {ISSUER: "tls"},
+        {} if chain is None else {ISSUER: chain},
     )
 
 
@@ -175,7 +175,7 @@ def test_continuity_rejects_conflicting_duplicate_for_compromised_kid() -> None:
         DECLARER_KID,  # type: ignore[attr-defined]
     )
 
-    assert manifests.check_continuity(trusted, candidate) is False
+    assert manifests.check_continuity(key_manifest(trusted), key_manifest(candidate)) is False
 
 
 @pytest.mark.parametrize("bad_version", [True, "2", None])

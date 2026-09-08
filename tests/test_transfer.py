@@ -22,6 +22,7 @@ from attest import (
     transfer,
     transparency,
 )
+from tests.helpers import key_manifest as kmh
 from tests.helpers import non_canonical_spellings
 
 ISSUER = "store.example.com"
@@ -88,7 +89,7 @@ def _resign_record(record: dict[str, Any]) -> None:
 @pytest.mark.parametrize("name,transferred_at", non_canonical_spellings(AT))
 def test_non_canonical_transferred_at_does_not_verify(name: str, transferred_at: str) -> None:
     record = _build_record(transferred_at=transferred_at)
-    assert not transfer.verify_record(record, _key_manifest())
+    assert not transfer.verify_record(record, kmh(_key_manifest()))
 
 
 @pytest.mark.parametrize("name,valid_from", non_canonical_spellings("2026-01-01T00:00:00Z"))
@@ -97,7 +98,7 @@ def test_non_canonical_signer_window_does_not_admit_a_record(name: str, valid_fr
     manifest = manifests.build_key_manifest(
         ISSUER, 1, "2026-01-01T00:00:00Z", entries, ISSUER_KP, KID
     )
-    assert not transfer.verify_record(_build_record(), manifest)
+    assert not transfer.verify_record(_build_record(), kmh(manifest))
 
 
 @pytest.mark.parametrize("name,value", non_canonical_spellings(AT))
@@ -218,7 +219,7 @@ def test_build_and_verify_record_roundtrip_ed25519() -> None:
         "holder_authorization",
         "signature",
     }
-    assert transfer.verify_record(record, _key_manifest()) is True
+    assert transfer.verify_record(record, kmh(_key_manifest())) is True
     assert transfer.verify_authorization(record, keys.b64u(HOLDER_KP.pub)) is True
 
 
@@ -253,14 +254,14 @@ def test_issuer_signed_record_with_undecodable_holder_sig_fails() -> None:
     }
     _resign_record(record)
 
-    assert transfer.verify_record(record, _key_manifest()) is False
+    assert transfer.verify_record(record, kmh(_key_manifest())) is False
 
 
 def test_post_signing_undecodable_holder_sig_also_fails() -> None:
     record = _build_record()
     record["holder_authorization"]["sig"] = "!" * 86
 
-    assert transfer.verify_record(record, _key_manifest()) is False
+    assert transfer.verify_record(record, kmh(_key_manifest())) is False
 
 
 # --- review round 1: fail-closed verification boundary ----------------------
@@ -271,12 +272,12 @@ def test_post_signing_undecodable_holder_sig_also_fails() -> None:
     [
         (
             lambda record: record.__setitem__("signature", []),
-            _key_manifest(),
+            kmh(_key_manifest()),
             AttributeError,
         ),
         (
             lambda record: record.__setitem__("receipt_id", object()),
-            _key_manifest(),
+            kmh(_key_manifest()),
             canon.CanonError,
         ),
         (lambda record: None, [], AttributeError),
@@ -288,7 +289,12 @@ def test_verify_record_fails_closed_at_untrusted_boundary(
     key_manifest: object,
     observed_exception: type[Exception],
 ) -> None:
-    """`observed_exception` documents the review repro's pre-fix failure mode."""
+    """`observed_exception` documents the review repro's pre-fix failure mode.
+
+    `key_manifest` is already the right shape per case: a handle for the two
+    well-formed cases, and the deliberately non-snapshot `[]` for
+    "malformed_manifest" — which must reach the door AS-IS, not through
+    `kmh()` (which would itself raise on a non-dict)."""
     record = _build_record()
     mutate_record(record)
 
@@ -303,7 +309,7 @@ def test_issuer_signed_record_with_extra_member_fails() -> None:
     record["extra"] = "not permitted"
     _resign_record(record)
 
-    assert transfer.verify_record(record, _key_manifest()) is False
+    assert transfer.verify_record(record, kmh(_key_manifest())) is False
 
 
 @pytest.mark.parametrize("field", ["receipt_id", "new_receipt_id"])
@@ -312,19 +318,19 @@ def test_issuer_signed_record_with_bad_ulid_fails(field: str) -> None:
     record[field] = "not-a-ulid"
     _resign_record(record)
 
-    assert transfer.verify_record(record, _key_manifest()) is False
+    assert transfer.verify_record(record, kmh(_key_manifest())) is False
 
 
 def test_issuer_signed_record_with_31_byte_new_holder_pubkey_fails() -> None:
     record = _build_record(new_holder_pubkey=keys.b64u(bytes(31)))
 
-    assert transfer.verify_record(record, _key_manifest()) is False
+    assert transfer.verify_record(record, kmh(_key_manifest())) is False
 
 
 def test_issuer_signed_record_with_noncanonical_transferred_at_fails() -> None:
     record = _build_record(transferred_at="2026-7-3T0:0:0Z")
 
-    assert transfer.verify_record(record, _key_manifest()) is False
+    assert transfer.verify_record(record, kmh(_key_manifest())) is False
 
 
 # --- review round 1: direct holder-authorization verification ---------------
@@ -355,7 +361,7 @@ def test_classical_only_record_against_hybrid_key_fails_closed() -> None:
     hk, key_manifest = _hybrid_key_manifest()
     classical_only_kp = keys.SigningKeyPair(seed=hk.ed.seed, pub=hk.ed.pub)
     record = _build_record(issuer_kp=classical_only_kp)
-    assert transfer.verify_record(record, key_manifest) is False
+    assert transfer.verify_record(record, kmh(key_manifest)) is False
 
 
 def test_hybrid_record_roundtrip() -> None:
@@ -363,7 +369,7 @@ def test_hybrid_record_roundtrip() -> None:
     record = _build_record(issuer_kp=hk)
     assert "sig" in record["signature"]
     assert "sig_ml_dsa_65" in record["signature"]
-    assert transfer.verify_record(record, key_manifest) is True
+    assert transfer.verify_record(record, kmh(key_manifest)) is True
 
 
 def test_hybrid_record_with_tampered_mldsa_leg_fails() -> None:
@@ -373,14 +379,14 @@ def test_hybrid_record_with_tampered_mldsa_leg_fails() -> None:
     raw[0] ^= 0xFF
     record["signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(raw))
 
-    assert transfer.verify_record(record, key_manifest) is False
+    assert transfer.verify_record(record, kmh(key_manifest)) is False
 
 
 def test_ed25519_record_with_stray_mldsa_leg_fails() -> None:
     record = _build_record()
     record["signature"]["sig_ml_dsa_65"] = keys.b64u(bytes(pq.ML_DSA_65_SIG_LEN))
 
-    assert transfer.verify_record(record, _key_manifest()) is False
+    assert transfer.verify_record(record, kmh(_key_manifest())) is False
 
 
 # --- signer key window --------------------------------------------------
@@ -394,7 +400,7 @@ def test_transferred_at_outside_key_window_fails() -> None:
     ]
     km = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, ISSUER_KP, KID)
     record = _build_record(transferred_at="2026-07-23T00:00:00Z")
-    assert transfer.verify_record(record, km) is False
+    assert transfer.verify_record(record, kmh(km)) is False
 
 
 # --- malformed holder_authorization shapes ----------------------------------
@@ -431,7 +437,7 @@ def test_malformed_holder_authorization_shapes_fail_closed(
     record = _build_record()
     original_sig = record["holder_authorization"]["sig"]
     record["holder_authorization"] = mutate(original_sig)
-    assert transfer.verify_record(record, _key_manifest()) is False
+    assert transfer.verify_record(record, kmh(_key_manifest())) is False
 
 
 # --- record_hash (mirrors revocation.record_hash) ---------------------------
@@ -626,7 +632,12 @@ def test_audit_chain_two_links_valid() -> None:
     ]
 
     res = transfer.audit_chain(
-        [p0, p1, p2], view, rev_view, _key_manifest(), [_transfer_log_key(hk)], _no_horizon_policy()
+        [p0, p1, p2],
+        view,
+        rev_view,
+        kmh(_key_manifest()),
+        [_transfer_log_key(hk)],
+        _no_horizon_policy(),
     )
 
     assert res.valid is True
@@ -646,7 +657,12 @@ def test_audit_chain_pubkey_loop_closure_failure() -> None:
     rev_view = [_chain_transferred_revocation(ID0, AT)]
 
     res = transfer.audit_chain(
-        [p0, p1], view, rev_view, _key_manifest(), [_transfer_log_key(hk)], _no_horizon_policy()
+        [p0, p1],
+        view,
+        rev_view,
+        kmh(_key_manifest()),
+        [_transfer_log_key(hk)],
+        _no_horizon_policy(),
     )
 
     assert res.link_status == ("invalid",)
@@ -670,7 +686,12 @@ def test_audit_chain_losing_branch_rejected() -> None:
     rev_view = [_chain_transferred_revocation(ID0, AT)]
 
     res = transfer.audit_chain(
-        [p0, p1], view, rev_view, _key_manifest(), [_transfer_log_key(hk)], _no_horizon_policy()
+        [p0, p1],
+        view,
+        rev_view,
+        kmh(_key_manifest()),
+        [_transfer_log_key(hk)],
+        _no_horizon_policy(),
     )
 
     assert res.link_status == ("invalid",)
@@ -695,7 +716,7 @@ def test_audit_chain_ignores_pre_floor_competing_claim() -> None:
             {"record": valid_record, "evidence": valid_bundle},
         ],
         [_chain_transferred_revocation(ID0, AT2)],
-        _key_manifest(),
+        kmh(_key_manifest()),
         [_transfer_log_key(hk)],
         _no_horizon_policy(),
     )
@@ -717,7 +738,7 @@ def test_audit_chain_rejects_transfer_before_previous_receipt_floor() -> None:
         [p0, p1],
         [{"record": record1, "evidence": bundle1}],
         [_chain_transferred_revocation(ID0, AT)],
-        _key_manifest(),
+        kmh(_key_manifest()),
         [_transfer_log_key(hk)],
         _no_horizon_policy(),
     )
@@ -736,7 +757,7 @@ def test_audit_chain_missing_transferred_revocation() -> None:
     view = [{"record": record1, "evidence": bundle1}]
 
     res = transfer.audit_chain(
-        [p0, p1], view, [], _key_manifest(), [_transfer_log_key(hk)], _no_horizon_policy()
+        [p0, p1], view, [], kmh(_key_manifest()), [_transfer_log_key(hk)], _no_horizon_policy()
     )
 
     assert res.link_status == ("invalid",)
@@ -755,7 +776,12 @@ def test_audit_chain_unlogged_record() -> None:
     hk = pq.HybridSigningKeys(ed=keys.generate(), mldsa=pq.generate())
 
     res = transfer.audit_chain(
-        [p0, p1], view, rev_view, _key_manifest(), [_transfer_log_key(hk)], _no_horizon_policy()
+        [p0, p1],
+        view,
+        rev_view,
+        kmh(_key_manifest()),
+        [_transfer_log_key(hk)],
+        _no_horizon_policy(),
     )
 
     assert res.link_status == ("invalid",)
@@ -774,7 +800,7 @@ def test_audit_chain_invalid_holder_authorization() -> None:
         [p0, p1],
         [{"record": record1, "evidence": bundle1}],
         [_chain_transferred_revocation(ID0, AT)],
-        _key_manifest(),
+        kmh(_key_manifest()),
         [_transfer_log_key(hk)],
         _no_horizon_policy(),
     )
@@ -790,7 +816,7 @@ def test_audit_chain_no_record_for_link() -> None:
     rev_view = [_chain_transferred_revocation(ID0, AT)]
 
     res = transfer.audit_chain(
-        [p0, p1], [], rev_view, _key_manifest(), [_transfer_log_key(hk)], _no_horizon_policy()
+        [p0, p1], [], rev_view, kmh(_key_manifest()), [_transfer_log_key(hk)], _no_horizon_policy()
     )
 
     assert res.link_status == ("invalid",)
@@ -808,8 +834,13 @@ def test_audit_chain_self_inconsistent_manifest_marks_every_link_invalid() -> No
     broken_manifest = dict(_key_manifest())
     broken_manifest["manifest_signature"] = {"kid": KID, "sig": "!" * 86}
 
+    # A self-inconsistent but well-typed manifest survives the parser
+    # boundary (still a plain dict, still canonicalizable) — a handle here
+    # reaches the SELF-CONSISTENCY branch (Step 4) rather than the
+    # non-snapshot branch, which would prepend an extra `_MSG_NOT_PARSED`
+    # error the assertion below does not expect.
     res = transfer.audit_chain(
-        [p0, p1, p2], [], [], broken_manifest, [_transfer_log_key(hk)], _no_horizon_policy()
+        [p0, p1, p2], [], [], kmh(broken_manifest), [_transfer_log_key(hk)], _no_horizon_policy()
     )
 
     assert res.valid is False
@@ -891,7 +922,7 @@ def _audit(
         payloads,
         transfer_view,
         revocation_view,
-        _key_manifest(),
+        kmh(_key_manifest()),
         [_transfer_log_key(hk)],
         _no_horizon_policy(),
     )

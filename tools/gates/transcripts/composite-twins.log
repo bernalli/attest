@@ -1,0 +1,78 @@
+# composite twins, regression proof — 2026-09-08T17:41:51Z
+# twins in scope for THIS run: all five (4 regressions + 1 watched premise)
+
+## transfer._verify_record
+no regression is written for this twin, and that is the finding:
+the public door `transfer.verify_record` is its only caller; the twin exists for symmetry with `revocation._verify_record`, which does have one
+what is measured instead: the call sites of the twin, from the AST
+result: PREMISE HOLDS (no internal caller)
+call sites: transfer.py:345 — the public door, and nothing else
+
+## grant._verify_grant
+caller put back on the public door in src/attest/verify.py
+tests: tests/test_evaluate_grant.py
+result: RED — the regression is named by a test
+FAILED tests/test_evaluate_grant.py::test_a_proof_resolving_earlier_than_the_fixed_date_leaves_the_grant_dormant
+FAILED tests/test_evaluate_grant.py::test_the_mode_declared_with_no_proof_at_all_warns_unanchored
+FAILED tests/test_evaluate_grant.py::test_a_verifier_with_no_anchor_policy_cannot_open_a_grant_on_time
+FAILED tests/test_evaluate_grant.py::test_an_anchor_over_the_wrong_document_does_not_activate
+FAILED tests/test_evaluate_grant.py::test_a_declaration_that_activated_suppresses_the_backstop_warning
+FAILED tests/test_evaluate_grant.py::test_two_genuine_proofs_reduce_to_the_MAXIMUM_not_the_minimum
+FAILED tests/test_evaluate_grant.py::test_the_crqc_horizon_check_applies_to_the_fixed_date_proof
+FAILED tests/test_evaluate_grant.py::test_a_fixed_date_set_without_the_mode_never_activates
+FAILED tests/test_evaluate_grant.py::test_a_covered_authenticated_grant_with_no_trigger_evidence_is_dormant
+FAILED tests/test_evaluate_grant.py::test_verify_reports_an_activated_grant_without_touching_ok
+FAILED tests/test_evaluate_grant.py::test_an_invalid_grant_never_makes_a_receipt_not_ok
+39 failed, 43 passed in 1.71s
+
+## grant._verify_declaration
+caller put back on the public door in src/attest/verify.py
+tests: tests/test_evaluate_grant.py
+result: RED — the regression is named by a test
+FAILED tests/test_evaluate_grant.py::test_a_discontinuous_publisher_chain_forces_unverified_rotation
+FAILED tests/test_evaluate_grant.py::test_a_widening_later_version_becomes_effective
+FAILED tests/test_evaluate_grant.py::test_a_later_version_changing_the_prose_still_governs_and_reports_it
+FAILED tests/test_evaluate_grant.py::test_a_grant_scoped_to_a_wider_catalogue_still_covers_the_receipt
+FAILED tests/test_evaluate_grant.py::test_a_publisher_declaration_activates_the_grant
+FAILED tests/test_evaluate_grant.py::test_a_successor_declaration_activates_and_says_so
+FAILED tests/test_evaluate_grant.py::test_the_scan_never_stops_at_the_first_declaration_that_succeeds
+FAILED tests/test_evaluate_grant.py::test_each_declaration_warning_is_emitted_at_most_once
+FAILED tests/test_evaluate_grant.py::test_the_successor_list_is_read_from_the_effective_grant
+FAILED tests/test_evaluate_grant.py::test_a_declaration_that_activated_suppresses_the_backstop_warning
+FAILED tests/test_evaluate_grant.py::test_verify_reports_an_activated_grant_without_touching_ok
+13 failed, 69 passed in 1.49s
+
+## authority._verify_authorization
+caller put back on the public door in src/attest/verify.py
+tests: tests/test_evaluate_authority.py
+result: RED — the regression is named by a test
+FAILED tests/test_evaluate_authority.py::test_live_window_restriction_may_land_exactly_on_either_bound[2026-02-01T00:00:00Z]
+FAILED tests/test_evaluate_authority.py::test_live_window_restriction_may_land_exactly_on_either_bound[2026-09-01T00:00:00Z]
+FAILED tests/test_evaluate_authority.py::test_valid_to_equal_to_successor_issued_at_is_live_for_classification
+FAILED tests/test_evaluate_authority.py::test_spent_window_moved_in_any_direction_is_nonconforming[2026-04-01T00:00:00Z]
+FAILED tests/test_evaluate_authority.py::test_spent_window_moved_in_any_direction_is_nonconforming[2026-06-01T00:00:00Z]
+FAILED tests/test_evaluate_authority.py::test_spent_window_moved_in_any_direction_is_nonconforming[None]
+FAILED tests/test_evaluate_authority.py::test_spent_window_carried_forward_identically_is_conforming
+FAILED tests/test_evaluate_authority.py::test_valid_from_changed_on_a_shared_entry_is_nonconforming
+FAILED tests/test_evaluate_authority.py::test_non_admitted_documents_are_not_successor_witnesses
+FAILED tests/test_evaluate_authority.py::test_successor_exclusions_are_simultaneous_not_cascading
+FAILED tests/test_evaluate_authority.py::test_successor_discipline_uses_shared_window_helpers
+42 failed, 20 passed in 1.61s
+
+## revocation._verify_record
+caller put back on the public door in src/attest/views.py
+tests: tests/test_views.py tests/test_trust_store_boundary.py
+result: RED — the regression is named by a test
+            if manifest_data is not None and not revocation.verify_record(record, manifest_data):
+>               raise ViewError(
+                    f"{what} signature does not verify against the key manifest given: the "
+                    "signer must be an active key of a self-consistent manifest, with its "
+                    "validity window covering 'revoked_at'"
+                )
+E               attest.views.ViewError: revocation record 0 signature does not verify against the key manifest given: the signer must be an active key of a self-consistent manifest, with its validity window covering 'revoked_at'
+
+src/attest/views.py:649: ViewError
+=========================== short test summary info ============================
+FAILED tests/test_trust_store_boundary.py::test_build_revocation_view_accepts_a_record_its_manifest_authenticates
+1 failed, 200 passed in 1.03s
+

@@ -12,7 +12,8 @@ from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from attest import canon, issue, keys, manifests, verify
-from tests.helpers import make_payload, non_canonical_spellings
+from tests.helpers import key_manifest as km
+from tests.helpers import make_payload, non_canonical_spellings, store
 from tests.strategies import malformed_manifests as malformed
 
 ISSUER = "store.example.com"
@@ -87,8 +88,9 @@ def test_key_entry_shape_and_defaults() -> None:
 
 def test_find_key_present_and_missing() -> None:
     m = _v1_manifest()
-    assert manifests.find_key(m, KID1) is not None
-    assert manifests.find_key(m, "nope") is None
+    handle = km(m)
+    assert manifests.find_key(handle, KID1) is not None
+    assert manifests.find_key(handle, "nope") is None
 
 
 # --- build_key_manifest / verify_key_manifest -------------------------------
@@ -96,44 +98,49 @@ def test_find_key_present_and_missing() -> None:
 
 def test_build_verify_key_manifest_roundtrip() -> None:
     m = _v1_manifest()
-    assert manifests.verify_key_manifest(m)
+    assert manifests.verify_key_manifest(km(m))
 
 
 def test_tampered_key_status_breaks_verification() -> None:
     """Design vector 11: key status flipped after manifest signing -> manifest invalid."""
     m = _v1_manifest()
     m["keys"][0]["status"] = "compromised"
-    assert not manifests.verify_key_manifest(m)
+    assert not manifests.verify_key_manifest(km(m))
 
 
 def test_tampered_signature_breaks_verification() -> None:
     m = _v1_manifest()
     m["manifest_signature"]["sig"] = keys.b64u(bytes(64))
-    assert not manifests.verify_key_manifest(m)
+    assert not manifests.verify_key_manifest(km(m))
 
 
 def test_verify_key_manifest_missing_signature_block_false() -> None:
     m = _v1_manifest()
     del m["manifest_signature"]
-    assert not manifests.verify_key_manifest(m)
+    assert not manifests.verify_key_manifest(km(m))
 
 
 def test_verify_key_manifest_unknown_signer_kid_false() -> None:
     m = _v1_manifest()
     m["manifest_signature"]["kid"] = "someone/else#ed25519-9"
-    assert not manifests.verify_key_manifest(m)
+    assert not manifests.verify_key_manifest(km(m))
 
 
 def test_verify_key_manifest_nonstr_sig_false_no_raise() -> None:
     m = _v1_manifest()
     m["manifest_signature"]["sig"] = 12345  # wrong-typed, arrives from untrusted source
-    assert not manifests.verify_key_manifest(m)
+    # R3: this DOES survive `canon.loads_strict`/`canonical_bytes` (verified:
+    # KeyManifest.from_bytes has no schema check on `sig`'s type, only ints
+    # are still valid JSON) — a hostile-but-parseable document, so it goes
+    # through the door like any other untrusted, wrong-typed input.
+    assert not manifests.verify_key_manifest(km(m))
 
 
 def test_verify_key_manifest_nonstr_pub_false_no_raise() -> None:
     m = _v1_manifest()
     m["keys"][0]["pub"] = 12345  # wrong-typed pub encoding
-    assert not manifests.verify_key_manifest(m)
+    # R3: same as above — survives the parser boundary, so it goes via handle.
+    assert not manifests.verify_key_manifest(km(m))
 
 
 def test_verify_key_manifest_fails_closed_on_out_of_range_integer_from_wire() -> None:
@@ -145,9 +152,13 @@ def test_verify_key_manifest_fails_closed_on_out_of_range_integer_from_wire() ->
     manifest["manifest_version"] = 9007199254740992
     parsed = canon.loads_strict(json.dumps(manifest).encode())
 
-    assert manifests.verify_key_manifest(parsed) is False
-    assert manifests.check_continuity(_v1_manifest(), parsed) is False
-    assert manifests.check_continuity(parsed, _v1_manifest()) is False
+    # R3: the canonicalizer rejects this integer outright (out of the I-JSON
+    # safe range), so `KeyManifest.from_bytes` would raise before a handle
+    # ever existed — this document cannot survive the parsed-snapshot door,
+    # only the private twins, which operate on raw dicts.
+    assert manifests._verify_key_manifest(parsed) is False
+    assert manifests._check_continuity(_v1_manifest(), parsed) is False
+    assert manifests._check_continuity(parsed, _v1_manifest()) is False
 
 
 def test_verify_key_manifest_fails_closed_on_float() -> None:
@@ -157,17 +168,23 @@ def test_verify_key_manifest_fails_closed_on_float() -> None:
     manifest = _v1_manifest()
     manifest["manifest_version"] = 1.0
 
-    assert manifests.verify_key_manifest(manifest) is False
-    assert manifests.check_continuity(_v1_manifest(), manifest) is False
-    assert manifests.check_continuity(manifest, _v1_manifest()) is False
+    # R3: a float can never come out of `canon.loads_strict`/`canonical_bytes`
+    # (floats are rejected outright), so this manifest can only ever be
+    # exercised as a raw dict, through the private twins.
+    assert manifests._verify_key_manifest(manifest) is False
+    assert manifests._check_continuity(_v1_manifest(), manifest) is False
+    assert manifests._check_continuity(manifest, _v1_manifest()) is False
 
 
 def test_verify_key_manifest_fails_closed_on_stack_busting_body() -> None:
     manifest = _v1_manifest()
     manifest["hostile"] = _nest(2000)
 
-    assert manifests.verify_key_manifest(manifest) is False
-    assert manifests.check_continuity(_v1_manifest(), manifest) is False
+    # R3: 2000 levels of nesting exceed `canon.MAX_DEPTH` (256), so
+    # `canon.loads_strict`/`KeyManifest.from_bytes` would refuse this body
+    # before a handle could exist — private twins only.
+    assert manifests._verify_key_manifest(manifest) is False
+    assert manifests._check_continuity(_v1_manifest(), manifest) is False
 
 
 # --- check_continuity --------------------------------------------------------
@@ -184,7 +201,7 @@ def test_continuity_active_signer_true() -> None:
     candidate = manifests.build_key_manifest(
         ISSUER, 2, "2026-06-01T00:00:00Z", entries_v2, KP1, KID1
     )
-    assert manifests.check_continuity(trusted, candidate)
+    assert manifests.check_continuity(km(trusted), km(candidate))
 
 
 def test_continuity_version_gap_false() -> None:
@@ -193,7 +210,7 @@ def test_continuity_version_gap_false() -> None:
     candidate = manifests.build_key_manifest(
         ISSUER, 3, "2026-06-01T00:00:00Z", entries_v3, KP1, KID1
     )
-    assert not manifests.check_continuity(trusted, candidate)
+    assert not manifests.check_continuity(km(trusted), km(candidate))
 
 
 def test_continuity_signer_absent_from_trusted_false() -> None:
@@ -202,7 +219,7 @@ def test_continuity_signer_absent_from_trusted_false() -> None:
     candidate = manifests.build_key_manifest(
         ISSUER, 2, "2026-06-01T00:00:00Z", entries_v2, KP3, KID3
     )
-    assert not manifests.check_continuity(trusted, candidate)
+    assert not manifests.check_continuity(km(trusted), km(candidate))
 
 
 def test_continuity_signer_retired_in_trusted_false() -> None:
@@ -216,7 +233,7 @@ def test_continuity_signer_retired_in_trusted_false() -> None:
     candidate = manifests.build_key_manifest(
         ISSUER, 2, "2026-06-01T00:00:00Z", entries_v2, KP1, KID1
     )
-    assert not manifests.check_continuity(trusted, candidate)
+    assert not manifests.check_continuity(km(trusted), km(candidate))
 
 
 def test_continuity_candidate_self_tampered_false() -> None:
@@ -229,7 +246,7 @@ def test_continuity_candidate_self_tampered_false() -> None:
         ISSUER, 2, "2026-06-01T00:00:00Z", entries_v2, KP1, KID1
     )
     candidate["keys"][1]["status"] = "compromised"  # breaks candidate's own signature
-    assert not manifests.check_continuity(trusted, candidate)
+    assert not manifests.check_continuity(km(trusted), km(candidate))
 
 
 def test_continuity_issuer_mismatch_false() -> None:
@@ -238,7 +255,7 @@ def test_continuity_issuer_mismatch_false() -> None:
     candidate = manifests.build_key_manifest(
         "evil.example.com", 2, "2026-06-01T00:00:00Z", entries, KP1, KID1
     )
-    assert not manifests.check_continuity(trusted, candidate)
+    assert not manifests.check_continuity(km(trusted), km(candidate))
 
 
 def test_check_continuity_refuses_malformed_successor_key_entry() -> None:
@@ -251,8 +268,11 @@ def test_check_continuity_refuses_malformed_successor_key_entry() -> None:
         }
     )
 
-    assert manifests.verify_key_manifest(candidate) is True
-    assert manifests.check_continuity(_v1_manifest(), candidate) is False
+    # R3: `None` in keys[] survives `canon.loads_strict`/`canonical_bytes`
+    # unchanged (verified — the boundary only requires a top-level object),
+    # so this is a hostile-but-parseable document and goes through the door.
+    assert manifests.verify_key_manifest(km(candidate)) is True
+    assert manifests.check_continuity(km(_v1_manifest()), km(candidate)) is False
 
 
 def test_check_continuity_refuses_malformed_predecessor_key_entry() -> None:
@@ -273,8 +293,10 @@ def test_check_continuity_refuses_malformed_predecessor_key_entry() -> None:
         }
     )
 
-    assert manifests.verify_key_manifest(trusted) is True
-    assert manifests.check_continuity(trusted, candidate) is False
+    # R3: `trusted` carries the same None-in-keys[] value, which survives the
+    # parser boundary unchanged — handle throughout.
+    assert manifests.verify_key_manifest(km(trusted)) is True
+    assert manifests.check_continuity(km(trusted), km(candidate)) is False
 
 
 def test_check_continuity_refuses_predecessor_entry_without_string_kid() -> None:
@@ -298,8 +320,10 @@ def test_check_continuity_refuses_predecessor_entry_without_string_kid() -> None
         }
     )
 
-    assert manifests.verify_key_manifest(trusted) is True
-    assert manifests.check_continuity(trusted, candidate) is False
+    # R3: kid=7 is a wrong type inside a keys[] entry, but it too survives
+    # the parser boundary (verified) — handle, not the private twin.
+    assert manifests.verify_key_manifest(km(trusted)) is True
+    assert manifests.check_continuity(km(trusted), km(candidate)) is False
 
 
 # --- build_artifact_manifest / verify_artifact_manifest ---------------------
@@ -310,7 +334,7 @@ def test_build_verify_artifact_manifest_roundtrip() -> None:
     am = manifests.build_artifact_manifest(
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", [_artifact()], KP1, KID1
     )
-    assert manifests.verify_artifact_manifest(am, key_manifest)
+    assert manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 def test_artifact_manifest_wrong_issuer_false() -> None:
@@ -318,7 +342,7 @@ def test_artifact_manifest_wrong_issuer_false() -> None:
     am = manifests.build_artifact_manifest(
         "other.example.com", SERIES, 1, "2026-03-01T00:00:00Z", [_artifact()], KP1, KID1
     )
-    assert not manifests.verify_artifact_manifest(am, key_manifest)
+    assert not manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 def test_artifact_manifest_tampered_false() -> None:
@@ -327,7 +351,7 @@ def test_artifact_manifest_tampered_false() -> None:
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", [_artifact()], KP1, KID1
     )
     am["version"] = 2
-    assert not manifests.verify_artifact_manifest(am, key_manifest)
+    assert not manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 def test_artifact_manifest_signer_not_active_false() -> None:
@@ -338,7 +362,7 @@ def test_artifact_manifest_signer_not_active_false() -> None:
     am = manifests.build_artifact_manifest(
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", [_artifact()], KP1, KID1
     )
-    assert not manifests.verify_artifact_manifest(am, key_manifest)
+    assert not manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 def test_artifact_manifest_released_before_valid_from_false() -> None:
@@ -349,7 +373,7 @@ def test_artifact_manifest_released_before_valid_from_false() -> None:
     am = manifests.build_artifact_manifest(
         ISSUER, SERIES, 1, "2026-01-01T00:00:00Z", [_artifact()], KP1, KID1
     )
-    assert not manifests.verify_artifact_manifest(am, key_manifest)
+    assert not manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 def test_artifact_manifest_released_after_valid_to_false() -> None:
@@ -362,16 +386,18 @@ def test_artifact_manifest_released_after_valid_to_false() -> None:
     am = manifests.build_artifact_manifest(
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", [_artifact()], KP1, KID1
     )
-    assert not manifests.verify_artifact_manifest(am, key_manifest)
+    assert not manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 def test_artifact_manifest_nonstr_released_at_false_no_raise() -> None:
+    # `released_at` is on the ARTIFACT manifest (the first, un-migrated arg),
+    # not on `key_manifest` — R2 only touches the second argument here.
     key_manifest = _v1_manifest()
     am = manifests.build_artifact_manifest(
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", [_artifact()], KP1, KID1
     )
     am["released_at"] = 12345  # wrong-typed date
-    assert not manifests.verify_artifact_manifest(am, key_manifest)
+    assert not manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 def test_artifact_manifest_none_released_at_false_no_raise() -> None:
@@ -380,20 +406,23 @@ def test_artifact_manifest_none_released_at_false_no_raise() -> None:
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", [_artifact()], KP1, KID1
     )
     am["released_at"] = None  # missing/null date
-    assert not manifests.verify_artifact_manifest(am, key_manifest)
+    assert not manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 def test_artifact_manifest_self_inconsistent_key_manifest_false() -> None:
     # key_manifest no longer self-verifies (status tampered after signing), yet the
     # artifact manifest is well-formed and signed by a kid still listed in it.
+    # Two SEPARATE handles: `key_manifest` is mutated in place between the
+    # sanity check and the tamper, and a KeyManifest snapshot is immutable —
+    # a handle built before the mutation would not see it.
     key_manifest = _v1_manifest()
     am = manifests.build_artifact_manifest(
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", [_artifact()], KP1, KID1
     )
-    assert manifests.verify_artifact_manifest(am, key_manifest)  # sanity: valid before tamper
+    assert manifests.verify_artifact_manifest(am, km(key_manifest))  # sanity: valid before tamper
     key_manifest["keys"][0]["valid_from"] = "1999-01-01T00:00:00Z"  # breaks self-signature
-    assert not manifests.verify_key_manifest(key_manifest)
-    assert not manifests.verify_artifact_manifest(am, key_manifest)
+    assert not manifests.verify_key_manifest(km(key_manifest))
+    assert not manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 def test_artifact_manifest_released_within_window_true() -> None:
@@ -406,7 +435,7 @@ def test_artifact_manifest_released_within_window_true() -> None:
     am = manifests.build_artifact_manifest(
         ISSUER, SERIES, 1, "2026-06-15T00:00:00Z", [_artifact()], KP1, KID1
     )
-    assert manifests.verify_artifact_manifest(am, key_manifest)
+    assert manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 # --- non-canonical timestamps in a window bound ------------------------------
@@ -459,7 +488,7 @@ def test_artifact_manifest_with_non_canonical_released_at_does_not_verify(
         ISSUER, 1, "2026-01-01T00:00:00Z", [_window_entry()], KP1, KID1
     )
     am = manifests.build_artifact_manifest(ISSUER, SERIES, 1, released_at, [_artifact()], KP1, KID1)
-    assert not manifests.verify_artifact_manifest(am, key_manifest)
+    assert not manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 # --- G1 normative ceilings (attest-versioning.md §5 amendment) --------------
@@ -487,7 +516,7 @@ def test_verify_key_manifest_true_at_key_ceiling() -> None:
     entries += _filler_key_entries(manifests.MAX_MANIFEST_KEYS - 1, "test-manifest-ceiling-at")
     assert len(entries) == manifests.MAX_MANIFEST_KEYS
     manifest = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, KID1)
-    assert manifests.verify_key_manifest(manifest) is True
+    assert manifests.verify_key_manifest(km(manifest)) is True
 
 
 def test_verify_key_manifest_false_over_key_ceiling() -> None:
@@ -495,7 +524,7 @@ def test_verify_key_manifest_false_over_key_ceiling() -> None:
     entries += _filler_key_entries(manifests.MAX_MANIFEST_KEYS, "test-manifest-ceiling-over")
     assert len(entries) == manifests.MAX_MANIFEST_KEYS + 1
     manifest = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP1, KID1)
-    assert manifests.verify_key_manifest(manifest) is False
+    assert manifests.verify_key_manifest(km(manifest)) is False
 
 
 def test_verify_artifact_manifest_true_at_entries_ceiling() -> None:
@@ -504,7 +533,7 @@ def test_verify_artifact_manifest_true_at_entries_ceiling() -> None:
     am = manifests.build_artifact_manifest(
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", artifacts, KP1, KID1
     )
-    assert manifests.verify_artifact_manifest(am, key_manifest) is True
+    assert manifests.verify_artifact_manifest(am, km(key_manifest)) is True
 
 
 def test_build_artifact_manifest_manifest_version_included_when_given() -> None:
@@ -513,7 +542,7 @@ def test_build_artifact_manifest_manifest_version_included_when_given() -> None:
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", [_artifact()], KP1, KID1, manifest_version=1
     )
     assert am["manifest_version"] == 1
-    assert manifests.verify_artifact_manifest(am, key_manifest)
+    assert manifests.verify_artifact_manifest(am, km(key_manifest))
 
 
 @pytest.mark.parametrize("manifest_version", [0, -1, True, "1"])
@@ -542,7 +571,7 @@ def test_verify_artifact_manifest_rejects_signed_zero_manifest_version() -> None
         KP1,
         KID1,  # type: ignore[attr-defined]
     )
-    assert manifests.verify_artifact_manifest(manifest, key_manifest) is False
+    assert manifests.verify_artifact_manifest(manifest, km(key_manifest)) is False
 
 
 def test_build_artifact_manifest_manifest_version_omitted_by_default() -> None:
@@ -665,7 +694,7 @@ def test_verify_artifact_manifest_false_over_entries_ceiling() -> None:
     am = manifests.build_artifact_manifest(
         ISSUER, SERIES, 1, "2026-03-01T00:00:00Z", artifacts, KP1, KID1
     )
-    assert manifests.verify_artifact_manifest(am, key_manifest) is False
+    assert manifests.verify_artifact_manifest(am, km(key_manifest)) is False
 
 
 # --- G6 mixed-keyset prohibition (v0.2 §2.3/§13 amendment) ------------------
@@ -747,10 +776,10 @@ def test_rotate_compromise_flips_status_and_chains() -> None:
         new_entry=manifests.key_entry(KID3, KP3.pub, "2026-06-01T00:00:00Z"),
     )
     assert rotated["manifest_version"] == 2
-    assert manifests.find_key(rotated, KID1)["status"] == "compromised"
-    assert manifests.find_key(rotated, KID3)["status"] == "active"
-    assert manifests.verify_key_manifest(rotated)
-    assert manifests.check_continuity(v1, rotated)  # signed by KID2, active in v1
+    assert manifests.find_key(km(rotated), KID1)["status"] == "compromised"
+    assert manifests.find_key(km(rotated), KID3)["status"] == "active"
+    assert manifests.verify_key_manifest(km(rotated))
+    assert manifests.check_continuity(km(v1), km(rotated))  # signed by KID2, active in v1
 
 
 def test_rotate_retire_flips_status() -> None:
@@ -758,14 +787,14 @@ def test_rotate_retire_flips_status() -> None:
     rotated = manifests.rotate_key_manifest(
         v1, KP2, KID2, "2026-06-01T00:00:00Z", retire_kids=[KID1]
     )
-    assert manifests.find_key(rotated, KID1)["status"] == "retired"
-    assert manifests.verify_key_manifest(rotated)
+    assert manifests.find_key(km(rotated), KID1)["status"] == "retired"
+    assert manifests.verify_key_manifest(km(rotated))
 
 
 def test_rotate_does_not_mutate_the_input_manifest() -> None:
     v1 = _two_active_v1()
     manifests.rotate_key_manifest(v1, KP2, KID2, "2026-06-01T00:00:00Z", compromise_kids=[KID1])
-    assert manifests.find_key(v1, KID1)["status"] == "active"  # caller's copy untouched
+    assert manifests.find_key(km(v1), KID1)["status"] == "active"  # caller's copy untouched
 
 
 def test_compromised_key_past_receipt_fails_verification() -> None:
@@ -774,13 +803,13 @@ def test_compromised_key_past_receipt_fails_verification() -> None:
     v1 = _two_active_v1()
     envelope_bytes = json.dumps(issue.issue(make_payload(), KP1, KID1)).encode("utf-8")
 
-    ts_before = verify.TrustStore(manifests={ISSUER: v1}, provenance={ISSUER: "bundle"})
+    ts_before = store({ISSUER: v1}, {ISSUER: "bundle"})
     assert verify.verify(envelope_bytes, ts_before).signature == "valid"
 
     v2 = manifests.rotate_key_manifest(
         v1, KP2, KID2, "2026-06-01T00:00:00Z", compromise_kids=[KID1]
     )
-    ts_after = verify.TrustStore(manifests={ISSUER: v2}, provenance={ISSUER: "bundle"})
+    ts_after = store({ISSUER: v2}, {ISSUER: "bundle"})
     result = verify.verify(envelope_bytes, ts_after)
     assert result.signature == "invalid"
     assert any("compromised" in e for e in result.errors)
@@ -792,7 +821,7 @@ def test_retired_key_past_receipt_still_verifies_with_warning() -> None:
     envelope_bytes = json.dumps(issue.issue(make_payload(), KP1, KID1)).encode("utf-8")
 
     v2 = manifests.rotate_key_manifest(v1, KP2, KID2, "2026-06-01T00:00:00Z", retire_kids=[KID1])
-    ts = verify.TrustStore(manifests={ISSUER: v2}, provenance={ISSUER: "bundle"})
+    ts = store({ISSUER: v2}, {ISSUER: "bundle"})
     result = verify.verify(envelope_bytes, ts)
     assert result.signature == "valid"
     assert any("retired" in w for w in result.warnings)
@@ -847,7 +876,7 @@ def test_continuity_rejects_compromised_status_regression() -> None:
     ]
     v3 = manifests.build_key_manifest(ISSUER, 3, "2026-07-01T00:00:00Z", entries_v3, KP2, KID2)
 
-    assert not manifests.check_continuity(v2, v3)
+    assert not manifests.check_continuity(km(v2), km(v3))
 
 
 def test_continuity_rejects_omitted_prior_kid() -> None:
@@ -855,7 +884,7 @@ def test_continuity_rejects_omitted_prior_kid() -> None:
     entries_v2 = [manifests.key_entry(KID2, KP2.pub, "2026-01-01T00:00:00Z", None, "active")]
     v2 = manifests.build_key_manifest(ISSUER, 2, "2026-06-01T00:00:00Z", entries_v2, KP2, KID2)
 
-    assert not manifests.check_continuity(v1, v2)
+    assert not manifests.check_continuity(km(v1), km(v2))
 
 
 def test_build_key_manifest_previous_rejects_compromised_status_regression() -> None:
@@ -1054,6 +1083,7 @@ def test_duplicate_kids_helper_tolerates_a_non_list() -> None:
         max_size=5,
     ),
 )
+@example(kids=["\U00010000", "\ue000"], noise=[])
 def test_duplicate_kids_guard_is_order_and_noise_independent(
     kids: list[str], noise: list[Any]
 ) -> None:
@@ -1062,7 +1092,7 @@ def test_duplicate_kids_guard_is_order_and_noise_independent(
     entries.extend({"kid": kid} for kid in reversed(duplicated))
     entries.extend(noise)
 
-    assert manifests.duplicate_kids(entries) == sorted(duplicated)
+    assert manifests.duplicate_kids(entries) == sorted(duplicated, key=canon.canonical_key_order)
     with pytest.raises(ValueError, match="duplicate kid"):
         manifests.build_key_manifest(
             ISSUER,
@@ -1092,7 +1122,7 @@ def test_rotate_retiring_last_key_with_replacement_is_fine() -> None:
     rotated = manifests.rotate_key_manifest(
         existing, KP1, KID1, "2026-06-01T00:00:00Z", new_entry=new_entry, retire_kids=[KID1]
     )
-    assert manifests.check_continuity(existing, rotated) is True
+    assert manifests.check_continuity(km(existing), km(rotated)) is True
 
 
 @PROPERTY_SETTINGS
@@ -1146,16 +1176,16 @@ def test_find_key_fails_closed_on_ambiguous_kid() -> None:
         manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised"),
     ]
     manifest = _hand_signed_manifest(entries, KP1, KID1)
-    assert manifests.find_key(manifest, KID1) is None
+    assert manifests.find_key(km(manifest), KID1) is None
     # The unambiguous sibling in the same manifest still resolves.
-    assert manifests.find_key(_hand_signed_manifest(entries[:1], KP1, KID1), KID1) is not None
+    assert manifests.find_key(km(_hand_signed_manifest(entries[:1], KP1, KID1)), KID1) is not None
 
 
 def test_find_key_fails_closed_on_three_entries_for_one_kid() -> None:
     """Ambiguity is a property of the array, not of a pair."""
     entry = manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "active")
     manifest = _hand_signed_manifest([dict(entry), dict(entry), dict(entry)], KP1, KID1)
-    assert manifests.find_key(manifest, KID1) is None
+    assert manifests.find_key(km(manifest), KID1) is None
 
 
 def test_verify_key_manifest_rejects_duplicate_kids_both_orders() -> None:
@@ -1164,7 +1194,8 @@ def test_verify_key_manifest_rejects_duplicate_kids_both_orders() -> None:
     c = manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, "compromised")
     for entries in ([a, c], [c, a]):
         assert (
-            manifests.verify_key_manifest(_hand_signed_manifest(list(entries), KP1, KID1)) is False
+            manifests.verify_key_manifest(km(_hand_signed_manifest(list(entries), KP1, KID1)))
+            is False
         )
 
 
@@ -1176,7 +1207,7 @@ def test_verify_key_manifest_rejects_duplicate_of_unrelated_kid() -> None:
         manifests.key_entry(KID2, KP2.pub, "2026-01-01T00:00:00Z", None, "active"),
         manifests.key_entry(KID2, KP2.pub, "2026-01-01T00:00:00Z", None, "retired"),
     ]
-    assert manifests.verify_key_manifest(_hand_signed_manifest(entries, KP1, KID1)) is False
+    assert manifests.verify_key_manifest(km(_hand_signed_manifest(entries, KP1, KID1))) is False
 
 
 def test_verify_key_manifest_still_accepts_a_degenerate_single_key_manifest() -> None:
@@ -1184,7 +1215,7 @@ def test_verify_key_manifest_still_accepts_a_degenerate_single_key_manifest() ->
     (conformance vectors 12 and 13) keep verifying byte-for-byte."""
     for status in ("retired", "compromised"):
         entries = [manifests.key_entry(KID1, KP1.pub, "2026-01-01T00:00:00Z", None, status)]
-        assert manifests.verify_key_manifest(_hand_signed_manifest(entries, KP1, KID1)) is True
+        assert manifests.verify_key_manifest(km(_hand_signed_manifest(entries, KP1, KID1))) is True
 
 
 # --- the zero-active guard checks capability, not the word "active" ------------
@@ -1223,7 +1254,7 @@ def test_rotation_leaving_a_usable_active_heir_is_allowed() -> None:
 
     rotated = _rotate_retiring_the_only_signer(heir)
 
-    assert manifests.find_key(rotated, _ROT_HEIR)["status"] == "active"
+    assert manifests.find_key(km(rotated), _ROT_HEIR)["status"] == "active"
 
 
 @pytest.mark.parametrize(

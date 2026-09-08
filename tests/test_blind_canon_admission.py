@@ -14,7 +14,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from attest import authority, canon, issue, keys, manifests, pq, revocation, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
 PUBLISHER = "pub.example"
@@ -63,9 +63,9 @@ PUBLISHER_MANIFEST = _publisher_manifest()
 
 
 def _trust_store() -> verify.TrustStore:
-    return verify.TrustStore(
-        manifests={ISSUER: ISSUER_MANIFEST, PUBLISHER: PUBLISHER_MANIFEST},
-        provenance={ISSUER: "tls", PUBLISHER: "tls"},
+    return store(
+        {ISSUER: ISSUER_MANIFEST, PUBLISHER: PUBLISHER_MANIFEST},
+        {ISSUER: "tls", PUBLISHER: "tls"},
     )
 
 

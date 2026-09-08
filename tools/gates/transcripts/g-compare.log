@@ -1,0 +1,139 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-COMPARE ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:16:21Z
+
+precondition ok: python present
+precondition ok: pytest importable
+precondition ok: local report-log channel importable
+precondition ok: compare_runs.py present
+ok: flip: baseline run produced report-log lines (3 lines collected — derived, not written down)
+ok: flip: after run produced report-log lines (3 lines collected — derived, not written down)
+--- property: passed -> xpassed is visible
+$ compare /tmp/tmp.d6zvjHdUOJ/flip.base.jsonl /tmp/tmp.d6zvjHdUOJ/flip.after.jsonl
+=== outcome counts (baseline) ===
+passed: 1
+failed: 0
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 0
+=== outcome counts (after) ===
+passed: 0
+failed: 0
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 1
+=== baseline-only (0) ===
+=== after-only (0) ===
+=== changed (1) ===
+test_flip.py::test_thing: passed -> xpassed
+compared 1 node id(s) across baseline and after
+exit: 1
+ok: flip: a passed->xpassed change is a gate failure (exit 1)
+ok: flip: changed entry names both outcomes (marker /test_flip\.py::test_thing: passed -> xpassed/ present)
+ok: vanish: baseline run produced report-log lines (6 lines collected — derived, not written down)
+ok: vanish: after run produced report-log lines (3 lines collected — derived, not written down)
+--- negative: vanished test id is named, and fails the gate
+$ compare /tmp/tmp.d6zvjHdUOJ/vanish.base.jsonl /tmp/tmp.d6zvjHdUOJ/vanish.after.jsonl
+=== outcome counts (baseline) ===
+passed: 2
+failed: 0
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 0
+=== outcome counts (after) ===
+passed: 1
+failed: 0
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 0
+=== baseline-only (1) ===
+test_vanish.py::test_b
+=== after-only (0) ===
+=== changed (0) ===
+compared 1 node id(s) across baseline and after
+exit: 1
+ok: negative 'vanished test id is named, and fails the gate' failed at the guarded path (exit 1)
+ok: new: baseline run produced report-log lines (3 lines collected — derived, not written down)
+ok: new: after run produced report-log lines (6 lines collected — derived, not written down)
+--- property: a new test alone does not fail the gate
+$ compare /tmp/tmp.d6zvjHdUOJ/new.base.jsonl /tmp/tmp.d6zvjHdUOJ/new.after.jsonl
+=== outcome counts (baseline) ===
+passed: 1
+failed: 0
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 0
+=== outcome counts (after) ===
+passed: 2
+failed: 0
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 0
+=== baseline-only (0) ===
+=== after-only (1) ===
+test_new.py::test_c
+=== changed (0) ===
+compared 1 node id(s) across baseline and after
+exit: 0
+ok: new: only an after-only addition, no vanished/changed test (exit 0)
+ok: new: the new node id is recorded in after-only (marker /test_new\.py::test_c/ present)
+ok: worse: baseline run produced report-log lines (3 lines collected — derived, not written down)
+ok: worse: after run produced report-log lines (3 lines collected — derived, not written down)
+--- negative: outcome regression is named, and fails the gate
+$ compare /tmp/tmp.d6zvjHdUOJ/worse.base.jsonl /tmp/tmp.d6zvjHdUOJ/worse.after.jsonl
+=== outcome counts (baseline) ===
+passed: 1
+failed: 0
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 0
+=== outcome counts (after) ===
+passed: 0
+failed: 1
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 0
+=== baseline-only (0) ===
+=== after-only (0) ===
+=== changed (1) ===
+test_worse.py::test_thing: passed -> failed
+compared 1 node id(s) across baseline and after
+exit: 1
+ok: negative 'outcome regression is named, and fails the gate' failed at the guarded path (exit 1)
+--- negative: an empty comparison is a failure, not a pass by absence
+$ compare /tmp/tmp.d6zvjHdUOJ/empty.base.jsonl /tmp/tmp.d6zvjHdUOJ/empty.after.jsonl
+=== outcome counts (baseline) ===
+passed: 0
+failed: 0
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 0
+=== outcome counts (after) ===
+passed: 0
+failed: 0
+error: 0
+skipped: 0
+xfailed: 0
+xpassed: 0
+=== baseline-only (0) ===
+=== after-only (0) ===
+=== changed (0) ===
+ERROR: compared 0 node id(s) -- nothing was compared (baseline and after share no node ID; an empty comparison is not a pass)
+exit: 1
+ok: negative 'an empty comparison is a failure, not a pass by absence' failed at the guarded path (exit 1)
+
+GATE G-COMPARE PASS property=compare_runs.py classifies xfail/xpass through report-log and never passes on an empty comparison

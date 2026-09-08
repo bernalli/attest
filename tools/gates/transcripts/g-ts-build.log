@@ -1,0 +1,46 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-TS-B ===
+tree:  <tree>
+head:  6742c53
+utc:   2026-09-08T12:38:22Z
+
+precondition ok: verifiers/ts/node_modules present
+precondition ok: npm available
+--- npm run build
+$ npm --prefix <tree>/verifiers/ts run build
+
+> attest-verifier@0.9.3 build
+> tsc -p tsconfig.json
+exit: 0
+ok: npm run build exits 0 (exit 0)
+precondition ok: dist/index.js exists after the build
+sources newer than dist/index.js (derived with find -newer, not written down): 0
+ok: no source in verifiers/ts/src is newer than dist/index.js
+
+sha256sum of dist/*.js (for the transcript, so a later gate can tell which build it read):
+235b89d9b004cf699626fc7624dcb1f30c8cae143406b9afdb8f1bba3cfe28f2  <tree>/verifiers/ts/dist/anchor.js
+87eceb96344d3a1f34ba62f3f66f9d4e7f0a38924ceb87a411109d2c3950a222  <tree>/verifiers/ts/dist/authority.js
+4be2ac89cf21ce849e43949490f606e883a78c9e0f381ddf08070b9bd0b2fc8e  <tree>/verifiers/ts/dist/b64u.js
+57378f953666460d8c1cc33fd22139981f5157e6b702e2f0a1dc305c0a1c40b1  <tree>/verifiers/ts/dist/canon.js
+3d95a7c966fd6f1ca18ca37545ddd2751e883aed6ccae32009f7234277cb14fb  <tree>/verifiers/ts/dist/commitment.js
+e870b4ccbb21f125d01cfdaeab7751fdc3d0bf99e0cd8b6bf82967eba7a4363f  <tree>/verifiers/ts/dist/dates.js
+817be40b882e58bcbd53d0605128e07add314025a3d6dee524b3b4fff1134281  <tree>/verifiers/ts/dist/ed25519.js
+5646c22f9d98ffeb30b28e17f62dde07041421ef3fc816cfeab81c239a658654  <tree>/verifiers/ts/dist/grant.js
+4590aacace3941a9c068e61966252b4ca22ae164128061fd989545bc7474244c  <tree>/verifiers/ts/dist/ids.js
+1bbcc64d24931b17217e778945238ae0f0d6b5a84228174de34596c845a37345  <tree>/verifiers/ts/dist/index.js
+0f6f3c422493fa6d1257870490e9cd0bbdecc4bfd6664e8df509cc5cd4e45d6b  <tree>/verifiers/ts/dist/manifests.js
+779357f5702bb74a6034a737ab57637b8bae8190d2185a1bec6516d72dc42663  <tree>/verifiers/ts/dist/messages.js
+ff33e5b32f40eefebf149fcbf3a1a01cdac8a8f3c6e25ea88ea33755177f78dd  <tree>/verifiers/ts/dist/mldsa.js
+9c93b605fa6fd043b68f58234201a739a40695ffc8c1d6bf764a656df0167355  <tree>/verifiers/ts/dist/revocation.js
+afcd3397ee6930058eb21875b28f6fe935bdd9203fa336c2ed1f76067c2f523b  <tree>/verifiers/ts/dist/schema.js
+0658c41b62cc045dd4f91a35342af6c97194da18ef18747ef64e329b2e95096e  <tree>/verifiers/ts/dist/tlog.js
+1875dc96a7a33e7d8f2662724f25f217f112eebd0578a47cde0ea542e6a4896a  <tree>/verifiers/ts/dist/transfer.js
+ba5ec1a4f87220bd22d5b2668049e5ed72874415bc6ee9d64ef3e20106156d9d  <tree>/verifiers/ts/dist/transparency.js
+624b69559a6f324f23ff7603b65caee61dff1ad2d8d7a9dfd39bf13f4548569c  <tree>/verifiers/ts/dist/trustMaterial.js
+b66c5f2f0825799cf1da139d42791c9cd7db204dafac6019e17439bb664e0f44  <tree>/verifiers/ts/dist/verify.js
+f079a6c3aadbb45cf41cbf018df0bb7f7bfc32ccad56b85166aedfaad1253697  <tree>/verifiers/ts/dist/witness.js
+
+GATE G-TS-B PASS property=verifiers/ts/dist/*.js is not older than any file in verifiers/ts/src

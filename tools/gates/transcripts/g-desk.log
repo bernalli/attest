@@ -1,0 +1,105 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-DESK ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:30:20Z
+
+precondition ok: desktop/node_modules present (run: npm ci --prefix <tree>/desktop)
+precondition ok: npm available
+precondition ok: jq available
+precondition ok: tools/test-census.json present
+precondition ok: tools/check_test_census.py present
+--- npm run typecheck (desktop: tsconfig.json then tsconfig.e2e.json)
+$ npm --prefix <tree>/desktop run typecheck
+
+> attest-desktop-verifier@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.e2e.json
+exit: 0
+ok: npm run typecheck (desktop) exits 0 (exit 0)
+--- npm test (desktop, default + json reporters)
+$ npm --prefix <tree>/desktop test -- --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/20260908T003020Z-desktop.json
+
+> attest-desktop-verifier@0.1.0 test
+> vitest run --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/20260908T003020Z-desktop.json
+
+
+ RUN  v2.1.9 <tree>/desktop
+
+ ✓ test/card.test.ts (14 tests) 488ms
+ ✓ test/card-hostile.test.ts (35 tests) 681ms
+ ✓ test/container-inherited.test.ts (66 tests) 59ms
+ ✓ test/app.test.ts (57 tests) 3552ms
+   ✓ the four evidence rails: one slot each, replaced never merged, refused independently > a rail drop and clear preserve binding proven 739ms
+   ✓ the four evidence rails: one slot each, replaced never merged, refused independently > a rail drop and clear preserve binding not_proven 750ms
+ ✓ test/rail-state.property.test.ts (8 tests) 2934ms
+   ✓ desktop: rail transitions > refuses an oversized evidence file (40000001 bytes) without cancelling the current receipt 313ms
+   ✓ desktop: rail transitions > preserves each receipt across arbitrary rejected rail drops, then accepts a valid replacement 1183ms
+   ✓ desktop: rail transitions > keeps a container refusal across rail gestures, then replaces it on a valid receipt drop 1073ms
+ ✓ test/provenance-characterization.test.ts (4 tests) 346ms
+ ✓ test/inherited-copy.test.ts (11 tests) 536ms
+ ✓ test/verdict.test.ts (13 tests) 20ms
+ ✓ test/shell-policy.test.ts (300 tests) 13230ms
+   ✓ the rules do not depend on where a construct sits > an event handler is refused on every element the allowlist names 864ms
+   ✓ the rules do not depend on where a construct sits > every attribute that names a resource is refused on every allowlisted element 796ms
+   ✓ the rules do not depend on where a construct sits > every element the corpus refuses is still refused inside the select 901ms
+   ✓ a stylesheet that fetches is refused however the token is spelled > every spelling of url( in the stylesheet is refused 1027ms
+ ✓ test/inline.test.ts (39 tests) 21274ms
+   ✓ the artifact the build actually produces > --check passes on the artifact and fails on a tampered copy 332ms
+   ✓ the shell policy is what --check now enforces > row 40 (a meta refresh inside the select, which no tree parser sees) is refused, and the refusal names a rule 5392ms
+
+ Test Files  10 passed (10)
+      Tests  547 passed (547)
+   Start at  02:30:25
+   Duration  26.75s (transform 1.12s, setup 0ms, collect 11.24s, tests 43.12s, environment 2.81s, prepare 952ms)
+
+JSON report written to <tree>/tools/gates/transcripts/20260908T003020Z-desktop.json
+exit: 0
+ok: npm test (desktop) exits 0 (exit 0)
+precondition ok: desktop test report was written: <tree>/tools/gates/transcripts/20260908T003020Z-desktop.json
+ok: tools/test-census.json declares at least one file for suite desktop (10 lines collected — derived, not written down)
+ok: the run's JSON report names at least one file (10 lines collected — derived, not written down)
+ok: the file set the census declares for desktop == the file set this run's report names (the two sets coincide)
+--- check_test_census.py desktop
+$ <tree>/.venv/bin/python <tree>/tools/check_test_census.py desktop --report <tree>/tools/gates/transcripts/20260908T003020Z-desktop.json
+desktop: 10 test file(s), 547 test(s) -- matches the census
+exit: 0
+ok: check_test_census.py desktop exits 0 (exit 0)
+--- check_test_census.py --selftest
+$ <tree>/.venv/bin/python <tree>/tools/check_test_census.py --selftest
+  ok   healthy input reports nothing
+  ok   a file on disk that the run never collected -> named ('test/b.test.ts')
+  ok   a file collected with zero tests -> named ('ran 0 tests')
+  ok   a file whose count drifted -> named ('the census records 5')
+  ok   a new file nobody registered -> named ('not in the census')
+  ok   a skipped test -> named ('pending')
+selftest: 6/6
+exit: 0
+ok: check_test_census.py --selftest exits 0 (exit 0)
+ok: selftest names: a file on disk the run never collected (marker /a file on disk that the run never collected -> named/ present)
+ok: selftest names: a file collected with zero tests (marker /a file collected with zero tests -> named/ present)
+ok: selftest names: a per-file count that drifted from the census (marker /a file whose count drifted -> named/ present)
+ok: selftest names: a file the run reports that is missing from the census (marker /a new file nobody registered -> named/ present)
+ok: selftest names: a pending/skipped test (marker /a skipped test -> named/ present)
+--- npm run build (desktop)
+$ npm --prefix <tree>/desktop run build
+
+> attest-desktop-verifier@0.1.0 build
+> tsc --noEmit -p tsconfig.json && vite build && node tools/inline.mjs
+
+vite v6.4.3 building for production...
+transforming...
+✓ 63 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   4.85 kB │ gzip:  2.23 kB
+dist/assets/index-B4Az_iuR.css   11.01 kB │ gzip:  3.00 kB
+dist/assets/index-xRH3Tk6I.js   221.41 kB │ gzip: 77.28 kB
+✓ built in 946ms
+inline: wrote <tree>/desktop/dist/attest-verifier.html (236912 bytes)
+exit: 0
+ok: npm run build (desktop) exits 0 (tsc --noEmit, vite build, then the inliner) (exit 0)
+
+GATE G-DESK PASS property=desktop typechecks (src and e2e), its suite passes, the census names exactly what the run collected, and the build succeeds

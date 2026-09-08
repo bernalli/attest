@@ -1,0 +1,42 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-CONT-DIFF ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:16:26Z
+
+precondition ok: container_differential.py present
+precondition ok: site/node_modules/.bin/esbuild present (container_differential's TS bundle)
+--- container_differential.py --count 500 --seed 20260902 (pages.yml's own numbers)
+$ <tree>/.venv/bin/python <tree>/tools/container_differential.py --count 500 --seed 20260902
+500 archives, 129 accepted, 371 refused, 25 distinct codes, 0 divergences
+codes: declared-member-over-cap=5, directory-misplaced=44, directory-record-overrun=1, directory-record-signature=8, duplicate-name=10, entry-counters-disagree=27, eocd-comment-length=25, eocd-not-last=63, local-header-out-of-range=6, local-header-signature=6, local-name-mismatch=12, member-crc-mismatch=20, member-data-out-of-range=6, multi-disk=32, record-comment=6, record-encrypted=6, record-method=5, record-multi-disk=6, record-name-empty=5, record-name-encoding=10, record-stored-size=5, record-zip64=5, too-many-entries=6, too-short=13, zip64=39
+exit: 0
+ok: container_differential.py: zero divergences at the CI count/seed (exit 0)
+ok: container_differential.py prints its own archive/accept/refuse/divergence counts, not just an exit code (marker /^[0-9]+ archives, [0-9]+ accepted, [0-9]+ refused, [0-9]+ distinct codes, [0-9]+ divergences$/ present)
+container_differential.py (count=500 seed=20260902): 500 archives, 129 accepted, 371 refused, 25 distinct codes, 0 divergences
+--- container_differential.py archive count (500) is > 0
+$ bash -c [ '500' -gt 0 ]
+
+exit: 0
+ok: container_differential.py exercised at least one archive (exit 0)
+--- container_differential.py divergence count (0) is 0
+$ bash -c [ '0' -eq 0 ]
+
+exit: 0
+ok: container_differential.py: the Python and TypeScript readers agreed on every archive (exit 0)
+--- container_differential.py --count 1 --seed 20260902 (does --count get read, or ignored?)
+$ <tree>/.venv/bin/python <tree>/tools/container_differential.py --count 1 --seed 20260902
+1 archives, 0 accepted, 1 refused, 1 distinct codes, 0 divergences
+codes: too-short=1
+exit: 0
+container_differential.py --count 1: 1 archives, 0 accepted, 1 refused, 1 distinct codes, 0 divergences
+--- archive count under --count 1 (1) differs from --count 500 (500)
+$ bash -c [ '1' -ne '500' ]
+
+exit: 0
+ok: container_differential.py reads --count instead of ignoring it (exit 0)
+
+GATE G-CONT-DIFF PASS property=container_differential.py reports zero divergences at pages.yml's own count/seed, over a nonzero number of archives, and --count is demonstrably read

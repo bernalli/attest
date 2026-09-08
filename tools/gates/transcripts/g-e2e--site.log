@@ -1,0 +1,164 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-E2E-SITE ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:32:02Z
+
+suite: site
+browser types this suite launches under CI=1 (from site/playwright.config.ts): chromium
+
+precondition ok: site/node_modules present (run: npm ci --prefix <tree>/site)
+precondition ok: npm available
+--- playwright install --dry-run (site), to read the pinned build IDs off
+Chrome for Testing 149.0.7827.55 (playwright chromium v1228)
+  Install location:    <home>/.cache/ms-playwright/chromium-1228
+  Download url:        https://cdn.playwright.dev/builds/cft/149.0.7827.55/linux64/chrome-linux64.zip
+
+Chrome Headless Shell 149.0.7827.55 (playwright chromium-headless-shell v1228)
+  Install location:    <home>/.cache/ms-playwright/chromium_headless_shell-1228
+  Download url:        https://cdn.playwright.dev/builds/cft/149.0.7827.55/linux64/chrome-headless-shell-linux64.zip
+
+Firefox 151.0 (playwright firefox v1532)
+  Install location:    <home>/.cache/ms-playwright/firefox-1532
+  Download url:        https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1532/firefox-debian-13.zip
+  Download fallback 1: https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/firefox/1532/firefox-debian-13.zip
+  Download fallback 2: https://cdn.playwright.dev/builds/firefox/1532/firefox-debian-13.zip
+
+WebKit 26.5 (playwright webkit v2311)
+  Install location:    <home>/.cache/ms-playwright/webkit-2311
+  Download url:        https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2311/webkit-debian-13.zip
+  Download fallback 1: https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/webkit/2311/webkit-debian-13.zip
+  Download fallback 2: https://cdn.playwright.dev/builds/webkit/2311/webkit-debian-13.zip
+
+FFmpeg (playwright ffmpeg v1011)
+  Install location:    <home>/.cache/ms-playwright/ffmpeg-1011
+  Download url:        https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip
+  Download fallback 1: https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip
+  Download fallback 2: https://cdn.playwright.dev/builds/ffmpeg/1011/ffmpeg-linux.zip
+
+exit: 0
+precondition ok: playwright install --dry-run (site) ran (its own manifest is how build IDs are read, not a version pinned in this script)
+precondition ok: playwright install --dry-run (site) named a build id for chromium
+checking: <home>/.cache/ms-playwright/chromium-1228/INSTALLATION_COMPLETE
+if missing, install with: npx --prefix <tree>/site playwright install chromium
+precondition ok: chromium (build 1228) is installed for site
+--- CI=1 npm run e2e (site)
+$ env CI=1 npm --prefix <tree>/site run e2e
+
+> attest-site@0.1.0 e2e
+> playwright test
+
+[WebServer] 
+[WebServer] > attest-site@0.1.0 build
+[WebServer] > tsc --noEmit -p tsconfig.json && vite build
+[WebServer] 
+[WebServer] vite v6.4.3 building for production...
+[WebServer] transforming...
+[WebServer] ✓ 79 modules transformed.
+[WebServer] rendering chunks...
+[WebServer] computing gzip size...
+[WebServer] dist/index.html                  19.29 kB │ gzip:  7.20 kB
+[WebServer] dist/assets/index-DE74FUDc.css   11.34 kB │ gzip:  3.00 kB
+[WebServer] dist/assets/index-DLnL0xC3.js   281.94 kB │ gzip: 99.67 kB
+[WebServer] ✓ built in 1.01s
+[WebServer] 
+[WebServer] > attest-site@0.1.0 preview
+[WebServer] > vite preview --port 4173 --strictPort --host 127.0.0.1
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:4173/
+
+Running 10 tests using 2 workers
+·········
+measured on rendered pixels, 720px viewport:
+4.70:1 (needs 4.5)  span.note rgb(101, 87, 62) 11.5px              scroll 1400px, background rgb(222, 210, 186)
+4.76:1 (needs 4.5)  code.diag-code rgb(101, 87, 62) 13.6px         scroll 5600px, background rgb(224, 211, 187)
+4.89:1 (needs 4.5)  p.label rgb(101, 87, 62) 10.5px                scroll 0px, background rgb(226, 214, 191)
+4.94:1 (needs 4.5)  code.component-value rgb(101, 87, 62) 15px     scroll 5600px, background rgb(227, 215, 192)
+5.04:1 (needs 4.5)  p rgb(92, 82, 65) 12.5px                       scroll 7000px, background rgb(221, 208, 185)
+5.04:1 (needs 4.5)  dd rgb(92, 82, 65) 15px                        scroll 2800px, background rgb(221, 208, 185)
+5.19:1 (needs 4.5)  p.probe-detail rgb(92, 82, 65) 13px            scroll 18900px, background rgb(224, 211, 187)
+5.19:1 (needs 4.5)  span rgb(92, 82, 65) 12.5px                    scroll 1400px, background rgb(224, 211, 188)
+5.19:1 (needs 4.5)  span rgb(92, 82, 65) 11.5px                    scroll 18900px, background rgb(224, 211, 189)
+5.22:1 (needs 4.5)  label rgb(101, 87, 62) 11px                    scroll 1400px, background rgb(231, 221, 201)
+5.22:1 (needs 4.5)  a rgb(122, 34, 49) 15px                        scroll 7700px, background rgb(216, 179, 173)
+5.24:1 (needs 4.5)  p.sample-row rgb(92, 82, 65) 12.5px            scroll 1400px, background rgb(225, 212, 188)
+5.24:1 (needs 4.5)  p rgb(74, 65, 50) 15px                         scroll 7700px, background rgb(216, 179, 173)
+5.28:1 (needs 4.5)  code rgb(92, 82, 65) 12.5px                    scroll 1400px, background rgb(225, 213, 190)
+5.30:1 (needs 4.5)  input::placeholder rgb(113, 98, 73) 12.5px     scroll 1400px, background rgb(248, 242, 226)
+5.33:1 (needs 4.5)  p.group-note rgb(92, 82, 65) 14.72px           scroll 2800px, background rgb(226, 214, 191)
+5.40:1 (needs 4.5)  p rgb(60, 87, 56) 13px                         scroll 18900px, background rgb(224, 210, 186)
+5.44:1 (needs 4.5)  code rgb(60, 87, 56) 13px                      scroll 18900px, background rgb(224, 211, 187)
+5.49:1 (needs 4.5)  p.caveat rgb(92, 82, 65) 12px                  scroll 1400px, background rgb(228, 217, 196)
+5.49:1 (needs 4.5)  p.footnote rgb(92, 82, 65) 12px                scroll 18900px, background rgb(228, 217, 196)
+5.49:1 (needs 4.5)  code.component-value rgb(107, 75, 18) 15px     scroll 3500px, background rgb(226, 213, 190)
+5.60:1 (needs 4.5)  p.rails rgb(92, 82, 65) 12.5px                 scroll 2100px, background rgb(230, 219, 199)
+5.69:1 (needs 4.5)  em rgb(92, 82, 65) 12.5px                      scroll 700px, background rgb(231, 221, 201)
+5.69:1 (needs 4.5)  code.tamper-value rgb(92, 82, 65) 12.5px       scroll 2100px, background rgb(231, 221, 201)
+5.72:1 (needs 4.5)  p.tamper-values rgb(92, 82, 65) 12.5px         scroll 2100px, background rgb(233, 221, 201)
+5.81:1 (needs 4.5)  p.exhibit-tally rgb(60, 87, 56) 15px           scroll 9100px, background rgb(229, 218, 197)
+5.85:1 (needs 4.5)  div.stamp rgb(60, 87, 56) 12px                 scroll 700px, background rgb(229, 219, 198)
+6.29:1 (needs 4.5)  span.label rgb(101, 87, 62) 10.5px             scroll 0px, background rgb(248, 242, 226)
+6.29:1 (needs 4.5)  span.card__id rgb(101, 87, 62) 12px            scroll 0px, background rgb(248, 242, 226)
+6.29:1 (needs 4.5)  div.label rgb(101, 87, 62) 10.5px              scroll 0px, background rgb(248, 242, 226)
+6.29:1 (needs 4.5)  div.card__sig rgb(101, 87, 62) 11px            scroll 700px, background rgb(248, 242, 226)
+6.29:1 (needs 4.5)  p.exhibit-source rgb(101, 87, 62) 12px         scroll 9100px, background rgb(248, 242, 226)
+6.29:1 (needs 4.5)  code rgb(101, 87, 62) 12px                     scroll 9100px, background rgb(248, 242, 226)
+6.52:1 (needs 4.5)  p rgb(74, 65, 50) 14px                         scroll 18200px, background rgb(221, 207, 179)
+6.68:1 (needs 4.5)  p.label rgb(122, 34, 49) 14px                  scroll 18200px, background rgb(223, 210, 183)
+6.76:1 (needs 4.5)  a rgb(122, 34, 49) 12.5px                      scroll 1400px, background rgb(224, 211, 186)
+6.79:1 (needs 4.5)  span rgb(74, 65, 50) 15px                      scroll 2800px, background rgb(224, 211, 187)
+6.86:1 (needs 4.5)  div.card__sub rgb(92, 82, 65) 13.5px           scroll 0px, background rgb(248, 242, 226)
+7.02:1 (needs 4.5)  a rgb(122, 34, 49) 11px                        scroll 0px, background rgb(227, 215, 193)
+7.12:1 (needs 4.5)  em rgb(74, 65, 50) 15px                        scroll 8400px, background rgb(228, 216, 195)
+7.19:1 (needs 4.5)  strong rgb(60, 87, 56) 16.8px                  scroll 9100px, background rgb(248, 242, 226)
+7.19:1 (needs 4.5)  code.component-value rgb(60, 87, 56) 15px      scroll 9800px, background rgb(248, 242, 226)
+7.19:1 (needs 4.5)  code.diag-code rgb(60, 87, 56) 13.6px          scroll 9800px, background rgb(248, 242, 226)
+7.19:1 (needs 4.5)  p.exhibit-check rgb(60, 87, 56) 12.5px         scroll 13300px, background rgb(248, 242, 226)
+7.20:1 (needs 4.5)  span.n rgb(122, 34, 49) 12px                   scroll 7000px, background rgb(228, 218, 197)
+7.35:1 (needs 4.5)  code.component-value rgb(122, 34, 49) 15px     scroll 2800px, background rgb(230, 220, 200)
+7.42:1 (needs 4.5)  code.tamper-value rgb(122, 34, 49) 12.5px      scroll 2100px, background rgb(231, 221, 201)
+7.42:1 (needs 4.5)  strong rgb(122, 34, 49) 16.8px                 scroll 2100px, background rgb(231, 221, 201)
+7.42:1 (needs 4.5)  h4 rgb(122, 34, 49) 15px                       scroll 5600px, background rgb(231, 221, 201)
+7.42:1 (needs 4.5)  li.diagnostic rgb(122, 34, 49) 15px            scroll 5600px, background rgb(231, 221, 201)
+7.42:1 (needs 4.5)  a rgb(122, 34, 49) 11.5px                      scroll 18900px, background rgb(231, 221, 201)
+7.44:1 (needs 4.5)  p.lead rgb(74, 65, 50) 15px                    scroll 0px, background rgb(231, 221, 201)
+7.66:1 (needs 4.5)  q.diag-operand rgb(122, 34, 49) 15px           scroll 16800px, background rgb(231, 225, 210)
+8.94:1 (needs 4.5)  code.diag-code rgb(122, 34, 49) 13.6px         scroll 14000px, background rgb(248, 242, 226)
+8.98:1 (needs 4.5)  p.exhibit-story rgb(74, 65, 50) 13px           scroll 9100px, background rgb(248, 242, 226)
+10.93:1 (needs 4.5)  span rgb(36, 31, 24) 13.5px                    scroll 7700px, background rgb(222, 210, 186)
+11.06:1 (needs 4.5)  span.component-name rgb(36, 31, 24) 15px       scroll 3500px, background rgb(224, 211, 187)
+11.06:1 (needs 4.5)  button#run-probe rgb(36, 31, 24) 12px          scroll 18200px, background rgb(224, 211, 187)
+11.07:1 (needs 3)  h2 rgb(36, 31, 24) 22px                        scroll 7700px, background rgb(224, 211, 188)
+11.15:1 (needs 4.5)  h4.group-question rgb(36, 31, 24) 16px         scroll 2800px, background rgb(224, 212, 188)
+11.17:1 (needs 4.5)  span.label rgb(36, 31, 24) 10.5px              scroll 2100px, background rgb(225, 212, 188)
+11.35:1 (needs 4.5)  h3 rgb(36, 31, 24) 14.5px                      scroll 7000px, background rgb(225, 214, 192)
+11.37:1 (needs 4.5)  span.term rgb(36, 31, 24) 13.5px               scroll 7700px, background rgb(226, 214, 191)
+11.49:1 (needs 3)  h1 rgb(36, 31, 24) 33.12px                     scroll 0px, background rgb(227, 215, 193)
+11.68:1 (needs 4.5)  button rgb(36, 31, 24) 12px                    scroll 2100px, background rgb(228, 217, 194)
+11.69:1 (needs 4.5)  button#run-exhibits rgb(36, 31, 24) 12px       scroll 9100px, background rgb(228, 217, 195)
+11.70:1 (needs 4.5)  code rgb(36, 31, 24) 13.5px                    scroll 7700px, background rgb(228, 217, 196)
+11.90:1 (needs 4.5)  button#clear-feeds rgb(36, 31, 24) 12px        scroll 1400px, background rgb(229, 219, 198)
+12.05:1 (needs 4.5)  h3 rgb(36, 31, 24) 17.55px                     scroll 2100px, background rgb(231, 220, 200)
+12.14:1 (needs 4.5)  button#load-sample rgb(36, 31, 24) 12px        scroll 700px, background rgb(231, 221, 201)
+12.14:1 (needs 4.5)  h4 rgb(36, 31, 24) 13.5px                      scroll 2100px, background rgb(231, 221, 201)
+12.14:1 (needs 4.5)  button#bench-restore rgb(36, 31, 24) 12px      scroll 2100px, background rgb(231, 221, 201)
+12.14:1 (needs 4.5)  summary rgb(36, 31, 24) 15px                   scroll 5600px, background rgb(231, 221, 201)
+13.03:1 (needs 4.5)  strong rgb(36, 31, 24) 14.5px                  scroll 700px, background rgb(237, 229, 210)
+13.20:1 (needs 4.5)  button#binding-apply rgb(240, 230, 210) 12.5px scroll 1400px, background rgb(36, 31, 24)
+13.26:1 (needs 4.5)  pre.raw rgb(36, 31, 24) 15px                   scroll 5600px, background rgb(237, 231, 216)
+13.29:1 (needs 4.5)  code rgb(36, 31, 24) 14.5px                    scroll 700px, background rgb(239, 231, 213)
+14.63:1 (needs 3)  div.card__title rgb(36, 31, 24) 22px           scroll 0px, background rgb(248, 242, 226)
+14.63:1 (needs 4.5)  div rgb(36, 31, 24) 13.5px                     scroll 0px, background rgb(248, 242, 226)
+14.63:1 (needs 4.5)  h3 rgb(36, 31, 24) 16px                        scroll 9100px, background rgb(248, 242, 226)
+
+·
+  10 passed (16.1s)
+exit: 0
+ok: CI=1 npm run e2e (site) exits 0 (exit 0)
+passed count, read off Playwright's own summary line just now (never written down here): 10
+ok: Playwright reported more than zero passed tests
+
+GATE G-E2E-SITE PASS property=the site Playwright e2e suite runs under CI=1, on every browser it configures, and reports more than zero tests passed

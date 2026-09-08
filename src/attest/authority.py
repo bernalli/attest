@@ -55,7 +55,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, cast
 
-from attest import canon, grant, keys, manifests, pq, transfer
+from attest import canon, grant, keys, manifests, pq, transfer, trust_material
 
 # Registry-governed vocabulary (attest-versioning.md §6.11). Named constants
 # rather than inline literals so a registration is one edit here.
@@ -434,7 +434,9 @@ def authorization_hash(document: dict[str, Any]) -> str:
 # --- authentication (§20.2) ---------------------------------------------------
 
 
-def verify_authorization_signature(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_authorization_signature(
+    document: dict[str, Any], key_manifest: trust_material.KeyManifest
+) -> bool:
     """Verify a document's own signature against an ALREADY self-verified
     `key_manifest` — exactly `verify_authorization` minus the
     `manifests.verify_key_manifest` self-consistency check, mirroring
@@ -459,6 +461,27 @@ def verify_authorization_signature(document: dict[str, Any], key_manifest: dict[
     PRECONDITION: the caller has already established
     `manifests.verify_key_manifest(key_manifest)`. Callers checking many
     documents against ONE manifest hoist that call out of their loop.
+
+    `key_manifest` is MATERIALIZED here, at the public boundary, through
+    `trust_material.materialized_key_manifest` — the same boundary
+    `grant.verify_grant_signature` applies to its own `key_manifest`
+    parameter. Callers that already hold a materialized manifest use
+    `_verify_authorization_signature`, so the cost is one pass per public call
+    and never one per document.
+    """
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return False
+    return _verify_authorization_signature(document, data)
+
+
+def _verify_authorization_signature(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_authorization_signature`'s body, over an ALREADY MATERIALIZED manifest.
+
+    Second precondition on top of the public one: `key_manifest` is the
+    output of `trust_material.materialized_key_manifest`, so every value it
+    holds is of exact built-in type. Calling this with a raw caller object
+    reopens the class the boundary exists to close.
     """
     try:
         if not _valid_authorization_shape(document):
@@ -473,7 +496,9 @@ def verify_authorization_signature(document: dict[str, Any], key_manifest: dict[
         return False
 
 
-def verify_authorization(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_authorization(
+    document: dict[str, Any], key_manifest: trust_material.KeyManifest
+) -> bool:
     """Verify a publisher authorization manifest against `key_manifest`,
     mirroring `grant.verify_grant` exactly: the signer key must be **active**
     in a SELF-CONSISTENT `key_manifest`, with its validity window covering the
@@ -484,11 +509,36 @@ def verify_authorization(document: dict[str, Any], key_manifest: dict[str, Any])
     Defense-in-depth: `key_manifest` itself must be self-consistent, so a
     fabricated publisher manifest paired with a matching fabricated signature
     cannot verify. Fails closed on every malformed input, never raises.
+
+    The manifest is materialized ONCE here and both halves run against that
+    one reconstruction, mirroring `grant.verify_grant`.
+    """
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return False
+    return _verify_authorization(document, data)
+
+
+def _verify_authorization(document: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_authorization`'s body, over a tree the snapshot already owns.
+
+    The public door opens the handle once and calls this; an internal caller
+    that already holds the tree calls this directly, instead of going back out
+    through a door that would only refuse it. Both halves run against the SAME
+    tree — never against a second read of anything — which is what stops a
+    manifest from being self-consistent for the first half and something else
+    for the second.
+
+    The shape check now runs AFTER the door has opened the handle rather than
+    before, and nothing observable moves: a caller who supplies both a
+    non-snapshot and a malformed document gets `False` either way. Ordering it
+    this way keeps the unwrap in one place — the door — instead of in the
+    middle of a body that internal callers reach with the tree in hand.
     """
     try:
         if not _valid_authorization_shape(document):
             return False
-        return manifests.verify_key_manifest(key_manifest) and verify_authorization_signature(
+        return manifests._verify_key_manifest(key_manifest) and _verify_authorization_signature(
             document, key_manifest
         )
     except Exception:  # see verify_authorization_signature

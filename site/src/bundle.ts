@@ -1,4 +1,4 @@
-import { loadsStrict, sha256Hex } from 'attest-verifier'
+import { loadsStrict, sha256Hex, canonicalBytes } from 'attest-verifier'
 import { canonicalMembers, readMember, ReadBudget, ContainerError, MAX_STORED_BYTES } from './container.js'
 import type { Member, ContainerCode } from './container.js'
 import { neutralized } from './untrusted-text.js'
@@ -336,6 +336,36 @@ export function parseBundle(
         throw new BundleError('bundle lists one issuer in more than one manifest member')
       const raw = blob['key_manifests']
       const kms = Array.isArray(raw) ? raw.map(asObject).filter((m): m is JsonObject => m !== null) : []
+      // `loadsStrict` admits integers the canonical profile does not, and the
+      // reference importer canonicalizes the whole store document before the
+      // library will parse it -- so an integer past the I-JSON boundary fails
+      // the ENTIRE import there while landing quietly here. One bundle
+      // importing on one road and refused on the other is the one thing two
+      // importers of one format may not do, whatever either of them decides.
+      //
+      // This is the MINIMUM that makes the two agree, not recipe B2 in full:
+      // the store here is still assembled as a plain object rather than handed
+      // to `parseTrustStore`, which lands with the rest of the TypeScript
+      // consumers. `intake` reaches this same function, so the refusal covers
+      // both roads by structure and not by being written twice.
+      for (const km of kms) {
+        try {
+          canonicalBytes(km)
+        } catch (e) {
+          // The reason travels. The reference importer's refusal for the same
+          // document names WHY ("integer out of I-JSON safe range: N"), and a
+          // message that drops it makes two cores that agree on the verdict look
+          // like they disagree on the diagnosis. Narrow by construction: `km`
+          // came out of `loadsStrict`, so floats, lone surrogates and duplicate
+          // keys are already gone and the depth cap already applied to the blob
+          // that contains it -- what reaches here is the canonical profile's own
+          // refusal, not an unrelated failure wearing its message.
+          const reason = e instanceof Error ? e.message : String(e)
+          throw new BundleError(
+            `manifest entry ${quoted(name)} is outside the canonical profile: ${reason}`,
+          )
+        }
+      }
       keyManifestsByIssuer.set(issuer, kms)
     } else if (name.startsWith('legal/') && name.endsWith('.txt')) {
       // A legal text is named by the digest of its own bytes (v0.1 §14.1), and

@@ -57,6 +57,27 @@ def _serialize_string(s: str) -> str:
     return "".join(out)
 
 
+def canonical_key_order(key: str) -> bytes:
+    """The sort key JCS (RFC 8785) gives an object member name.
+
+    JCS orders members by their UTF-16 CODE UNITS, which is not the same as
+    ordering by code point: an astral character encodes to a surrogate pair,
+    and a surrogate code unit sorts below U+E000 rather than above U+FFFF. The
+    two orders therefore disagree on any object that mixes astral names with
+    names in the U+E000-U+FFFF range, and a signature is computed over one of
+    them.
+
+    Public, and used by anything that needs to answer "which of these names
+    comes first" the way the signed bytes answer it -- `trust_material`'s
+    refusal for an unknown member does, because the ANSWER has to be the same
+    in both cores and the document's own member order is not something a
+    JavaScript object preserves. One definition, so the serializer and every
+    other reader cannot drift apart; `verifiers/ts/src/canon.ts` carries the
+    twin (JavaScript's default string comparison already IS this order).
+    """
+    return key.encode("utf-16-be", "surrogatepass")
+
+
 def _serialize(obj: Any, out: list[str], depth: int = 1) -> None:
     if obj is None:
         out.append("null")
@@ -115,7 +136,7 @@ def _serialize(obj: Any, out: list[str], depth: int = 1) -> None:
             if serialized_key in emitted_keys:
                 raise DuplicateKeyError(f"duplicate object key: {key!r}")
             emitted_keys.add(serialized_key)
-            entries.append((key.encode("utf-16-be", "surrogatepass"), serialized_key, k))
+            entries.append((canonical_key_order(key), serialized_key, k))
         if len(emitted_keys) != source_key_count:
             # NOT a duplicate: the mapping iterated a different number of
             # members than it stores. `DuplicateKeyError` here would name a

@@ -1,0 +1,229 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-PY-SUB ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:21:18Z
+
+segment: sub
+args:    <tree>/tests/tools
+
+precondition ok: .venv/bin/python exists
+precondition ok: import pytest
+precondition ok: import attest (workspace member)
+precondition ok: import attest_bridge (workspace member)
+precondition ok: import attest_witness (workspace member)
+--- pytest run (sub)
+$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260908T002118Z-sub.xml <tree>/tests/tools
+........................................................................ [ 38%]
+........................................................................ [ 77%]
+..........................................                               [100%]
+186 passed in 100.84s (0:01:40)
+exit: 0
+ok: pytest run (sub) exits 0 (exit 0)
+--- collect files (sub)
+$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q --collect-only <tree>/tests/tools
+tests/tools/test_check_formal.py::test_parse_summary_extracts_name_trait_result
+tests/tools/test_check_formal.py::test_parse_summary_rejects_duplicate_lemma
+tests/tools/test_check_formal.py::test_parse_summary_handles_real_tamarin_block_shape
+tests/tools/test_check_formal.py::test_parse_summary_reports_falsified
+tests/tools/test_check_formal.py::test_parse_summary_rejects_unparseable_status_line
+tests/tools/test_check_formal.py::test_parse_summary_rejects_status_suffixes[verifiedXYZ]
+tests/tools/test_check_formal.py::test_parse_summary_rejects_status_suffixes[falsifiedness]
+tests/tools/test_check_formal.py::test_parse_summary_rejects_status_suffixes[verified (1 steps) trailing-garbage]
+tests/tools/test_check_formal.py::test_parse_summary_rejects_missing_block
+tests/tools/test_check_formal.py::test_parse_summary_rejects_empty_block
+tests/tools/test_check_formal.py::test_normalize_lemma_extracts_named_block_only
+tests/tools/test_check_formal.py::test_normalize_lemma_insensitive_to_comment_edits_and_reflow
+tests/tools/test_check_formal.py::test_lemma_digest_sensitive_to_formula_token_change
+tests/tools/test_check_formal.py::test_lemma_digest_sensitive_to_trait_change
+tests/tools/test_check_formal.py::test_lemma_digest_sensitive_to_annotation_change
+tests/tools/test_check_formal.py::test_lemma_digest_is_sha256_hex
+tests/tools/test_check_formal.py::test_normalize_lemma_missing_lemma_raises
+tests/tools/test_check_formal.py::test_normalize_lemma_duplicate_declaration_raises
+tests/tools/test_check_formal.py::test_lemma_digest_distinguishes_quoted_constants
+tests/tools/test_check_formal.py::test_comment_marker_inside_quotes_is_refused
+tests/tools/test_check_formal.py::test_newline_inside_quoted_constant_is_refused
+tests/tools/test_check_formal.py::test_contract_covers_entire_lemma_corpus
+tests/tools/test_check_formal.py::test_contract_digests_and_traits_match_real_theory
+tests/tools/test_check_formal.py::test_main_green_via_summary_file
+tests/tools/test_check_formal.py::test_main_green_via_fake_prover_subprocess
+tests/tools/test_check_formal.py::test_prover_invocation_pins_derivcheck_timeout
+tests/tools/test_check_formal.py::test_main_digest_mismatch_fails_even_when_verified
+tests/tools/test_check_formal.py::test_main_trait_flip_fails
+tests/tools/test_check_formal.py::test_main_missing_pinned_lemma_fails
+tests/tools/test_check_formal.py::test_main_unexpected_extra_lemma_fails
+tests/tools/test_check_formal.py::test_main_census_rejects_extra_theory_lemma
+tests/tools/test_check_formal.py::test_main_falsified_result_fails
+tests/tools/test_check_formal.py::test_main_prover_crash_fails
+tests/tools/test_check_formal.py::test_main_empty_summary_fails
+tests/tools/test_check_formal.py::test_main_prover_timeout_fails
+tests/tools/test_check_formal.py::test_main_missing_prover_binary_fails
+tests/tools/test_check_formal.py::test_main_only_subset_passes_when_unscoped_lemmas_are_absent
+tests/tools/test_check_formal.py::test_main_only_does_not_excuse_failed_shard_lemma
+tests/tools/test_check_formal.py::test_main_only_name_absent_from_contract_is_an_error
+tests/tools/test_check_formal.py::test_main_only_empty_shard_is_an_error
+tests/tools/test_check_formal.py::test_main_only_does_not_launder_non_scoped_falsification
+tests/tools/test_check_formal.py::test_main_only_accepts_real_shard_shape
+tests/tools/test_check_formal.py::test_main_only_fails_scoped_lemma_not_verified
+tests/tools/test_check_formal.py::test_main_theory_file_requires_summary_file
+tests/tools/test_check_formal.py::test_main_green_on_recorded_summary_fixture
+tests/tools/test_check_formal.py::test_main_version_mismatch_fails
+tests/tools/test_check_formal.py::test_main_version_unparseable_fails
+tests/tools/test_check_formal.py::test_main_maude_version_mismatch_or_unparseable_fails[Maude 3.4.0]
+tests/tools/test_check_formal.py::test_main_maude_version_mismatch_or_unparseable_fails[no version to be found here]
+tests/tools/test_check_formal.py::test_main_missing_maude_binary_fails
+tests/tools/test_check_formal.py::test_main_only_digest_check_still_global
+tests/tools/test_check_formal.py::test_maude_bare_version_line_accepted
+tests/tools/test_check_formal.py::test_summary_file_without_theory_file_digests_positional_theory
+tests/tools/test_check_formal.py::test_nested_block_comment_unterminated_is_theory_error
+tests/tools/test_check_formal.py::test_nested_block_comment_terminated_strips_whole_span
+tests/tools/test_check_formal.py::test_maude_wrong_tool_name_rejected
+tests/tools/test_check_formal.py::test_maude_stray_version_line_in_junk_rejected
+tests/tools/test_check_formal.py::test_verified_found_trace_is_contradictory_and_rejected
+tests/tools/test_check_formal.py::test_round3_repro_quoted_comment_opener_rejected
+tests/tools/test_check_formal.py::test_ci_formal_matrix_declares_exactly_the_five_shards
+tests/tools/test_check_formal.py::test_ci_formal_job_executes_matrix_shard_checker
+tests/tools/test_check_formal.py::test_ci_formal_job_rejects_hard_coded_shard_execution
+tests/tools/test_check_formal.py::test_ci_formal_job_rejects_expected_command_hidden_in_comment
+tests/tools/test_check_formal.py::test_ci_formal_job_rejects_expected_command_hidden_in_env_value
+tests/tools/test_check_formal.py::test_ci_formal_job_check_survives_block_scalar_run
+tests/tools/test_check_formal.py::test_ci_formal_job_rejects_disabled_step_with_command_in_env
+tests/tools/test_check_formal.py::test_ci_formal_job_rejects_if_gated_job
+tests/tools/test_check_formal.py::test_ci_formal_job_rejects_command_only_in_shell_comment
+tests/tools/test_check_formal.py::test_ci_formal_job_rejects_command_in_trailing_shell_comment
+tests/tools/test_check_formal.py::test_ci_formal_job_rejects_continue_on_error
+tests/tools/test_check_formal.py::test_ci_formal_job_rejects_or_true_fallback
+tests/tools/test_check_formal.py::test_ci_formal_shard_lists_are_pairwise_disjoint
+tests/tools/test_check_formal.py::test_ci_formal_shard_union_equals_contract
+tests/tools/test_check_formal.py::test_ci_formal_shards_rejects_duplicate_entry
+tests/tools/test_check_formal.py::test_ci_formal_shards_rejects_missing_formal_job
+tests/tools/test_check_formal.py::test_ci_parser_counts_raw_markers_against_parsed_entries
+tests/tools/test_check_formal.py::test_ci_parser_catches_fifth_shard_in_any_spelling[          - shard : sneaky-fifth\n            timeout: 90\n            checker_timeout: 5100\n            lemmas: "sanity_toolchain"\n]
+tests/tools/test_check_formal.py::test_ci_parser_catches_fifth_shard_in_any_spelling[          - "shard": sneaky-fifth\n            timeout: 90\n            checker_timeout: 5100\n            lemmas: "sanity_toolchain"\n]
+tests/tools/test_check_formal.py::test_ci_parser_catches_fifth_shard_in_any_spelling[          - {shard: sneaky-fifth, timeout: 90, checker_timeout: 5100, lemmas: "sanity_toolchain"}\n]
+tests/tools/test_check_formal.py::test_ci_parser_catches_fifth_shard_in_any_spelling[          -\n            "shard": sneaky-fifth\n            timeout: 90\n            checker_timeout: 5100\n            lemmas: "sanity_toolchain"\n]
+tests/tools/test_check_formal.py::test_ci_parser_catches_fifth_shard_in_any_spelling[          -\n            shard: sneaky-fifth\n            timeout: 90\n            checker_timeout: 5100\n            lemmas: "sanity_toolchain"\n]
+tests/tools/test_check_formal.py::test_ci_parser_catches_fifth_shard_in_any_spelling[comment-then-quoted]
+tests/tools/test_check_formal.py::test_ci_parser_catches_fifth_shard_in_any_spelling[comment-inside-entry]
+tests/tools/test_conformance_dogfood.py::test_python_adapter_single_leaf
+tests/tools/test_conformance_dogfood.py::test_python_reference_self_certifies_v02
+tests/tools/test_conformance_runner.py::test_find_leaf_dirs_discovers_nested_leaves_sorted
+tests/tools/test_conformance_runner.py::test_leaf_id_is_posix_relative
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[01-a/x-True]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[14b-x-True]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[25-y/a-True]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[26-b-False]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[29-limits/a-True]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[31-currency/e-True]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[33-z/a-False]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[35-transfer/i-v01-transferable-null-pubkey-ok-True]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[35-transfer/j-other-False]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[41-compromise-cutoff/f-stage1-fail-closed-True]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[41-compromise-cutoff/a-other-False]
+tests/tools/test_conformance_runner.py::test_in_v01_subset_rule[36-chain/a-False]
+tests/tools/test_conformance_runner.py::test_select_subset_v01_is_exactly_66_leaves_of_the_real_corpus
+tests/tools/test_conformance_runner.py::test_select_subset_v02_is_the_full_real_corpus
+tests/tools/test_conformance_runner.py::test_diff_verify_result_passes_on_full_match
+tests/tools/test_conformance_runner.py::test_diff_verify_result_required_exact_mismatch
+tests/tools/test_conformance_runner.py::test_diff_verify_result_required_field_missing_from_actual
+tests/tools/test_conformance_runner.py::test_diff_verify_result_conditional_field_ignored_when_absent_from_expected
+tests/tools/test_conformance_runner.py::test_diff_verify_result_conditional_field_mismatch_when_present_in_expected
+tests/tools/test_conformance_runner.py::test_diff_verify_result_conditional_field_missing_from_actual_is_a_mismatch
+tests/tools/test_conformance_runner.py::test_diff_verify_result_exact_errors_list
+tests/tools/test_conformance_runner.py::test_diff_verify_result_exact_warnings_list
+tests/tools/test_conformance_runner.py::test_diff_verify_result_errors_contains_pass_and_fail
+tests/tools/test_conformance_runner.py::test_diff_verify_result_warnings_contains_pass_and_fail
+tests/tools/test_conformance_runner.py::test_diff_verify_result_errors_contains_defaults_to_empty_list_when_absent
+tests/tools/test_conformance_runner.py::test_diff_verify_result_missing_errors_warnings_is_mismatch_not_empty_list
+tests/tools/test_conformance_runner.py::test_diff_verify_result_ok_bool_rejects_int_one_as_true
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[signature]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[schema]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[trust]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[revocation]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[binding]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[transparency]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[corroboration]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[manifest_freshness]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[grant]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[grant_trust]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[publisher_authority]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[publisher_authority_trust]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_wrong_value_for_each_exact_field_yields_named_mismatch[ok]
+tests/tools/test_conformance_runner.py::test_diff_verify_result_errors_contains_non_string_item_does_not_crash
+tests/tools/test_conformance_runner.py::test_diff_verify_result_warnings_contains_non_string_item_does_not_crash
+tests/tools/test_conformance_runner.py::test_diff_verify_result_ignores_extra_actual_fields
+tests/tools/test_conformance_runner.py::test_diff_chain_result_passes_on_full_match
+tests/tools/test_conformance_runner.py::test_diff_chain_result_valid_and_link_status_mismatch
+tests/tools/test_conformance_runner.py::test_diff_chain_result_valid_missing_from_actual
+tests/tools/test_conformance_runner.py::test_diff_chain_result_errors_contains_substring_pass_and_fail
+tests/tools/test_conformance_runner.py::test_diff_chain_result_missing_warnings_is_mismatch_not_empty_list
+tests/tools/test_conformance_runner.py::test_diff_chain_result_valid_rejects_int_one_as_true
+tests/tools/test_conformance_runner.py::test_diff_chain_result_missing_link_status_is_mismatch_not_empty_list
+tests/tools/test_conformance_runner.py::test_diff_chain_result_errors_contains_non_string_item_does_not_crash
+tests/tools/test_conformance_runner.py::test_diff_chain_result_warnings_exact_list
+tests/tools/test_conformance_runner.py::test_run_corpus_routes_chain_and_plain_leaves_to_their_own_rules
+tests/tools/test_conformance_runner.py::test_run_corpus_a_plain_leaf_diffed_with_wrong_chain_shape_fails
+tests/tools/test_conformance_runner.py::test_run_adapter_exit_code_produces_error_outcome
+tests/tools/test_conformance_runner.py::test_run_adapter_garbage_stdout_produces_error_outcome
+tests/tools/test_conformance_runner.py::test_run_adapter_rejects_nan_json_constant
+tests/tools/test_conformance_runner.py::test_run_adapter_timeout_produces_error_outcome
+tests/tools/test_conformance_runner.py::test_run_corpus_adapter_failure_yields_error_status_and_not_conformant[exit_code_adapter_template]
+tests/tools/test_conformance_runner.py::test_run_corpus_adapter_failure_yields_error_status_and_not_conformant[garbage_adapter_template]
+tests/tools/test_conformance_runner.py::test_run_corpus_timeout_adapter_yields_error_status
+tests/tools/test_conformance_runner.py::test_run_adapter_substitutes_leaf_placeholder_with_absolute_path_and_survives_shlex
+tests/tools/test_conformance_runner.py::test_main_returns_2_when_adapter_template_lacks_leaf_placeholder
+tests/tools/test_conformance_runner.py::test_main_returns_2_for_unknown_subset
+tests/tools/test_conformance_runner.py::test_main_returns_2_for_missing_vectors_dir
+tests/tools/test_conformance_runner.py::test_main_returns_2_for_empty_vectors_dir
+tests/tools/test_conformance_runner.py::test_main_returns_2_when_adapter_argument_missing_entirely
+tests/tools/test_conformance_runner.py::test_corpus_revision_is_stable_across_two_calls
+tests/tools/test_conformance_runner.py::test_corpus_revision_changes_when_a_leaf_file_changes
+tests/tools/test_conformance_runner.py::test_corpus_revision_unchanged_by_non_leaf_file_edits
+tests/tools/test_conformance_runner.py::test_report_shape_exact_member_set_and_sorted_leaves
+tests/tools/test_conformance_runner.py::test_main_exit_code_0_for_conformant_mini_corpus
+tests/tools/test_conformance_runner.py::test_main_exit_code_1_for_failing_mini_corpus
+tests/tools/test_conformance_runner.py::test_main_writes_report_file_with_expected_shape
+tests/tools/test_gate_tools.py::test_two_empty_report_logs_compare_nothing_and_fail
+tests/tools/test_gate_tools.py::test_invalid_json_line_reports_path_and_line_not_a_traceback
+tests/tools/test_gate_tools.py::test_lines_missing_report_shape_are_ignored_not_errored
+tests/tools/test_gate_tools.py::test_unrecognized_call_outcome_raises_malformed_run_error
+tests/tools/test_gate_tools.py::test_nodeid_wrong_type_raises_malformed_run_error_with_location_and_type
+tests/tools/test_gate_tools.py::test_nodeid_wrong_type_end_to_end_is_a_clean_error_not_a_traceback
+tests/tools/test_gate_tools.py::test_wasxfail_null_is_not_treated_as_xfail
+tests/tools/test_gate_tools.py::test_wasxfail_present_and_truthy_is_still_xpassed
+tests/tools/test_gate_tools.py::test_fence_indented_up_to_three_spaces_is_extracted_and_linted
+tests/tools/test_gate_tools.py::test_fence_without_language_is_named_and_fails_the_gate
+tests/tools/test_gate_tools.py::test_fence_with_tilde_marker_is_extracted_and_linted
+tests/tools/test_gate_tools.py::test_plan_with_no_blocks_at_all_fails_instead_of_declaring_clean
+tests/tools/test_gate_tools.py::test_composite_run_line_is_classified_per_fragment_not_per_line
+tests/tools/test_gate_tools.py::test_workflows_to_read_are_derived_and_named_exemption_is_excluded_unparsed
+tests/tools/test_test_census.py::test_counts_are_integers_without_coercion
+tests/tools/test_test_census.py::test_totals_are_bound_to_the_entries
+tests/tools/test_test_census.py::test_order_is_irrelevant_but_duplicate_files_are_refused
+tests/tools/test_test_census.py::test_duplicate_members_and_every_truncation_are_refused[census]
+tests/tools/test_test_census.py::test_duplicate_members_and_every_truncation_are_refused[report]
+tests/tools/test_test_census.py::test_census_requires_its_exact_suite_fields[total]
+tests/tools/test_test_census.py::test_census_requires_its_exact_suite_fields[files]
+tests/tools/test_test_census.py::test_census_requires_its_exact_suite_fields[extra]
+tests/tools/test_test_census.py::test_report_requires_consumed_fields_and_typed_assertions
+tests/tools/test_test_census.py::test_update_refuses_skipped_transitions_without_writing[pending-numPendingTests]
+tests/tools/test_test_census.py::test_update_refuses_skipped_transitions_without_writing[todo-numTodoTests]
+
+186 tests collected in 0.26s
+exit: 0
+ok: collect-only (sub) exits 0 (exit 0)
+ok: collected files (sub) non-empty (5 lines collected — derived, not written down)
+ok: collected files (sub) match the segment's own definition (the two sets coincide)
+--- negative: nonexistent argument is reported by name, not silently absorbed
+$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra <tree>/tests/test_nonexistent.py
+ERROR: file or directory not found: <tree>/tests/test_nonexistent.py
+
+
+no tests ran in 0.14s
+exit: 4
+ok: negative 'nonexistent argument is reported by name, not silently absorbed' failed at the guarded path (exit 4)
+
+GATE G-PY-SUB PASS property=the sub segment collects every file that belongs to it and exits green

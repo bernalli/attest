@@ -20,9 +20,9 @@ model key lifecycle honestly at the manifest level.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
-from attest import canon, keys, pq
+from attest import canon, keys, pq, trust_material
 from attest.dates import parse_strict_utc
 
 _ACTIVE = "active"
@@ -123,10 +123,18 @@ def duplicate_kids(entries: Any) -> list[str]:
             if kid in seen:
                 dups.add(kid)
             seen.add(kid)
-    return sorted(dups)
+    # Canonical key order, not `sorted()`'s: this list is rendered into an error
+    # a caller reads (`verify`'s duplicate-kid preflight), so the two cores owe
+    # each other the same sequence. `sorted()` on `str` orders by CODE POINT and
+    # the TypeScript twin's `.sort()` by UTF-16 CODE UNIT -- measured through
+    # `verify()` on both cores, from a conformance vector mutated in its kids
+    # alone: this core answered ['\ue000', '\U00010000'] and the other the
+    # reverse. The conformance vector for that case asserts only the substring
+    # "duplicate kid", so the corpus could not see it.
+    return sorted(dups, key=canon.canonical_key_order)
 
 
-def find_key(manifest: dict[str, Any], kid: str) -> dict[str, Any] | None:
+def _find_key(manifest: dict[str, Any], kid: str) -> dict[str, Any] | None:
     """Return the `keys[]` entry with the given `kid` — or None if absent OR
     AMBIGUOUS (2+ entries share `kid`).
 
@@ -148,8 +156,14 @@ def find_key(manifest: dict[str, Any], kid: str) -> dict[str, Any] | None:
     invisible to `duplicate_kids`, which compares strings only, so the
     ambiguity guard could not see it either. Every caller now inherits the
     refusal, including the ones that never look at a signature block.
+
+    `type(kid) is str`, never `isinstance`: a `str` SUBCLASS can answer one
+    thing to `==` here and another to whoever reads the entry afterwards,
+    which is the family this boundary exists to close. The public door above
+    applies the same rule before this body is reached (D18), so a selector
+    that is not exactly a string selects nothing at either level.
     """
-    if not isinstance(kid, str):
+    if type(kid) is not str:
         return None
     entries = manifest.get("keys", [])
     if not isinstance(entries, list):
@@ -161,6 +175,38 @@ def find_key(manifest: dict[str, Any], kid: str) -> dict[str, Any] | None:
                 return None
             found = entry
     return found
+
+
+def find_key(key_manifest: trust_material.KeyManifest, kid: str) -> dict[str, Any] | None:
+    """The public door: resolve `kid` in a PARSED key manifest.
+
+    Name and publicity are kept (D-A1) and the contract changes underneath:
+    the manifest arrives as a snapshot the library parsed itself, never as a
+    caller's live object whose `keys` member can answer differently to two
+    readers. A non-snapshot resolves NOTHING -- `None`, the same answer as an
+    absent kid, because a lookup that cannot be trusted has nothing to hand
+    back. That `None` is the WEAK migration signal (section 9); the strong one
+    is the annotation, which mypy reads.
+
+    `type(kid) is str` before any lookup (D18): the selector is checked here,
+    at the door, and again in `_find_key`, because internal callers reach the
+    body directly.
+
+    What comes back is a COPY, not the snapshot's own sub-tree. A caller that
+    edits the entry it was handed must not be able to change what the next
+    reader sees, nor what `to_bytes()` exports. `canonical_bytes` cannot fail
+    here: the whole document passed `_canonical` when the snapshot was built
+    (D16), and a sub-tree of a canonicalizable tree is canonicalizable.
+    """
+    if type(kid) is not str:
+        return None
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return None
+    found = _find_key(data, kid)
+    if found is None:
+        return None
+    return cast("dict[str, Any]", canon.loads_strict(canon.canonical_bytes(found)))
 
 
 def _entries_for_kid(manifest: dict[str, Any], kid: str) -> tuple[dict[str, Any], ...]:
@@ -355,7 +401,7 @@ def _preserves_absorbing_compromises(trusted: dict[str, Any], candidate: dict[st
     return True
 
 
-def verify_key_manifest(manifest: dict[str, Any]) -> bool:
+def _verify_key_manifest(manifest: dict[str, Any]) -> bool:
     """Self-consistency: signature verifies with a key listed in the manifest itself.
 
     Fails closed (never raises) if `keys[]` exceeds `MAX_MANIFEST_KEYS` — the
@@ -387,7 +433,7 @@ def verify_key_manifest(manifest: dict[str, Any]) -> bool:
     kid = dict.get(sig_block, "kid")
     if not isinstance(kid, str):
         return False
-    entry = find_key(manifest, kid)
+    entry = _find_key(manifest, kid)
     if entry is None:
         return False
     try:
@@ -397,7 +443,20 @@ def verify_key_manifest(manifest: dict[str, Any]) -> bool:
     return verify_signature_block(signable, sig_block, entry)
 
 
-def manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
+def verify_key_manifest(key_manifest: trust_material.KeyManifest) -> bool:
+    """The public door for self-consistency, over a PARSED manifest.
+
+    A non-snapshot is `False`: not "unverified", not an exception -- `False`
+    authorizes nothing, which is the fail-closed answer for a predicate whose
+    True is a permission.
+    """
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return False
+    return _verify_key_manifest(data)
+
+
+def _manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
     """Did the issuer actually sign THIS manifest, byte for byte?
 
     Narrower than `verify_key_manifest` on purpose. That function answers
@@ -451,7 +510,7 @@ def manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
     kid = dict.get(sig_block, "kid")
     if not isinstance(kid, str):
         return False
-    entry = find_key(manifest, kid)
+    entry = _find_key(manifest, kid)
     if entry is None:
         return False
     try:
@@ -478,7 +537,15 @@ def manifest_signature_is_authentic(manifest: dict[str, Any]) -> bool:
         return False
 
 
-def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool:
+def manifest_signature_is_authentic(key_manifest: trust_material.KeyManifest) -> bool:
+    """The public door for authenticity, over a PARSED manifest."""
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return False
+    return _manifest_signature_is_authentic(data)
+
+
+def _check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool:
     """True iff `candidate` (version `trusted`+1) was signed by a key `active` in `trusted`.
 
     Both manifests must be self-consistent and share `issuer`. Version gaps
@@ -486,7 +553,7 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
     successor is accepted here, so bridging a gap requires validating every
     intermediate manifest via repeated calls.
     """
-    if not verify_key_manifest(trusted) or not verify_key_manifest(candidate):
+    if not _verify_key_manifest(trusted) or not _verify_key_manifest(candidate):
         return False
     if trusted.get("issuer") != candidate.get("issuer"):
         return False
@@ -496,7 +563,7 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
         signer_kid = candidate["manifest_signature"]["kid"]
     except (KeyError, TypeError):
         return False
-    signer_entry = find_key(trusted, signer_kid)
+    signer_entry = _find_key(trusted, signer_kid)
     if signer_entry is None or not _kid_is_active_for_continuity(trusted, signer_kid):
         return False
     # The signer key must also cover the candidate's issuance in its validity
@@ -511,7 +578,7 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
     # candidate lists for it. Otherwise an attacker reuses a trusted kid, swaps in
     # its own pub, self-signs, and passes — continuity becomes cryptographically
     # hollow (2026-07-13 review, finding 1).
-    # Defense in depth only: `verify_key_manifest(candidate)` above already
+    # Defense in depth only: `_verify_key_manifest(candidate)` above already
     # canonicalizes the same object behind the same guard, so this branch is
     # unreachable today and carries no coverage. It stays so that reordering
     # the self-consistency check can never reopen the fail-closed hole.
@@ -520,6 +587,22 @@ def check_continuity(trusted: dict[str, Any], candidate: dict[str, Any]) -> bool
     except (TypeError, canon.CanonError):
         return False
     return verify_signature_block(signable, candidate["manifest_signature"], signer_entry)
+
+
+def check_continuity(
+    trusted: trust_material.KeyManifest, candidate: trust_material.KeyManifest
+) -> bool:
+    """The public door for rotation continuity, over two PARSED manifests.
+
+    BOTH sides open, and either failing to open is `False`: a continuity
+    answer computed from one snapshot and one live object would carry the
+    weaker of the two guarantees while reading like the stronger.
+    """
+    trusted_data = trust_material._manifest_data(trusted)
+    candidate_data = trust_material._manifest_data(candidate)
+    if trusted_data is None or candidate_data is None:
+        return False
+    return _check_continuity(trusted_data, candidate_data)
 
 
 def _can_sign_for_continuity(entry: Any) -> bool:
@@ -811,7 +894,9 @@ def check_artifact_continuity(trusted: dict[str, Any], candidate: dict[str, Any]
     return candidate_version == trusted_version + 1
 
 
-def verify_artifact_manifest(manifest: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+def verify_artifact_manifest(
+    manifest: dict[str, Any], key_manifest: trust_material.KeyManifest
+) -> bool:
     """Verify against `key_manifest`: signer must be `active` there, with `released_at`
     covered by the signer key's `[valid_from, valid_to]` window, and issuers must match.
 
@@ -833,6 +918,33 @@ def verify_artifact_manifest(manifest: dict[str, Any], key_manifest: dict[str, A
     `MAX_ARTIFACT_ENTRIES` — the G1 ceiling (attest-versioning.md §5
     amendment) on the sibling array this function is the self-consistency
     gate for, mirroring `verify_key_manifest`'s `MAX_MANIFEST_KEYS` check.
+
+    `key_manifest` — never `manifest`, which is the document UNDER
+    EXAMINATION rather than trusted material — arrives as a SNAPSHOT the
+    library parsed from bytes, the same contract `verify.py` applies to the
+    trust store and every sibling side-document module (`revocation`,
+    `transfer`, `grant`, `authority`) applies to its own `key_manifest`
+    parameter. The entry predicates below (`entry.get("status")`,
+    `entry.get("valid_to")`) are shadowable, so without that contract a
+    manifest can be authentic and lying at the same time. Callers that
+    already hold the snapshot's tree use `_verify_artifact_manifest`, so the
+    cost is one unwrap per public call and never one per artifact.
+    """
+    data = trust_material._manifest_data(key_manifest)
+    if data is None:
+        return False
+    return _verify_artifact_manifest(manifest, data)
+
+
+def _verify_artifact_manifest(manifest: dict[str, Any], key_manifest: dict[str, Any]) -> bool:
+    """`verify_artifact_manifest`'s body, over an ALREADY MATERIALIZED `key_manifest`.
+
+    Second precondition on top of the public one: `key_manifest` is the
+    output of `trust_material.materialized_key_manifest`, so every value it
+    holds is of exact built-in type and the `.get` reads below cannot be
+    shadowed. Calling this with a raw caller object reopens the class the
+    boundary exists to close. `manifest` (the document under examination) is
+    NOT materialized here, unchanged from before this boundary existed.
     """
     manifest_version = manifest.get("manifest_version")
     if "manifest_version" in manifest and (
@@ -847,7 +959,7 @@ def verify_artifact_manifest(manifest: dict[str, Any], key_manifest: dict[str, A
         and len(artifacts_for_ceiling) > MAX_ARTIFACT_ENTRIES
     ):
         return False
-    if not verify_key_manifest(key_manifest):
+    if not _verify_key_manifest(key_manifest):
         return False
     sig_block = manifest.get("manifest_signature")
     if not isinstance(sig_block, dict):
@@ -857,7 +969,7 @@ def verify_artifact_manifest(manifest: dict[str, Any], key_manifest: dict[str, A
     kid = dict.get(sig_block, "kid")
     if not isinstance(kid, str):
         return False
-    entry = find_key(key_manifest, kid)
+    entry = _find_key(key_manifest, kid)
     if entry is None or entry.get("status") != _ACTIVE:
         return False
     try:

@@ -35,7 +35,7 @@ from attest import (
     validate,
     verify,
 )
-from tests.helpers import make_payload, non_canonical_spellings
+from tests.helpers import key_manifest, make_payload, non_canonical_spellings, store
 
 ISSUER = "store.example.com"
 SERIES = "store.example.com/works/EXG-001"  # matches make_payload()'s default work.artifact_series
@@ -76,7 +76,7 @@ def _manifest_active_plus_compromised() -> dict[str, Any]:
 def _trust_store(
     manifest: dict[str, Any], issuer: str = ISSUER, provenance: str = "tls"
 ) -> verify.TrustStore:
-    return verify.TrustStore(manifests={issuer: manifest}, provenance={issuer: provenance})
+    return store({issuer: manifest}, {issuer: provenance})
 
 
 def _to_bytes(envelope: dict[str, Any]) -> bytes:
@@ -173,7 +173,7 @@ def test_non_canonical_revoked_at_never_authenticates_a_record(name: str, revoke
     payload, envelope = _refund_window_receipt()
     manifest = _key_manifest()
     record = revocation.build_record(payload["receipt_id"], "revoked", revoked_at, KP, KID)
-    assert revocation.verify_record(record, manifest) is False
+    assert revocation.verify_record(record, key_manifest(manifest)) is False
     result = verify.verify(_to_bytes(envelope), _trust_store(manifest), revocation_view=[record])
     assert not any("outside refund window" in w for w in result.warnings)
     assert any("failed verification, ignored" in w for w in result.warnings)
@@ -380,12 +380,12 @@ def test_unsupported_attest_version_is_invalid() -> None:
 def test_issuer_mismatch_signed_by_evil_domain_key() -> None:
     """Design vector 5: a valid manifest for evil.example.com must never validate
     a receipt claiming issuer.id "store.example.com"."""
-    trust_store = verify.TrustStore(
-        manifests={
+    trust_store = store(
+        {
             ISSUER: _key_manifest(),
             EVIL_ISSUER: _key_manifest(EVIL_ISSUER, EVIL_KID, EVIL_KP),
         },
-        provenance={ISSUER: "tls", EVIL_ISSUER: "tls"},
+        {ISSUER: "tls", EVIL_ISSUER: "tls"},
     )
     payload = make_payload()  # issuer.id == store.example.com
     sig = keys.sign(canon.canonical_bytes(payload), EVIL_KP)
@@ -400,7 +400,7 @@ def test_issuer_mismatch_signed_by_evil_domain_key() -> None:
 
 def test_unknown_issuer_no_manifest_is_invalid() -> None:
     envelope = issue.issue(make_payload(), KP, KID)
-    empty_store = verify.TrustStore(manifests={}, provenance={})
+    empty_store = store({}, {})
     result = verify.verify(_to_bytes(envelope), empty_store)
     assert result.signature == "invalid"
     assert result.errors
@@ -492,7 +492,7 @@ def test_manifest_entry_missing_pub_fails_closed_with_malformed_key_material() -
     manifest = manifests.build_key_manifest(
         ISSUER, 1, "2026-01-01T00:00:00Z", [broken, signer], signer_kp, signer_kid
     )
-    assert manifests.verify_key_manifest(manifest) is True
+    assert manifests.verify_key_manifest(key_manifest(manifest)) is True
 
     envelope = issue.issue(make_payload(), KP, KID)
     result = verify.verify(_to_bytes(envelope), _trust_store(manifest))
@@ -648,9 +648,9 @@ def _verify_with_authority_view(
 ) -> verify.VerificationResult:
     payload = make_payload(work={"publisher_id": "pub.example"})
     envelope = issue.issue(payload, KP, KID)
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: _key_manifest(), "pub.example": publisher_manifest},
-        provenance={ISSUER: "tls", "pub.example": "tls"},
+    trust_store = store(
+        {ISSUER: _key_manifest(), "pub.example": publisher_manifest},
+        {ISSUER: "tls", "pub.example": "tls"},
     )
     return verify.verify(_to_bytes(envelope), trust_store, authority_view=authority_view)
 
@@ -1490,9 +1490,7 @@ def test_rotation_continuity_happy_path_keeps_normal_trust() -> None:
     root = _key_manifest()  # v1, sole active key KID/KP
     entries_v2 = [manifests.key_entry(KID, KP.pub, "2026-01-01T00:00:00Z", None, "active")]
     v2 = manifests.build_key_manifest(ISSUER, 2, "2026-02-01T00:00:00Z", entries_v2, KP, KID)
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: v2}, provenance={ISSUER: "tls"}, chains={ISSUER: [root, v2]}
-    )
+    trust_store = store({ISSUER: v2}, {ISSUER: "tls"}, {ISSUER: [root, v2]})
     envelope = issue.issue(make_payload(), KP, KID)
     result = verify.verify(_to_bytes(envelope), trust_store)
     assert result.trust == "verified"
@@ -1511,9 +1509,7 @@ def test_rotation_discontinuous_chain_yields_unverified_rotation() -> None:
     v2 = manifests.build_key_manifest(
         ISSUER, 2, "2026-02-01T00:00:00Z", entries_v2, stranger_kp, stranger_kid
     )
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: v2}, provenance={ISSUER: "tls"}, chains={ISSUER: [root, v2]}
-    )
+    trust_store = store({ISSUER: v2}, {ISSUER: "tls"}, {ISSUER: [root, v2]})
     envelope = issue.issue(make_payload(), KP, KID)  # still resolves fine against v2's KID entry
     result = verify.verify(_to_bytes(envelope), trust_store)
     assert result.signature == "valid"
@@ -1522,7 +1518,7 @@ def test_rotation_discontinuous_chain_yields_unverified_rotation() -> None:
 
 def test_no_chain_recorded_is_backward_compatible() -> None:
     """Task-8 TrustStore construction (no `chains` kwarg) must keep working."""
-    trust_store = verify.TrustStore(manifests={ISSUER: _key_manifest()}, provenance={ISSUER: "tls"})
+    trust_store = store({ISSUER: _key_manifest()}, {ISSUER: "tls"})
     envelope = issue.issue(make_payload(), KP, KID)
     result = verify.verify(_to_bytes(envelope), trust_store)
     assert result.trust == "verified"
@@ -1548,7 +1544,7 @@ def test_artifact_manifest_no_trust_store_entry_is_zero_behavior_change() -> Non
     """A TrustStore with no `artifact_manifests` entry for the receipt's series
     (Task-8-shaped construction, no new kwargs at all) must keep working exactly
     as before this task."""
-    trust_store = verify.TrustStore(manifests={ISSUER: _key_manifest()}, provenance={ISSUER: "tls"})
+    trust_store = store({ISSUER: _key_manifest()}, {ISSUER: "tls"})
     envelope = issue.issue(make_payload(), KP, KID)
     result = verify.verify(_to_bytes(envelope), trust_store)
     assert result.trust == "verified"
@@ -1558,9 +1554,9 @@ def test_artifact_manifest_no_trust_store_entry_is_zero_behavior_change() -> Non
 def test_artifact_manifest_monotone_chain_keeps_normal_trust() -> None:
     am1 = _artifact_manifest(1, 1)
     am2 = _artifact_manifest(2, 2)
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: _key_manifest()},
-        provenance={ISSUER: "tls"},
+    trust_store = store(
+        {ISSUER: _key_manifest()},
+        {ISSUER: "tls"},
         artifact_manifests={ISSUER: {SERIES: am2}},
         artifact_manifest_chains={ISSUER: {SERIES: [am1, am2]}},
     )
@@ -1579,9 +1575,9 @@ def test_artifact_manifest_rollback_yields_unverified_rotation() -> None:
     for key manifests."""
     am1 = _artifact_manifest(1, 1)
     am2 = _artifact_manifest(2, 2)
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: _key_manifest()},
-        provenance={ISSUER: "tls"},
+    trust_store = store(
+        {ISSUER: _key_manifest()},
+        {ISSUER: "tls"},
         artifact_manifests={ISSUER: {SERIES: am1}},
         artifact_manifest_chains={ISSUER: {SERIES: [am1, am2]}},
     )
@@ -1593,9 +1589,9 @@ def test_artifact_manifest_rollback_yields_unverified_rotation() -> None:
 
 def test_artifact_manifest_missing_manifest_version_warns_legacy() -> None:
     legacy = _artifact_manifest(1, None)
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: _key_manifest()},
-        provenance={ISSUER: "tls"},
+    trust_store = store(
+        {ISSUER: _key_manifest()},
+        {ISSUER: "tls"},
         artifact_manifests={ISSUER: {SERIES: legacy}},
     )
     envelope = issue.issue(make_payload(), KP, KID)
@@ -1609,9 +1605,9 @@ def test_unauthenticated_artifact_manifest_is_ignored_before_currency() -> None:
     am1 = _artifact_manifest(1, 1)
     am2 = _artifact_manifest(2, 2)
     del am2["manifest_signature"]
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: _key_manifest()},
-        provenance={ISSUER: "tls"},
+    trust_store = store(
+        {ISSUER: _key_manifest()},
+        {ISSUER: "tls"},
         artifact_manifests={ISSUER: {SERIES: am2}},
         artifact_manifest_chains={ISSUER: {SERIES: [am1, am2]}},
     )
@@ -1623,9 +1619,9 @@ def test_unauthenticated_artifact_manifest_is_ignored_before_currency() -> None:
 def test_legacy_chain_transitions_are_warn_only() -> None:
     versioned = _artifact_manifest(2, 1)
     legacy = _artifact_manifest(1, None)
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: _key_manifest()},
-        provenance={ISSUER: "tls"},
+    trust_store = store(
+        {ISSUER: _key_manifest()},
+        {ISSUER: "tls"},
         artifact_manifests={ISSUER: {SERIES: versioned}},
         artifact_manifest_chains={ISSUER: {SERIES: [legacy, versioned]}},
     )
@@ -1641,9 +1637,9 @@ def test_legacy_pinned_after_versioned_history_is_warn_only() -> None:
     # must be skipped entirely when any authenticated member is legacy.
     versioned = _artifact_manifest(1, 1)
     legacy = _artifact_manifest(2, None)
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: _key_manifest()},
-        provenance={ISSUER: "tls"},
+    trust_store = store(
+        {ISSUER: _key_manifest()},
+        {ISSUER: "tls"},
         artifact_manifests={ISSUER: {SERIES: legacy}},
         artifact_manifest_chains={ISSUER: {SERIES: [versioned]}},
     )
@@ -1656,9 +1652,9 @@ def test_artifact_currency_is_scoped_to_receipt_issuer_and_series() -> None:
     am1 = _artifact_manifest(1, 1)
     am2 = _artifact_manifest(2, 2)
     other_issuer = "other.example.com"
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: _key_manifest()},
-        provenance={ISSUER: "tls"},
+    trust_store = store(
+        {ISSUER: _key_manifest()},
+        {ISSUER: "tls"},
         artifact_manifests={ISSUER: {SERIES: am2}, other_issuer: {SERIES: am1}},
         artifact_manifest_chains={ISSUER: {SERIES: [am1, am2]}, other_issuer: {SERIES: [am1, am2]}},
     )
@@ -1670,9 +1666,9 @@ def test_artifact_currency_is_scoped_to_receipt_issuer_and_series() -> None:
 def test_artifact_manifest_issuer_mismatch_is_ignored_with_distinct_warning() -> None:
     mismatched = _artifact_manifest(1, 1)
     mismatched["issuer"] = "other.example.com"
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: _key_manifest()},
-        provenance={ISSUER: "tls"},
+    trust_store = store(
+        {ISSUER: _key_manifest()},
+        {ISSUER: "tls"},
         artifact_manifests={ISSUER: {SERIES: mismatched}},
     )
     result = verify.verify(_to_bytes(issue.issue(make_payload(), KP, KID)), trust_store)
@@ -2011,7 +2007,7 @@ def test_an_oversized_integer_literal_from_the_wire_is_a_verdict_not_a_crash() -
     the wire, it must come back as a fail-closed verdict: the boundary here
     catches `canon.CanonError`, so anything else escapes to the caller."""
     wire = b'{"payload":{"n":' + b"9" * 4400 + b'},"signatures":[]}'
-    result = verify.verify(wire, verify.TrustStore(manifests={}, provenance={}))
+    result = verify.verify(wire, store({}, {}))
 
     assert result.signature == "invalid"
     assert any("invalid JSON" in e for e in result.errors)

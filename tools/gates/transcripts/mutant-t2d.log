@@ -1,0 +1,249 @@
+# mutant t2d: every provenance entry is remapped to tls at the boundary
+# recorded 2026-09-08T17:41:44Z
+
+# injected through tools/gates/mutant_d_plugin.py (no source edit)
+$ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf -p tools.gates.mutant_d_plugin tests/test_vectors.py::test_vector_matches_spec_intended_result[28-transparency/a-logged-trust-unchanged] tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/q-tofu-publisher] tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/x-trust-not-borrowed-from-signer] tests/test_vectors.py::test_vector_matches_spec_intended_result[43-publisher-authority/o-tofu-authorized]
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_vector_matches_spec_intended_result[28-transparency/a-logged-trust-unchanged] _
+
+vector_dir = PosixPath('<tree>/docs/spec/vectors/28-transparency/a-logged-trust-unchanged')
+
+    @pytest.mark.parametrize("vector_dir", _VECTOR_DIRS, ids=_VECTOR_IDS)
+    def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
+        expected = _load_json(vector_dir / "expected.json")
+        envelope_bytes = _envelope_bytes(vector_dir)
+        trust_store = _trust_store(vector_dir)
+        disclosure = _disclosure(vector_dir)
+        revocation_view = _revocation_view(vector_dir)
+        # Group 41's compromise-declaration channel is handed over only by the
+        # leaves that ship one, so every other leaf in the corpus is replayed
+        # through exactly the call it was replayed through before the channel
+        # existed — the file's presence is the whole gate (see this module's
+        # docstring).
+        compromise_view = _compromise_view(vector_dir)
+        compromise_kwargs: dict[str, Any] = (
+            {} if compromise_view is None else {"compromise_view": compromise_view}
+        )
+    
+        result = verify.verify(
+            envelope_bytes,
+            trust_store,
+            revocation_view=revocation_view,
+            disclosure=disclosure,
+            transparency=_transparency_evidence(vector_dir),
+            log_keys=_log_keys(vector_dir),
+            anchor_policy=_anchor_policy(vector_dir),
+            revocation_evidence=_revocation_evidence(vector_dir),
+            transfer_view=_transfer_view(vector_dir),
+            witness_policy=_witness_policy(vector_dir),
+            grant_view=_grant_view(vector_dir),
+            authority_view=_authority_view(vector_dir),
+            **compromise_kwargs,
+        )
+    
+        assert result.signature == expected["signature"]
+        assert result.schema == expected["schema"]
+>       assert result.trust == expected["trust"]
+E       AssertionError: assert 'verified' == 'unauthenticated_tofu'
+E         
+E         - unauthenticated_tofu
+E         + verified
+
+tests/test_vectors.py:379: AssertionError
+_ test_vector_matches_spec_intended_result[37-preservation-pledge/q-tofu-publisher] _
+
+vector_dir = PosixPath('<tree>/docs/spec/vectors/37-preservation-pledge/q-tofu-publisher')
+
+    @pytest.mark.parametrize("vector_dir", _VECTOR_DIRS, ids=_VECTOR_IDS)
+    def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
+        expected = _load_json(vector_dir / "expected.json")
+        envelope_bytes = _envelope_bytes(vector_dir)
+        trust_store = _trust_store(vector_dir)
+        disclosure = _disclosure(vector_dir)
+        revocation_view = _revocation_view(vector_dir)
+        # Group 41's compromise-declaration channel is handed over only by the
+        # leaves that ship one, so every other leaf in the corpus is replayed
+        # through exactly the call it was replayed through before the channel
+        # existed — the file's presence is the whole gate (see this module's
+        # docstring).
+        compromise_view = _compromise_view(vector_dir)
+        compromise_kwargs: dict[str, Any] = (
+            {} if compromise_view is None else {"compromise_view": compromise_view}
+        )
+    
+        result = verify.verify(
+            envelope_bytes,
+            trust_store,
+            revocation_view=revocation_view,
+            disclosure=disclosure,
+            transparency=_transparency_evidence(vector_dir),
+            log_keys=_log_keys(vector_dir),
+            anchor_policy=_anchor_policy(vector_dir),
+            revocation_evidence=_revocation_evidence(vector_dir),
+            transfer_view=_transfer_view(vector_dir),
+            witness_policy=_witness_policy(vector_dir),
+            grant_view=_grant_view(vector_dir),
+            authority_view=_authority_view(vector_dir),
+            **compromise_kwargs,
+        )
+    
+        assert result.signature == expected["signature"]
+        assert result.schema == expected["schema"]
+        assert result.trust == expected["trust"]
+        if "revocation" in expected:
+            assert result.revocation == expected["revocation"]
+        if "binding" in expected:
+            assert result.binding == expected["binding"]
+        if "transparency" in expected:
+            assert result.transparency == expected["transparency"]
+        if "corroboration" in expected:
+            assert result.corroboration == expected["corroboration"]
+        if "manifest_freshness" in expected:
+            assert result.manifest_freshness == expected["manifest_freshness"]
+        if "grant" in expected:
+            assert result.grant == expected["grant"]
+        if "grant_trust" in expected:
+>           assert result.grant_trust == expected["grant_trust"]
+E           AssertionError: assert 'verified' == 'unauthenticated_tofu'
+E             
+E             - unauthenticated_tofu
+E             + verified
+
+tests/test_vectors.py:393: AssertionError
+_ test_vector_matches_spec_intended_result[37-preservation-pledge/x-trust-not-borrowed-from-signer] _
+
+vector_dir = PosixPath('<tree>/docs/spec/vectors/37-preservation-pledge/x-trust-not-borrowed-from-signer')
+
+    @pytest.mark.parametrize("vector_dir", _VECTOR_DIRS, ids=_VECTOR_IDS)
+    def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
+        expected = _load_json(vector_dir / "expected.json")
+        envelope_bytes = _envelope_bytes(vector_dir)
+        trust_store = _trust_store(vector_dir)
+        disclosure = _disclosure(vector_dir)
+        revocation_view = _revocation_view(vector_dir)
+        # Group 41's compromise-declaration channel is handed over only by the
+        # leaves that ship one, so every other leaf in the corpus is replayed
+        # through exactly the call it was replayed through before the channel
+        # existed — the file's presence is the whole gate (see this module's
+        # docstring).
+        compromise_view = _compromise_view(vector_dir)
+        compromise_kwargs: dict[str, Any] = (
+            {} if compromise_view is None else {"compromise_view": compromise_view}
+        )
+    
+        result = verify.verify(
+            envelope_bytes,
+            trust_store,
+            revocation_view=revocation_view,
+            disclosure=disclosure,
+            transparency=_transparency_evidence(vector_dir),
+            log_keys=_log_keys(vector_dir),
+            anchor_policy=_anchor_policy(vector_dir),
+            revocation_evidence=_revocation_evidence(vector_dir),
+            transfer_view=_transfer_view(vector_dir),
+            witness_policy=_witness_policy(vector_dir),
+            grant_view=_grant_view(vector_dir),
+            authority_view=_authority_view(vector_dir),
+            **compromise_kwargs,
+        )
+    
+        assert result.signature == expected["signature"]
+        assert result.schema == expected["schema"]
+        assert result.trust == expected["trust"]
+        if "revocation" in expected:
+            assert result.revocation == expected["revocation"]
+        if "binding" in expected:
+            assert result.binding == expected["binding"]
+        if "transparency" in expected:
+            assert result.transparency == expected["transparency"]
+        if "corroboration" in expected:
+            assert result.corroboration == expected["corroboration"]
+        if "manifest_freshness" in expected:
+            assert result.manifest_freshness == expected["manifest_freshness"]
+        if "grant" in expected:
+            assert result.grant == expected["grant"]
+        if "grant_trust" in expected:
+>           assert result.grant_trust == expected["grant_trust"]
+E           AssertionError: assert 'verified' == 'unauthenticated_tofu'
+E             
+E             - unauthenticated_tofu
+E             + verified
+
+tests/test_vectors.py:393: AssertionError
+_ test_vector_matches_spec_intended_result[43-publisher-authority/o-tofu-authorized] _
+
+vector_dir = PosixPath('<tree>/docs/spec/vectors/43-publisher-authority/o-tofu-authorized')
+
+    @pytest.mark.parametrize("vector_dir", _VECTOR_DIRS, ids=_VECTOR_IDS)
+    def test_vector_matches_spec_intended_result(vector_dir: Path) -> None:
+        expected = _load_json(vector_dir / "expected.json")
+        envelope_bytes = _envelope_bytes(vector_dir)
+        trust_store = _trust_store(vector_dir)
+        disclosure = _disclosure(vector_dir)
+        revocation_view = _revocation_view(vector_dir)
+        # Group 41's compromise-declaration channel is handed over only by the
+        # leaves that ship one, so every other leaf in the corpus is replayed
+        # through exactly the call it was replayed through before the channel
+        # existed — the file's presence is the whole gate (see this module's
+        # docstring).
+        compromise_view = _compromise_view(vector_dir)
+        compromise_kwargs: dict[str, Any] = (
+            {} if compromise_view is None else {"compromise_view": compromise_view}
+        )
+    
+        result = verify.verify(
+            envelope_bytes,
+            trust_store,
+            revocation_view=revocation_view,
+            disclosure=disclosure,
+            transparency=_transparency_evidence(vector_dir),
+            log_keys=_log_keys(vector_dir),
+            anchor_policy=_anchor_policy(vector_dir),
+            revocation_evidence=_revocation_evidence(vector_dir),
+            transfer_view=_transfer_view(vector_dir),
+            witness_policy=_witness_policy(vector_dir),
+            grant_view=_grant_view(vector_dir),
+            authority_view=_authority_view(vector_dir),
+            **compromise_kwargs,
+        )
+    
+        assert result.signature == expected["signature"]
+        assert result.schema == expected["schema"]
+        assert result.trust == expected["trust"]
+        if "revocation" in expected:
+            assert result.revocation == expected["revocation"]
+        if "binding" in expected:
+            assert result.binding == expected["binding"]
+        if "transparency" in expected:
+            assert result.transparency == expected["transparency"]
+        if "corroboration" in expected:
+            assert result.corroboration == expected["corroboration"]
+        if "manifest_freshness" in expected:
+            assert result.manifest_freshness == expected["manifest_freshness"]
+        if "grant" in expected:
+            assert result.grant == expected["grant"]
+        if "grant_trust" in expected:
+            assert result.grant_trust == expected["grant_trust"]
+        if "publisher_authority" in expected:
+            assert result.publisher_authority == expected["publisher_authority"]
+        if "publisher_authority_trust" in expected:
+>           assert result.publisher_authority_trust == expected["publisher_authority_trust"]
+E           AssertionError: assert 'verified' == 'unauthenticated_tofu'
+E             
+E             - unauthenticated_tofu
+E             + verified
+
+tests/test_vectors.py:397: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[28-transparency/a-logged-trust-unchanged]
+FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/q-tofu-publisher]
+FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/x-trust-not-borrowed-from-signer]
+FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[43-publisher-authority/o-tofu-authorized]
+4 failed in 0.52s
+
+exit: 1
+
+RED: True
+MARKER 'unauthenticated_tofu' present: True
+VERDICT: KILLED

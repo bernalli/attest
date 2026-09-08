@@ -25,8 +25,8 @@ import pytest
 from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
-from attest import issue, keys, manifests, verify
-from tests.helpers import make_payload
+from attest import issue, keys, manifests, trust_material, verify
+from tests.helpers import key_manifest, make_payload, store
 from tests.strategies import malformed_manifests as malformed
 
 ISSUER = "store.example.com"
@@ -104,7 +104,7 @@ def _manifest(entries: list[dict[str, Any]], version: object = 1) -> dict[str, A
 
 
 def _trust(manifest: dict[str, Any]) -> verify.TrustStore:
-    return verify.TrustStore(manifests={ISSUER: manifest}, provenance={ISSUER: "tls"}, chains={})
+    return store({ISSUER: manifest}, {ISSUER: "tls"})
 
 
 # One well-formed §7.1 manifest and one receipt signed by KID, built once:
@@ -141,9 +141,18 @@ def test_p1_any_entry_marking_the_kid_compromised_forbids_a_valid_signature(
     """v0.1 §7.3: *any* held entry marking K compromised must win.
 
     Which entry an implementation happens to read first is an implementation
-    detail; the evidence the verifier holds is the whole array.
+    detail; the evidence the verifier holds is the whole array. A decoration
+    that puts the manifest outside the attest-JCS profile (e.g. a float
+    `manifest_version`) is refused at the trust-store boundary itself
+    (`TrustMaterialError`) before `verify.verify` ever runs -- a stronger
+    refusal than `signature != "valid"`, not a violation of it.
     """
-    result = verify.verify(RECEIPT_BYTES, _trust(manifest))
+    try:
+        trust_store = _trust(manifest)
+    except trust_material.TrustMaterialError:
+        return
+
+    result = verify.verify(RECEIPT_BYTES, trust_store)
 
     assert result.signature != "valid"
 
@@ -160,15 +169,24 @@ def test_p2_malformed_manifests_never_raise_out_of_the_entry_points(
 
     Manifests arrive from untrusted sources, so every entry point that touches
     one must fail closed rather than propagate a `KeyError`/`TypeError`/
-    `AttributeError` out of the library.
+    `AttributeError` out of the library. `TrustMaterialError` at the
+    trust-store boundary is that same fail-closed contract one layer earlier:
+    a document outside the attest-JCS profile (e.g. a float
+    `manifest_version`) never reaches `verify.verify` at all, and is not the
+    crash this property exists to catch.
     """
     # Channel 1: the mutated manifest IS the trust-store manifest.
     try:
-        verify.verify(RECEIPT_BYTES, _trust(manifest))
-    except TypeError as exc:
-        assert str(exc) in VERIFY_DECLARED_TYPE_ERRORS, (
-            f"verify() raised an undeclared TypeError on a mutated manifest: {exc}"
-        )
+        trust_store: verify.TrustStore | None = _trust(manifest)
+    except trust_material.TrustMaterialError:
+        trust_store = None
+    if trust_store is not None:
+        try:
+            verify.verify(RECEIPT_BYTES, trust_store)
+        except TypeError as exc:
+            assert str(exc) in VERIFY_DECLARED_TYPE_ERRORS, (
+                f"verify() raised an undeclared TypeError on a mutated manifest: {exc}"
+            )
 
     # Channel 2: the trust store is clean and the mutation arrives as an
     # untrusted §19 compromise claim.
@@ -184,12 +202,15 @@ def test_p2_malformed_manifests_never_raise_out_of_the_entry_points(
         )
 
     # The four read-only `manifests` entry points declare no exception at all:
-    # anything escaping these five calls fails the test by propagating.
-    manifests.find_key(manifest, KID)
-    manifests.verify_key_manifest(manifest)
-    manifests.manifest_signature_is_authentic(manifest)
-    manifests.check_continuity(WELL_FORMED, manifest)
-    manifests.check_continuity(manifest, WELL_FORMED)
+    # anything escaping these five calls fails the test by propagating. This
+    # is the CORPUS body (R3): `manifest` need not survive json.dumps + strict
+    # parsing -- Channel 1 above already covers that boundary separately --
+    # so these go through the private twins, never the parsed-snapshot doors.
+    manifests._find_key(manifest, KID)
+    manifests._verify_key_manifest(manifest)
+    manifests._manifest_signature_is_authentic(manifest)
+    manifests._check_continuity(WELL_FORMED, manifest)
+    manifests._check_continuity(manifest, WELL_FORMED)
 
 
 # --- P3: a compromised kid is never resurrected -----------------------------
@@ -228,7 +249,10 @@ def test_p3_successor_can_never_resurrect_a_compromised_kid(
         DECLARER_KID,
     )
 
-    assert manifests.check_continuity(COMPROMISED_PREDECESSOR, successor) is False
+    assert (
+        manifests.check_continuity(key_manifest(COMPROMISED_PREDECESSOR), key_manifest(successor))
+        is False
+    )
 
 
 @PROPERTY_SETTINGS
@@ -259,7 +283,7 @@ def test_p4_continuity_signer_status_reads_every_duplicate_entry(
     # would make the property below vacuous through `check_continuity` alone,
     # so the signer-status predicate is asserted directly: a regression from
     # reading EVERY entry back to a first-match read stays detectable.
-    assert manifests.verify_key_manifest(predecessor) is False
-    assert manifests.verify_key_manifest(successor) is True
+    assert manifests.verify_key_manifest(key_manifest(predecessor)) is False
+    assert manifests.verify_key_manifest(key_manifest(successor)) is True
     assert manifests._kid_is_active_for_continuity(predecessor, DECLARER_KID) is False  # type: ignore[attr-defined]
-    assert manifests.check_continuity(predecessor, successor) is False
+    assert manifests.check_continuity(key_manifest(predecessor), key_manifest(successor)) is False

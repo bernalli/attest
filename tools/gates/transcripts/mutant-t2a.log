@@ -1,0 +1,64 @@
+# mutant t2a: the brand check accepts a plain dict carrying the five member names
+# recorded 2026-09-08T17:41:36Z
+
+# injected into src/attest/trust_material.py
+$ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf tests/test_trust_store_boundary.py::test_verify_answers_a_verdict_for_anything_but_a_snapshot tests/test_trust_store_boundary.py::test_the_evaluators_raise_for_anything_but_a_snapshot
+.F..........F.........                                                   [100%]
+=================================== FAILURES ===================================
+_ test_verify_answers_a_verdict_for_anything_but_a_snapshot[five-member-dict-{'manifests': {}, 'provenance': {}, 'cha] _
+
+label = 'five-member-dict'
+imposter = {'manifests': {}, 'provenance': {}, 'chains': {}, 'artifact_manifests': {}, ...}
+
+    @pytest.mark.parametrize("label,imposter", _store_imposters(), ids=lambda v: str(v)[:40])
+    def test_verify_answers_a_verdict_for_anything_but_a_snapshot(label: str, imposter: object) -> None:
+        """Section 5.5 class `V`: `verify()` ANSWERS, it does not raise.
+    
+        This entry point already answers a malformed envelope with `ok: false` and
+        a named reason; an embedder's request handler should not start crashing
+        because the trust material it was handed is of the wrong kind. The
+        evaluators are the opposite case (below) and the asymmetry is deliberate.
+        """
+        envelope = _to_bytes(issue.issue(make_payload(), KP, KID))
+        _clear()
+        result = verify.verify(envelope, cast("Any", imposter))
+        assert result.ok is False, label
+>       assert _NOT_PARSED_STORE in result.errors, f"{label}: {result.errors}"
+E       AssertionError: five-member-dict: ("no trusted manifest for issuer 'store.example.com'",)
+E       assert 'trust store must be a parsed snapshot produced by this library; a live object is not accepted' in ("no trusted manifest for issuer 'store.example.com'",)
+E        +  where ("no trusted manifest for issuer 'store.example.com'",) = VerificationResult(signature='invalid', schema='not_checked', revocation='unknown', binding='not_checked', trust='unau...t='not_checked', grant_trust='not_checked', publisher_authority='not_checked', publisher_authority_trust='not_checked').errors
+
+tests/test_trust_store_boundary.py:462: AssertionError
+_ test_the_evaluators_raise_for_anything_but_a_snapshot[five-member-dict-{'manifests': {}, 'provenance': {}, 'cha] _
+
+label = 'five-member-dict'
+imposter = {'manifests': {}, 'provenance': {}, 'chains': {}, 'artifact_manifests': {}, ...}
+
+    @pytest.mark.parametrize("label,imposter", _store_imposters(), ids=lambda v: str(v)[:40])
+    def test_the_evaluators_raise_for_anything_but_a_snapshot(label: str, imposter: object) -> None:
+        """Section 5.5 class `TE`: `evaluate_*` raise, and this is not a detail.
+    
+        `not_checked` is a VERDICT — it says "you did not ask me to check this" —
+        and a policy that reads it as "no objection" would treat malformed trusted
+        configuration as an absent question. A `TypeError` cannot be read that way
+        by anybody, because there is no verdict object to misread. The test below
+        (`test_no_policy_can_read_the_refusal_as_an_omitted_check`) is the same
+        property from the caller's side.
+        """
+        payload = make_payload()
+        _clear()
+>       with pytest.raises(TypeError) as grant_exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE TypeError
+
+tests/test_trust_store_boundary.py:483: Failed
+=========================== short test summary info ============================
+FAILED tests/test_trust_store_boundary.py::test_verify_answers_a_verdict_for_anything_but_a_snapshot[five-member-dict-{'manifests': {}, 'provenance': {}, 'cha]
+FAILED tests/test_trust_store_boundary.py::test_the_evaluators_raise_for_anything_but_a_snapshot[five-member-dict-{'manifests': {}, 'provenance': {}, 'cha]
+2 failed, 20 passed in 0.53s
+
+exit: 1
+
+RED: True
+MARKER 'five-member-dict' present: True
+VERDICT: KILLED

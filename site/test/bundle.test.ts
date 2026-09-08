@@ -5,6 +5,7 @@ import { zipSync } from 'fflate'
 import { loadsStrict, canonicalBytes, sha256Hex } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { parseBundle, BundleError, BundleTooLargeError, PrivateBundleError, DEFAULT_CAPS } from '../src/bundle.js'
+import { intake } from '../src/intake.js'
 import { runVerify } from '../src/run.js'
 import { VECTORS_ROOT, logKeys, anchorPolicy } from './helpers/vectors.js'
 // Aliased: this file already defines a local `storedZip` that does NOT set
@@ -871,5 +872,57 @@ describe('parseBundle: declining to read is not a verdict about the bytes', () =
 
   it('leaves a caller who does not care catching what it always caught', () => {
     expect(BundleTooLargeError.prototype).toBeInstanceOf(BundleError)
+  })
+})
+
+describe('parseBundle refuses a manifest outside the canonical profile', () => {
+  // Spliced into the text rather than built: `canonicalBytes` is precisely what
+  // refuses to write this integer, so an oracle that used it to construct the
+  // case would be calling the code under test.
+  const bundleWithVersion = (version: string): Uint8Array => {
+    const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
+    const issuer = Object.keys(d.manifests as JsonObject)[0]
+    const km = (d.manifests as JsonObject)[issuer] as JsonObject
+    const canonical = new TextDecoder().decode(
+      canonicalBytes({ ...km, manifest_version: 1n } as JsonObject),
+    )
+    const spliced = canonical.replace(/"manifest_version":1/, `"manifest_version":${version}`)
+    const blob = `{"issuer":${JSON.stringify(issuer)},"key_manifests":[${spliced}],"artifact_manifests":[]}`
+    return utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      [`manifests/${issuer}.json`, new TextEncoder().encode(blob)],
+      legalEntry(),
+    ])
+  }
+
+  it('refuses a manifest_version past the integer boundary', () => {
+    // The reference importer canonicalizes the whole store document before the
+    // library parses it, so this bundle fails the ENTIRE import there. One bundle
+    // importing on one road and refused on the other is the one thing two
+    // importers of one format may not do.
+    expect(() => parseBundle(bundleWithVersion('9007199254740992'))).toThrow(
+      /outside the canonical profile/,
+    )
+  })
+
+  it('refuses one past the negative boundary too', () => {
+    expect(() => parseBundle(bundleWithVersion('-9007199254740992'))).toThrow(
+      /outside the canonical profile/,
+    )
+  })
+
+  it('keeps the largest integer the profile admits', () => {
+    // The positive control. Without it a check that refused every manifest would
+    // satisfy both refusals above and say nothing about the boundary.
+    expect(() => parseBundle(bundleWithVersion('9007199254740991'))).not.toThrow()
+  })
+
+  it('refuses it on the intake road as well', () => {
+    // `intake` reaches `parseBundle`, so the refusal covers both roads by
+    // structure -- asserted rather than assumed, because "by structure" is a
+    // claim about a call that someone may later route around.
+    const result = intake('bundle.attest', bundleWithVersion('9007199254740992'))
+    expect(result.kind).toBe('rejected')
+    expect(JSON.stringify(result)).toMatch(/outside the canonical profile/)
   })
 })

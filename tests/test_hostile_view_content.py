@@ -31,7 +31,7 @@ from typing import Any
 import pytest
 
 from attest import authority, canon, grant, issue, keys, manifests, pq, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest, make_payload, store
 
 ISSUER = "store.example.com"
 PUBLISHER = "pub.example"
@@ -123,9 +123,9 @@ GRANT_PAYLOAD = make_payload(
     },
     survivability={"end_of_life": "sunset-grant"},
 )
-TRUST_STORE = verify.TrustStore(
-    manifests={PUBLISHER: PUB_MANIFEST, ISSUER: ISSUER_MANIFEST, SUCCESSOR: SUCCESSOR_MANIFEST},
-    provenance={PUBLISHER: "tls", ISSUER: "tls", SUCCESSOR: "tls"},
+TRUST_STORE = store(
+    {PUBLISHER: PUB_MANIFEST, ISSUER: ISSUER_MANIFEST, SUCCESSOR: SUCCESSOR_MANIFEST},
+    {PUBLISHER: "tls", ISSUER: "tls", SUCCESSOR: "tls"},
 )
 
 _BOOM = RuntimeError("hijacked read")
@@ -333,7 +333,7 @@ def test_authority_evaluator_returns_on_every_hijacked_read(spelling: str) -> No
 @pytest.mark.parametrize("spelling", _SPELLING_IDS)
 def test_authority_primitives_return_on_every_hijacked_read(spelling: str) -> None:
     document = _hostile(spelling, AUTHORIZATION)
-    authority.verify_authorization(document, PUB_MANIFEST)
+    authority.verify_authorization(document, key_manifest(PUB_MANIFEST))
     authority.entry_for_issuer(document, ISSUER)
     authority.within_structural_ceiling([document])
     grant.signer_domain(document)
@@ -504,13 +504,13 @@ def test_grant_evaluator_returns_on_every_hijacked_read(spelling: str, member: s
 def test_grant_primitives_return_on_every_hijacked_read(spelling: str) -> None:
     document = _hostile(spelling, GRANT)
     declaration = _hostile(spelling, DECLARATION)
-    grant.verify_grant(document, PUB_MANIFEST)
+    grant.verify_grant(document, key_manifest(PUB_MANIFEST))
     grant.signer_domain(document)
     grant.grant_covers_receipt(document, GRANT_PAYLOAD)
     grant.is_non_narrowing(GRANT, document)
     grant.is_non_narrowing(document, GRANT)
     grant.prose_differs(GRANT, document)
-    grant.verify_declaration(declaration, PUB_MANIFEST)
+    grant.verify_declaration(declaration, key_manifest(PUB_MANIFEST))
     grant.declaration_signer_role(declaration, GRANT)
     grant.declaration_covers_grant(declaration, GRANT)
 
@@ -725,7 +725,7 @@ def test_grant_evaluator_returns_on_uncomparable_member_value(member: str) -> No
 @pytest.mark.parametrize("member", ["publisher", "issued_at"])
 def test_grant_primitives_return_on_uncomparable_member_value(member: str) -> None:
     document = _with_evil_value(GRANT, member)
-    grant.verify_grant(document, PUB_MANIFEST)
+    grant.verify_grant(document, key_manifest(PUB_MANIFEST))
     grant.signer_domain(document)
     grant.is_non_narrowing(GRANT, document)
     grant.prose_differs(GRANT, document)

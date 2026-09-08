@@ -1,0 +1,1450 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-CI-PY ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:30:56Z
+
+precondition ok: python present in .venv
+precondition ok: 'import attest' resolves
+precondition ok: gen_container_corpus.py present
+precondition ok: importer_differential.py present
+precondition ok: conformance_runner.py present
+ok: tests/container-corpus has at least one committed file to compare (184 lines collected — derived, not written down)
+--- gen_container_corpus.py --check
+$ <tree>/.venv/bin/python <tree>/tools/gen_container_corpus.py --check
+
+exit: 0
+ok: gen_container_corpus.py --check: no drift from the committed corpus (exit 0)
+--- python -m demo.store_dies
+$ env PYTHONPATH=<tree> <tree>/.venv/bin/python -m demo.store_dies
+warning: reading .private.attest — it carries buyer-binding secrets; handle it with care and never share it.
+warning: check-artifact compares hashes only and does NOT verify the receipt signature — use `attest verify` to authenticate the receipt.
+
+--- Step 1: the store generates its signing key and first key manifest ---
+{
+  "pub": "1wrrUK_OUYFhaX9pQIgKmJ-QfriuyinLu7v1QVMQBik",
+  "pub_out": "/tmp/attest-store-dies-qyp27zvq/store/issuer.pub",
+  "seed_out": "/tmp/attest-store-dies-qyp27zvq/store/issuer.seed"
+}
+{
+  "issuer": "store.dies.example",
+  "manifest_version": 1,
+  "out": "/tmp/attest-store-dies-qyp27zvq/store/manifest.json"
+}
+
+--- Step 2: the store publishes a DRM-free game artifact and its manifest ---
+{
+  "issuer": "store.dies.example",
+  "manifest_version": 1,
+  "out": "/tmp/attest-store-dies-qyp27zvq/store/artifact-manifest.json",
+  "series": "store.dies.example/works/INDIE-001",
+  "version": 1
+}
+
+--- Step 3: the store issues an irrevocable receipt to casey@example.com ---
+{
+  "out": "/tmp/attest-store-dies-qyp27zvq/buyer/receipt.attest.json",
+  "receipt_id": "01M1Z6SNAG94PHNJ1J2932207K"
+}
+
+--- Step 4: the store exports a shareable bundle — Casey's copy of the deal ---
+{
+  "attest": "/tmp/attest-store-dies-qyp27zvq/export/casey-library.attest",
+  "private": "/tmp/attest-store-dies-qyp27zvq/export/casey-library.private.attest"
+}
+
+--- Step 5: the store is deleted — keys, manifests, everything ---
+
+--- Step 6: Casey imports the bundle offline and verifies it against the bundle alone ---
+{
+  "issuers": [
+    "store.dies.example"
+  ],
+  "out_dir": "/tmp/attest-store-dies-qyp27zvq/import",
+  "proofs": 0,
+  "receipts": 1
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "not_checked",
+  "grant_trust": "not_checked",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": []
+}
+
+--- Step 7: Casey proves possession of the receipt's binding secret by disclosing the salt ---
+{
+  "binding": "proven",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "not_checked",
+  "grant_trust": "not_checked",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": []
+}
+
+--- Step 8: check a mirror copy of the game file against the surviving receipt ---
+{
+  "artifact": {
+    "filename": "indie-game-1.0-setup.bin",
+    "platform": "linux-x86_64",
+    "role": "installer",
+    "sha256": "0f35cfca3b9bc37e93e123a5ab21711312b32094064b30b79b0be5749ae67a7d",
+    "size_bytes": 9216
+  },
+  "authenticated": false,
+  "file": "/tmp/attest-store-dies-qyp27zvq/mirror/indie-game-1.0-setup.bin",
+  "match": true,
+  "sha256": "0f35cfca3b9bc37e93e123a5ab21711312b32094064b30b79b0be5749ae67a7d"
+}
+
+--- Done: store.dies.example no longer exists on disk anywhere in this workspace, and the receipt it once issued still verifies, still proves possession of its binding secret by Casey, and still matches an independently mirrored copy of the game it paid for. ---
+
+=== Summary ===
+{
+  "receipt_id": "01M1Z6SNAG94PHNJ1J2932207K",
+  "store_dir_deleted": true,
+  "verify": {
+    "ok": true,
+    "trust": "unauthenticated_tofu",
+    "revocation": "unknown"
+  },
+  "binding": "proven",
+  "check_artifact_match": true
+}
+exit: 0
+ok: demo.store_dies: the store can vanish and the receipt still verifies (exit 0)
+--- python -m demo.pledge_dies
+$ env PYTHONPATH=<tree> <tree>/.venv/bin/python -m demo.pledge_dies
+warning: reading .private.attest — it carries buyer-binding secrets; handle it with care and never share it.
+
+--- === pass: publisher-declaration === ---
+
+--- Step 1: the rights holder generates keys of its own — separate from the store's, which is the whole reason a cessation can still be signed after the store is gone ---
+{
+  "mldsa_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/publisher/publisher.mldsa.json",
+  "mldsa_pub": "roY5U005Z7hK7qHVLof7aELG-XDCE5EpkMIkFqyDvlGOMBMeDhfEafgcDBXIXcWJaiWdpLsEKl9IxX6Eh1TiuT2TSI7H5jqTm6NVp0DemGSybzWz6qUwhB3WzOYzVBcy0BcjmMV4W3zjd3oOmOClTs5NIFHQ_V32Hjr8tU46Lh55iSZ1cubOCCBx1r179YIKcCB-1u4c5wgLUPYpmUQk6bttGRQnvTNmr61suB-J96Hyii6MmyxkytCxqN6rmujwD6rLMWNcco3zxfAMnSTyJdbl6RVEOe16ut83ZEtAzua5vLcCqDaxHPjB9-vk39nlrjmIC7dEZwB7f1ppUyoA8kXHjGIm67c5vWHta0L9Vzp_GZifBhTQjjQbxEY1W10PjE2W_hxR7rjEQ1o2U5MJGlZ9uIB9wxmQf-MA6FWKSkzeHIY5-9MIceVaOiyadgiMG46DRjhAdLEe8qMEm67rdRh-ab-SftQjsaDUh7W7oDNIAkQ0t1bDldVod8T-6yU0e5CS4wGJ8tDNiiZwHvbUP39tPHOYyQC2wIWBZSpNWimv6H4Q-2mcuTWOMg8-fRY8_1WFTZqAtGW7cp2YvSqoDvzQZJFpnfONX9dquMdMl2vmbD3eH2HO64RNKIOyKEoEPOi9svirvV4G8MChD3_ESPCnh61KSLslc32vjobo5yEHDA1QEsGsPC_1_aXrW2bjQBHW1hRpomzsFIqjo-CTfmQFK81wg091-6aub-WC_WEBn4hl62xw3StldlOFr-qcND0bZHjscHeoM1mJOPyU_XylAugQxTjz6eTKTRFfdmS1eiEbtU1svFIrwD_8_TRQMSQcxKYQIBXpi9UyL9slNC2tQjmTwc9kHscr_de0qijDRGtuT3Q5SUHd4af5StRE9iuBmxPpPaU_Oi4jdGyYm8BBoGYBbhsBXsLbChOrY2H_985AyBUbKI2njwNtVw47EU88cLo9wEjiYvVrNw8HXvgxLE0cZL9nwvZgIdGRrQJRGeQ-NXLXsefCqmd-chOkfAYWr_OhLvIGZ2msjdFUhrknE9B2fcHHsLh2NJemMC5ow0hzk-bsVY3NJjI27uHLERLTrEvVK1gIc8ysq8QZF5H6Fn_-gx8rPcpikP2nd7REX1VVaGZG3Ge7ljF4tq3NKEg33JeCnQlpps8irkvwugvnHLBbKT60XZZ_CZoYlfgsKAr7MF1SBnMMeszlw9V687YzPD6nvXYkoh6D4y_VkIAjfcBVRDzx26tTC-_pTkAGy0gEAmFzDzpfufwauDhv2xF2VNp4QiQ6M2FCuKoZrj7Uj1YoIuWfjg_Tgb_utdd2RS1EE7eQhbJKaLAzJOKVc3RogCfwkAUACUpRBAwU80LXIGb-O4X-obb5FDxfbyuTfVw1d1cQbl8kqM5QuKWmVQypZpSMwSbeC2xBURFls5Auaj0UVODORmm7u3ISJdH0zgtYxBCPfZ2D3caS_Z3HgvInCQI0VPH0oGateNDTXKHzd3DuLAM21VVLzSnzQfEXKKyZ0hdKkNXoPtoj-ecdbWcumvwlj3xP8ImYINhYUzrUiMuYDsJ7ZVGHDGkral4r_RSi55hsAT1PgxsB5trg0egBtNRc0YAhzBwH3m7719lQw-8qRdin5IPEmmPELvOTbdlUjT3tmsCbRLIS0FXPEX3O7qjWU7ZW0Tf-Vs0cH_f4jD76V5UxEtVPyfxh55KD3PBSkMyYYu-REzpFDAt6o2DZkga0TGc-n-MlIudb7S5GKnt_WsdBGE0rWwtAEAvq2CB1bAc9R2QIH7jRfivSK90zyz9iL2u1zXbUyXxEegaMm2Wwmem2pnpg4A4VxkNl-TIqMXnMA3XioXzInKID5tEbvR4oflr3KQimQ-nfQmKiltD5aoUhFw0Q6gsjQI-EE-g1n3sinmt4Z8la4-78W42H5sOd9C6K3Y5X5ku0HslCvTYQXtHxuCqAmb7Zzar4zWXQknQdsqw6cZ7qO3lRgPpCCBX9koHh46poMzRx39VYmxxjzDx4MDzAhn78fN1e9gTc-wD8MBWZkpofCGY5IDfM3zQzRPmDNmTvyknIxKU4CKyk97qkB7oAP2r1j6iznFqQ4mxrOTZBAa5kLkS4VfzbRzB8dwtZV0Gjk-6LVHeyiXTQyJ9bp4XDSyFWlyMlrTE4zZ_4mhyFTm0CKedw7FD0opHY-3aliuaf9oiq3c5OOounEhNZP9COFy_lF7WlA9k7q98N1BZHkPf8aQNyjT1SJUpj6_YrVi6hJejpGcUi0C13XdPpSzS8o7NaMKWB0_nabCa0OmTJ83XxMwr9bJhTvX7YMQbjJXG6N6hm8M9EtMqKlRN8y-IHCyPKM9vzpQEQX6QZ9SlXRHWVz9ZZmHiD0OA_EBBYGhZ8F8-3SK-PeCLjDLTBSb7i109XRTiEdNqT37mw-e1Njgw50AXZeT2B75okyzpyZJNcCs3S-aLqSWQKaogM0Zz_tsE-PbSTNvJX3sXK6h4lmE7Z1iwNZ5qJu7XkH042RAeX3rOSRpqyIJALw1hg3LGwB0PcqRa3D8vwukKwyW-2SmsT9wA1xUGDOpW-O-sLIkufaC4BeejWFrjtYLNVnIyCHMWbvvE",
+  "pub": "9JYgAloDBwz63U0AmFCXSNLx93juuCv2EXRtxqWz1QU",
+  "pub_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/publisher/publisher.pub",
+  "seed_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/publisher/publisher.seed"
+}
+{
+  "issuer": "pub.dies.example",
+  "manifest_version": 1,
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/publisher/manifest.json"
+}
+
+--- Step 2: the store generates its signing key and first key manifest ---
+{
+  "mldsa_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/store/issuer.mldsa.json",
+  "mldsa_pub": "JsVOf10gFmWHNvinrDYxGo3a0L-zyybnbn57zJetfJrJIM6Y4qSlyIexfiez2TSieMl9ciwxLeEe5ApTkKNhSh6LssJyzqLTeG8ifC7S5ZKIVqkznXzCVpdXtG6D7dmw9dXUNFq-3J0AKXSudMBtRUG5x3jrJ5YF5Duvz6xwLZj7aE7lnqd_zW02MDkcF7lDlfzxUJnOMizxS-Tzg3vFOx2fZ2v9STax_awuP6ozx1vbyBjghbfHRsO4kGwkS9TFf9XuIaoYFNz-vueJpm93L27NhkZ0BJgaNL3fYj0kZNcLezlqKJkszEwlVlWF7j8Fsb-fiDgvuCI7RDkPxO_ZdSzNiR4jsBL20pVT5pow-5FY-yVrkec7GdztYpSwfRvJQ5Y8Kgk4R6rLbFLXhr6SIWqz55iSiJ5cQIGnD3-uGsA7-3IPKTZHXeyg9X5SEnf6uFajF0DxrA0VuR7hiVODFv1BLY9pZVJPqXf_62GrBtXp1SO5ki8IbkODopQbXIMXm_okYSP0fS8S_wGNAy9lCTP33Jf8xHJh9HMTJj1raq2OlCv_b3qJy6YcSoh79dz8NKWHJwqJlDWaE9ntA6t4i5tUxWqqsM8J2D9GkurR03T0Md95TY9qu106QKzfjShT75YBLWwi9-kSw7-9G0KNDHz0A7q_e7EVSqYr30r7UYVVHg9hFzjci-XFogkpnyKJlBDdsbe-zMynU7qag22aMXRWqk07BhOwuqiXBNeK--I3Pou0VKJOscMsyQQUEx2YT5rAnf-cD9WV9Z_blAovg3hT3ABxRXSKX2GpU4CR6Foa8XXBUVedkkVd5sbXgIy2LDOOcZAFxaTEoP7yKXyf74b_L3qdPqhJEU29qnDAHUsaREmmBemrsbNYhIwIpzElgF0x8e8ls-0ImQsbnUg5O_O_Dk0pNBZx9QjxDZ89HAtv99oReAdOS9IJbXhveRoJWpU5gJXhhDv8riYWmuYmtKzXMOsAGmjBXLdhICcANnlYZ2JNWTRnkjw_VRC7gu1U_CryMCHl2O_TzQnd6wXc9_qSl_c5-KUxgA59Hi0eQB0icxE_nGGs3zwazrYvMyM84VG8OxFQoaoAhPUyRToVvL_rV7m8otzxXL8NR_mhGsPBsFc75LS_XuEaCDPYihFtFtdR1SLhO-lympM7-E_rcHLo9k3CbuAEL4kcCL1fl6Iw6jCSUDJyf-jDkGCimL0EFl-HdmwQ1QFRxiHKdMLMot9wmWAiIKBXayt41-rs49JxkjyKiW5AFSoxaGvmNecE-0s5u8PDzeRe-EcyBApbko9QEu2lgNvW9jBeHCxJvguoR70diw1g0agJzkm7pGRqOLpdamzV6oScITrZ3wmRraMy7giYl7WUgaU7XyhKi6_6QkF8QDXK1iyXvea7sXaTZfER0otOG-D7VdQIwnDjFfpK-iuBPv4yh65OxBJlvKVfwuX3NyLAU8Rr2mdGqFt-MyBr7FHv1rY59mV1Gc6UktwbArAZHz7BCDsFzmhrIWppNpfzxaU_sg6NlTwRdsRl1Fa70IJKC028HG99NdpG9XzT92PgT-uBg5bi9pTI2PKd3Oy3o6JLGzFtLL1VYfjpSjcar7inJYNm-zcKLqeqBXF240hCqoYdRnc_GpG2upikLKuNupjPyMx7MZuAVSkJnD3YV3JgVlGsft5OPyw9-xR7C7MztBdPd2ZhY3VWrGmJ0r5jmjmFmIU9z_PpkUxmWQ0jNZ9yCA3en52JEMoh1vyrhgCG2eM8MPioh9ASk4Od4U9WXQfjrATS-Oc_hAuvr1fuSvGwZmoy3aHXoIk1skxpz0O5M4cR138WljCCiapjMwHzFrLqWHzm5uMDSDWOt3H7kMfMsw-nKZBxID5e2G1y0NmHWeCts9WftzNDZTnyCyEXOefI3XGA-kdfjx4pcSG6pWOgBP2GypwOyvFnqw2888GgqsPDXDghERJZ-daQlhq_8bS2dgh8mQ5Qgr2sBwpaS6W-B2MTJ0TqAW0M1sr00-gHH9Tq19kOaj5MZ-F6gs03by05v8kjQRTmcWG-2M1N-wv-Rc02m75EnFdo-fL10gBhjYIVf89ggBilG7tHxjfrLze7qHjVftaEVn-FntE1s7lYFkbY9RObUXl0oEdZB3st0TNQBy0e7LQ6tU4nUkTpHg-pxLzTGtp4jGm82bagrV-H1vfQhQM3gDnISeKIep_-yrK24uRJ24Hg-6CjeyabXP84wvyHn7rfGcfeMxMzTOhcm7I9yOTYqouTTcG-RU4afUpBfDlGt_b2R-wiGHtA70TVabzHlDWIRReOa2QaPio-L5LBd3q_JStgVM79yV0mlGqO_CnFREQISZJP5CYRY5niy0LLOSpD6liMZNRywcp5AV9nkf3fYmJYKGQY7T74io5bRCalWYDCAGFoGFygMpwR3gxUdtyjrPW0mt8LJZSHbftRHvRFO_9EL513D4wQr1P_UMHtvjRgh7t5QXEuwG-5BrmQfFzOGd-l9-6aG8d476ppgpOBCuBxnLzl5ZgePeItp0ZZKUClCm1Piog36VQGVksjj90ijUiXujZy1GA47p0VqHwJ8HFMjm4Cq5xBpTt51U_grNddDS4",
+  "pub": "TrxRTbWiMEzTts2j0rLAC2hYVW3QAI9XaGiV4gEmUp8",
+  "pub_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/store/issuer.pub",
+  "seed_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/store/issuer.seed"
+}
+{
+  "issuer": "store.pledge.example",
+  "manifest_version": 1,
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/store/manifest.json"
+}
+
+--- Step 3: the store publishes the work, and an archive keeps an independent copy — no network anywhere in this demo, the archive is a directory ---
+{
+  "issuer": "store.pledge.example",
+  "manifest_version": 1,
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/store/artifact-manifest.json",
+  "series": "store.pledge.example/works/PLEDGE-001",
+  "version": 1
+}
+
+--- Step 4: the rights holder signs the sunset grant — the promise, in a document, hash-bound to prose a lawyer has to write for real ---
+{
+  "grant_sha256": "93c4567a3d430db9ddaafd8bf61402b67c26e15b7b70210b0629fb5ead9b80bd",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/publisher/grant.json"
+}
+
+--- Step 5: the store issues a receipt to casey@example.com, who holds a signing key of their own — without it there is nobody the archive could later answer to ---
+{
+  "pub": "TUryy5kt3xyo5NE8el5G16dgXdEuzcs7t_NlTNEUPdc",
+  "pub_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/buyer.pub",
+  "seed_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/buyer.seed"
+}
+{
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/receipt.attest.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "attest": "/tmp/attest-pledge-publisher-declaration-fectfiuc/export/casey-library.attest",
+  "private": "/tmp/attest-pledge-publisher-declaration-fectfiuc/export/casey-library.private.attest"
+}
+
+--- Step 6: the store is deleted — keys, manifests, hosted copy, everything ---
+{
+  "issuers": [
+    "store.pledge.example"
+  ],
+  "out_dir": "/tmp/attest-pledge-publisher-declaration-fectfiuc/import",
+  "proofs": 0,
+  "receipts": 1
+}
+
+--- Step 7: offline verification with the grant as evidence — the pledge is there, and it is DORMANT: nothing is owed yet ---warning: check-artifact compares hashes only and does NOT verify the receipt signature — use `attest verify` to authenticate the receipt.
+warning: check-artifact compares hashes only and does NOT verify the receipt signature — use `attest verify` to authenticate the receipt.
+
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "dormant",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested",
+    "grant_unanchored"
+  ]
+}
+
+--- Step 8: Casey turns up at the archive anyway. REFUSED: the grant is dormant ---
+{
+  "audience": "archive.holders.example",
+  "nonce": "FLlAqSJwcP9cWZytAeAxzuFWY28uO1derXAp4GI1rjo",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/gate/01M1Z6SNVAQ0JBY58K4W58KNAY.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "audience": "archive.holders.example",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/response.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "dormant",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested",
+    "grant_unanchored"
+  ]
+}
+
+--- Step 9: the rights holder signs the cessation declaration — the trigger the grant named. The store is gone; the person who made the promise is not ---
+{
+  "declaration_sha256": "7ba298cca7e16505c93b52e9e8b1c0685ab54b46079f13afb444153b0d9baf61",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/publisher/declaration.json"
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "activated",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested"
+  ]
+}
+
+--- Step 10: the grant is active, and the gate still refuses four requests — an activated pledge is a promise to the HOLDER, not to whoever turns up ---
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [
+    "signature verification failed"
+  ],
+  "grant": "not_checked",
+  "grant_trust": "not_checked",
+  "manifest_freshness": "not_checked",
+  "ok": false,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "not_checked",
+  "signature": "invalid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": []
+}
+{
+  "pub": "kRsg3z5N0dFoewzgKnYFPSEBmMDwjm45e0lTS4OnQhU",
+  "pub_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/thief.pub",
+  "seed_out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/thief.seed"
+}
+{
+  "audience": "archive.holders.example",
+  "nonce": "y-l5lO9QBzvRP5RG_GQKPUbhu8AlmhJE_Lt9NQDkCTQ",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/gate/01M1Z6SNVAQ0JBY58K4W58KNAY.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "audience": "archive.holders.example",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/forged-response.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "activated",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested"
+  ]
+}
+{
+  "redemption": "not_verified"
+}
+{
+  "audience": "other-archive.example",
+  "nonce": "0GVIg62_w-L9xZ2l0Q5uPV7t8oqgVkHtPULYNHjiI28",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/gate/elsewhere/01M1Z6SNVAQ0JBY58K4W58KNAY.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "audience": "other-archive.example",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/replayed-response.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "audience": "archive.holders.example",
+  "nonce": "fGdvcuD27oLnNzYu2yQ541uV8TYZzkP3trI5VdbQsMk",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/gate/01M1Z6SNVAQ0JBY58K4W58KNAY.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "activated",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested"
+  ]
+}
+{
+  "redemption": "not_verified"
+}
+
+--- Step 11: a fresh challenge, Casey's own signature over it, and the archive hands the file across ---
+{
+  "audience": "archive.holders.example",
+  "nonce": "WlPVCGAi4wGvlDhwPc3eTVHNfQfnZ2ZKk9CQpvuonv0",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/gate/01M1Z6SNVAQ0JBY58K4W58KNAY.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "audience": "archive.holders.example",
+  "out": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/final-response.json",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY"
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "activated",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested"
+  ]
+}
+{
+  "redemption": "verified"
+}
+{
+  "artifact": {
+    "filename": "pledged-game-1.0-setup.bin",
+    "platform": "linux-x86_64",
+    "role": "installer",
+    "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927",
+    "size_bytes": 52
+  },
+  "authenticated": false,
+  "file": "/tmp/attest-pledge-publisher-declaration-fectfiuc/archive/pledged-game-1.0-setup.bin",
+  "match": true,
+  "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
+}
+{
+  "artifact": {
+    "filename": "pledged-game-1.0-setup.bin",
+    "platform": "linux-x86_64",
+    "role": "installer",
+    "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927",
+    "size_bytes": 52
+  },
+  "authenticated": false,
+  "file": "/tmp/attest-pledge-publisher-declaration-fectfiuc/delivered/pledged-game-1.0-setup.bin",
+  "match": true,
+  "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
+}
+
+--- Done: the store no longer exists anywhere in this workspace, the rights holder's pledge fired, and an archive that never had a relationship with Casey handed over the file — against a receipt, a signed grant, and a proof only Casey could make ---
+
+--- outcomes (publisher-declaration) ---
+{
+  "archived_copy": "/tmp/attest-pledge-publisher-declaration-fectfiuc/archive/pledged-game-1.0-setup.bin",
+  "buyer_seed_path": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/buyer.seed",
+  "check_artifact": {
+    "artifact": {
+      "filename": "pledged-game-1.0-setup.bin",
+      "platform": "linux-x86_64",
+      "role": "installer",
+      "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927",
+      "size_bytes": 52
+    },
+    "authenticated": false,
+    "file": "/tmp/attest-pledge-publisher-declaration-fectfiuc/delivered/pledged-game-1.0-setup.bin",
+    "match": true,
+    "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
+  },
+  "check_artifact_exit_code": 0,
+  "declaration_existed_at_dormant_refusal": false,
+  "declaration_minted": true,
+  "delivered": "/tmp/attest-pledge-publisher-declaration-fectfiuc/delivered/pledged-game-1.0-setup.bin",
+  "receipt_id": "01M1Z6SNVAQ0JBY58K4W58KNAY",
+  "refusal_bad_proof": "redemption_proof_invalid",
+  "refusal_bad_receipt": "receipt_not_ok",
+  "refusal_dormant": "grant_not_activated",
+  "refusal_replayed_proof": "redemption_proof_invalid",
+  "refusal_salt": "salt_disclosure_rejected",
+  "salt_path": "/tmp/attest-pledge-publisher-declaration-fectfiuc/buyer/receipt.salt",
+  "served": "served",
+  "store_dir_deleted": true,
+  "trigger": "publisher-declaration",
+  "verify_activated": {
+    "binding": "not_checked",
+    "corroboration": "none",
+    "errors": [],
+    "grant": "activated",
+    "grant_trust": "unauthenticated_tofu",
+    "manifest_freshness": "not_checked",
+    "ok": true,
+    "publisher_authority": "not_checked",
+    "publisher_authority_trust": "not_checked",
+    "revocation": "unknown",
+    "schema": "valid",
+    "signature": "valid",
+    "transparency": "not_checked",
+    "trust": "unauthenticated_tofu",
+    "warnings": [
+      "publisher_claim_unattested"
+    ]
+  },
+  "verify_activated_exit_code": 0,
+  "verify_dormant": {
+    "binding": "not_checked",
+    "corroboration": "none",
+    "errors": [],
+    "grant": "dormant",
+    "grant_trust": "unauthenticated_tofu",
+    "manifest_freshness": "not_checked",
+    "ok": true,
+    "publisher_authority": "not_checked",
+    "publisher_authority_trust": "not_checked",
+    "revocation": "unknown",
+    "schema": "valid",
+    "signature": "valid",
+    "transparency": "not_checked",
+    "trust": "unauthenticated_tofu",
+    "warnings": [
+      "publisher_claim_unattested",
+      "grant_unanchored"
+    ]
+  },
+  "verify_dormant_exit_code": 0
+}warning: reading .private.attest — it carries buyer-binding secrets; handle it with care and never share it.
+
+
+--- === pass: fixed-date === ---
+
+--- Step 1: the rights holder generates keys of its own — separate from the store's, which is the whole reason a cessation can still be signed after the store is gone ---
+{
+  "mldsa_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/publisher/publisher.mldsa.json",
+  "mldsa_pub": "lNoQm7Py2gKenmbHAzpxExg5ymhnIPfBlaz_A0LaYOZ1zxsgxplW7UcOYP41ufuZPlmYWI_UmSmHabhOxp5koVeuCXG_NsxQT37r0Zlw3AGa_7cAx0iClWyxz4PPorxdZdoEieyItS6x0j7Y0hft6mZdnpu5MmFACFxwIo1dxTKnx5T4JG4ZzfGtA2FJUUwLCN1AmGmHuy3iEBLOZWaoSMeRnom6t48J1oSSSEfBeP59Bu59XcQcMuRT803XYU90mW134snRVE5C-HWJ9hxqB92Rdy-ukn6xZAROBPMjN47rVOOFEzBdsIu7tl6J81javX6YfG_qNYdSy3p1xMuxa5AR5lPZeQT5Bl0NX419QOhU-IkfmoIwKkZUi0FaUPvnduUoOWrYvuex20TULceJB0IU-HtuSq88O6J4bK32lZ0lE8D_tB5VNME30XweRg0HbPTgC52ZBJuER4siUs1Rpgh4CH5Ng0JrJ1g-EMm5UcjG0ORrTpcRxSoyD_kT06ItU1kgTRuaj2Er2qC4Gdb53XQrR69G3MaCITrERAsmUMpmF-jy9H8gVcxMbiKCxaS3PtKBT07QscEmC7kOfzcy6tue4QongT7FHUKZVVgCOpr6jb6xdu2pRUUwesDS-Xrg4BhXBQB5QtHq0VinckQo2LIUr8iNffT7536ho_yNugGfD_iRLWr8Vm01HV17Mf4HVLElzseSr8E4rLaZDOXI4UEkXe0Gk6p8h0wpyucEEUqEMdolSMyB5NXAx-zTrdJ4dWb8YWDsFTWATY5qQC8XZRU_doJ3s93edvtmvOyyhu10xbHrXyyu1fNXCKoF2A_G6z8R2skC2PSUBTzFHoG-vdSvxh0jhTH5HLTFOA1azAXSFqc51wzthyt_mCQm99hb6_Z6h5KYFXkGVuV_WbN5sf9x8Fd_G1dnszpev4XvzOyl8D4UHwhToURRiIrzVmbvRLvK3pfDCTGpVv6qzZmhVpWYr-zjSVQTqi9SwVD6cdxHSE-yYHvOtO5gEY5LzllPCI_W7fHsGXrgId9Xf7R20G6Yq3OvYAdfJ4m8S_JG3UJAkI5e92W5xM8dGiog-fqf1yKCSZcPxaoNpeLLH_iR_gU2ZbLRX-0-3bkx9Kg4Jul_MPp181LTz09dCdEv52T3bcFztuR5AbBocKrOe_-RMq6sSTh85SQfYLxAxqYh97fzFPQr43w45i58E0b9wMiQ0Z0oB6Arxae2lfWtUx8MZQ0zBZlWU1YTcffnSshIvZ4VFL2o5wm5Ne0BWdUatyxLuql-K0nBrpSYhpmrwrru-8dtuu88XWkZLFyFdT4l6ooJNfGqdB-45CK91-K_gubhFTBqeeUjmfcOrakJaHV143V9qG2CTU76CP40F45jvEX5DHmp34Qy4I1Z1-gxeKTVVsxdWq_wEAYOf-9fZOmK03f6HvfPfCTGUk9iYoVDHhRnvob0aUx3xrEJSjftkE6L0mR1QCH9Br91IkNpcvFsGccOQeGhiq62dPABkcgJRpHhO_2f7APXagjhz9GCOFCC7PDX0TXUkLlZZMp_eJHFiFrF4C5Bw6jzq-xA-t1OYd571slRF1_5OhlwEvmuTcnh3-2AUxsYvYbabq7-xqhw-rYP_277Qh9C6ZXFoTZtyESLwTPExtlsD7mxICuHePT31EFRwogvfap2G0WS6WtwxRgJ8BmXY3xZTgRR9Wqrb2QaEn1U8Rp6SEmdpYUBpTVXoZBvNK04ZYBiKAMidSW3dcdvZTWrHqXJ5cgyY6_F1dSARqbT1VslKyd08CcNucUJE8o43h0CWb7iRkiOPGLVGrnmS53ZcvQJmDf_CQ--LSth-ypSC7UhcXT3HOXZT4v3XhQmRJKYvyAm24FrU_0GXKhDKrytKplwPDUoXfehCBQM2K6OScQ8iWpM3iVllpEfTqrspQkEfBW1Xe6FkrovdwIzA4ub9eqVcGMcaQb34g4dT4F8vao_rRJBHLgYLvA0bU6o3oD_muEN6pV1AHpWBdHYJFqDS0cy11z6KHu-tQZE6GfZQZ7tqSe8fmAXXiu9NwjwY_98RUuWYoxCSYRoplTCD0PcgGvzEiYrYQ6tXnllmM6CeJRqBOb5pFU-1wTqnsmqhz-DqlX-xHTFq0nhyK6xLc9u9Yv9LsPptNT6sTKVTTpCzspWD-ppheLlx_rHU9d8BAKmOMXQ7RmvoDbPYSyczZd55KvoJvhilGluER8_VjxyVahTzpCAf6Y32N2T4Sj3YP_wyuQuOCkr88wdIYqPxKNnL-azmVjeQg-RKV8GKcW-7B9C11kOTetBWb8Qok5GvTsSfRXQ7ljAH9C0eMGFiK2Pqjn_eWFkEmWUbS4x88JmD__7ICyrHLs_Fht5oT9Owy4QM1sMYygo7FsWRqKRNUTJxOlagCY8RWrr8jRqAiMjQbg27aA3JZ_DxcQxddhFu7Za_4YQxxzHDenEXAy3MzscwjzWERrSA-ucX8PSnxU0yJdAW43HMNZLPZMEWrLP_aFs67eda2SCigGnIMp8WkDBw-viEz9OoOjXeypFnhn80g6C3Aum9Ke_RwZkO36oTEBr3-JA0XlNxRBi5bQw2RYV4RD59gDHnRrhOcY",
+  "pub": "gUuy-ASP6p6Z_B5t8TRpbqCk3U9RRChCE5YRcENLfu8",
+  "pub_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/publisher/publisher.pub",
+  "seed_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/publisher/publisher.seed"
+}
+{
+  "issuer": "pub.dies.example",
+  "manifest_version": 1,
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/publisher/manifest.json"
+}
+
+--- Step 2: the store generates its signing key and first key manifest ---
+{
+  "mldsa_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/store/issuer.mldsa.json",
+  "mldsa_pub": "tkn39H6_I4xCoe2TA7C18iFcaq2KuNTrsuCwa539X-TojGOJu1g2BohZWzSmf-8btnh-eH33806F59BbCwK2mxiZCtGdp7hi1oyYbK5TSvmL3BVulQkW9Uw5c5d7TklW278aAouquKJIPY8YLhHj_fcBTmcZfxyCuFn953Qiwtcb_bk5JMVQZXR9PYFV8hA22j8Oqj1kqfshjzFFTWtmXpIK_fWhUcYUPNQ5kn3wpPg5WeKzBGdnYz18ecYNZiP-qQmupWJuzyCJMnzkGZAXE08aTySN_itTAJCOcP2tmLWuAss2FBhKp5kgMwShpwL4VcJo-qMUhTzNKzPIQw2kt38mjKUhHRHx_Ht55HHcwHxj4M4OBoboXmPuHPTLxZXWwSFVwZJHxz5XRFTyrQYqYZzYKSoGwgWc66LX_9UwOWFU3NPNn_5yYpJaUcOhqVZd5cstxBaS_RU4rlRX_kNhFnyAlH1UCKnyqOaJ5jdcPbURUZRO34trXNrvFben7JbcarCbDuTa38NY8byxl7ih_NMX2gTMMlb9xqhh8NSPVOv4mwY9t-ZzFdpmWkcF2gs98dObMsE5U2zBXmeYBo4Sd4NljYN9RZf89L6Sco67E8hEDDFAveWprOnmxSl_UYMP_8z2qlYdm1raisiQoh82WgON0N-ml_nKHPRbvlWlvcyw_THzlAbyL_nk9iLcxvbKySFxXxQJoU3Xh9alzIEvvRtD0-0qY6IjfSnZFCf1VlQ34Yko_kRTBU9gvj95oBAvFWCK2T4DU4LK3qHESWdjiEtfGXqXDHDChFbgqEBUaZ-1r-EoGT-Gb_a0fAyjwg1gjfyu4nVUa5eg6qCDInDZ-EuGJmBPkuvPSr3kWhBakL8DKEVoezofsQrKwMdf8oymISSXvQMQeC241gl5w-HI4mF4l5jJflpASA6CRm4Y1Bh_fvzkV3z7nFs28vq0ryHO_3hKI9aYdeI10elcxmaGVNZ_m7ssTqn1FMyReJz7yTovRIuQ42Zcyq5yeVDzcppsiUFQ5NyanTjVufaxihS0KqNje84YB8I0MzabIrEG7dCgkC2vSl16GA13Dh0ahSKojgBHzQrkGYiXZ_EAaKQupVCXKJsEpSVP3clalOwIMhmYgtoxun178XDIUMfShDcP8qtYocrOP-3qH3tJTGjqQwU5PAv9Fe4nexxZOkv_dr_rH2ZLZxW1m6pvtaWNX0PKJMU_0Pu_JuVbG7GMFuH7zFDPtMcpCieSnxZoCRw_S3AX0xrlOAlbA6wLPzkHkW66bkX3-vf3HuwmhxI_AZpyDRA2_7gSLzz8ds3NHcguZFR0J9F58sqlFJdkeub59PY_oWMnmjyxHCBwyGZ74TI7YRMsGsaJ4wqeEmhGC3DDAHbIZiLef2eJrRZ61DFZpz1SDyJsn7D30cPf6mFQyJn-nnudObeaXGkArN55uDYyJgiovdgOO8660GsyH13DmqyKO3lu8pdinWK9ZHvAgZS2PX5n_PRCHXp6yKn0YR24i5xrqryfK-unqs774ioyLHf-2-Qm7oIe0uwq5kt-rH--aQLSpFU0Hs-fha4MxukPsl3kYprboZN7ZsFjw-qabxfVZLNI0qxe8Ck5gqZl5BmEnOX0SXxbYI4Y_coPVK7COH_6i8YoZIKWtqKSgFOHWInXU03qFeH-8Rf7zdpPCmZHQ7iGdG_9OVjKmsBF39SYu9u1x6iR5WYDZfyTiiOUSm93MheKVLBNbno-bBDSAObAvtGPxNGU4eprkuF-UOG_kwyJ5FNIY6NW-8lLaR5vMD9T45TXmdvpvAYcpyuH2MDFaEa4-z7zsb8PQezm_pAiucAjPV8cknkwpl8EGS_xeeS1KC-jOWUqYiOciwQOI2_9nWp2gSTQ00DO3JC2IIjZIl7_qPieBIk9BcSGW1L0aYWQA46zwePw9KzUsE3W1r6bnVCdKA3FTIlAVZzHqvMU1mJamWmBKapP07kXDqiImP3yChWvwC4MrKnQsUycsrkQktD9C-eYDkMqXoQUCLMUJxRsOAS3NEN_Q2w6sU2b3hc51DnyXDpP8TT5r8-v5PNIXvwkTPxVMFJ4SqBvLR05i9Y8HVru4J8VvVAIVPJldBqwFg3wJ1X3hTE-8PrQDt3ow0w_-vbMOAkI76lJ_fId3C6pHjL7-rb2M8bFUyOEWujEuKkG3Ul0d747PWMjFZ86fclDM61r8sR1x4gbJLCrxENs52ISudvl08FvCtJzObi8deosblDmnLzusCdADU4whnh7GRnwyKQby1iZCQEGI8hidnbpBVahFyA3G5q_4ryF0N_ZrU9EUZbV0mgqz05ET7IwZaC8eERl58P7QWsfXLRxh5RyUsVppmRBMaTVUM_vybuW6S8pvMiXI1c-Vvm8nc-0aqOuXO7FGU2BTRd65wFzpfH-wBYql3JRJbRMVdtF0w12XwIRaOGocXmP05QiggI-_bQU2YfaikDYL67UkhFADD8fdqG8_lYHnRL-B9xMmlz8qea1t0aEWdOhDYbxz9WxnRmktlCpQGyXGfDeLkus2YkPk2eI1T_y1zR18-hZNAHCNGofCsky5l43ECwXEIG2trv2D638Wvx4HqmabR4",
+  "pub": "bZou02nP6dcaBKXMlYzJMKXaiPk2Z7PLAHvDO1q3P4Q",
+  "pub_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/store/issuer.pub",
+  "seed_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/store/issuer.seed"
+}
+{
+  "issuer": "store.pledge.example",
+  "manifest_version": 1,
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/store/manifest.json"
+}
+
+--- Step 3: the store publishes the work, and an archive keeps an independent copy — no network anywhere in this demo, the archive is a directory ---
+{
+  "issuer": "store.pledge.example",
+  "manifest_version": 1,
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/store/artifact-manifest.json",
+  "series": "store.pledge.example/works/PLEDGE-001",
+  "version": 1
+}
+
+--- Step 4: the rights holder signs the sunset grant — the promise, in a document, hash-bound to prose a lawyer has to write for real ---
+{
+  "grant_sha256": "e8f3033960b7640541c88f8af225815687e1cbb9860c201788104a2eadd74e3d",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/publisher/grant.json"
+}
+
+--- Step 5: the store issues a receipt to casey@example.com, who holds a signing key of their own — without it there is nobody the archive could later answer to ---
+{
+  "pub": "t2NP9PD64KCdUFHgFoE6VU7a9FMpaVtES4ARSP5-3XU",
+  "pub_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/buyer.pub",
+  "seed_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/buyer.seed"
+}
+{
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/receipt.attest.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "attest": "/tmp/attest-pledge-fixed-date-avqe8xyx/export/casey-library.attest",
+  "private": "/tmp/attest-pledge-fixed-date-avqe8xyx/export/casey-library.private.attest"
+}
+
+--- Step 6: the store is deleted — keys, manifests, hosted copy, everything ---
+{
+  "issuers": [
+    "store.pledge.example"
+  ],
+  "out_dir": "/tmp/attest-pledge-fixed-date-avqe8xyx/import",
+  "proofs": 0,
+  "receipts": 1
+}
+
+--- Step 7: offline verification with the grant as evidence — the pledge is there, and it is DORMANT: nothing is owed yet ---
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "dormant",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested",
+    "grant_unanchored"
+  ]
+}
+warning: check-artifact compares hashes only and does NOT verify the receipt signature — use `attest verify` to authenticate the receipt.
+warning: check-artifact compares hashes only and does NOT verify the receipt signature — use `attest verify` to authenticate the receipt.
+
+--- Step 8: Casey turns up at the archive anyway. REFUSED: the grant is dormant ---
+{
+  "audience": "archive.holders.example",
+  "nonce": "5RnKiiCCDYtihm_gTHQgjePZvkhLzs4IzRHc77oRIso",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/gate/01M1Z6SPEX63E3R7RG7M3W2EGW.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "audience": "archive.holders.example",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/response.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "dormant",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested",
+    "grant_unanchored"
+  ]
+}
+
+--- Step 9: nobody signs anything. The rights holder is gone too, and the backstop the grant named has been reached — proved by an anchor, not asserted by anyone ---
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "activated",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested"
+  ]
+}
+
+--- Step 10: the grant is active, and the gate still refuses four requests — an activated pledge is a promise to the HOLDER, not to whoever turns up ---
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [
+    "signature verification failed"
+  ],
+  "grant": "not_checked",
+  "grant_trust": "not_checked",
+  "manifest_freshness": "not_checked",
+  "ok": false,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "not_checked",
+  "signature": "invalid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": []
+}
+{
+  "pub": "Wyc8cDTs66UIqvGyei8hqf7cimri604LFs06rxxByNc",
+  "pub_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/thief.pub",
+  "seed_out": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/thief.seed"
+}
+{
+  "audience": "archive.holders.example",
+  "nonce": "R8GLWL7OQwvsQPQOqkZlY3YTDME6MMcONjbxfyfrBVs",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/gate/01M1Z6SPEX63E3R7RG7M3W2EGW.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "audience": "archive.holders.example",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/forged-response.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "activated",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested"
+  ]
+}
+{
+  "redemption": "not_verified"
+}
+{
+  "audience": "other-archive.example",
+  "nonce": "X5WFWEVaRKGUgkN1sBfnShnI81JOpecsPeGnZmnKvnQ",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/gate/elsewhere/01M1Z6SPEX63E3R7RG7M3W2EGW.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "audience": "other-archive.example",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/replayed-response.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "audience": "archive.holders.example",
+  "nonce": "Rrz6_yUMcQ2UHd34etNiamavoqWgDcaxVW15a4Fju5I",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/gate/01M1Z6SPEX63E3R7RG7M3W2EGW.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "activated",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested"
+  ]
+}
+{
+  "redemption": "not_verified"
+}
+
+--- Step 11: a fresh challenge, Casey's own signature over it, and the archive hands the file across ---
+{
+  "audience": "archive.holders.example",
+  "nonce": "pTSjFvBmEeSP_YIaVWesK2epnbUh_z_1tgpYYrPzjU0",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/gate/01M1Z6SPEX63E3R7RG7M3W2EGW.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "audience": "archive.holders.example",
+  "out": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/final-response.json",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW"
+}
+{
+  "binding": "not_checked",
+  "corroboration": "none",
+  "errors": [],
+  "grant": "activated",
+  "grant_trust": "unauthenticated_tofu",
+  "manifest_freshness": "not_checked",
+  "ok": true,
+  "publisher_authority": "not_checked",
+  "publisher_authority_trust": "not_checked",
+  "revocation": "unknown",
+  "schema": "valid",
+  "signature": "valid",
+  "transparency": "not_checked",
+  "trust": "unauthenticated_tofu",
+  "warnings": [
+    "publisher_claim_unattested"
+  ]
+}
+{
+  "redemption": "verified"
+}
+{
+  "artifact": {
+    "filename": "pledged-game-1.0-setup.bin",
+    "platform": "linux-x86_64",
+    "role": "installer",
+    "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927",
+    "size_bytes": 52
+  },
+  "authenticated": false,
+  "file": "/tmp/attest-pledge-fixed-date-avqe8xyx/archive/pledged-game-1.0-setup.bin",
+  "match": true,
+  "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
+}
+{
+  "artifact": {
+    "filename": "pledged-game-1.0-setup.bin",
+    "platform": "linux-x86_64",
+    "role": "installer",
+    "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927",
+    "size_bytes": 52
+  },
+  "authenticated": false,
+  "file": "/tmp/attest-pledge-fixed-date-avqe8xyx/delivered/pledged-game-1.0-setup.bin",
+  "match": true,
+  "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
+}
+
+--- Done: the store no longer exists anywhere in this workspace, the rights holder's pledge fired, and an archive that never had a relationship with Casey handed over the file — against a receipt, a signed grant, and a proof only Casey could make ---
+
+--- outcomes (fixed-date) ---
+{
+  "anchor_after_the_date": {
+    "binding": "not_checked",
+    "corroboration": "none",
+    "errors": [],
+    "grant": "activated",
+    "grant_trust": "unauthenticated_tofu",
+    "manifest_freshness": "not_checked",
+    "ok": true,
+    "publisher_authority": "not_checked",
+    "publisher_authority_trust": "not_checked",
+    "revocation": "unknown",
+    "schema": "valid",
+    "signature": "valid",
+    "transparency": "not_checked",
+    "trust": "unauthenticated_tofu",
+    "warnings": [
+      "publisher_claim_unattested"
+    ]
+  },
+  "anchor_before_the_date": {
+    "binding": "not_checked",
+    "corroboration": "none",
+    "errors": [],
+    "grant": "dormant",
+    "grant_trust": "unauthenticated_tofu",
+    "manifest_freshness": "not_checked",
+    "ok": true,
+    "publisher_authority": "not_checked",
+    "publisher_authority_trust": "not_checked",
+    "revocation": "unknown",
+    "schema": "valid",
+    "signature": "valid",
+    "transparency": "not_checked",
+    "trust": "unauthenticated_tofu",
+    "warnings": [
+      "publisher_claim_unattested",
+      "grant_unanchored"
+    ]
+  },
+  "archived_copy": "/tmp/attest-pledge-fixed-date-avqe8xyx/archive/pledged-game-1.0-setup.bin",
+  "buyer_seed_path": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/buyer.seed",
+  "check_artifact": {
+    "artifact": {
+      "filename": "pledged-game-1.0-setup.bin",
+      "platform": "linux-x86_64",
+      "role": "installer",
+      "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927",
+      "size_bytes": 52
+    },
+    "authenticated": false,
+    "file": "/tmp/attest-pledge-fixed-date-avqe8xyx/delivered/pledged-game-1.0-setup.bin",
+    "match": true,
+    "sha256": "cc0cf8dab0dc1ef05576f8c61856cc7e351d953b251619d48e0694c170bca927"
+  },
+  "check_artifact_exit_code": 0,
+  "declaration_existed_at_dormant_refusal": false,
+  "declaration_minted": false,
+  "delivered": "/tmp/attest-pledge-fixed-date-avqe8xyx/delivered/pledged-game-1.0-setup.bin",
+  "receipt_id": "01M1Z6SPEX63E3R7RG7M3W2EGW",
+  "refusal_bad_proof": "redemption_proof_invalid",
+  "refusal_bad_receipt": "receipt_not_ok",
+  "refusal_dormant": "grant_not_activated",
+  "refusal_replayed_proof": "redemption_proof_invalid",
+  "refusal_salt": "salt_disclosure_rejected",
+  "salt_path": "/tmp/attest-pledge-fixed-date-avqe8xyx/buyer/receipt.salt",
+  "served": "served",
+  "store_dir_deleted": true,
+  "trigger": "fixed-date",
+  "verify_activated": {
+    "binding": "not_checked",
+    "corroboration": "none",
+    "errors": [],
+    "grant": "activated",
+    "grant_trust": "unauthenticated_tofu",
+    "manifest_freshness": "not_checked",
+    "ok": true,
+    "publisher_authority": "not_checked",
+    "publisher_authority_trust": "not_checked",
+    "revocation": "unknown",
+    "schema": "valid",
+    "signature": "valid",
+    "transparency": "not_checked",
+    "trust": "unauthenticated_tofu",
+    "warnings": [
+      "publisher_claim_unattested"
+    ]
+  },
+  "verify_activated_exit_code": 0,
+  "verify_dormant": {
+    "binding": "not_checked",
+    "corroboration": "none",
+    "errors": [],
+    "grant": "dormant",
+    "grant_trust": "unauthenticated_tofu",
+    "manifest_freshness": "not_checked",
+    "ok": true,
+    "publisher_authority": "not_checked",
+    "publisher_authority_trust": "not_checked",
+    "revocation": "unknown",
+    "schema": "valid",
+    "signature": "valid",
+    "transparency": "not_checked",
+    "trust": "unauthenticated_tofu",
+    "warnings": [
+      "publisher_claim_unattested",
+      "grant_unanchored"
+    ]
+  },
+  "verify_dormant_exit_code": 0
+}
+exit: 0
+ok: demo.pledge_dies: the pledge behaves as documented once its issuer is gone (exit 0)
+precondition ok: node present (conformance TS adapter)
+precondition ok: verifiers/ts/dist/index.js present (conformance TS adapter)
+--- conformance_runner.py --adapter <ts> --subset v0.2
+$ <tree>/.venv/bin/python <tree>/tools/conformance_runner.py --adapter node <tree>/tools/conformance_adapter_ts.mjs {leaf} --subset v0.2
+CONFORMANT (v0.2): 224/224 leaves pass — corpus revision 03691da364e1
+exit: 0
+ok: conformance_runner.py: CONFORMANT against the TS adapter (exit 0)
+ok: conformance_runner.py prints how many leaves it ran, not just that it exited 0 (marker /^CONFORMANT \(v0\.2\): [0-9]+/[0-9]+ leaves pass/ present)
+conformance_runner.py (TS adapter): 224/224 leaves pass
+--- conformance_runner.py leaves-passed count (224) is > 0
+$ bash -c [ '224' -gt 0 ]
+
+exit: 0
+ok: conformance_runner.py ran and passed at least one real leaf (exit 0)
+--- documenting the plan's prescribed negative BEFORE using the real one
+--- conformance_runner.py --adapter false (the plan's original negative)
+$ <tree>/.venv/bin/python <tree>/tools/conformance_runner.py --adapter false --subset v0.2
+error: --adapter template must contain the {leaf} placeholder
+exit: 2
+^ exit 2: this dies in argparse (--adapter must contain {leaf}), never reaching an adapter or a leaf — asserting only "exit != 0" here would be exactly the F-06 defect (D-G1b)
+--- negative: conformance_runner.py --adapter 'false {leaf}' --subset v0.2 (adapter runs, fails on every leaf)
+$ <tree>/.venv/bin/python <tree>/tools/conformance_runner.py --adapter false {leaf} --subset v0.2
+FAIL 01-valid-minimal
+    adapter: exit 1: 
+FAIL 02-valid-full
+    adapter: exit 1: 
+FAIL 03-tampered-payload
+    adapter: exit 1: 
+FAIL 04-wrong-key
+    adapter: exit 1: 
+FAIL 05-issuer-mismatch
+    adapter: exit 1: 
+FAIL 06-duplicate-key-reject
+    adapter: exit 1: 
+FAIL 07-unicode-canon/a-nfd-and-int-boundary-accepted
+    adapter: exit 1: 
+FAIL 07-unicode-canon/b-int-boundary-rejected
+    adapter: exit 1: 
+FAIL 08-sig-malleability
+    adapter: exit 1: 
+FAIL 09-commitment/a-ascii-email
+    adapter: exit 1: 
+FAIL 09-commitment/b-unicode-email
+    adapter: exit 1: 
+FAIL 09-commitment/c-issuer-account
+    adapter: exit 1: 
+FAIL 10-unknown-field
+    adapter: exit 1: 
+FAIL 11-manifest-tamper
+    adapter: exit 1: 
+FAIL 12-retired-key-ok
+    adapter: exit 1: 
+FAIL 13-compromised-key
+    adapter: exit 1: 
+FAIL 14-rotation-continuity
+    adapter: exit 1: 
+FAIL 14b-rotation-discontinuous
+    adapter: exit 1: 
+FAIL 15-revoked-policy
+    adapter: exit 1: 
+FAIL 16-revocation-against-none-ignored
+    adapter: exit 1: 
+FAIL 17-binding-proven/a-salt-disclosure
+    adapter: exit 1: 
+FAIL 17-binding-proven/b-pubkey-challenge
+    adapter: exit 1: 
+FAIL 18-drm-bound
+    adapter: exit 1: 
+FAIL 19-rotation-substituted-key/a-substituted-candidate-key
+    adapter: exit 1: 
+FAIL 19-rotation-substituted-key/b-chain-tail-not-manifest-used
+    adapter: exit 1: 
+FAIL 20-sig-canonicity/a-s-equals-l
+    adapter: exit 1: 
+FAIL 20-sig-canonicity/b-small-order-pubkey
+    adapter: exit 1: 
+FAIL 20-sig-canonicity/c-small-order-r
+    adapter: exit 1: 
+FAIL 21-canon-strict/a-bom
+    adapter: exit 1: 
+FAIL 21-canon-strict/b-depth-255
+    adapter: exit 1: 
+FAIL 21-canon-strict/c-depth-256
+    adapter: exit 1: 
+FAIL 21-canon-strict/d-depth-257
+    adapter: exit 1: 
+FAIL 21-canon-strict/e-lone-surrogate
+    adapter: exit 1: 
+FAIL 21-canon-strict/f-supplementary-raw
+    adapter: exit 1: 
+FAIL 21-canon-strict/g-supplementary-escaped
+    adapter: exit 1: 
+FAIL 22-b64u-decoder-parity/a-padding-accepted
+    adapter: exit 1: 
+FAIL 22-b64u-decoder-parity/b-standard-alphabet-accepted
+    adapter: exit 1: 
+FAIL 22-b64u-decoder-parity/c-trailing-bits-accepted
+    adapter: exit 1: 
+FAIL 23-revocation-refund-window/a-inside-window
+    adapter: exit 1: 
+FAIL 23-revocation-refund-window/b-after-window
+    adapter: exit 1: 
+FAIL 23-revocation-refund-window/c-window-end-unrepresentable
+    adapter: exit 1: 
+FAIL 23-revocation-refund-window/d-unrepresentable-no-matching-record
+    adapter: exit 1: 
+FAIL 24-canonical-roundtrip
+    adapter: exit 1: 
+FAIL 25-schema-parity/a-edition-nonstring
+    adapter: exit 1: 
+FAIL 25-schema-parity/b-ulid-first-char
+    adapter: exit 1: 
+FAIL 26-hybrid/a-valid-hybrid
+    adapter: exit 1: 
+FAIL 26-hybrid/b-ed25519-leg-tampered
+    adapter: exit 1: 
+FAIL 26-hybrid/c-mldsa-leg-tampered
+    adapter: exit 1: 
+FAIL 26-hybrid/d-mldsa-leg-missing
+    adapter: exit 1: 
+FAIL 26-hybrid/e-duplicate-ed25519-alg
+    adapter: exit 1: 
+FAIL 26-hybrid/f-kid-mismatch-between-legs
+    adapter: exit 1: 
+FAIL 26-hybrid/g-key-entry-not-hybrid
+    adapter: exit 1: 
+FAIL 26-hybrid/h-manifest-downgraded-continuity
+    adapter: exit 1: 
+FAIL 27-valid-to-absent
+    adapter: exit 1: 
+FAIL 28-transparency/a-logged-trust-unchanged
+    adapter: exit 1: 
+FAIL 28-transparency/b-wrong-root
+    adapter: exit 1: 
+FAIL 28-transparency/c-ed-only-checkpoint
+    adapter: exit 1: 
+FAIL 28-transparency/d-origin-mismatch-log-key
+    adapter: exit 1: 
+FAIL 28-transparency/e-consistency-ok
+    adapter: exit 1: 
+FAIL 28-transparency/f-equivocation-detected
+    adapter: exit 1: 
+FAIL 28-transparency/g-entry-hash-mismatch
+    adapter: exit 1: 
+FAIL 28-transparency/h-rotation-chain-omitted
+    adapter: exit 1: 
+FAIL 28-transparency/i-compromised-key-fail-closed
+    adapter: exit 1: 
+FAIL 28-transparency/j-ots-anchor
+    adapter: exit 1: 
+FAIL 28-transparency/k-rfc3161-only
+    adapter: exit 1: 
+FAIL 28-transparency/l-payload-only-precommit
+    adapter: exit 1: 
+FAIL 28-transparency/m-hybrid-revocation-and-rule
+    adapter: exit 1: 
+FAIL 28-transparency/n-unknown-entry-type
+    adapter: exit 1: 
+FAIL 28-transparency/o-malformed-signature-logged
+    adapter: exit 1: 
+FAIL 29-limits/a-envelope-oversize
+    adapter: exit 1: 
+FAIL 29-limits/c-manifest-array-overflow
+    adapter: exit 1: 
+FAIL 30-mixed-keyset/a-active-ed-sibling-warn
+    adapter: exit 1: 
+FAIL 30-mixed-keyset/b-migrated-clean
+    adapter: exit 1: 
+FAIL 31-manifest-currency/a-rollback-rejected
+    adapter: exit 1: 
+FAIL 31-manifest-currency/b-monotone-ok
+    adapter: exit 1: 
+FAIL 31-manifest-currency/c-legacy-unversioned-warn
+    adapter: exit 1: 
+FAIL 31-manifest-currency/d-unauthenticated-ignored
+    adapter: exit 1: 
+FAIL 31-manifest-currency/e-legacy-transition-warn-only
+    adapter: exit 1: 
+FAIL 32-anchor-v2/a-v2-valid
+    adapter: exit 1: 
+FAIL 32-anchor-v2/b-v2-commit-mismatch
+    adapter: exit 1: 
+FAIL 32-anchor-v2/c-v1-note-only-warn
+    adapter: exit 1: 
+FAIL 32-anchor-v2/d-converted-from-ots
+    adapter: exit 1: 
+FAIL 33-logged-revocation/a-timely-logged-honored
+    adapter: exit 1: 
+FAIL 33-logged-revocation/b-unlogged-ignored-warn
+    adapter: exit 1: 
+FAIL 33-logged-revocation/c-late-anchor-ignored
+    adapter: exit 1: 
+FAIL 33-logged-revocation/d-policy-class-unchanged
+    adapter: exit 1: 
+FAIL 35-transfer/a-transferred-with-backing
+    adapter: exit 1: 
+FAIL 35-transfer/b-transferred-on-none-with-backing
+    adapter: exit 1: 
+FAIL 35-transfer/c-transferred-on-none-unbacked
+    adapter: exit 1: 
+FAIL 35-transfer/d-forged-holder-auth
+    adapter: exit 1: 
+FAIL 35-transfer/e-unlogged-transfer
+    adapter: exit 1: 
+FAIL 35-transfer/f-double-assignment-earliest-wins
+    adapter: exit 1: 
+FAIL 35-transfer/g-not-transferable-before-violation
+    adapter: exit 1: 
+FAIL 35-transfer/h-classical-only-record-hybrid-key
+    adapter: exit 1: 
+FAIL 35-transfer/i-v01-transferable-null-pubkey-ok
+    adapter: exit 1: 
+FAIL 35-transfer/j-v02-transferable-requires-pubkey
+    adapter: exit 1: 
+FAIL 35-transfer/k-not-transferable-before-boundary
+    adapter: exit 1: 
+FAIL 36-transfer-chain/a-valid-chain
+    adapter: exit 1: 
+FAIL 36-transfer-chain/b-pubkey-mismatch-no-link
+    adapter: exit 1: 
+FAIL 36-transfer-chain/c-losing-branch-no-link
+    adapter: exit 1: 
+FAIL 36-transfer-chain/d-floor-violation-no-link
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/a-dormant-no-declaration
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/b-activated-publisher-declaration
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/c-activated-successor-declaration
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/d-declaration-forged-ignored
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/e-declaration-scope-subset-ignored
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/f-declaration-unlisted-successor-ignored
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/g-activated-fixed-date
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/h-fixed-date-unproven
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/i-fixed-date-stale-proof
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/j-none-not-declared
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/k-not-checked-no-grant-doc
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/l-signer-mismatch
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/m-commitment-mismatch
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/n-ratchet-narrowing-ignored
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/o-ratchet-broadening-adds-fixed-date
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/p-ratchet-equivocation
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/q-tofu-publisher
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/r-scope-uncovered
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/s-v01-negative-control
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/t-schema-pledge-requires-pubkey
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/u-schema-pledge-requires-publisher-id
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/v-classical-only-grant-hybrid-publisher
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/w-empty-legal-text-uri
+    adapter: exit 1: 
+FAIL 37-preservation-pledge/x-trust-not-borrowed-from-signer
+    adapter: exit 1: 
+FAIL 38-redemption/a-valid-proof
+    adapter: exit 1: 
+FAIL 38-redemption/b-wrong-audience-replay
+    adapter: exit 1: 
+FAIL 38-redemption/c-forged-signature
+    adapter: exit 1: 
+FAIL 38-redemption/d-short-nonce
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/a-ed25519-witnessed-bootstrap
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/b-unpinned-witness-does-not-count
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/c-invalid-ed25519-does-not-count
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/d-c2sp-type-06-does-not-count
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/e-checkpoint-domain-not-cosignature
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/f-cosignature-domain-not-checkpoint
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/g-missing-policy-epoch
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/h-wrong-role
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/i-historical-epoch-valid
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/j-current-epoch-not-substituted
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/k-old-valid-no-local-clock-cap
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/l-evidence-policy-substitution-ignored
+    adapter: exit 1: 
+FAIL 39-witness-corroboration/m-compromise-onset-unknown
+    adapter: exit 1: 
+FAIL 40-witness-quorum/a-one-of-one-valid
+    adapter: exit 1: 
+FAIL 40-witness-quorum/b-two-of-three-conservative-t
+    adapter: exit 1: 
+FAIL 40-witness-quorum/c-ed25519-leg-only-invalid
+    adapter: exit 1: 
+FAIL 40-witness-quorum/d-mldsa-leg-only-invalid
+    adapter: exit 1: 
+FAIL 40-witness-quorum/e-legs-with-divergent-timestamps
+    adapter: exit 1: 
+FAIL 40-witness-quorum/f-transplanted-leg
+    adapter: exit 1: 
+FAIL 40-witness-quorum/g-one-vote-per-control-group
+    adapter: exit 1: 
+FAIL 40-witness-quorum/h-direct-domain-conflict
+    adapter: exit 1: 
+FAIL 40-witness-quorum/i-transitive-domain-conflict
+    adapter: exit 1: 
+FAIL 40-witness-quorum/j-committee-of-ten-invalid
+    adapter: exit 1: 
+FAIL 40-witness-quorum/k-declared-form-incoherent-with-membership
+    adapter: exit 1: 
+FAIL 40-witness-quorum/l-skew-600-valid
+    adapter: exit 1: 
+FAIL 40-witness-quorum/m-skew-601-invalid
+    adapter: exit 1: 
+FAIL 40-witness-quorum/n-anchor-before-latest-vote
+    adapter: exit 1: 
+FAIL 40-witness-quorum/o-anchor-delay-86400-valid
+    adapter: exit 1: 
+FAIL 40-witness-quorum/p-anchor-delay-86401-invalid
+    adapter: exit 1: 
+FAIL 40-witness-quorum/q-note-v1-anchor-insufficient
+    adapter: exit 1: 
+FAIL 40-witness-quorum/r-new-evidence-does-not-revive-expired-epoch
+    adapter: exit 1: 
+FAIL 40-witness-quorum/s-quorum-time-exactly-at-compromise-cutoff
+    adapter: exit 1: 
+FAIL 40-witness-quorum/t-compromise-cutoff-null-zero-votes
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/a-rescued-anchored-before-cutoff
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/b-anchored-after-cutoff-fails
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/c-logged-only-fails
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/d-cutoff-logged-only-survives
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/e-no-cutoff-evidence-survives
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/f-stage1-fail-closed
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/g-boundary-equal-fails
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/h-earliest-cutoff-wins
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/i-unvouched-declaration-ignored
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/j-hybrid-rescued
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/k-manifest-claim-does-not-rescue
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/l-uncompromise-chain-floor
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/m-uncompromise-view-floor
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/n-uncompromise-floor-spares-anchored
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/o-status-regression-breaks-continuity
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/p-declaring-signer-compromised-still-floors
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/q-retired-reactivation-untouched
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/r-compromised-signer-establishes-no-cutoff
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/s-chain-dates-the-signer-cutoff-holds
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/t-keyset-omission-breaks-continuity
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/u-stale-pin-not-a-retraction
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/w-oversized-view-does-not-certify
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/x-chain-member-duplicate-kid-refused
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/y-stage2-unanchored-receipt-warns-without-view
+    adapter: exit 1: 
+FAIL 41-compromise-cutoff/z-stolen-key-chain-member-cannot-deny-cutoff
+    adapter: exit 1: 
+FAIL 42-publisher-claim/a-claim-differs-warn
+    adapter: exit 1: 
+FAIL 42-publisher-claim/b-self-publisher-silent
+    adapter: exit 1: 
+FAIL 42-publisher-claim/c-no-claim-silent
+    adapter: exit 1: 
+FAIL 43-publisher-authority/a-authorized
+    adapter: exit 1: 
+FAIL 43-publisher-authority/b-unauthorized-empty-list
+    adapter: exit 1: 
+FAIL 43-publisher-authority/c-no-view-not-checked
+    adapter: exit 1: 
+FAIL 43-publisher-authority/d-empty-view-unattested
+    adapter: exit 1: 
+FAIL 43-publisher-authority/e-forged-ignored
+    adapter: exit 1: 
+FAIL 43-publisher-authority/f-signer-mismatch
+    adapter: exit 1: 
+FAIL 43-publisher-authority/g-window-expired-unauthorized
+    adapter: exit 1: 
+FAIL 43-publisher-authority/h-prospective-not-retroactive
+    adapter: exit 1: 
+FAIL 43-publisher-authority/i-equivocation
+    adapter: exit 1: 
+FAIL 43-publisher-authority/j-rollback-max-wins
+    adapter: exit 1: 
+FAIL 43-publisher-authority/k-scope-uncovered
+    adapter: exit 1: 
+FAIL 43-publisher-authority/l-permission-missing
+    adapter: exit 1: 
+FAIL 43-publisher-authority/m-self-publisher
+    adapter: exit 1: 
+FAIL 43-publisher-authority/n-no-claim
+    adapter: exit 1: 
+FAIL 43-publisher-authority/o-tofu-authorized
+    adapter: exit 1: 
+FAIL 43-publisher-authority/p-view-ceiling
+    adapter: exit 1: 
+FAIL 43-publisher-authority/q-classical-only-rejected
+    adapter: exit 1: 
+FAIL 43-publisher-authority/r-denial-without-currency
+    adapter: exit 1: 
+FAIL 43-publisher-authority/s-stale-behind-assertion
+    adapter: exit 1: 
+FAIL 43-publisher-authority/t-deauth-window-closed-past-receipt
+    adapter: exit 1: 
+FAIL 43-publisher-authority/u-entry-removal-nonconforming
+    adapter: exit 1: 
+FAIL 43-publisher-authority/v-backdated-closure-nonconforming
+    adapter: exit 1: 
+FAIL 43-publisher-authority/w-postdated-closure-nonconforming
+    adapter: exit 1: 
+FAIL 43-publisher-authority/x-early-revocation-live-term-window
+    adapter: exit 1: 
+FAIL 43-publisher-authority/y-extension-live-window-conforming
+    adapter: exit 1: 
+FAIL 44-manifest-duplicate-kid/a-active-first
+    adapter: exit 1: 
+FAIL 44-manifest-duplicate-kid/b-compromised-first
+    adapter: exit 1: 
+FAIL 44-manifest-duplicate-kid/c-unrelated-duplicate
+    adapter: exit 1: 
+FAIL 45-revocation-anchor-status/a-unrelated-unknown-status
+    adapter: exit 1: 
+FAIL 45-revocation-anchor-status/b-matching-unknown-status
+    adapter: exit 1: 
+FAIL 45-revocation-anchor-status/c-malformed-receipt-id-unknown-status
+    adapter: exit 1: 
+FAIL 46-manifest-unauthenticated/a-signature-corrupted
+    adapter: exit 1: 
+FAIL 46-manifest-unauthenticated/b-key-swapped-forged-receipt
+    adapter: exit 1: 
+FAIL 47-oversized-view-transfer/a-oversized-view-hides-transfer
+    adapter: exit 1: 
+NOT CONFORMANT (v0.2): 0/224 leaves pass — 224 failing
+exit: 1
+ok: negative 'conformance_runner.py --adapter 'false {leaf}' --subset v0.2 (adapter runs, fails on every leaf)' failed at the guarded path (exit 1)
+precondition ok: site/node_modules/.bin/esbuild present (importer_differential's browser bundle)
+--- importer_differential.py
+$ <tree>/.venv/bin/python <tree>/tools/importer_differential.py
+462 archives fed to both importers at their own defaults
+  browser intake: accept=141, malformed=317, resource-limit=4
+  browser parseBundle: accept=141, malformed=317, resource-limit=4
+  reference importer: accept=141, malformed=317, resource-limit=4
+0 divergences across 0 families
+0 advisory disagreements, reported and not counted
+canonical projection — compared: outcome class, then receipts, issuers, proofs, legal
+  compared on the parser road only: legal — a verify job carries an envelope, a trust store and its evidence — the bundle's legal members are not part of what the door hands back, on either side
+§14.4 axes this run does not reach:
+  stored size of the container, as content — the floor is 1073741824 bytes. The DECLARED reading of that axis is reached by the stored-floor family, on a container whose length is one byte past the floor and whose tail is a hole; a container carrying that much CONTENT would have to be written and handed whole to both sides, which is not affordable here. The pair family exercises the bound's shape across a pair at a scaled value.
+  decompressed size produced by the whole container — the declared reading of that axis is exercised at the floor and one byte past it; the produced reading would mean inflating more than a quarter of a gigabyte per archive on both sides, which is not affordable at this vector count.
+exit: 0
+ok: importer_differential.py: the reference importer and the browser importer agree (exit 0)
+ok: importer_differential.py prints how many archives it fed both importers, not just that it exited 0 (marker /^[0-9]+ archives fed to both importers at their own defaults/ present)
+importer_differential.py: 462 archives fed to both importers
+--- importer_differential.py archive count (462) is > 0
+$ bash -c [ '462' -gt 0 ]
+
+exit: 0
+ok: importer_differential.py fed at least one real archive to both importers (exit 0)
+
+GATE G-CI-PY PASS property=gen_container_corpus, both demo scripts, conformance_runner (TS, v0.2) and importer_differential all run and their leaf/archive counts are > 0

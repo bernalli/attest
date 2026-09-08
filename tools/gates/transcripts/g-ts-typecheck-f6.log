@@ -1,0 +1,17 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-TS-TC-F6 ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:15:11Z
+
+precondition ok: verifiers/ts/node_modules present
+precondition ok: verifiers/ts/node_modules/@types present
+precondition ok: git available on GATE_TREE
+test files in scope for this phase (diff + untracked + script args), derived now: 0
+
+NO TS TEST FILE TOUCHED IN THIS PHASE — there is no object for this gate to measure
+(the pathspec verifiers/ts/test exists and is populated, so this empty set is the phase's, not the derivation's)
+GATE G-TS-TC-F6 SKIPPED precondition=no-object

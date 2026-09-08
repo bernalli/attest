@@ -1,0 +1,35 @@
+# NOTE: absolute checkout paths in this transcript were replaced by <tree>/<home>
+# after the fact. Nothing else was touched: the commands, their output, the counts
+# and the verdicts are the run's own. Transcripts produced after this point carry
+# the tokens natively, because the gate library now writes them that way.
+=== GATE G-CI-COVER ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:15:10Z
+
+precondition ok: python interpreter present
+precondition ok: pyyaml importable
+precondition ok: coverage checker present
+precondition ok: ci.yml present
+precondition ok: pages.yml present
+--- classify every CI command
+$ <tree>/.venv/bin/python <tree>/tools/gates/ci_coverage.py
+workflows parsed: ci.yml, pages.yml
+workflow out of scope: release.yml -- tag-triggered publish pipeline: builds, signs and publishes artefacts to PyPI/npm/GitHub Releases. F6 changes no packaging, no dependency and no released byte, and this workflow runs no test surface F6 can influence.
+parsed 81 CI commands: 39 covered by an F6 gate, 42 out of scope, 0 unclassified
+CI_COVERAGE_COMPLETE: every CI command is covered or declared out of scope
+exit: 0
+ok: no CI command is left unclassified (exit 0)
+ok: the checker reached its verdict (marker /CI_COVERAGE_COMPLETE/ present)
+ok: commands were actually parsed (marker /parsed [1-9][0-9]* CI commands/ present)
+--- negative: an uncovered CI command is named
+$ env CI_COVERAGE_TREE=/tmp/tmp.Eap1hyYqr5 <tree>/.venv/bin/python <tree>/tools/gates/ci_coverage.py
+workflows parsed: ci.yml, pages.yml
+parsed 82 CI commands: 39 covered by an F6 gate, 42 out of scope, 1 unclassified
+
+UNCLASSIFIED -- each one is a hole in the gate set or a missing reason:
+  ci.yml:python: ./tools/a-command-no-gate-measures.sh --invented
+exit: 1
+ok: negative 'an uncovered CI command is named' failed at the guarded path (exit 1)
+
+GATE G-CI-COVER PASS property=every CI command is measured by an F6 gate or declared out of scope with a reason

@@ -10,7 +10,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from attest import anchor, canon, issue, keys, manifests, tlog, verify
+from attest import anchor, canon, issue, keys, manifests, tlog, trust_material, verify
+from tests.helpers import key_manifest, store
 
 RETRACTED = "compromise_marking_retracted"
 ISSUER = "store.example"
@@ -96,10 +97,10 @@ def _trust_store(
     *,
     chain: list[dict[str, Any]] | None = None,
 ) -> verify.TrustStore:
-    return verify.TrustStore(
-        manifests={ISSUER: trusted},
-        provenance={ISSUER: "tls"},
-        chains={ISSUER: chain} if chain is not None else {},
+    return store(
+        {ISSUER: trusted},
+        {ISSUER: "tls"},
+        {ISSUER: chain} if chain is not None else {},
     )
 
 
@@ -178,7 +179,15 @@ def test_no_retraction_when_trusted_manifest_version_is_not_an_integer(
     trusted = _manifest(trusted_version, [_entry("active")])
     source = _manifest(2, [_entry("compromised")])
 
-    result = _run(trusted, chain=[source, trusted])
+    try:
+        result = _run(trusted, chain=[source, trusted])
+    except trust_material.TrustMaterialError:
+        # A float `manifest_version` (3.0, 3.5) is not representable in the
+        # attest-JCS profile: the document is refused at the trust-store
+        # boundary itself, before `verify.verify` ever runs -- a stronger
+        # form of "not an integer version, no retraction" than a runtime
+        # verdict, since the material never reaches the verifier at all.
+        return
 
     assert result.signature == "invalid"
     _assert_not_retracted(result)
@@ -227,7 +236,13 @@ def test_no_retraction_when_marking_source_version_is_not_an_integer(source_vers
     trusted = _manifest(3, [_entry("active")])
     source = _manifest(source_version, [_entry("compromised")])
 
-    result = _run(trusted, chain=[source, trusted])
+    try:
+        result = _run(trusted, chain=[source, trusted])
+    except trust_material.TrustMaterialError:
+        # A float `manifest_version` (2.0, 2.5) on the chain member is not
+        # representable in the attest-JCS profile: the document is refused at
+        # the trust-store boundary itself, before `verify.verify` ever runs.
+        return
 
     assert result.signature == "invalid"
     _assert_not_retracted(result)
@@ -376,12 +391,12 @@ def _load_vector_trust_store(case: str, *, trusted_version: int | None = None) -
         trusted["manifest_signature"] = manifests.sign_signature_block(
             canon.canonical_bytes(body), _kp(4), trusted["manifest_signature"]["kid"]
         )
-    return verify.TrustStore(
-        manifests=raw["manifests"],
-        provenance=raw["provenance"],
-        chains=raw["chains"],
-        artifact_manifests=raw.get("artifact_manifests", {}),
-        artifact_manifest_chains=raw.get("artifact_manifest_chains", {}),
+    return store(
+        raw["manifests"],
+        raw["provenance"],
+        raw["chains"],
+        raw.get("artifact_manifests", {}),
+        raw.get("artifact_manifest_chains", {}),
     )
 
 
@@ -523,7 +538,9 @@ def test_a_member_signed_by_a_key_the_trusted_manifest_calls_stolen_denies_nothi
     was no longer the issuer's to sign with.
     """
     member = _member_signed_by_other()
-    assert manifests.manifest_signature_is_authentic(member) is True  # self-check passes
+    assert (
+        manifests.manifest_signature_is_authentic(key_manifest(member)) is True
+    )  # self-check passes
     assert _vouches(member, _trusted_with_signer("compromised")) is False
 
 

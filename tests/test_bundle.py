@@ -31,7 +31,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from attest import bundle, buyer_surface, canon, container, issue, keys, manifests, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#ed25519-1"
@@ -100,7 +100,7 @@ def test_export_import_roundtrip_verifies_green(tmp_path: Path) -> None:
     result = verify.verify(json.dumps(receipt).encode("utf-8"), imported.trust_store)
     assert result.ok is True
     assert result.trust == "unauthenticated_tofu"
-    assert imported.trust_store.provenance[ISSUER] == "bundle"
+    assert imported.trust_store.provenance_for(ISSUER) == "bundle"
 
 
 def test_import_without_private_file_has_empty_salts(tmp_path: Path) -> None:
@@ -538,9 +538,7 @@ def test_disclose_output_is_self_contained_and_verifies(tmp_path: Path) -> None:
     disclosed = json.loads(disclosed_bytes)
     manifest_snapshot = disclosed["delivery"]["issuer_manifest"]
 
-    trust_store = verify.TrustStore(
-        manifests={ISSUER: manifest_snapshot}, provenance={ISSUER: "bundle"}
-    )
+    trust_store = store({ISSUER: manifest_snapshot}, {ISSUER: "bundle"})
     result = verify.verify(disclosed_bytes, trust_store)
     assert result.ok is True
     assert result.trust == "unauthenticated_tofu"
@@ -582,8 +580,10 @@ def test_import_groups_artifact_manifests_by_series_and_picks_latest_key_manifes
     assert [m["version"] for m in imported.artifact_manifests[series]] == [1, 2]
     # A single key-manifest version: it is both the "current" manifest and,
     # trivially, the whole (length-1) rotation chain.
-    assert imported.trust_store.manifests[ISSUER]["manifest_version"] == 1
-    assert [m["manifest_version"] for m in imported.trust_store.chains[ISSUER]] == [1]
+    manifest = imported.trust_store.manifest_for(ISSUER)
+    assert manifest is not None
+    assert manifest.data()["manifest_version"] == 1
+    assert [m.data()["manifest_version"] for m in imported.trust_store.chain_for(ISSUER)] == [1]
 
 
 def test_disclose_unknown_receipt_id_raises_bundle_error(tmp_path: Path) -> None:
@@ -1283,7 +1283,7 @@ def test_import_skips_every_non_object_manifest_shape(tmp_path: Path, malformed:
 
     imported = bundle.import_bundle(hostile)
 
-    assert imported.trust_store.manifests == {}
+    assert imported.trust_store.issuers() == ()
     assert imported.artifact_manifests == {}
 
 
@@ -1307,7 +1307,7 @@ def test_import_skips_every_non_array_manifest_collection(
 
     imported = bundle.import_bundle(hostile)
 
-    assert imported.trust_store.manifests == {}
+    assert imported.trust_store.issuers() == ()
     assert imported.artifact_manifests == {}
 
 
@@ -1331,7 +1331,7 @@ def test_import_filters_every_non_object_manifest_entry(
 
     imported = bundle.import_bundle(hostile)
 
-    assert imported.trust_store.manifests == {}
+    assert imported.trust_store.issuers() == ()
     assert imported.artifact_manifests == {}
 
 
@@ -1374,7 +1374,9 @@ def test_import_orders_every_non_integer_manifest_version_below_valid_versions(
     imported = bundle.import_bundle(hostile)
 
     if family == "key":
-        assert imported.trust_store.manifests[ISSUER]["marker"] == "valid"
+        manifest = imported.trust_store.manifest_for(ISSUER)
+        assert manifest is not None
+        assert manifest.data()["marker"] == "valid"
     else:
         assert imported.artifact_manifests["example"][-1]["marker"] == "valid"
 
@@ -1542,9 +1544,9 @@ def test_import_keeps_an_issuer_named_after_an_object_member(tmp_path: Path) -> 
         dst.writestr("manifests/attacker.json", blob)
 
     imported = bundle.import_bundle(hostile)
-    assert list(imported.trust_store.manifests) == ["__proto__"]
+    assert list(imported.trust_store.issuers()) == ["__proto__"]
     # And nothing that issuer wrote reaches an issuer it did not name.
-    assert imported.trust_store.manifests.get(ISSUER) is None
+    assert imported.trust_store.manifest_for(ISSUER) is None
 
 
 def test_import_refuses_every_corpus_archive_with_a_bundle_error(tmp_path: Path) -> None:

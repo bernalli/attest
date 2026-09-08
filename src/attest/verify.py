@@ -38,6 +38,7 @@ from attest import (
     revocation,
     tlog,
     transfer,
+    trust_material,
     validate,
 )
 from attest import (
@@ -247,38 +248,15 @@ _HEX_LOWER = frozenset("0123456789abcdef")
 _MAX_TRANSPARENCY_EVIDENCE_LEN = canon.MAX_ADMISSION_BYTES
 
 
-@dataclass(frozen=True)
-class TrustStore:
-    """The verifier's local trust material (design §5: offline verification
-    works from a local trust store of key manifests).
-
-    `chains` is optional and backward-compatible (default empty): when
-    present, `chains[issuer_id]` is the ordered manifest-version history the
-    verifier holds for that issuer, oldest first, ending with the same
-    manifest as `manifests[issuer_id]` — the one actually used to resolve
-    signing keys in steps 2-4. `verify()` walks consecutive pairs with
-    `manifests.check_continuity`; any break marks the issuer's active
-    manifest as reached via a discontinuous rotation (design §5: "version
-    gaps are bridgeable only by validating every intermediate manifest in
-    sequence... if intermediates are unavailable, the manifest counts as
-    discontinuous"), which forces `trust: "unverified_rotation"` regardless
-    of provenance. An issuer absent from `chains`, or a chain with fewer
-    than 2 entries, has nothing to validate and behaves exactly like a
-    Task-8 `TrustStore` (no `chains` kwarg at all).
-    """
-
-    manifests: dict[str, dict[str, Any]]  # issuer_id -> key manifest
-    provenance: dict[str, str]  # issuer_id -> "tls" | "bundle"
-    chains: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
-    # G2/G3 (attest-versioning.md rev 4; v0.1 §7.2/§7.3 amendment) — the
-    # artifact-manifest analog of `manifests`/`chains` above, scoped by the
-    # receipt issuer and `work.artifact_series`: issuer_id -> series ->
-    # manifest/history. This prevents one issuer's series name from affecting
-    # another issuer's currency state.
-    artifact_manifests: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
-    artifact_manifest_chains: dict[str, dict[str, list[dict[str, Any]]]] = field(
-        default_factory=dict
-    )
+# `verify.TrustStore` is the NAME callers have always imported; what it names
+# is now the snapshot `trust_material` parses from bytes. Keeping the name is
+# not politeness — it is what makes the old call site fail LOUDLY instead of
+# silently: `verify.TrustStore(manifests=..., provenance=...)` raises
+# `TypeError: TrustStore.__init__() got an unexpected keyword argument
+# 'manifests'` at argument binding, before the constructor body runs. Deleting
+# the name would have produced `AttributeError: module has no attribute`,
+# which reads like a bad import rather than like a contract that changed.
+TrustStore = trust_material.TrustStore
 
 
 @dataclass(frozen=True)
@@ -459,7 +437,7 @@ def _chain_continuous(chain: list[dict[str, Any]]) -> bool:
     """
     if len(chain) < 2:
         return True
-    return all(manifests.check_continuity(chain[i], chain[i + 1]) for i in range(len(chain) - 1))
+    return all(manifests._check_continuity(chain[i], chain[i + 1]) for i in range(len(chain) - 1))
 
 
 def _artifact_chain_continuous(chain: list[dict[str, Any]]) -> bool:
@@ -1046,7 +1024,7 @@ def _trusted_manifest_vouches_for_member(
     issued_at = member.get("issued_at")
     if not isinstance(issued_at, str):
         return False
-    signer_entry = manifests.find_key(trusted_manifest, signer_kid)
+    signer_entry = manifests._find_key(trusted_manifest, signer_kid)
     if signer_entry is None:
         return False
     if signer_entry.get("status") not in (_STATUS_ACTIVE, _STATUS_RETIRED):
@@ -1438,6 +1416,12 @@ def _resolve_transfer_backing(
     (`{"record": <transfer record>, "evidence": <§10.2 evidence bundle>}`),
     or `None` if no claim survives every gate below.
 
+    PRECONDITION: `issuer_manifest` is ALREADY MATERIALIZED — it came out of
+    `_materialized_trust_store`. This function reaches the hoisted
+    `transfer._verify_record_signature`, which does not re-apply the boundary,
+    so a raw caller object handed in here would reopen the class that boundary
+    closes. Private for exactly that reason.
+
     `transfer_view` is materialized once at the untrusted boundary — the
     SAME `canon.dumps`/size-bound/`except Exception` confinement
     `_revocation_deadline_satisfied` already applies to `revocation_evidence`
@@ -1448,7 +1432,7 @@ def _resolve_transfer_backing(
 
     1. `record` is a dict whose `receipt_id` equals `payload`'s own — else
        the claim is irrelevant to this receipt and is skipped silently.
-    2. `transfer.verify_record_signature(record, issuer_manifest)` — the
+    2. `transfer._verify_record_signature(record, issuer_manifest)` — the
        issuer's own signature (hoisting `manifests.verify_key_manifest` once
        here, mirroring `_classify_revocation`'s own hoisting of the same
        check — this function is called at most once per classification).
@@ -1503,7 +1487,7 @@ def _resolve_transfer_backing(
     # attacker one deletion and no key: `manifest_signature` sits outside
     # the signed bytes. Severe where evidence can SAVE, permissive where it
     # can only KILL.
-    manifest_ok = manifests.manifest_signature_is_authentic(issuer_manifest)
+    manifest_ok = manifests._manifest_signature_is_authentic(issuer_manifest)
 
     def _append_once(warning: str) -> None:
         if warning not in warnings:
@@ -1517,7 +1501,11 @@ def _resolve_transfer_backing(
         if not isinstance(record, dict) or record.get("receipt_id") != receipt_id:
             continue
 
-        if not manifest_ok or not transfer.verify_record_signature(record, issuer_manifest):
+        # The MATERIALIZED variant, deliberately: `issuer_manifest` came out of
+        # `_materialized_trust_store` before this function was reached, and the
+        # public entry point would re-materialize it once PER RECORD instead of
+        # once per call. The boundary is not skipped here, it is hoisted.
+        if not manifest_ok or not transfer._verify_record_signature(record, issuer_manifest):
             _append_once(_WARN_TRANSFERRED_REVOCATION_UNBACKED)
             continue
 
@@ -1587,6 +1575,11 @@ def _classify_revocation(
     transfer_view: list[dict[str, Any]] | None = None,
 ) -> str:
     """§6 step 6 / §3.1: revocation-by-class.
+
+    PRECONDITION: `issuer_manifest` is ALREADY MATERIALIZED, exactly as in
+    `_resolve_transfer_backing` above and for the same reason — the per-record
+    loop below uses `revocation._verify_record_signature`, the variant that
+    does not re-apply the boundary.
 
     A record is a candidate revocation for THIS receipt only if it (a)
     matches the payload's `receipt_id`, (b) authenticates against
@@ -1741,12 +1734,15 @@ def _classify_revocation(
     # attacker one deletion and no key: `manifest_signature` sits outside
     # the signed bytes. Severe where evidence can SAVE, permissive where it
     # can only KILL.
-    manifest_ok = manifests.manifest_signature_is_authentic(issuer_manifest)
+    manifest_ok = manifests._manifest_signature_is_authentic(issuer_manifest)
     authenticated_ids: set[int] = set()
     authenticated: list[dict[str, Any]] = []
     if manifest_ok:
         for record in admitted_view:
-            if isinstance(record, dict) and revocation.verify_record_signature(
+            # Materialized variant, hoisted for the same reason as the
+            # transfer rail above: this loop runs up to
+            # `MAX_REVOCATION_RECORDS` times against ONE manifest.
+            if isinstance(record, dict) and revocation._verify_record_signature(
                 record, issuer_manifest
             ):
                 authenticated.append(record)
@@ -2018,16 +2014,14 @@ def _pledge_or_none(payload: object) -> dict[str, Any] | None:
     return pledge
 
 
-def _grant_trust_ladder(trust_store: TrustStore, domain: str, manifest: object) -> str:
+def _grant_trust_ladder(store: trust_material._StoreData, domain: str, manifest: object) -> str:
     """§18.5's ladder for the PUBLISHER's manifest — v0.1 §11.1's discipline
     for `trust`, applied verbatim to a different domain and reported ONLY in
     `grant_trust`. The receipt's own `trust` component is untouched: it remains
     a statement about the issuer, and a publisher the verifier happens to know
     less well must never downgrade it."""
-    level = (
-        _TRUST_VERIFIED if trust_store.provenance.get(domain) == _PROVENANCE_TLS else _TRUST_TOFU
-    )
-    chain = trust_store.chains.get(domain)
+    level = _TRUST_VERIFIED if store.provenance.get(domain) == _PROVENANCE_TLS else _TRUST_TOFU
+    chain = store.chains.get(domain)
     if chain and (not _chain_continuous(chain) or chain[-1] != manifest):
         return _TRUST_UNVERIFIED_ROTATION
     return level
@@ -2116,6 +2110,26 @@ def evaluate_grant(
     warnings: list[str] = []
     if grant_view is None:
         return GrantVerdict(_GRANT_NOT_CHECKED, _GRANT_TRUST_NOT_CHECKED)
+    # The trust-store boundary for the callers who enter HERE (§18.7's
+    # custodian asks this question without re-verifying the receipt). Below
+    # the capability gate, so a caller that supplies no Stage 4 evidence pays
+    # nothing — and that ORDER is the contract, not an optimization: a caller
+    # that supplies no evidence gets `not_checked` even when the store is not a
+    # snapshot, because the gate above answered first.
+    #
+    # Opening the snapshot RAISES rather than answering `not_checked`. The two
+    # are not interchangeable: `not_checked` says "you did not ask me to check
+    # this", and a policy that reads it as "no objection" would treat malformed
+    # trusted configuration as an absent question. A `TypeError` cannot be read
+    # that way by anybody — there is no verdict object to misread.
+    #
+    # The flag this used to carry (`_already_materialized`, set by `verify()`)
+    # is gone with the pass it protected: opening a snapshot is a type check
+    # and a five-field tuple, not a copy linear in the size of the store, so
+    # there is nothing left worth skipping.
+    store = trust_material._store_data(trust_store)
+    if store is None:
+        raise TypeError(trust_material._MSG_NOT_PARSED.format(what="trust store"))
     materialized_grant_view = _materialize_grant_view(grant_view)
 
     # --- Step 1: the pledge itself, from the signed payload alone.
@@ -2162,7 +2176,7 @@ def evaluate_grant(
     work = payload.get("work")
     publisher_id = work.get("publisher_id") if isinstance(work, dict) else None
     signer = grant_module.signer_domain(floor)
-    manifest = trust_store.manifests.get(signer) if isinstance(signer, str) else None
+    manifest = store.manifests.get(signer) if isinstance(signer, str) else None
     # The ladder is scoped to the RECEIPT's declared `work.publisher_id` (§18.5,
     # "the trust store's provenance for the resolved `work.publisher_id`"), and
     # NEVER to whatever domain a supplied document happens to name in its `kid`.
@@ -2175,12 +2189,12 @@ def evaluate_grant(
     # the binding check, and where they differ the answer is `signer_mismatch`,
     # not a trust value borrowed from a stranger.
     grant_trust = (
-        _grant_trust_ladder(trust_store, publisher_id, trust_store.manifests.get(publisher_id))
+        _grant_trust_ladder(store, publisher_id, store.manifests.get(publisher_id))
         if isinstance(publisher_id, str)
         else _TRUST_TOFU
     )
 
-    if not isinstance(manifest, dict) or not grant_module.verify_grant(floor, manifest):
+    if not isinstance(manifest, dict) or not grant_module._verify_grant(floor, manifest):
         return GrantVerdict(_GRANT_INVALID_IGNORED, grant_trust, tuple(warnings))
     # §18.1: the signer's `kid` DNS prefix MUST equal the resolving manifest's
     # own `issuer`. A trust store that maps one domain to another domain's
@@ -2224,7 +2238,7 @@ def evaluate_grant(
         return GrantVerdict(_GRANT_DORMANT, grant_trust, tuple(warnings))
 
     # --- Step 9: the declaration path, scanned in FULL.
-    if _honor_declarations(declarations, effective, trust_store, warnings):
+    if _honor_declarations(declarations, effective, store, warnings):
         return GrantVerdict(_GRANT_ACTIVATED, grant_trust, tuple(warnings))
 
     # --- Step 10: the fixed-date path, reached ONLY because step 9 did not
@@ -2285,8 +2299,23 @@ def _resolve_effective_grant(
     what §18.3 rejects, and a replayed copy is not a second document.
     """
     candidates: dict[str, dict[str, Any]] = {floor_hash: floor}
+    # `verify_key_manifest` is hoisted out of the loop and the signature check
+    # uses the MATERIALIZED variant: `manifest` came from the already
+    # materialized trust store, and the public `verify_grant` would repeat both
+    # halves — including a fresh materialization — once per later grant.
+    # `isinstance` first: the public `verify_grant` wrapped BOTH halves in a
+    # try/except returning False, and hoisting the manifest check out of the
+    # loop took it out of that guard. The caller does validate `manifest`
+    # before reaching here, so this is belt rather than fix — but a hoist that
+    # silently narrows a fail-closed path is the kind of change that is only
+    # noticed later, by something else.
+    manifest_ok = isinstance(manifest, dict) and manifests._verify_key_manifest(manifest)
     for later in later_grants if isinstance(later_grants, list) else []:
-        if not isinstance(later, dict) or not grant_module.verify_grant(later, manifest):
+        if (
+            not manifest_ok
+            or not isinstance(later, dict)
+            or not grant_module._verify_grant_signature(later, manifest)
+        ):
             continue
         if not _member_equals(later, "publisher", _own_member(floor, "publisher")):
             continue
@@ -2339,7 +2368,7 @@ def _resolve_effective_grant(
 def _honor_declarations(
     declarations: object,
     effective: dict[str, Any],
-    trust_store: TrustStore,
+    store: trust_material._StoreData,
     warnings: list[str],
 ) -> bool:
     """§18.4 step 9: EVERY supplied declaration is examined; the step never
@@ -2364,14 +2393,12 @@ def _honor_declarations(
         # `compromised` ceases to authenticate, and a grant that had activated
         # on it returns to `dormant`: the safe direction, stated in §18.4
         # rather than left to be discovered.
-        declaration_manifest = (
-            trust_store.manifests.get(domain) if isinstance(domain, str) else None
-        )
+        declaration_manifest = store.manifests.get(domain) if isinstance(domain, str) else None
         if (
             role is None
             or not isinstance(declaration_manifest, dict)
             or declaration_manifest.get("issuer") != domain
-            or not grant_module.verify_declaration(declaration, declaration_manifest)
+            or not grant_module._verify_declaration(declaration, declaration_manifest)
             or not grant_module.declaration_covers_grant(declaration, effective)
         ):
             ignored = True
@@ -2450,7 +2477,7 @@ def _grant_hash_or_none(candidate: object) -> str | None:
 
 def _admitted_authorizations(
     authorizations: list[Any],
-    trust_store: TrustStore,
+    store: trust_material._StoreData,
     publisher_id: str,
     authority_trust: str,
     warnings: list[str],
@@ -2468,8 +2495,8 @@ def _admitted_authorizations(
             continue
         document = candidate
         signer = grant_module.signer_domain(document)
-        manifest = trust_store.manifests.get(signer) if isinstance(signer, str) else None
-        if not isinstance(manifest, dict) or not authority_module.verify_authorization(
+        manifest = store.manifests.get(signer) if isinstance(signer, str) else None
+        if not isinstance(manifest, dict) or not authority_module._verify_authorization(
             document, manifest
         ):
             _append_warning_once(warnings, _WARN_AUTHORIZATION_INVALID_IGNORED)
@@ -2599,6 +2626,12 @@ def evaluate_publisher_authority(
     warnings: list[str] = []
     if authority_view is None:
         return AuthorityVerdict(_AUTHORITY_NOT_CHECKED, _AUTHORITY_NOT_CHECKED)
+    # Same boundary, same placement rule, same refusal as `evaluate_grant`
+    # above: under the capability gate, and a non-snapshot raises rather than
+    # answering `not_checked`.
+    store = trust_material._store_data(trust_store)
+    if store is None:
+        raise TypeError(trust_material._MSG_NOT_PARSED.format(what="trust store"))
     materialized_authority_view = _materialize_authority_view(authority_view)
 
     # --- Step 1.
@@ -2631,13 +2664,11 @@ def evaluate_publisher_authority(
     # --- Step 5. The ladder is keyed to the RECEIPT's publisher claim, never
     # to any domain named by a supplied document's kid; the document is still
     # attacker-supplied bytes at this point.
-    authority_trust = _grant_trust_ladder(
-        trust_store, publisher_id, trust_store.manifests.get(publisher_id)
-    )
+    authority_trust = _grant_trust_ladder(store, publisher_id, store.manifests.get(publisher_id))
 
     # --- Step 6.
     admitted, authority_trust = _admitted_authorizations(
-        authorizations, trust_store, publisher_id, authority_trust, warnings
+        authorizations, store, publisher_id, authority_trust, warnings
     )
 
     # --- Step 7.
@@ -2745,6 +2776,13 @@ def verify(
     one status, `compromised`; a Stage-2-capable verifier may then spare a
     receipt whose own receipt claim was anchored strictly before the earliest
     anchored compromise declaration for the signing key.
+
+    `trust_store` is MATERIALIZED before it is read (see
+    `_materialized_trust_store`): the verifier decides from the store's own
+    DATA, in exact built-in types, never from an embedder's object whose
+    `.get`/`__eq__` can answer differently from what it serializes. A store
+    that cannot be read as data is a verification error naming itself, not an
+    exception; a well-formed store is unaffected.
     """
     # Caller-contract enforcement (security): a non-list `revocation_view`
     # must fail loud. If a lone record OBJECT slipped through here,
@@ -2902,6 +2940,22 @@ def verify(
     if not isinstance(signatures_obj, list):
         return _invalid("envelope missing array member 'signatures'")
 
+    # --- The trust-store boundary, immediately before the FIRST read of it.
+    # Placed here and not earlier so that every envelope refusal above keeps
+    # the verdict and the message it has always had: a snapshot opens, so no
+    # existing outcome moves, and something that is not a snapshot is refused
+    # before one bit of it has steered a decision.
+    #
+    # `verify()` ANSWERS rather than raising, unlike `evaluate_*`: this entry
+    # point already answers a malformed envelope with `ok: false` and a named
+    # reason, and an embedder's request handler should not start crashing
+    # because the trust material it was handed is of the wrong kind. The
+    # evaluators are the other case — there `not_checked` would be a verdict
+    # a policy could misread, so they raise.
+    store = trust_material._store_data(trust_store)
+    if store is None:
+        return _invalid(trust_material._MSG_NOT_PARSED.format(what="trust store"))
+
     # Resolve trust as soon as we can identify the claimed issuer, even if a
     # later step rejects the receipt — a failed verification still reports
     # the trust level of the manifest that was consulted (or the safe
@@ -2912,9 +2966,9 @@ def verify(
     issuer_id = issuer_block.get("id") if isinstance(issuer_block, dict) else None
     issuer_manifest: dict[str, Any] | None = None
     if isinstance(issuer_id, str):
-        provenance = trust_store.provenance.get(issuer_id)
+        provenance = store.provenance.get(issuer_id)
         trust = _TRUST_VERIFIED if provenance == _PROVENANCE_TLS else _TRUST_TOFU
-        issuer_manifest = trust_store.manifests.get(issuer_id)
+        issuer_manifest = store.manifests.get(issuer_id)
 
         # G1 ceiling + G6 detection preflight — ABOVE the chain handling, for
         # structural parity with verify.ts (2026-07-22 fix wave 2 round 2,
@@ -2964,13 +3018,13 @@ def verify(
             # Deliberately last in this preflight: the keys ceiling above
             # bounds the work this check does, and running it after the
             # existing refusals leaves their verdicts and messages unchanged.
-            if not manifests.manifest_signature_is_authentic(issuer_manifest):
+            if not manifests._manifest_signature_is_authentic(issuer_manifest):
                 return _invalid(
                     f"issuer manifest for {issuer_id!r} is not self-consistent: "
                     "its own signature does not verify"
                 )
 
-        chain = trust_store.chains.get(issuer_id)
+        chain = store.chains.get(issuer_id)
         # v0.1 §7.1 (2026-08-26 amendment): an ambiguous key manifest fails its
         # self-consistency check WHEREVER it is consumed. A held chain member is
         # consumed — by rotation continuity (§7.3) and by v0.2 §19.3's floor and
@@ -2999,17 +3053,23 @@ def verify(
     work_block = payload.get("work")
     artifact_series = work_block.get("artifact_series") if isinstance(work_block, dict) else None
     if isinstance(issuer_id, str) and isinstance(artifact_series, str):
-        issuer_artifact_manifests = trust_store.artifact_manifests.get(issuer_id, {})
+        issuer_artifact_manifests = store.artifact_manifests.get(issuer_id, {})
         candidate_artifact_manifest = issuer_artifact_manifests.get(artifact_series)
         if isinstance(candidate_artifact_manifest, dict):
-            am_chain = trust_store.artifact_manifest_chains.get(issuer_id, {}).get(artifact_series)
+            am_chain = store.artifact_manifest_chains.get(issuer_id, {}).get(artifact_series)
             members = [candidate_artifact_manifest]
             if am_chain:
                 members.extend(am_chain)
+            # `_verify_artifact_manifest`, the MATERIALIZED variant: this
+            # `all(...)` runs once per chain member against ONE manifest, and
+            # `issuer_manifest` came out of `_materialized_trust_store` above.
+            # The public door would re-materialize it per member. The boundary
+            # is hoisted, not skipped — same shape as the transfer and
+            # revocation loops.
             authenticated = (
                 isinstance(issuer_manifest, dict)
                 and all(
-                    manifests.verify_artifact_manifest(member, issuer_manifest)
+                    manifests._verify_artifact_manifest(member, issuer_manifest)
                     for member in members
                     if isinstance(member, dict)
                 )
@@ -3074,7 +3134,7 @@ def verify(
         issuer_id if isinstance(issuer_id, str) else None,
         issuer_manifest,
         _rotation_chain_verified(
-            trust_store.chains.get(issuer_id) if isinstance(issuer_id, str) else None,
+            store.chains.get(issuer_id) if isinstance(issuer_id, str) else None,
             issuer_manifest,
         ),
         transparency,
@@ -3145,11 +3205,11 @@ def verify(
         # --- Step 3 (shared with v0.1): key checks — present, not
         # compromised (fail-closed regardless of issued_at), issued_at within
         # the key's validity window.
-        entry = manifests.find_key(manifest, kid)
+        entry = manifests._find_key(manifest, kid)
         if entry is None:
             return _invalid(f"no key {kid!r} in issuer manifest")
 
-        chain = trust_store.chains.get(issuer_id)
+        chain = store.chains.get(issuer_id)
         authenticated_claims = _authenticated_compromise_claims(
             materialized_compromise_view,
             manifest,
@@ -3258,11 +3318,11 @@ def verify(
 
         # --- Step 3: key checks — present, not compromised (fail-closed
         # regardless of issued_at), issued_at within the key's validity window.
-        entry = manifests.find_key(manifest, kid)
+        entry = manifests._find_key(manifest, kid)
         if entry is None:
             return _invalid(f"no key {kid!r} in issuer manifest")
 
-        chain = trust_store.chains.get(issuer_id)
+        chain = store.chains.get(issuer_id)
         authenticated_claims = _authenticated_compromise_claims(
             materialized_compromise_view,
             manifest,
@@ -3354,7 +3414,10 @@ def verify(
         # evaluating a grant against a payload that failed that conditional
         # would be reasoning about a receipt the verifier has already rejected.
         grant_verdict = evaluate_grant(
-            payload, trust_store, grant_view, anchor_policy=anchor_policy
+            payload,
+            trust_store,
+            grant_view,
+            anchor_policy=anchor_policy,
         )
         authority_verdict = evaluate_publisher_authority(payload, trust_store, authority_view)
     else:

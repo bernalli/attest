@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from attest import authority, grant, keys, manifests, pq, verify
-from tests.helpers import make_payload
+from tests.helpers import key_manifest, make_payload, store
 
 ISSUER = "store.example"
 PUBLISHER = "pub.example"
@@ -140,10 +140,10 @@ def _grant_payload(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def _store() -> verify.TrustStore:
-    return verify.TrustStore(
-        manifests={ISSUER: ISSUER_MANIFEST, PUBLISHER: PUBLISHER_MANIFEST},
-        provenance={ISSUER: "tls", PUBLISHER: "tls"},
-        chains={},
+    return store(
+        {ISSUER: ISSUER_MANIFEST, PUBLISHER: PUBLISHER_MANIFEST},
+        {ISSUER: "tls", PUBLISHER: "tls"},
+        {},
     )
 
 
@@ -156,12 +156,12 @@ def _evaluate_grant(document: dict[str, Any], view: object) -> Any:
 
 
 def _assert_authority_fixture(document: dict[str, Any]) -> None:
-    assert authority.verify_authorization(document, PUBLISHER_MANIFEST) is True
+    assert authority.verify_authorization(document, key_manifest(PUBLISHER_MANIFEST)) is True
 
 
 def _assert_grant_fixture(document: dict[str, Any], declaration: dict[str, Any]) -> None:
-    assert grant.verify_grant(document, PUBLISHER_MANIFEST) is True
-    assert grant.verify_declaration(declaration, PUBLISHER_MANIFEST) is True
+    assert grant.verify_grant(document, key_manifest(PUBLISHER_MANIFEST)) is True
+    assert grant.verify_declaration(declaration, key_manifest(PUBLISHER_MANIFEST)) is True
 
 
 class _LyingGet(dict[str, Any]):
@@ -404,8 +404,8 @@ def test_hostile_identifier_cannot_false_activate() -> None:
     declaration_scope = hostile_declaration["scope"]
     assert isinstance(declaration_scope, dict)
     declaration_scope["artifact_series"] = _HostileIdentifier(ROGUE)
-    assert grant.verify_grant(hostile, PUBLISHER_MANIFEST) is True
-    assert grant.verify_declaration(hostile_declaration, PUBLISHER_MANIFEST) is True
+    assert grant.verify_grant(hostile, key_manifest(PUBLISHER_MANIFEST)) is True
+    assert grant.verify_declaration(hostile_declaration, key_manifest(PUBLISHER_MANIFEST)) is True
 
     verdict = _evaluate_grant(hostile, {"grant": hostile, "declarations": [hostile_declaration]})
 
