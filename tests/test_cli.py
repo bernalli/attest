@@ -33,6 +33,7 @@ from attest import (
     verify,
     views,
 )
+from tests.helpers import key_manifest as km
 from tests.helpers import make_payload, non_canonical_spellings
 
 ISSUER = "store.example.com"
@@ -2449,6 +2450,70 @@ def test_manifest_init_spliced_mldsa_key_errors(tmp_path: Path, capsys: CapSys) 
     assert rc == 2
     assert capsys.readouterr().err != ""
     assert not out.exists()
+
+
+def test_manifest_init_matched_mldsa_key_writes_a_hybrid_manifest(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The positive half `--mldsa-key` never had, and the reason it was missed.
+
+    Three tests pin what this flag REFUSES — an aliased output, an aliased seed,
+    a spliced keypair — and none pinned what it accepts, because the happy-path
+    test above builds an ed25519-only manifest (`_keygen`, not
+    `_keygen_hybrid`). An oracle of the shape `rc == 2 and err != ""` therefore
+    has nothing to contradict it, and stays green even when the command starts
+    refusing every keypair, matched ones included.
+
+    Which is the state of THIS tree: with the trust doors taking snapshots and
+    the command line not yet reading its trust material as serialized bytes, a
+    correctly matched pair fails exactly like a spliced one — same exit code,
+    same stderr (`built manifest does not self-verify; check that --seed and
+    --mldsa-key are a valid matching keypair`), no output written. The refusal
+    tests cannot tell the two apart while that lasts. The published package is
+    not affected: there the same matched pair exits 0.
+
+    So this test is red here on purpose, and it is the side that can discriminate:
+    it turns green exactly when the command line is migrated, which is what makes
+    that migration provable instead of merely finished. Its assertions are the
+    negation of the failure above — the manifest IS written, it carries the
+    ML-DSA half, and it self-verifies through the door whose refusal the error
+    message reports.
+    """
+    seed, _pub, mldsa = _keygen_hybrid(tmp_path, "issuer")
+    out = tmp_path / "manifest.json"
+
+    capsys.readouterr()
+    rc = cli.main(
+        [
+            "manifest",
+            "init",
+            "--issuer",
+            ISSUER,
+            "--kid",
+            KID,
+            "--seed",
+            str(seed),
+            "--mldsa-key",
+            str(mldsa),
+            "--valid-from",
+            VALID_FROM,
+            "--issued-at",
+            VALID_FROM,
+            "--out",
+            str(out),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == cli.EXIT_OK, captured.err
+    assert out.exists()
+    manifest = json.loads(out.read_text(encoding="utf-8"))
+    entry = manifest["keys"][0]
+    assert entry["kid"] == KID
+    # The ML-DSA half is the one the flag exists to carry: a manifest that came
+    # back ed25519-only would satisfy every other assertion here.
+    assert entry["pub_ml_dsa_65"] == json.loads(mldsa.read_text(encoding="utf-8"))["pub"]
+    assert manifests.verify_key_manifest(km(manifest)) is True
 
 
 def test_manifest_rotate_noncontinuous_signer_errors(tmp_path: Path, capsys: CapSys) -> None:
