@@ -411,6 +411,87 @@ def test_purchase_rejected_dead_letters_but_claim_still_completes(
     assert claim.receipts_issued == 0
 
 
+def _cli_claim_extraction(raw_json: str) -> tuple[object, object]:
+    """The extraction `cli._cmd_retry_failed` performs on an itch dead letter.
+
+    Restated here rather than imported ON PURPOSE: this is the PREMISE the
+    replay guard rests on, and a test whose oracle is the guard's own code
+    could never contradict it. Both stored shapes must come out the same way
+    -- the wrapped `{"claim": {...}, "purchase": ...}` the poller writes on a
+    normalize/process failure, and the flat `{"email", "game_id"}`
+    `Ledger.exhaust_claim_with_dead_letter` writes when a claim is abandoned.
+    """
+    data = json.loads(raw_json)
+    claim = data.get("claim", data) if isinstance(data, dict) else None
+    if not isinstance(claim, dict):
+        return None, None
+    return claim.get("email"), claim.get("game_id")
+
+
+def test_a_normalize_failure_dead_letters_a_replayable_claim(
+    ledger: Ledger, core: IssuingCore
+) -> None:
+    """Pins the premise `retry-failed`'s itch guard depends on, for the WRAPPED
+    writer. The guard closes a record with no `str` email/game id, which is
+    defense in depth only as long as no writer can produce one: if this ever
+    goes red, that guard has become load-bearing and closing would start
+    discarding recoverable claims. The sister site that dead-letters a
+    `core.process` rejection builds the identical `failed_claim` literal.
+    """
+    now = datetime(2026, 7, 24, 10, 0, 0, tzinfo=UTC)
+    ledger.enqueue_claim("buyer@example.com", "123456", now=now.strftime(_RFC3339))
+    purchases = [
+        _purchase_json(id=5003, game_id=123456, status="settled", created_at="garbage-timestamp")
+    ]
+    fake_http_get, _ = _fake_http_get(purchases)
+    poller = ItchPoller(
+        adapter=ItchAdapter(api_key="itch_key", http_get=fake_http_get),
+        ledger=ledger,
+        core=core,
+    )
+
+    poller.tick(now=now)
+
+    dead_letters = ledger.unresolved_dead_letters()
+    assert len(dead_letters) == 1
+    email, game_id = _cli_claim_extraction(dead_letters[0].raw_json)
+    assert isinstance(email, str)
+    assert isinstance(game_id, str)
+
+
+def test_an_exhausted_claim_dead_letters_a_replayable_claim(
+    ledger: Ledger, core: IssuingCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same premise, FLAT writer -- and this one is invisible to a `grep` for
+    `add_dead_letter`, because it inserts through
+    `Ledger.exhaust_claim_with_dead_letter`. Its record is documented as the
+    sole recovery path for an abandoned claim, so a guard that closed it would
+    discard an API-confirmed purchase outright.
+    """
+    now = datetime(2026, 7, 24, 10, 0, 0, tzinfo=UTC)
+    ledger.enqueue_claim("buyer@example.com", "123456", now=now.strftime(_RFC3339))
+    fake_http_get, _ = _fake_http_get([_purchase_json(id=8001, game_id=123456, status="settled")])
+    poller = ItchPoller(
+        adapter=ItchAdapter(api_key="itch_key", http_get=fake_http_get),
+        ledger=ledger,
+        core=core,
+        max_attempts=1,
+    )
+
+    def boom(purchase: object) -> None:
+        raise RuntimeError("unexpected signing failure")
+
+    monkeypatch.setattr(core, "process", boom)
+
+    poller.tick(now=now)
+
+    dead_letters = ledger.unresolved_dead_letters()
+    assert len(dead_letters) == 1
+    email, game_id = _cli_claim_extraction(dead_letters[0].raw_json)
+    assert isinstance(email, str)
+    assert isinstance(game_id, str)
+
+
 # -- ItchPoller.tick: purchase-row validation + crash-proofing (FIX 2) --------
 
 

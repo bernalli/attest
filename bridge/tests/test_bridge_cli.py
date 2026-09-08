@@ -932,6 +932,7 @@ def test_retry_failed_closes_a_stripe_dead_letter_that_carries_no_event_object(
     hybrid_keys: pq.HybridSigningKeys,
     key_manifest: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     body: object,
 ) -> None:
     """The same shape on the oldest rail, driven end to end through the real
@@ -968,10 +969,20 @@ def test_retry_failed_closes_a_stripe_dead_letter_that_carries_no_event_object(
     assert len(dead_letters) == 1
     assert not isinstance(json.loads(dead_letters[0].raw_json), dict)
 
-    rc = cli.main(["retry-failed", "--config", str(config_path)])
+    with caplog.at_level(logging.INFO):
+        rc = cli.main(["retry-failed", "--config", str(config_path)])
 
     assert rc == 0
     assert deps.ledger.unresolved_dead_letters() == []
+    # Closing SPENDS the standing alarm, so this line is the only proactive
+    # signal left that a body was DISCARDED rather than replayed: the row
+    # survives with `resolved_at` set, but no command lists resolved records.
+    assert "carries no event object" in caplog.text
+    # ... and the negative names the arm it did NOT take. Without it, dropping
+    # the `continue` after the close leaves the record resolved but re-drives
+    # it into `wants`, logging a spurious permanent-failure warning about a
+    # record that was just closed -- measured green on all three rails.
+    assert "still failing" not in caplog.text
 
 
 @pytest.mark.parametrize("raw_json", ["[]", "7", '"order"', "null", "true"])
@@ -980,6 +991,7 @@ def test_retry_failed_closes_a_shopify_dead_letter_that_carries_no_event_object(
     hybrid_keys: pq.HybridSigningKeys,
     key_manifest: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     raw_json: str,
 ) -> None:
     """Shopify's webhook refuses a non-object body with 400 before the Ledger is
@@ -1013,10 +1025,19 @@ def test_retry_failed_closes_a_shopify_dead_letter_that_carries_no_event_object(
         extra_toml=f'[shopify]\nwebhook_secret_env = "{_SHOPIFY_ENV_VAR}"\n',
     )
 
-    rc = cli.main(["retry-failed", "--config", str(config_path)])
+    with caplog.at_level(logging.INFO):
+        rc = cli.main(["retry-failed", "--config", str(config_path)])
 
     assert rc == 0
     assert ledger.unresolved_dead_letters() == []
+    # Names the arm the record took: without it this test cannot tell a close
+    # by THIS guard from a close by any other arm of the same loop.
+    assert "carries no order object" in caplog.text
+    # ... and the negative names the arm it did NOT take. Without it, dropping
+    # the `continue` after the close leaves the record resolved but re-drives
+    # it into `wants`, logging a spurious permanent-failure warning about a
+    # record that was just closed -- measured green on all three rails.
+    assert "still failing" not in caplog.text
 
 
 @pytest.mark.parametrize("raw_json", ["[1, 2, 3]", "7", '"claim"', "null", "true", "{}"])
@@ -1025,6 +1046,7 @@ def test_retry_failed_closes_an_itch_dead_letter_with_no_replayable_claim(
     hybrid_keys: pq.HybridSigningKeys,
     key_manifest: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     raw_json: str,
 ) -> None:
     """Third preexisting rail, same standing alarm. `ItchPoller` only ever
@@ -1043,11 +1065,18 @@ def test_retry_failed_closes_an_itch_dead_letter_with_no_replayable_claim(
     assert len(ledger.unresolved_dead_letters()) == 1
     config_path = _write_config(tmp_path, hybrid_keys, key_manifest, extra_toml=_ITCH_AND_DELIVERY)
 
-    rc = cli.main(["retry-failed", "--config", str(config_path)])
+    with caplog.at_level(logging.INFO):
+        rc = cli.main(["retry-failed", "--config", str(config_path)])
 
     assert rc == 0
     assert ledger.unresolved_dead_letters() == []
     assert ledger.due_claims("2100-01-01T00:00:00Z") == []
+    assert "carries no replayable claim" in caplog.text
+    # ... and the negative names the arm it did NOT take. Without it, dropping
+    # the `continue` after the close leaves the record resolved but re-drives
+    # it into `wants`, logging a spurious permanent-failure warning about a
+    # record that was just closed -- measured green on all three rails.
+    assert "still failing" not in caplog.text
 
 
 def test_retry_failed_needs_the_itch_section_to_replay(

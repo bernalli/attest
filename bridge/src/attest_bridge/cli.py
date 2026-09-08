@@ -752,6 +752,18 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
         return _RC_CONFIG_ERROR
 
     resolved = 0
+    # DELIBERATE ASYMMETRY, and the guards below make it look like an
+    # oversight: a record whose `raw_json` does not PARSE is closed by no arm
+    # here. A non-object body is well-formed data that is merely unusable, so
+    # closing it costs nothing; an unparseable one means the column itself was
+    # corrupted, which is a different alarm class and the one case where a
+    # standing exit 1 is the right answer. Do not add a fourth guard for
+    # `JSONDecodeError` by symmetry.
+    # Every writer goes through `json.dumps`, so the parse cannot fail on a row
+    # this bridge wrote -- but enumerating those writers by grepping
+    # `add_dead_letter` misses one: `Ledger.exhaust_claim_with_dead_letter`
+    # inserts the itch abandonment record (`itch_adapter.py`), and it is the
+    # only writer of the FLAT `{"email", "game_id"}` shape the itch arm reads.
     for dead_letter in deps.ledger.unresolved_dead_letters():
         if dead_letter.platform == "itch":
             if deps.itch is None:
