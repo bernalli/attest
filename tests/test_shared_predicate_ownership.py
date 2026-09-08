@@ -266,23 +266,137 @@ def test_canonical_wire_text_is_rendered_only_where_it_is_pinned() -> None:
     `cli.py` until the commit that removed it. A criterion that misses the most
     recent spelling of the bug it exists to prevent is not a criterion.
 
-    The two survivors RENDER text and never read it back; they are pinned by
-    path and count, not excluded by pattern, so a third call — or a second one
-    in a pinned file — is red. Both render `now()`, whose year has four digits,
-    so they are correct BY ACCIDENT rather than by construction: that is the
-    emission half of C-217 and it is still open. `views.py` was the third and
-    is gone — it renders through `dates.render_strict_utc`, which is why that
-    function is public.
+    This guard used to stop at `src/attest/`, on the theory that a workspace
+    member could not reach a signed receipt. That theory was never checked: it
+    excluded `bridge/` and `tools/` by PATH, not by argument, and the exclusion
+    itself was the untested claim (C-7). Removed: this walks every source in
+    the repository, exactly like the parser guard above, and pins what it
+    finds by name and count, never by pattern — a pattern exempts whatever is
+    written after it, which is how the first four copies of this defect were
+    born unwatched.
+
+    Nine files render `strftime`-shaped text today. They fall into four
+    groups, and the two reasons below are NOT interchangeable — writing the
+    fail-closed reason for a site whose product a verifier never re-reads is
+    the same mistake C-6 made the other way round, just with the roles
+    reversed:
+
+    * `src/attest/issue.py` (`_now_iso`) and `src/attest/transparency.py`
+      (`_iso8601`) — the core's own two survivors, unchanged from before this
+      guard's perimeter grew. See their per-function reasons further down.
+
+    * `bridge/src/attest_bridge/core.py:41`, `http.py:137`, and
+      `signing.py:174` — the only three sites whose product actually reaches
+      the core's fail-closed boundary. `core.py`'s `_now_rfc3339()` supplies
+      `issue_for`'s `issued_at`, which both signs into the payload
+      (`issue.build_payload`) AND gates `signing_key_within_validity` before
+      that happens; `http.py`'s copy of the same helper is called the same
+      way at the webhook readiness/issuance gate (`http.py:823`); `signing.py`
+      calls `verifier._within_validity` directly, at issuer load, before a key
+      may sign at all. For these three: *(i)* they render `datetime.now(UTC)`,
+      so the year is always four digits and the padding defect is
+      unreachable today, AND *(ii)* even if a future caller fed them a low
+      year, `verify._within_validity` re-derives the instant with
+      `parse_strict_utc` (fail-closed) before trusting it — so the failure
+      mode of a divergent renderer here is a REJECTED window, never an
+      admitted one. Both halves are load-bearing; the first without the
+      second is the exact claim this docstring used to make about the whole
+      file and C-7 found false for `bridge/` as a class. Reason *(ii)*
+      protects THAT CALL, not every call these two helpers serve:
+      `core.py`'s copy is also read at `:264` (`_ledger.mark_delivered`)
+      and `http.py`'s copy roughly a dozen more times in the same file
+      (`mark_event`, `enqueue_claim`) — those calls share the ledger-only
+      failure mode of the group below, not this one.
+
+    * `bridge/src/attest_bridge/cli.py:76` (the `_now_rfc3339()` helper) and
+      `:880` (a SEPARATE, inline `now.strftime(_RFC3339)` on the one clock
+      read `_cmd_itch_dry_run` takes for its whole run — not a call
+      through that helper; see the comment above `:880`), `delivery.py:388`,
+      and `itch_adapter.py:319`, `:484`, `:495` — all six feed only
+      `Ledger.*` bookkeeping (`enqueue_claim`, `resolve_dead_letter`,
+      `mark_delivered`, `mark_event`, `due_claims`,
+      `exhaust_claim_with_dead_letter`, `defer_claim`): grepped for every
+      call site of each helper, none reaches `signing_key_within_validity`,
+      `_within_validity`, or `build_payload`. Reason *(ii)* above is FALSE
+      for these six and is not claimed: the ledger stores the string and
+      compares it lexically, it does not reparse it through the core's
+      strict parser. Only *(i)* holds, and only because their production
+      caller happens to pass `datetime.now(UTC)` today (`itch_adapter.py`'s
+      `now` is a parameter of `ItchPoller.tick`, supplied in production by
+      `run_forever` and by `cli.py`'s own dry-run command at `:901` —
+      neither is a clock read inside the pinned function itself). A
+      divergent renderer here produces a malformed ledger row — a retry
+      scheduled wrong, a dead letter that never resolves — never an admitted
+      receipt: it is C-6 on a different site, not a signing-path defect.
+
+    * `bridge/src/attest_bridge/cli.py:209` — a THIRD call in `cli.py`,
+      inside `_itch_dry_run_purchase`, and it is not attempting the canonical
+      wire shape at all: it renders `%Y-%m-%d %H:%M:%S` (a space, no `Z`) to
+      imitate itch.io's own `created_at` field in a synthetic dry-run
+      fixture. Safe because it is a DIFFERENT format on purpose, the same pin
+      shape the parser guard above already uses for this file's `strptime`
+      side ("a merchant adapter reading a DIFFERENT wire format").
+
+    * `tools/conformance_runner.py:423` (`_utc_now_iso`) — renders
+      `Report.generated_at` for a conformance run's own report. A generator
+      doing clock arithmetic for tooling output, the same category as
+      `tools/gen_vectors.py`, already pinned in the parser guard above; not a
+      verdict path.
+
+    A second, UNRELATED grafia reaches the same canonical shape without ever
+    calling `strftime`, and this guard cannot see it:
+    `moment.replace(microsecond=0, tzinfo=None).isoformat() + "Z"`, written
+    identically in `itch_adapter.py:177`, `shopify_adapter.py:126`, and
+    `model.py:123`. It is safe for a DIFFERENT reason than either group
+    above — `datetime.isoformat()` always pads the year to four digits, so
+    the glibc `%Y` defect this guard exists to catch cannot occur there
+    regardless of which year is rendered — and it feeds
+    `NormalizedPurchase.purchased_at`, which the adapters construct but
+    nothing in this repository re-reads. Naming it here is C-222's own
+    lesson applied to this guard: a guard that recognizes one spelling reads
+    as "every spelling is watched" unless it says otherwise.
+
+    `witness/` carries zero `strftime`/`strptime`/`isoformat` occurrences
+    today (its timestamp is a POSIX integer, the C2SP cosign shape) and is
+    walked anyway — not because it renders anything now, but so a predicate
+    born there tomorrow does not inherit the exemption C-7 just closed.
+
+    The pinned two from before this guard's perimeter grew:
+
+    * `issue._now_iso()` does render the clock, but it takes no argument, so a
+      low year can never reach it. It is a DEFAULT of `build_payload`, not a
+      gate: the CLI's `issue` verb never calls it, and signs whatever
+      `issued_at` the caller wrote into `--payload` (deliberately — see the
+      header of `demo/store_dies.py`). The callers that do reach it —
+      `demo/store_dies.py`, `demo/pledge_dies.py`, `tools/gen_site_sample.py` —
+      never override it.
+    * `transparency._iso8601()` does NOT render `now()` at all. Its argument is
+      `anchor_verdict.anchored_before`, a block-header time carried by the
+      `--transparency` evidence a verifier is handed. It is contained because
+      `anchor._validate_policy` bounds verified anchor times, not because it
+      reads the clock.
+
+    So the emission half of C-217 is still open, but not where that claim put
+    it: a receipt's `issued_at` reaches a verifier as a string the issuer wrote,
+    which passed through no renderer this guard counts. `views.py` was the third
+    and is gone — it renders through `dates.render_strict_utc`, which is why
+    that function is public.
     """
     renderers = {
         "src/attest/issue.py": 1,
         "src/attest/transparency.py": 1,
+        "bridge/src/attest_bridge/cli.py": 3,
+        "bridge/src/attest_bridge/core.py": 1,
+        "bridge/src/attest_bridge/delivery.py": 1,
+        "bridge/src/attest_bridge/http.py": 1,
+        "bridge/src/attest_bridge/itch_adapter.py": 3,
+        "bridge/src/attest_bridge/signing.py": 1,
+        "tools/conformance_runner.py": 1,
     }
     found = {
         path.relative_to(REPO_ROOT).as_posix(): calls
         for path in _sources((".py",))
-        if path.is_relative_to(REPO_ROOT / "src" / "attest")
-        and (calls := _strftime_calls(path.read_text(encoding="utf-8")))
+        if (calls := _strftime_calls(path.read_text(encoding="utf-8")))
     }
     assert found == renderers, (
         "canonicality is decided by `attest.dates`, which renders the year "

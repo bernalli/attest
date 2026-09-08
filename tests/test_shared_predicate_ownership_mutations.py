@@ -139,11 +139,31 @@ def test_valid_radix_spellings_still_expose_the_bound(
 _OWNERS_FOR_DATES = {
     "src/attest/dates.py": "import datetime\nd = datetime.datetime.strptime(s, F)\n",
     "tools/gen_vectors.py": "import datetime\nd = datetime.datetime.strptime(s, F)\n",
+    # This file owns both a parser reference (for the parser guard's `owners`)
+    # and three renderer calls (for the renderer guard's `renderers`, which
+    # pins it at 3 since D-C7): the two counts must not drift, or seeding it
+    # for one guard silently starves the other.
     "bridge/src/attest_bridge/itch_adapter.py": (
-        "import datetime\nd = datetime.datetime.strptime(s, F)\n"
+        "import datetime\n"
+        "d = datetime.datetime.strptime(s, F)\n"
+        "r1 = now().strftime(F)\n"
+        "r2 = now().strftime(F)\n"
+        "r3 = now().strftime(F)\n"
     ),
     "src/attest/issue.py": "r = now().strftime(F)\n",
     "src/attest/transparency.py": "r = ts().strftime(F)\n",
+    # D-C7: the renderer guard's perimeter grew to the whole repository, and
+    # its `renderers` dict pins every one of these by name and count. Seeding
+    # them here keeps the baseline `check()` calls below green against the
+    # real (production) dict instead of the pre-D-C7 two-file one.
+    "bridge/src/attest_bridge/cli.py": (
+        "r1 = now().strftime(F)\nr2 = now().strftime(F)\nr3 = now().strftime(F)\n"
+    ),
+    "bridge/src/attest_bridge/core.py": "r = now().strftime(F)\n",
+    "bridge/src/attest_bridge/delivery.py": "r = now().strftime(F)\n",
+    "bridge/src/attest_bridge/http.py": "r = now().strftime(F)\n",
+    "bridge/src/attest_bridge/signing.py": "r = now().strftime(F)\n",
+    "tools/conformance_runner.py": "r = now().strftime(F)\n",
 }
 
 
@@ -181,26 +201,38 @@ def test_the_parser_guard_turns_red_and_recovers(
 
 
 @pytest.mark.parametrize(
-    "source",
+    ("probe_path", "source"),
     [
-        # The plain call.
-        "r = parsed.strftime(F)\n",
+        # The plain call, inside the pre-D-C7 perimeter.
+        ("src/attest/newmod.py", "r = parsed.strftime(F)\n"),
         # The three spellings a call-only criterion walks straight past. Each
         # was measured green against the earlier version of the guard, with the
         # low-year defect live.
-        "render = parsed.strftime\nr = render(F)\n",
-        'r = f"{parsed:%Y-%m-%dT%H:%M:%SZ}"\n',
-        'r = getattr(parsed, "strftime")(F)\n',
+        ("src/attest/newmod.py", "render = parsed.strftime\nr = render(F)\n"),
+        ("src/attest/newmod.py", 'r = f"{parsed:%Y-%m-%dT%H:%M:%SZ}"\n'),
+        ("src/attest/newmod.py", 'r = getattr(parsed, "strftime")(F)\n'),
+        # D-C7: the perimeter grew past `src/attest/`. A plain call outside
+        # it must be caught exactly like one inside it — this is the case the
+        # guard could not see before this diff, on the path (`bridge/`) where
+        # C-7 found real, committed occupants.
+        ("bridge/src/attest_bridge/newmod.py", "r = parsed.strftime(F)\n"),
+        # And the same deferred-binding spelling the pre-D-C7 guard already
+        # caught inside `src/attest/`, now outside it.
+        (
+            "bridge/src/attest_bridge/newmod.py",
+            "render = parsed.strftime\nr = render(F)\n",
+        ),
     ],
 )
 def test_the_renderer_guard_turns_red_and_recovers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probe_path: str, source: str
 ) -> None:
     _seed_dates_owners(tmp_path)
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
     check = guard.test_canonical_wire_text_is_rendered_only_where_it_is_pinned
     check()
-    probe = tmp_path / "src/attest/newmod.py"
+    probe = tmp_path / probe_path
+    probe.parent.mkdir(parents=True, exist_ok=True)
     probe.write_text(source, encoding="utf-8")
     with pytest.raises(AssertionError, match="canonicality is decided by"):
         check()
