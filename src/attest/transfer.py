@@ -109,10 +109,15 @@ def _valid_utc_timestamp(value: object) -> bool:
     """
     if not isinstance(value, str):
         return False
-    own = str.__str__(value)
     try:
+        # INSIDE the try, and `TypeError` is caught: `isinstance` is not
+        # a type check an object cannot forge. A non-`str` whose
+        # `__class__` property answers `str` passes the line above, and
+        # `str.__str__` then raises `TypeError` — the very escape across
+        # sixteen call sites this predicate exists to prevent.
+        own = str.__str__(value)
         return is_strict_utc(own)
-    except ValueError:
+    except (TypeError, ValueError):
         return False
 
 

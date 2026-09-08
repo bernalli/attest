@@ -10,13 +10,14 @@ from __future__ import annotations
 import ast
 import os
 import re
+import string
 from collections import Counter
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from tests.helpers import non_canonical_spellings
+from tests.helpers import ForgedStr, non_canonical_spellings
 from tests.test_shared_predicate_parity import EXPECTED_BOUND, EXPECTED_ULID_PATTERN
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -196,6 +197,19 @@ def test_the_wire_timestamp_is_parsed_in_exactly_one_place() -> None:
     name and count rather than excluded by pattern: a corpus generator doing
     clock arithmetic, and a merchant adapter reading a DIFFERENT wire format.
     A third one appearing anywhere turns this red.
+
+    What this guard does NOT see, named here for the same reason the renderer
+    guard names its own blind spot: `datetime.fromisoformat` parses the strict
+    wire shape too, and this counter never looks for it. Three sites use it
+    today — `verify._parse_iso` (deliberately lenient: revocation freshness,
+    the separate ISO parse `dates.ts` documents as the sibling of this one),
+    `itch_adapter.py:158` and `shopify_adapter.py:105` (both on a DIFFERENT
+    merchant wire format). None decides the signed shape, so none is pinned;
+    but a fourth copy of THIS predicate written with `fromisoformat` plus a
+    hand-built round trip would be invisible to both syntactic guards, and
+    inside `attest.*` only the semantic guard below would catch it. A guard
+    that recognizes one spelling reads as "every spelling is watched" unless
+    it says otherwise.
     """
     owners = {
         "src/attest/dates.py": 1,
@@ -210,6 +224,43 @@ def test_the_wire_timestamp_is_parsed_in_exactly_one_place() -> None:
     assert found == owners, (
         "the strict UTC wire shape is parsed in one place, `attest.dates`; "
         f"import it instead of restating it. Found {found}"
+    )
+
+
+def _spec_renders_a_date(spec: str) -> bool:
+    """`%` followed by a letter is a `strftime` directive; a bare trailing `%`
+    is the percentage presentation type (`f"{x:.1%}"`, `"{:.1%}".format(x)`)
+    and has nothing to do with dates."""
+    return bool(re.search(r"%[a-zA-Z]", spec))
+
+
+def _format_call_spec_renders_a_date(node: ast.Call) -> bool:
+    """Whether `node` is `"...{:%X...}...".format(...)` or `format(v, "%X...")`.
+
+    Both reach `datetime.__format__`, which is `strftime`. The `.format` arm
+    reads the template through `string.Formatter().parse`, so a `%` sitting in
+    the LITERAL text of the template rather than in a field's spec does not
+    count — `"100%  done {}".format(x)` is not a date rendering.
+    """
+    func = node.func
+    if (
+        isinstance(func, ast.Attribute)
+        and func.attr == "format"
+        and isinstance(func.value, ast.Constant)
+        and isinstance(func.value.value, str)
+    ):
+        try:
+            fields = list(string.Formatter().parse(func.value.value))
+        except ValueError:  # pragma: no cover - a template `str.format` itself rejects
+            return False
+        return any(spec is not None and _spec_renders_a_date(spec) for _, _, spec, _ in fields)
+    return (
+        isinstance(func, ast.Name)
+        and func.id == "format"
+        and len(node.args) == 2
+        and isinstance(node.args[1], ast.Constant)
+        and isinstance(node.args[1].value, str)
+        and _spec_renders_a_date(node.args[1].value)
     )
 
 
@@ -229,14 +280,29 @@ def _strftime_calls(source: str) -> int:
       whole reason a second, semantic guard was written;
     * `getattr(parsed, "strftime")(fmt)`.
 
-    So: any attribute named `strftime`, any `getattr` naming it as a constant,
-    and any format spec carrying a `%` directive applied to an interpolated
-    value. Prose is unaffected — this reads the AST, never the word.
+    `datetime.__format__` IS `strftime`, so every route to it counts, not only
+    the f-string one: `"{:%Y-%m-%d}".format(parsed)`, `format(parsed, fmt)` and
+    an explicit `parsed.__format__(fmt)` all render through it and all reproduce
+    the low-year defect verbatim (measured: each returns `'999-06-15...'` for
+    `datetime(999, ...)` on this libc, exactly as `strftime` does). A guard that
+    counted only the f-string spelling was the same criterion-misses-the-newest-
+    spelling defect this docstring already records one paragraph up, and it
+    mattered more here than there: outside `src/attest/` this syntactic guard is
+    the ONLY one — the semantic guard below walks `attest.*` and never reaches
+    `bridge/` or `tools/`, which is where D-C7 grew this perimeter to look.
+
+    So: any attribute named `strftime` or `__format__`, any `getattr` naming
+    either as a constant, and any `%`-directive format spec — whether written as
+    an f-string spec, inside a literal `.format()` template, or as the second
+    argument of the `format` builtin. Prose is unaffected — this reads the AST,
+    never the word.
     """
     tree = ast.parse(source)
     count = 0
     for node in ast.walk(tree):
-        if _names_attribute(node, "strftime"):
+        if _names_attribute(node, "strftime") or _names_attribute(node, "__format__"):
+            count += 1
+        elif isinstance(node, ast.Call) and _format_call_spec_renders_a_date(node):
             count += 1
         elif isinstance(node, ast.FormattedValue) and node.format_spec is not None:
             spec = "".join(
@@ -244,10 +310,7 @@ def _strftime_calls(source: str) -> int:
                 for part in ast.walk(node.format_spec)
                 if isinstance(part, ast.Constant) and isinstance(part.value, str)
             )
-            # `%` followed by a letter is a strftime directive; a bare
-            # trailing `%` is the percentage presentation type (`f"{x:.1%}"`)
-            # and has nothing to do with dates.
-            if re.search(r"%[a-zA-Z]", spec):
+            if _spec_renders_a_date(spec):
                 count += 1
     return count
 
@@ -535,6 +598,70 @@ def test_every_canonicality_predicate_agrees_with_the_owner() -> None:
     assert not disagreements, (
         f"a predicate decides canonicality differently from `attest.dates`: {disagreements[:5]}"
     )
+
+
+def test_every_canonicality_predicate_fails_closed_on_an_object_that_forges_its_type() -> None:
+    """`isinstance(value, str)` is not a check an object cannot forge, and every
+    predicate discovered above opens with one.
+
+    DISCOVERED, never listed — the same sweep as the test above and for the same
+    reason: a predicate written tomorrow inherits this without anyone
+    remembering to register it. It found three, the OWNER included, which is the
+    point: `dates.is_strict_utc` had this defect too, so fixing only the two
+    callers would have left the module the whole branch exists to make
+    authoritative answering with an exception.
+
+    The observable is the KIND of answer, not merely that something happened: a
+    predicate that returns `False` has DECIDED, one that raises has ESCAPED into
+    its callers. Nothing else distinguishes them —
+    `transfer._valid_utc_timestamp` alone is read at sixteen call sites across
+    `transfer`, `authority`, `grant` and `cli`, and not one of them catches
+    `TypeError`. `views._round_trips` was fail-closed on this input before the
+    round that introduced `attest.dates` and stopped being so; the assertion
+    below is what would have said so.
+    """
+    forged = ForgedStr()
+    assert isinstance(forged, str), "premise failed: this input must pass the gate it forges"
+    assert type(forged) is not str, "premise failed: this input must not actually be a str"
+
+    found = dict(_canonicality_predicates())
+    assert set(found) >= {
+        "dates.is_strict_utc",
+        "transfer._valid_utc_timestamp",
+        "views._round_trips",
+    }, f"discovery stopped finding the predicates this guard was written for: {sorted(found)}"
+
+    escaped = []
+    for name, predicate in sorted(found.items()):
+        try:
+            verdict = predicate(forged)
+        # Broad on purpose: the escape IS the finding, whatever its class.
+        except BaseException as exc:
+            escaped.append((name, f"raised {type(exc).__name__}"))
+            continue
+        if verdict is not False:
+            escaped.append((name, f"answered {verdict!r}"))
+    assert not escaped, (
+        "a canonicality predicate does not fail closed on an object that forges "
+        f"`isinstance(x, str)`; it must answer False, not raise: {escaped}"
+    )
+
+
+def test_the_witness_gate_refuses_a_forged_type_with_its_own_error() -> None:
+    """`_require_timestamp` promises `WitnessError`, and every caller catches
+    that and nothing else.
+
+    Pinned apart from the sweep above because discovery cannot reach it (it
+    raises instead of returning a bool, the same accident that already puts its
+    low-year exemption in a test of its own). On a forged type it raised
+    `TypeError` out of `str.__str__`, straight through `parse_policy` and out of
+    the core: a malformed field taking down the whole policy parse instead of
+    being refused.
+    """
+    from attest import witness
+
+    with pytest.raises(witness.WitnessError):
+        witness._require_timestamp(ForgedStr(), "field")
 
 
 def test_the_one_predicate_allowed_to_differ_differs_only_where_it_says() -> None:

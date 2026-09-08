@@ -204,8 +204,13 @@ def _round_trips(value: object) -> bool:
     """
     if not isinstance(value, str):
         return False
-    own = str.__str__(value)
     try:
+        # INSIDE the try: `isinstance` is not a type check an object
+        # cannot forge. A non-`str` whose `__class__` property answers
+        # `str` passes the line above, and `str.__str__` then raises
+        # `TypeError` — which outside the try escapes this fail-closed
+        # predicate instead of answering False.
+        own = str.__str__(value)
         return is_strict_utc(own)
     except (TypeError, ValueError):
         return False

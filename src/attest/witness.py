@@ -99,7 +99,12 @@ def _require_timestamp(value: object, field: str) -> datetime:
         raise WitnessError(f"{field} must be a UTC ISO-8601 second timestamp")
     try:
         parsed = parse_strict_utc(value)
-    except ValueError as exc:
+    # `TypeError` too: `isinstance` above is forgeable (an object whose
+    # `__class__` property answers `str` passes it), and `str.__str__` inside
+    # the parser then raises. Every caller of this function catches
+    # `WitnessError` and nothing else, so letting `TypeError` out would take
+    # `parse_policy` down instead of refusing one field.
+    except (TypeError, ValueError) as exc:
         raise WitnessError(f"{field} must be a UTC ISO-8601 second timestamp") from exc
     # Years 0000-0099 are refused: JavaScript's `Date.UTC` remaps them to
     # 1900-1999, so the TypeScript core cannot represent them and the same

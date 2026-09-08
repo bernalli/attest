@@ -321,3 +321,34 @@ def non_canonical_spellings(canonical: str) -> tuple[tuple[str, str], ...]:
 
     assert len(set(spellings.values())) == len(spellings), "two names for one spelling"
     return tuple(sorted(spellings.items()))
+
+
+# --- an input the `isinstance` gate cannot refuse -----------------------------
+
+
+class ForgedStr:
+    """Not a `str`, and `isinstance(x, str)` answers True anyway.
+
+    Every other hostile timestamp class in this suite is a `str` SUBCLASS —
+    `_RaisingEqStr`, `_DenyingEqStr`, `_LyingStr`, `_RaisingStr`, `_BadReprStr`,
+    `_ShadowedReadStr`, `_RaisingEq`, `_LyingEq`, `_DenyingEq`,
+    `_AlwaysEqualId` — because the family they were written for is "a string
+    that misbehaves": a hostile `__eq__`, a lying `__str__`, a shadowed read.
+    A corpus grown around one attack inherits that attack's perimeter, and the
+    question that leaves it is not "which other misbehaving string is missing"
+    but "what if it were not a string at all".
+
+    This is that input, and it lives here rather than in one test module
+    because it is a property of every `isinstance(value, str)` gate in the
+    package, not of any one caller. `isinstance` consults `__class__` when the
+    exact type check fails, so this passes every such gate while `str.__str__`
+    — the own-data spelling those gates reach for immediately afterwards —
+    raises `TypeError` on it. A predicate that takes its own data OUTSIDE its
+    `try` therefore answers with an exception instead of a verdict.
+    """
+
+    __slots__ = ()
+
+    @property
+    def __class__(self) -> type:  # type: ignore[override]
+        return str

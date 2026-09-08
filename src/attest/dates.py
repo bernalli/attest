@@ -108,11 +108,27 @@ def parse_strict_utc(value: str) -> datetime:
 
 def is_strict_utc(value: object) -> bool:
     """Whether `value` is a `str` in the strict UTC wire shape naming a real
-    instant. Mirror of `validStage3UtcTimestamp` in `dates.ts`."""
+    instant. Mirror of `validStage3UtcTimestamp` in `dates.ts`.
+
+    TOTAL, exactly like that mirror, and the asymmetry is why this catches
+    `TypeError` too. `typeof s !== 'string'` cannot be forged in JavaScript, so
+    the TypeScript side answers `false` for anything that is not a string;
+    `isinstance(value, str)` CAN be forged — `isinstance` consults `__class__`
+    when the exact type check fails, so a plain object whose `__class__`
+    property answers `str` walks past the gate below and makes `str.__str__`
+    raise `TypeError` inside `parse_strict_utc`. Letting that out would leave
+    the two cores answering the same question in different KINDS — a verdict
+    there, an exception here — which is the divergence this module exists to
+    remove, not one it may introduce.
+
+    `parse_strict_utc` keeps raising `TypeError` on a non-`str`: that is its
+    documented contract and callers who want the distinction still get it.
+    This predicate is the one that promises a bool.
+    """
     if not isinstance(value, str):
         return False
     try:
         parse_strict_utc(value)
-    except ValueError:
+    except (TypeError, ValueError):
         return False
     return True

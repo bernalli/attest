@@ -211,6 +211,14 @@ def test_the_parser_guard_turns_red_and_recovers(
         ("src/attest/newmod.py", "render = parsed.strftime\nr = render(F)\n"),
         ("src/attest/newmod.py", 'r = f"{parsed:%Y-%m-%dT%H:%M:%SZ}"\n'),
         ("src/attest/newmod.py", 'r = getattr(parsed, "strftime")(F)\n'),
+        # `datetime.__format__` IS `strftime`. Three more routes to it, each
+        # measured to reproduce the low-year defect byte for byte, and each
+        # counted 0 by the guard before this parametrization grew.
+        ("src/attest/newmod.py", 'r = "{:%Y-%m-%dT%H:%M:%SZ}".format(parsed)\n'),
+        ("src/attest/newmod.py", 'r = format(parsed, "%Y-%m-%dT%H:%M:%SZ")\n'),
+        ("src/attest/newmod.py", 'r = parsed.__format__("%Y-%m-%dT%H:%M:%SZ")\n'),
+        # And outside `src/attest/`, where this guard is the only one.
+        ("bridge/src/attest_bridge/newmod.py", 'r = "{:%Y-%m-%dT%H:%M:%SZ}".format(parsed)\n'),
         # D-C7: the perimeter grew past `src/attest/`. A plain call outside
         # it must be caught exactly like one inside it — this is the case the
         # guard could not see before this diff, on the path (`bridge/`) where
@@ -247,6 +255,13 @@ def test_the_renderer_guard_ignores_prose_and_percentage_formats(tmp_path: Path)
     assert guard._strftime_calls('"""never call strftime here"""\n') == 0
     assert guard._strftime_calls('r = f"{share:.1%}"\n') == 0
     assert guard._strftime_calls('r = f"{d:%Y}"\n') == 1
+    # The `.format`/`format` arms obey the same rule, and a `%` in the literal
+    # text of a template is not a date rendering.
+    assert guard._strftime_calls('r = "{:.1%}".format(share)\n') == 0
+    assert guard._strftime_calls('r = "100% done {}".format(x)\n') == 0
+    assert guard._strftime_calls('r = format(x, ".2f")\n') == 0
+    assert guard._strftime_calls('r = "{:%Y}".format(d)\n') == 1
+    assert guard._strftime_calls('r = format(d, "%Y")\n') == 1
 
 
 def test_the_semantic_guard_turns_red_on_a_predicate_it_was_never_told_about() -> None:
