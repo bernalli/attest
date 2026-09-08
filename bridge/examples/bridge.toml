@@ -46,6 +46,26 @@ poll_interval_seconds = 60
 max_attempts = 10
 # @table-end itch
 
+# @table-start paddle
+# Omit this whole table if you don't sell through Paddle (Billing). Both values
+# are required: the customer's email is not in the webhook, and the bridge
+# fetches it with the API key before it can issue.
+[paddle]
+webhook_secret_env = "PADDLE_WEBHOOK_SECRET"     # pdl_ntfset_... from Developer tools > Notifications
+api_key_env = "PADDLE_API_KEY"                   # pdl_live_apikey_... with customer.read
+# environment = "live"                           # or "sandbox"
+# @table-end paddle
+
+# @table-start paypal
+# Omit this whole table if you don't sell through PayPal. Paddle Classic and
+# PayPal's legacy IPN buttons are not this rail: see the two setup guides.
+[paypal]
+client_id_env = "PAYPAL_CLIENT_ID"
+client_secret_env = "PAYPAL_CLIENT_SECRET"
+webhook_id = "8PT597110X687430LKGECATA"          # the webhook's own id from the Developer Dashboard
+# environment = "live"                           # or "sandbox"
+# @table-end paypal
+
 # @table-start delivery
 # Omit this whole table for download-link-only mode (no receipt emails sent).
 [delivery]
@@ -62,10 +82,11 @@ info_url = "https://store.example.com/what-is-this-file"
 
 # One [products.<product_key>] table per SKU you sell. `<product_key>` is
 # whatever identifier the platform's webhook uses to name the purchased
-# item — a Stripe price id, or `itch_<game_id>` for itch.io. A purchase for
+# item — a Stripe price id, `itch_<game_id>` for itch.io,
+# `paddle_<price_id>` for Paddle, or `paypal_<sku>` for PayPal. A purchase for
 # a product_key with no matching table here is refused (UnmappedProduct),
 # never issued with guessed terms.
-[products.price_1PxYzEXAMPLE]                     # Stripe price id, or itch_<game_id>
+[products.price_1PxYzEXAMPLE]                     # Stripe price id, itch_<game_id>, paddle_<price_id>, paypal_<sku>
 title = "Example Game"
 publisher = "Example Publisher srl"
 artifact_series = "store.example.com/works/EXG-001"

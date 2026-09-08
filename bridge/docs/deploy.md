@@ -26,8 +26,10 @@ image rebuilds matters.
   from an env var — Render; see that target's section for which)
 - `issuer.seed` and `issuer.mldsa.json` (your signing keys — genuinely
   secret; same deal, always read from `/secrets/`)
-- the four env vars your `bridge.toml` references via `*_env`:
-  `STRIPE_WEBHOOK_SECRET`, `STRIPE_API_KEY`, `ITCH_API_KEY`, `SMTP_PASSWORD`
+- the env vars your `bridge.toml` references via `*_env`:
+  `STRIPE_WEBHOOK_SECRET`, `STRIPE_API_KEY`, `SHOPIFY_WEBHOOK_SECRET`,
+  `ITCH_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_API_KEY`,
+  `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `SMTP_PASSWORD`
   (only set the ones you actually use)
 - a writable persistent directory containing `ledger_path` and SQLite's WAL
   sidecars — the Ledger is a logical database, not one independently copyable
@@ -177,7 +179,7 @@ taking it out of rotation would break the one thing still working.
 mkdir -p bridge/deploy/etc bridge/deploy/secrets
 cp bridge.toml key-manifest.json bridge/deploy/etc/
 cp issuer.seed issuer.mldsa.json bridge/deploy/secrets/
-printf 'STRIPE_WEBHOOK_SECRET=whsec_...\n' > bridge/deploy/.env   # + STRIPE_API_KEY / ITCH_API_KEY / SMTP_PASSWORD as needed
+printf 'STRIPE_WEBHOOK_SECRET=whsec_...\n' > bridge/deploy/.env   # + SHOPIFY_WEBHOOK_SECRET / STRIPE_API_KEY / ITCH_API_KEY / PADDLE_WEBHOOK_SECRET / PADDLE_API_KEY / PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET / SMTP_PASSWORD as needed
 chmod 600 bridge/deploy/.env
 sudo chown -R 10001:10001 bridge/deploy/etc bridge/deploy/secrets
 docker compose -f bridge/deploy/docker-compose.yml up -d
@@ -249,7 +251,10 @@ fly secrets set \
   KEY_MANIFEST="$(base64 < key-manifest.json | tr -d '\n')" \
   ISSUER_SEED="$(base64 < issuer.seed | tr -d '\n')" \
   ISSUER_MLDSA="$(base64 < issuer.mldsa.json | tr -d '\n')" \
-  STRIPE_WEBHOOK_SECRET=whsec_... STRIPE_API_KEY=sk_... ITCH_API_KEY=... SMTP_PASSWORD=...
+  STRIPE_WEBHOOK_SECRET=whsec_... STRIPE_API_KEY=sk_... \
+  SHOPIFY_WEBHOOK_SECRET=shpss_... ITCH_API_KEY=... \
+  PADDLE_WEBHOOK_SECRET=pdl_ntfset_... PADDLE_API_KEY=pdl_live_apikey_... \
+  PAYPAL_CLIENT_ID=... PAYPAL_CLIENT_SECRET=... SMTP_PASSWORD=...
 fly deploy --config bridge/deploy/fly.toml
 ```
 
@@ -272,14 +277,16 @@ Render dashboard → **New +** → **Blueprint** → point at this repo → pick
 `bridge/deploy/render.yaml` as the Blueprint file. Render prompts you for
 every `sync: false` env var the Blueprint declares **during creation, before
 the first deploy ever runs** (confirmed against Render's own docs) — fill in
-all eight right there:
+all of them right there:
 
 - `BRIDGE_TOML_B64`, `KEY_MANIFEST_B64`, `ISSUER_SEED_B64`, `ISSUER_MLDSA_B64`
   — base64 of `bridge.toml`, `key-manifest.json`, `issuer.seed`, and
   `issuer.mldsa.json` respectively (`base64 < bridge.toml`, etc.) — paste the
   whole, possibly multi-line, output straight into the dashboard field; it
   doesn't need to be single-line here the way Fly's shell command above does
-- `STRIPE_WEBHOOK_SECRET`, `STRIPE_API_KEY`, `ITCH_API_KEY`, `SMTP_PASSWORD`
+- `STRIPE_WEBHOOK_SECRET`, `STRIPE_API_KEY`, `SHOPIFY_WEBHOOK_SECRET`,
+  `ITCH_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_API_KEY`,
+  `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `SMTP_PASSWORD`
   — whichever your `bridge.toml` actually references
 
 There is no shell/SCP step and no crash loop here, on purpose: Render's

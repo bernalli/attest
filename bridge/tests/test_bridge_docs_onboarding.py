@@ -21,7 +21,7 @@ true at the command"):
    is drift the reader discovers instead of us.
 
 Both derive the rail set from the example file rather than hardcoding it, so
-a fourth platform inherits the coverage on the day it ships.
+each new platform inherits the coverage on the day it ships.
 """
 
 from __future__ import annotations
@@ -60,6 +60,8 @@ _GUIDES = {
     "stripe": "setup-stripe.md",
     "shopify": "setup-shopify.md",
     "itch": "setup-itch.md",
+    "paddle": "setup-paddle.md",
+    "paypal": "setup-paypal.md",
 }
 
 
@@ -659,7 +661,7 @@ def test_sample_check_config_output_matches_what_the_cli_prints(
 
 _GUIDES_THAT_MUST_SHOW_THE_SUMMARY = frozenset({"setup-stripe.md"})
 _GUIDES_THAT_MUST_NOT_SHOW_THE_SUMMARY = frozenset(
-    {"deploy.md", "setup-itch.md", "setup-shopify.md"}
+    {"deploy.md", "setup-itch.md", "setup-shopify.md", "setup-paddle.md", "setup-paypal.md"}
 )
 
 
@@ -1225,6 +1227,8 @@ class TestTopLevelTables:
             "stripe",
             "shopify",
             "itch",
+            "paddle",
+            "paypal",
             "delivery",
             "products",
         ]

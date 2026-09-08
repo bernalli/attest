@@ -2267,7 +2267,16 @@ def test_threading_server_docstring_lists_the_webhook_platforms_it_serializes() 
 # -- setup guides: legal_text_path and the §14.1/§14.2 bundle pair ---------
 
 
-@pytest.mark.parametrize("guide_name", ["setup-stripe.md", "setup-itch.md", "setup-shopify.md"])
+@pytest.mark.parametrize(
+    "guide_name",
+    [
+        "setup-stripe.md",
+        "setup-itch.md",
+        "setup-shopify.md",
+        "setup-paddle.md",
+        "setup-paypal.md",
+    ],
+)
 def test_setup_guides_document_legal_text_path_and_bundle_delivery(guide_name: str) -> None:
     text = (Path(__file__).parents[1] / "docs" / guide_name).read_text(encoding="utf-8")
 

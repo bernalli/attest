@@ -11,7 +11,7 @@
 
 attest-bridge is how a store becomes an issuer without writing code. It's a
 small service the merchant deploys and runs themselves, next to the existing
-checkout — Stripe, itch.io or Shopify. A paid order comes in as a platform
+checkout — Stripe, itch.io, Shopify, Paddle or PayPal. A paid order comes in as a platform
 event; a signed attest receipt goes out to the buyer, automatically, at the
 moment of sale. From then on the buyer receives a portable receipt: a plain attest
 file that verifies offline no matter what happens to the bridge, the
@@ -59,6 +59,12 @@ window is the only way the same email goes out twice.
 - [`docs/setup-shopify.md`](docs/setup-shopify.md) — the same, for Shopify
   order webhooks (keypair, manifest and deploy are shared with the Stripe
   guide; this covers what differs).
+- [`docs/setup-paddle.md`](docs/setup-paddle.md) — the same, for Paddle
+  **Billing** notifications (Classic, with its form-encoded `p_signature`
+  alerts, is a different scheme this bridge does not verify).
+- [`docs/setup-paypal.md`](docs/setup-paypal.md) — the same, for PayPal
+  **REST** webhooks on captured orders (not legacy Buy-Now buttons or IPN),
+  including why orders have to be created server-side.
 - [`docs/deploy.md`](docs/deploy.md) — the three deploy targets, all built
   from [`deploy/Dockerfile`](deploy/Dockerfile). Fly.io is the shortest path
   to a bridge answering a real webhook; Docker Compose is the sovereign one,

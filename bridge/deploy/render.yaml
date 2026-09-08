@@ -5,12 +5,14 @@
 #
 # Render prompts for every `sync: false` env var below DURING Blueprint
 # creation, before the service's first deploy ever runs (confirmed against
-# Render's own docs) — fill in all eight there:
+# Render's own docs) — fill them all in there:
 #   - BRIDGE_TOML_B64 / KEY_MANIFEST_B64 / ISSUER_SEED_B64 / ISSUER_MLDSA_B64:
 #     base64 of bridge.toml / key-manifest.json / issuer.seed /
 #     issuer.mldsa.json (`base64 < bridge.toml`, etc.) — paste the whole,
 #     possibly multi-line, output straight into the dashboard field
-#   - STRIPE_WEBHOOK_SECRET / STRIPE_API_KEY / ITCH_API_KEY / SMTP_PASSWORD:
+#   - STRIPE_WEBHOOK_SECRET / STRIPE_API_KEY / SHOPIFY_WEBHOOK_SECRET /
+#     ITCH_API_KEY / PADDLE_WEBHOOK_SECRET / PADDLE_API_KEY /
+#     PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET / SMTP_PASSWORD:
 #     whichever your bridge.toml actually references
 #
 # There is no shell/SCP step and no crash loop: this image's ENTRYPOINT
@@ -57,7 +59,17 @@ services:
         sync: false
       - key: STRIPE_API_KEY
         sync: false
+      - key: SHOPIFY_WEBHOOK_SECRET
+        sync: false
       - key: ITCH_API_KEY
+        sync: false
+      - key: PADDLE_WEBHOOK_SECRET
+        sync: false
+      - key: PADDLE_API_KEY
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
         sync: false
       - key: SMTP_PASSWORD
         sync: false
