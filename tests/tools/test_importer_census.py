@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -126,10 +127,111 @@ def test_scoped_update_cannot_write_or_start_a_measurement(
     assert path.read_bytes() == before
 
 
-def test_absent_census_cannot_be_bootstrapped_by_update(tmp_path: Path) -> None:
+def test_absent_census_is_a_census_failure_not_an_absent_prerequisite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """78 says "the gate did not measure"; a deleted pin is the property breaking.
+
+    tools/gates/_lib.sh defines 78 as "a precondition is missing: the gate did
+    not measure" and states it is neither a pass nor a failure OF THE PROPERTY.
+    Deleting the committed census is the strongest attack on this artefact, and
+    every lesser corruption of that same file already exits 3; total removal
+    must not be the single mutation that reads as skippable.
+    """
     path = tmp_path / "absent.json"
-    assert d.main(["--census", str(path), "--update-census"]) == 78
+    assert d.main(["--census", str(path), "--families", "baseline"]) == 3
+    assert d.main(["--census", str(path), "--update-census"]) == 3
     assert not path.exists()
+    # The refusal has to say WHY: an update admits ADDITIONS to a baseline, so
+    # an unreadable census leaves nothing for this run to be an addition to.
+    assert "no baseline to be an addition to" in capsys.readouterr().err
+    # Control. Without it this test still passes if every outcome is collapsed
+    # onto 3, destroying the distinction 677fbd6 exists to draw: a census that
+    # loads plus an absent bundler is an absent prerequisite, and stays 78.
+    monkeypatch.setattr(d, "ESBUILD", tmp_path / "no-such-esbuild")
+    assert d.main(["--census", str(d.DEFAULT_CENSUS), "--families", "baseline"]) == 78
+
+
+def test_updating_the_census_preserves_the_committed_file_mode(tmp_path: Path) -> None:
+    """A regeneration must not narrow the pin's permissions where review cannot see.
+
+    NamedTemporaryFile is 0600 and Path.replace carries that mode to the
+    destination. Git tracks only the exec bit, so the narrowing would never
+    appear in a diff -- in an artefact whose whole virtue is that every change
+    to the pin is visible in review.
+    """
+    path = tmp_path / "census.json"
+    path.write_bytes(d.DEFAULT_CENSUS.read_bytes())
+    path.chmod(0o644)
+    expected, count, seed = d.load_importer_census(path)
+    before = path.read_bytes()
+    d.write_importer_census(path, expected, count, seed)
+    assert path.stat().st_mode & 0o777 == 0o644
+    # The mode is the only thing that may change: the bytes are still the ones
+    # the round trip produces, and the replacement is still atomic.
+    assert path.read_bytes() == before
+    fresh = tmp_path / "fresh.json"
+    d.write_importer_census(fresh, expected, count, seed)
+    assert fresh.stat().st_mode & 0o777 == 0o644
+
+
+def test_a_ledger_with_mixed_units_is_a_census_failure_not_a_divergence(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Split on purpose, and the split is the honest part.
+
+    Reaching this through the corpus needs node and a built verifier, so the
+    raising CONDITION is exercised on the real function with real ledger
+    entries, and the CLASS it lands in is exercised at the seam. Uncaught, the
+    ValueError is a traceback and process status 1 -- what this tool reserves
+    for a measured divergence -- while its contract promises 3.
+    """
+    ledger = [
+        d.ExecutedCase("archives", "baseline", "sound-bundle"),
+        d.ExecutedCase("archive pairs", "baseline", "pair"),
+    ]
+    with pytest.raises(ValueError, match="baseline: mixed measurement units"):
+        d.observed_census(ledger)
+
+    def raising(_: list[d.ExecutedCase]) -> dict[str, d.FamilyRun]:
+        raise ValueError("baseline: mixed measurement units")
+
+    monkeypatch.setattr(d, "observed_census", raising)
+    monkeypatch.setattr(d, "collect", lambda *args: [])
+    monkeypatch.setattr(d, "build_ts_bundle", lambda work: work / "bundle")
+    monkeypatch.setattr(d, "ts_projections", lambda *args: [])
+    assert d.run([], 1, 1, None, expected={}) == 3
+    captured = capsys.readouterr()
+    assert "census (full default invocation): DIFFERS" in captured.out
+    assert "mixed measurement units" in captured.err
+
+
+def test_the_gate_asserts_a_marker_only_a_full_census_check_can_emit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The archive count cannot tell 462 from 1; the scope label can.
+
+    Measured 2026-09-09: every assertion in the importer block of g-ci-py.sh
+    passes identically on `--families baseline`, which feeds ONE archive -- the
+    tally check included, since it compares each road against the archive count
+    the same run printed. The scope label is computed from argv rather than
+    from the comparison, so it is a second measurement and not the exit code
+    restated: the divergence mutant prints MATCHES and exits 1.
+
+    This asserts the regex the gate uses against BOTH labels the tool can emit,
+    so it fails if the gate stops asserting it, if the wording drifts, or if a
+    scoped run ever learns to print the full-scope label.
+    """
+    marker = r"^census \(full default invocation\): MATCHES"
+    gate = (d.REPO_ROOT / "tools/gates/g-ci-py.sh").read_text()
+    assert marker in gate, "g-ci-py.sh no longer asserts the census scope marker"
+    healthy = {"alpha": d.FamilyRun("archives", ("a",))}
+    d.report_census(healthy, [], scoped=False)
+    full = capsys.readouterr().out
+    d.report_census(healthy, [], scoped=True)
+    scoped = capsys.readouterr().out
+    assert re.search(marker, full, re.M), "a full default run must emit the marker"
+    assert not re.search(marker, scoped, re.M), "a scoped run must not emit the marker"
 
 
 def test_bare_command_keeps_pinned_expectations_when_registry_or_defaults_shrink(

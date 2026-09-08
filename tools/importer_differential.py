@@ -45,6 +45,9 @@ COMPILED verifier, so a stale build measures the previous revision's logic:
 
 Exit status: 0 for agreement, 1 for a failed measurement or divergence, and
 3 for a census mismatch, and 78 for an absent prerequisite (no measurement).
+An absent or unreadable census is a census failure, never an absent
+prerequisite: the pin is committed, so losing it is the property breaking and
+not the environment being incomplete.
 
 The committed tools/importer-census.json pins executed identities in two distinct
 units: differential archives and reference-only archive-pair cases. A default
@@ -1711,6 +1714,11 @@ def write_importer_census(
         try:
             handle.write(json.dumps(data, indent=2) + "\n")
             handle.close()
+            # NamedTemporaryFile is 0600 and `replace` carries that mode to the
+            # destination, so regenerating would silently narrow the committed
+            # file. Git tracks only the exec bit, so the change never surfaces
+            # in review. Set before the replacement, which stays atomic.
+            temporary.chmod(path.stat().st_mode & 0o777 if path.exists() else 0o644)
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)
@@ -2070,7 +2078,21 @@ def run(
                 )
 
     report(completed, outcomes, divergences)
-    observed = observed_census(completed)
+    try:
+        observed = observed_census(completed)
+    except ValueError as exc:
+        # A ledger that cannot be grouped is a census failure. Uncaught, it
+        # leaves a traceback and process status 1 -- the class this tool
+        # reserves for a measured divergence.
+        scope = "selected invocation" if scoped else "full default invocation"
+        print(f"census ({scope}): DIFFERS")
+        print(f"CENSUS: {exc}", file=sys.stderr)
+        if updating:
+            print(
+                "refusing to update the census: expected cases are absent or invalid",
+                file=sys.stderr,
+            )
+        return 3
     problems = compare_census(observed, expected, updating=updating)
     report_census(observed, problems, scoped=scoped)
     if problems:
@@ -2134,10 +2156,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         try:
             expected, pinned_count, pinned_seed = load_importer_census(args.census)
-        except FileNotFoundError as exc:
-            raise MissingPrerequisite(f"missing committed census {args.census}") from exc
         except (ValueError, OSError) as exc:
+            # An absent census is the removal of the pin itself, never a fact
+            # about the environment. 78 is this repo's "did not measure, not a
+            # failure of the property" status (tools/gates/_lib.sh): every
+            # lesser corruption of this same file already exits 3, and total
+            # removal -- the strongest attack on a committed expectation --
+            # must not be the one mutation that reads as skippable.
             print(f"CENSUS SCHEMA: {exc}", file=sys.stderr)
+            if args.update_census:
+                # Same class as a refused update scope, for a stronger reason:
+                # an update admits ADDITIONS to a baseline, so with nothing
+                # readable to add to there is no addition to recognise -- only
+                # an absence to bless, which is what must never happen here.
+                print(
+                    "refusing to update the census: the existing census could not be read, "
+                    "so this run has no baseline to be an addition to",
+                    file=sys.stderr,
+                )
             return 3
         full_defaults = census_update_scope(
             selected, args.count, args.seed, pinned_count, pinned_seed

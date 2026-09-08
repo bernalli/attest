@@ -176,6 +176,25 @@ gate_expect_marker '^0 divergences across 0 families' \
   "importer_differential.py reached its report (this restates the exit code; it does not measure)"
 gate_expect_marker '^[0-9]+ archives fed to both importers at their own defaults' \
   "importer_differential.py prints how many archives it fed both importers, not just that it exited 0"
+# The archive count above cannot tell 462 from 1: MEASURED (2026-09-09) every
+# assertion in this block passes identically on `--families baseline`, which
+# feeds ONE archive. The tally check does not close it either -- it compares
+# each road against IMPORTER_ARCHIVES, so it is self-relative. OL-13 added the
+# grandeur that is neither the exit code nor the archive count: WHICH census
+# the run compared itself against, computed from argv rather than from the
+# comparison. Measured orthogonal to the exit code in both directions -- the
+# divergence mutant prints MATCHES and exits 1; `--families baseline` exits 0
+# without the marker. A scoped invocation (--families/--count/--seed, including
+# `--count 300 --seed 20260904` stated explicitly) prints "selected invocation"
+# and fails here, so the day this step is given parameters -- as pages.yml:test
+# already does for container_differential.py -- the scope change is loud.
+gate_expect_marker '^census \(full default invocation\): MATCHES' \
+  "importer_differential.py checked the whole committed census, not a scoped subset of it"
+# Evidence that the census accounting was reached at all, in both units. It
+# does NOT discriminate scope -- measured present on the 1-archive scoped run
+# too -- and is kept for the little it proves, like the divergence line above.
+gate_expect_marker '^[0-9]+ cases across [0-9]+ families \(case count' \
+  "importer_differential.py reached its per-unit census accounting"
 
 # GATE_OUT belongs to the LAST gate_run, and every assertion below runs one --
 # including the `> 0` comparison a few lines down, whose output is empty. Read
