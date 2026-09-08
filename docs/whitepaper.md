@@ -472,8 +472,18 @@ places a dishonest seller outside its scope — attest proves what a seller sign
 seller is honest — and it already forbids a verifier from treating the same key on two receipts
 as proof that the same person bought both. What this document adds is the plain reading: a
 binding proof establishes possession of a secret, and the seller's word is what connects that
-secret to a person. The standard is being amended to say exactly that in its own text. A further
-addition is planned and not yet specified: a buyer's own signature over the terms of the offer,
+secret to a person. The standard now says exactly that in its own text, and goes one step further
+than a reader of an earlier draft of this document would expect. v0.1 §8 closes by stating what a
+proven binding establishes — possession, by the party presenting the disclosure, of a secret that
+reproduces a value the issuer wrote into the payload — and what it does not: the buyer's
+participation at the moment of sale. v0.1 §11.1 then turns that into a rule a *display* must obey:
+a conforming rendering surface must not present "proven" as evidence that the person the receipt
+names made the purchase, nor "not proven" as evidence that whoever is presenting the receipt is
+not the buyer. Nothing on the wire moved with either sentence — no field, no algorithm step, no
+result value — because both state a property the two mechanisms already had and bound what may be
+claimed from it. The project's threat model catalogues the case as TM-78, and its verdict is
+honest about the shape of the fix: the claim is narrowed, the fabrication is not prevented. A
+further addition is planned and not yet specified: a buyer's own signature over the terms of the offer,
 carried inside the receipt, so that a seller whose key was stolen, or who was coerced, could not
 issue a receipt in a buyer's name without that buyer's key having agreed to the deal. No receipt
 carries it today, it would remain optional, and section 13 says what it would and would not
@@ -693,10 +703,21 @@ only as durable as the seller's signing key is *current*: a verifier honours a t
 only while the key that signed it is still in use, so the ordinary act of retiring a key and
 adding a new one — routine, section 4 said — silently un-honours every transfer that key
 counter-signed, and the old receipt reverts to its previous holder while the new one stays valid.
-The rule that would close that — judge a transfer record against the key's validity window at
-the moment the transfer was signed, not against the key's status today — is declared work in the
-specification's own record, and until it is written this document does not say that a transfer
-holds.
+Marking that key stolen rather than retiring it does the same thing, and needs no thief: anyone
+holding any still-current key of the same seller can do it. Say plainly what that leaves, because
+it is worse than "a transfer that stops holding". Both people end up with a receipt that verifies
+and reports `ok`: the one who sold and the one who bought. Nothing either of them can see in
+their own file says otherwise, and only an audit of the recorded chain of title, or the seller
+re-issuing the transfer under a current key, tells them apart. The project's threat model
+catalogues this as TM-80, and — this is the part worth pausing on — the outcome is now pinned by
+a case in the public conformance corpus as the *intended* one, so that a verifier cannot quietly
+"repair" it. The reason for pinning it is a lesson about verification itself: two independent
+implementations agreeing is not a safety net when both can reach the same wrong answer by
+different routes, and a behaviour that no document declares is indistinguishable from an
+accident. The rule that would close it — judge a transfer record against the key's validity
+window at the moment the transfer was signed, not against the key's status today — is declared
+work in the specification's own record, and until it is written this document does not say that a
+transfer holds.
 
 So the right picture is this: a receipt is a key to a door, never to a file. It does not open
 anything on your disk; a player that ignores your receipt still plays your file. What it opens is
@@ -720,8 +741,11 @@ written down.
 > `binding: "proven"` establishes possession of the key's private half and never the buyer's
 > participation (section 4). Transfer requires the strong form: a v0.2 receipt that claims
 > `license.transferable: true` with no `buyer.pubkey` is a schema error (v0.2 §17.8). Transfer is
-> issuer-mediated by design, never buyer-to-buyer (§17); the outgoing holder's consent is a
-> signature by that key over a domain-separated preimage (§17.1), and it is what permits
+> issuer-mediated by design, never buyer-to-buyer (§17); the outgoing holder's authorization is a
+> signature by that key over a domain-separated preimage (§17.1) — control of the key the issuer
+> recorded, never the consent of the person, which is why the specification renamed the gate it
+> feeds from "consent gate" to *key-authorization gate*, the old name having asserted what the
+> mechanism does not establish — and it is what permits
 > extinguishing even an otherwise irrevocable receipt (§17.3); a transfer record is honoured only
 > when its inclusion in the issuer's transparency log is proven (§17.2); two logged records for the
 > same receipt are a double assignment and the earliest log index wins (§17.4); walking the chain
@@ -738,13 +762,19 @@ written down.
 > `license.transferable` is not read on the path that honours a transfer record (every combination
 > of receipt version and flag with a non-null `buyer.pubkey` yields `transferred`), and a transfer
 > record authenticates only while its signing `kid` is `active` (§17.1 mirrors v0.1 §12.1), so a
-> `retired` key un-honours it and the old receipt returns to `revocation: "unknown"`; a rule that
+> `retired` — or `compromised` — key un-honours it and the old receipt returns to
+> `revocation: "unknown"` with `ok: true`, while the new receipt keeps `ok: true` of its own: one
+> purchase, two green receipts, invisible to any verification of a single receipt and visible only
+> to a chain-of-title audit (v0.2 §17.5). The two markings are one mechanism, threat model TM-80 says
+> so, and neither one's consequence for a completed transfer has been decided; a rule that
 > judges the record against the key's validity window at `transferred_at` is declared work and not
-> yet specified. The three properties named above, the two arguments for why
+> yet specified. The corpus pins the compromised variant as intended rather than accidental, so an
+> implementation that honours the record anyway is non-conforming and not improved. The three
+> properties named above, the two arguments for why
 > the triple fails, and the recommendation that no specification change follow from them are the
 > subject of the project's research record of 5 September 2026; the door the receipt opens is the
-> normative precondition a custodian checks before serving bytes (v0.2 §18.7) and the consent gate
-> a transfer passes through (§17.3), both shipped.
+> normative precondition a custodian checks before serving bytes (v0.2 §18.7) and the
+> key-authorization gate a transfer passes through (§17.3), both shipped.
 
 ---
 
@@ -1215,7 +1245,8 @@ the issuer does, because every transfer is counter-signed by the issuer; making 
 issuer has a name in the specification's own open work and is not built. Whether the seller's
 terms allow a transfer at all is a signed statement that the verifier honouring one never reads,
 and a transfer is honoured only while the key that counter-signed it is still in use, so a routine
-rotation un-honours it — both measured, both stated in section 5 as limits and not as guarantees. A publisher's word about
+rotation — or a compromise marking — un-honours it and leaves one purchase with two green
+receipts; both measured, both stated in section 5 as limits and not as guarantees. A publisher's word about
 who was authorised to sell never touches the verdict, and nothing distinguishes a publisher who
 refuses to participate from one who simply never has. It does no forensic tracking, and it does not
 extend to streaming.
@@ -1233,7 +1264,12 @@ extend to streaming.
 >   and ignored, which is also why a routine rotation that retires the signing key un-honours every
 >   transfer record that key signed (section 5) — and extending the cutoff to them is named as a
 >   distinct design with its own hazards, transfer resurrection and double assignment. Neither
->   specification restricts *which* keys may publish a compromise marking.
+>   specification restricts *which* keys may publish a compromise marking, so marking the
+>   counter-signing key stolen reaches a completed transfer the same way retiring it does, and
+>   leaves both parties holding a green receipt for one purchase; threat model TM-80 catalogues
+>   that outcome, and a case in the conformance corpus pins it, so that a verifier meeting it
+>   cannot mistake it for a defect to be repaired. It is the price of refusing the alternative,
+>   not one of the hazards that alternative carries.
 > - **The trust root is domain control** (v0.1 §7.1, §7.4). "An issuer's identity is its DNS domain";
 >   `trust: "verified"` requires a manifest fetched over TLS from it, everything else is
 >   `unauthenticated_tofu` and is "never silently upgraded"; and no value of transparency or
@@ -1243,10 +1279,12 @@ extend to streaming.
 >   is a replayable bearer proof that burns that receipt's binding secrecy toward that verifier;
 >   the non-revealing path — a challenge-response against a buyer public key — is the strong one,
 >   and it is optional and absent by default wherever there is no buyer-side client. Every input to
->   either proof is issuer-chosen, so `proven` never establishes that the named buyer took part;
->   the amendment stating this in the specification's own text is in progress, and a
->   `buyer.acceptance` member carrying the buyer's own signature over the offer is a planned,
->   OPTIONAL addition, not yet specified.
+>   either proof is issuer-chosen, so `proven` never establishes that the named buyer took part.
+>   §8 now states that limit in the specification's own text and §11.1 binds a rendering surface
+>   to it, forbidding any conforming display from presenting the two results as evidence about a
+>   person; threat model TM-78 catalogues the residual, with the claim narrowed and the
+>   fabrication not prevented. A `buyer.acceptance` member carrying the buyer's own signature over
+>   the offer remains a planned, OPTIONAL addition, not yet specified.
 > - **The heir's case is closed by construction** (v0.2 §18.6, §18.7; threat model TM-44). A pledge
 >   receipt must carry a non-null `buyer.pubkey`, and "Salt disclosure MUST NOT be accepted as a
 >   redemption proof … This is a normative prohibition, not a recommendation."
@@ -1587,10 +1625,16 @@ keeps them lawful and what gives a publisher control over whether resale happens
 means they stop when the issuer does. Making a transfer outlive its issuer — an issuer, while
 alive, delegating that authority to a successor in advance — is unsolved, and it is the hardest
 problem on the project's list. Nearer at hand, and measured: a transfer today is honoured only
-while the key that counter-signed it is still in use, so a routine key rotation un-honours it
-(section 5); the rule that would judge the record against the key's validity window at the time
-of the transfer is declared and not yet written, and the flag in the licence that says whether a
-receipt may be passed on is not read by the verifier that honours the transfer at all.
+while the key that counter-signed it is still in use, so a routine key rotation un-honours it, and
+so does marking that key stolen, which anyone holding any current key of the same seller can do
+(section 5). What the two leave behind is one purchase with two receipts that both verify, seen by
+neither holder and only by an audit of the recorded chain. The threat model catalogues it as
+TM-80, treats the two markings as one mechanism whose consequence for a completed transfer has not
+been decided, and the conformance corpus pins the outcome so that nobody patches it away in a
+verifier instead of deciding it in the standard. The rule that would judge the record against the
+key's validity window at the time of the transfer is declared and not yet written, and the flag in
+the licence that says whether a receipt may be passed on is not read by the verifier that honours
+the transfer at all.
 
 **Silent death of a publisher.** A publisher who vanishes without signing anything and without
 naming a successor leaves a preservation pledge dormant for ever. The mode that would cover it,
