@@ -213,13 +213,13 @@ amount of protocol fixes that.
 
 Spec v0.1 is complete and v0.2 is specified, with two independent
 implementations — a Python reference implementation and a TypeScript verifier —
-measured by the shared conformance corpus, now 226 leaves across 47 groups: 66
+measured by the shared conformance corpus, now 226 leaves across 47 groups: 67
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
 deadlines), Stage 3 issuer-mediated transfer, Stage 4 preservation pledge, the
 time-boxed compromise rescue, and publisher authorization. (A v0.1-only verifier is
-required to reject v0.2 envelopes, so it is measured against the 66-leaf
+required to reject v0.2 envelopes, so it is measured against the 67-leaf
 subset.) There are also two end-to-end demos: one deletes a store's entire
 infrastructure mid-lifecycle and proves the receipt still verifies, and one
 carries that a step further — a rights holder's preservation pledge fires and

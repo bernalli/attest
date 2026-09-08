@@ -35,7 +35,7 @@ import, before any leaf is checked.)
   with that leaf's absolute path in every argv token, splits the template with
   `shlex.split`, and invokes it as a fixed argv list (`shell=False` — never a
   shell string).
-- `--subset` selects `v0.1` (66 leaves) or `v0.2` (all leaves, currently 226) —
+- `--subset` selects `v0.1` (67 leaves) or `v0.2` (all leaves, currently 226) —
   see §4.
 - `--report FILE` additionally writes the machine-readable JSON report (§6)
   to `FILE`.
@@ -48,7 +48,7 @@ non-passing leaf, then exactly one summary line:
 
 ```
 CONFORMANT (v0.2): 226/226 leaves pass — corpus revision <hex12>
-NOT CONFORMANT (v0.1): 63/66 leaves pass — 3 failing
+NOT CONFORMANT (v0.1): 64/67 leaves pass — 3 failing
 ```
 
 Exit code: `0` if conformant, `1` if not, `2` on a usage/environment error
@@ -122,18 +122,21 @@ either as a worked example of the contract above.
 
 - **v0.2** — every leaf in the corpus (currently 226). Measures conformance
   against `docs/spec/attest-v0.2.md`.
-- **v0.1** — the 66-leaf subset: every leaf whose top-level group directory's
+- **v0.1** — the 67-leaf subset: every leaf whose top-level group directory's
   leading integer is ≤ 25, plus groups `29-limits`,
   `31-manifest-currency`, `42-publisher-claim`, `44-manifest-duplicate-kid`,
-  `45-revocation-anchor-status`, and `46-manifest-unauthenticated`, plus three
+  `45-revocation-anchor-status`, and `46-manifest-unauthenticated`, plus four
   pinned leaf ids,
   `35-transfer/i-v01-transferable-null-pubkey-ok` (`35i`),
-  `37-preservation-pledge/s-v01-negative-control` (`37s`), and
-  `41-compromise-cutoff/f-stage1-fail-closed` (`41f`). They are included
-  because each is itself an `attest_version: "0.1"` receipt — a v0.1-shaped
-  negative control for a v0.2-only schema conditional, living inside an
-  otherwise-v0.2-only group — see `docs/spec/vectors/README.md` for the full
-  membership rationale. A v0.1-only implementation (one that never accepts v0.2's hybrid
+  `37-preservation-pledge/s-v01-negative-control` (`37s`),
+  `41-compromise-cutoff/f-stage1-fail-closed` (`41f`), and
+  `41-compromise-cutoff/v-broken-signature-member-still-floors` (`41v`). The
+  first two are included because each is itself an `attest_version: "0.1"`
+  receipt — a v0.1-shaped negative control for a v0.2-only schema conditional,
+  living inside an otherwise-v0.2-only group; `41f` and `41v` because neither
+  ships any Stage-2 material, so the v0.2 rescue is out of reach and a v0.1-only
+  verifier must reproduce their verdicts — see `docs/spec/vectors/README.md` for
+  the full membership rationale. A v0.1-only implementation (one that never accepts v0.2's hybrid
   profile) is measured against this subset, not against all 226.
 
 ## 5. The claim process
@@ -199,9 +202,9 @@ from PyPI or npm; the 0.9.3 rows record release preparation before publication.
 | Implementation | Subset | Leaves passed | Corpus revision | Date | Command |
 | --- | --- | --- | --- | --- | --- |
 | attest (Python reference) 0.9.3 | v0.2 | 226/226 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-08 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
-| attest (Python reference) 0.9.3 | v0.1 | 66/66 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-08 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
+| attest (Python reference) 0.9.3 | v0.1 | 67/67 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-09 | `uv run --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
 | attest-verifier (TypeScript) 0.9.3 | v0.2 | 226/226 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-08 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
-| attest-verifier (TypeScript) 0.9.3 | v0.1 | 66/66 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-08 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
+| attest-verifier (TypeScript) 0.9.3 | v0.1 | 67/67 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-09 | `npm run build --prefix verifiers/ts && python3 tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
 
 A third-party implementation adds a row here (or in its own repo/README,
 linking back to this process) the same way: run §2's command, record the
