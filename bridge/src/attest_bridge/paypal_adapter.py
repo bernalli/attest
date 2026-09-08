@@ -182,11 +182,26 @@ def _parse_create_time(raw: Any, order_id: str) -> str:
         ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
+    # `astimezone(UTC)` raises OverflowError at either end of the representable
+    # range (a year-1 value with a positive offset, a year-9999 value with a
+    # negative one). `OverflowError` is neither a `PurchaseRejected` nor a
+    # `TypeError`/`AttributeError`, so it falls straight through the route's
+    # dead-letter clause into its 500 row: PayPal then redelivers a body that
+    # can never succeed for three days, and the order never reaches the
+    # dead-letter queue an operator triages. The Shopify and itch twins already
+    # carry this guard; `_loads_authenticated_body` closes the same escape one
+    # step earlier for unparseable bodies.
+    try:
+        moment = parsed.astimezone(UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise PurchaseRejected(
+            f"paypal capture for order {log_id} create_time is outside the representable range"
+        ) from exc
     # `strftime("%Y")` does not zero-pad below year 1000 on glibc, so a year-1
     # timestamp would leave here as "1-01-01T00:00:00Z", which is not RFC 3339.
     # `isoformat()` always pads to four digits - the same fix the Paddle,
     # Shopify, itch and `model.rfc3339_from_unix` twins already carry.
-    return parsed.astimezone(UTC).replace(microsecond=0, tzinfo=None).isoformat() + "Z"
+    return moment.replace(microsecond=0, tzinfo=None).isoformat() + "Z"
 
 
 class PayPalAdapter:

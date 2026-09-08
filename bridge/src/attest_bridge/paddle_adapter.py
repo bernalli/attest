@@ -154,11 +154,27 @@ def _parse_billed_at(raw: Any, purchase_id: str) -> str:
         ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
+    # `astimezone(UTC)` raises OverflowError at either end of the representable
+    # range (a year-1 value with a positive offset, a year-9999 value with a
+    # negative one). `OverflowError` is neither a `PurchaseRejected` nor a
+    # `TypeError`/`AttributeError`, so it falls straight through the route's
+    # dead-letter clause into its 500 row: Paddle then redelivers a body that
+    # can never succeed, 60 times over three days, and the transaction never
+    # reaches the dead-letter queue an operator triages. Same escape the
+    # surrogate, RecursionError and long-integer guards on this rail close, and
+    # the Shopify and itch twins already carry this one.
+    try:
+        moment = parsed.astimezone(UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise PurchaseRejected(
+            "paddle transaction "
+            f"{purchase_id_for_log(purchase_id)} billed_at is outside the representable range"
+        ) from exc
     # `strftime("%Y")` does not zero-pad below year 1000 on glibc, so a year-1
     # timestamp would leave here as "1-01-01T00:00:00Z", which is not RFC 3339.
     # `isoformat()` always pads to four digits. The Shopify, itch and
     # `model.rfc3339_from_unix` twins already carry the same fix.
-    return parsed.astimezone(UTC).replace(microsecond=0, tzinfo=None).isoformat() + "Z"
+    return moment.replace(microsecond=0, tzinfo=None).isoformat() + "Z"
 
 
 class PaddleAdapter:
@@ -357,7 +373,12 @@ class PaddleAdapter:
             ) from exc
 
         try:
-            response = json.loads(body)
+            # The strict loader, not `json.loads`: a lone-surrogate `str` is legal
+            # JSON, survives every `isinstance` below, and only fails at the first
+            # sink that encodes it (sqlite3, SMTP) — long after this rail's
+            # `PurchaseRejected` contract, as an unhandled 500. The PayPal twin
+            # already reads its API responses through the same door.
+            response = loads_utf8_strict(body)
         except (ValueError, RecursionError):
             response = None
         customer = response.get("data") if isinstance(response, dict) else None

@@ -687,6 +687,26 @@ def test_normalize_rejects_an_order_without_a_payer_email(
 
 
 @pytest.mark.parametrize(
+    "create_time",
+    ["0001-01-01T00:00:00+05:00", "9999-12-31T23:59:59-05:00"],
+)
+def test_normalize_rejects_an_extreme_create_time_before_any_order_fetch(
+    monkeypatch: MonkeyPatch, create_time: str
+) -> None:
+    """`astimezone(UTC)` walks off the end of the representable range.
+
+    `OverflowError` is not named by this adapter's contract, so the route would
+    answer 500 to an authenticated body that can never succeed. The Shopify and
+    itch twins already reject it as malformed purchase input.
+    """
+    api = FakePayPalApi()
+    adapter = make_adapter(monkeypatch, api)
+    with pytest.raises(PurchaseRejected, match=r"representable range"):
+        adapter.normalize(make_capture_completed(resource={"create_time": create_time}))
+    assert api.get_calls == []
+
+
+@pytest.mark.parametrize(
     "purchase_units",
     [
         [],

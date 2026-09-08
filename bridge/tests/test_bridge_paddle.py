@@ -1285,16 +1285,43 @@ def test_unexpected_paddle_adapter_exception_returns_500_and_does_not_mark_event
     assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
 
 
-def test_paddle_timestamp_underflow_returns_500_and_does_not_mark_event(
-    paddle_deps: BridgeDeps,
+@pytest.mark.parametrize(
+    "billed_at",
+    ["0001-01-01T00:00:00+05:00", "9999-12-31T23:59:59-05:00"],
+)
+def test_an_extreme_billed_at_is_dead_lettered_not_a_three_day_retry_loop(
+    paddle_deps: BridgeDeps, billed_at: str
 ) -> None:
-    event = _route_transaction(billed_at="0001-01-01T00:00:00+05:00")
+    """`astimezone(UTC)` walks off the end of the representable range.
+
+    A signed body carrying such a value can never succeed, so it belongs on the
+    dead-letter row with the other permanently-bad input — not on the 500 row,
+    which asks Paddle to redeliver it 60 times over three days and leaves the
+    transaction invisible to `retry-failed`. The Shopify and itch twins already
+    reject it as malformed purchase input.
+    """
+    event = _route_transaction(billed_at=billed_at)
 
     status, _, _ = _post_paddle_webhook(paddle_deps, event)
 
-    assert status.startswith("500")
-    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is False
-    assert paddle_deps.ledger.unresolved_dead_letters() == []
+    assert status.startswith("200")
+    assert paddle_deps.ledger.seen_event("paddle", event["event_id"]) is True
+    assert len(paddle_deps.ledger.unresolved_dead_letters()) == 1
+
+
+@pytest.mark.parametrize(
+    "billed_at",
+    ["0001-01-01T00:00:00+05:00", "9999-12-31T23:59:59-05:00"],
+)
+def test_normalize_rejects_an_extreme_billed_at_before_any_api_call(
+    monkeypatch: pytest.MonkeyPatch, billed_at: str
+) -> None:
+    """The adapter-level twin of the Shopify and itch tests of the same shape."""
+    adapter, http_get = _adapter(monkeypatch, RecordingHttpGet(b"{}"))
+    with pytest.raises(PurchaseRejected, match=r"representable range"):
+        adapter.normalize(make_transaction_completed(billed_at=billed_at))
+    assert isinstance(http_get, RecordingHttpGet)
+    assert http_get.calls == []
 
 
 def test_paddle_route_is_404_when_paddle_is_not_configured(paddle_deps: BridgeDeps) -> None:
