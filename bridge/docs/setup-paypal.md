@@ -27,23 +27,28 @@ Identical to [setup-stripe.md](setup-stripe.md) steps 1 and 2. Do those first.
 
 ## 2. Create the app and the webhook
 
-**The app** — [Developer Dashboard](https://developer.paypal.com/dashboard/)
-→ **Apps & Credentials** → *Create App* (type: Merchant). Copy the two values
-it shows you into your deploy environment:
+Both live in the [Developer Dashboard](https://developer.paypal.com/dashboard/).
+Its menu wording moves between revisions, so what follows names each step by
+what it does rather than by the label it currently carries.
+
+**The app** — create an app on your account. Copy the two values it shows you
+into your deploy environment:
 
 - **Client ID** → `PAYPAL_CLIENT_ID`
 - **Secret** → `PAYPAL_CLIENT_SECRET`
 
-Make sure you are on the right tab: the Dashboard has **Sandbox** and
-**Live** credentials, and they are different apps. Sandbox credentials need
-`environment = "sandbox"` in the table below, which points the bridge at
-`api-m.sandbox.paypal.com` instead of `api-m.paypal.com`.
+Sandbox and live credentials are separate, and they are not interchangeable:
+the pair you copy has to match the `environment` you set in the table below,
+which is what decides whether the bridge talks to `api-m.sandbox.paypal.com`
+or `api-m.paypal.com`. Copying a sandbox pair while leaving `environment`
+unset points sandbox credentials at the live API.
 
-**The webhook** — in the same app, **Webhooks** → *Add Webhook*:
+**The webhook** — create one on that same app:
 
 - **URL**: `https://<your-bridge-host>/paypal/webhook`
-- **Event types**: subscribe to `Payment capture completed`
-  (`PAYMENT.CAPTURE.COMPLETED`) and nothing else.
+- **Event types**: subscribe to `PAYMENT.CAPTURE.COMPLETED` and nothing else.
+  That constant is what the bridge matches on; the dashboard shows it under a
+  human-readable name next to it.
 
 After saving, PayPal shows the webhook's **own ID** — a value like
 `8PT597110X687430LKGECATA`. Copy it: unlike the two credentials above it is
@@ -178,7 +183,13 @@ curl -sS -i -X POST http://127.0.0.1:8080/paypal/webhook \
 ```
 
 Expected: `400` and `missing signature`. The bridge refuses before it calls
-PayPal at all — an unauthenticated body is never relayed anywhere.
+PayPal at all. Note carefully what that does *not* mean: once the five headers
+are present and well-formed, the body **is** sent to PayPal verbatim, because on
+this rail the postback *is* the authentication — the outbound call necessarily
+precedes it, and no local check can come first. Anyone who can reach this
+endpoint with five plausible headers and a non-empty body can make your bridge
+spend one PayPal round-trip. That is the surface the rate limit below exists to
+bound, and the reason this endpoint has one when the HMAC rails do not.
 
 Then the sandbox, which is the real test: either use **Send test** on the
 webhook you created in the Dashboard, or make a sandbox purchase through your
@@ -241,13 +252,18 @@ Worth knowing, because it shapes what can go wrong:
   verifying the RSA signature locally — would mean adding an RSA/X.509
   dependency the bridge does not otherwise need, fetching a certificate per
   delivery and validating its chain. This design adds no cryptographic
-  surface; what it costs is one API round-trip per delivery, and a `500`
-  (which PayPal retries) whenever PayPal's own API is unreachable.
+  surface; what it costs is one API round-trip per delivery to authenticate it
+  — two when the cached OAuth token has expired — plus a second call to fetch
+  the order for a delivery that is actually issued for, and a `500` (which
+  PayPal retries) whenever PayPal's own API is unreachable.
 - The body is **never re-serialised** before being sent for verification.
   PayPal's signature covers the exact bytes it sent; re-encoding an authentic
   delivery is enough to make it fail.
-- If any of the five headers is missing or blank the answer is
-  `400 missing signature`, decided locally, before any call.
+- If any of the five headers is missing or empty the answer is
+  `400 missing signature`. A header that is present but whitespace-only, too
+  long, non-ASCII, or that carries an `auth_algo` other than `SHA256withRSA`
+  or a `cert_url` outside `*.paypal.com`, is `400 invalid signature` instead.
+  Both are decided locally, before any call to PayPal.
 - **Replay is the Ledger's job.** A genuine delivery verifies again when
   PayPal retries it; the bridge deduplicates the signed envelope `id` and,
   separately, the related order id. Two capture events for the same order
@@ -269,14 +285,17 @@ Worth knowing, because it shapes what can go wrong:
 - **Refunds and reversals do not revoke anything yet.**
   `PAYMENT.CAPTURE.REFUNDED` and `PAYMENT.CAPTURE.REVERSED` are not handled:
   a refunded purchase keeps its receipt until refund-driven revocation ships.
-- **A delivery larger than 1 MiB is refused with `413`**, and no more than
-  **60 formally complete deliveries per minute** are admitted — the rest get
-  `429`. Both limits sit *before* authentication, and they are stricter here
-  than on any other rail for a reason: every delivery this endpoint accepts
-  costs an outbound call to PayPal, so an unauthenticated flood would spend
-  your API budget rather than the sender's. Sixty a minute leaves PayPal's own
-  retry bursts room; if you genuinely sell faster than that, this is the
-  number to raise.
+- **A delivery larger than 1 MiB is refused with `413`** — the same cap the
+  Paddle rail applies — and, uniquely to this rail, no more than **60 formally
+  complete deliveries per minute** are admitted; the rest get `429`. Both sit
+  *before* authentication, and only this rail needs the second one: every
+  delivery this endpoint accepts costs an outbound call to PayPal, so an
+  unauthenticated flood would spend your API budget rather than the sender's,
+  while the HMAC rails can refuse a forgery locally and for free. Sixty a
+  minute leaves PayPal's own retry bursts room. Both numbers are compiled-in
+  defaults today, not `bridge.toml` fields: if your store genuinely sells
+  faster than sixty a minute, say so — raising it is a change to the bridge,
+  not to your config.
 - A transient failure answers `500` so PayPal redelivers — up to 25 times
   over three days, and note that PayPal retries a `400` too, unlike Stripe. A
   permanently-bad event answers `200` and lands in the dead-letter queue,

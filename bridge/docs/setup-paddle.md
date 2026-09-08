@@ -33,12 +33,16 @@ Identical to [setup-stripe.md](setup-stripe.md) steps 1 and 2. Do those first.
 
 ## 2. Create the notification destination and the API key
 
-Two separate things in the Paddle dashboard, and you need both.
+Two separate things in the Paddle dashboard, and you need both. The exact
+menu wording moves between dashboard revisions, so what follows names each
+screen by what it does; the notifications screen was, at the time of writing,
+under **Developer tools → Notifications**.
 
-**The notification destination** — Paddle → **Developer tools →
-Notifications** → *New destination*:
+**The notification destination** — create a new destination on the
+notifications screen:
 
-- **Notification type**: `Webhook`
+- **Type**: the destination kind that delivers over HTTP to a URL you supply,
+  not the one that sends email.
 - **URL**: `https://<your-bridge-host>/paddle/webhook`
 - **Events**: subscribe to `transaction.completed` and nothing else. The
   bridge ignores every other event, so a wider subscription only costs you
@@ -48,8 +52,8 @@ After saving, open the destination and copy its **secret key** — it looks like
 `pdl_ntfset_...`. That value is what the bridge verifies signatures against.
 Put it in your deploy environment as `PADDLE_WEBHOOK_SECRET`.
 
-**The API key** — Paddle → **Developer tools → Authentication** → *New API
-key*, with the `customer.read` permission. It looks like
+**The API key** — create one from your account's API-key screen, granting it
+the `customer.read` permission and nothing more. It looks like
 `pdl_live_apikey_...` (or `pdl_sdbx_apikey_...` on sandbox). Put it in your
 deploy environment as `PADDLE_API_KEY`.
 
@@ -59,8 +63,9 @@ permission the bridge needs, and a key with more is a key that can do more if
 your bridge host is ever compromised.
 
 > **Sandbox keys and live keys are not interchangeable**, and the failure is
-> not obvious: a sandbox key sent to the live API is rejected with a `403`,
-> which the bridge treats as permanent and dead-letters. If you are testing
+> not obvious: the live API refuses a sandbox key with a 4xx, and the bridge
+> treats `400`, `401`, `403` and `404` alike — permanent, dead-lettered, never
+> retried. If you are testing
 > against Paddle's sandbox, set `environment = "sandbox"` in the table below
 > so the bridge talks to `sandbox-api.paddle.com` instead of
 > `api.paddle.com`.
@@ -83,8 +88,9 @@ api_key_env = "PADDLE_API_KEY"
 
 Then one `[products.paddle_<price_id>]` table per item you sell. The product
 key is `paddle_` followed by the **price id**, which is Paddle's unit of sale
-— not the product id. Find it in the dashboard under **Catalog → Products →
-your product → Prices**; it looks like `pri_01h8xce4qz2m3n4p5q6r7s8t9v`.
+— not the product id. Find it in your Paddle catalogue, on the price attached
+to the product you sell; it looks like `pri_01h8xce4qz2m3n4p5q6r7s8t9v` and is
+distinguishable from a product id by its `pri_` prefix.
 
 ```toml
 [products.paddle_pri_01h8xce4qz2m3n4p5q6r7s8t9v]
@@ -224,8 +230,11 @@ Worth knowing, because it shapes what can go wrong:
 
 - The HMAC covers **the timestamp and the request body together**
   (`<ts>:<body>`), so neither can be changed without invalidating the
-  signature. Nothing else about the request is read: no header outside
-  `Paddle-Signature` gates any decision.
+  signature. `Paddle-Signature` is the only header that gates an *issuing*
+  decision — no other header can change what gets attested, or for whom. The
+  one other header the bridge reads at all is `Content-Length`, and only to
+  bound the request before touching it (the 1 MiB row below) and to decide how
+  many bytes of body to read.
 - **The timestamp window is 300 seconds**, not the five seconds Paddle's own
   SDKs default to. Five seconds turns ordinary delivery latency into a
   rejection, and a rejection into a retry; replay protection is the Ledger's
@@ -255,10 +264,15 @@ Worth knowing, because it shapes what can go wrong:
   signature is even checked. A `transaction.completed` event is nowhere near
   that; a body that is means something is wrong upstream, and the bridge
   declines to hash it.
-- A transient failure answers `500` so Paddle redelivers — up to 60 times
-  over three days. A permanently-bad event answers `200` and lands in the
-  dead-letter queue, replayable with `attest-bridge retry-failed` once you
-  have fixed the cause.
+- A transient failure answers `500` so Paddle redelivers — up to 60 times over
+  three days on live, but only **3 times within 15 minutes on sandbox**, so a
+  sandbox test has far less room to recover than production does. Paddle also
+  wants its `200` within **five seconds**, and this is the one rail that spends
+  a synchronous Paddle API call before it can answer; a slower delivery is
+  retried, and the deduplication above is what keeps that retry from issuing a
+  second receipt. A permanently-bad event answers `200` and lands in the
+  dead-letter queue, replayable with `attest-bridge retry-failed` once you have
+  fixed the cause.
 
 ## Buyer-held keys (optional)
 
