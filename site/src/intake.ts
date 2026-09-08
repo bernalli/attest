@@ -1,4 +1,4 @@
-import { loadsStrict } from 'attest-verifier'
+import { canonicalBytes, loadsStrict, parseTrustStore } from 'attest-verifier'
 import type { JsonObject, JsonValue, TrustStore } from 'attest-verifier'
 import { parseBundle, BundleError, BundleTooLargeError, bareStore, storedLimitMessage } from './bundle.js'
 import { MAX_STORED_BYTES } from './container.js'
@@ -43,16 +43,21 @@ const storeFor = (issuer: string, manifest: JsonObject, provenance: string): Tru
   const where = bareStore<string>()
   manifests[issuer] = manifest
   where[issuer] = provenance
-  return { manifests, provenance: where }
+  // `canonicalBytes` and never `JSON.stringify`: the parser hands integers
+  // back as `bigint`, and `JSON.stringify` throws on the first one — which a
+  // manifest always has, in `manifest_version`. The failure would arrive on
+  // the first real file rather than in any test with a hand-made fixture.
+  return parseTrustStore(canonicalBytes({ manifests, provenance: where }))
 }
 
-// Frozen because it is a module singleton handed to the verifier and to the
-// tamper exhibit: a store whose whole purpose is to answer nothing should not
-// be able to start answering because someone downstream wrote to it.
-export const EMPTY_TRUST: TrustStore = {
-  manifests: Object.freeze(bareStore<JsonObject>()),
-  provenance: Object.freeze(bareStore<string>()),
-}
+// A parsed snapshot, not a literal, because it is a module singleton handed to
+// the verifier and to the tamper exhibit: a store whose whole purpose is to
+// answer nothing should not be able to start answering because someone
+// downstream wrote to it. The snapshot carries that guarantee itself, which is
+// why the two `Object.freeze` calls this replaced are gone rather than kept.
+export const EMPTY_TRUST: TrustStore = parseTrustStore(
+  new TextEncoder().encode('{"manifests":{},"provenance":{}}'),
+)
 
 const PRIVATE_NAME_MSG =
   'That file is named .private.attest — it holds your binding salts and keys. ' +
@@ -407,14 +412,21 @@ export function intake(fileName: string, bytes: Uint8Array): IntakeResult {
 }
 
 export function trustStoreFromManifestBytes(bytes: Uint8Array): TrustStore | null {
+  // The `try` covers the PARSE and nothing else. `null` means "this does not
+  // have the shape of a key manifest" — and it must not also come to mean "it
+  // had the shape and the library refused it", because the second is something
+  // the person who dropped the file needs told, not silently turned into "no
+  // manifest here". So the store is built AFTER the catch, where a refusal
+  // propagates.
+  let m: JsonObject | null = null
   try {
-    const m = asObject(loadsStrict(bytes))
-    if (m && typeof m['issuer'] === 'string' && Array.isArray(m['keys'])) {
-      const issuer = m['issuer']
-      return storeFor(issuer, m, 'user-supplied')
-    }
+    m = asObject(loadsStrict(bytes))
   } catch {
     /* not canonical JSON → not a manifest */
+    return null
+  }
+  if (m && typeof m['issuer'] === 'string' && Array.isArray(m['keys'])) {
+    return storeFor(m['issuer'], m, 'user-supplied')
   }
   return null
 }

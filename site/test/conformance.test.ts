@@ -171,6 +171,11 @@ describe('the §19 copy each group-41 leaf produces through the site adapter', (
     // 41u is 41m with an OLDER trusted pin: same signature story, but the
     // verifier holds no evidence of a retraction, so the trust row stays hedged.
     'u-stale-pin-not-a-retraction': /no anchored proof/,
+    // 41v holds the compromise ONLY in an unauthenticated chain member, so the
+    // copy is the floor story `l` already tells: the marking this verifier has
+    // seen is not taken back by the later list. Sharing a story is the point --
+    // what 41v adds is that the held member never had to authenticate.
+    'v-broken-signature-member-still-floors': /not taken back by a later key list/,
     // 41w is 41m's fixture with the view padded one past the 64-claim ceiling.
     // The key never resolves to `compromised` — the ceiling refuses before the
     // rescue branches are reached — so this lands on the generic invalid-

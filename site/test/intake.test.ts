@@ -322,8 +322,8 @@ describe('the trust stores intake builds answer only for the issuers they were g
     expect(r.kind).toBe('jobs')
     if (r.kind !== 'jobs') return
     for (const name of INHERITED) {
-      expect(r.jobs[0].trustStore.manifests[name]).toBeUndefined()
-      expect(r.jobs[0].trustStore.provenance[name]).toBeUndefined()
+      expect(r.jobs[0].trustStore.manifestFor(name)).toBeNull()
+      expect(r.jobs[0].trustStore.provenanceFor(name)).toBeNull()
     }
   })
 
@@ -332,8 +332,8 @@ describe('the trust stores intake builds answer only for the issuers they were g
     const store = trustStoreFromManifestBytes(canonicalBytes(manifest))
     expect(store).not.toBeNull()
     for (const name of INHERITED) {
-      expect(store!.manifests[name]).toBeUndefined()
-      expect(store!.provenance[name]).toBeUndefined()
+      expect(store!.manifestFor(name)).toBeNull()
+      expect(store!.provenanceFor(name)).toBeNull()
     }
   })
 
@@ -342,8 +342,8 @@ describe('the trust stores intake builds answer only for the issuers they were g
     expect(r.kind).toBe('jobs')
     if (r.kind !== 'jobs') return
     for (const name of INHERITED) {
-      expect(r.jobs[0].trustStore.manifests[name]).toBeUndefined()
-      expect(r.jobs[0].trustStore.provenance[name]).toBeUndefined()
+      expect(r.jobs[0].trustStore.manifestFor(name)).toBeNull()
+      expect(r.jobs[0].trustStore.provenanceFor(name)).toBeNull()
     }
   })
 
@@ -355,8 +355,8 @@ describe('the trust stores intake builds answer only for the issuers they were g
     const named = { ...manifest, issuer: '__proto__' } as JsonObject
     const store = trustStoreFromManifestBytes(canonicalBytes(named))
     expect(store).not.toBeNull()
-    expect(Object.keys(store!.manifests)).toEqual(['__proto__'])
-    expect(store!.manifests['__proto__']).toBeDefined()
+    expect(store!.issuers()).toEqual(['__proto__'])
+    expect(store!.manifestFor('__proto__')).not.toBeNull()
   })
 })
 
