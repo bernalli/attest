@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 140
 # G-CI-COVER — every CI command is covered by an F6 gate or declared out of scope.
 #
 # This gate exists because the plan carried the sentence "the F6 gates cover every

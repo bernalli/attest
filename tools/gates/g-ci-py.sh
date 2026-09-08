@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# gate-order: 80
+# gate-order-why: the TS conformance adapter needs dist
 # G-CI-PY: the conformance and differential tools run, and their counts are > 0.
 #
 # Five commands from ci.yml:python and ci.yml:supply-chain, each with its own

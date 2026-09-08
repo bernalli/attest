@@ -1,78 +1,136 @@
 #!/usr/bin/env bash
-# Run every gate in dependency order and report THREE named sets, not three numbers.
+# Run every gate on disk, in the order they declare, and report three NAMED sets.
 #
-# The contract each gate implements -- 0 the property holds, 1 it does not, 78 it
-# could not measure -- had no consumer. A contract with no consumer dies the first
-# time someone reads 78 as "not 1, so we are fine", and that reading is the whole
-# reason the third status exists. So the summary never prints a count on its own:
-# it names which gates are green, which are red, and which did not measure, because
-# a gate that did not measure has to stay visible even when everything else is green.
+# TWO STRUCTURAL PROPERTIES, and the first version of this file had neither.
 #
-# Exit status: non-zero if any gate is RED. A 78 does not fail the run -- a missing
-# browser or an unbuilt dependency is not a defect of the product -- but it is always
-# listed, and the reason comes with it.
+# 1. THE GATES ARE DISCOVERED, NOT LISTED. The previous version carried an array
+#    of gate names. A list is exempt by construction from whatever lands after it,
+#    so a gate added tomorrow would simply never run -- measured: a red
+#    g-brand-new.sh sitting on disk produced RUN-ALL PASS, exit 0, and was never
+#    named. That is the same defect the gates themselves exist to catch, in the
+#    file that runs them. Now the glob finds them and each gate declares its own
+#    position (`# gate-order:`) and its own invocations (`# gate-invocations:`)
+#    in its header. A gate WITHOUT a declaration is not skipped and not assumed
+#    last: it stops this runner by name, because "I do not know where this goes"
+#    must never be spelled "I will leave it out".
+#
+# 2. THE TRANSCRIPT IS THE RUN'S STREAM, IN APPEND -- not a file written at the
+#    end. The previous version captured the output, waited for the verdict, and
+#    then wrote the file; a gate that died before printing its verdict left the
+#    PREVIOUS run's transcript untouched on disk. The screen said FAIL and the
+#    file said PASS, which is an artefact of measurement asserting something
+#    false. Now each run streams into its own transcript as it goes: a run that
+#    dies leaves a TRUNCATED transcript with no verdict line, and the absence of
+#    the verdict is the verdict.
+#
+# Exit status: non-zero if any gate is RED. A 78 does not fail the run -- a
+# missing browser or an unbuilt dependency is not a defect of the product -- but
+# it is always listed with its reason, because a gate that did not measure has to
+# stay visible even when everything else is green.
+#
+# ON THIS MACHINE THE WHOLE RUN MAY NOT FIT IN MEMORY, and that is a fact about
+# the container, not about the gates. Measured twice in a row: killed by the OOM
+# killer partway through g-ts-test.sh (vitest over the whole TS suite), with three
+# other work resident. When that happens, do NOT relaunch
+# first: an OOM kill takes the small process that orchestrates and leaves the heavy
+# work it spawned alive, so hunt the orphans (`ps -eo pid,ppid,rss --sort=-rss`,
+# looking for PPID 1) before starting anything. Then run the gates in GROUPS -- the
+# light ones together, each suite on its own -- exactly as the project's rule for
+# segmented suites already prescribes. Each gate writes its own transcript either
+# way, so a grouped run leaves the same evidence as a whole one.
 set -uo pipefail
 
 GATE_TREE="${GATE_TREE:-<tree>}"
-HERE="$GATE_TREE/tools/gates"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRANSCRIPTS="$HERE/transcripts"
+mkdir -p "$TRANSCRIPTS"
 
-# Dependency order, and the reasons are real: G-TS-B first because dist feeds
-# G-PY-BW, G-CI-PY and the consumer suites, and a gate downstream of a stale dist
-# measures the wrong tree without saying so. The order is written here and nowhere
-# else; T0 points at this file rather than repeating it.
-GATES=(
-  "g-ts-build.sh"
-  "g-ts-typecheck.sh"
-  "g-ts-test.sh"
-  "g-py-suite.sh ah"
-  "g-py-suite.sh iz"
-  "g-py-suite.sh sub"
-  "g-py-suite.sh bw"
-  "g-py-cover.sh"
-  "g-lint.sh"
-  "g-vec.sh"
-  "g-ci-py.sh"
-  "g-cont-diff.sh"
-  "g-site.sh"
-  "g-desk.sh"
-  "g-e2e.sh site"
-  "g-e2e.sh desktop"
-  "g-compare.sh"
-  "g-ci-cover.sh"
-  "g-plan-code.sh"
-  "g-ts-typecheck-f6.sh"
-)
+green=(); red=(); skipped=(); undeclared=()
 
-green=(); red=(); skipped=()
+# --- Discovery: every g-*.sh on disk, ordered by its own declaration ----------
+declare -a ENTRIES=()
+for script in "$HERE"/g-*.sh; do
+  [ -f "$script" ] || continue
+  name="$(basename "$script")"
+  if [ ! -x "$script" ]; then
+    # A gate that cannot be executed is not a gate that passed. Taken from the
+    # reviewer's patch: without this it would fail as rc=126 among the reds, which
+    # is true but says "the property does not hold" about a file nobody ran.
+    undeclared+=("$name (not executable: chmod +x)")
+    continue
+  fi
+  order="$(sed -n 's/^# gate-order: *\([0-9][0-9]*\).*/\1/p' "$script" | head -1)"
+  if [ -z "$order" ]; then
+    undeclared+=("$name")
+    continue
+  fi
+  invocations="$(sed -n 's/^# gate-invocations: *//p' "$script" | head -1)"
+  if [ -z "$invocations" ]; then
+    ENTRIES+=("$order $name")
+  else
+    for arg in $invocations; do
+      ENTRIES+=("$order $name $arg")
+    done
+  fi
+done
 
-for entry in "${GATES[@]}"; do
-  # shellcheck disable=SC2206 - deliberate word splitting: the entry carries its argument
+if [ "${#undeclared[@]}" -gt 0 ]; then
+  echo "RUN-ALL REFUSES TO START: gate(s) without a '# gate-order:' declaration"
+  printf '  %s\n' "${undeclared[@]}"
+  echo
+  echo "A gate whose position is unknown must not be silently left out, and must not"
+  echo "be silently appended: declare '# gate-order: NN' in its header, beside the"
+  echo "reason, and rerun."
+  exit 2
+fi
+
+if [ "${#ENTRIES[@]}" -eq 0 ]; then
+  echo "RUN-ALL REFUSES TO PASS: discovery found no gate at all in $HERE"
+  echo "(an empty set of gates would otherwise report a clean run)"
+  exit 2
+fi
+
+mapfile -t SORTED < <(printf '%s\n' "${ENTRIES[@]}" | sort -n -k1,1 -k2,2 -k3,3)
+echo "discovered ${#SORTED[@]} gate invocation(s) from $HERE/g-*.sh"
+echo
+
+for entry in "${SORTED[@]}"; do
+  # shellcheck disable=SC2206 - deliberate splitting: "order name [arg]"
   parts=($entry)
-  script="${parts[0]}"
-  label="$entry"
+  name="${parts[1]}"
+  arg="${parts[2]:-}"
+  label="$name${arg:+ $arg}"
+  # The transcript name is derived from the invocation, which is known BEFORE the
+  # run -- it cannot depend on a verdict the run may never print.
+  slug="${name%.sh}${arg:+--$arg}"
+  log="$TRANSCRIPTS/$slug.log"
+
   printf '%-28s ' "$label"
-  out="$("$HERE/$script" "${parts[@]:1}" 2>&1)"
+  # Streamed, not captured-then-written. PIPESTATUS[0] because the pipeline's own
+  # status is tee's, and the gate's exit IS the measurement here.
+  "$HERE/$name" ${arg:+"$arg"} > "$log" 2>&1
   rc=$?
-  verdict="$(printf '%s\n' "$out" | grep -E '^GATE ' | tail -1)"
+
+  verdict="$(grep -E '^GATE ' "$log" | tail -1)"
+  if [ -z "$verdict" ]; then
+    # No verdict line: the run did not reach its own conclusion. Whatever the
+    # exit status says, this transcript is truncated and must not read as a pass.
+    red+=("$label — no verdict line: run ended before concluding (transcript truncated)")
+    printf 'NO VERDICT (rc=%s, transcript truncated)\n' "$rc"
+    continue
+  fi
   case "$rc" in
     0)  green+=("$label");   printf 'PASS\n' ;;
-    78) reason="$(printf '%s\n' "$verdict" | sed -n 's/.*precondition=\(.*\)/\1/p')"
+    78) reason="$(sed -n 's/.*precondition=\(.*\)/\1/p' <<< "$verdict")"
         skipped+=("$label — precondition: ${reason:-unknown}")
         printf 'DID NOT MEASURE (78, %s)\n' "${reason:-unknown}" ;;
-    *)  red+=("$label");     printf 'FAIL (rc=%s)\n' "$rc" ;;
+    *)  red+=("$label (rc=$rc)"); printf 'FAIL (rc=%s)\n' "$rc" ;;
   esac
-  # The transcript name is derived from the gate id, never written down: see the
-  # correspondence rule in section 7.0 of the plan.
-  id="$(printf '%s\n' "$verdict" | awk '{print $2}')"
-  if [ -n "$id" ]; then
-    printf '%s\n' "$out" > "$TRANSCRIPTS/$(printf '%s' "$id" | tr 'A-Z' 'a-z').log"
-  fi
 done
 
 echo
 echo "=== GREEN (${#green[@]}) ==="
-printf '  %s\n' "${green[@]}"
+if [ "${#green[@]}" -eq 0 ]; then echo "  (none)"; else printf '  %s\n' "${green[@]}"; fi
 echo "=== DID NOT MEASURE (${#skipped[@]}) — neither green nor red ==="
 if [ "${#skipped[@]}" -eq 0 ]; then echo "  (none)"; else printf '  %s\n' "${skipped[@]}"; fi
 echo "=== RED (${#red[@]}) ==="

@@ -1,9 +1,10 @@
 # The negative control of the gate decision
 
-These two scripts are not gates. They are the falsification test of the decision
+These three scripts are not gates. They are the falsification test of the decision
 that produced every gate in the directory above, kept executable so that the next
 person to think "D-G1 was enough" can find out in thirty seconds instead of at the
-next review.
+next review. The first two attack a named defect; the third (below) attacks the
+rules themselves.
 
 ## What was being asked
 
@@ -37,7 +38,10 @@ members, `bridge/tests/conftest.py` died on `ModuleNotFoundError: attest_bridge`
 and pytest returned 4 for an import error rather than for the reason the claim
 described. With the environment built (`uv sync --all-packages --all-extras` —
 both flags; `--all-packages` alone uninstalls pytest, mypy and ruff), the same
-unchanged script is **red on its first run**: exit 0, 118 files collected. So D-G1
+unchanged script is **red on its first run**: exit 0, with the whole universe
+collected instead of nothing. The count is not repeated here: it moved (118 -> 119)
+inside the commit that added a test file, which is the same lesson one level down.
+So D-G1
 does dissolve F-08 — but only when the execution happens in the environment the
 gate will actually run in. This is what D-G1c was added for, and why a missing
 precondition exits **78** rather than passing or failing.
@@ -54,11 +58,15 @@ collection asserted non-empty, the precondition checked with 78 on absence, and 
 negative control that demands a marker rather than a bare non-zero exit. Run it:
 
 ```
-ok: the collector reached some files (4 lines collected — derived, not written down)
+ok: the collector reached some files (N lines collected — derived, not written down)
 ok: every file the segment owns was collected (the two sets coincide)
 ok: negative 'a missing argument is caught' failed at the guarded path (exit 4)
 GATE G-TAUTOLOGY PASS
 ```
+
+(`N` is literal here on purpose: the run prints the number it derived, and quoting it
+would put a count in a README that the next added test file falsifies — which is
+exactly what happened to the "118" above.)
 
 That PASS is worth more than any explanation of the defect, because it is what the
 defect looks like from outside: indistinguishable from a gate that works. The two

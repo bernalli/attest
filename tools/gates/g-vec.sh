@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 70
 # G-VEC: the vectors committed under docs/spec/vectors are exactly what
 # gen_vectors.py produces — byte for byte, not "close enough".
 #

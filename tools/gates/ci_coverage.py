@@ -134,9 +134,26 @@ OUT_OF_SCOPE: dict[str, str] = {
 _SEPARATORS = re.compile(r"\s*(?:&&|\|\||;)\s*")
 
 
+# A REDIRECTION is not a command either, and leaving it inside the fragment lets the
+# same absorption happen one level down: `python tools/new.py --json >> $GITHUB_OUTPUT`
+# is a NEW python surface whose OUTPUT goes to the runner's plumbing, and the
+# GITHUB_OUTPUT needle swallows the surface. Measured after the split above was in
+# place: of six ordinary gate-less steps injected into a copy of ci.yml, four were
+# named and the two that stayed silent were this form and `... | sha256sum`. So a
+# fragment is judged on the command that WRITES, with the redirection tail cut off; if
+# cutting leaves nothing (a fragment that is only a redirection), it is judged whole.
+_REDIRECTION = re.compile(r"\s\d?>>?")
+
+
 def fragments(command: str) -> list[str]:
     """Split a run: line into the simple commands it actually executes."""
-    return [part for part in _SEPARATORS.split(command) if part.strip()]
+    simple: list[str] = []
+    for part in _SEPARATORS.split(command):
+        if not part.strip():
+            continue
+        head = _REDIRECTION.split(part, maxsplit=1)[0]
+        simple.append(head if head.strip() else part)
+    return simple
 
 
 def commands() -> Iterator[tuple[str, str, str]]:

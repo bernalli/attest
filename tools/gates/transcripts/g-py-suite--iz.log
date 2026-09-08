@@ -1,7 +1,7 @@
 === GATE G-PY-IZ ===
 tree:  <tree>
-head:  006f273
-utc:   2026-09-07T23:10:56Z
+head:  72c30c6
+utc:   2026-09-08T00:23:44Z
 
 segment: iz
 args:    <tree>/tests/test_issue.py <tree>/tests/test_issue_hybrid.py <tree>/tests/test_keys.py <tree>/tests/test_lexicon_guard.py <tree>/tests/test_manifest_mutation_properties.py <tree>/tests/test_manifests.py <tree>/tests/test_manifests_hybrid.py <tree>/tests/test_nonstring_kid_resolution.py <tree>/tests/test_offer_projection_order_independence.py <tree>/tests/test_ots.py <tree>/tests/test_ots_convert.py <tree>/tests/test_ots_corpus_parity.py <tree>/tests/test_pq.py <tree>/tests/test_release_workflow_steps.py <tree>/tests/test_review_fixes_2026_07.py <tree>/tests/test_review_shouldfix_2026_07.py <tree>/tests/test_revocation.py <tree>/tests/test_revocation_view_bound.py <tree>/tests/test_schema.py <tree>/tests/test_sdist_build.py <tree>/tests/test_shared_predicate_artifact_mutations.py <tree>/tests/test_shared_predicate_ownership.py <tree>/tests/test_shared_predicate_ownership_mutations.py <tree>/tests/test_shared_predicate_parity.py <tree>/tests/test_sibling_hybrid_sidedocs.py <tree>/tests/test_smoke.py <tree>/tests/test_tlog.py <tree>/tests/test_transfer.py <tree>/tests/test_transparency.py <tree>/tests/test_trust_store_boundary.py <tree>/tests/test_trusted_manifest_gate.py <tree>/tests/test_vectors.py <tree>/tests/test_verify.py <tree>/tests/test_verify_all.py <tree>/tests/test_verify_all_runtime.py <tree>/tests/test_verify_compromise.py <tree>/tests/test_verify_hybrid.py <tree>/tests/test_verify_transfer.py <tree>/tests/test_version_parity.py <tree>/tests/test_views.py <tree>/tests/test_views_properties.py <tree>/tests/test_vl2_bundle_duplicate_members_adversarial.py <tree>/tests/test_vl34_issuance_guards_adversarial.py <tree>/tests/test_vl5_anchor_status_adversarial.py <tree>/tests/test_witness.py <tree>/tests/test_witness_cosignature.py <tree>/tests/test_witness_quorum.py
@@ -12,7 +12,7 @@ precondition ok: import attest (workspace member)
 precondition ok: import attest_bridge (workspace member)
 precondition ok: import attest_witness (workspace member)
 --- pytest run (iz)
-$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260907T231056Z-iz.xml <tree>/tests/test_issue.py <tree>/tests/test_issue_hybrid.py <tree>/tests/test_keys.py <tree>/tests/test_lexicon_guard.py <tree>/tests/test_manifest_mutation_properties.py <tree>/tests/test_manifests.py <tree>/tests/test_manifests_hybrid.py <tree>/tests/test_nonstring_kid_resolution.py <tree>/tests/test_offer_projection_order_independence.py <tree>/tests/test_ots.py <tree>/tests/test_ots_convert.py <tree>/tests/test_ots_corpus_parity.py <tree>/tests/test_pq.py <tree>/tests/test_release_workflow_steps.py <tree>/tests/test_review_fixes_2026_07.py <tree>/tests/test_review_shouldfix_2026_07.py <tree>/tests/test_revocation.py <tree>/tests/test_revocation_view_bound.py <tree>/tests/test_schema.py <tree>/tests/test_sdist_build.py <tree>/tests/test_shared_predicate_artifact_mutations.py <tree>/tests/test_shared_predicate_ownership.py <tree>/tests/test_shared_predicate_ownership_mutations.py <tree>/tests/test_shared_predicate_parity.py <tree>/tests/test_sibling_hybrid_sidedocs.py <tree>/tests/test_smoke.py <tree>/tests/test_tlog.py <tree>/tests/test_transfer.py <tree>/tests/test_transparency.py <tree>/tests/test_trust_store_boundary.py <tree>/tests/test_trusted_manifest_gate.py <tree>/tests/test_vectors.py <tree>/tests/test_verify.py <tree>/tests/test_verify_all.py <tree>/tests/test_verify_all_runtime.py <tree>/tests/test_verify_compromise.py <tree>/tests/test_verify_hybrid.py <tree>/tests/test_verify_transfer.py <tree>/tests/test_version_parity.py <tree>/tests/test_views.py <tree>/tests/test_views_properties.py <tree>/tests/test_vl2_bundle_duplicate_members_adversarial.py <tree>/tests/test_vl34_issuance_guards_adversarial.py <tree>/tests/test_vl5_anchor_status_adversarial.py <tree>/tests/test_witness.py <tree>/tests/test_witness_cosignature.py <tree>/tests/test_witness_quorum.py
+$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260908T002344Z-iz.xml <tree>/tests/test_issue.py <tree>/tests/test_issue_hybrid.py <tree>/tests/test_keys.py <tree>/tests/test_lexicon_guard.py <tree>/tests/test_manifest_mutation_properties.py <tree>/tests/test_manifests.py <tree>/tests/test_manifests_hybrid.py <tree>/tests/test_nonstring_kid_resolution.py <tree>/tests/test_offer_projection_order_independence.py <tree>/tests/test_ots.py <tree>/tests/test_ots_convert.py <tree>/tests/test_ots_corpus_parity.py <tree>/tests/test_pq.py <tree>/tests/test_release_workflow_steps.py <tree>/tests/test_review_fixes_2026_07.py <tree>/tests/test_review_shouldfix_2026_07.py <tree>/tests/test_revocation.py <tree>/tests/test_revocation_view_bound.py <tree>/tests/test_schema.py <tree>/tests/test_sdist_build.py <tree>/tests/test_shared_predicate_artifact_mutations.py <tree>/tests/test_shared_predicate_ownership.py <tree>/tests/test_shared_predicate_ownership_mutations.py <tree>/tests/test_shared_predicate_parity.py <tree>/tests/test_sibling_hybrid_sidedocs.py <tree>/tests/test_smoke.py <tree>/tests/test_tlog.py <tree>/tests/test_transfer.py <tree>/tests/test_transparency.py <tree>/tests/test_trust_store_boundary.py <tree>/tests/test_trusted_manifest_gate.py <tree>/tests/test_vectors.py <tree>/tests/test_verify.py <tree>/tests/test_verify_all.py <tree>/tests/test_verify_all_runtime.py <tree>/tests/test_verify_compromise.py <tree>/tests/test_verify_hybrid.py <tree>/tests/test_verify_transfer.py <tree>/tests/test_version_parity.py <tree>/tests/test_views.py <tree>/tests/test_views_properties.py <tree>/tests/test_vl2_bundle_duplicate_members_adversarial.py <tree>/tests/test_vl34_issuance_guards_adversarial.py <tree>/tests/test_vl5_anchor_status_adversarial.py <tree>/tests/test_witness.py <tree>/tests/test_witness_cosignature.py <tree>/tests/test_witness_quorum.py
 ........................................................................ [  3%]
 ........................................................................ [  6%]
 ........................................................................ [  9%]
@@ -81,7 +81,7 @@ SKIPPED [1] tests/test_verify_all.py:833: provisioning: matrix template; verify-
 SKIPPED [2] tests/test_verify_all.py:833: provisioning: installs browsers and their system packages with apt; verify-all reports a missing engine and prints this command instead of running it
 SKIPPED [6] tests/test_verify_all.py:864: provisioning: installs syft/grype/grant; verify-all uses whatever is on PATH
 SKIPPED [2] tests/test_verify_all.py:864: provisioning: extends PATH for later runner steps; no local equivalent
-2158 passed, 50 skipped, 4 warnings in 121.85s (0:02:01)
+2158 passed, 50 skipped, 4 warnings in 117.86s (0:01:57)
 exit: 0
 ok: pytest run (iz) exits 0 (exit 0)
 --- collect files (iz)
@@ -2295,7 +2295,7 @@ tests/test_witness_quorum.py::test_a_malformed_anchor_policy_raises
 tests/test_witness_quorum.py::test_a_valid_nine_group_committee_verifies_at_most_nine_pairs
 tests/test_witness_quorum.py::test_the_pq_leg_is_never_verified_when_the_ed25519_leg_fails
 
-2208 tests collected in 1.69s
+2208 tests collected in 1.63s
 exit: 0
 ok: collect-only (iz) exits 0 (exit 0)
 ok: collected files (iz) non-empty (47 lines collected — derived, not written down)
@@ -2305,7 +2305,7 @@ $ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cachepro
 ERROR: file or directory not found: <tree>/tests/test_nonexistent.py
 
 
-no tests ran in 0.15s
+no tests ran in 0.14s
 exit: 4
 ok: negative 'nonexistent argument is reported by name, not silently absorbed' failed at the guarded path (exit 4)
 

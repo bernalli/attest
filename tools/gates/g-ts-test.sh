@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 30
 # G-TS: the vitest suite passes AND collects exactly the *.test.ts files present on disk.
 #
 # Plan reference: docs/plans/2026-09-08-trust-material-serialized-entry.md, §7.0 row G-TS.

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# gate-order: 120
+# gate-order-why: runs after the suites that build each app
+# gate-invocations: site desktop
 # G-E2E <site|desktop>: the named tree's Playwright suite runs under CI=1 and reports more
 # than zero tests passed.
 #
@@ -73,23 +76,42 @@ gate_say "browser types this suite launches under CI=1 (from $SUITE/playwright.c
 # being silent: the config is read now, and any browser name in it that this gate
 # does not know about stops the gate by name. The exemption stays enumerated; it
 # no longer hides.
+#
+# AND THE LIST OF KNOWN NAMES BELOW IS ITSELF AN ENUMERATION -- say it plainly,
+# because this guard recognises a SPELLING. Playwright names the same browser
+# through presets: `devices['Desktop Safari']` IS webkit, and measured on site's
+# config, `projects: [{ name: 'safari', use: { ...devices['Desktop Safari'] } }]`
+# does NOT trip this check. Latent today (desktop names all three literally), and
+# it is the same defect one layer in: the guard against a stale enumeration is
+# itself enumerated. Closing it properly means reading `projects` -- the decision
+# this comment already says has not been taken.
 PW_CONFIG="$SUITE_DIR/playwright.config.ts"
-if [ -r "$PW_CONFIG" ]; then
-  for known in chromium firefox webkit; do
-    if grep -qE "(^|[^a-zA-Z])$known([^a-zA-Z]|$)" "$PW_CONFIG"; then
-      case " ${BROWSER_TYPES[*]} " in
-        *" $known "*) ;;
-        *)
-          gate_say "PRECONDITION MISSING: $SUITE/playwright.config.ts names the browser"
-          gate_say "  '$known', which this gate's enumeration for '$SUITE' does not include."
-          gate_say "  Launching it unchecked would report a missing executable as a product failure."
-          gate_say "GATE $GATE_ID SKIPPED precondition=enumeration-stale"
-          exit 78
-          ;;
-      esac
-    fi
-  done
+if [ ! -r "$PW_CONFIG" ]; then
+  # Silence here would be the guard failing open: Playwright also accepts .js/.mjs/.cjs/
+  # .mts/.cts, so a renamed config makes the staleness check do nothing while the gate
+  # goes on launching an enumerated browser set nobody has compared to anything.
+  # Measured: with `if [ -r ]` and no else, the config renamed to .js left the check
+  # silent and the gate proceeded. A precondition that cannot be read is a 78.
+  gate_say "PRECONDITION MISSING: $SUITE/playwright.config.ts is not readable — the"
+  gate_say "  browser enumeration for '$SUITE' cannot be compared against the config,"
+  gate_say "  so this gate cannot know which browsers the suite will launch."
+  gate_say "GATE $GATE_ID SKIPPED precondition=config-unreadable"
+  exit 78
 fi
+for known in chromium firefox webkit; do
+  if grep -qE "(^|[^a-zA-Z])$known([^a-zA-Z]|$)" "$PW_CONFIG"; then
+    case " ${BROWSER_TYPES[*]} " in
+      *" $known "*) ;;
+      *)
+        gate_say "PRECONDITION MISSING: $SUITE/playwright.config.ts names the browser"
+        gate_say "  '$known', which this gate's enumeration for '$SUITE' does not include."
+        gate_say "  Launching it unchecked would report a missing executable as a product failure."
+        gate_say "GATE $GATE_ID SKIPPED precondition=enumeration-stale"
+        exit 78
+        ;;
+    esac
+  fi
+done
 gate_say ""
 
 gate_need "$SUITE/node_modules present (run: npm ci --prefix $SUITE_DIR)" -- test -d "$SUITE_DIR/node_modules"

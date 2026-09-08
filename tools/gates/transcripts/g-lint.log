@@ -1,7 +1,7 @@
 === GATE G-LINT ===
 tree:  <tree>
-head:  006f273
-utc:   2026-09-07T23:15:30Z
+head:  72c30c6
+utc:   2026-09-08T00:15:19Z
 
 precondition ok: ruff present in .venv
 precondition ok: mypy present in .venv
@@ -21,9 +21,9 @@ $ <tree>/.venv/bin/mypy --strict <tree>/src <tree>/bridge/src <tree>/witness/src
 Success: no issues found in 58 source files
 exit: 0
 ok: mypy --strict: no findings (exit 0)
-sources on disk under src/bridge/witness right now: 58
+sources on disk under <tree>/src <tree>/bridge/src <tree>/witness/src <tree>/tools/gates right now: 58
 ok: mypy prints how many source files it read (marker /Success: no issues found in [0-9]+ source files/ present)
-mypy reports it read 58 source files; find(src/bridge/witness) finds 58 now
+mypy reports it read 58 source files; find over MYPY_ROOTS finds 58 now
 --- mypy read count (58) is not less than the derived count (58)
 $ bash -c [ '58' -ge '58' ]
 
@@ -35,8 +35,8 @@ $ <tree>/.venv/bin/python <tree>/tools/check_spec_docs.py
 exit: 0
 ok: check_spec_docs.py: no drift between spec prose and its cross-references (exit 0)
 --- negative: mypy --strict against a copy of __init__.py with an injected type error
-$ <tree>/.venv/bin/mypy --strict --no-incremental /tmp/tmp.PxKAV6UWiD/injected.py
-/tmp/tmp.PxKAV6UWiD/injected.py:16: error: Incompatible types in assignment (expression has type "str", variable has type "int")  [assignment]
+$ <tree>/.venv/bin/mypy --strict --no-incremental /tmp/tmp.kO7dL2MSEb/injected.py
+/tmp/tmp.kO7dL2MSEb/injected.py:16: error: Incompatible types in assignment (expression has type "str", variable has type "int")  [assignment]
 Found 1 error in 1 file (checked 1 source file)
 exit: 1
 ok: negative 'mypy --strict against a copy of __init__.py with an injected type error' failed at the guarded path (exit 1)

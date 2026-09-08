@@ -15,8 +15,13 @@
 # 2. A collection is asserted non-empty before anything is concluded from it. A
 #    glob that does not expand leaves pytest without arguments; pytest without
 #    arguments uses `testpaths` and exits 0 having collected the whole suite.
-#    Measured on this tree: exit 0, 118 files. An empty set compares equal to an
-#    empty set, so a gate that skips this check is green for absence.
+#    Measured on this tree: exit 0, and the WHOLE universe collected instead of
+#    the segment. How many files that is is deliberately not written here: the
+#    figure moved (118 -> 119) inside the very commit that added a test file, so
+#    the number was false in the same diff that wrote it. The gates derive it;
+#    see tools/gates/transcripts/g-py-cover.log for the count of any given run.
+#    An empty set compares equal to an empty set, so a gate that skips this check
+#    is green for absence.
 #
 # 3. A negative control asserts WHERE it fails, not just that it fails. Measured:
 #    `conformance_runner.py --adapter false` exits 2 from the argument parser,

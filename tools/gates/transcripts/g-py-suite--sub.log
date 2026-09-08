@@ -1,7 +1,7 @@
 === GATE G-PY-SUB ===
 tree:  <tree>
-head:  006f273
-utc:   2026-09-07T23:13:01Z
+head:  72c30c6
+utc:   2026-09-08T00:21:18Z
 
 segment: sub
 args:    <tree>/tests/tools
@@ -12,11 +12,11 @@ precondition ok: import attest (workspace member)
 precondition ok: import attest_bridge (workspace member)
 precondition ok: import attest_witness (workspace member)
 --- pytest run (sub)
-$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260907T231301Z-sub.xml <tree>/tests/tools
+$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260908T002118Z-sub.xml <tree>/tests/tools
 ........................................................................ [ 38%]
 ........................................................................ [ 77%]
 ..........................................                               [100%]
-186 passed in 104.49s (0:01:44)
+186 passed in 100.84s (0:01:40)
 exit: 0
 ok: pytest run (sub) exits 0 (exit 0)
 --- collect files (sub)
@@ -208,7 +208,7 @@ tests/tools/test_test_census.py::test_report_requires_consumed_fields_and_typed_
 tests/tools/test_test_census.py::test_update_refuses_skipped_transitions_without_writing[pending-numPendingTests]
 tests/tools/test_test_census.py::test_update_refuses_skipped_transitions_without_writing[todo-numTodoTests]
 
-186 tests collected in 0.31s
+186 tests collected in 0.26s
 exit: 0
 ok: collect-only (sub) exits 0 (exit 0)
 ok: collected files (sub) non-empty (5 lines collected — derived, not written down)
@@ -218,7 +218,7 @@ $ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cachepro
 ERROR: file or directory not found: <tree>/tests/test_nonexistent.py
 
 
-no tests ran in 0.15s
+no tests ran in 0.14s
 exit: 4
 ok: negative 'nonexistent argument is reported by name, not silently absorbed' failed at the guarded path (exit 4)
 

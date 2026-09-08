@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# gate-order: 160
+# gate-order-why: last: its object is whatever the phase touched
 # G-TS-TC-F6: the test files THIS PHASE touched typecheck cleanly, and their
 # `// @ts-expect-error` directives are actually verified (they are not, under vitest/esbuild —
 # C-215: the TS test suite has no typecheck of its own in this repo).
@@ -30,6 +32,13 @@ source "$SCRIPT_DIR/_lib.sh"
 
 TS_DIR="$GATE_TREE/verifiers/ts"
 TYPE_ROOTS="$TS_DIR/node_modules/@types"
+# The pathspec this gate derives from, written ONCE. A guard that re-spells the path is
+# asserting a DIFFERENT object from the one the derivation reads, so it cannot tell a
+# healthy empty set from a broken derivation. Measured with the path spelled separately
+# in the guard: the one-word typo in the `git diff` pathspec below still produced output
+# byte-identical to a healthy T0, and the gate printed "the pathspec exists and is
+# populated" about a path it was no longer reading.
+TS_TEST_PATHSPEC="verifiers/ts/test"
 
 gate_head
 
@@ -37,8 +46,8 @@ gate_need "verifiers/ts/node_modules present" -- test -d "$TS_DIR/node_modules"
 gate_need "verifiers/ts/node_modules/@types present" -- test -d "$TYPE_ROOTS"
 gate_need "git available on GATE_TREE" -- git -C "$GATE_TREE" rev-parse --is-inside-work-tree
 
-mapfile -t _diffed < <(git -C "$GATE_TREE" diff --name-only -- verifiers/ts/test)
-mapfile -t _untracked < <(git -C "$GATE_TREE" ls-files --others --exclude-standard -- verifiers/ts/test)
+mapfile -t _diffed < <(git -C "$GATE_TREE" diff --name-only -- "$TS_TEST_PATHSPEC")
+mapfile -t _untracked < <(git -C "$GATE_TREE" ls-files --others --exclude-standard -- "$TS_TEST_PATHSPEC")
 _extra_args=("$@")
 
 declare -A _seen
@@ -66,18 +75,18 @@ if [ "${#FILES[@]}" -eq 0 ]; then
   # a healthy T0. One reads as "nothing to do here yet" and resolves itself; the
   # other never becomes green and nobody is told. So the derivation's own input
   # is asserted before its empty output is believed (D-G1b applied to the 78).
-  if [ ! -d "$GATE_TREE/verifiers/ts/test" ]; then
-    gate_say "PRECONDITION MISSING: verifiers/ts/test is not a directory — the pathspec this gate derives from does not exist, so its empty result says nothing about the phase"
+  if [ ! -d "$GATE_TREE/$TS_TEST_PATHSPEC" ]; then
+    gate_say "PRECONDITION MISSING: $TS_TEST_PATHSPEC is not a directory — the pathspec this gate derives from does not exist, so its empty result says nothing about the phase"
     gate_say "GATE $GATE_ID SKIPPED precondition=absent"
     exit 78
   fi
-  if ! compgen -G "$GATE_TREE/verifiers/ts/test/*.test.ts" > /dev/null; then
-    gate_say "PRECONDITION MISSING: verifiers/ts/test holds no *.test.ts — there is nothing this gate could ever derive"
+  if ! compgen -G "$GATE_TREE/$TS_TEST_PATHSPEC/*.test.ts" > /dev/null; then
+    gate_say "PRECONDITION MISSING: $TS_TEST_PATHSPEC holds no *.test.ts — there is nothing this gate could ever derive"
     gate_say "GATE $GATE_ID SKIPPED precondition=absent"
     exit 78
   fi
   gate_say "NO TS TEST FILE TOUCHED IN THIS PHASE — there is no object for this gate to measure"
-  gate_say "(the pathspec verifiers/ts/test exists and is populated, so this empty set is the phase's, not the derivation's)"
+  gate_say "(the pathspec $TS_TEST_PATHSPEC exists and is populated, so this empty set is the phase's, not the derivation's)"
   gate_say "GATE $GATE_ID SKIPPED precondition=no-object"
   exit 78
 fi

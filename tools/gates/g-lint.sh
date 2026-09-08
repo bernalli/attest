@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 60
 # G-LINT: lint, formatting and types pass on the whole tree, and mypy actually
 # read the sources it claims to have checked.
 #
@@ -38,11 +39,14 @@ gate_expect_rc 0 "mypy --strict: no findings"
 # This is the "collection could be empty" guard from the family that made
 # `--check` on an unbuilt corpus green for absence elsewhere in this repo:
 # an empty MYPY_ROOTS would make the marker below trivially true.
+# The label below names MYPY_ROOTS itself rather than spelling the roots out: the
+# array gained tools/gates and the two hard-coded labels went on saying
+# "src/bridge/witness", i.e. the number was described as covering less than it did.
 FOUND_PY="$(mktemp)"
 find "${MYPY_ROOTS[@]}" -name '*.py' | sort -u > "$FOUND_PY"
 N_FOUND="$(grep -c . "$FOUND_PY")"
 rm -f "$FOUND_PY"
-gate_say "sources on disk under src/bridge/witness right now: $N_FOUND"
+gate_say "sources on disk under ${MYPY_ROOTS[*]} right now: $N_FOUND"
 
 gate_expect_marker 'Success: no issues found in [0-9]+ source files' \
   "mypy prints how many source files it read"
@@ -57,7 +61,7 @@ if [ -z "$MYPY_N" ]; then
   gate_run "unresolved mypy count (forces a failure)" -- false
   gate_expect_rc 0 "mypy source-file count was extractable"
 else
-  gate_say "mypy reports it read $MYPY_N source files; find(src/bridge/witness) finds $N_FOUND now"
+  gate_say "mypy reports it read $MYPY_N source files; find over MYPY_ROOTS finds $N_FOUND now"
   gate_run "mypy read count ($MYPY_N) is not less than the derived count ($N_FOUND)" -- \
     bash -c "[ '$MYPY_N' -ge '$N_FOUND' ]"
   gate_expect_rc 0 "mypy did not silently skip sources that exist on disk"

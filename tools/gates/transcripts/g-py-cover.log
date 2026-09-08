@@ -1,7 +1,7 @@
 === GATE G-PY-COVER ===
 tree:  <tree>
-head:  006f273
-utc:   2026-09-07T23:15:14Z
+head:  72c30c6
+utc:   2026-09-08T00:28:44Z
 
 precondition ok: .venv/bin/python exists
 precondition ok: import pytest
@@ -2551,7 +2551,7 @@ tests/test_hostile_view_content.py::test_authority_view_reconstruction_always_ca
 tests/test_hostile_view_content.py::test_hostile_view_key_cannot_refuse_a_valid_authority_member
 tests/test_hostile_view_content.py::test_malformed_grant_array_member_is_absent_not_whole_view_refusal
 
-2536 tests collected in 2.03s
+2536 tests collected in 1.90s
 exit: 0
 ok: collect-only (ah) exits 0 (exit 0)
 ok: collected files (ah) non-empty (43 lines collected — derived, not written down)
@@ -4766,7 +4766,7 @@ tests/test_witness_quorum.py::test_a_malformed_anchor_policy_raises
 tests/test_witness_quorum.py::test_a_valid_nine_group_committee_verifies_at_most_nine_pairs
 tests/test_witness_quorum.py::test_the_pq_leg_is_never_verified_when_the_ed25519_leg_fails
 
-2208 tests collected in 1.73s
+2208 tests collected in 1.66s
 exit: 0
 ok: collect-only (iz) exits 0 (exit 0)
 ok: collected files (iz) non-empty (47 lines collected — derived, not written down)
@@ -5754,7 +5754,7 @@ witness/tests/test_witness_store.py::test_database_file_is_not_world_readable
 witness/tests/test_witness_store.py::test_an_existing_over_permissive_database_is_tightened
 witness/tests/test_witness_store.py::test_commits_are_configured_to_reach_the_disk
 
-788 tests collected in 0.56s
+788 tests collected in 0.43s
 exit: 0
 ok: collect-only (bw) exits 0 (exit 0)
 ok: collected files (bw) non-empty (24 lines collected — derived, not written down)
@@ -5763,7 +5763,7 @@ ok: the union of ah+iz+sub+bw covers every test file testpaths declares, no gap 
 ok: negative 'empty file uncollected by node ID' — the comparison names it:
 tests/test_zz_probe_cover.py
 --- negative: a segment stripped of its own arguments (observed behaviour, not assumed)
-observed: collect-only with no arguments exits 0 and collects 119 files (testpaths fallback), not the 4 files 'sub' owns
+observed: collect-only with no arguments exits 0 and collects 119 files (testpaths fallback), not the 5 files 'sub' owns
 ok: negative 'sub stripped of its arguments' detected — its census no longer equals its own definition (excerpt):
 	bridge/tests/test_bridge_catalog.py
 	bridge/tests/test_bridge_cli.py

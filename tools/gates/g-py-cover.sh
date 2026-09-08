@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# gate-order: 50
+# gate-order-why: compares the union of the segments above
 # G-PY-COVER
 #
 # Property: the union of the ah/iz/sub/bw segments covers every test file on
@@ -143,7 +145,11 @@ probe_diff="$(comm -3 <(sort -u "$probe_universe") <(sort -u "$probe_union"))"
 rm -f "$PROBE"
 trap - EXIT
 
-if printf '%s\n' "$probe_diff" | grep -Eq -- 'test_zz_probe_cover\.py'; then
+# Here-string, same property as everywhere else in this directory: through a pipe,
+# pipefail turns an early grep -q match into 141. Here it would be a false RED --
+# harmless today only because probe_diff is short enough that printf finishes
+# writing first, which is not a property anyone should rely on.
+if grep -Eq -- 'test_zz_probe_cover\.py' <<< "$probe_diff"; then
   gate_say "ok: negative 'empty file uncollected by node ID' — the comparison names it:"
   printf '%s\n' "$probe_diff"
 else
@@ -154,10 +160,12 @@ fi
 # --- Negative 2: a segment stripped of its arguments. Measured, not assumed:
 # on this tree `pytest --collect-only` with NO arguments does not exit 4 or
 # collect nothing — it falls back to `testpaths` and exits 0 having
-# collected the WHOLE suite (118 files). A check that expected "exit 4, zero
-# files" would be FALSE here. What actually makes the defect visible is that
-# the degraded census for the "sub" segment (4 files expected) no longer
-# equals its own definition — it silently balloons to the entire universe. --
+# collected the WHOLE suite. A check that expected "exit 4, zero files" would
+# be FALSE here. What actually makes the defect visible is that the degraded
+# census for the "sub" segment no longer equals its own definition — it
+# silently balloons to the entire universe. Neither figure is written here:
+# both moved inside the commit that added a test file (118 -> 119 and 4 -> 5),
+# and the line below derives them. --
 gate_say "--- negative: a segment stripped of its own arguments (observed behaviour, not assumed)"
 
 sub_expected="$TRANSCRIPTS/${TAG}-sub.expected"
@@ -167,7 +175,7 @@ GATE_OUT="$(env PYTHONDONTWRITEBYTECODE=1 "$GATE_PY" -m pytest -p no:cacheprovid
 GATE_RC=$?
 degraded_census="$TRANSCRIPTS/${TAG}-sub-degraded.files"
 printf '%s\n' "$GATE_OUT" | sed -n 's/::.*//p' | sort -u > "$degraded_census"
-gate_say "observed: collect-only with no arguments exits $GATE_RC and collects $(grep -c . "$degraded_census") files (testpaths fallback), not the 4 files 'sub' owns"
+gate_say "observed: collect-only with no arguments exits $GATE_RC and collects $(grep -c . "$degraded_census") files (testpaths fallback), not the $(grep -c . "$sub_expected") files 'sub' owns"
 
 degraded_diff="$(comm -3 <(sort -u "$sub_expected") <(sort -u "$degraded_census"))"
 if [ -n "$degraded_diff" ]; then

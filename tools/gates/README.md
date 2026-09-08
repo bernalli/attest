@@ -42,7 +42,10 @@ each rule in the comments. In short:
   status in `GATE_RC`.
 - **Assert a collection is non-empty before concluding anything from it.** A glob that fails to
   expand leaves pytest without arguments, and pytest without arguments uses `testpaths`: measured
-  here, exit 0 and 118 files. An empty set satisfies almost any comparison you then make with it.
+  here, exit 0 and the whole universe collected instead of the segment. The count is not written
+  down — it moved inside the commit that added a test file — it is in
+  `tools/gates/transcripts/g-py-cover.log`. An empty set satisfies almost any comparison you then
+  make with it.
 - **A negative control names where it must fail.** `gate_negative --marker <regex>` demands both a
   non-zero exit *and* the marker only the guarded path can emit. Measured: the conformance runner's
   prescribed negative, `--adapter false`, exits 2 from the argument parser without invoking any

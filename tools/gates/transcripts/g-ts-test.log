@@ -1,0 +1,109 @@
+=== GATE G-TS ===
+tree:  <tree>
+head:  72c30c6
+utc:   2026-09-08T00:29:06Z
+
+precondition ok: verifiers/ts/node_modules present
+precondition ok: GATE_PY available
+--- vitest run (whole suite)
+$ npx --prefix <tree>/verifiers/ts vitest run --root <tree>/verifiers/ts --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/g-ts.vitest-full.json
+
+ RUN  v2.1.9 <tree>/verifiers/ts
+
+ ✓ test/tlog.test.ts (173 tests) 456ms
+ ✓ test/grant.test.ts (145 tests) 851ms
+ ✓ test/transparency.test.ts (74 tests) 5683ms
+   ✓ verify(): Stage 2 integration > caps oversized transparency evidence 2375ms
+   ✓ verify(): Stage 2 integration > counts transparency evidence caps by Unicode code points, not UTF-16 units 2002ms
+   ✓ verify(): Stage 2 integration > accepts evaluator max-scale anchor evidence (harmonization boundary) 608ms
+ ✓ test/anchor.test.ts (96 tests) 174ms
+ ✓ test/evaluate-grant.test.ts (96 tests) 9363ms
+   ✓ evaluateGrant — step 7: the ratchet > takes the MAXIMUM over the floor-relative filter, independent of presentation order 326ms
+   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array one past its ceiling truncates evaluation, never activating 1192ms
+   ✓ evaluateGrant — the admission boundary is per member (§18.4) > a declarations array exactly at its ceiling is still evaluated 2647ms
+ ✓ test/revocation.test.ts (24 tests) 340ms
+ ✓ test/verify-unit.test.ts (43 tests) 4346ms
+   ✓ verify(): Stage 3 transferred-class backing (§17.3) > warns unbacked when the resolver never engages (oversized) 2633ms
+ ✓ test/transfer.test.ts (57 tests) 1175ms
+ ✓ test/authority.test.ts (100 tests) 1043ms
+   ✓ publisher authorization shape > enforces the 4096-entry document ceiling before entry validation 371ms
+ ✓ test/anchor-seeded.test.ts (73 tests) 71ms
+ ✓ test/blind-integer-representation.test.ts (31 tests) 1280ms
+ ✓ test/blind-rail-admission.test.ts (24 tests) 2270ms
+   ✓ blind caller-rail admission boundary > H permissive: a refused transfer evidence unit must not neutralize genuine backed transfer evidence 378ms
+ ✓ test/authority-adversarial.test.ts (77 tests) 790ms
+   ✓ authorized_issuers shape (v0.2 section 20.2) > accepts exactly MAX_AUTHORIZED_ISSUERS entries and rejects one more 360ms
+ ✓ test/manifests.test.ts (37 tests) 686ms
+ ✓ test/witness-quorum.test.ts (58 tests) 2269ms
+ ✓ test/compromise-adversarial.test.ts (42 tests) 500ms
+ ✓ test/trust-material-boundary.test.ts (11 tests) 258ms
+ ✓ test/compromise-retraction-provenance.test.ts (34 tests) 529ms
+ ✓ test/verify-compromise.test.ts (13 tests) 399ms
+ ✓ test/witness.test.ts (68 tests) 29ms
+ ✓ test/hybrid.test.ts (13 tests) 546ms
+ ✓ test/evaluate-authority.test.ts (27 tests) 1007ms
+ ✓ test/schema.test.ts (39 tests) 31ms
+ ✓ test/witness-cosignature.test.ts (25 tests) 519ms
+ ✓ test/vl3-duplicate-kid-adversarial.test.ts (19 tests) 133ms
+ ✓ test/revocation-parity.test.ts (17 tests) 89ms
+ ✓ test/revocation-bound.test.ts (12 tests) 165ms
+ ✓ test/canon-depth-profile-adversarial.test.ts (23 tests) 257ms
+ ✓ test/sibling-hybrid.test.ts (11 tests) 338ms
+ ✓ test/artifact-manifest-currency.test.ts (9 tests) 236ms
+ ✓ test/verify-ceilings.test.ts (2 tests) 324ms
+ ✓ test/blind-authority-evaluation.test.ts (67 tests) 25522ms
+   ✓ blind publisher authority evaluation > [PERMISSIVA] exactly 4096 authorized_issuers entries remain within the document ceiling 490ms
+   ✓ blind publisher authority evaluation > [PERMISSIVA] an authorization document exactly at the evidence code-point ceiling remains admissible 14637ms
+   ✓ blind publisher authority evaluation > [RESTRITTIVA] an authorization document one code point over the evidence code-point ceiling is set aside alone 7287ms
+ ✓ test/vl3-duplicate-kid.test.ts (13 tests) 75ms
+ ✓ test/conformance.test.ts (229 tests) 5628ms
+ ✓ test/canon-serialize.test.ts (16 tests) 44ms
+ ✓ test/vl5-anchor-status-adversarial.test.ts (13 tests) 305ms
+ ✓ test/review-fixes.test.ts (5 tests) 48ms
+ ✓ test/witness-quorum-cost.test.ts (4 tests) 224ms
+ ✓ test/shouldfix.test.ts (2 tests) 54ms
+ ✓ test/c57-findkey-type-guard.test.ts (7 tests) 33ms
+ ✓ test/canon-parse.test.ts (11 tests) 11ms
+ ✓ test/ed25519.test.ts (5 tests) 21ms
+ ✓ test/vl5-anchor-status.test.ts (13 tests) 152ms
+ ✓ test/index.test.ts (6 tests) 8ms
+ ✓ test/messages.test.ts (2 tests) 4ms
+ ✓ test/dates.test.ts (4 tests) 5ms
+ ✓ test/canon-admission-ceiling.test.ts (2 tests) 5ms
+ ✓ test/b64u.test.ts (3 tests) 5ms
+ ✓ test/mldsa.test.ts (5 tests) 25ms
+ ✓ test/commitment.test.ts (7 tests) 654ms
+   ✓ commitment > reproduces the reference commitments (09a/09b/09c) 646ms
+ ✓ test/smoke.test.ts (3 tests) 3ms
+
+ Test Files  51 passed (51)
+      Tests  1890 passed (1890)
+   Start at  02:29:07
+   Duration  32.21s (transform 1.76s, setup 0ms, collect 12.11s, tests 68.98s, environment 16ms, prepare 4.46s)
+
+JSON report written to <tree>/tools/gates/transcripts/g-ts.vitest-full.json
+exit: 0
+ok: vitest run exits 0 (exit 0)
+precondition ok: vitest wrote its JSON report
+ok: there is at least one *.test.ts file on disk (51 lines collected — derived, not written down)
+ok: vitest reports having run at least one test file (51 lines collected — derived, not written down)
+ok: files vitest's JSON report names == files 'ls test/*.test.ts' finds now (the two sets coincide)
+--- vitest run --root ... test/messages.test.ts (filter narrows the run)
+$ npx --prefix <tree>/verifiers/ts vitest run --root <tree>/verifiers/ts test/messages.test.ts --reporter=default --reporter=json --outputFile.json=<tree>/tools/gates/transcripts/g-ts.vitest-filter.json
+
+ RUN  v2.1.9 <tree>/verifiers/ts
+
+ ✓ test/messages.test.ts (2 tests) 4ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  02:29:40
+   Duration  352ms (transform 74ms, setup 0ms, collect 73ms, tests 4ms, environment 0ms, prepare 68ms)
+
+JSON report written to <tree>/tools/gates/transcripts/g-ts.vitest-filter.json
+exit: 0
+ok: filtered run exits 0 (exit 0)
+precondition ok: vitest wrote the filtered JSON report
+ok: the filtered run executed exactly {test/messages.test.ts}, nothing more and nothing less (the two sets coincide)
+
+GATE G-TS PASS property=the vitest suite passes and executes exactly the *.test.ts files present on disk

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 110
 # G-DESK: desktop's typecheck (src AND e2e) passes, the suite passes, the census names
 # exactly what the run collected, and the build succeeds.
 #

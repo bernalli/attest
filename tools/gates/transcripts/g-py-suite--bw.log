@@ -1,7 +1,7 @@
 === GATE G-PY-BW ===
 tree:  <tree>
-head:  006f273
-utc:   2026-09-07T23:14:47Z
+head:  72c30c6
+utc:   2026-09-08T00:23:08Z
 
 segment: bw
 args:    <tree>/bridge/tests <tree>/witness/tests
@@ -13,7 +13,7 @@ precondition ok: import attest_bridge (workspace member)
 precondition ok: import attest_witness (workspace member)
 precondition ok: verifiers/ts/dist/index.js present (bw needs the TS build first)
 --- pytest run (bw)
-$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260907T231447Z-bw.xml <tree>/bridge/tests <tree>/witness/tests
+$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260908T002308Z-bw.xml <tree>/bridge/tests <tree>/witness/tests
 ........................................................................ [  9%]
 ........................................................................ [ 18%]
 .............................sss........................................ [ 27%]
@@ -29,7 +29,7 @@ $ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cachepro
 SKIPPED [1] bridge/tests/test_bridge_docs_onboarding.py:646: deploy.md shows no check-config summary block
 SKIPPED [1] bridge/tests/test_bridge_docs_onboarding.py:646: setup-itch.md shows no check-config summary block
 SKIPPED [1] bridge/tests/test_bridge_docs_onboarding.py:646: setup-shopify.md shows no check-config summary block
-785 passed, 3 skipped in 23.96s
+785 passed, 3 skipped in 23.14s
 exit: 0
 ok: pytest run (bw) exits 0 (exit 0)
 ok: witness cross-core test not skipped (dist was in reach)
@@ -824,7 +824,7 @@ witness/tests/test_witness_store.py::test_database_file_is_not_world_readable
 witness/tests/test_witness_store.py::test_an_existing_over_permissive_database_is_tightened
 witness/tests/test_witness_store.py::test_commits_are_configured_to_reach_the_disk
 
-788 tests collected in 0.58s
+788 tests collected in 0.44s
 exit: 0
 ok: collect-only (bw) exits 0 (exit 0)
 ok: collected files (bw) non-empty (24 lines collected — derived, not written down)
@@ -834,7 +834,7 @@ $ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cachepro
 ERROR: file or directory not found: <tree>/tests/test_nonexistent.py
 
 
-no tests ran in 0.15s
+no tests ran in 0.14s
 exit: 4
 ok: negative 'nonexistent argument is reported by name, not silently absorbed' failed at the guarded path (exit 4)
 

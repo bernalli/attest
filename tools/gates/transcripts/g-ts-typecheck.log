@@ -1,7 +1,7 @@
 === GATE G-TS-TC ===
 tree:  <tree>
-head:  006f273
-utc:   2026-09-07T23:07:23Z
+head:  72c30c6
+utc:   2026-09-08T00:15:05Z
 
 precondition ok: verifiers/ts/node_modules present
 precondition ok: verifiers/ts/tsconfig.json present
@@ -13,8 +13,8 @@ ok: typecheck of verifiers/ts/src exits 0 (exit 0)
 ok: verifiers/ts/src has at least one .ts file to typecheck (21 lines collected — derived, not written down)
 ok: files tsc --listFilesOnly reports under src == files find(src -name '*.ts') finds now (the two sets coincide)
 --- negative: type error injected into an out-of-tree copy of verifiers/ts/src
-$ npx --prefix /tmp/tmp.lleoy2VrPy/ts tsc --noEmit -p /tmp/tmp.lleoy2VrPy/ts/tsconfig.json
-../../../../../../tmp/tmp.lleoy2VrPy/ts/src/b64u.ts(24,14): error TS2322: Type 'string' is not assignable to type 'number'.
+$ npx --prefix /tmp/tmp.IZeIdahs8c/ts tsc --noEmit -p /tmp/tmp.IZeIdahs8c/ts/tsconfig.json
+../../../../../../tmp/tmp.IZeIdahs8c/ts/src/b64u.ts(24,14): error TS2322: Type 'string' is not assignable to type 'number'.
 exit: 2
 ok: negative 'type error injected into an out-of-tree copy of verifiers/ts/src' failed at the guarded path (exit 2)
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 90
 # G-CONT-DIFF: the two container readers (Python, TypeScript) never disagree,
 # at the exact seed and count pages.yml uses.
 #

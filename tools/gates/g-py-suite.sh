@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# gate-order: 40
+# gate-order-why: bw needs dist, so it follows g-ts-build
+# gate-invocations: ah iz sub bw
 # G-PY-AH / G-PY-IZ / G-PY-SUB / G-PY-BW
 #
 # Property: the segment collects every file that belongs to it, and exits
@@ -95,13 +98,44 @@ gate_run "pytest run ($SEGMENT)" -- \
 RUN_OUT="$GATE_OUT"
 gate_expect_rc 0 "pytest run ($SEGMENT) exits 0"
 
+# Derived, not written down: the file holding the cross-core test is the one that
+# names it, found now. A path spelled out here would be a fourth literal copy of
+# the same constant, and copies of a constant are not independent sides.
+CROSS_CORE_FILE="$(cd "$GATE_TREE" && grep -rl 'verify_in_both_cores' witness/tests/*.py | head -n1)"
+
 if [ "$SEGMENT" = "bw" ]; then
   # G-TS-B must precede this gate: the cross-core witness test skips (rather
   # than failing) when verifiers/ts/dist is missing, and a skip here is the
   # gate measuring less than it believes. -ra put the skip, if any, in
   # RUN_OUT's short test summary; absence of the test's own line there is
   # the marker that it actually ran and did not skip.
-  if printf '%s\n' "$RUN_OUT" | grep -Eq 'SKIPPED.*test_the_lines_this_witness_produces_verify_in_both_cores'; then
+  # Two defects lived in this check at once, and both made it say "not skipped"
+  # whatever happened.
+  #
+  # First, `printf | grep -q`: with pipefail, grep -q exits at the first match and
+  # printf takes SIGPIPE, so the pipeline reports 141 and this `if` goes FALSE on a
+  # skip that DID happen -- a false GREEN, in the branch whose whole job is to
+  # notice the gate measured less than it believes. Hence the here-string.
+  #
+  # Second, and it would have survived the first fix: the marker named the TEST
+  # FUNCTION, and `pytest -ra` does not print function names. Measured on a real
+  # skip: `SKIPPED [1] path/to/file.py:LINE: reason`. The function name never
+  # appears, so that pattern could not match anything, ever. The anchor is the
+  # test FILE, which holds exactly one test -- asserted below, because an anchor
+  # that silently stops being unique is the same defect one level up.
+  if [ "$(grep -c '^def test_' "$GATE_TREE/$CROSS_CORE_FILE")" != "1" ]; then
+    gate_say "PRECONDITION MISSING: $CROSS_CORE_FILE no longer holds exactly one test"
+    gate_say "  (the skip marker anchors on the file; with more than one test it stops being exact)"
+    gate_say "GATE $GATE_ID SKIPPED precondition=anchor-stale"
+    exit 78
+  fi
+  # The `[N]` prefix is part of pytest's own skip line and is included so the
+  # marker cannot be satisfied by the file name appearing anywhere else in the
+  # output. (Taken from the reviewer's patch, which measured the exact format on a
+  # real skip forced with node off PATH -- another way this test skips that this
+  # gate had not considered. The file name itself stays DERIVED rather than spelled
+  # out, because a literal here would be one more copy of the same constant.)
+  if grep -Eq "SKIPPED \[[0-9]+\] .*$(basename "$CROSS_CORE_FILE" | sed 's/\./\\./g')" <<< "$RUN_OUT"; then
     gate_say "FAIL: witness cross-core test was SKIPPED — verifiers/ts/dist is present but the test still skipped, or G-TS-B ran against a different tree"
     _gate_failures=$((_gate_failures + 1))
   else

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# gate-order: 10
+# gate-order-why: dist feeds G-PY-BW, G-CI-PY and the consumer suites
 # G-TS-B: verifiers/ts/dist is built from the current verifiers/ts/src.
 #
 # Plan reference: docs/plans/2026-09-08-trust-material-serialized-entry.md, §7.0 row G-TS-B.

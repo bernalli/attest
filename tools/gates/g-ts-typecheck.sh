@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 20
 # G-TS-TC: the typecheck of verifiers/ts/src passes AND covers exactly the sources on disk.
 #
 # Plan reference: docs/plans/2026-09-08-trust-material-serialized-entry.md, §7.0 row G-TS-TC.

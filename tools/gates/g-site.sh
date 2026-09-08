@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 100
 # G-SITE: the site suite passes, the census names exactly the files the run collected, and
 # the build (which typechecks site's tests too, since tsconfig.json's "include" covers "test")
 # succeeds.

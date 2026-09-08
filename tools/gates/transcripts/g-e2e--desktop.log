@@ -1,7 +1,7 @@
 === GATE G-E2E-DESKTOP ===
 tree:  <tree>
-head:  006f273
-utc:   2026-09-07T23:19:09Z
+head:  72c30c6
+utc:   2026-09-08T00:32:20Z
 
 suite: desktop
 browser types this suite launches under CI=1 (from desktop/playwright.config.ts): chromium firefox webkit

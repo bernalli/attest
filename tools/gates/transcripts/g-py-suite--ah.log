@@ -1,7 +1,7 @@
 === GATE G-PY-AH ===
 tree:  <tree>
-head:  006f273
-utc:   2026-09-07T23:08:10Z
+head:  72c30c6
+utc:   2026-09-08T00:25:53Z
 
 segment: ah
 args:    <tree>/tests/test_anchor.py <tree>/tests/test_anchor_seeded.py <tree>/tests/test_assert_artifacts.py <tree>/tests/test_authority.py <tree>/tests/test_authority_adversarial.py <tree>/tests/test_blind_audit_chain_admission.py <tree>/tests/test_blind_canon_admission.py <tree>/tests/test_blind_evidence_sinks.py <tree>/tests/test_blind_hostile_evidence_views.py <tree>/tests/test_blind_revocation_admission.py <tree>/tests/test_bundle.py <tree>/tests/test_buyer_surface.py <tree>/tests/test_canon.py <tree>/tests/test_canon_depth_profile_adversarial.py <tree>/tests/test_check_spec_docs.py <tree>/tests/test_ci_required.py <tree>/tests/test_cli.py <tree>/tests/test_cli_authority.py <tree>/tests/test_cli_authority_blind.py <tree>/tests/test_cli_binding_properties.py <tree>/tests/test_cli_grant.py <tree>/tests/test_cli_overwrite.py <tree>/tests/test_cli_revoke_properties.py <tree>/tests/test_cli_views_builder_properties.py <tree>/tests/test_cli_views_properties.py <tree>/tests/test_commitment.py <tree>/tests/test_compromise_adversarial.py <tree>/tests/test_compromise_retraction_provenance.py <tree>/tests/test_container.py <tree>/tests/test_container_corpus.py <tree>/tests/test_container_differential_smoke.py <tree>/tests/test_deflate.py <tree>/tests/test_demo_e2e.py <tree>/tests/test_demo_pledge_e2e.py <tree>/tests/test_evaluate_authority.py <tree>/tests/test_evaluate_authority_blind.py <tree>/tests/test_evaluate_grant.py <tree>/tests/test_gen_container_corpus.py <tree>/tests/test_gen_site_sample.py <tree>/tests/test_gen_vectors.py <tree>/tests/test_gen_vectors_helpers.py <tree>/tests/test_grant.py <tree>/tests/test_hostile_view_content.py
@@ -12,7 +12,7 @@ precondition ok: import attest (workspace member)
 precondition ok: import attest_bridge (workspace member)
 precondition ok: import attest_witness (workspace member)
 --- pytest run (ah)
-$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260907T230810Z-ah.xml <tree>/tests/test_anchor.py <tree>/tests/test_anchor_seeded.py <tree>/tests/test_assert_artifacts.py <tree>/tests/test_authority.py <tree>/tests/test_authority_adversarial.py <tree>/tests/test_blind_audit_chain_admission.py <tree>/tests/test_blind_canon_admission.py <tree>/tests/test_blind_evidence_sinks.py <tree>/tests/test_blind_hostile_evidence_views.py <tree>/tests/test_blind_revocation_admission.py <tree>/tests/test_bundle.py <tree>/tests/test_buyer_surface.py <tree>/tests/test_canon.py <tree>/tests/test_canon_depth_profile_adversarial.py <tree>/tests/test_check_spec_docs.py <tree>/tests/test_ci_required.py <tree>/tests/test_cli.py <tree>/tests/test_cli_authority.py <tree>/tests/test_cli_authority_blind.py <tree>/tests/test_cli_binding_properties.py <tree>/tests/test_cli_grant.py <tree>/tests/test_cli_overwrite.py <tree>/tests/test_cli_revoke_properties.py <tree>/tests/test_cli_views_builder_properties.py <tree>/tests/test_cli_views_properties.py <tree>/tests/test_commitment.py <tree>/tests/test_compromise_adversarial.py <tree>/tests/test_compromise_retraction_provenance.py <tree>/tests/test_container.py <tree>/tests/test_container_corpus.py <tree>/tests/test_container_differential_smoke.py <tree>/tests/test_deflate.py <tree>/tests/test_demo_e2e.py <tree>/tests/test_demo_pledge_e2e.py <tree>/tests/test_evaluate_authority.py <tree>/tests/test_evaluate_authority_blind.py <tree>/tests/test_evaluate_grant.py <tree>/tests/test_gen_container_corpus.py <tree>/tests/test_gen_site_sample.py <tree>/tests/test_gen_vectors.py <tree>/tests/test_gen_vectors_helpers.py <tree>/tests/test_grant.py <tree>/tests/test_hostile_view_content.py
+$ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -ra --junitxml=<tree>/tools/gates/transcripts/20260908T002553Z-ah.xml <tree>/tests/test_anchor.py <tree>/tests/test_anchor_seeded.py <tree>/tests/test_assert_artifacts.py <tree>/tests/test_authority.py <tree>/tests/test_authority_adversarial.py <tree>/tests/test_blind_audit_chain_admission.py <tree>/tests/test_blind_canon_admission.py <tree>/tests/test_blind_evidence_sinks.py <tree>/tests/test_blind_hostile_evidence_views.py <tree>/tests/test_blind_revocation_admission.py <tree>/tests/test_bundle.py <tree>/tests/test_buyer_surface.py <tree>/tests/test_canon.py <tree>/tests/test_canon_depth_profile_adversarial.py <tree>/tests/test_check_spec_docs.py <tree>/tests/test_ci_required.py <tree>/tests/test_cli.py <tree>/tests/test_cli_authority.py <tree>/tests/test_cli_authority_blind.py <tree>/tests/test_cli_binding_properties.py <tree>/tests/test_cli_grant.py <tree>/tests/test_cli_overwrite.py <tree>/tests/test_cli_revoke_properties.py <tree>/tests/test_cli_views_builder_properties.py <tree>/tests/test_cli_views_properties.py <tree>/tests/test_commitment.py <tree>/tests/test_compromise_adversarial.py <tree>/tests/test_compromise_retraction_provenance.py <tree>/tests/test_container.py <tree>/tests/test_container_corpus.py <tree>/tests/test_container_differential_smoke.py <tree>/tests/test_deflate.py <tree>/tests/test_demo_e2e.py <tree>/tests/test_demo_pledge_e2e.py <tree>/tests/test_evaluate_authority.py <tree>/tests/test_evaluate_authority_blind.py <tree>/tests/test_evaluate_grant.py <tree>/tests/test_gen_container_corpus.py <tree>/tests/test_gen_site_sample.py <tree>/tests/test_gen_vectors.py <tree>/tests/test_gen_vectors_helpers.py <tree>/tests/test_grant.py <tree>/tests/test_hostile_view_content.py
 ........................................................................ [  2%]
 ........................................................................ [  5%]
 ........................................................................ [  8%]
@@ -51,7 +51,7 @@ $ env PYTHONDONTWRITEBYTECODE=1 <tree>/.venv/bin/python -m pytest -p no:cachepro
 ................                                                         [100%]
 =========================== short test summary info ============================
 XFAIL tests/test_blind_revocation_admission.py::test_verify_honors_chameleon_refund_revocation_and_sets_aside_bad_sibling - open: honouring a record whose reconstruction does not authenticate
-2535 passed, 1 xfailed in 162.00s (0:02:41)
+2535 passed, 1 xfailed in 155.60s (0:02:35)
 exit: 0
 ok: pytest run (ah) exits 0 (exit 0)
 --- collect files (ah)
@@ -2593,7 +2593,7 @@ tests/test_hostile_view_content.py::test_authority_view_reconstruction_always_ca
 tests/test_hostile_view_content.py::test_hostile_view_key_cannot_refuse_a_valid_authority_member
 tests/test_hostile_view_content.py::test_malformed_grant_array_member_is_absent_not_whole_view_refusal
 
-2536 tests collected in 2.04s
+2536 tests collected in 2.09s
 exit: 0
 ok: collect-only (ah) exits 0 (exit 0)
 ok: collected files (ah) non-empty (43 lines collected — derived, not written down)

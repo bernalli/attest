@@ -1,7 +1,7 @@
 === GATE G-CI-COVER ===
 tree:  <tree>
-head:  006f273
-utc:   2026-09-07T23:19:15Z
+head:  72c30c6
+utc:   2026-09-08T00:15:10Z
 
 precondition ok: python interpreter present
 precondition ok: pyyaml importable
@@ -19,7 +19,7 @@ ok: no CI command is left unclassified (exit 0)
 ok: the checker reached its verdict (marker /CI_COVERAGE_COMPLETE/ present)
 ok: commands were actually parsed (marker /parsed [1-9][0-9]* CI commands/ present)
 --- negative: an uncovered CI command is named
-$ env CI_COVERAGE_TREE=/tmp/tmp.f1N5iUM7OP <tree>/.venv/bin/python <tree>/tools/gates/ci_coverage.py
+$ env CI_COVERAGE_TREE=/tmp/tmp.Eap1hyYqr5 <tree>/.venv/bin/python <tree>/tools/gates/ci_coverage.py
 workflows parsed: ci.yml, pages.yml
 parsed 82 CI commands: 39 covered by an F6 gate, 42 out of scope, 1 unclassified
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 150
 # G-PLAN-CODE — the plan's normative Python survives the repository's own linters.
 #
 # The plan hands the executor blocks to transcribe verbatim. One of them declared

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-order: 130
 # G-COMPARE: the property is "compare_runs.py sees a change that junit XML
 # cannot see, never reports a comparison it did not perform, and names the
 # node ID at the point where it fails" (F-05).

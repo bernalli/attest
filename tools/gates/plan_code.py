@@ -11,13 +11,16 @@ elsewhere in the plan are undefined inside a single block, and imports are absen
 Rules that need a whole module are therefore not applicable, and the check runs the
 subset that judges a statement on its own.
 
-Formatting is deliberately NOT checked. The repository formats on commit, so a
-block written for a document — a tuple laid out on two lines to stay readable in
-prose — costs nothing: the transcription is reformatted before it is ever measured.
-Checking it here would have reported four blocks out of five, and a gate that is
-mostly noise is a gate people learn to ignore. What the executor genuinely cannot
-see coming is a lint RULE, which no formatter fixes and which surfaces only when
-G-LINT runs inside the task.
+Formatting is deliberately NOT checked: a block written for a document — a tuple laid
+out on two lines to stay readable in prose — is not a block written by the formatter,
+and checking it here would have reported four blocks out of five. A gate that is mostly
+noise is a gate people learn to ignore. What the executor genuinely cannot see coming is
+a lint RULE, which no formatter fixes and which surfaces only when G-LINT runs inside
+the task.
+
+The reason those four are tolerable is NOT that "the repository formats on commit" —
+this repository has no .pre-commit-config.yaml and no commit hook that formats. See the
+measured reason in tools/gates/g-plan-code.sh, which this docstring must not contradict.
 """
 
 from __future__ import annotations
@@ -52,13 +55,21 @@ PYTHON_FENCES = {"python", "py", "python3"}
 KNOWN_OTHER_FENCES = {"ts", "typescript", "js", "javascript", "sh", "bash", "json", "text", "diff"}
 
 # CommonMark opens a fenced block with three backticks OR three tildes, and allows
-# up to three leading spaces -- which is exactly what a code block nested in a list
-# item looks like. Matching only a line that STARTS at column zero with three
-# backticks is a guard that recognises one SPELLING of the object rather than the
-# object (C-222). Measured on this plan: the very RUF023 defect this gate was born
-# from survives green both under an indented python fence and under a fence that
-# names no language at all, with the checker printing PLAN_CODE_CLEAN in each case.
-_FENCE = re.compile(r"^(?P<indent> {0,3})(?P<mark>`{3,}|~{3,})(?P<info>.*)$")
+# leading spaces -- which is exactly what a code block nested in a list item looks
+# like. Matching only a line that STARTS at column zero with three backticks is a
+# guard that recognises one SPELLING of the object rather than the object (C-222).
+# Measured on this plan: the very RUF023 defect this gate was born from survives green
+# both under an indented python fence and under a fence that names no language at all,
+# with the checker printing PLAN_CODE_CLEAN in each case.
+#
+# The indent is NOT capped at three. CommonMark's three-space limit is relative to the
+# enclosing block, so a fence inside a NESTED list item, or inside `10. `, sits at four
+# or more absolute spaces and is ordinary markdown -- measured: with the cap, the same
+# RUF023 defect under `- outer / - inner / <4 spaces>```python` was still invisible and
+# the checker still printed PLAN_CODE_CLEAN. Capping at three is the same guard one
+# spelling wider, not the object. Re-measured after widening: the real plan extracts the
+# identical five blocks with identical output, so this costs no false positive.
+_FENCE = re.compile(r"^(?P<indent> *)(?P<mark>`{3,}|~{3,})(?P<info>.*)$")
 
 
 def fenced(text: str) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
