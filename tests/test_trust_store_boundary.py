@@ -822,3 +822,141 @@ def test_the_refusal_names_the_member_that_actually_failed() -> None:
     broken["issued_at"] = object()
     result = verify.verify(envelope, _trust_store(broken))
     assert any("'manifests'" in error for error in result.errors)
+
+
+# ---------------------------------------------------------------------------
+# Section 5.6(c): export and meta-closure, pinned by test (F6, T1).
+#
+# WHAT THIS PROVES: no PUBLIC parameter named for trusted material, anywhere
+# in `attest.*`, accepts anything but the new handle types -- judged by
+# parameter NAME (the closed set D19 fixes) and by the RESOLVED annotation
+# object, never its spelling. `verify.py` keeps a dataclass literally called
+# `TrustStore` at T1 (it is what `trust_material.TrustStore` replaces), so a
+# check that compared annotation STRINGS would call `verify.evaluate_grant`
+# closed today for the wrong reason -- section 5.6(c) requires
+# `typing.get_type_hints`, and this is why.
+#
+# WHAT THIS DOES NOT PROVE, stated because section 5.6(c) requires it stated:
+# that the ports which DO carry the right annotation actually EXECUTE the
+# handle correctly -- open it once with `_store_data`/`_manifest_data` and
+# read nothing else off a caller's object. That is INV-4 (section 6.4), a
+# runtime property no static signature check can see, and this file does not
+# attempt it.
+#
+# Both pins below are `xfail(strict=True)`: at T1 neither holds, by design --
+# `trust_material.__all__` still carries the T0 materialization family and no
+# public signature has migrated. T2/T3 close them, and `strict=True` is the
+# promise that they turn green on their own the moment that happens, and
+# fail loudly (XPASS) if this file's own numbers drift from the code first.
+#
+# `importlib`/`inspect`/`pkgutil`/`typing`/`attest` are LOCAL to the one
+# function below that needs them, not at the top of this file: the two test
+# files this front may touch are append-only (a shared writer edits
+# `verifiers/ts/**` in the same worktree), so a module-level import here is
+# not available.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "measured 2026-09-08 on this worktree: trust_material.__all__ is still "
+        "['TRUST_STORE_FIELDS', 'TrustMaterialError', 'materialize', "
+        "'materialized_key_manifest', 'trust_store_fields'] -- the T0 materialization "
+        "family the module's own docstring says falls in T2 ('_reads_as_own_data, "
+        "materialize, materialized_key_manifest, trust_store_fields, TRUST_STORE_FIELDS "
+        "restano (cadono in T2)'). T2 drops the export list to the three names this "
+        "pin fixes."
+    ),
+)
+def test_trust_material_all_is_the_serialized_boundarys_three_names() -> None:
+    """5.6(c): the export surface, pinned by the exact list rather than
+    membership -- a total kept alongside a growing list is the copy that
+    ages first, so there is none here: just the list itself.
+    """
+    assert trust_material.__all__ == ["TrustMaterialError", "KeyManifest", "TrustStore"]
+
+
+def meta_closure_violations() -> list[str]:
+    """Every public `attest.*` function whose parameter, by NAME, should
+    carry a trust handle but does not, by RESOLVED annotation identity.
+
+    Watched parameter names (section 5.6(c)'s closed set): `trust_store`,
+    `key_manifest`, `trusted_manifest`, `previous`, `candidate`. Excluded by
+    name (the closed list of evidence builders section 5.6(c) names):
+    `views.build_compromise_claim`, `views.key_manifest_log_entry` -- neither
+    currently has a watched parameter (both take `manifest`), so the
+    exclusion is a no-op today and a guard against a future rename, exactly
+    as written.
+
+    `typing.get_type_hints`, never the raw `__annotations__` string:
+    `attest` uses `from __future__ import annotations` throughout, so a bare
+    string compare against `"TrustStore"` would call `verify.evaluate_grant`
+    closed today -- its parameter IS spelled `TrustStore`, and resolves to
+    `verify.py`'s OWN dataclass of that name, not `trust_material.TrustStore`.
+    Only identity with the module under test's two handles counts.
+    """
+    import importlib
+    import inspect
+    import pkgutil
+    import typing
+
+    import attest
+
+    watched_names = {"trust_store", "key_manifest", "trusted_manifest", "previous", "candidate"}
+    excluded = {("views", "build_compromise_claim"), ("views", "key_manifest_log_entry")}
+    handles = (trust_material.TrustStore, trust_material.KeyManifest)
+
+    violations: list[str] = []
+    for info in pkgutil.iter_modules(attest.__path__, attest.__name__ + "."):
+        module = importlib.import_module(info.name)
+        stem = info.name.rsplit(".", 1)[-1]
+        for name, func in inspect.getmembers(module, inspect.isfunction):
+            if name.startswith("_") or func.__module__ != module.__name__:
+                continue
+            if (stem, name) in excluded:
+                continue
+            matched = watched_names & inspect.signature(func).parameters.keys()
+            if not matched:
+                continue
+            try:
+                hints = typing.get_type_hints(func)
+            except Exception as exc:  # a forward ref this walk cannot resolve
+                violations.append(f"{stem}.{name}: get_type_hints failed: {exc}")
+                continue
+            for param_name in sorted(matched):
+                annotation = hints.get(param_name)
+                if annotation not in handles:
+                    violations.append(
+                        f"{stem}.{name}({param_name}: {annotation}) is not a trust handle"
+                    )
+    return violations
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "measured 2026-09-08 on this worktree: 22 public signatures across "
+        "authority.py, grant.py, manifests.py, revocation.py, transfer.py, "
+        "trust_material.py, verify.py and views.py carry one of the five watched "
+        "parameter names and NONE resolves to trust_material.TrustStore/KeyManifest "
+        "today. Three of the 22 (verify.evaluate_grant, "
+        "verify.evaluate_publisher_authority, verify.verify) are already annotated "
+        "`TrustStore` BY NAME but resolve to verify.py's own dataclass of that name, "
+        "not the new handle -- the case get_type_hints exists to catch. T2/T3 migrate "
+        "these signatures to the new handles; this pin turns green as they do, one "
+        "violation fewer at a time."
+    ),
+)
+def test_no_public_signature_takes_a_trusted_dict_where_a_handle_belongs() -> None:
+    """5.6(c): meta-closure over every public signature in `attest.*`.
+
+    PROVES that no public parameter named for trusted material accepts
+    anything but the new handle types, by resolved annotation.
+
+    Does NOT prove that the ports which DO carry the right annotation
+    actually EXECUTE the handle correctly -- open it once and read nothing
+    else off a caller's live object. That is INV-4 (section 6.4), a runtime
+    property this static signature check cannot see and does not attempt.
+    """
+    assert meta_closure_violations() == []

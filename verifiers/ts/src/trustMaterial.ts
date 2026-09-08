@@ -40,8 +40,38 @@
  *
  * Fail-closed: `null` is the only failure, never a partial read.
  */
-import { admitValue, MAX_ADMISSION_NODES, type JsonObject } from './canon.js'
-import type { TrustStore } from './manifests.js'
+import {
+  CanonError,
+  MAX_ADMISSION_BYTES,
+  MAX_ADMISSION_NODES,
+  admitValue,
+  canonicalBytes,
+  canonicalKeyOrder,
+  loadsStrict,
+  type JsonObject,
+  type JsonValue,
+} from './canon.js'
+import {
+  detachedBuffer,
+  memberShape,
+  notByteView,
+  notBytes,
+  notCanonical,
+  notObject,
+  sharedMemory,
+  tooLarge,
+  unknownMember,
+  unparsable,
+} from './messages.js'
+// The OLD interface, kept under an alias for the functions that still take it.
+// It dies in T3 together with them; until then the name `TrustStore` in this
+// file means the CLASS below, which is what every new caller wants, and the
+// alias keeps the two apart without renaming anything a caller can see.
+//
+// `import type` and not `import`: this is erased at compile time, so the
+// runtime module graph stays one-directional (D19) — `manifests.ts` imports
+// this file, and this file imports nothing back.
+import type { TrustStore as TrustStoreShape } from './manifests.js'
 
 /**
  * The `TrustStore` members this boundary owns, in the order the interface
@@ -149,7 +179,7 @@ export function materializeKeyManifest(keyManifest: unknown): JsonObject | null 
  * verifier's own configuration, not adversarial evidence, and one it cannot
  * fully read is one it should not reason from at all.
  */
-export function materializeTrustStore(store: TrustStore): TrustStore | null {
+export function materializeTrustStore(store: TrustStoreShape): TrustStoreShape | null {
   return materializeTrustStoreDetailed(store).store
 }
 
@@ -163,8 +193,8 @@ export function materializeTrustStore(store: TrustStore): TrustStore | null {
  * can name the member in the error it reports. Python parity:
  * `trust_material.TrustMaterialError.member`.
  */
-export function materializeTrustStoreDetailed(store: TrustStore): {
-  store: TrustStore | null
+export function materializeTrustStoreDetailed(store: TrustStoreShape): {
+  store: TrustStoreShape | null
   member: string | null
 } {
   const out: Record<string, JsonObject> = {}
@@ -182,5 +212,401 @@ export function materializeTrustStoreDetailed(store: TrustStore): {
     if (materialized === null) return { store: null, member: field }
     out[field] = materialized
   }
-  return { store: out as unknown as TrustStore, member: null }
+  return { store: out as unknown as TrustStoreShape, member: null }
+}
+
+// ===========================================================================
+// The serialized entry (plan section 5.2). Everything above this line is the
+// OLD boundary, which takes a live object and copies its own data; it stays
+// until T3 moves its callers over. Everything below takes BYTES and hands back
+// a snapshot — the difference is that a snapshot cannot be a live object at
+// all, so there is nothing left to copy defensively.
+// ===========================================================================
+
+// Intrinsics captured at module load: own-SLOT reads, never property reads on
+// the candidate. A getter taken off the prototype and invoked with `.call(x)`
+// reads `x`'s internal slot and runs none of `x`'s code, which is what makes
+// the refusals below observable-free.
+const TYPED_ARRAY_PROTO = Object.getPrototypeOf(Uint8Array.prototype) as object
+// `[[TypedArrayName]]`, or `undefined` for anything that is not a typed array
+// — a DataView, a plain object, a Proxy over a real view. A Proxy answers
+// `undefined` with ZERO traps, because the getter reads a slot the Proxy does
+// not have rather than a property it could forward.
+const TYPED_ARRAY_TAG = Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTO, Symbol.toStringTag)!
+  .get as (this: unknown) => string | undefined
+// 0 on a detached or out-of-bounds view.
+const TYPED_ARRAY_BYTE_LENGTH = Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTO, 'byteLength')!
+  .get as (this: unknown) => number
+const TYPED_ARRAY_BUFFER = Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTO, 'buffer')!.get as (
+  this: unknown,
+) => ArrayBufferLike
+const ARRAY_BUFFER_BYTE_LENGTH = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  'byteLength',
+)!.get as (this: unknown) => number
+
+/** The three views whose elements ARE bytes. */
+const BYTE_VIEWS: ReadonlySet<string> = new Set(['Uint8Array', 'Int8Array', 'Uint8ClampedArray'])
+
+/**
+ * True only for an ORDINARY `ArrayBuffer`, proved positively.
+ *
+ * The question is deliberately not "is it shared?". Asking it that way needs a
+ * `SharedArrayBuffer` binding to compare against, and in a realm where that
+ * global is absent the honest answer is "I cannot tell" — which a boolean
+ * turns into "no", admitting a shared view that arrived from another realm.
+ * A fallback that admits when it does not know is fail-OPEN.
+ *
+ * `ArrayBuffer.prototype.byteLength` reads an internal slot and THROWS on
+ * every `SharedArrayBuffer`, local or cross-realm, so it answers the question
+ * that actually matters — "is this the kind of buffer whose bytes only this
+ * agent can change?" — without needing either constructor to be in scope.
+ */
+function isOrdinaryArrayBuffer(buffer: ArrayBufferLike): boolean {
+  try {
+    ARRAY_BUFFER_BYTE_LENGTH.call(buffer)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * `data` as a PRIVATE copy of its bytes, or a refusal.
+ *
+ * Order (section 5.2.1): M1, M9, M10, M2, M11, M2 again on the copy. The
+ * ceiling is checked before the copy so an oversized input is refused without
+ * being copied, and again after it because the first read and the copy are two
+ * different observations of a buffer that can resize.
+ *
+ * The copy is what makes INV-5 true: after this returns, the caller can
+ * overwrite the bytes, detach the buffer or resize it to nothing, and the
+ * snapshot built from the copy does not notice.
+ */
+function documentBytes(data: unknown, what: string): Uint8Array {
+  if (data === null || typeof data !== 'object') throw new TrustMaterialError(notBytes(what))
+  const tag = TYPED_ARRAY_TAG.call(data)
+  if (tag === undefined) throw new TrustMaterialError(notBytes(what))
+  if (!BYTE_VIEWS.has(tag)) throw new TrustMaterialError(notByteView(what))
+  if (!isOrdinaryArrayBuffer(TYPED_ARRAY_BUFFER.call(data))) {
+    throw new TrustMaterialError(sharedMemory(what))
+  }
+  if (TYPED_ARRAY_BYTE_LENGTH.call(data) > MAX_ADMISSION_BYTES) {
+    throw new TrustMaterialError(tooLarge(what))
+  }
+  let copy: Uint8Array
+  try {
+    // Slot copy: reads the source's internal slots and runs no caller code —
+    // not `Symbol.species`, not `constructor`, not an index getter.
+    copy = new Uint8Array(data as Uint8Array)
+  } catch {
+    throw new TrustMaterialError(detachedBuffer(what))
+  }
+  if (copy.byteLength > MAX_ADMISSION_BYTES) throw new TrustMaterialError(tooLarge(what))
+  return copy
+}
+
+/** Bytes in, parsed tree out. M7 for anything the profile's parser refuses. */
+function parseDocument(data: unknown, what: string): JsonValue {
+  const copy = documentBytes(data, what)
+  try {
+    return loadsStrict(copy)
+  } catch (e) {
+    if (e instanceof CanonError) throw new TrustMaterialError(unparsable(what, e.message))
+    throw e
+  }
+}
+
+/** The admitted domain is what the snapshot can export without loss (D16). */
+function canonicalOf(parsed: JsonValue, what: string): Uint8Array {
+  try {
+    return canonicalBytes(parsed)
+  } catch (e) {
+    if (e instanceof CanonError) throw new TrustMaterialError(notCanonical(what, e.message))
+    throw e
+  }
+}
+
+function isPlainObject(value: JsonValue): value is JsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * The container grammar of section 5.3: the nesting path of each member, and
+ * the phrase its refusal uses.
+ *
+ * Derived from one place so the check and the message cannot drift apart. Two
+ * copies of the same rule are two rules that will disagree eventually, and the
+ * message is what a caller uses to fix their document.
+ */
+const MEMBER_SHAPES: ReadonlyArray<readonly [string, readonly string[], string]> = [
+  ['manifests', ['object', 'object'], 'an object of objects'],
+  ['provenance', ['object', 'string'], 'an object of strings'],
+  ['chains', ['object', 'array', 'object'], 'an object of arrays of objects'],
+  ['artifact_manifests', ['object', 'object', 'object'], 'an object of objects of objects'],
+  [
+    'artifact_manifest_chains',
+    ['object', 'object', 'array', 'object'],
+    'an object of objects of arrays of objects',
+  ],
+]
+const REQUIRED_MEMBERS: ReadonlySet<string> = new Set(['manifests', 'provenance'])
+const KNOWN_MEMBERS: ReadonlySet<string> = new Set(MEMBER_SHAPES.map(([name]) => name))
+
+/** Whether `value` has the nesting the grammar names for a member. */
+function matchesShape(value: JsonValue, kinds: readonly string[]): boolean {
+  const kind = kinds[0]
+  const rest = kinds.slice(1)
+  if (kind === 'object') {
+    if (!isPlainObject(value)) return false
+    if (rest.length === 0) return true
+    return Object.values(value).every((item) => matchesShape(item, rest))
+  }
+  if (kind === 'array') {
+    if (!Array.isArray(value)) return false
+    if (rest.length === 0) return true
+    return value.every((item) => matchesShape(item, rest))
+  }
+  return typeof value === 'string'
+}
+
+/**
+ * The grammar of section 5.3, in its stated order: M4, M5, M6, and nothing else.
+ *
+ * The order is part of the contract, not an implementation detail: a document
+ * with two defects must be refused for the FIRST one, so that a caller fixing
+ * what the message names makes progress instead of meeting a different
+ * complaint about the same document.
+ *
+ * What this does NOT validate is as deliberate as what it does: manifest
+ * contents, the agreement between `manifests[i]` and `chains[i]`'s last entry,
+ * the values of `provenance`, empty issuer ids. The boundary guarantees the
+ * shape of the containers and canonical representability — that the readers
+ * downstream find what they read, and that `data()`/`toBytes()` are total.
+ * Everything else belongs to whoever knows what it means.
+ */
+function validatedStoreDocument(parsed: JsonValue): StoreData {
+  if (!isPlainObject(parsed)) throw new TrustMaterialError(notObject('trust store'))
+  // M5 before M6. WHICH unknown member gets named is the minimum in CANONICAL
+  // key order, never the first in document order -- and in this language that
+  // is not a refinement, it is the only implementable rule. `JSON.parse` (and
+  // `loadsStrict`, which builds ordinary objects) enumerates integer-like keys
+  // first whatever the document said, so document order is already gone here
+  // (measured 2026-09-08: this core named '0' where Python named 'zz' on the
+  // same bytes). Canonical order is what the protocol already signs on, and
+  // `Array.prototype.sort`'s default comparator IS that order -- UTF-16 code
+  // units -- which is why `canonicalKeyOrder` is a call and not a comparator.
+  const unknown = canonicalKeyOrder(Object.keys(parsed).filter((n) => !KNOWN_MEMBERS.has(n)))
+  if (unknown.length > 0) throw new TrustMaterialError(unknownMember(unknown[0]!))
+  const fields: Record<string, unknown> = {}
+  for (const [name, kinds, phrase] of MEMBER_SHAPES) {
+    if (!Object.hasOwn(parsed, name)) {
+      if (REQUIRED_MEMBERS.has(name)) throw new TrustMaterialError(memberShape(name, phrase), name)
+      // Absent: read as empty, exported as absent. `Object.create(null)` and
+      // never `{}` — a `{}` would answer `chains['toString']` with a function
+      // inherited from `Object.prototype`, so an issuer id that happens to be
+      // an object-system name would select something the document never
+      // carried. A member present with value `null` is NOT this case and falls
+      // to the shape check below.
+      fields[name] = Object.create(null) as object
+      continue
+    }
+    const value = parsed[name]!
+    if (!matchesShape(value, kinds)) throw new TrustMaterialError(memberShape(name, phrase), name)
+    fields[name] = value
+  }
+  return fields as unknown as StoreData
+}
+
+/** The five member trees of an admitted store document. */
+export interface StoreData {
+  manifests: Record<string, JsonObject>
+  provenance: Record<string, string>
+  chains: Record<string, JsonObject[]>
+  artifact_manifests: Record<string, Record<string, JsonObject>>
+  artifact_manifest_chains: Record<string, Record<string, JsonObject[]>>
+}
+
+/**
+ * Trust material that cannot be admitted as data.
+ *
+ * `member` names the trust-store member that failed, when the failure happened
+ * inside one. A refusal that accuses the wrong member sends whoever receives
+ * it to debug the wrong half of their configuration, so the name travels with
+ * the error instead of being guessed by the caller. Python parity:
+ * `trust_material.TrustMaterialError.member`.
+ */
+export class TrustMaterialError extends Error {
+  readonly member: string | null
+  constructor(message: string, member: string | null = null) {
+    super(message)
+    this.name = 'TrustMaterialError'
+    this.member = member
+  }
+}
+
+// Module sentinel. NOT `Symbol.for`: a registered symbol is reachable by
+// description from any code in the realm, which would make the token a
+// password anyone can look up. This one is never exported and never stored on
+// an object a caller can reach, so the only way to hold it is to be this file.
+const ADMIT: unique symbol = Symbol('attest.trustMaterial.admit')
+
+// Declared BEFORE the classes: the static blocks below assign them during
+// class evaluation, and a `let` declared after the class would still be in its
+// temporal dead zone when that block runs.
+//
+// These two are the doors' way in. They are exported from this MODULE for the
+// rest of the package and never from `index.ts` — a snapshot's internal tree
+// leaving the package is exactly the shape C-216 was about.
+export let manifestData!: (m: unknown) => JsonObject | null
+export let storeData!: (s: unknown) => StoreData | null
+
+/**
+ * A key manifest that was parsed from bytes by this library, and nothing else.
+ *
+ * The constructor exists in the type system — a caller can write it — and
+ * refuses everyone who is not this file. Holding one of these is therefore the
+ * proof that the bytes went through `parseKeyManifest`, which is what every
+ * door downstream needs to know and what it could not learn from a live object.
+ */
+export class KeyManifest {
+  #data: JsonObject
+  #canonical: Uint8Array
+
+  constructor(token: symbol, data: JsonObject, canonical: Uint8Array) {
+    // Identity, and never equality: `!==` on symbols runs no user code, so a
+    // caller cannot forge admission with something that compares equal.
+    if (token !== ADMIT) throw new TypeError('KeyManifest is built by parseKeyManifest(bytes)')
+    this.#data = data
+    this.#canonical = canonical
+  }
+
+  /**
+   * The brand: a private field is present only on an instance this class built.
+   *
+   * `instanceof` would answer for `Object.create(KeyManifest.prototype)` and
+   * for a Proxy over one; a private-field check answers false for both, and a
+   * Proxy cannot forward it, so no trap of a hostile wrapper ever runs.
+   */
+  static is(x: unknown): x is KeyManifest {
+    try {
+      return #data in (x as object)
+    } catch {
+      return false
+    }
+  }
+
+  /** The canonical bytes computed at import. A fresh copy every call (INV-5). */
+  toBytes(): Uint8Array {
+    return new Uint8Array(this.#canonical)
+  }
+
+  /**
+   * A fresh tree of parser types, every call.
+   *
+   * Re-parsed rather than returned: handing back the internal tree would let a
+   * caller mutate what a later reader sees, and two readers of the same
+   * snapshot disagreeing is the whole class of defect this boundary ends.
+   */
+  data(): JsonObject {
+    return loadsStrict(this.#canonical) as JsonObject
+  }
+
+  static {
+    manifestData = (m: unknown): JsonObject | null => (KeyManifest.is(m) ? m.#data : null)
+  }
+}
+
+/** A trust store parsed from bytes: five member trees plus the bytes they came from. */
+export class TrustStore {
+  #manifests: Record<string, JsonObject>
+  #provenance: Record<string, string>
+  #chains: Record<string, JsonObject[]>
+  #artifactManifests: Record<string, Record<string, JsonObject>>
+  #artifactManifestChains: Record<string, Record<string, JsonObject[]>>
+  #canonical: Uint8Array
+
+  constructor(token: symbol, fields: StoreData, canonical: Uint8Array) {
+    if (token !== ADMIT) throw new TypeError('TrustStore is built by parseTrustStore(bytes)')
+    this.#manifests = fields.manifests
+    this.#provenance = fields.provenance
+    this.#chains = fields.chains
+    this.#artifactManifests = fields.artifact_manifests
+    this.#artifactManifestChains = fields.artifact_manifest_chains
+    this.#canonical = canonical
+  }
+
+  static is(x: unknown): x is TrustStore {
+    try {
+      return #manifests in (x as object)
+    } catch {
+      return false
+    }
+  }
+
+  toBytes(): Uint8Array {
+    return new Uint8Array(this.#canonical)
+  }
+
+  data(): JsonObject {
+    return loadsStrict(this.#canonical) as JsonObject
+  }
+
+  issuers(): string[] {
+    return Object.keys(this.#manifests).sort()
+  }
+
+  // D18 on all three selectors: the type check comes BEFORE any indexing, so a
+  // hostile object's `Symbol.toPrimitive`/`toString`/`valueOf` never runs. A
+  // `String` wrapper is refused too — it is an object, and the thing that gets
+  // past a lookup is precisely a value that coerces to a real key.
+  manifestFor(issuer: unknown): KeyManifest | null {
+    if (typeof issuer !== 'string') return null
+    const found = this.#manifests[issuer]
+    return found === undefined ? null : new KeyManifest(ADMIT, found, canonicalBytes(found))
+  }
+
+  chainFor(issuer: unknown): KeyManifest[] {
+    if (typeof issuer !== 'string') return []
+    const found = this.#chains[issuer]
+    if (found === undefined) return []
+    return found.map((m) => new KeyManifest(ADMIT, m, canonicalBytes(m)))
+  }
+
+  provenanceFor(issuer: unknown): string | null {
+    if (typeof issuer !== 'string') return null
+    const found = this.#provenance[issuer]
+    return found === undefined ? null : found
+  }
+
+  static {
+    storeData = (s: unknown): StoreData | null =>
+      TrustStore.is(s)
+        ? {
+            manifests: s.#manifests,
+            provenance: s.#provenance,
+            chains: s.#chains,
+            artifact_manifests: s.#artifactManifests,
+            artifact_manifest_chains: s.#artifactManifestChains,
+          }
+        : null
+  }
+}
+
+/** One key manifest, from its serialized bytes. Throws `TrustMaterialError`. */
+export function parseKeyManifest(data: unknown): KeyManifest {
+  const parsed = parseDocument(data, 'key manifest')
+  if (!isPlainObject(parsed)) throw new TrustMaterialError(notObject('key manifest'))
+  return new KeyManifest(ADMIT, parsed, canonicalOf(parsed, 'key manifest'))
+}
+
+/** A trust store, from its serialized bytes. Throws `TrustMaterialError`. */
+export function parseTrustStore(data: unknown): TrustStore {
+  const parsed = parseDocument(data, 'trust store')
+  const fields = validatedStoreDocument(parsed)
+  // On the document AS RECEIVED (D17): an absent member stays absent in what
+  // `toBytes()` gives back, which is not the same document as one carrying an
+  // empty member. `canonicalOf` runs after the grammar so a shape complaint
+  // reaches the caller before a representability one.
+  return new TrustStore(ADMIT, fields, canonicalOf(parsed, 'trust store'))
 }
