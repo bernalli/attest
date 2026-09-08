@@ -17,7 +17,7 @@
       "publisher": "pub.example",
       "signature": {
         "kid": "pub.example/keys/2025-01#ed25519-1",
-        "sig": "dYFTL6nQO51OWHSXvhwDmbp8fQhhtlNatbMY7EcNx-AldNbDJau36C_8UGSqfFaKy91J5G9XK0O1Bl9XZOFoAg"
+        "sig": "iGD64lo79eq--zSlAStAIF6wjdI8Q7jasFdiJmKhA3fof3jQ6wLJDFBazkmIlziQnzmTEaLxlRHqPi-Rg9tCBA"
       }
     }
   ]

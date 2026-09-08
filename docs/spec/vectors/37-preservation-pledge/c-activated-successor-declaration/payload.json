@@ -15,7 +15,7 @@
     "grant": "perpetual",
     "legal_text_sha256": "a9e875fe29704222a432410b0c160f5a2e5ef48effa8b51a5017c640e21c109c",
     "preservation_pledge": {
-      "grant_sha256": "4cb62cec6a82cb70d2441944eb8ec673cd3dd3b870fe6ea7a386b52a26b1ad10",
+      "grant_sha256": "af5ce2ae28865a67d5e4c5125cd519d5c2160b68abc52f135cdd1c6146326b53",
       "grant_uri": "https://pub.example/sunset-grant-v1.json",
       "pledge": "sunset-grant-v1"
     },

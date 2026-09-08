@@ -81,7 +81,7 @@ import shutil
 import sys
 import tempfile
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -5469,8 +5469,8 @@ PLEDGE_PUBLISHER_ID = "pub.example"
 PLEDGE_SUCCESSOR_ID = "heritage.example"
 PLEDGE_MARKETPLACE_ID = "marketplace.example"
 
-PLEDGE_PUBLISHER_KP = keys.from_seed(bytes([37]) * 32)
-PLEDGE_SUCCESSOR_KP = keys.from_seed(bytes([38]) * 32)
+PLEDGE_PUBLISHER_KP = keys.from_seed(bytes([142]) * 32)
+PLEDGE_SUCCESSOR_KP = keys.from_seed(bytes([143]) * 32)
 PLEDGE_MARKETPLACE_KP = keys.from_seed(bytes([39]) * 32)
 
 PLEDGE_PUBLISHER_KID = f"{PLEDGE_PUBLISHER_ID}/keys/2025-01#ed25519-1"
@@ -9308,6 +9308,7 @@ def generate(out: Path) -> int:
     build a second tree without disturbing the committed one.
     """
     global VECTORS_DIR
+    _assert_distinct_signing_keys()
     previous = VECTORS_DIR
     VECTORS_DIR = out
     try:
@@ -9432,6 +9433,52 @@ def check(out: Path) -> int:
             print(f"  {name} (hand-authored, missing)", file=sys.stderr)
         return 1
     return 0
+
+
+def _assert_distinct_signing_keys() -> None:
+    """Every module-level Ed25519 keypair MUST have its own public key.
+
+    A seed reused for a second identity gives two ROLES one key, and a leaf
+    that should distinguish them can then pass because they happen to be the
+    same party. Two such collisions existed here: `bytes([37])` and
+    `bytes([38])` were spelled once as named constants for group 36 and again,
+    five thousand lines away, as INLINE literals for group 37 — which is why
+    looking for the constant's name found nothing.
+
+    Enumeration walks this module's own namespace rather than a list written
+    beside it, and descends into containers: ten of the thirty-one keypairs
+    live inside `WITNESS_ED_KPS`, and a check that read only module attributes
+    would report thirty-one as twenty-one and miss whichever collision hid in
+    there. Seeds built by arithmetic (`bytes([41 + index])`) are invisible to a
+    text search for the literal, so the public keys are compared instead of the
+    seeds: it is the property that matters, and it holds however the seed was
+    spelled.
+    """
+
+    def walk(value: object, path: str, depth: int = 0) -> Iterator[tuple[str, str]]:
+        if depth > 3:
+            return
+        if isinstance(value, keys.SigningKeyPair):
+            yield path, keys.b64u(value.pub)
+        elif isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                yield from walk(item, f"{path}[{index}]", depth + 1)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from walk(item, f"{path}[{key!r}]", depth + 1)
+
+    seen: dict[str, str] = {}
+    collisions: list[str] = []
+    for name, value in sorted(globals().items()):
+        if name.startswith("__"):
+            continue
+        for path, pub in walk(value, name):
+            if pub in seen:
+                collisions.append(f"{seen[pub]} and {path} share a public key")
+            else:
+                seen[pub] = path
+    if collisions:
+        raise AssertionError("reused signing seed: " + "; ".join(collisions))
 
 
 def main(argv: list[str] | None = None) -> int:

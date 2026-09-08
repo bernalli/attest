@@ -16,7 +16,7 @@
       "grant": "perpetual",
       "legal_text_sha256": "a9e875fe29704222a432410b0c160f5a2e5ef48effa8b51a5017c640e21c109c",
       "preservation_pledge": {
-        "grant_sha256": "e8502b5db8155ae127c09df7ccffca41e7b867bd6a3dd1a6e1e799d279d7fa7e",
+        "grant_sha256": "2c5532c9d1ab11f0fa4aa77187f3e1db09e9f9c15fc5409dd6b8b7b1f3f90b49",
         "grant_uri": "https://pub.example/sunset-grant-v1.json",
         "pledge": "sunset-grant-v1"
       },
@@ -45,7 +45,7 @@
     {
       "alg": "Ed25519",
       "kid": "store.example.com/keys/2025-01#ed25519-1",
-      "sig": "w3C9jha07xQxMIpkCMXkk-QPtJPt6s6pt_8uJgnPW5RTfW_zO-ktyr0JmaUf0KFLTLNnJXEzkDH0-V-tGSYrDQ"
+      "sig": "0T8MoxrtN1sPYytBTuwXOdjzrfwS6k2MGdM78djoZ6eSUVtJKLc9-fTg-scm9bg9mLftjZ_YNZdXt9FqJeJRDg"
     }
   ]
 }
