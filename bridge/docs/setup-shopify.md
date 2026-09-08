@@ -50,9 +50,9 @@ rest of the file):
 webhook_secret_env = "SHOPIFY_WEBHOOK_SECRET"
 ```
 
-Drop `[stripe]` and `[itch]` from `bridge.toml` too if you don't sell
-through them — step 3 of setup-stripe.md tells you to drop the *other*
-platform tables, never its own. A table left behind is not inert: the bridge
+Drop `[stripe]`, `[itch]`, `[paddle]` and `[paypal]` from `bridge.toml` too
+if you don't sell through them — step 3 of setup-stripe.md tells you to drop
+the *other* platform tables, never its own. A table left behind is not inert: the bridge
 resolves the environment variable it names at startup and refuses to start
 when that variable is unset.
 

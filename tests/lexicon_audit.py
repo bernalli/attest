@@ -95,6 +95,21 @@ VERDICTS: Final = frozenset({"NEGATED", "OTHER-SUBJECT", "DESCRIBES-THE-RENAME"}
 #: record it.
 AUDITED: Final[tuple[Occurrence, ...]] = (
     Occurrence(
+        path="bridge/src/attest_bridge/paypal_adapter.py",
+        sha256="a7dd20cc1cf993421259c1cabf6f48adfda7ee3f406fcb823972b195503d5243",
+        excerpt=(
+            "ncoding several named keys into that one value belongs to the binding-consent "
+            "design when ratified, so this adapter intentionally assigns it no sem"
+        ),
+        verdict="OTHER-SUBJECT",
+        reason=(
+            "Names the binding-consent design document, which is about buyer acceptance "
+            "carried at checkout — not §17.3's gate. The sentence declines to give the "
+            "carrier any meaning until that design is ratified, so it asserts nothing "
+            "about what a signature establishes."
+        ),
+    ),
+    Occurrence(
         path="docs/faq.md",
         sha256="a187a65d2352d60184e413289ccc778a662a58a9119ddce493bd7f2c089e70fd",
         excerpt="r is also logged. This proves control of the issuer-record",

@@ -6,10 +6,11 @@ Sections reference the environment variable that holds the secret via a
 `load_config` resolves the named variable at startup and raises
 `ConfigError` naming the MISSING VARIABLE — never the resolved value. The
 secret-bearing dataclass fields below (`StripeConfig.webhook_secret`,
-`StripeConfig.api_key`, `ItchConfig.api_key`, `DeliveryConfig.smtp_password`)
-are declared with `field(repr=False)` so a resolved value can never leak via
-`repr()`/`logging.debug(config)` either — only an explicit attribute access
-exposes it.
+`StripeConfig.api_key`, `PaddleConfig.webhook_secret`, `PaddleConfig.api_key`,
+`PayPalConfig.client_id`, `PayPalConfig.client_secret`, `ItchConfig.api_key`,
+`DeliveryConfig.smtp_password`) are declared with `field(repr=False)` so a
+resolved value can never leak via `repr()`/`logging.debug(config)` either —
+only an explicit attribute access exposes it.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from attest_bridge.model import ConfigError
 # themselves, and most won't write one at all. Absent an explicit `info_url`,
 # every receipt email links here instead of failing config load.
 DEFAULT_INFO_URL = "https://attest-receipts.org/what-is-this.html"
+_ENVIRONMENTS = frozenset({"live", "sandbox"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +52,25 @@ class StripeConfig:
 @dataclass(frozen=True, slots=True)
 class ShopifyConfig:
     webhook_secret: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class PaddleConfig:
+    """Resolved Paddle credentials and API environment."""
+
+    webhook_secret: str = field(repr=False)
+    api_key: str = field(repr=False)
+    environment: str = "live"
+
+
+@dataclass(frozen=True, slots=True)
+class PayPalConfig:
+    """Resolved PayPal credentials, webhook identifier, and API environment."""
+
+    client_id: str = field(repr=False)
+    client_secret: str = field(repr=False)
+    webhook_id: str
+    environment: str = "live"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +102,8 @@ class BridgeConfig:
     # Default None so every existing `BridgeConfig(...)` construction site keeps
     # working unchanged — purely additive, mirroring how `itch` was introduced.
     shopify: ShopifyConfig | None = None
+    paddle: PaddleConfig | None = None
+    paypal: PayPalConfig | None = None
     # Licence texts keyed by their verified SHA-256, ready to be shipped inside
     # the buyer's bundle (spec §14.1). `repr=False` for size, not secrecy.
     legal_texts: dict[str, bytes] = field(default_factory=dict, repr=False)
@@ -120,6 +143,13 @@ def _optional_str(table: Mapping[str, Any], key: str, default: str, *, context: 
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{context}: field {key!r} must be a non-empty string")
     return value
+
+
+def _environment(table: Mapping[str, Any], *, context: str) -> str:
+    environment = _optional_str(table, "environment", "live", context=context)
+    if environment not in _ENVIRONMENTS:
+        raise ConfigError(f"{context}: field 'environment' must be one of live, sandbox")
+    return environment
 
 
 def _require_int(table: Mapping[str, Any], key: str, *, context: str) -> int:
@@ -276,6 +306,25 @@ def _load_shopify(table: Mapping[str, Any], env: Mapping[str, str]) -> ShopifyCo
     return ShopifyConfig(webhook_secret=_env(env, table, "webhook_secret", context=context))
 
 
+def _load_paddle(table: Mapping[str, Any], env: Mapping[str, str]) -> PaddleConfig:
+    context = "[paddle]"
+    return PaddleConfig(
+        webhook_secret=_env(env, table, "webhook_secret", context=context),
+        api_key=_env(env, table, "api_key", context=context),
+        environment=_environment(table, context=context),
+    )
+
+
+def _load_paypal(table: Mapping[str, Any], env: Mapping[str, str]) -> PayPalConfig:
+    context = "[paypal]"
+    return PayPalConfig(
+        client_id=_env(env, table, "client_id", context=context),
+        client_secret=_env(env, table, "client_secret", context=context),
+        webhook_id=_require_str(table, "webhook_id", context=context),
+        environment=_environment(table, context=context),
+    )
+
+
 def _load_itch(table: Mapping[str, Any], env: Mapping[str, str]) -> ItchConfig:
     context = "[itch]"
     return ItchConfig(
@@ -330,6 +379,8 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> BridgeConfi
 
     stripe_table = _optional_table(data, "stripe", context="config")
     shopify_table = _optional_table(data, "shopify", context="config")
+    paddle_table = _optional_table(data, "paddle", context="config")
+    paypal_table = _optional_table(data, "paypal", context="config")
     itch_table = _optional_table(data, "itch", context="config")
     delivery_table = _optional_table(data, "delivery", context="config")
 
@@ -346,6 +397,8 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> BridgeConfi
         products=products,
         stripe=_load_stripe(stripe_table, resolved_env) if stripe_table is not None else None,
         shopify=_load_shopify(shopify_table, resolved_env) if shopify_table is not None else None,
+        paddle=_load_paddle(paddle_table, resolved_env) if paddle_table is not None else None,
+        paypal=_load_paypal(paypal_table, resolved_env) if paypal_table is not None else None,
         itch=_load_itch(itch_table, resolved_env) if itch_table is not None else None,
         delivery=(
             _load_delivery(delivery_table, resolved_env) if delivery_table is not None else None

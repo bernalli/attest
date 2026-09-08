@@ -13,7 +13,10 @@
 #     KEY_MANIFEST="$(base64 < key-manifest.json | tr -d '\n')" \
 #     ISSUER_SEED="$(base64 < issuer.seed | tr -d '\n')" \
 #     ISSUER_MLDSA="$(base64 < issuer.mldsa.json | tr -d '\n')" \
-#     STRIPE_WEBHOOK_SECRET=whsec_... STRIPE_API_KEY=sk_... ITCH_API_KEY=... SMTP_PASSWORD=...
+#     STRIPE_WEBHOOK_SECRET=whsec_... STRIPE_API_KEY=sk_... \
+#     SHOPIFY_WEBHOOK_SECRET=shpss_... ITCH_API_KEY=... \
+#     PADDLE_WEBHOOK_SECRET=pdl_ntfset_... PADDLE_API_KEY=pdl_live_apikey_... \
+#     PAYPAL_CLIENT_ID=... PAYPAL_CLIENT_SECRET=... SMTP_PASSWORD=...
 #
 #   (the double quotes and `tr -d '\n'` matter: GNU coreutils `base64` — the
 #   default on Linux — line-wraps its output every 76 characters, and an
@@ -35,8 +38,10 @@ primary_region = "iad"
 
 [env]
   # Non-secret only — this whole table is safe to commit. Everything else
-  # (the four merchant secrets STRIPE_WEBHOOK_SECRET/STRIPE_API_KEY/
-  # ITCH_API_KEY/SMTP_PASSWORD, and the four base64-encoded file secrets
+  # (the merchant secrets STRIPE_WEBHOOK_SECRET/STRIPE_API_KEY/
+  # SHOPIFY_WEBHOOK_SECRET/ITCH_API_KEY/PADDLE_WEBHOOK_SECRET/PADDLE_API_KEY/
+  # PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET/SMTP_PASSWORD, and the four
+  # base64-encoded file secrets
   # BRIDGE_TOML/KEY_MANIFEST/ISSUER_SEED/ISSUER_MLDSA) is `fly secrets set`,
   # never set here.
 
