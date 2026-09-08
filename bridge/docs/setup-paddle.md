@@ -21,8 +21,13 @@ mis-issued. Check which you are on before configuring anything, and check it
 on a **delivery** rather than on a screen, because that is the thing this
 bridge actually reads: a Billing notification arrives as a JSON body with a
 `Paddle-Signature` header, a Classic alert as form-encoded fields including
-`p_signature`. If you have never seen one, the synthetic delivery in step 4
-is what a Billing one looks like.
+`p_signature`. If you already receive notifications from Paddle, look at one.
+If you do not — a new account, nothing configured yet — this is a question
+worth asking Paddle before you configure anything, and the cost of guessing
+wrong is bounded: a Classic alert is rejected at the door, never mis-issued.
+(The synthetic delivery in step 4 is a Billing body in miniature, but you
+write that one yourself, so it cannot tell you which product your account is
+on.)
 
 Only `transaction.completed` is acted on. `transaction.paid` fires earlier,
 before Paddle has finished processing, and is ignored. A transaction with a
@@ -39,9 +44,12 @@ Identical to [setup-stripe.md](setup-stripe.md) steps 1 and 2. Do those first.
 
 You need two values out of Paddle. This page says what each one is and what
 it has to be able to do — **not** where the dashboard currently keeps it.
-Paddle's navigation is Paddle's to document and it changes; a menu path
-printed here would be wrong on some future Tuesday, and wrong in the way that
-is hardest to notice, because it would still look authoritative.
+Navigation belongs to Paddle's own documentation: a menu path printed here
+could be wrong on some future Tuesday, and wrong in the way that is hardest
+to notice, because it would still look authoritative. One pointer anyway,
+because you have to start somewhere: at the time of writing Paddle documented
+the destination's secret as living under **Developer tools → Notifications**.
+If it has moved since, the description below is still what you are after.
 
 **1. A notification destination, and its secret.** Create a destination that
 delivers your notifications over HTTP to
@@ -60,8 +68,8 @@ every signature is checked against. Put it in your deploy environment as
 
 Grant it `customer.read` and nothing else.
 
-This is the only secret in the bridge that is used to *make* a request rather
-than to check one, so it is worth being narrow: `customer.read` is the whole
+Unlike a webhook secret, this one is used to *make* a request rather than to
+check one, so it is worth being narrow: `customer.read` is the whole
 permission the bridge needs, and a key with more is a key that can do more if
 your bridge host is ever compromised.
 
