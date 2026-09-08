@@ -9,7 +9,7 @@ import { parseStrictUtc } from './dates.js'
 // CLASS: the local `KeyManifest` interface below is the document's SHAPE, and
 // the two must not be confused — a shape can be imitated, which is what the
 // handle exists to stop.
-import { manifestData, type KeyManifest as ParsedKeyManifestHandle } from './trustMaterial.js'
+import { manifestData, type KeyManifest as ParsedKeyManifest } from './trustMaterial.js'
 
 export type KeyStatus = 'active' | 'retired' | 'compromised'
 export interface KeyEntry {
@@ -361,7 +361,7 @@ export function artifactChainContinuous(chain: JsonObject[]): boolean {
 // already holds as data (`TrustStore.artifact_manifests`, itself parsed from
 // the store's bytes), and it authenticates through its own signature below,
 // not through a read of `keyManifest`.
-export function verifyArtifactManifest(manifest: JsonObject, keyManifest: ParsedKeyManifestHandle): boolean {
+export function verifyArtifactManifest(manifest: JsonObject, keyManifest: ParsedKeyManifest): boolean {
   try {
     const data = manifestData(keyManifest)
     if (data === null) return false

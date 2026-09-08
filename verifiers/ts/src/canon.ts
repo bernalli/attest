@@ -359,14 +359,20 @@ export function ownArrayLength(value: unknown): number | null {
  * ("no upper bound", "no declaration"). A reconstruction that silently drops a
  * key the unit carries is not that unit, so the whole unit is set aside.
  *
- * A NON-ENUMERABLE data property is skipped instead, and that is not the same
- * case wearing different clothes: it is not part of the object's JSON form at
- * all — `JSON.stringify` does not serialize it and no parser ever produces one
- * — so there is no member to lose. An accessor, by contrast, occupies a key
- * that IS in the form. The distinction is pinned by
- * `blind-integer-representation.test.ts` ("a non-enumerable extra member is not
- * own data and the genuine declaration still activates"): making this branch
- * refuse it too costs a genuine document its activation.
+ * The first question is DATA OR CODE, and it is asked before any other: an
+ * accessor is refused whatever its enumerability, because what makes it
+ * inadmissible is that reading it runs the caller's code, not where it would
+ * land in a serialization. Only among DATA members does the JSON form decide,
+ * and there a non-enumerable one is skipped rather than refused: it is not part
+ * of the object's JSON form at all — `JSON.stringify` does not serialize it and
+ * no parser ever produces one — so there is no member to lose.
+ *
+ * Three outcomes, not two, and the order of the two checks below is what makes
+ * them three: a non-enumerable ACCESSOR is refused (data-or-code decides first),
+ * a non-enumerable DATA property is skipped, an enumerable accessor is refused.
+ * The middle one is pinned by `blind-integer-representation.test.ts` ("a
+ * non-enumerable extra member is not own data and the genuine declaration still
+ * activates"): refusing it too would cost a genuine document its activation.
  *
  * Integers arrive as `bigint` — the profile's only numeric type — and a JS
  * `number` is refused rather than coerced. Coercing would silently admit a

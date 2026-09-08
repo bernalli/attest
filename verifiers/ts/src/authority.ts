@@ -402,9 +402,9 @@ function memberEquals(document: unknown, member: string, expected: unknown): boo
  * deduplicating by document hash BEFORE any shape work, so a view padded with
  * copies of one document costs one verification and not one per copy.
  *
- * PRECONDITION: `store` is `evaluateAuthority`'s already-materialized
- * store (its `materializeTrustStore` pass runs before this function is
- * reached), so `manifest` below is already materialized data. Reading it with
+ * PRECONDITION: `store` is the `StoreData` `evaluateAuthority` unwrapped from
+ * its `TrustStore` handle, so `manifest` below is a tree of the snapshot and
+ * never a caller's object. Reading it with
  * `verifyAuthorizationSignatureData` (not the public
  * `verifyAuthorization`) is what keeps this loop — up to
  * `MAX_AUTHORITY_DOCUMENTS` candidates — from re-materializing the SAME

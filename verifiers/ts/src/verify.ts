@@ -1179,10 +1179,10 @@ export function verify(
       const amChain = store.artifact_manifest_chains[issuerId]?.[artifactSeries]
       const members = [candidateArtifactManifest, ...(amChain ?? [])]
       const authenticated = issuerManifestForTransparency != null && members.every(
-        // The MATERIALIZED twin: this runs once per chain member against ONE
-        // manifest, and `issuerManifestForTransparency` came out of
-        // `materializeTrustStoreDetailed` above. The public door would
-        // re-materialize it per member. Python parity: verify.py's same loop.
+        // The snapshot-tree twin: this runs once per chain member against ONE
+        // manifest, and `issuerManifestForTransparency` came off the `StoreData`
+        // unwrapped above. The public door takes a handle and would unwrap one
+        // per member. Python parity: verify.py's same loop.
         member => verifyArtifactManifestData(member, issuerManifestForTransparency!),
       )
       if (candidateArtifactManifest['issuer'] !== issuerId) {

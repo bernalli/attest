@@ -258,8 +258,8 @@ const REVOCATION_TRANSFERRED = 'transferred'
  * log index (first-logged) wins. Python parity:
  * `verify._resolve_transfer_backing`.
  *
- * PRECONDITION: `issuerManifest` is ALREADY MATERIALIZED — it came out of
- * `materializeTrustStore`. This function reaches the hoisted
+ * PRECONDITION: `issuerManifest` is a TREE OF THE SNAPSHOT — it came off a
+ * `TrustStore` handle, never from a caller. This function reaches the hoisted
  * `verifyRecordSignatureData`, which does not re-apply the boundary,
  * so a raw caller object handed in here would reopen the class that boundary
  * closes. Module-local for exactly that reason.
@@ -312,9 +312,9 @@ function resolveTransferBacking(
     const record = asObject(c['record'])
     if (!record || record['receipt_id'] !== receiptId) continue
 
-    // The MATERIALIZED variant, deliberately: `issuerManifest` came out of
-    // `materializeTrustStore` before this function was reached, and the public
-    // entry point would re-materialize it once PER CLAIM instead of once per
+    // The snapshot-tree variant, deliberately: `issuerManifest` came off a
+    // `TrustStore` handle before this function was reached, and the public
+    // entry point would unwrap a handle once PER CLAIM instead of once per
     // call. The boundary is not skipped here, it is hoisted.
     if (!manifestOk || !verifyTransferRecordSignatureData(record, issuerManifest)) {
       appendOnce(TRANSFER_WARN.REVOCATION_UNBACKED)

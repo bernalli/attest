@@ -34,7 +34,7 @@
 import { describe, it, expect } from 'vitest'
 import { canonicalBytes, materializeValue } from '../src/canon.js'
 import { ERR } from '../src/messages.js'
-import type { JsonObject } from '../src/canon.js'
+import type { JsonObject, JsonValue } from '../src/canon.js'
 import type { KeyManifest as KeyManifestHandle } from '../src/trustMaterial.js'
 import { keyManifest as manifestHandle } from './helpers/trust.js'
 import {
@@ -53,6 +53,11 @@ import {
   auditChain,
   authorizationMessage,
 } from '../src/transfer.js'
+import {
+  verifyRecord as verifyRevocationRecord,
+  verifyRecordSignature as verifyRevocationRecordSignature,
+} from '../src/revocation.js'
+import { verifyArtifactManifest } from '../src/manifests.js'
 import { ed25519 } from '@noble/curves/ed25519'
 import { b64uEncode } from '../src/b64u.js'
 import {
@@ -90,11 +95,17 @@ const EXPIRED = manifestWith([expiredEntry()])
  * This is the exact shape that made the old two-walk materializer drop a
  * member: truthful for the validating walk, an accessor for the copying one.
  */
-function lyingEntry(honest: Record<string, unknown>, prop: string, truthfulReads: number): unknown {
+function lyingEntry(
+  honest: Record<string, unknown>,
+  prop: string,
+  truthfulReads: number,
+  counter?: { n: number },
+): unknown {
   let reads = 0
   return new Proxy(honest, {
     getOwnPropertyDescriptor(target, p) {
       if (p === prop) {
+        if (counter !== undefined) counter.n += 1
         reads += 1
         if (reads > truthfulReads) {
           return { get: () => (target as Record<string, unknown>)[prop], enumerable: true, configurable: true }
@@ -105,9 +116,9 @@ function lyingEntry(honest: Record<string, unknown>, prop: string, truthfulReads
   })
 }
 
-const hostileManifest = (truthfulReads: number): unknown => ({
+const hostileManifest = (truthfulReads: number, counter?: { n: number }): unknown => ({
   ...(EXPIRED as unknown as Record<string, unknown>),
-  keys: [lyingEntry((EXPIRED['keys'] as JsonObject[])[0] as unknown as Record<string, unknown>, 'valid_to', truthfulReads)],
+  keys: [lyingEntry((EXPIRED['keys'] as JsonObject[])[0] as unknown as Record<string, unknown>, 'valid_to', truthfulReads, counter)],
 })
 
 // --- the documents, one per rail, all signed AFTER the key expired ----------
@@ -167,12 +178,21 @@ const TRANSFER = (() => {
   return parse({ ...body, signature: signBlock(canonicalBytes(parse(body)), SIGNER, KID) })
 })()
 
+const REVOCATION = (() => {
+  const body = { receipt_id: OLD_ID, status: 'revoked', revoked_at: AFTER_EXPIRY }
+  return parse({ ...body, signature: signBlock(canonicalBytes(parse(body)), SIGNER, KID) })
+})()
+
 /**
- * The eight boolean ports, each as a function of the manifest alone.
+ * The boolean ports, each as a function of the manifest alone.
  *
- * Enumerated from the module exports rather than described in prose: a port
- * added to one of these files and not to this list is a port this suite does
- * not measure, and a list is the only form in which that omission is visible.
+ * Written out one by one rather than described in prose: a port added to one of
+ * these modules and not to this list is a port this suite does not measure, and
+ * a list is the only form in which that omission is visible. It is still a list
+ * kept by hand — it was short by the two `revocation.ts` doors when it was
+ * first written, and nothing but a reader noticed — so a door added to
+ * `grant.ts`, `authority.ts`, `transfer.ts`, `revocation.ts` or `manifests.ts`
+ * belongs here the same day.
  * `auditChain` is not here — it returns a report, not a boolean — and has its
  * own section below.
  */
@@ -185,6 +205,20 @@ const BOOLEAN_PORTS: ReadonlyArray<readonly [string, (m: KeyManifestHandle) => b
   ['verifyPublisherAuthorizationSignature', (m) => verifyPublisherAuthorizationSignature(AUTHORIZATION, m)],
   ['verifyTransferRecord', (m) => verifyTransferRecord(TRANSFER, m)],
   ['verifyTransferRecordSignature', (m) => verifyTransferRecordSignature(TRANSFER, m)],
+  ['verifyRevocationRecord', (m) => verifyRevocationRecord(REVOCATION, m)],
+  ['verifyRevocationRecordSignature', (m) => verifyRevocationRecordSignature(REVOCATION, m)],
+]
+
+/**
+ * `verifyArtifactManifest` takes a handle too, but its FIRST argument is the
+ * document under examination, so it is not a function of the manifest alone
+ * and cannot join the list above. It is measured with the others in the
+ * trap-manifest case below; its positive control lives where the material to
+ * build one already does (`manifests.test.ts`, `sibling-hybrid.test.ts`).
+ */
+const EVERY_HANDLE_PORT: ReadonlyArray<readonly [string, (m: KeyManifestHandle) => boolean]> = [
+  ...BOOLEAN_PORTS,
+  ['verifyArtifactManifest', (m) => verifyArtifactManifest({}, m)],
 ]
 
 // ===========================================================================
@@ -212,10 +246,43 @@ describe('the manifest ports accept a parsed handle and nothing else', () => {
   })
 
   it.each([0, 1, 2, 3])(
-    'the two-read window that flipped four verdicts on 0.9.3 is unreachable (truthful reads = %i)',
+    'the entry that answered twice cannot even be read (truthful reads = %i)',
     (truthful) => {
-      const hostile = hostileManifest(truthful) as KeyManifestHandle
-      for (const [, port] of BOOLEAN_PORTS) expect(port(hostile)).toBe(false)
+      // MEASURED, not assumed: with the ports taking a handle, this object is
+      // refused by the brand check and its descriptors are never read at all —
+      // `reads` stays 0 on every window. That is the point, and it is also why
+      // the assertion below is on `reads` and not only on `false`: a `false`
+      // here is produced by the contract refusal, so on its own it would say
+      // nothing about the window, and this case would be a second copy of the
+      // live-object test above wearing the name of a different property.
+      const reads = { n: 0 }
+      const hostile = hostileManifest(truthful, reads) as KeyManifestHandle
+      for (const [, port] of EVERY_HANDLE_PORT) expect(port(hostile)).toBe(false)
+      expect(reads.n).toBe(0)
+    },
+  )
+
+  it.each(EVERY_HANDLE_PORT)(
+    '%s: runs no code of an object that is not a handle',
+    (_name, port) => {
+      // The property `false` alone cannot carry, and the one a returned-to-live
+      // -object regression breaks FIRST. Every reflective operation a port
+      // could perform on this stand-in reports itself and throws, so a door
+      // that reached for the caller's object at all is red here even when its
+      // verdict happens to stay `false`. Measured: giving any door back a
+      // `manifestData(m) ?? m` fallback turns this red.
+      let fired = false
+      const trap = new Proxy(
+        {},
+        {
+          get(_t, name) { fired = true; throw new Error(`read at ${String(name)}`) },
+          ownKeys() { fired = true; throw new Error('enumerated') },
+          getOwnPropertyDescriptor(_t, name) { fired = true; throw new Error(`descriptor at ${String(name)}`) },
+          has(_t, name) { fired = true; throw new Error(`probed for ${String(name)}`) },
+        },
+      ) as unknown as KeyManifestHandle
+      expect(port(trap)).toBe(false)
+      expect(fired).toBe(false)
     },
   )
 })
@@ -253,6 +320,18 @@ describe('the reconstruction boundary refuses a unit whose member reads as an ac
     expect(materializeValue(arr)).toBeNull()
   })
 
+  it('a non-enumerable ACCESSOR is refused: data-or-code is asked first, and it decides', () => {
+    // The third outcome, and the one that shows which criterion the code really
+    // applies. By "not in the JSON form" alone this member would be skipped like
+    // the non-enumerable data one below — it is invisible to `JSON.stringify`
+    // just the same. It is refused instead, because the first question is
+    // whether reading it runs the caller's code, and only among DATA members
+    // does the JSON form get to decide anything.
+    const unit: Record<string, unknown> = { kept: 'a' }
+    Object.defineProperty(unit, 'hidden', { get: () => 'b', enumerable: false, configurable: true })
+    expect(materializeValue(unit)).toBeNull()
+  })
+
   it('a NON-ENUMERABLE data member is still skipped, and that is a different case', () => {
     // Deliberately NOT symmetric with the accessor, and the reason is that a
     // non-enumerable property is not in the object's JSON form at all —
@@ -287,7 +366,7 @@ describe('auditChain separates a contract refusal from a finding about real mate
     parse({ receipt_id: OLD_ID, buyer: { pubkey: b64uEncode(holderPub) } }),
     parse({ receipt_id: NEW_ID, buyer: { pubkey: b64uEncode(holderPub) } }),
   ]
-  const view = parse([{ record: TRANSFER, evidence: null }])
+  const view = parse([{ record: TRANSFER, evidence: null }]) as unknown as JsonValue[]
   const NO_ANCHOR = { horizon: null } as unknown as import('../src/anchor.js').AnchorPolicy
   const audit = (m: unknown, ps = payloads) =>
     auditChain(ps, view, [], m as KeyManifestHandle, [], NO_ANCHOR)
@@ -329,6 +408,26 @@ describe('auditChain separates a contract refusal from a finding about real mate
     // `valid: linkCount === 0` would have reported as valid.
     expect(audit(ACTIVE).valid).toBe(false)
     expect(audit(ACTIVE, [payloads[0]!]).valid).toBe(false)
+  })
+
+  it('the contract refusal marks every link invalid, which no zero-link case reaches', () => {
+    // The PER-LINK half of the refusal — the `linkStatus` entries and one named
+    // error per link — is only built when `linkCount > 0`, so every zero-link
+    // case above leaves that half unexecuted. A branch that only ever runs with
+    // its loop bound at zero is a branch no test has executed.
+    //
+    // Measured: with this absent, returning `'valid'` for every link from the
+    // contract branch passed the ENTIRE suite. The Python twin already pins the
+    // same shape — `test_audit_chain_marks_every_link_invalid_for_anything_but`
+    // `_a_snapshot` in `tests/test_trust_store_boundary.py` — so the two cores
+    // were unequally covered on a property section 5.5 states for both.
+    const withLinks = audit(ACTIVE)
+    expect(withLinks.linkStatus).toEqual(['invalid'])
+    expect(withLinks.warnings).toEqual([])
+
+    const zeroLinks = audit(ACTIVE, [payloads[0]!])
+    expect(zeroLinks.linkStatus).toEqual([])
+    expect(zeroLinks.warnings).toEqual([])
   })
 
   it('a handle whose manifest fails its OWN self-verify keeps the empty chain vacuously valid', () => {

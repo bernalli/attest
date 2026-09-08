@@ -1009,8 +1009,9 @@ function fixedDateReached(
  * A byte-identical duplicate of a document already seen is deduplicated rather
  * than treated as equivocation: "two DISTINCT authenticated grants" is what
  * §18.3 rejects, and a replayed copy is not a second document. */
-// PRECONDITION: `manifest` is ALREADY MATERIALIZED — it is `store.manifests[signer]`
-// read after `evaluateGrant`'s `materializeTrustStore` pass, and its
+// PRECONDITION: `manifest` is a TREE OF THE SNAPSHOT — it is
+// `store.manifests[signer]`, read off the `StoreData` a `TrustStore` handle
+// gave up, so it holds only what the parser produced. Its
 // self-consistency was already established by the floor's own `verifyGrant`
 // check before this function is reached. Hoisting that self-consistency check
 // ONCE below (`manifestOk`) and reading `verifyGrantSignatureData`
@@ -1108,9 +1109,9 @@ function honorDeclarations(
     // declaration signed under a key later marked `compromised` ceases to
     // authenticate, and a grant that had activated on it returns to `dormant`:
     // the safe direction, stated in §18.4 rather than left to be discovered.
-    // `store` here is `evaluateGrant`'s already-materialized store (its
-    // `materializeTrustStore` pass ran before `honorDeclarations` was
-    // reached), so `declarationManifest` is already materialized data.
+    // `store` here is the `StoreData` `evaluateGrant` unwrapped from its
+    // `TrustStore` handle, so `declarationManifest` is a tree of the snapshot
+    // and never a caller's object.
     // `verifyDeclarationSignatureData` (not the public
     // `verifyDeclaration`) is what avoids re-materializing it once per
     // supplied declaration — the manifest differs per declaration (publisher
