@@ -68,7 +68,7 @@ describe('every provenance the app can reach lands short of green', () => {
     expect(result.kind).toBe('jobs')
     if (result.kind !== 'jobs') return
     const [job] = result.jobs
-    expect(Object.values(job.trustStore.provenance)).toEqual(['bundle'])
+    expect(job.trustStore.issuers().map((i) => job.trustStore.provenanceFor(i))).toEqual(['bundle'])
 
     const run = runVerify(job.envelopeBytes, job.trustStore, null, null, {})
     expect(run.result.trust).toBe('unauthenticated_tofu')
@@ -81,7 +81,7 @@ describe('every provenance the app can reach lands short of green', () => {
     expect(result.kind).toBe('jobs')
     if (result.kind !== 'jobs') return
     const [job] = result.jobs
-    expect(Object.values(job.trustStore.provenance)).toEqual(['embedded'])
+    expect(job.trustStore.issuers().map((i) => job.trustStore.provenanceFor(i))).toEqual(['embedded'])
 
     const run = runVerify(job.envelopeBytes, job.trustStore, null, null, {})
     expect(run.result.trust).toBe('unauthenticated_tofu')
@@ -110,7 +110,7 @@ describe('every provenance the app can reach lands short of green', () => {
     const store = trustStoreFromManifestBytes(keyManifest)
     expect(store, 'a single key manifest must be accepted on the user-supplied path').not.toBeNull()
     if (!store) return
-    expect(Object.values(store.provenance)).toEqual(['user-supplied'])
+    expect(store.issuers().map((i) => store.provenanceFor(i))).toEqual(['user-supplied'])
 
     const run = runVerify(result.envelopeBytes, store, null, null, {})
     expect(run.result.trust).toBe('unauthenticated_tofu')

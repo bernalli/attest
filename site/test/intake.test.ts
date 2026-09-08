@@ -110,7 +110,7 @@ describe('intake', () => {
     const run = runVerify(r.jobs[0].envelopeBytes, r.jobs[0].trustStore)
     expect(run.result.signature).toBe('valid')
     expect(run.result.trust).toBe('unauthenticated_tofu')
-    expect(r.jobs[0].trustStore.provenance[issuer]).toBe('embedded')
+    expect(r.jobs[0].trustStore.provenanceFor(issuer)).toBe('embedded')
   })
 
   it('asks for a manifest when a parseable envelope has none embedded', () => {
@@ -196,7 +196,7 @@ describe('trustStoreFromManifestBytes', () => {
     const { issuer, manifest } = keyManifest()
     const ts = trustStoreFromManifestBytes(canonicalBytes(manifest))
     expect(ts).not.toBeNull()
-    expect(ts!.provenance[issuer]).toBe('user-supplied')
+    expect(ts!.provenanceFor(issuer)).toBe('user-supplied')
     expect(runVerify(envelopeBytes(), ts!).result.signature).toBe('valid')
   })
 

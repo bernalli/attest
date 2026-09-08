@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import * as V from './helpers/vectors.js'
 import { runVerify } from '../src/run.js'
 import { explain } from '../src/explain.js'
+import { parseTrustStore } from 'attest-verifier'
 import type { VerificationResult } from 'attest-verifier'
 
 const emptyLeaf = (): string => mkdtempSync(join(tmpdir(), 'attest-vectors-'))
@@ -32,8 +33,12 @@ describe('compromiseView loader, not-well-formed inputs', () => {
   it('lets verify() reject a view that is not an array (caller-contract rail)', () => {
     const view = V.compromiseView(leafWith('{"manifest":{}}'))
     expect(Array.isArray(view)).toBe(false)
+    // A real empty snapshot, so the throw this asserts is the RAIL's and not
+    // the store's: a `{ manifests: {} }` literal is now refused on its own
+    // contract, and the test would then pass on a message it never names.
+    const empty = parseTrustStore(new TextEncoder().encode('{"manifests":{},"provenance":{}}'))
     expect(() =>
-      runVerify(new Uint8Array(), { manifests: {}, provenance: {} }, null, null, { compromiseView: view }),
+      runVerify(new Uint8Array(), empty, null, null, { compromiseView: view }),
     ).toThrow(/compromise_view must be a list/)
   })
 })

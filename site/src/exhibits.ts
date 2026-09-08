@@ -1,4 +1,4 @@
-import { loadsStrict } from 'attest-verifier'
+import { loadsStrict, parseTrustStore } from 'attest-verifier'
 import type {
   AnchorPolicy, JsonObject, JsonValue, LogKey, PinnedHeader, TrustStore,
   VerificationResult, VerifyTransparencyOptions,
@@ -84,13 +84,25 @@ export interface ExhibitRun {
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text)
 const strict = (text: string): JsonValue => loadsStrict(bytes(text)) as JsonValue
 
+/**
+ * The leaf's `manifests.json`, as the BYTES it ships in.
+ *
+ * It used to be rebuilt member by member, with `chains` defaulted to `{}` when
+ * the file omitted it — and that default is the reason the rebuild had to go: a
+ * store with NO `chains` and one with an EMPTY `chains` are different documents
+ * under §5.3, and the rebuild handed the verifier the second when the leaf said
+ * the first. An exhibit that shows the corpus has to show the document the
+ * corpus stores, or the page is replaying something the vector never said.
+ *
+ * `bytes(text)` and not `strict(text)`: the file is already in the document
+ * grammar, so there is nothing to reconstruct — the same one-line spelling
+ * `site/test/helpers/vectors.ts` and `tools/conformance_adapter_ts.mjs` use for
+ * the same file. A leaf outside the profile throws here, at module evaluation,
+ * which is where a corpus exhibit that cannot be shown belongs: this array is
+ * the page's own fixture, not something a visitor supplies.
+ */
 function trustStoreOf(text: string): TrustStore {
-  const d = strict(text) as unknown as JsonObject
-  return {
-    manifests: d.manifests as unknown as Record<string, JsonObject>,
-    provenance: d.provenance as unknown as Record<string, string>,
-    chains: (d.chains ?? {}) as unknown as Record<string, JsonObject[]>,
-  }
+  return parseTrustStore(bytes(text))
 }
 
 // Configuration, not evidence: shaped by hand from the leaf's own trusted

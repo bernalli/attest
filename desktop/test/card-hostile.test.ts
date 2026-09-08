@@ -2,7 +2,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL as NodeURL } from 'node:url'
-import { loadsStrict } from 'attest-verifier'
+import { parseTrustStore } from 'attest-verifier'
 import { intake, type VerifyJob } from '../../site/src/intake.js'
 import { runVerify, type VerifyRun } from '../../site/src/run.js'
 import { renderResult } from '../../site/src/render.js'
@@ -189,7 +189,14 @@ const VECTORS = fileURLToPath(new NodeURL('../../docs/spec/vectors/', import.met
 function warningJob(): { job: VerifyJob; run: VerifyRun } {
   const dir = `${VECTORS}12-retired-key-ok/`
   const envelopeBytes = new Uint8Array(readFileSync(`${dir}envelope.json`))
-  const trustStore = loadsStrict(new Uint8Array(readFileSync(`${dir}manifests.json`))) as never
+  // The leaf's `manifests.json` as the BYTES it ships in, parsed by the
+  // library. It used to be `loadsStrict(...) as never`: the cast is what let
+  // this call site survive the flip untouched and unseen — the typechecker
+  // cannot object to `never`, so the store arrived as a live tree, `verify`
+  // refused it on contract, and the fixture stopped carrying the warning it
+  // exists to carry while the suite reported one plain failure instead of a
+  // migration that had been missed.
+  const trustStore = parseTrustStore(new Uint8Array(readFileSync(`${dir}manifests.json`)))
   const job: VerifyJob = { label: 'retired.attest', envelopeBytes, trustStore, transparency: null }
   return { job, run: runVerify(envelopeBytes, trustStore, null, null, {}) }
 }

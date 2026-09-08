@@ -97,26 +97,41 @@ function envelopeDigest(bytes) {
   }
 }
 
-/** Issuers as a caller of the trust store observes them: a sorted list, because
- *  a store is looked up by name and the order of its members is not a fact
- *  about the bundle. */
+/** Issuers as a caller of the trust store observes them.
+ *
+ *  Recipe T1: read the snapshot through its OWN surface, never through member
+ *  names it no longer exposes. `issuers()` is already in canonical order — the
+ *  order the signed bytes put them in — so the `sort()` that used to be here
+ *  would now be a SECOND ordering rule on top of the library's, and nothing
+ *  could keep the two in agreement. Same spelling as the Python side of this
+ *  differential (`importer_differential.py`, recipe T2), because a projection
+ *  the two sides compute differently compares the projections and not the
+ *  importers.
+ *
+ *  No `store.manifests || {}` fallback, and that is the point of this rewrite:
+ *  a snapshot answers `undefined` for that name, so the fallback turned "this
+ *  is not a store I can read" into "this store has no issuers" — a projection
+ *  that agrees with an empty one and disagrees with nothing. A store that is
+ *  not a snapshot is now a loud failure with the reason in it. */
 function issuerProjection(store) {
-  if (!store) return []
-  const manifests = store.manifests || {}
-  const provenance = store.provenance || {}
-  const chains = store.chains || {}
-  return Object.keys(manifests)
-    .sort()
-    .map((issuer) => ({
+  if (!store || typeof store.issuers !== 'function')
+    throw new TypeError(
+      'the browser importer handed back something that is not a parsed trust store: ' +
+        'a projection read off member names would silently be empty',
+    )
+  return store.issuers().map((issuer) => {
+    const selected = store.manifestFor(issuer)
+    // `issuers()` lists what `manifestFor` resolves; a null here is the library
+    // disagreeing with itself, not a bundle that lacks a manifest.
+    if (selected === null) throw new TypeError(`issuers() listed ${issuer}, manifestFor did not`)
+    const chain = store.chainFor(issuer).map((member) => member.data())
+    return {
       issuer,
-      provenance: Object.prototype.hasOwnProperty.call(provenance, issuer)
-        ? provenance[issuer]
-        : null,
-      selected: canonicalDigest(manifests[issuer]),
-      chain: Object.prototype.hasOwnProperty.call(chains, issuer)
-        ? chains[issuer].map(canonicalDigest)
-        : [canonicalDigest(manifests[issuer])],
-    }))
+      provenance: store.provenanceFor(issuer),
+      selected: canonicalDigest(selected.data()),
+      chain: (chain.length > 0 ? chain : [selected.data()]).map(canonicalDigest),
+    }
+  })
 }
 
 function proofProjection(proofs) {
