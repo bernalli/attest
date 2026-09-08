@@ -61,9 +61,17 @@ languages' default string sort does not:
 The two orders agree on everything in the Basic Multilingual Plane and disagree
 the moment an **astral** character appears: astral characters encode as a
 surrogate pair starting at `0xD800`, so by code unit they sort *below* the
-`U+E000`–`U+FFFF` block and by code point *above* it. Measured:
-`sorted(["", "\U00010000"])` in Python gives `["", "\U00010000"]`
-while `["", "\U00010000"].sort()` in JavaScript gives the reverse.
+`U+E000`-`U+FFFF` block and by code point *above* it. Measured, on the two
+strings `U+E000` (a private-use character) and `U+10000` (the first astral one):
+
+    Python      sorted([...])  ->  [U+E000, U+10000]   # by code point
+    JavaScript  [...].sort()   ->  [U+10000, U+E000]   # by UTF-16 code unit
+
+Those two are named by code point here rather than written literally, and that
+is not fussiness: `U+E000` is private-use and has NO glyph in any font, by
+definition. Spelled literally, a reader comparing the two lines sees what looks
+like an empty string and concludes the example is broken -- which happened
+during review of this very paragraph.
 
 So: **anywhere product code orders strings that a caller can observe, take the
 order from the canonicalizer** (`canon.canonical_key_order` in Python,

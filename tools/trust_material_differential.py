@@ -117,7 +117,13 @@ def _python_answer(payload: bytes) -> dict[str, Any]:
     try:
         store = trust_material.TrustStore.from_bytes(payload)
     except trust_material.TrustMaterialError as exc:
-        return {"admitted": False, "cls": _message_class(str(exc)), "member": exc.member}
+        message = str(exc)
+        return {
+            "admitted": False,
+            "cls": _message_class(message),
+            "member": exc.member,
+            "message": message,
+        }
     return {"admitted": True, "issuers": list(store.issuers())}
 
 
@@ -167,40 +173,73 @@ DECLARED_DIVERGENCES: dict[str, str] = {
 }
 
 
-def _divergences(corpus: list[tuple[str, bytes]]) -> list[str]:
+def _divergences(corpus: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
+    """`(document name, what differs)` for every disagreement.
+
+    The name travels as a FIELD, never re-extracted from the rendered line. A
+    caller that formats `f"{name}: {reason}"` and then recovers the name by
+    splitting on the separator has built a parser for its own output, and it is
+    wrong on the first name that contains the separator -- measured: with either
+    a `startswith(name + ":")` or a `partition(": ")[0]` test, a document called
+    `"<declared name>: variant"` is absorbed as if it WERE the declared one.
+    """
     ts = _ts_answers(corpus)
-    found: list[str] = []
+    found: list[tuple[str, str]] = []
     for name, data in corpus:
         theirs = ts.get(name)
         if theirs is None:
-            found.append(f"{name}: the TypeScript side returned no answer")
+            found.append((name, "the TypeScript side returned no answer"))
             continue
         if "foreign" in theirs:
             found.append(
-                f"{name}: TypeScript refused with a non-TrustMaterialError: {theirs['foreign']}"
+                (name, f"TypeScript refused with a non-TrustMaterialError: {theirs['foreign']}")
             )
             continue
         mine = _python_answer(data)
         if mine["admitted"] != theirs["admitted"]:
             found.append(
-                f"{name}: python {'admitted' if mine['admitted'] else 'refused'}, "
-                f"typescript {'admitted' if theirs['admitted'] else 'refused'}"
+                (
+                    name,
+                    f"python {'admitted' if mine['admitted'] else 'refused'}, "
+                    f"typescript {'admitted' if theirs['admitted'] else 'refused'}",
+                )
             )
             continue
         if mine["admitted"]:
             if mine["issuers"] != theirs["issuers"]:
                 found.append(
-                    f"{name}: issuers differ — python {mine['issuers']!r}, "
-                    f"typescript {theirs['issuers']!r}"
+                    (
+                        name,
+                        f"issuers differ — python {mine['issuers']!r}, "
+                        f"typescript {theirs['issuers']!r}",
+                    )
                 )
             continue
         theirs_cls = _message_class(theirs["message"])
-        if mine["cls"] != theirs_cls:
-            found.append(f"{name}: class differs — python {mine['cls']}, typescript {theirs_cls}")
+        # An unclassifiable message on EITHER side is a divergence in itself,
+        # never a class to compare: `UNCLASSIFIED == UNCLASSIFIED` would make two
+        # genuinely different FUTURE refusals agree, and `member` is None on both
+        # sides for every class that omits it, so nothing downstream catches it.
+        # It is F-1's own shape, applied to the instrument that exists to find
+        # F-1: two independent implementations "agreeing" because the tool cannot
+        # tell them apart.
+        if "UNCLASSIFIED" in (mine["cls"], theirs_cls):
+            found.append(
+                (
+                    name,
+                    "a refusal this differential cannot classify — "
+                    f"python cls={mine['cls']!r} message={mine['message']!r}, "
+                    f"typescript cls={theirs_cls!r} message={theirs['message']!r}",
+                )
+            )
+        elif mine["cls"] != theirs_cls:
+            found.append((name, f"class differs — python {mine['cls']}, typescript {theirs_cls}"))
         elif mine["member"] != theirs["member"]:
             found.append(
-                f"{name}: member differs — python {mine['member']!r}, "
-                f"typescript {theirs['member']!r}"
+                (
+                    name,
+                    f"member differs — python {mine['member']!r}, typescript {theirs['member']!r}",
+                )
             )
     return found
 
@@ -232,14 +271,14 @@ def main(argv: list[str] | None = None) -> int:
     # there. A gate that only subtracts an allow-list goes quiet the day the
     # thing it was excusing stops happening -- which is exactly when somebody
     # wants to know.
-    def _is_declared(entry: str) -> bool:
-        return any(entry.startswith(name + ":") for name in DECLARED_DIVERGENCES)
-
-    declared_seen = {
-        name for name in DECLARED_DIVERGENCES if any(f.startswith(name + ":") for f in found)
-    }
+    #
+    # Matched on the document NAME as a field. Matching on the rendered line --
+    # by prefix or by splitting on the separator -- absorbs any future document
+    # whose name begins with a declared one, which is an allow-list quietly
+    # growing to cover cases nobody declared.
+    declared_seen = {name for name, _ in found if name in DECLARED_DIVERGENCES}
     missing = set(DECLARED_DIVERGENCES) - declared_seen
-    found = [f for f in found if not _is_declared(f)]
+    found = [(name, reason) for name, reason in found if name not in DECLARED_DIVERGENCES]
     for name in sorted(declared_seen):
         print(f"declared divergence, still present: {name}")
     if missing:
@@ -249,11 +288,12 @@ def main(argv: list[str] | None = None) -> int:
         print("  either a core changed, or the corpus stopped reaching this case.")
         return 1
 
+    lines = [f"{name}: {reason}" for name, reason in found]
     if args.keep is not None:
-        args.keep.write_text("\n".join(found) + "\n", encoding="utf-8")
+        args.keep.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if found:
         print(f"DIVERGENCES: {len(found)}")
-        for line in found[:40]:
+        for line in lines[:40]:
             print(f"  {line}")
         if len(found) > 40:
             print(f"  ... and {len(found) - 40} more")

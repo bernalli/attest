@@ -42,6 +42,14 @@ gate_need "the TypeScript adapter is present" -- test -f "$ADAPTER"
 # is nothing to compare against, and that is a precondition failure (78), not a
 # red -- a gate that could not measure is neither green nor broken.
 gate_need "verifiers/ts/dist is built (npm run build)" -- test -f "$DIST"
+# The differential imports `tests.test_trust_material_parse` for its corpus, and
+# that module imports pytest and hypothesis at module level. Without the dev
+# extras installed the import raises ModuleNotFoundError, the differential exits
+# 1, and `gate_expect_rc 0` below would read that as "the two cores disagree" --
+# a FAIL where the honest answer is 78. This repo has already met that exact
+# shape once, from `uv sync` run without `--all-extras`.
+gate_need "the differential's Python dependencies (pytest, hypothesis) are importable" -- \
+  "$GATE_PY" -c "import pytest, hypothesis"
 
 gate_run "trust_material_differential.py" -- "$GATE_PY" "$DIFFERENTIAL"
 gate_expect_rc 0 "the two cores agree on every document of the corpus"
