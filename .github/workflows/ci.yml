@@ -88,6 +88,7 @@ jobs:
       # This complements the reader-level differential in pages.yml.
       # The Python environment, built TS verifier and site dependencies needed
       # by this command are prepared earlier in this job.
+      - run: uv run --frozen python tools/importer_differential.py --selftest
       - run: uv run --frozen python tools/importer_differential.py
       # Same reason, for the corpus that pins the protocol itself. Replaying
       # the committed leaves never re-runs the asserts the generator makes
