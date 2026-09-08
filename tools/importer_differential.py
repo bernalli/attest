@@ -43,7 +43,8 @@ COMPILED verifier, so a stale build measures the previous revision's logic:
     npm ci --prefix verifiers/ts && npm run build --prefix verifiers/ts
     npm ci --prefix site
 
-Exit status is non-zero when any divergence is found.
+Exit status: 0 for agreement, 1 for a failed measurement or divergence, and
+78 for an absent prerequisite (no measurement).
 """
 
 from __future__ import annotations
@@ -1263,11 +1264,21 @@ def python_projection(attest: Path, private: Path | None = None, **caps: int) ->
     }
 
 
+class MissingPrerequisite(RuntimeError):
+    """The environment cannot supply a measurement."""
+
+
 def build_ts_bundle(out_dir: Path) -> Path:
     """Bundle the browser importer's two entry points for the adapter."""
     if not ESBUILD.exists():
-        raise SystemExit(
+        raise MissingPrerequisite(
             f"missing {ESBUILD} — run `npm ci --prefix site` before the importer differential"
+        )
+    if shutil.which("node") is None:
+        raise MissingPrerequisite("missing node on PATH")
+    if not (REPO_ROOT / "verifiers/ts/dist/index.js").is_file():
+        raise MissingPrerequisite(
+            "missing verifier build — run `npm run build --prefix verifiers/ts`"
         )
     bundle = out_dir / "importer.mjs"
     result = subprocess.run(  # noqa: S603 -- fixed argv list, no shell
@@ -1723,7 +1734,11 @@ def main(argv: list[str] | None = None) -> int:
     unknown = [name for name in families if name not in ALL_FAMILIES]
     if unknown:
         raise SystemExit(f"unknown families: {', '.join(unknown)}")
-    return run(families, args.count, args.seed, args.keep)
+    try:
+        return run(families, args.count, args.seed, args.keep)
+    except MissingPrerequisite as exc:
+        print(f"PRECONDITION ABSENT: {exc}", file=sys.stderr)
+        return 78
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
