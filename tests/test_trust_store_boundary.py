@@ -202,9 +202,15 @@ class HostileHashKey:
 class RecordingStore:
     """An object that answers to everything a door might ask of a snapshot.
 
-    It has the five member names as attributes AND a `__class__` that claims to
-    be `TrustStore`, so a door checking anything other than the exact type is
-    fooled. Every access is registered.
+    It has the five member names as attributes, and every access is registered.
+
+    It does NOT fake `__class__`, and an earlier version of this docstring said
+    it did: `__class__` is found by ordinary lookup, so it never reaches
+    `__getattr__`, and nothing here can make it answer `TrustStore`. What tells
+    `type(x) is TrustStore` apart from `isinstance(x, TrustStore)` is the
+    `subclass-built-past-the-factory` imposter below, not this one -- and the
+    distinction matters, because a subclass that skipped the factory is the
+    shape `isinstance` would let through.
     """
 
     def __init__(self, marker: str) -> None:
@@ -330,8 +336,10 @@ def test_two_faced_status_cannot_resurrect_a_compromised_key() -> None:
 # TOUCHING IT.
 #
 # The imposters are section 6.1's: the old shape (a dict with the five member
-# names), an object that claims the right `__class__`, the containers the old
-# boundary used to tolerate, a handle of the WRONG kind, and `None`. Each is
+# names), an object answering to every member name, a SUBCLASS built past the
+# factory (the one that separates `type(x) is` from `isinstance`), the
+# containers the old boundary used to tolerate, a handle of the WRONG kind, and
+# `None`. Each is
 # measured against every door, and the refusal class comes from section 5.5:
 # `V` verdict, `F` false/none, `CA` chain audit, `TE` TypeError, `X` ViewError.
 # ---------------------------------------------------------------------------
@@ -548,6 +556,30 @@ def test_audit_chain_is_invalid_at_zero_links_for_anything_but_a_snapshot(
     assert _TOUCHED == [], f"audit_chain consulted {label}: {_TOUCHED}"
 
 
+@pytest.mark.parametrize("label,imposter", _manifest_imposters(), ids=lambda v: str(v)[:40])
+def test_audit_chain_marks_every_link_invalid_for_anything_but_a_snapshot(
+    label: str, imposter: object
+) -> None:
+    """The contract branch WITH links, which nothing else reaches.
+
+    Every other imposter test hands `audit_chain` an empty `payloads`, so
+    `link_count` is 0 and the per-link half of the refusal -- the `link_status`
+    tuple and one named error per link -- is never built. A branch that only
+    ever runs with its loop bound at zero is a branch no test has executed.
+    """
+    payloads = [{"receipt_id": _REV_ID}, {"receipt_id": _REV_ID2}]
+    _clear()
+    result = transfer.audit_chain(payloads, [], [], cast("Any", imposter), [], _NO_HORIZON)
+    assert result.valid is False, label
+    assert result.link_status == ("invalid",), label
+    assert result.errors == (
+        _NOT_PARSED_MANIFEST,
+        "chain link 1: issuer signature invalid",
+    ), label
+    assert result.warnings == ()
+    assert _TOUCHED == [], f"audit_chain consulted {label}: {_TOUCHED}"
+
+
 def test_audit_chain_separates_a_contract_failure_from_a_verdict_on_real_data() -> None:
     """The two refusals of `audit_chain` are different, and the difference shows
     at zero links — the only place it CAN show.
@@ -566,6 +598,15 @@ def test_audit_chain_separates_a_contract_failure_from_a_verdict_on_real_data() 
     broken = _key_manifest_active()
     broken["manifest_signature"]["sig"] = keys.b64u(bytes(64))
     unverifiable = key_manifest(broken)
+
+    # The fixture has to BE the case it stands for, and this is the assertion
+    # that says so. At zero links `valid=True, errors=()` is ALSO what a
+    # manifest whose self-verify PASSES answers -- measured: both branches
+    # return exactly that -- so without these two lines the P-15 half of this
+    # test is satisfied by a perfectly good manifest and pins nothing at all.
+    assert manifests.verify_key_manifest(honest) is True
+    assert manifests.verify_key_manifest(unverifiable) is False
+
     verdict = transfer.audit_chain([], [], [], unverifiable, [], _NO_HORIZON)
     assert verdict.valid is True, "a snapshot that fails its self-verify keeps P-15"
     assert verdict.errors == ()
@@ -1009,6 +1050,11 @@ _EXCLUDED: dict[tuple[str, str, str], str] = {
         "keeps the artifact `manifest` a dict for this same reason. The key "
         "manifest that authenticates them is a separate argument elsewhere."
     ),
+    ("manifests", "check_artifact_continuity", "trusted"): (
+        "the other side of the same door, for the same reason: an ARTIFACT "
+        "manifest under examination. Watched by NAME since `trusted` joined the "
+        "closed set, so it needs its own entry instead of inheriting one."
+    ),
     ("views", "build_compromise_claim", "manifest"): (
         "evidence builder named by section 5.6(c) itself: the manifest is the "
         "document the claim is built ABOUT, admitted on the section 18.4 rail."
@@ -1017,6 +1063,30 @@ _EXCLUDED: dict[tuple[str, str, str], str] = {
         "evidence builder named by section 5.6(c) itself, same reason."
     ),
 }
+
+
+def _is_handle(annotation: object) -> bool:
+    """Does this resolved annotation carry one of the two trust handles?
+
+    Module scope rather than a closure inside `meta_closure_violations`, so the
+    non-vacuity test can call the REAL predicate instead of restating it.
+    `typing`/`types` stay local, for the reason given above this section.
+
+    A Union counts only when it is exactly {handle, NoneType}: section 5.5
+    prescribes `KeyManifest | None` for `views.build_revocation_view`, while
+    `KeyManifest | dict` must stay a violation -- that is the case that would
+    actually matter.
+    """
+    import types
+    import typing
+
+    handles = (trust_material.TrustStore, trust_material.KeyManifest)
+    if annotation in handles:
+        return True
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType):
+        args = set(typing.get_args(annotation))
+        return len(args) == 2 and type(None) in args and bool(args & set(handles))
+    return False
 
 
 def meta_closure_violations() -> list[str]:
@@ -1045,21 +1115,24 @@ def meta_closure_violations() -> list[str]:
     import importlib
     import inspect
     import pkgutil
-    import types
     import typing
 
     import attest
 
-    watched_names = {"trust_store", "key_manifest", "trusted_manifest", "previous", "candidate"}
-    handles = (trust_material.TrustStore, trust_material.KeyManifest)
-
-    def is_handle(annotation: object) -> bool:
-        if annotation in handles:
-            return True
-        if typing.get_origin(annotation) in (typing.Union, types.UnionType):
-            args = set(typing.get_args(annotation))
-            return len(args) == 2 and type(None) in args and bool(args & set(handles))
-        return False
+    # `trusted` is in this set because `manifests.check_continuity(trusted,
+    # candidate)` is a section 5.5 door whose FIRST argument was invisible
+    # here: 5.6(c) names the pair `previous`/`candidate`, but the code calls
+    # them `trusted`/`candidate`, so one of the two arguments of a migrated
+    # door went unwatched -- and, not being watched, it never appeared in the
+    # exclusion list either, which is where the accounting would have shown it.
+    watched_names = {
+        "trust_store",
+        "key_manifest",
+        "trusted_manifest",
+        "trusted",
+        "previous",
+        "candidate",
+    }
 
     violations: list[str] = []
     for info in pkgutil.iter_modules(attest.__path__, attest.__name__ + "."):
@@ -1080,7 +1153,7 @@ def meta_closure_violations() -> list[str]:
                 if (stem, name, param_name) in _EXCLUDED:
                     continue
                 annotation = hints.get(param_name)
-                if not is_handle(annotation):
+                if not _is_handle(annotation):
                     violations.append(
                         f"{stem}.{name}({param_name}: {annotation}) is not a trust handle"
                     )
@@ -1124,14 +1197,24 @@ def test_the_meta_closure_is_not_vacuous() -> None:
         watched += 1
     assert watched == 5
 
-    # And a deliberately wrong annotation IS reported: a Union that is not
-    # {handle, None} must not slip through the correction made for Optional.
-    def fake(key_manifest: trust_material.KeyManifest | dict[str, Any]) -> bool:
+    # And the Optional correction is exercised on the PREDICATE, both ways. The
+    # assertion that used to stand here was `annotation not in (KeyManifest,
+    # TrustStore)`, which is true of the Union that must be REFUSED and equally
+    # true of the Optional that must be ACCEPTED -- so it could not tell them
+    # apart, and a broken normalization would have left it green. Measured.
+    def refused(key_manifest: trust_material.KeyManifest | dict[str, Any]) -> bool:
         return True
 
-    hints = typing.get_type_hints(fake, globalns={"trust_material": trust_material, "Any": Any})
-    annotation = hints["key_manifest"]
-    assert annotation not in (trust_material.KeyManifest, trust_material.TrustStore)
+    def accepted(key_manifest: trust_material.KeyManifest | None) -> bool:
+        return True
+
+    globalns = {"trust_material": trust_material, "Any": Any}
+    refused_ann = typing.get_type_hints(refused, globalns=globalns)["key_manifest"]
+    accepted_ann = typing.get_type_hints(accepted, globalns=globalns)["key_manifest"]
+    assert _is_handle(refused_ann) is False
+    assert _is_handle(accepted_ann) is True
+    assert _is_handle(trust_material.TrustStore) is True
+    assert _is_handle(dict) is False
 
 
 def test_build_revocation_view_accepts_a_record_its_manifest_authenticates() -> None:

@@ -49,6 +49,28 @@ class IssuerIdentity:
     manifest_snapshot: dict[str, Any] = field(repr=False)
     manifest_handle: trust_material.KeyManifest = field(repr=False)
 
+    def __post_init__(self) -> None:
+        """The two fields are ONE manifest, and until now nothing said so.
+
+        `core.can_issue` decides key validity from `manifest_handle`, while
+        `core.issue_for` copies `manifest_snapshot` verbatim into every
+        envelope. Built from different documents, this bridge would authorize
+        against one manifest and publish another -- and no test of either half
+        could notice, because each half is self-consistent. Splitting one field
+        into two created the invariant; this is the only place both are in
+        scope, so it is the only place it can be stated.
+        """
+        try:
+            document = canon.canonical_bytes(self.manifest_snapshot)
+        except canon.CanonError as exc:
+            raise ConfigError(f"issuer key manifest is not canonicalizable: {exc}") from exc
+        if document != self.manifest_handle.to_bytes():
+            raise ConfigError(
+                "issuer key manifest disagrees with its parsed handle: the document "
+                "copied into envelopes and the trust material the ports read must be "
+                "the same manifest"
+            )
+
 
 def _load_seed(path: Path) -> keys.SigningKeyPair:
     try:

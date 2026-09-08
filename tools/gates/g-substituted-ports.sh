@@ -80,7 +80,16 @@ gate_say "ports watched: $(tr '|' ' ' <<< "$PORTS" | wc -w)"
 
 # --- Derive the population, now ------------------------------------------
 FOUND="$(mktemp)"
-grep -rlnE "setattr\(([^)]*\b(${PORTS})\b|\"[^\"]*\.(${PORTS})\")" \
+# `-z` reads each FILE as one record, so `[^)]*` may span newlines. Without it
+# the search is line-based and a substitution the formatter wrapped --
+#     monkeypatch.setattr(
+#         manifests, "verify_key_manifest", stub
+#     )
+# -- is invisible, while being the same form. That wrapped shape already occurs
+# 19 times in this test tree for other targets, so it is the form `ruff format`
+# produces, not a hypothetical. With `-l` the file names still come back
+# newline-separated, so the pipeline below is unchanged.
+grep -rlzE "setattr\(([^)]*\b(${PORTS})\b|\"[^\"]*\.(${PORTS})\")" \
   "$GATE_TREE/tests" "$GATE_TREE/bridge/tests" "$GATE_TREE/witness/tests" \
   --include='*.py' 2>/dev/null | sort -u > "$FOUND"
 gate_expect_nonempty "$FOUND" "at least one port substitution exists to measure"
@@ -106,6 +115,19 @@ while read -r file; do
   if grep -Eq -- "NO substitution was intercepted" <<< "$RUN_OUT"; then
     gate_say "FAIL: $rel carries the form but the plugin intercepted no substitution"
     gate_say "      (the search and the counter disagree: classify the form or widen the plugin)"
+    _gate_failures=$((_gate_failures + 1))
+    continue
+  fi
+
+  # An intercepted substitution whose label is not a watched port is a gap in
+  # the gate, exactly like the disagreement above: the plugin recognised the
+  # form but has no counter for that module, so it measured NOTHING and said so
+  # quietly. The header of this script promises it fails closed on a form it
+  # cannot classify; without this branch it did not.
+  if grep -Eq -- "UNWATCHED-NAME" <<< "$RUN_OUT"; then
+    gate_say "FAIL: $rel substitutes a port in a module the plugin does not watch"
+    grep -E -- "UNWATCHED-NAME" <<< "$RUN_OUT" | while read -r line; do gate_say "      $line"; done
+    gate_say "      Add the owning module to _OWNERS in substituted_ports_plugin.py."
     _gate_failures=$((_gate_failures + 1))
     continue
   fi

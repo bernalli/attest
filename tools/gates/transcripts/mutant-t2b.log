@@ -1,12 +1,13 @@
 # mutant t2b: the first member of every chain is dropped at admission
-# recorded 2026-09-08T12:22:47Z
+# recorded 2026-09-08T14:36:28Z
 
 # injected into src/attest/trust_material.py
 $ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf tests/test_trust_material_parse.py tests/test_trust_store_boundary.py
-........................................................................ [ 25%]
-............F........................................................... [ 50%]
-....................................................x................... [ 75%]
-.................................................F...................    [100%]
+........................................................................ [ 24%]
+............F........................................................... [ 49%]
+....................................................x................... [ 73%]
+........................................................F............... [ 98%]
+....                                                                     [100%]
 =================================== FAILURES ===================================
 ___________ test_every_selector_hands_back_what_the_document_carried ___________
 
@@ -50,13 +51,14 @@ E
 E         Right contains one more item: {'issuer': 'store.example.com', 'manifest_version': 1, 'issued_at': '2026-01-01T00:00:00Z', 'keys': [{'kid': 'store.ex...ub': '_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg', 'valid_from': '2026-01-01T00:00:00Z', 'valid_to': None, ...}], ...}
 E         Use -v to get more diff
 
-tests/test_trust_store_boundary.py:709: AssertionError
+tests/test_trust_store_boundary.py:750: AssertionError
 =========================== short test summary info ============================
 FAILED tests/test_trust_material_parse.py::test_every_selector_hands_back_what_the_document_carried
 FAILED tests/test_trust_store_boundary.py::test_an_unreadable_chain_is_refused_not_deleted
-2 failed, 282 passed, 1 xfailed in 3.30s
+2 failed, 289 passed, 1 xfailed in 3.13s
 
 exit: 1
 
 RED: True
+MARKER 'test_an_unreadable_chain_is_refused_not_deleted' present: True
 VERDICT: KILLED

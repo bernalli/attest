@@ -100,6 +100,65 @@ gate_expect_rc() {
   fi
 }
 
+# gate_expect_staged_red <marker-regex> <closing-task> <label>
+# A step this migration keeps red ON PURPOSE, for as long as one core has moved
+# and the other has not. Three properties, and the gate is worth nothing without
+# all three:
+#
+#   1. It is red for the DECLARED reason. A staged red judged on `rc != 0` alone
+#      is the F-06 defect this gate carries in its own header: any other failure
+#      -- an import error, a missing file, a real regression -- wears the same
+#      exit code and would be waved through. The marker is the observable that
+#      only the declared cause can print.
+#   2. It has a CLOSING TASK, named in the output, so the registration cannot
+#      outlive its cause quietly.
+#   3. It fails CLOSED IN BOTH DIRECTIONS. A staged red that turns GREEN is a
+#      failure too: either the closing task has landed (and this registration
+#      must be deleted, not left to bless whatever comes next) or the stricter
+#      side stopped refusing -- which is the regression the pair existed to
+#      catch. An expectation that only ever complains about "more red" is how a
+#      migration exception quietly becomes permanent.
+gate_expect_staged_red() {
+  local re="$1" until="$2" label="$3"
+  if [ "$GATE_RC" -eq 0 ]; then
+    gate_say "FAIL: $label — expected the staged red declared until $until, observed exit 0"
+    gate_say "      Either $until has landed (delete this registration) or the strict side"
+    gate_say "      stopped refusing. Both need a person; neither is a pass."
+    _gate_failures=$((_gate_failures + 1))
+    return 0
+  fi
+  # Here-string, for the reason spelled out in gate_expect_marker below.
+  if ! grep -Eq -- "$re" <<< "$GATE_OUT"; then
+    gate_say "FAIL: $label — red, but NOT the staged red (marker /$re/ absent)"
+    gate_say "      A red without its declared observable is an unexplained red."
+    _gate_failures=$((_gate_failures + 1))
+    return 0
+  fi
+  gate_say "ok: $label — staged red, carrying its declared cause, until $until (exit $GATE_RC)"
+}
+
+# gate_divergence_signatures <text>
+# One sorted line per divergence importer_differential.py reported: the vector,
+# the browser road it was seen on, and the DIRECTION (which side said what).
+# Lives here rather than inline in the gate so the self-test can exercise the
+# real extractor instead of restating it -- an oracle that repeats the logic it
+# checks cannot contradict it.
+#
+# The direction is part of the signature deliberately: "these two vectors
+# disagree" would still hold if the two importers swapped answers, which is a
+# different world entirely.
+gate_divergence_signatures() {
+  awk '
+    /^DIVERGENCE /{ vec=$2; ref=""; next }
+    /^  reference importer: /{ ref=$3; next }
+    /^  browser [^:]*: /{
+      road=$2; sub(/:$/, "", road)
+      if (vec != "") { print vec" road="road" reference="ref" browser="$3; vec="" }
+      next
+    }
+  ' <<< "$1" | sort -u
+}
+
 # gate_expect_marker <regex> <label>
 # The output must carry something only a completed measurement can print.
 gate_expect_marker() {

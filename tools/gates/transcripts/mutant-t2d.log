@@ -1,5 +1,5 @@
 # mutant t2d: every provenance entry is remapped to tls at the boundary
-# recorded 2026-09-08T12:23:40Z
+# recorded 2026-09-08T14:36:35Z
 
 # injected through tools/gates/mutant_d_plugin.py (no source edit)
 $ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf -p tools.gates.mutant_d_plugin tests/test_vectors.py::test_vector_matches_spec_intended_result[28-transparency/a-logged-trust-unchanged] tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/q-tofu-publisher] tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/x-trust-not-borrowed-from-signer] tests/test_vectors.py::test_vector_matches_spec_intended_result[43-publisher-authority/o-tofu-authorized]
@@ -240,7 +240,7 @@ FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[28-transp
 FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/q-tofu-publisher]
 FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/x-trust-not-borrowed-from-signer]
 FAILED tests/test_vectors.py::test_vector_matches_spec_intended_result[43-publisher-authority/o-tofu-authorized]
-4 failed in 0.66s
+4 failed in 0.52s
 
 exit: 1
 

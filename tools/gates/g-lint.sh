@@ -33,7 +33,30 @@ gate_run "ruff format --check" -- "$RUFF" format --check "$GATE_TREE"
 gate_expect_rc 0 "ruff format --check: nothing left to reformat"
 
 gate_run "mypy --strict" -- "$MYPY" --strict "${MYPY_ROOTS[@]}"
-gate_expect_rc 0 "mypy --strict: no findings"
+
+# STAGED RED until T4b. `cli.py` is the one caller T2 deliberately left behind,
+# so every one of these findings is a consequence of the flip landing in the
+# library while the CLI still hands it dicts. The decision not to silence it --
+# no `type: ignore`, no exclusion of the file, both of which would weaken the
+# gate permanently for a problem two tasks wide -- was taken when T2 was
+# written. What was missing is that the decision lived only in prose: the gate
+# still asked for `rc 0`, so it went red on an exit code and could not tell the
+# declared twenty from a twenty-first appearing somewhere else.
+#
+# The observable is therefore the SET OF FILES carrying errors, derived from
+# mypy's own output and compared against the one file declared. A finding in
+# any other module fails, and so does mypy going green: at that point T4b has
+# landed and this registration must be deleted rather than left to bless
+# whatever comes after it.
+MYPY_ERR_FILES="$(mktemp)"
+MYPY_ERR_DECLARED="$(mktemp)"
+grep -Eo '^[^ ]+\.py:[0-9]+: error:' <<< "$GATE_OUT" | sed 's/:.*//' | sort -u > "$MYPY_ERR_FILES"
+printf 'src/attest/cli.py\n' > "$MYPY_ERR_DECLARED"
+gate_expect_staged_red 'Found [0-9]+ errors in 1 file' "T4b" \
+  "mypy --strict: findings confined to the un-migrated CLI (D-A3)"
+gate_expect_same_set "$MYPY_ERR_FILES" "$MYPY_ERR_DECLARED" \
+  "every mypy finding is in the one file declared, and in no other"
+rm -f "$MYPY_ERR_FILES" "$MYPY_ERR_DECLARED"
 
 # Derive, right now, how many source files mypy was obligated to have read.
 # This is the "collection could be empty" guard from the family that made
@@ -48,13 +71,17 @@ N_FOUND="$(grep -c . "$FOUND_PY")"
 rm -f "$FOUND_PY"
 gate_say "sources on disk under ${MYPY_ROOTS[*]} right now: $N_FOUND"
 
-gate_expect_marker 'Success: no issues found in [0-9]+ source files' \
+# mypy states its file count in BOTH of its endings -- "Success: no issues found
+# in N source files" and "Found N errors in M files (checked N source files)" --
+# so the completeness check below keeps working while the staged red above is in
+# force, instead of being suspended for the two tasks when it is most needed.
+gate_expect_marker '(Success: no issues found in|\(checked )[0-9]+ source files' \
   "mypy prints how many source files it read"
 
 MYPY_OUT_FOR_COUNT="$GATE_OUT"
 MYPY_N="$(printf '%s\n' "$MYPY_OUT_FOR_COUNT" \
-  | grep -Eo 'Success: no issues found in [0-9]+ source files' \
-  | grep -Eo '[0-9]+')"
+  | grep -Eo '(Success: no issues found in|\(checked )[0-9]+ source files' \
+  | grep -Eo '[0-9]+' | head -n1)"
 
 if [ -z "$MYPY_N" ]; then
   gate_say "FAIL: mypy's own source-file count could not be extracted from its output"

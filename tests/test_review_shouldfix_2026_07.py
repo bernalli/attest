@@ -70,10 +70,17 @@ def _rewrite_zip(
 
 
 def test_find_key_tolerates_non_dict_entries() -> None:
-    # `None`/`"x"` as `keys[]` members do not survive json.dumps + strict
-    # parsing as a document a caller could hand the library (R3): this
-    # exercises the corpus body, so it goes through the private twin.
+    # R3, MEASURED rather than assumed: both documents DO survive the door --
+    # `KeyManifest.from_bytes(json.dumps(...))` accepts them, because a key
+    # manifest only has to be a JSON object the profile can canonicalize, and
+    # `null` inside `keys[]` is all three. An earlier comment here claimed the
+    # opposite and sent the test to the private twin, which skipped the public
+    # door for a case a caller can actually reach -- and the public door does
+    # something the twin does not: it hands back a COPY of the entry.
     manifest = {"keys": [None, "x", {"kid": KID, "pub": "p"}]}
+    assert manifests.find_key(key_manifest(manifest), KID) == {"kid": KID, "pub": "p"}
+    assert manifests.find_key(key_manifest({"keys": [None]}), KID) is None
+    # The twin keeps its own coverage: the body is what internal callers reach.
     assert manifests._find_key(manifest, KID) == {"kid": KID, "pub": "p"}
     assert manifests._find_key({"keys": [None]}, KID) is None
 

@@ -81,7 +81,14 @@ MUTANTS: tuple[Mutant, ...] = (
             "    return _StoreFields(**fields)"
         ),
         tests=("tests/test_trust_material_parse.py", "tests/test_trust_store_boundary.py"),
-        marker="",
+        # The marker is NOT optional here, and an empty one is the defect this
+        # runner exists to prevent: `marker_ok` is `(not marker) or ...`, so a
+        # blank marker makes the kill criterion `rc != 0` and nothing else --
+        # exactly the "looked only at the exit code" reading that would have
+        # called t2d a kill when pytest exited 4 on a node ID that did not
+        # exist. These two tests are scoped to whole FILES, so without a marker
+        # ANY red anywhere in them counts.
+        marker="test_an_unreadable_chain_is_refused_not_deleted",
         what="the first member of every chain is dropped at admission",
     ),
     Mutant(
@@ -105,7 +112,10 @@ MUTANTS: tuple[Mutant, ...] = (
         ),
         new=('        to end.\n        """\n        return self._data'),
         tests=("tests/test_trust_material_parse.py",),
-        marker="",
+        # See t2b: a blank marker degrades the criterion to the exit code. This
+        # mutant in particular already died on the SCHEMA once, and the marker
+        # is what would say so a second time instead of reporting a kill.
+        marker="test_mutating_a_held_manifest_changes_neither_it_nor_the_store",
         what="KeyManifest.data() hands back its own tree instead of a fresh parse (aliasing)",
     ),
     Mutant(

@@ -1,5 +1,5 @@
 # mutant t2a: the brand check accepts a plain dict carrying the five member names
-# recorded 2026-09-08T12:43:43Z
+# recorded 2026-09-08T14:36:27Z
 
 # injected into src/attest/trust_material.py
 $ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf tests/test_trust_store_boundary.py::test_verify_answers_a_verdict_for_anything_but_a_snapshot tests/test_trust_store_boundary.py::test_the_evaluators_raise_for_anything_but_a_snapshot
@@ -28,7 +28,7 @@ E       AssertionError: five-member-dict: ("no trusted manifest for issuer 'stor
 E       assert 'trust store must be a parsed snapshot produced by this library; a live object is not accepted' in ("no trusted manifest for issuer 'store.example.com'",)
 E        +  where ("no trusted manifest for issuer 'store.example.com'",) = VerificationResult(signature='invalid', schema='not_checked', revocation='unknown', binding='not_checked', trust='unau...t='not_checked', grant_trust='not_checked', publisher_authority='not_checked', publisher_authority_trust='not_checked').errors
 
-tests/test_trust_store_boundary.py:454: AssertionError
+tests/test_trust_store_boundary.py:462: AssertionError
 _ test_the_evaluators_raise_for_anything_but_a_snapshot[five-member-dict-{'manifests': {}, 'provenance': {}, 'cha] _
 
 label = 'five-member-dict'
@@ -51,11 +51,11 @@ imposter = {'manifests': {}, 'provenance': {}, 'chains': {}, 'artifact_manifests
              ^^^^^^^^^^^^^^^^^^^^^^^^
 E       Failed: DID NOT RAISE TypeError
 
-tests/test_trust_store_boundary.py:475: Failed
+tests/test_trust_store_boundary.py:483: Failed
 =========================== short test summary info ============================
 FAILED tests/test_trust_store_boundary.py::test_verify_answers_a_verdict_for_anything_but_a_snapshot[five-member-dict-{'manifests': {}, 'provenance': {}, 'cha]
 FAILED tests/test_trust_store_boundary.py::test_the_evaluators_raise_for_anything_but_a_snapshot[five-member-dict-{'manifests': {}, 'provenance': {}, 'cha]
-2 failed, 20 passed in 0.54s
+2 failed, 20 passed in 0.50s
 
 exit: 1
 

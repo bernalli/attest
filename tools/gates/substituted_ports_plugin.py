@@ -17,10 +17,13 @@ the stand-in stopped being called. The test still passed.
 
 WHAT THIS PLUGIN DOES
 
-It replaces the substitution with a COUNTING WRAPPER around the real function:
-the stand-in the test wrote is dropped, the genuine implementation stays, and
-every call through that name is tallied. At the end of the session it prints
-one line per substituted target with its count.
+It wraps every watched port in a COUNTING WRAPPER around the real function,
+installed for the whole session before any test runs, and tallies every call made
+through that name. A test's own substitution is still APPLIED -- the stand-in is
+not dropped, it replaces the counter for that test's duration -- so what the count
+answers is whether the name is reached by the REST of the file. (An earlier
+wording here said the stand-in was dropped. It is not, and the difference matters
+to anyone reading a count and deciding what it proves.)
 
 The gate then asks one question of each: **was this name reached at all?** A
 count of zero means the test filed its stand-in at an address the code under
@@ -82,7 +85,18 @@ _MISSING = object()
 # The modules whose ports are watched. Named here rather than discovered, and
 # the gate checks that every one of them imports: a module that silently failed
 # to load would contribute zero counts and read as "nothing to see".
-_OWNERS = ("attest.manifests", "attest.revocation", "attest.transfer", "attest.views")
+# `grant` and `authority` are here because T2's five NEW composite twins live in
+# them: a stand-in filed on `attest.grant.verify_grant` produced a label with no
+# counter behind it, which the session reported as `UNWATCHED-NAME` and the gate
+# did not count as a failure -- silence on exactly the surface the task changed.
+_OWNERS = (
+    "attest.manifests",
+    "attest.revocation",
+    "attest.transfer",
+    "attest.views",
+    "attest.grant",
+    "attest.authority",
+)
 
 
 def _install_counters() -> None:
@@ -152,7 +166,13 @@ def pytest_configure(config: object) -> None:
         args = [a for a in (name, value) if a is not _MISSING]
         original_setattr(self, target, *args, **kwargs)
 
-    pytest.MonkeyPatch.setattr = patched  # type: ignore[method-assign]
+    # Both codes, and mypy names the second itself: `MonkeyPatch.setattr` is
+    # overloaded, so replacing it is an `assignment` error as well as a
+    # `method-assign` one, and a suppression that covers only the first leaves
+    # the file red. It went unseen because the check reported for T2 was
+    # `mypy --strict src/attest/`, while G-LINT measures MYPY_ROOTS -- which
+    # includes this directory. Same criterion, wider population.
+    pytest.MonkeyPatch.setattr = patched  # type: ignore[method-assign, assignment]
 
 
 def pytest_sessionfinish(session: object, exitstatus: int) -> None:
