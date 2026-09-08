@@ -700,6 +700,24 @@ def _cmd_check_config(args: argparse.Namespace) -> int:
         config = load_config(Path(args.config))
         issuer = load_issuer(config.issuer)
         catalog = ProductCatalog(config.products)
+        # Construct exactly what `_build_deps` will construct. Both adapters
+        # validate locally and contact nothing, so this stays inside
+        # `check-config`'s contract (no Ledger, no platform) while closing the
+        # gap where the pre-flight prints "configured" for a rail that `serve`
+        # then refuses to start on.
+        if config.paddle is not None:
+            PaddleAdapter(
+                webhook_secret=config.paddle.webhook_secret,
+                api_key=config.paddle.api_key,
+                environment=config.paddle.environment,
+            )
+        if config.paypal is not None:
+            PayPalAdapter(
+                client_id=config.paypal.client_id,
+                client_secret=config.paypal.client_secret,
+                webhook_id=config.paypal.webhook_id,
+                environment=config.paypal.environment,
+            )
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return _RC_CONFIG_ERROR
@@ -794,6 +812,20 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
                 continue
             try:
                 event = json.loads(dead_letter.raw_json)
+                if not isinstance(event, dict):
+                    # `http.py` dead-letters a SIGNED body that is not an object
+                    # (`test_signed_non_object_paddle_event_is_dead_lettered_and_
+                    # acknowledged`). Nothing can ever be issued from one, so
+                    # leaving it unresolved keeps `retry-failed` at exit 1 for
+                    # good and hides the next real dead letter behind a standing
+                    # alarm. Same rule as a non-actionable event: close it.
+                    log.info(
+                        "retry-failed: paddle dead letter %d carries no event object",
+                        dead_letter.id,
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
                 if not deps.paddle.wants(event):
                     log.info(
                         "retry-failed: paddle dead letter %d is not actionable", dead_letter.id
@@ -802,8 +834,18 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
                     resolved += 1
                     continue
                 deps.core.process(deps.paddle.normalize(event))
-            except Exception:  # still bad input, or a transient failure — leave unresolved
-                log.warning("retry-failed: paddle dead letter %d still failing", dead_letter.id)
+            except Exception as exc:  # still bad input, or a transient failure
+                # The exception CLASS, never its message: it separates a bad
+                # payload (`PurchaseRejected`) from a transient provider fault
+                # (`PaddleApiError`) from a bug in this bridge (`AttributeError`), and
+                # carries no purchase id and no credential of its own. Without
+                # it a permanent failure and one that will clear on the next
+                # run are the same line.
+                log.warning(
+                    "retry-failed: paddle dead letter %d still failing (%s)",
+                    dead_letter.id,
+                    type(exc).__name__,
+                )
                 continue
             deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
             resolved += 1
@@ -823,6 +865,20 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
                 continue
             try:
                 event = json.loads(dead_letter.raw_json)
+                if not isinstance(event, dict):
+                    # `http.py` dead-letters a SIGNED body that is not an object
+                    # (`test_signed_non_object_paypal_event_is_dead_lettered_and_
+                    # acknowledged`). Nothing can ever be issued from one, so
+                    # leaving it unresolved keeps `retry-failed` at exit 1 for
+                    # good and hides the next real dead letter behind a standing
+                    # alarm. Same rule as a non-actionable event: close it.
+                    log.info(
+                        "retry-failed: paypal dead letter %d carries no event object",
+                        dead_letter.id,
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
                 if not deps.paypal.wants(event):
                     log.info(
                         "retry-failed: paypal dead letter %d is not actionable", dead_letter.id
@@ -831,8 +887,18 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
                     resolved += 1
                     continue
                 deps.core.process(deps.paypal.normalize(event))
-            except Exception:  # still bad input, or a transient failure — leave unresolved
-                log.warning("retry-failed: paypal dead letter %d still failing", dead_letter.id)
+            except Exception as exc:  # still bad input, or a transient failure
+                # The exception CLASS, never its message: it separates a bad
+                # payload (`PurchaseRejected`) from a transient provider fault
+                # (`PayPalApiError`) from a bug in this bridge (`AttributeError`), and
+                # carries no purchase id and no credential of its own. Without
+                # it a permanent failure and one that will clear on the next
+                # run are the same line.
+                log.warning(
+                    "retry-failed: paypal dead letter %d still failing (%s)",
+                    dead_letter.id,
+                    type(exc).__name__,
+                )
                 continue
             deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
             resolved += 1

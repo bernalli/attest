@@ -833,6 +833,209 @@ def test_retry_failed_needs_the_paddle_section_to_replay(
     assert "needs a [paddle] section to replay" in caplog.text
 
 
+@pytest.mark.parametrize("raw_json", ["[]", "7", '"event"', "null", "true"])
+def test_retry_failed_closes_a_paddle_dead_letter_that_carries_no_event_object(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    raw_json: str,
+) -> None:
+    """A signed body that is not an object is dead-lettered by `http.py`
+    (`test_signed_non_object_paddle_event_is_dead_lettered_and_acknowledged`,
+    over exactly these five shapes) and nothing can ever be issued from one.
+    Leaving it unresolved pins `retry-failed` at exit 1 for good, and a cron
+    job that alerts on that exit code then hides every later dead letter — the
+    lost purchases — behind an alarm that never clears.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    _export_paddle_env(monkeypatch)
+    api = RecordingHttpGet(AssertionError("a bodyless dead letter must cost no API call"))
+    monkeypatch.setattr(paddle_module, "_default_http_get", api)
+
+    price_id = make_transaction_completed()["data"]["items"][0]["price"]["id"]
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+    ledger.add_dead_letter(
+        "paddle",
+        None,
+        "paddle event id is missing or not a non-empty string",
+        raw_json,
+        now="2026-09-05T10:00:00Z",
+    )
+    config_path = _write_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        products_toml=_paddle_product_toml(price_id),
+        extra_toml=_PADDLE_TABLE,
+    )
+
+    rc = cli.main(["retry-failed", "--config", str(config_path)])
+
+    assert rc == 0
+    assert ledger.unresolved_dead_letters() == []
+    assert api.calls == []
+
+
+@pytest.mark.parametrize("raw_json", ["[]", "7", '"event"', "null", "true"])
+def test_retry_failed_closes_a_paypal_dead_letter_that_carries_no_event_object(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    raw_json: str,
+) -> None:
+    """Same reachable shape on the PayPal rail
+    (`test_signed_non_object_paypal_event_is_dead_lettered_and_acknowledged`),
+    and it must cost no order fetch to close it."""
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    _export_paypal_env(monkeypatch)
+    api = FakePayPalApi()
+    api.order_responses = [AssertionError("a bodyless dead letter must cost no order fetch")]
+    monkeypatch.setattr(paypal_module, "https_get", api.get)
+    monkeypatch.setattr(paypal_module, "https_post", api.post)
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+    ledger.add_dead_letter(
+        "paypal",
+        None,
+        "paypal event id is missing or not a non-empty string",
+        raw_json,
+        now="2026-09-05T10:00:00Z",
+    )
+    config_path = _write_config(tmp_path, hybrid_keys, key_manifest, extra_toml=_PAYPAL_TABLE)
+
+    rc = cli.main(["retry-failed", "--config", str(config_path)])
+
+    assert rc == 0
+    assert ledger.unresolved_dead_letters() == []
+    assert api.get_calls == []
+
+
+def test_retry_failed_names_the_exception_class_of_a_failed_replay(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`except Exception` also catches this bridge's own bugs. Without the
+    class in the line, an `AttributeError` and a provider outage produce the
+    identical "still failing", and the operator has nothing to act on. The
+    class, never the message: it carries no purchase id and no credential.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    _export_paddle_env(monkeypatch)
+    monkeypatch.setattr(paddle_module, "_default_http_get", RecordingHttpGet())
+
+    event = make_transaction_completed()
+    price_id = event["data"]["items"][0]["price"]["id"]
+    event["data"]["items"] = [{"price": {"id": price_id}}, {"price": {"id": price_id}}]
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+    ledger.add_dead_letter(
+        "paddle", event["data"]["id"], "2 items", json.dumps(event), now="2026-09-05T10:00:00Z"
+    )
+    config_path = _write_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        products_toml=_paddle_product_toml(price_id),
+        extra_toml=_PADDLE_TABLE,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        cli.main(["retry-failed", "--config", str(config_path)])
+
+    assert "still failing (PurchaseRejected)" in caplog.text
+
+
+def test_no_retry_failed_log_line_carries_a_raw_purchase_id_or_a_credential(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`retry-failed` is what a cron job's log keeps. The http rails have this
+    guard (`test_no_paddle_log_line_carries_the_raw_purchase_id_or_a_secret`);
+    the CLI branches that replay them did not, and the failing path is the one
+    an operator actually reads.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    _export_paddle_env(monkeypatch)
+    _export_paypal_env(monkeypatch)
+    paddle_api = RecordingHttpGet()
+    paypal_api = FakePayPalApi()
+    monkeypatch.setattr(paddle_module, "_default_http_get", paddle_api)
+    monkeypatch.setattr(paypal_module, "https_get", paypal_api.get)
+    monkeypatch.setattr(paypal_module, "https_post", paypal_api.post)
+
+    paddle_event = make_transaction_completed()
+    price_id = paddle_event["data"]["items"][0]["price"]["id"]
+    transaction_id = paddle_event["data"]["id"]
+    paddle_event["data"]["items"] = [{"price": {"id": price_id}}, {"price": {"id": price_id}}]
+    paypal_event = make_capture_completed()
+    order_id = paypal_event["resource"]["supplementary_data"]["related_ids"]["order_id"]
+    sku = paypal_api.order["purchase_units"][0]["items"][0]["sku"]
+    paypal_api.order["purchase_units"][0]["items"] = [
+        {"name": "Stardrift Chronicles", "sku": sku},
+        {"name": "The Long Dusk", "sku": "TLD-STD-001"},
+    ]
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+    ledger.add_dead_letter(
+        "paddle", transaction_id, "2 items", json.dumps(paddle_event), now="2026-09-05T10:00:00Z"
+    )
+    ledger.add_dead_letter(
+        "paypal", order_id, "2 items", json.dumps(paypal_event), now="2026-09-05T10:00:00Z"
+    )
+    config_path = _write_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        products_toml=_paddle_product_toml(price_id) + _paypal_product_toml(sku),
+        extra_toml=_PADDLE_TABLE + _PAYPAL_TABLE,
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        cli.main(["retry-failed", "--config", str(config_path)])
+
+    for forbidden in (
+        transaction_id,
+        order_id,
+        os.environ[_PADDLE_WEBHOOK_ENV_VAR],
+        os.environ[_PADDLE_API_KEY_ENV_VAR],
+        os.environ[_PAYPAL_CLIENT_ID_ENV_VAR],
+        os.environ[_PAYPAL_CLIENT_SECRET_ENV_VAR],
+    ):
+        assert forbidden not in caplog.text
+
+
+def test_check_config_refuses_a_rail_serve_would_refuse(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`check-config` is the pre-flight. A blank-but-set credential passes
+    config loading (`_env` only rejects unset and empty) and is refused by
+    `PaddleAdapter.__init__`, so before this guard the pre-flight printed
+    "paddle: configured" for a rail `serve` then died on. Constructing the
+    adapter contacts nothing, so the pre-flight's own contract holds.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    monkeypatch.setenv(_PADDLE_WEBHOOK_ENV_VAR, "   ")
+    monkeypatch.setenv(_PADDLE_API_KEY_ENV_VAR, "pdl_sdbx_apikey_cli_test_value")
+    config_path = _write_config(tmp_path, hybrid_keys, key_manifest, extra_toml=_PADDLE_TABLE)
+
+    rc = cli.main(["check-config", "--config", str(config_path)])
+
+    assert rc == 2
+    assert "paddle webhook secret is empty" in capsys.readouterr().err
+
+
 def test_retry_failed_needs_the_paypal_section_to_replay(
     tmp_path: Path,
     hybrid_keys: pq.HybridSigningKeys,
@@ -2030,12 +2233,24 @@ def test_cli_and_http_docstrings_name_every_webhook_rail() -> None:
     A rail that `_build_deps` wires and `make_app` routes but neither
     docstring names is a rail nobody knows to configure — and on this CLI the
     same list governs which dead letters `retry-failed` can replay.
+
+    Each docstring is narrowed to the slice that ENUMERATES the rails before
+    the names are looked for. A search over the whole text would stay green
+    after the enumeration itself was deleted, because "paddle" and "paypal"
+    also occur in the surrounding prose — measured, not supposed.
     """
     from attest_bridge import http
 
+    cli_doc = cli.__doc__ or ""
+    opening, closing = "the webhook rails", "polled `itch` rail"
+    assert opening in cli_doc and closing in cli_doc, "cli docstring lost its rail list"
+    start = cli_doc.index(opening)
+    cli_rails = cli_doc[start : cli_doc.index(closing, start) + len(closing)].lower()
+    http_rails = (http.__doc__ or "").split("\n\n", 1)[0].lower()
+
     for rail in ("stripe", "shopify", "itch", "paddle", "paypal"):
-        assert rail in (cli.__doc__ or "").lower(), f"cli docstring omits {rail}"
-        assert rail in (http.__doc__ or "").lower(), f"http docstring omits {rail}"
+        assert rail in cli_rails, f"cli docstring's rail list omits {rail}"
+        assert rail in http_rails, f"http docstring's opening line omits {rail}"
 
 
 def test_threading_server_docstring_lists_the_webhook_platforms_it_serializes() -> None:
