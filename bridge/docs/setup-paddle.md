@@ -17,8 +17,12 @@ This rail is Paddle **Billing** only. If your account is on **Paddle
 Classic**, the alerts you receive are form-encoded bodies containing a
 `p_signature` field and an RSA signature — a different scheme entirely, which
 this bridge does not verify. Classic deliveries will be rejected, not
-mis-issued. Check which you are on before configuring anything: the two
-dashboards differ, and only Billing has **Developer tools → Notifications**.
+mis-issued. Check which you are on before configuring anything, and check it
+on a **delivery** rather than on a screen, because that is the thing this
+bridge actually reads: a Billing notification arrives as a JSON body with a
+`Paddle-Signature` header, a Classic alert as form-encoded fields including
+`p_signature`. If you have never seen one, the synthetic delivery in step 4
+is what a Billing one looks like.
 
 Only `transaction.completed` is acted on. `transaction.paid` fires earlier,
 before Paddle has finished processing, and is ignored. A transaction with a
@@ -33,29 +37,28 @@ Identical to [setup-stripe.md](setup-stripe.md) steps 1 and 2. Do those first.
 
 ## 2. Create the notification destination and the API key
 
-Two separate things in the Paddle dashboard, and you need both. The exact
-menu wording moves between dashboard revisions, so what follows names each
-screen by what it does; the notifications screen was, at the time of writing,
-under **Developer tools → Notifications**.
+You need two values out of Paddle. This page says what each one is and what
+it has to be able to do — **not** where the dashboard currently keeps it.
+Paddle's navigation is Paddle's to document and it changes; a menu path
+printed here would be wrong on some future Tuesday, and wrong in the way that
+is hardest to notice, because it would still look authoritative.
 
-**The notification destination** — create a new destination on the
-notifications screen:
+**1. A notification destination, and its secret.** Create a destination that
+delivers your notifications over HTTP to
+`https://<your-bridge-host>/paddle/webhook`, subscribed to
+`transaction.completed`. The bridge ignores every other event type, so a wider
+subscription costs you nothing but deliveries that end in a `200` and no
+receipt.
 
-- **Type**: the destination kind that delivers over HTTP to a URL you supply,
-  not the one that sends email.
-- **URL**: `https://<your-bridge-host>/paddle/webhook`
-- **Events**: subscribe to `transaction.completed` and nothing else. The
-  bridge ignores every other event, so a wider subscription only costs you
-  deliveries that end in a `200` and no receipt.
+That destination has a **secret**, of the form `pdl_ntfset_...`. It is what
+every signature is checked against. Put it in your deploy environment as
+`PADDLE_WEBHOOK_SECRET`.
 
-After saving, open the destination and copy its **secret key** — it looks like
-`pdl_ntfset_...`. That value is what the bridge verifies signatures against.
-Put it in your deploy environment as `PADDLE_WEBHOOK_SECRET`.
+**2. An API key with `customer.read`.** Of the form `pdl_live_apikey_...`, or
+`pdl_sdbx_apikey_...` on sandbox. Put it in your deploy environment as
+`PADDLE_API_KEY`.
 
-**The API key** — create one from your account's API-key screen, granting it
-the `customer.read` permission and nothing more. It looks like
-`pdl_live_apikey_...` (or `pdl_sdbx_apikey_...` on sandbox). Put it in your
-deploy environment as `PADDLE_API_KEY`.
+Grant it `customer.read` and nothing else.
 
 This is the only secret in the bridge that is used to *make* a request rather
 than to check one, so it is worth being narrow: `customer.read` is the whole
@@ -88,9 +91,11 @@ api_key_env = "PADDLE_API_KEY"
 
 Then one `[products.paddle_<price_id>]` table per item you sell. The product
 key is `paddle_` followed by the **price id**, which is Paddle's unit of sale
-— not the product id. Find it in your Paddle catalogue, on the price attached
-to the product you sell; it looks like `pri_01h8xce4qz2m3n4p5q6r7s8t9v` and is
-distinguishable from a product id by its `pri_` prefix.
+— not the product id. If you are unsure which identifier you are holding,
+read it off a delivery instead of off a screen: it is the value the bridge
+takes from `data.items[].price.id` of the `transaction.completed` body, and it
+looks like `pri_01h8xce4qz2m3n4p5q6r7s8t9v`. The synthetic delivery in step 4
+below shows exactly where it sits.
 
 ```toml
 [products.paddle_pri_01h8xce4qz2m3n4p5q6r7s8t9v]

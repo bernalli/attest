@@ -27,28 +27,30 @@ Identical to [setup-stripe.md](setup-stripe.md) steps 1 and 2. Do those first.
 
 ## 2. Create the app and the webhook
 
-Both live in the [Developer Dashboard](https://developer.paypal.com/dashboard/).
-Its menu wording moves between revisions, so what follows names each step by
-what it does rather than by the label it currently carries.
+You need three values out of PayPal, all from the
+[Developer Dashboard](https://developer.paypal.com/dashboard/). This page says
+what each one is and what it has to be able to do — **not** where the Dashboard
+currently keeps it. PayPal's navigation is PayPal's to document and it changes;
+a menu path printed here would be wrong on some future Tuesday, and wrong in
+the way that is hardest to notice, because it would still look authoritative.
 
-**The app** — create an app on your account. Copy the two values it shows you
-into your deploy environment:
+**1 and 2. A REST app's credentials.** Create an app and copy its pair into
+your deploy environment:
 
 - **Client ID** → `PAYPAL_CLIENT_ID`
 - **Secret** → `PAYPAL_CLIENT_SECRET`
 
-Sandbox and live credentials are separate, and they are not interchangeable:
-the pair you copy has to match the `environment` you set in the table below,
-which is what decides whether the bridge talks to `api-m.sandbox.paypal.com`
-or `api-m.paypal.com`. Copying a sandbox pair while leaving `environment`
-unset points sandbox credentials at the live API.
+Sandbox and live credentials are separate and are not interchangeable: the
+pair you copy has to match the `environment` you set in the table below, which
+is what decides whether the bridge talks to `api-m.sandbox.paypal.com` or
+`api-m.paypal.com`. Copying a sandbox pair while leaving `environment` unset
+points sandbox credentials at the live API, and every delivery then fails
+authentication for a reason that looks like a signature problem.
 
-**The webhook** — create one on that same app:
-
-- **URL**: `https://<your-bridge-host>/paypal/webhook`
-- **Event types**: subscribe to `PAYMENT.CAPTURE.COMPLETED` and nothing else.
-  That constant is what the bridge matches on; the dashboard shows it under a
-  human-readable name next to it.
+**3. A webhook, and its id.** Create one on that same app, delivering to
+`https://<your-bridge-host>/paypal/webhook` and subscribed to the event type
+`PAYMENT.CAPTURE.COMPLETED` — that constant is the only one the bridge acts
+on.
 
 After saving, PayPal shows the webhook's **own ID** — a value like
 `8PT597110X687430LKGECATA`. Copy it: unlike the two credentials above it is
@@ -77,7 +79,9 @@ webhook_id = "8PT597110X687430LKGECATA"
 Then one `[products.paypal_<sku>]` table per item you sell. The product key is
 `paypal_` followed by the **`sku` your server puts on the order's line item** —
 PayPal has no catalogue of its own here, so this is a value you choose and
-your checkout sends.
+your checkout sends. Concretely it is what the bridge reads from
+`purchase_units[0].items[0].sku` of the order it fetches, which is why step 4
+below matters more on this rail than on any other.
 
 ```toml
 [products.paypal_SDC-STD-001]
