@@ -1001,6 +1001,7 @@ def test_duplicate_kids_helper_tolerates_a_non_list() -> None:
         max_size=5,
     ),
 )
+@example(kids=["\U00010000", "\ue000"], noise=[])
 def test_duplicate_kids_guard_is_order_and_noise_independent(
     kids: list[str], noise: list[Any]
 ) -> None:
@@ -1009,7 +1010,7 @@ def test_duplicate_kids_guard_is_order_and_noise_independent(
     entries.extend({"kid": kid} for kid in reversed(duplicated))
     entries.extend(noise)
 
-    assert manifests.duplicate_kids(entries) == sorted(duplicated)
+    assert manifests.duplicate_kids(entries) == sorted(duplicated, key=canon.canonical_key_order)
     with pytest.raises(ValueError, match="duplicate kid"):
         manifests.build_key_manifest(
             ISSUER,

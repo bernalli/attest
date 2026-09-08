@@ -119,7 +119,15 @@ def duplicate_kids(entries: Any) -> list[str]:
             if kid in seen:
                 dups.add(kid)
             seen.add(kid)
-    return sorted(dups)
+    # Canonical key order, not `sorted()`'s: this list is rendered into an error
+    # a caller reads (`verify`'s duplicate-kid preflight), so the two cores owe
+    # each other the same sequence. `sorted()` on `str` orders by CODE POINT and
+    # the TypeScript twin's `.sort()` by UTF-16 CODE UNIT -- measured through
+    # `verify()` on both cores, from a conformance vector mutated in its kids
+    # alone: this core answered ['\ue000', '\U00010000'] and the other the
+    # reverse. The conformance vector for that case asserts only the substring
+    # "duplicate kid", so the corpus could not see it.
+    return sorted(dups, key=canon.canonical_key_order)
 
 
 def find_key(manifest: dict[str, Any], kid: str) -> dict[str, Any] | None:

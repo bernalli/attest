@@ -1,4 +1,4 @@
-import { JsonObject, JsonValue, canonicalBytes, dumps } from './canon.js'
+import { JsonObject, JsonValue, canonicalBytes, canonicalKeyOrder, dumps } from './canon.js'
 import { verifyStrict } from './ed25519.js'
 import { verifyStrict as verifyMldsaStrict } from './mldsa.js'
 import { b64uDecode } from './b64u.js'
@@ -57,7 +57,12 @@ export function duplicateKids(entries: unknown): string[] {
     if (seen.has(kid)) dups.add(kid)
     seen.add(kid)
   }
-  return [...dups].sort()
+  // `canonicalKeyOrder` and not a bare `.sort()`, even though here the two are
+  // the same call: this list is rendered into an error a caller reads, the
+  // Python twin used its own language's default (CODE POINT) and the two cores
+  // answered the same manifest in opposite orders. Naming the rule is what makes
+  // it checkable that both use one.
+  return canonicalKeyOrder([...dups])
 }
 
 /** The entry carrying `kid` — or null if absent, AMBIGUOUS, or `kid` is not

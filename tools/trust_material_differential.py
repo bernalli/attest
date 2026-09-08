@@ -57,7 +57,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from attest import trust_material  # noqa: E402
+from attest import manifests, trust_material  # noqa: E402
 from tests.test_trust_material_parse import BYTE_MUTANT_CORPUS  # noqa: E402
 
 ADAPTER = ROOT / "tools" / "trust_material_adapter_ts.mjs"
@@ -74,6 +74,52 @@ ORDERING_IDS: tuple[tuple[str, ...], ...] = (
 )
 
 
+# Key manifests whose DUPLICATE kids separate the two candidate orders. The
+# manifest boundary applies no grammar (section 5.3), so what there is to compare
+# on this surface is the ordered list `duplicate_kids` derives from the admitted
+# document -- and that list only discriminates when it holds at least two kids on
+# which code point and UTF-16 code unit disagree.
+#
+# Measured 2026-09-08 through `verify()` on both cores, from a real conformance
+# vector mutated in its kids alone: Python answered
+# `['\ue000', '\U00010000']` and TypeScript the reverse, inside the error string a
+# caller reads. The conformance vector for that case asserts only the substring
+# "duplicate kid", so the corpus could not see it.
+MANIFEST_DUPLICATE_KIDS: tuple[tuple[str, ...], ...] = (
+    ("\U00010000", "\ue000"),
+    ("\U0001f600", "\ufb00"),
+    ("a", "\uffff", "\U00010000"),
+)
+
+
+def _manifest_documents() -> list[tuple[str, bytes]]:
+    """Key manifests carrying each kid twice, so `duplicate_kids` returns them all.
+
+    IMPLICIT DEPENDENCY, named here rather than left to be rediscovered (D1 of
+    the review): this surface reaches `duplicate_kids` through a STANDALONE
+    `KeyManifest.from_bytes`, while the defect it exists to catch surfaced on the
+    STORE-EMBEDDED path (`verify.py`'s duplicate-kid preflight, which reads
+    `store.manifests[issuer]`). The two are equivalent today because
+    `duplicate_kids` is a pure function of the entries list and both paths hand
+    it the same unvalidated tree -- neither the store grammar nor the manifest
+    boundary looks inside `keys[]`.
+
+    They stop being equivalent the moment either path starts transforming the
+    manifest before the call. If that happens, this corpus keeps passing while
+    the embedded path diverges, and the gate goes green on a surface it is no
+    longer measuring.
+    """
+    out: list[tuple[str, bytes]] = []
+    for index, kids in enumerate(MANIFEST_DUPLICATE_KIDS):
+        entries = [
+            {"kid": kid, "status": status} for kid in kids for status in ("active", "retired")
+        ]
+        doc = {"issuer": "store.example.com", "manifest_version": 1, "keys": entries}
+        payload = json.dumps(doc, separators=(",", ":"), ensure_ascii=False).encode()
+        out.append((f"duplicate-kids-{index}", payload))
+    return out
+
+
 def _ordering_documents() -> list[tuple[str, bytes]]:
     """Well-formed stores whose issuer ids separate the two candidate orders."""
     out: list[tuple[str, bytes]] = []
@@ -87,7 +133,15 @@ def _ordering_documents() -> list[tuple[str, bytes]]:
     return out
 
 
-def _message_class(message: str) -> str:
+# The subject each surface's messages name. `_message_class` builds its heads
+# from it: with the wrong subject NO head matches and every refusal falls to
+# UNCLASSIFIED, which the comparator then reports as a divergence -- measured on
+# the first run of the manifest surface, 1774 false divergences from a hardcoded
+# "trust store". The classifier must be told which surface it is reading.
+SUBJECT = {"store": "trust store", "manifest": "key manifest"}
+
+
+def _message_class(message: str, what: str) -> str:
     """Which of M1-M8 produced `message`, by its constant head.
 
     Read from `trust_material`'s own templates, and used for BOTH cores: on
@@ -97,13 +151,16 @@ def _message_class(message: str) -> str:
     """
     heads: list[tuple[str, str]] = []
     for identifier, constant, kwargs in (
-        ("M1", "_MSG_NOT_BYTES", {"what": "trust store"}),
-        ("M2", "_MSG_TOO_LARGE", {"what": "trust store"}),
-        ("M4", "_MSG_NOT_OBJECT", {"what": "trust store"}),
+        ("M1", "_MSG_NOT_BYTES", {"what": what}),
+        ("M2", "_MSG_TOO_LARGE", {"what": what}),
+        ("M4", "_MSG_NOT_OBJECT", {"what": what}),
+        # M5 and M6 name the trust store in their own text whatever the subject
+        # is, and are unreachable from the manifest side: the manifest boundary
+        # has no grammar (section 5.3).
         ("M5", "_MSG_UNKNOWN_MEMBER", {"name": "\x00"}),
         ("M6", "_MSG_MEMBER_SHAPE", {"member": "\x00", "expected": "\x00"}),
-        ("M7", "_MSG_UNPARSABLE", {"what": "trust store", "reason": "\x00"}),
-        ("M8", "_MSG_NOT_CANONICAL", {"what": "trust store", "reason": "\x00"}),
+        ("M7", "_MSG_UNPARSABLE", {"what": what, "reason": "\x00"}),
+        ("M8", "_MSG_NOT_CANONICAL", {"what": what, "reason": "\x00"}),
     ):
         rendered = str(getattr(trust_material, constant)).format(**kwargs)
         heads.append((identifier, rendered.split("\x00")[0]))
@@ -113,21 +170,32 @@ def _message_class(message: str) -> str:
     return max(matches, key=lambda item: len(item[1]))[0]
 
 
-def _python_answer(payload: bytes) -> dict[str, Any]:
+def _python_answer(payload: bytes, surface: str) -> dict[str, Any]:
+    """What a caller of the Python core sees, on one surface.
+
+    `ordered` is the surface's ordered result: the issuer list for the store,
+    the duplicate-kid list for the manifest. One field, because what the two
+    cores owe each other is the same on both -- the same sequence, in the same
+    order -- and a comparator with one field per surface would grow a branch per
+    surface and stop being one engine.
+    """
     try:
-        store = trust_material.TrustStore.from_bytes(payload)
+        if surface == "store":
+            store = trust_material.TrustStore.from_bytes(payload)
+            return {"admitted": True, "ordered": list(store.issuers())}
+        manifest = trust_material.KeyManifest.from_bytes(payload)
+        return {"admitted": True, "ordered": manifests.duplicate_kids(manifest.data().get("keys"))}
     except trust_material.TrustMaterialError as exc:
         message = str(exc)
         return {
             "admitted": False,
-            "cls": _message_class(message),
+            "cls": _message_class(message, SUBJECT[surface]),
             "member": exc.member,
             "message": message,
         }
-    return {"admitted": True, "issuers": list(store.issuers())}
 
 
-def _ts_answers(corpus: list[tuple[str, bytes]]) -> dict[str, dict[str, Any]]:
+def _ts_answers(corpus: list[tuple[str, bytes]], surface: str) -> dict[str, dict[str, Any]]:
     payload = [{"id": name, "b64": base64.b64encode(data).decode("ascii")} for name, data in corpus]
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         json.dump(payload, handle)
@@ -141,7 +209,7 @@ def _ts_answers(corpus: list[tuple[str, bytes]]) -> dict[str, dict[str, Any]]:
         raise SystemExit("node is not on PATH: the TypeScript half cannot be measured")
     try:
         proc = subprocess.run(  # noqa: S603
-            [node, str(ADAPTER), corpus_path],
+            [node, str(ADAPTER), corpus_path, surface],
             capture_output=True,
             text=True,
             check=False,
@@ -163,17 +231,30 @@ def _ts_answers(corpus: list[tuple[str, bytes]]) -> dict[str, dict[str, Any]]:
 # result AND asserted still present: a declared divergence that stops happening
 # means either a core changed or the corpus stopped covering it, and both are
 # things somebody has to be told about. A bare allow-list would hide the second.
-DECLARED_DIVERGENCES: dict[str, str] = {
-    "4301 digit integer token": (
-        "D16, declared: Python's int-to-str conversion refuses past 4300 digits and "
-        "surfaces it as a PARSE failure (M7), where the TypeScript core reaches the "
-        "canonicalizer and reports M8. Neither core produces an object, which is the "
-        "property that matters; only the class differs."
-    ),
+ORDERED_NAME = {"store": "issuers", "manifest": "duplicate kids"}
+
+_D16 = (
+    "D16, declared: Python's int-to-str conversion refuses past 4300 digits and "
+    "surfaces it as a PARSE failure (M7), where the TypeScript core reaches the "
+    "canonicalizer and reports M8. Neither core produces an object, which is the "
+    "property that matters; only the class differs. Reachable from BOTH boundaries: "
+    "the token is refused before either grammar is consulted."
+)
+
+DECLARED_DIVERGENCES: dict[str, dict[str, str]] = {
+    "manifest": {"4301 digit integer token": _D16},
+    "store": {
+        "4301 digit integer token": (
+            "D16, declared: Python's int-to-str conversion refuses past 4300 digits and "
+            "surfaces it as a PARSE failure (M7), where the TypeScript core reaches the "
+            "canonicalizer and reports M8. Neither core produces an object, which is the "
+            "property that matters; only the class differs."
+        ),
+    },
 }
 
 
-def _divergences(corpus: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
+def _divergences(corpus: list[tuple[str, bytes]], surface: str) -> list[tuple[str, str]]:
     """`(document name, what differs)` for every disagreement.
 
     The name travels as a FIELD, never re-extracted from the rendered line. A
@@ -183,7 +264,7 @@ def _divergences(corpus: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
     a `startswith(name + ":")` or a `partition(": ")[0]` test, a document called
     `"<declared name>: variant"` is absorbed as if it WERE the declared one.
     """
-    ts = _ts_answers(corpus)
+    ts = _ts_answers(corpus, surface)
     found: list[tuple[str, str]] = []
     for name, data in corpus:
         theirs = ts.get(name)
@@ -195,7 +276,7 @@ def _divergences(corpus: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
                 (name, f"TypeScript refused with a non-TrustMaterialError: {theirs['foreign']}")
             )
             continue
-        mine = _python_answer(data)
+        mine = _python_answer(data, surface)
         if mine["admitted"] != theirs["admitted"]:
             found.append(
                 (
@@ -206,16 +287,16 @@ def _divergences(corpus: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
             )
             continue
         if mine["admitted"]:
-            if mine["issuers"] != theirs["issuers"]:
+            if mine["ordered"] != theirs["ordered"]:
                 found.append(
                     (
                         name,
-                        f"issuers differ — python {mine['issuers']!r}, "
-                        f"typescript {theirs['issuers']!r}",
+                        f"{ORDERED_NAME[surface]} differ — python {mine['ordered']!r}, "
+                        f"typescript {theirs['ordered']!r}",
                     )
                 )
             continue
-        theirs_cls = _message_class(theirs["message"])
+        theirs_cls = _message_class(theirs["message"], SUBJECT[surface])
         # An unclassifiable message on EITHER side is a divergence in itself,
         # never a class to compare: `UNCLASSIFIED == UNCLASSIFIED` would make two
         # genuinely different FUTURE refusals agree, and `member` is None on both
@@ -246,26 +327,35 @@ def _divergences(corpus: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--surface", choices=("store", "manifest"), default="store")
     parser.add_argument("--keep", type=Path, default=None, help="write divergences to this file")
     args = parser.parse_args(argv)
+    surface: str = args.surface
+    declared = DECLARED_DIVERGENCES[surface]
 
     if not DIST.exists():
         raise SystemExit(f"missing {DIST}: build verifiers/ts first (npm run build)")
 
+    # Both surfaces are seeded from the suite's own byte corpus -- that is what
+    # exercises the lexical and parse-level parity -- and each adds the documents
+    # that discriminate ITS ordered result. Neither surface is compared against
+    # the other: the store has a grammar and the manifest deliberately has none,
+    # so a cross-surface comparison would report the contract as a divergence.
     corpus = [(name, data) for name, data in BYTE_MUTANT_CORPUS]
-    corpus.extend(_ordering_documents())
+    corpus.extend(_ordering_documents() if surface == "store" else _manifest_documents())
+    print(f"surface: {surface}")
 
     # A count printed, not just an exit code: a differential that fed nothing to
     # either core would exit 0 and mean nothing, and this is the line a gate
     # reads to know the measurement happened at all.
     print(f"documents fed to both cores: {len(corpus)}")
 
-    admitted = sum(1 for _, data in corpus if _python_answer(data)["admitted"])
+    admitted = sum(1 for _, data in corpus if _python_answer(data, surface)["admitted"])
     print(f"of which admitted by the Python core: {admitted}")
     if admitted == 0:
         raise SystemExit("the corpus admits nothing: the comparison would be vacuous")
 
-    found = _divergences(corpus)
+    found = _divergences(corpus, surface)
 
     # Split the declared from the rest, and check the declared ones are STILL
     # there. A gate that only subtracts an allow-list goes quiet the day the
@@ -276,15 +366,15 @@ def main(argv: list[str] | None = None) -> int:
     # by prefix or by splitting on the separator -- absorbs any future document
     # whose name begins with a declared one, which is an allow-list quietly
     # growing to cover cases nobody declared.
-    declared_seen = {name for name, _ in found if name in DECLARED_DIVERGENCES}
-    missing = set(DECLARED_DIVERGENCES) - declared_seen
-    found = [(name, reason) for name, reason in found if name not in DECLARED_DIVERGENCES]
+    declared_seen = {name for name, _ in found if name in declared}
+    missing = set(declared) - declared_seen
+    found = [(name, reason) for name, reason in found if name not in declared]
     for name in sorted(declared_seen):
         print(f"declared divergence, still present: {name}")
     if missing:
         print("DECLARED DIVERGENCES THAT NO LONGER HAPPEN:")
         for name in sorted(missing):
-            print(f"  {name} -- {DECLARED_DIVERGENCES[name]}")
+            print(f"  {name} -- {declared[name]}")
         print("  either a core changed, or the corpus stopped reaching this case.")
         return 1
 
