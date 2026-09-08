@@ -319,7 +319,7 @@ def deps(
     )
 
 
-def _signed_webhook(deps: BridgeDeps, event: dict[str, Any]) -> tuple[str, dict[str, str], bytes]:
+def _signed_webhook(deps: BridgeDeps, event: object) -> tuple[str, dict[str, str], bytes]:
     body = json.dumps(event).encode()
     header = sign_stripe(body, _WEBHOOK_SECRET, _FROZEN_NOW)
     app = make_app(deps)
@@ -659,6 +659,25 @@ def test_paid_event_with_non_object_data_is_dead_lettered_and_acknowledged(
     assert len(deps.ledger.unresolved_dead_letters()) == 1
     if has_event_id:
         assert deps.ledger.seen_event("stripe", "evt_test_1") is True
+
+
+@pytest.mark.parametrize("event", [[1, 2, 3], 7, "event", None, True])
+def test_signed_non_object_stripe_event_is_dead_lettered_and_acknowledged(
+    deps: BridgeDeps, frozen_now: int, event: object
+) -> None:
+    """A validly signed body that is not an object at all: there is no event id
+    to deduplicate on, so this arm dead-letters and answers 200 rather than
+    letting Stripe redeliver forever. What matters downstream is the SHAPE it
+    stores -- `raw_json` is the body verbatim, so the dead letter itself carries
+    a non-object, and `retry-failed` must be able to close one
+    (`test_retry_failed_closes_a_stripe_dead_letter_that_carries_no_event_object`).
+    """
+    status, _, _ = _signed_webhook(deps, event)
+
+    assert status.startswith("200")
+    dead_letters = deps.ledger.unresolved_dead_letters()
+    assert len(dead_letters) == 1
+    assert not isinstance(json.loads(dead_letters[0].raw_json), dict)
 
 
 def test_multiple_stripe_line_items_dead_letter_without_issuing(
