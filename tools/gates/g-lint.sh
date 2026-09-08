@@ -75,12 +75,12 @@ gate_say "sources on disk under ${MYPY_ROOTS[*]} right now: $N_FOUND"
 # in N source files" and "Found N errors in M files (checked N source files)" --
 # so the completeness check below keeps working while the staged red above is in
 # force, instead of being suspended for the two tasks when it is most needed.
-gate_expect_marker '(Success: no issues found in|\(checked )[0-9]+ source files' \
+gate_expect_marker '(Success: no issues found in |\(checked )[0-9]+ source files' \
   "mypy prints how many source files it read"
 
 MYPY_OUT_FOR_COUNT="$GATE_OUT"
 MYPY_N="$(printf '%s\n' "$MYPY_OUT_FOR_COUNT" \
-  | grep -Eo '(Success: no issues found in|\(checked )[0-9]+ source files' \
+  | grep -Eo '(Success: no issues found in |\(checked )[0-9]+ source files' \
   | grep -Eo '[0-9]+' | head -n1)"
 
 if [ -z "$MYPY_N" ]; then

@@ -132,9 +132,16 @@ def _call_sites(module: str, name: str) -> list[str]:
     `module.name(...)` anywhere. A grep would also match the definition, the
     docstrings that discuss it and `revocation._verify_record`, which shares the
     attribute name — the reason this reads the tree instead.
+
+    `rglob`, not `glob`: `attest` has a subpackage (`schema`), and a sweep that
+    stops at the top level would answer "no caller" for a package it never
+    opened — the same narrower-population defect this script exists to catch,
+    committed by the script itself. A caller reached through `getattr` would
+    still be invisible here; nothing in this tree does that today, and this
+    sentence is the record that it is not covered rather than not possible.
     """
     found: list[str] = []
-    for path in sorted((TREE / "src" / "attest").glob("*.py")):
+    for path in sorted((TREE / "src" / "attest").rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
         own = path.stem == module
         for node in ast.walk(tree):
