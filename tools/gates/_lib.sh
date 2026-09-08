@@ -120,6 +120,12 @@ gate_expect_rc() {
 }
 
 # gate_expect_staged_red <marker-regex> <closing-task> <label>
+# NO PRODUCTION CALLER as of T4b: the three registrations that used it (two
+# demos, mypy) and the one in g-ci-py.sh closed with their causes. It is kept,
+# with selftest-staged-red.sh as its only exercise, because the next migration
+# that has to stage a red needs this and not a fresh `rc != 0`. Deleting it
+# would take the self-test with it and leave the next author to reinvent the
+# three properties below -- which is how a staged red becomes permanent.
 # A step this migration keeps red ON PURPOSE, for as long as one core has moved
 # and the other has not. Three properties, and the gate is worth nothing without
 # all three:
@@ -157,6 +163,10 @@ gate_expect_staged_red() {
 }
 
 # gate_divergence_signatures <text>
+# Also without a production caller since the four staged divergences closed at
+# B2. Retained for the same reason, and for a second one: the census the
+# differential step lost when its declared set went empty is restored by
+# pinning names again, and this is the extractor that does it.
 # One sorted line per divergence importer_differential.py reported: the vector,
 # the browser road it was seen on, and the DIRECTION (which side said what).
 # Lives here rather than inline in the gate so the self-test can exercise the

@@ -351,8 +351,19 @@ export function parseBundle(
       for (const km of kms) {
         try {
           canonicalBytes(km)
-        } catch {
-          throw new BundleError(`manifest entry ${quoted(name)} is outside the canonical profile`)
+        } catch (e) {
+          // The reason travels. The reference importer's refusal for the same
+          // document names WHY ("integer out of I-JSON safe range: N"), and a
+          // message that drops it makes two cores that agree on the verdict look
+          // like they disagree on the diagnosis. Narrow by construction: `km`
+          // came out of `loadsStrict`, so floats, lone surrogates and duplicate
+          // keys are already gone and the depth cap already applied to the blob
+          // that contains it -- what reaches here is the canonical profile's own
+          // refusal, not an unrelated failure wearing its message.
+          const reason = e instanceof Error ? e.message : String(e)
+          throw new BundleError(
+            `manifest entry ${quoted(name)} is outside the canonical profile: ${reason}`,
+          )
         }
       }
       keyManifestsByIssuer.set(issuer, kms)

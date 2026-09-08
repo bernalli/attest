@@ -382,12 +382,19 @@ def _loads_strict(data: bytes, path: Path, input_name: str) -> Any:
     """Parse CLI input bytes with the canonical strict parser.
 
     `_read_json` above uses `json.loads`, where a duplicate object member
-    collapses onto the last one and a float parses fine — behavior published
-    for the flags that already had it, and not changed here. Inputs introduced
-    with the revocation rail read through this function instead: a file whose
+    collapses onto the last one and a float parses fine. That reader is what
+    the flags carrying EVIDENCE still use: a holder is expected to hand over
+    whatever they were given, and refusing their file for a float in a field
+    nobody reads would refuse the deal instead of the defect.
+
+    TRUST MATERIAL is the other half, and it reads through here or through
+    `trust_material.*.from_bytes`, which is this same parser: a file whose
     meaning depends on which duplicate a parser happens to keep is refused,
-    not resolved by position (`canon.loads_strict`, same reader the verifier's
-    own admission path uses).
+    not resolved by position. T4b moved three already-published flags across
+    that line -- `verify --trust-dir`, `manifest rotate --in` and
+    `manifest artifacts --in` -- and the move is a tightening: `json.loads`
+    kept the LAST `issuer` of a manifest that carried two, so a document could
+    name one issuer to a reader and another to the flag acting on it.
     """
     try:
         return canon.loads_strict(data)
@@ -428,13 +435,13 @@ def _read_key_manifest(path: Path, input_name: str) -> trust_material.KeyManifes
     manifest whose meaning depends on which duplicate member a parser happens
     to keep is refused instead of resolved by position -- the same rule the
     verifier's own admission path has always applied to trust material.
+
+    Bounded before it is read, not after: `from_bytes` applies the same ceiling,
+    but only once the file is already in memory, and a pre-parse gate that
+    allocates first is not one. The bound is `canon.MAX_ADMISSION_BYTES` and not
+    a second literal, so it cannot drift from the one the library enforces.
     """
-    try:
-        raw = path.read_bytes()
-    except FileNotFoundError as exc:
-        raise CliUsageError(f"file not found: {path}") from exc
-    except OSError as exc:
-        raise CliUsageError(f"cannot read {path}: {exc}") from exc
+    raw = _read_bounded_bytes(path, max_bytes=canon.MAX_ADMISSION_BYTES, input_name=input_name)
     try:
         return trust_material.KeyManifest.from_bytes(raw)
     except trust_material.TrustMaterialError as exc:
@@ -681,17 +688,65 @@ def _load_mldsa_kp(path: Path) -> pq.MLDSAKeyPair:
 # --- trust-dir loading (shared by `verify` and documented for `import`) -----
 
 
+def _classified_trust_manifest(manifest: Any, what: str) -> tuple[str, str | None]:
+    """Classify one trust-material document, or refuse naming `what`.
+
+    Returns `(issuer, series)`, with `series` None for a key manifest.
+
+    The rule lives HERE and not inside `_load_trust_dir` because `attest
+    import` WRITES the files that loader later reads. Stated in one place and
+    applied in only one of them, it let this CLI persist a file its own
+    verifier refuses: a bundle whose chain carried a manifest without a string
+    `issuer` imported at exit 0 and left a trust directory that
+    `verify --trust-dir` then rejected WHOLE -- for every issuer in it, naming
+    the operator's directory for a defect the bundle brought.
+    """
+    if not isinstance(manifest, dict):
+        raise CliUsageError(f"{what}: trust material must be a JSON object")
+    issuer = manifest.get("issuer")
+    if not isinstance(issuer, str):
+        raise CliUsageError(f"{what}: trust material must carry a string 'issuer'")
+    if "keys" in manifest:
+        return issuer, None
+    series = manifest.get("series")
+    if not isinstance(series, str):
+        raise CliUsageError(
+            f"{what}: not a key manifest (no 'keys') nor an artifact manifest (no 'series')"
+        )
+    return issuer, series
+
+
+def _trust_manifest_version(manifest: dict[str, Any]) -> int:
+    """Order key by `manifest_version`, for a value the document chose the type of.
+
+    `bundle._version_key` already states this for the archive road, and the two
+    roads assemble the SAME store: comparing the raw values refuses to sort a
+    mixed list at all -- a `TypeError` out of `sorted` instead of a verdict,
+    caught two frames up by `main`'s safety net and reported as
+    "'<' not supported between instances of 'str' and 'int'", which names
+    neither the file nor the defect this loader promises to name.
+    """
+    value = manifest.get("manifest_version", 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def _load_trust_dir(trust_dir: Path) -> verify.TrustStore:
     """Assemble the trust store a `--trust-dir` names, and refuse out loud.
 
     Recipe C1. Two properties are worth stating because the shape before this
     one had neither:
 
-    Nothing is skipped. A file this loader cannot classify used to be passed
-    over with `continue`, so a directory of five manifests and one typo built a
-    store out of four of them and said nothing. "Loaded successfully, minus the
-    part I could not read" is the sentence every refusal below exists to
-    prevent, and each one names the file that caused it.
+    Nothing that this loader READS is skipped. A file it cannot classify used to
+    be passed over with `continue`, so a directory of five manifests and one typo
+    built a store out of four of them and said nothing. "Loaded successfully,
+    minus the part I could not read" is the sentence every refusal below exists
+    to prevent, and each one names the file that caused it.
+
+    What it reads is `*.json`, and that selection is NOT part of the promise:
+    a manifest saved as `manifest.JSON` or `manifest.json.bak` is invisible here
+    and produces an empty store rather than a refusal. `verify` then answers "no
+    trusted manifest for issuer X", which is true and does not mention the file
+    sitting unread beside it.
 
     The aggregate ceiling is applied to the SIZES, before a single file is
     read. Per-file bounds do not compose: a thousand files just under one are a
@@ -709,13 +764,14 @@ def _load_trust_dir(trust_dir: Path) -> verify.TrustStore:
 
     files = sorted(trust_dir.glob("*.json"))
     try:
-        total_bytes = sum(path.stat().st_size for path in files)
+        declared_bytes = sum(path.stat().st_size for path in files)
     except OSError as exc:
         raise CliUsageError(f"cannot read --trust-dir {trust_dir}: {exc}") from exc
-    if total_bytes > canon.MAX_ADMISSION_BYTES:
+    if declared_bytes > canon.MAX_ADMISSION_BYTES:
         raise CliUsageError(
-            f"--trust-dir {trust_dir} exceeds the admission ceiling "
-            f"({total_bytes} bytes over {canon.MAX_ADMISSION_BYTES})"
+            f"--trust-dir {trust_dir} exceeds the admission ceiling: "
+            f"{len(files)} files declaring {declared_bytes} bytes in total, "
+            f"ceiling {canon.MAX_ADMISSION_BYTES}"
         )
 
     by_issuer: dict[str, list[dict[str, Any]]] = {}
@@ -727,31 +783,34 @@ def _load_trust_dir(trust_dir: Path) -> verify.TrustStore:
     # absence of `keys[]` (a key manifest always carries it; an artifact
     # manifest never does).
     by_issuer_series: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    # The declared sizes bought the refusal above WITHOUT reading anything, which
+    # is the whole point of a pre-read gate. They do not bound what is read: a
+    # file can grow between the two passes. So the budget below is spent on the
+    # bytes actually taken, and it is the one that makes the aggregate promise
+    # true rather than likely.
+    remaining = canon.MAX_ADMISSION_BYTES
     for path in files:
         raw = _read_bounded_bytes(
             path, max_bytes=canon.MAX_ADMISSION_BYTES, input_name="--trust-dir"
         )
-        manifest = _loads_strict(raw, path, "--trust-dir")
-        if not isinstance(manifest, dict):
-            raise CliUsageError(f"{path}: trust material must be a JSON object")
-        issuer = manifest.get("issuer")
-        if not isinstance(issuer, str):
-            raise CliUsageError(f"{path}: trust material must carry a string 'issuer'")
-        if "keys" in manifest:
-            by_issuer.setdefault(issuer, []).append(manifest)
-            continue
-        series = manifest.get("series")
-        if not isinstance(series, str):
+        remaining -= len(raw)
+        if remaining < 0:
             raise CliUsageError(
-                f"{path}: not a key manifest (no 'keys') nor an artifact manifest (no 'series')"
+                f"--trust-dir {trust_dir} exceeds the admission ceiling: the files read "
+                f"through {path} already pass {canon.MAX_ADMISSION_BYTES} bytes in total"
             )
-        by_issuer_series.setdefault((issuer, series), []).append(manifest)
+        manifest = _loads_strict(raw, path, "--trust-dir")
+        issuer, series = _classified_trust_manifest(manifest, str(path))
+        if series is None:
+            by_issuer.setdefault(issuer, []).append(manifest)
+        else:
+            by_issuer_series.setdefault((issuer, series), []).append(manifest)
 
     manifests_map: dict[str, dict[str, Any]] = {}
     provenance: dict[str, str] = {}
     chains: dict[str, list[dict[str, Any]]] = {}
     for issuer, versions in by_issuer.items():
-        ordered = sorted(versions, key=lambda m: m.get("manifest_version", 0))
+        ordered = sorted(versions, key=_trust_manifest_version)
         manifests_map[issuer] = ordered[-1]
         provenance[issuer] = _PROVENANCE_BUNDLE
         chains[issuer] = ordered
@@ -759,7 +818,7 @@ def _load_trust_dir(trust_dir: Path) -> verify.TrustStore:
     artifact_manifests_map: dict[str, dict[str, dict[str, Any]]] = {}
     artifact_manifest_chains: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for (issuer, series), am_versions in by_issuer_series.items():
-        am_ordered = sorted(am_versions, key=lambda m: m.get("manifest_version", 0))
+        am_ordered = sorted(am_versions, key=_trust_manifest_version)
         artifact_manifests_map.setdefault(issuer, {})[series] = am_ordered[-1]
         artifact_manifest_chains.setdefault(issuer, {})[series] = am_ordered
 
@@ -4369,6 +4428,13 @@ def _cmd_import(args: argparse.Namespace) -> int:
     for issuer in imported.trust_store.issuers():
         for member in imported.trust_store.chain_for(issuer):
             version_manifest = member.data()
+            # The loader that will READ this directory classifies every file in
+            # it, so a manifest that would not survive that classification is
+            # refused HERE -- while the bundle that carried it is still the
+            # thing being blamed, and before anything is written.
+            _classified_trust_manifest(
+                version_manifest, f"import: trust-store entry for issuer {issuer!r}"
+            )
             version = _trust_manifest_version_for_filename(version_manifest, issuer)
             trust_path = trust_dir / f"{_safe_name(issuer)}.v{version}.json"
             trust_text = _json_text(version_manifest)

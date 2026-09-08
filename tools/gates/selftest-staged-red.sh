@@ -57,6 +57,18 @@ GATE_OUT='everything fine'
 check "staged red that went GREEN is a failure" 1 \
   gate_expect_staged_red 'built manifest does not self-verify' "T4b" "demo"
 
+# THE CASE THAT DISCRIMINATES PROPERTY 3, and the reason the case above does
+# not. Measured 2026-09-08: with the rc==0 branch of gate_expect_staged_red
+# disabled, the bench above still scores 9/9 -- 'everything fine' carries no
+# marker either, so the MARKER branch fires instead and adds the same one
+# failure for a different reason, which a bench counting failures cannot see.
+# Here the marker is PRESENT, so the green-direction branch is the only thing
+# that can fail: original 10/10, mutant 9/10.
+GATE_RC=0
+GATE_OUT='error: built manifest does not self-verify; check that --seed ...'
+check "green WITH the declared marker still present is a failure" 1 \
+  gate_expect_staged_red 'built manifest does not self-verify' "T4b" "demo"
+
 # Red for another reason wears the same exit code. Without the marker the
 # registration would wave through an import error or a real regression.
 GATE_RC=1

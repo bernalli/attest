@@ -59,8 +59,10 @@ gate_say "sources on disk under ${MYPY_ROOTS[*]} right now: $N_FOUND"
 
 # mypy states its file count in BOTH of its endings -- "Success: no issues found
 # in N source files" and "Found N errors in M files (checked N source files)" --
-# so the completeness check below keeps working while the staged red above is in
-# force, instead of being suspended for the two tasks when it is most needed.
+# so this check keeps working whether mypy is green or red. It was written that
+# way for a staged red that no longer exists, and the shape is kept on purpose:
+# the day this gate goes red again, the count is exactly what says whether the
+# findings came from a full reading or a partial one.
 gate_expect_marker '(Success: no issues found in |\(checked )[0-9]+ source files' \
   "mypy prints how many source files it read"
 

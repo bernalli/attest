@@ -157,20 +157,34 @@ gate_need "site/node_modules/.bin/esbuild present (importer_differential's brows
 # quietly on the other. B2 in `site/src/bundle.ts` closed it; the four
 # divergences are gone and the registration goes with them.
 #
-# What replaces it is NOT `rc 0` on its own. That tool exits 1 for a missing
-# precondition as readily as for a divergence, and an empty divergence set is
-# also what a tool that compared nothing would report -- so the two assertions
-# below are the ones that carry the weight: the count of archives actually fed
-# to both importers, and the line only a completed comparison can print. An
-# empty set is a claim about a measurement; those two are the measurement.
+# What replaces it must not be `rc 0` on its own, and MEASURED (2026-09-08) it
+# must not be the divergence line either: `importer_differential.py --families ''`
+# prints "0 divergences across 0 families" and exits 0 having compared nothing.
+# That line is also definitionally equal to the exit code -- run() returns 1 iff
+# a non-advisory divergence exists, and the count printed IS that number -- so
+# asserting both says one thing twice. It is kept below only as evidence that
+# report() was reached at all, which is the little it proves.
+#
+# The measurement is the block after the archive count: every road the tool
+# tallies must be present, and each must have answered for exactly as many
+# archives as were fed. An empty comparison has no tally lines and fails the
+# set; a road that quietly answered for fewer archives fails the sum. Both
+# were verified against a doctored transcript before this was written.
 gate_run "importer_differential.py" -- "$GATE_PY" "$IMPORTER_DIFF"
 gate_expect_rc 0 "importer_differential.py: the two importers agree on every archive"
 gate_expect_marker '^0 divergences across 0 families' \
-  "importer_differential.py states the comparison came out empty, rather than staying silent"
+  "importer_differential.py reached its report (this restates the exit code; it does not measure)"
 gate_expect_marker '^[0-9]+ archives fed to both importers at their own defaults' \
   "importer_differential.py prints how many archives it fed both importers, not just that it exited 0"
 
-IMPORTER_ARCHIVES="$(printf '%s\n' "$GATE_OUT" \
+# GATE_OUT belongs to the LAST gate_run, and every assertion below runs one --
+# including the `> 0` comparison a few lines down, whose output is empty. Read
+# through GATE_OUT after that point and the census reads an empty transcript,
+# which is green for absence. Measured while writing this block: the tally check
+# passed on nothing and only the set comparison caught it. Capture once, here.
+IMPORTER_OUT="$GATE_OUT"
+
+IMPORTER_ARCHIVES="$(printf '%s\n' "$IMPORTER_OUT" \
   | grep -Eo '^[0-9]+ archives fed to both importers at their own defaults' \
   | grep -Eo '^[0-9]+' | head -n1)"
 gate_say "importer_differential.py: $IMPORTER_ARCHIVES archives fed to both importers"
@@ -183,4 +197,36 @@ else
   gate_expect_rc 0 "importer_differential.py fed at least one real archive to both importers"
 fi
 
-gate_verdict "gen_container_corpus, both demo scripts, conformance_runner (TS, v0.2) and importer_differential all run and their leaf/archive counts are > 0"
+# The census the deleted registration used to carry, in the only form still
+# available now that the declared set is empty: the roads are pinned BY NAME,
+# and each is required to have answered for every archive fed. "> 0" alone
+# cannot tell 462 archives from 1, and an agreement reached over one archive is
+# not the property this step exists to assert.
+SIDES_SEEN="$(mktemp)"
+SIDES_DECLARED="$(mktemp)"
+printf '%s\n' "$IMPORTER_OUT" | awk '
+  /^[0-9]+ archives fed to both importers/ { inblock = 1; next }
+  /^[0-9]+ divergences across [0-9]+ families/ { inblock = 0 }
+  inblock && /^  [^:]+: [a-z-]+=[0-9]+/ { line = $0; sub(/: .*$/, "", line); sub(/^  /, "", line); print line }
+' | sort -u > "$SIDES_SEEN"
+printf 'browser intake\nbrowser parseBundle\nreference importer\n' > "$SIDES_DECLARED"
+gate_expect_same_set "$SIDES_SEEN" "$SIDES_DECLARED" \
+  "every road the tool tallies answered on this run, none missing and none new"
+rm -f "$SIDES_SEEN" "$SIDES_DECLARED"
+
+TALLY_BAD="$(mktemp)"
+printf '%s\n' "$IMPORTER_OUT" | awk -v want="$IMPORTER_ARCHIVES" '
+  /^[0-9]+ archives fed to both importers/ { inblock = 1; next }
+  /^[0-9]+ divergences across [0-9]+ families/ { inblock = 0 }
+  inblock && /^  [^:]+: [a-z-]+=[0-9]+/ {
+    line = $0; sub(/^  [^:]+: /, "", line)
+    n = split(line, parts, ", "); sum = 0
+    for (i = 1; i <= n; i++) { split(parts[i], kv, "="); sum += kv[2] }
+    if (sum != want) printf "%s sums to %d, not %d\n", $0, sum, want
+  }' > "$TALLY_BAD"
+[ -s "$TALLY_BAD" ] && gate_say "$(cat "$TALLY_BAD")"
+gate_run "every road answered for all $IMPORTER_ARCHIVES archives" -- test ! -s "$TALLY_BAD"
+gate_expect_rc 0 "each road tallied exactly as many outcomes as archives fed"
+rm -f "$TALLY_BAD"
+
+gate_verdict "gen_container_corpus, both demo scripts, conformance_runner (TS, v0.2) and importer_differential all run, every road answered for every archive, and the leaf/archive counts are > 0"

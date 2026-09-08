@@ -1357,14 +1357,28 @@ def test_load_trust_dir_keeps_the_largest_integer_ijson_admits(tmp_path: Path) -
 def test_load_trust_dir_refuses_an_integer_outside_the_ijson_range(tmp_path: Path) -> None:
     """`canon.loads_strict` admits integers `canonical_bytes` then refuses, so the
     refusal happens HERE — while the directory that carried it is still the thing
-    being blamed — rather than downstream inside the verifier."""
+    being blamed — rather than downstream inside the verifier.
+
+    The negative assertion is what makes that sentence a measurement instead of a
+    hope: serializing with `json.dumps` instead of the canonical serializer still
+    refuses this document, because `TrustStore.from_bytes` canonicalizes what it
+    is handed -- but it refuses it a layer LOWER, and the operator is told
+    "trust store is outside the canonical profile" by the library rather than the
+    reason by the loader. Measured 2026-09-08: with that mutation every other test
+    in this group stays green.
+    """
     trust_dir = _trust_dir_with(tmp_path, bad=_key_manifest_document(2**53))
 
     with pytest.raises(cli.CliUsageError) as exc:
         cli._load_trust_dir(trust_dir)
 
-    assert "--trust-dir" in str(exc.value)
-    assert "out of I-JSON safe range" in str(exc.value)
+    message = str(exc.value)
+    assert "--trust-dir" in message
+    assert "out of I-JSON safe range" in message
+    assert "outside the canonical profile" not in message, (
+        "the refusal came from the library, not from this loader: the CLI stopped "
+        "canonicalizing the store document before handing it over"
+    )
 
 
 def test_load_trust_dir_applies_the_aggregate_ceiling_before_reading_any_file(
@@ -1387,6 +1401,124 @@ def test_load_trust_dir_applies_the_aggregate_ceiling_before_reading_any_file(
     assert "bad.json" not in str(exc.value)
 
 
+# The constant is spent by THREE guards that measure three different things: the
+# pre-read gate over declared file sizes, the running budget over bytes actually
+# read, and `_document_bytes` over the assembled document. The two tests below
+# tell them apart, because "it raised" is satisfied by all three.
+_TRUST_DIR_CEILING_SLACK = 64
+
+
+def test_load_trust_dir_pre_read_gate_is_not_the_binding_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pre-read gate and `TrustStore.from_bytes` spend one constant on two
+    DIFFERENT quantities.
+
+    This loader sums the sizes of the FILES and refuses before reading any of
+    them. `from_bytes` then applies the same constant to the ASSEMBLED document,
+    which wraps every manifest under five members and is strictly larger --
+    measured on this fixture: 132 bytes on disk against 485 assembled. So a
+    directory can clear the early gate and still be refused, and the refusal
+    names the trust store rather than the files.
+
+    That asymmetry is not a defect to close by making the gate exact: it cannot
+    be, short of assembling the document the gate exists to avoid assembling.
+    It is pinned because the loader's docstring reads as though the aggregate
+    check were the whole guard, and because a test that assumed the two
+    quantities were equal is what sent this finding back for a second turn.
+    """
+    trust_dir = _trust_dir_with(
+        tmp_path, a=_key_manifest_document(1), b=_key_manifest_document(2, "other.example.com")
+    )
+    declared = sum(path.stat().st_size for path in trust_dir.glob("*.json"))
+
+    # Positive control at the real ceiling: the fixture loads, so the red below
+    # is about the ceiling and never about the manifests.
+    assert cli._load_trust_dir(trust_dir).issuers() == ("other.example.com", ISSUER)
+
+    # A ceiling above every declared size, so the pre-read gate cannot fire and
+    # the second one is left alone to answer.
+    monkeypatch.setattr(canon, "MAX_ADMISSION_BYTES", declared + _TRUST_DIR_CEILING_SLACK)
+
+    with pytest.raises(cli.CliUsageError) as exc:
+        cli._load_trust_dir(trust_dir)
+
+    message = str(exc.value)
+    assert "trust store exceeds the admission ceiling" in message
+    assert "files declaring" not in message, (
+        f"the pre-read gate fired, so this says nothing about the second ceiling: {message}"
+    )
+
+
+def test_load_trust_dir_bounds_the_bytes_it_reads_when_a_file_grows_under_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pre-read gate spends DECLARED sizes; the running budget spends bytes
+    TAKEN. Only the second survives a file that grows between the two passes.
+
+    The growth is real -- `b.json` is rewritten longer after `a.json` has been
+    read, which is what a concurrent writer does and what the declared sizes
+    cannot see. Both arms run at the SAME ceiling and differ only in whether the
+    growth happened, so the change of guard is attributable to the growth and to
+    nothing else. Without the second arm, an assertion that "it raised" would be
+    satisfied by the assembled-document ceiling of the test above, and by the
+    pre-read gate as well.
+    """
+
+    def fixture(name: str) -> tuple[Path, Path]:
+        root = tmp_path / name
+        root.mkdir()
+        (root / "a.json").write_text(_key_manifest_document(1), encoding="utf-8")
+        grows = root / "b.json"
+        grows.write_text(_key_manifest_document(2, "other.example.com"), encoding="utf-8")
+        return root, grows
+
+    quiet, _ = fixture("quiet")
+    declared = sum(path.stat().st_size for path in quiet.glob("*.json"))
+    ceiling = declared + _TRUST_DIR_CEILING_SLACK
+    monkeypatch.setattr(canon, "MAX_ADMISSION_BYTES", ceiling)
+
+    # Arm 1 -- nothing grows. The bytes read stay inside the budget, so what
+    # refuses is the assembled document meeting the ceiling a level down.
+    with pytest.raises(cli.CliUsageError) as quiet_exc:
+        cli._load_trust_dir(quiet)
+    assert "trust store exceeds the admission ceiling" in str(quiet_exc.value)
+
+    # Arm 2 -- same directory shape, same ceiling, and `b.json` grows after
+    # `a.json` was read.
+    noisy, grows = fixture("noisy")
+    padded = json.dumps(
+        {"issuer": "other.example.com", "manifest_version": 2, "keys": [], "pad": "x" * 90}
+    )
+    first_read = len(_key_manifest_document(1).encode())
+    # The window this arm needs, stated rather than assumed: big enough that the
+    # budget runs out, small enough that `_read_bounded_bytes` does not refuse
+    # the file on its own first. A later edit to the fixture fails HERE, naming
+    # the reason, instead of failing on a message assertion that looks unrelated.
+    assert len(padded) <= ceiling, "the per-file bound would fire before the budget"
+    assert first_read + len(padded) > ceiling, "the budget would not run out"
+
+    read_bounded = cli._read_bounded_bytes
+
+    def grow_after_the_first_read(path: Path, **kwargs: Any) -> bytes:
+        data = read_bounded(path, **kwargs)
+        if path.name == "a.json":
+            grows.write_text(padded, encoding="utf-8")
+        return data
+
+    monkeypatch.setattr(cli, "_read_bounded_bytes", grow_after_the_first_read)
+
+    with pytest.raises(cli.CliUsageError) as noisy_exc:
+        cli._load_trust_dir(noisy)
+
+    message = str(noisy_exc.value)
+    assert "the files read through" in message, message
+    assert str(grows) in message
+    assert "trust store exceeds" not in message, (
+        f"the grown file reached assembly, so the running budget did not bound it: {message}"
+    )
+
+
 def test_load_trust_dir_admits_the_bytes_the_file_carried(tmp_path: Path) -> None:
     """C1 and the one-manifest origins admit the SAME document.
 
@@ -1404,6 +1536,92 @@ def test_load_trust_dir_admits_the_bytes_the_file_carried(tmp_path: Path) -> Non
     assert admitted is not None
     on_its_own = trust_material.KeyManifest.from_bytes(document.encode())
     assert admitted.to_bytes() == on_its_own.to_bytes()
+
+
+def test_load_trust_dir_orders_versions_whatever_type_the_document_chose(
+    tmp_path: Path,
+) -> None:
+    """The version is a value the DOCUMENT picks the type of, and the sort key must
+    survive that. Comparing the raw values refuses to sort a mixed list at all --
+    a `TypeError` out of `sorted` instead of a verdict, which `main`'s safety net
+    turns into "'<' not supported between instances of 'str' and 'int'": exit 2
+    with a message naming neither the file nor the defect this loader promises to
+    name. `bundle._version_key` states the same rule for the archive road, and the
+    two roads assemble the same store."""
+    trust_dir = _trust_dir_with(
+        tmp_path,
+        sound=_key_manifest_document(2),
+        odd=json.dumps({"issuer": ISSUER, "manifest_version": "2", "keys": []}),
+    )
+
+    store = cli._load_trust_dir(trust_dir)
+
+    # A non-integer version orders as zero, so the integer one is the head, and
+    # both survive in the chain: the ordering is total again.
+    manifest = store.manifest_for(ISSUER)
+    assert manifest is not None
+    assert manifest.data()["manifest_version"] == 2
+    assert len(store.chain_for(ISSUER)) == 2
+
+
+def test_load_trust_dir_and_the_bundle_road_order_the_same_document_alike(
+    tmp_path: Path,
+) -> None:
+    """Two roads, one store: the trust-dir loader's version key must agree with
+    `bundle._version_key`, or the same manifests yield a different head depending
+    on whether they arrived as a directory or as an archive."""
+    from attest import bundle as bundle_mod
+
+    for value in ("2", None, [1], True, 3, 0):
+        document = {"issuer": ISSUER, "manifest_version": value, "keys": []}
+        assert cli._trust_manifest_version(document) == bundle_mod._version_key(
+            document, "manifest_version"
+        ), value
+
+
+def test_load_trust_dir_builds_all_five_members_and_orders_the_chain_by_version(
+    tmp_path: Path,
+) -> None:
+    """C1's declared shape, which nothing pinned: five members present (this is
+    what separates C1 from B1 and C2, where `chains` is absent), the head is the
+    highest version, the chain is ordered, and provenance is TOFU for every
+    issuer. All four are true today; none of them was measured."""
+    trust_dir = _trust_dir_with(
+        tmp_path,
+        c=_key_manifest_document(3),
+        a=_key_manifest_document(1),
+        b=_key_manifest_document(2),
+    )
+
+    document = cli._load_trust_dir(trust_dir).data()
+
+    assert set(document) == {
+        "manifests",
+        "provenance",
+        "chains",
+        "artifact_manifests",
+        "artifact_manifest_chains",
+    }
+    assert document["manifests"][ISSUER]["manifest_version"] == 3
+    assert [m["manifest_version"] for m in document["chains"][ISSUER]] == [1, 2, 3]
+    assert document["provenance"][ISSUER] == "bundle"
+
+
+def test_load_trust_dir_breaks_a_version_tie_by_file_name(tmp_path: Path) -> None:
+    """Two files claiming one issuer at one version: the sort is stable, so the
+    LAST file name wins the head. Written down because it is a trust-resolution
+    rule nobody stated -- not because it is an escalation: whoever can drop a file
+    in this directory can also claim a higher version and win outright."""
+    trust_dir = _trust_dir_with(
+        tmp_path,
+        aaa=json.dumps({"issuer": ISSUER, "manifest_version": 1, "keys": ["first"]}),
+        zzz=json.dumps({"issuer": ISSUER, "manifest_version": 1, "keys": ["second"]}),
+    )
+
+    head = cli._load_trust_dir(trust_dir).manifest_for(ISSUER)
+
+    assert head is not None
+    assert head.data()["keys"] == ["second"]
 
 
 def test_verify_with_an_unclassifiable_trust_dir_file_exits_2(
@@ -6398,3 +6616,149 @@ def test_crqc_horizon_refuses_every_non_canonical_spelling(name: str, value: str
     restriction would have landed with nothing watching it."""
     with pytest.raises(cli.CliUsageError):
         cli._parse_crqc_horizon(value)
+
+
+# --- the readers the migrated flags now use (T4b) ----------------------------
+#
+# `manifest rotate --in` and `manifest artifacts --in` read through
+# `KeyManifest.from_bytes`, so `canon.loads_strict` and no longer `json.loads`.
+# The duplicate case is the one that matters: `json.loads` kept the LAST member,
+# so a manifest carrying `issuer` twice used to be read as the SECOND issuer --
+# the attacker's -- and the flag went on to rotate against it.
+
+
+@pytest.mark.parametrize(
+    ("case", "document", "expected"),
+    [
+        pytest.param(
+            "duplicate member",
+            '{"issuer": "a.example.com", "issuer": "b.example.com", "keys": []}',
+            "duplicate object key",
+            id="duplicate-member",
+        ),
+        pytest.param(
+            "a float",
+            '{"issuer": "a.example.com", "keys": [], "x": 1.5}',
+            "floats are not allowed",
+            id="float",
+        ),
+        pytest.param(
+            "an out-of-range integer",
+            '{"issuer": "a.example.com", "keys": [], "manifest_version": 9007199254740992}',
+            "out of I-JSON safe range",
+            id="integer-past-boundary",
+        ),
+        pytest.param(
+            "an array where an object belongs",
+            '["not an object"]',
+            "must be a JSON object",
+            id="not-an-object",
+        ),
+    ],
+)
+def test_manifest_rotate_in_reads_with_the_strict_parser(
+    tmp_path: Path, capsys: CapSys, case: str, document: str, expected: str
+) -> None:
+    seed, _pub = _keygen(tmp_path, "issuer")
+    manifest_in = tmp_path / "in.json"
+    manifest_in.write_text(document, encoding="utf-8")
+
+    rc = cli.main(
+        [
+            "manifest",
+            "rotate",
+            "--in",
+            str(manifest_in),
+            "--signing-kid",
+            KID,
+            "--signing-seed",
+            str(seed),
+            "--issued-at",
+            "2026-06-01T00:00:00Z",
+            "--retire-kid",
+            KID,
+            "--out",
+            str(tmp_path / "out.json"),
+        ]
+    )
+
+    assert rc == 2, case
+    captured = capsys.readouterr().err
+    assert str(manifest_in) in captured, case
+    assert expected in captured, case
+    assert not (tmp_path / "out.json").exists(), case
+
+
+def test_manifest_rotate_in_still_reads_the_manifest_init_wrote(tmp_path: Path) -> None:
+    """The positive control the four refusals above need: a reader that refused
+    every document would satisfy them all for the wrong reason."""
+    seed, _pub = _keygen(tmp_path, "issuer")
+    manifest_in = _manifest_init(tmp_path, seed, "manifest.json")
+
+    admitted = cli._read_key_manifest(manifest_in, "--in")
+
+    assert admitted.data()["issuer"] == ISSUER
+
+
+def test_read_key_manifest_names_a_file_that_is_not_there(tmp_path: Path) -> None:
+    with pytest.raises(cli.CliUsageError) as exc:
+        cli._read_key_manifest(tmp_path / "absent.json", "--in")
+    assert "file not found" in str(exc.value)
+    assert str(tmp_path / "absent.json") in str(exc.value)
+
+
+def test_revocation_view_manifest_that_is_not_readable_trust_material_exits_2(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The C3 refusal on `--manifest`, which no test reached: the flag admits the
+    file as a SNAPSHOT now, so a document the library cannot parse is refused
+    here rather than becoming a view that authenticated nothing."""
+    manifest = tmp_path / "m.json"
+    manifest.write_text('{"issuer": "a", "issuer": "b", "keys": []}', encoding="utf-8")
+    record = _write_json(tmp_path / "r.json", {"not": "a record"})
+
+    rc = cli.main(
+        [
+            "revocation-view",
+            "--record",
+            str(record),
+            "--manifest",
+            str(manifest),
+            "--out",
+            str(tmp_path / "v.json"),
+        ]
+    )
+
+    assert rc == 2
+    assert "cannot read --manifest" in capsys.readouterr().err
+
+
+def test_compromise_view_trusted_manifest_without_a_string_issuer_exits_2(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """C4 selects the trusted manifest out of the store BY ITS DECLARED ISSUER, so
+    a manifest that declares none has no selector and the store cannot be keyed.
+    The refusal is the CLI's because only the CLI knows which flag carried the
+    file -- and until this test nothing reached it."""
+    trusted = _write_json(tmp_path / "trusted.json", {"manifest_version": 1, "keys": []})
+    claim = json.loads((LEAF_41A / "compromise-view.json").read_text(encoding="utf-8"))[0]
+
+    rc = cli.main(
+        [
+            "manifest",
+            "compromise-view",
+            "--trusted-manifest",
+            str(trusted),
+            "--manifest",
+            str(_write_json(tmp_path / "d.json", claim["manifest"])),
+            "--evidence",
+            str(_write_json(tmp_path / "e.json", claim["evidence"])),
+            "--out",
+            str(tmp_path / "out.json"),
+        ]
+    )
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert str(trusted) in err
+    assert "must carry a string 'issuer'" in err
