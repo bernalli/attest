@@ -23,6 +23,7 @@ import { b64uEncode, b64uDecode } from '../src/b64u.js'
 import { ML_DSA_65_SIG_LEN } from '../src/mldsa.js'
 import { verifyArtifactManifest } from '../src/manifests.js'
 import { verifyRecord, classifyRevocation } from '../src/revocation.js'
+import { keyManifest as manifestHandle } from './helpers/trust.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 const parse = (v: unknown): JsonObject => loadsStrict(enc(JSON.stringify(v))) as JsonObject
@@ -86,63 +87,63 @@ function withSig(doc: JsonObject, sigField: string, sig: JsonObject): JsonObject
 
 describe('hybrid revocation records', () => {
   it('a hybrid record verifies', () => {
-    expect(verifyRecord(record(true), keyManifest(true))).toBe(true)
+    expect(verifyRecord(record(true), manifestHandle(keyManifest(true)))).toBe(true)
   })
 
   it('a hybrid record missing the ML-DSA-65 leg is invalid', () => {
     const doc = record(true)
     const sig = { ...(doc['signature'] as JsonObject) }
     delete sig['sig_ml_dsa_65']
-    expect(verifyRecord(withSig(doc, 'signature', sig), keyManifest(true))).toBe(false)
+    expect(verifyRecord(withSig(doc, 'signature', sig), manifestHandle(keyManifest(true)))).toBe(false)
   })
 
   it('a hybrid record with a tampered ML-DSA-65 leg is invalid', () => {
     const doc = record(true)
     const sig = doc['signature'] as JsonObject
     const tampered = { ...sig, sig_ml_dsa_65: flipByte(sig['sig_ml_dsa_65'] as string) }
-    expect(verifyRecord(withSig(doc, 'signature', tampered), keyManifest(true))).toBe(false)
+    expect(verifyRecord(withSig(doc, 'signature', tampered), manifestHandle(keyManifest(true)))).toBe(false)
   })
 
   it('an Ed25519-only record against an Ed25519-only manifest is unchanged', () => {
-    expect(verifyRecord(record(false), keyManifest(false))).toBe(true)
+    expect(verifyRecord(record(false), manifestHandle(keyManifest(false)))).toBe(true)
   })
 
   it('an Ed25519-only record with a stray ML-DSA-65 leg is invalid', () => {
     const doc = record(false)
     const sig = doc['signature'] as JsonObject
     const stray = { ...sig, sig_ml_dsa_65: b64uEncode(new Uint8Array(ML_DSA_65_SIG_LEN)) }
-    expect(verifyRecord(withSig(doc, 'signature', stray), keyManifest(false))).toBe(false)
+    expect(verifyRecord(withSig(doc, 'signature', stray), manifestHandle(keyManifest(false)))).toBe(false)
   })
 })
 
 describe('hybrid artifact manifests', () => {
   it('a hybrid manifest verifies', () => {
-    expect(verifyArtifactManifest(artifactManifest(true), keyManifest(true))).toBe(true)
+    expect(verifyArtifactManifest(artifactManifest(true), manifestHandle(keyManifest(true)))).toBe(true)
   })
 
   it('a hybrid manifest missing the ML-DSA-65 leg is invalid', () => {
     const doc = artifactManifest(true)
     const sig = { ...(doc['manifest_signature'] as JsonObject) }
     delete sig['sig_ml_dsa_65']
-    expect(verifyArtifactManifest(withSig(doc, 'manifest_signature', sig), keyManifest(true))).toBe(false)
+    expect(verifyArtifactManifest(withSig(doc, 'manifest_signature', sig), manifestHandle(keyManifest(true)))).toBe(false)
   })
 
   it('a hybrid manifest with a tampered ML-DSA-65 leg is invalid', () => {
     const doc = artifactManifest(true)
     const sig = doc['manifest_signature'] as JsonObject
     const tampered = { ...sig, sig_ml_dsa_65: flipByte(sig['sig_ml_dsa_65'] as string) }
-    expect(verifyArtifactManifest(withSig(doc, 'manifest_signature', tampered), keyManifest(true))).toBe(false)
+    expect(verifyArtifactManifest(withSig(doc, 'manifest_signature', tampered), manifestHandle(keyManifest(true)))).toBe(false)
   })
 
   it('an Ed25519-only manifest against an Ed25519-only key manifest is unchanged', () => {
-    expect(verifyArtifactManifest(artifactManifest(false), keyManifest(false))).toBe(true)
+    expect(verifyArtifactManifest(artifactManifest(false), manifestHandle(keyManifest(false)))).toBe(true)
   })
 
   it('an Ed25519-only manifest with a stray ML-DSA-65 leg is invalid', () => {
     const doc = artifactManifest(false)
     const sig = doc['manifest_signature'] as JsonObject
     const stray = { ...sig, sig_ml_dsa_65: b64uEncode(new Uint8Array(ML_DSA_65_SIG_LEN)) }
-    expect(verifyArtifactManifest(withSig(doc, 'manifest_signature', stray), keyManifest(false))).toBe(false)
+    expect(verifyArtifactManifest(withSig(doc, 'manifest_signature', stray), manifestHandle(keyManifest(false)))).toBe(false)
   })
 })
 

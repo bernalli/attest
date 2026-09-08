@@ -351,6 +351,23 @@ export function ownArrayLength(value: unknown): number | null {
  * avoid. `Object.getOwnPropertyDescriptor` is what tells the two apart;
  * inherited members are never own data and are not copied either.
  *
+ * An accessor is REFUSED, not skipped, and the two branches below agree on
+ * that. Skipping it used to be an object-branch-only behaviour, and the
+ * asymmetry was reachable: a descriptor read truthfully by an earlier walk and
+ * as an accessor by this one made the member VANISH from the reconstruction,
+ * and downstream an absent member is not an error, it is a different meaning
+ * ("no upper bound", "no declaration"). A reconstruction that silently drops a
+ * key the unit carries is not that unit, so the whole unit is set aside.
+ *
+ * A NON-ENUMERABLE data property is skipped instead, and that is not the same
+ * case wearing different clothes: it is not part of the object's JSON form at
+ * all — `JSON.stringify` does not serialize it and no parser ever produces one
+ * — so there is no member to lose. An accessor, by contrast, occupies a key
+ * that IS in the form. The distinction is pinned by
+ * `blind-integer-representation.test.ts` ("a non-enumerable extra member is not
+ * own data and the genuine declaration still activates"): making this branch
+ * refuse it too costs a genuine document its activation.
+ *
  * Integers arrive as `bigint` — the profile's only numeric type — and a JS
  * `number` is refused rather than coerced. Coercing would silently admit a
  * float, and the whole point of the integer-only profile is that a float is not
@@ -403,7 +420,7 @@ export function ownDataCopy(
     const out: JsonObject = Object.create(null) as JsonObject
     for (const key of Object.getOwnPropertyNames(value as object)) {
       const descriptor = Object.getOwnPropertyDescriptor(value as object, key)
-      if (descriptor === undefined || !('value' in descriptor)) continue
+      if (descriptor === undefined || !('value' in descriptor)) throw new CanonError(ERR.TYPE_NOT_JSON)
       if (!descriptor.enumerable) continue
       out[key] = ownDataCopy(descriptor.value, budget, options)
     }

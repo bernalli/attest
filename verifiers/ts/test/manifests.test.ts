@@ -13,6 +13,7 @@ import {
   checkArtifactContinuity,
   MAX_ARTIFACT_ENTRIES,
 } from '../src/manifests.js'
+import { keyManifest as manifestHandle } from './helpers/trust.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 function signManifest(body: Record<string, unknown>, kid: string, seed: Uint8Array) {
@@ -424,13 +425,13 @@ describe('manifests', () => {
     )
 
     it('verifies a pristine artifact manifest against its key manifest', () => {
-      expect(verifyArtifactManifest(parse(am), parse(v1))).toBe(true)
+      expect(verifyArtifactManifest(parse(am), manifestHandle(parse(v1)))).toBe(true)
     })
 
     it('fails after a signed-field tamper', () => {
       const t = JSON.parse(JSON.stringify(am))
       t.version = 2
-      expect(verifyArtifactManifest(parse(t), parse(v1))).toBe(false)
+      expect(verifyArtifactManifest(parse(t), manifestHandle(parse(v1)))).toBe(false)
     })
 
     // --- I3(b) (2026-07-22 fix wave 2): G1 artifact-entries ceiling boundary —
@@ -457,7 +458,7 @@ describe('manifests', () => {
         kid1,
         seed1,
       )
-      expect(verifyArtifactManifest(parse(atCeiling), parse(v1))).toBe(true)
+      expect(verifyArtifactManifest(parse(atCeiling), manifestHandle(parse(v1)))).toBe(true)
     })
 
     it('rejects an artifact manifest one entry over MAX_ARTIFACT_ENTRIES', () => {
@@ -472,7 +473,7 @@ describe('manifests', () => {
         kid1,
         seed1,
       )
-      expect(verifyArtifactManifest(parse(overCeiling), parse(v1))).toBe(false)
+      expect(verifyArtifactManifest(parse(overCeiling), manifestHandle(parse(v1)))).toBe(false)
     })
 
     it('rejects a signed artifact manifest with manifest_version zero', () => {
@@ -488,7 +489,7 @@ describe('manifests', () => {
         kid1,
         seed1,
       )
-      expect(verifyArtifactManifest(parse(zero), parse(v1))).toBe(false)
+      expect(verifyArtifactManifest(parse(zero), manifestHandle(parse(v1)))).toBe(false)
     })
   })
 

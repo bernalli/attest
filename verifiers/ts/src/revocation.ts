@@ -7,13 +7,13 @@ import {
 } from './canon.js'
 import { verifyKeyManifest, manifestSignatureIsAuthentic, findKey, verifySignatureBlock } from './manifests.js'
 import { parseStrictUtc, parseIsoLenient, validStage3UtcTimestamp, MAX_REPRESENTABLE_UNIX_SECONDS } from './dates.js'
-import { materializeKeyManifest } from './trustMaterial.js'
+import { manifestData, type KeyManifest } from './trustMaterial.js'
 import { RECEIPT_ID_RE } from './ids.js'
 import { LogKey, encodeEntry, TlogError } from './tlog.js'
 import { AnchorPolicy, validatePolicy } from './anchor.js'
 import { evaluateTransparency, validateLogKeys, TransparencyError } from './transparency.js'
 import {
-  verifyRecordSignatureMaterialized as verifyTransferRecordSignatureMaterialized,
+  verifyRecordSignatureData as verifyTransferRecordSignatureData,
   verifyAuthorization as verifyTransferAuthorization,
   recordLoggedStanding as transferRecordLoggedStanding,
   MAX_TRANSFER_CLAIMS,
@@ -57,29 +57,29 @@ export function recordHash(record: JsonObject): string {
 // sibling-patch parity).
 //
 // `keyManifest` is MATERIALIZED here, at the public boundary, before any
-// predicate reads it: the entry reads below (`entry['status']`,
-// `entry['valid_to']`) go through whatever accessor the caller's object
-// defines, while the signature check reads own data — so without the boundary
-// the same manifest is authentic and lying at once, and a record signed after
-// the key expired verifies. In-package callers that already hold a
-// materialized manifest use `verifyRecordSignatureMaterialized`, so the
-// boundary is one pass per public call and never one per record.
+// predicate reads it: on a live object the entry reads below
+// (`entry['status']`, `entry['valid_to']`) would go through whatever accessor
+// that object defined, while the signature check read own data — so the same
+// manifest could be authentic and lying at once, and a record signed after the
+// key expired verified. A HANDLE removes the object; this unwraps it. In-package
+// callers that already hold the tree use `verifyRecordSignatureData`, so the
+// unwrap is one per public call and never one per record.
 // Python parity: revocation.py's `verify_record_signature`.
-export function verifyRecordSignature(record: JsonObject, keyManifest: JsonObject): boolean {
-  const materialized = materializeKeyManifest(keyManifest)
-  if (materialized === null) return false
-  return verifyRecordSignatureMaterialized(record, materialized)
+export function verifyRecordSignature(record: JsonObject, keyManifest: KeyManifest): boolean {
+  const data = manifestData(keyManifest)
+  if (data === null) return false
+  return verifyRecordSignatureData(record, data)
 }
 
-// `verifyRecordSignature`'s body, over an ALREADY MATERIALIZED manifest.
-// Second precondition on top of the public one: `keyManifest` is the output of
-// `materializeKeyManifest`, so it holds only what `loadsStrict` produces and
-// the reads below cannot be steered. Calling this with a raw caller object
-// reopens the class the boundary exists to close. Exported, not module-local,
+// `verifyRecordSignature`'s body, over the snapshot TREE.
+// Second precondition on top of the public one: `keyManifest` is a tree from
+// `manifestData`/`storeData`, so it holds only what `loadsStrict` produces and
+// the reads below cannot be steered. Calling this with a live object reopens
+// the class the handle exists to close. Exported, not module-local,
 // because `verify.ts` and `transfer.ts` are the hoisting callers and TypeScript
 // has no in-package visibility — the name states the precondition instead.
 // Python parity: revocation.py's `_verify_record_signature`.
-export function verifyRecordSignatureMaterialized(
+export function verifyRecordSignatureData(
   record: JsonObject,
   keyManifest: JsonObject,
 ): boolean {
@@ -108,11 +108,11 @@ export function verifyRecordSignatureMaterialized(
 // reconstruction — never against a second read of the caller's object, which
 // is what would let a manifest be self-consistent for the first half and
 // something else for the second.
-export function verifyRecord(record: JsonObject, keyManifest: JsonObject): boolean {
+export function verifyRecord(record: JsonObject, keyManifest: KeyManifest): boolean {
   try {
-    const materialized = materializeKeyManifest(keyManifest)
-    if (materialized === null) return false
-    return verifyKeyManifest(materialized) && verifyRecordSignatureMaterialized(record, materialized)
+    const data = manifestData(keyManifest)
+    if (data === null) return false
+    return verifyKeyManifest(data) && verifyRecordSignatureData(record, data)
   } catch { return false }
 }
 
@@ -237,7 +237,7 @@ const REVOCATION_TRANSFERRED = 'transferred'
  *
  * 1. `record` is an object whose `receipt_id` equals `payload`'s own — else
  *    the claim is irrelevant to this receipt and is skipped silently.
- * 2. `transfer.verifyRecordSignatureMaterialized(record, issuerManifest)` — the
+ * 2. `transfer.verifyRecordSignatureData(record, issuerManifest)` — the
  *    issuer's own signature (hoisting `verifyKeyManifest` once here,
  *    mirroring `classifyRevocation`'s own hoisting of the same check). On
  *    failure: TRANSFER_WARN.REVOCATION_UNBACKED (deduplicated), skip.
@@ -260,7 +260,7 @@ const REVOCATION_TRANSFERRED = 'transferred'
  *
  * PRECONDITION: `issuerManifest` is ALREADY MATERIALIZED — it came out of
  * `materializeTrustStore`. This function reaches the hoisted
- * `verifyRecordSignatureMaterialized`, which does not re-apply the boundary,
+ * `verifyRecordSignatureData`, which does not re-apply the boundary,
  * so a raw caller object handed in here would reopen the class that boundary
  * closes. Module-local for exactly that reason.
  */
@@ -316,7 +316,7 @@ function resolveTransferBacking(
     // `materializeTrustStore` before this function was reached, and the public
     // entry point would re-materialize it once PER CLAIM instead of once per
     // call. The boundary is not skipped here, it is hoisted.
-    if (!manifestOk || !verifyTransferRecordSignatureMaterialized(record, issuerManifest)) {
+    if (!manifestOk || !verifyTransferRecordSignatureData(record, issuerManifest)) {
       appendOnce(TRANSFER_WARN.REVOCATION_UNBACKED)
       continue
     }
@@ -363,7 +363,7 @@ function resolveTransferBacking(
 
 // PRECONDITION: `issuerManifest` is ALREADY MATERIALIZED, exactly as in
 // `resolveTransferBacking` above and for the same reason — the per-record map
-// below uses `verifyRecordSignatureMaterialized`, the variant that does not
+// below uses `verifyRecordSignatureData`, the variant that does not
 // re-apply the boundary.
 export function classifyRevocation(
   payload: JsonObject, view: JsonValue[] | null, issuerManifest: JsonObject, warnings: string[],
@@ -465,9 +465,9 @@ export function classifyRevocation(
   // manifest_signature sits outside the signed bytes. Python parity:
   // verify.py's _resolve_transfer_backing and _classify_revocation.
   const manifestOk = manifestSignatureIsAuthentic(issuerManifest)
-  // Materialized variant, hoisted for the same reason as the transfer rail:
+  // Tree variant, hoisted for the same reason as the transfer rail:
   // this map runs up to MAX_REVOCATION_RECORDS times against ONE manifest.
-  const auth: boolean[] = admittedView.map((r) => { const o = asObject(r); return manifestOk && o !== null && verifyRecordSignatureMaterialized(o, issuerManifest) })
+  const auth: boolean[] = admittedView.map((r) => { const o = asObject(r); return manifestOk && o !== null && verifyRecordSignatureData(o, issuerManifest) })
 
   // freshness anchor T = max revoked_at over AUTHENTICATED STATEMENT-STATUS
   // records (status revoked/transferred, v0.1 §12.3 2026-08-26 amendment) of

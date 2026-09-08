@@ -8,6 +8,7 @@ import { b64uEncode } from '../src/b64u.js'
 import { verifyRecord, classifyRevocation, recordHash } from '../src/revocation.js'
 import { parseCheckpoint, type LogKey } from '../src/tlog.js'
 import type { AnchorPolicy } from '../src/anchor.js'
+import { keyManifest as manifestHandle } from './helpers/trust.js'
 
 const h = (hex: string) => hexToBytes(hex)
 
@@ -103,7 +104,7 @@ const revokedRecord = signRecord(
 describe('revocation', () => {
   describe('verifyRecord', () => {
     it('verifies a record signed by the active key', () => {
-      expect(verifyRecord(parse(revokedRecord), parse(keyManifest))).toBe(true)
+      expect(verifyRecord(parse(revokedRecord), manifestHandle(parse(keyManifest)))).toBe(true)
     })
 
     it('rejects a record signed by a compromised key (a compromised key must not forge revocations)', () => {
@@ -112,7 +113,7 @@ describe('revocation', () => {
         kidCompromised,
         seedCompromised,
       )
-      expect(verifyRecord(parse(record), parse(keyManifest))).toBe(false)
+      expect(verifyRecord(parse(record), manifestHandle(parse(keyManifest)))).toBe(false)
     })
 
     it('rejects a record signed by a retired key', () => {
@@ -121,7 +122,7 @@ describe('revocation', () => {
         kidRetired,
         seedRetired,
       )
-      expect(verifyRecord(parse(record), parse(keyManifest))).toBe(false)
+      expect(verifyRecord(parse(record), manifestHandle(parse(keyManifest)))).toBe(false)
     })
 
     it('rejects a record signed by a key absent from the manifest entirely', () => {
@@ -130,7 +131,7 @@ describe('revocation', () => {
         kidWrong,
         seedWrong,
       )
-      expect(verifyRecord(parse(record), parse(keyManifest))).toBe(false)
+      expect(verifyRecord(parse(record), manifestHandle(parse(keyManifest)))).toBe(false)
     })
 
     it('rejects a record whose revoked_at falls outside the signer key\'s validity window', () => {
@@ -157,7 +158,7 @@ describe('revocation', () => {
         kid1,
         seed1,
       )
-      expect(verifyRecord(parse(record), parse(boundedManifest))).toBe(false)
+      expect(verifyRecord(parse(record), manifestHandle(parse(boundedManifest)))).toBe(false)
     })
   })
 

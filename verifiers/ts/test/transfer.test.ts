@@ -30,6 +30,8 @@ import {
   auditChain,
 } from '../src/transfer.js'
 import { buildTree, inclusionProof, signCheckpoint, type HybridTestKeys } from './helpers/tlog-builder.js'
+import { keyManifest as manifestHandle } from './helpers/trust.js'
+import type { KeyManifest as ParsedKeyManifest } from '../src/trustMaterial.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 const parse = (v: unknown): JsonObject => loadsStrict(enc(JSON.stringify(v))) as JsonObject
@@ -168,7 +170,7 @@ describe('verifyRecord roundtrip', () => {
     expect(Object.keys(record).sort()).toEqual(
       ['holder_authorization', 'new_holder_pubkey', 'new_receipt_id', 'receipt_id', 'signature', 'transferred_at'].sort(),
     )
-    expect(verifyRecord(record, keyManifest())).toBe(true)
+    expect(verifyRecord(record, manifestHandle(keyManifest()))).toBe(true)
     expect(verifyAuthorization(record, b64uEncode(holderPub))).toBe(true)
   })
 
@@ -203,14 +205,14 @@ describe('holder authorization strictness', () => {
     }
     const sig = ed25519.sign(canonicalBytes(parse(body)), issuerSeed)
     const record = parse({ ...body, signature: { kid: KID, sig: b64uEncode(sig) } })
-    expect(verifyRecord(record, keyManifest())).toBe(false)
+    expect(verifyRecord(record, manifestHandle(keyManifest()))).toBe(false)
   })
 
   it('a post-signing undecodable holder sig also fails', () => {
     const record = buildRecord()
     const auth = { ...(record['holder_authorization'] as JsonObject), sig: '!'.repeat(86) }
     const mutated = { ...record, holder_authorization: auth }
-    expect(verifyRecord(mutated, keyManifest())).toBe(false)
+    expect(verifyRecord(mutated, manifestHandle(keyManifest()))).toBe(false)
   })
 })
 
@@ -220,19 +222,22 @@ describe('verifyRecord fails closed at the untrusted boundary', () => {
   it('non-object signature block', () => {
     const record = buildRecord()
     const mutated = { ...record, signature: [] as unknown as JsonObject }
-    expect(verifyRecord(mutated, keyManifest())).toBe(false)
+    expect(verifyRecord(mutated, manifestHandle(keyManifest()))).toBe(false)
   })
 
   it('non-canonicalizable record field', () => {
     const record = buildRecord()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mutated = { ...record, receipt_id: { bogus: () => {} } as any }
-    expect(verifyRecord(mutated, keyManifest())).toBe(false)
+    expect(verifyRecord(mutated, manifestHandle(keyManifest()))).toBe(false)
   })
 
   it('malformed key manifest', () => {
+    // An array is not a document a handle can be built from, so this is a cast
+    // and not `manifestHandle([])`: wrapping it would throw in the fixture and
+    // the test would measure `parseKeyManifest` instead of `verifyRecord`.
     const record = buildRecord()
-    expect(verifyRecord(record, [] as unknown as JsonObject)).toBe(false)
+    expect(verifyRecord(record, [] as unknown as ParsedKeyManifest)).toBe(false)
   })
 })
 
@@ -241,29 +246,29 @@ describe('verifyRecord fails closed at the untrusted boundary', () => {
 describe('closed six-field record profile', () => {
   it('rejects an extra member', () => {
     const record = resignRecord({ ...buildRecord(), extra: 'not permitted' })
-    expect(verifyRecord(record, keyManifest())).toBe(false)
+    expect(verifyRecord(record, manifestHandle(keyManifest()))).toBe(false)
   })
 
   it.each(['receipt_id', 'new_receipt_id'])('rejects a bad ULID in %s', (field) => {
     const record = resignRecord({ ...buildRecord(), [field]: 'not-a-ulid' })
-    expect(verifyRecord(record, keyManifest())).toBe(false)
+    expect(verifyRecord(record, manifestHandle(keyManifest()))).toBe(false)
   })
 
   it('rejects a 31-byte new_holder_pubkey', () => {
     const record = buildRecord({ newHolderPubkey: b64uEncode(new Uint8Array(31)) })
-    expect(verifyRecord(record, keyManifest())).toBe(false)
+    expect(verifyRecord(record, manifestHandle(keyManifest()))).toBe(false)
   })
 
   it('rejects a non-canonical transferred_at', () => {
     const record = buildRecord({ transferredAt: '2026-7-3T0:0:0Z' })
-    expect(verifyRecord(record, keyManifest())).toBe(false)
+    expect(verifyRecord(record, manifestHandle(keyManifest()))).toBe(false)
   })
 
   it.each(['2026-02-30T00:00:00Z', '2026-13-01T00:00:00Z', '2026-04-31T00:00:00Z'])(
     'rejects an impossible calendar transferred_at (%s)',
     (transferredAt) => {
       const record = buildRecord({ transferredAt })
-      expect(verifyRecord(record, keyManifest())).toBe(false)
+      expect(verifyRecord(record, manifestHandle(keyManifest()))).toBe(false)
     },
   )
 })
@@ -292,7 +297,7 @@ describe('hybrid AND-rule', () => {
   it('a classical-only record against a hybrid key fails closed', () => {
     const { hk, manifest } = hybridKeyManifest()
     const record = buildRecord({ issuerSeed: hk.edSeed })
-    expect(verifyRecord(record, manifest)).toBe(false)
+    expect(verifyRecord(record, manifestHandle(manifest))).toBe(false)
   })
 
   it('a hybrid record roundtrips', () => {
@@ -301,7 +306,7 @@ describe('hybrid AND-rule', () => {
     const sig = record['signature'] as JsonObject
     expect('sig' in sig).toBe(true)
     expect('sig_ml_dsa_65' in sig).toBe(true)
-    expect(verifyRecord(record, manifest)).toBe(true)
+    expect(verifyRecord(record, manifestHandle(manifest))).toBe(true)
   })
 
   it('a hybrid record with a tampered ML-DSA-65 leg fails', () => {
@@ -311,14 +316,14 @@ describe('hybrid AND-rule', () => {
     const raw = b64uDecode(sig['sig_ml_dsa_65'] as string)
     raw[0] = raw[0]! ^ 0xff
     const mutated = { ...record, signature: { ...sig, sig_ml_dsa_65: b64uEncode(raw) } }
-    expect(verifyRecord(mutated, manifest)).toBe(false)
+    expect(verifyRecord(mutated, manifestHandle(manifest))).toBe(false)
   })
 
   it('an Ed25519-only record with a stray ML-DSA-65 leg fails', () => {
     const record = buildRecord()
     const sig = record['signature'] as JsonObject
     const mutated = { ...record, signature: { ...sig, sig_ml_dsa_65: b64uEncode(new Uint8Array(ML_DSA_65_SIG_LEN)) } }
-    expect(verifyRecord(mutated, keyManifest())).toBe(false)
+    expect(verifyRecord(mutated, manifestHandle(keyManifest()))).toBe(false)
   })
 })
 
@@ -328,7 +333,7 @@ describe('signer key window', () => {
   it('rejects a transferred_at outside the key validity window', () => {
     const km = keyManifestWithWindow('2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z')
     const record = buildRecord({ transferredAt: '2026-07-23T00:00:00Z' })
-    expect(verifyRecord(record, km)).toBe(false)
+    expect(verifyRecord(record, manifestHandle(km))).toBe(false)
   })
 })
 
@@ -347,7 +352,7 @@ describe('malformed holder_authorization shapes fail closed', () => {
     const record = buildRecord()
     const originalSig = (record['holder_authorization'] as JsonObject)['sig'] as string
     const mutated = { ...record, holder_authorization: mutate(originalSig) as JsonObject }
-    expect(verifyRecord(mutated, keyManifest())).toBe(false)
+    expect(verifyRecord(mutated, manifestHandle(keyManifest()))).toBe(false)
   })
 })
 
@@ -487,7 +492,7 @@ describe('auditChain', () => {
     ])
     const revView = parse([chainTransferredRevocation(ID0, AT), chainTransferredRevocation(ID1, AT2)])
 
-    const res = auditChain([p0, p1, p2], view, revView, keyManifest(), [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1, p2], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.valid).toBe(true)
     expect(res.linkStatus).toEqual(['valid', 'valid'])
@@ -505,7 +510,7 @@ describe('auditChain', () => {
     const view = parse([{ record: record1, evidence: bundle1 }])
     const revView = parse([chainTransferredRevocation(ID0, AT)])
 
-    const res = auditChain([p0, p1], view, revView, keyManifest(), [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.linkStatus).toEqual(['invalid'])
     expect(res.errors).toContain('chain link 1: new receipt buyer.pubkey != new_holder_pubkey')
@@ -527,7 +532,7 @@ describe('auditChain', () => {
     ])
     const revView = parse([chainTransferredRevocation(ID0, AT)])
 
-    const res = auditChain([p0, p1], view, revView, keyManifest(), [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.linkStatus).toEqual(['invalid'])
     expect(res.errors).toContain('chain link 1: losing branch of a double assignment')
@@ -547,7 +552,7 @@ describe('auditChain', () => {
     ])
     const revView = parse([chainTransferredRevocation(ID0, AT2)])
 
-    const res = auditChain([p0, p1], view, revView, keyManifest(), [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.valid).toBe(true)
     expect(res.linkStatus).toEqual(['valid'])
@@ -563,7 +568,7 @@ describe('auditChain', () => {
     const view = parse([{ record: record1, evidence: bundle1 }])
     const revView = parse([chainTransferredRevocation(ID0, AT)])
 
-    const res = auditChain([p0, p1], view, revView, keyManifest(), [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.linkStatus).toEqual(['invalid'])
     expect(res.errors).toContain('chain link 1: transferred before not_transferable_before')
@@ -578,7 +583,7 @@ describe('auditChain', () => {
     const bundle1 = chainLogBundle([record1], hk)[0]
     const view = parse([{ record: record1, evidence: bundle1 }])
 
-    const res = auditChain([p0, p1], view, [], keyManifest(), [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1], view, [], manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.linkStatus).toEqual(['invalid'])
     expect(res.errors).toContain('chain link 1: previous receipt lacks a backed transferred-class revocation')
@@ -593,7 +598,7 @@ describe('auditChain', () => {
     const revView = parse([chainTransferredRevocation(ID0, AT)])
     const hk = generateHybridLogKeys()
 
-    const res = auditChain([p0, p1], view, revView, keyManifest(), [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.linkStatus).toEqual(['invalid'])
     expect(res.errors).toContain('chain link 1: transfer record not logged')
@@ -609,7 +614,7 @@ describe('auditChain', () => {
     const view = parse([{ record: record1, evidence: bundle1 }])
     const revView = parse([chainTransferredRevocation(ID0, AT)])
 
-    const res = auditChain([p0, p1], view, revView, keyManifest(), [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.linkStatus).toEqual(['invalid'])
     expect(res.errors).toContain('chain link 1: holder authorization invalid')
@@ -621,7 +626,7 @@ describe('auditChain', () => {
     const hk = generateHybridLogKeys()
     const revView = parse([chainTransferredRevocation(ID0, AT)])
 
-    const res = auditChain([p0, p1], [], revView, keyManifest(), [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1], [], revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.linkStatus).toEqual(['invalid'])
     expect(res.errors).toEqual(['chain link 1: no transfer record'])
@@ -634,7 +639,7 @@ describe('auditChain', () => {
     const p2 = chainPayload(ID2, secondNewHolderPub)
     const brokenManifest = { ...keyManifest(), manifest_signature: { kid: KID, sig: '!'.repeat(86) } }
 
-    const res = auditChain([p0, p1, p2], [], [], brokenManifest, [transferLogKey(hk)], noHorizonPolicy())
+    const res = auditChain([p0, p1, p2], [], [], manifestHandle(brokenManifest), [transferLogKey(hk)], noHorizonPolicy())
 
     expect(res.valid).toBe(false)
     expect(res.linkStatus).toEqual(['invalid', 'invalid'])
@@ -673,7 +678,7 @@ describe('auditChain admission boundary', () => {
     payloads: JsonObject[], view: unknown, revView: unknown, hk: HybridTestKeys,
   ) => auditChain(
     payloads, view as JsonValue[], revView as JsonValue[],
-    keyManifest(), [transferLogKey(hk)], noHorizonPolicy(),
+    manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy(),
   )
 
   it.each([

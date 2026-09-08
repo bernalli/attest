@@ -7,7 +7,7 @@ import {
 import {
   findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
   duplicateKids,
-  artifactChainContinuous, verifyArtifactManifest, verifyArtifactManifestMaterialized,
+  artifactChainContinuous, verifyArtifactManifest, verifyArtifactManifestData,
   signableManifestBytes, verifySignatureBlock,
   manifestSignatureIsAuthentic,
 } from './manifests.js'
@@ -1183,7 +1183,7 @@ export function verify(
         // manifest, and `issuerManifestForTransparency` came out of
         // `materializeTrustStoreDetailed` above. The public door would
         // re-materialize it per member. Python parity: verify.py's same loop.
-        member => verifyArtifactManifestMaterialized(member, issuerManifestForTransparency!),
+        member => verifyArtifactManifestData(member, issuerManifestForTransparency!),
       )
       if (candidateArtifactManifest['issuer'] !== issuerId) {
         warnings.push(WARN.ARTIFACT_MANIFEST_ISSUER_MISMATCH)

@@ -13,7 +13,7 @@ import {
 import * as messages from '../src/messages.js'
 import { verifyRecord } from '../src/revocation.js'
 import { isOk, verify } from '../src/verify.js'
-import { store as parsedStore } from './helpers/trust.js'
+import { store as parsedStore, keyManifest as manifestHandle } from './helpers/trust.js'
 
 const enc = (value: string) => new TextEncoder().encode(value)
 const parse = (value: unknown): JsonObject => loadsStrict(enc(JSON.stringify(value))) as JsonObject
@@ -232,11 +232,11 @@ describe('v0.1 §7.1 duplicate kid manifest self-consistency', () => {
 
 describe('v0.1 §7.1 duplicate kid rejection at every manifest consumer', () => {
   it('rejects revocation-record authentication against a signed ambiguous manifest', () => {
-    expect(verifyRecord(revocationRecord(), manifestWithUnrelatedDuplicate())).toBe(false)
+    expect(verifyRecord(revocationRecord(), manifestHandle(manifestWithUnrelatedDuplicate()))).toBe(false)
   })
 
   it('rejects artifact-manifest authentication against a signed ambiguous manifest', () => {
-    expect(verifyArtifactManifest(artifactManifest(), manifestWithUnrelatedDuplicate())).toBe(false)
+    expect(verifyArtifactManifest(artifactManifest(), manifestHandle(manifestWithUnrelatedDuplicate()))).toBe(false)
   })
 
   it('rejects rotation continuity when the candidate is self-ambiguous', () => {

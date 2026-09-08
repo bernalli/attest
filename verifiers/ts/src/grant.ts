@@ -53,7 +53,7 @@ import {
   canonicalBytes, dumps, materializeArray, materializeValue, ownViewMember,
   VIEW_MEMBER_ABSENT, VIEW_MEMBER_NESTING,
 } from './canon.js'
-import { TrustStore, type StoreData, storeData, materializeKeyManifest } from './trustMaterial.js'
+import { TrustStore, type StoreData, storeData, manifestData, type KeyManifest } from './trustMaterial.js'
 import { findKey, verifySignatureBlock, verifyKeyManifest, chainContinuous } from './manifests.js'
 import { parseStrictUtc, validStage3UtcTimestamp } from './dates.js'
 import { ISSUER_RE, HEX64_RE } from './tlog.js'
@@ -349,29 +349,32 @@ export function verifySignedDocument(
  * `verifyKeyManifest(keyManifest)`. Callers checking many documents against
  * ONE manifest hoist that call out of their loop.
  *
- * `keyManifest` is MATERIALIZED here, at the public boundary, before
- * `verifySignedDocument` reads `entry['status']`/`entry['valid_from']`/
- * `entry['valid_to']` off it: those are plain property reads a getter or a
- * `Proxy` trap on the caller's own object can steer, the same class
- * `verifyRecordSignature` (revocation.ts) closes for its own manifest
- * argument. In-module callers that already hold a materialized manifest use
- * `verifyGrantSignatureMaterialized`, so the boundary is one pass per public
+ * `keyManifest` is a HANDLE — a snapshot this library parsed from bytes — and
+ * its tree is taken once, here, with `manifestData`. The argument used to be
+ * the caller's own object, reconstructed at this boundary before
+ * `verifySignedDocument` read `entry['status']`/`entry['valid_from']`/
+ * `entry['valid_to']` off it. That reconstruction closed the steering for those
+ * particular reads and left the real thing open: the door still ACCEPTED a live
+ * object, so the question "can this object answer twice and differently" had to
+ * be answered correctly by every walk, forever. A handle removes the question —
+ * there is nothing of the caller's left to read. In-module callers that already
+ * hold the tree use `verifyGrantSignatureData`, so the unwrap is one per public
  * call and never one per candidate in a loop. */
-export function verifyGrantSignature(document: unknown, keyManifest: JsonObject): boolean {
+export function verifyGrantSignature(document: unknown, keyManifest: KeyManifest): boolean {
   try {
-    const materialized = materializeKeyManifest(keyManifest)
-    if (materialized === null) return false
-    return verifyGrantSignatureMaterialized(document, materialized)
+    const data = manifestData(keyManifest)
+    if (data === null) return false
+    return verifyGrantSignatureData(document, data)
   } catch {
     return false
   }
 }
 
-/** `verifyGrantSignature`'s body, over an ALREADY MATERIALIZED `keyManifest`.
- * PRECONDITION: `keyManifest` is the output of `materializeKeyManifest` (or is
- * otherwise known to hold only own data — no getter, no Proxy). Calling this
- * with a raw caller object reopens the class the boundary exists to close. */
-export function verifyGrantSignatureMaterialized(document: unknown, keyManifest: JsonObject): boolean {
+/** `verifyGrantSignature`'s body, over the snapshot TREE.
+ * PRECONDITION: `keyManifest` is a tree obtained from `manifestData`/`storeData`
+ * — never a caller's object. Calling this with a live object reopens the class
+ * the handle exists to close, and nothing here would notice. */
+export function verifyGrantSignatureData(document: unknown, keyManifest: JsonObject): boolean {
   try {
     if (!validGrantShape(document)) return false
     return verifySignedDocument(document, keyManifest, 'issued_at')
@@ -390,16 +393,17 @@ export function verifyGrantSignatureMaterialized(document: unknown, keyManifest:
  * signature cannot verify. Fails closed on every malformed input, never
  * throws.
  *
- * `keyManifest` is materialized ONCE here and BOTH halves — the self-
- * consistency check and the signature check — run against that one
- * reconstruction, never against a second read of the caller's object: reading
- * twice is what would let a manifest be self-consistent for the first half and
- * something else for the second (mirrors revocation.ts's `verifyRecord`). */
-export function verifyGrant(document: unknown, keyManifest: JsonObject): boolean {
+ * The handle's tree is taken ONCE here and BOTH halves — the self-consistency
+ * check and the signature check — run against that one tree. Reading twice is
+ * what would let a manifest be self-consistent for the first half and something
+ * else for the second (mirrors revocation.ts's `verifyRecord`); with a handle
+ * the two reads cannot disagree, because the bytes were parsed once and the
+ * tree is this library's. */
+export function verifyGrant(document: unknown, keyManifest: KeyManifest): boolean {
   try {
-    const materialized = materializeKeyManifest(keyManifest)
-    if (materialized === null) return false
-    return verifyKeyManifest(materialized) && verifyGrantSignatureMaterialized(document, materialized)
+    const data = manifestData(keyManifest)
+    if (data === null) return false
+    return verifyKeyManifest(data) && verifyGrantSignatureData(document, data)
   } catch {
     return false
   }
@@ -413,21 +417,21 @@ export function verifyGrant(document: unknown, keyManifest: JsonObject): boolean
  * for a given grant is `declarationSignerRole`, and whether the declaration
  * reaches that grant's scope is `declarationCoversGrant`.
  *
- * `keyManifest` is materialized at this public boundary for the same reason
- * `verifyGrantSignature` materializes it — see that function's comment. */
-export function verifyDeclarationSignature(declaration: unknown, keyManifest: JsonObject): boolean {
+ * `keyManifest` is a handle, unwrapped at this public boundary for the same
+ * reason `verifyGrantSignature` unwraps one — see that function's comment. */
+export function verifyDeclarationSignature(declaration: unknown, keyManifest: KeyManifest): boolean {
   try {
-    const materialized = materializeKeyManifest(keyManifest)
-    if (materialized === null) return false
-    return verifyDeclarationSignatureMaterialized(declaration, materialized)
+    const data = manifestData(keyManifest)
+    if (data === null) return false
+    return verifyDeclarationSignatureData(declaration, data)
   } catch {
     return false
   }
 }
 
-/** `verifyDeclarationSignature`'s body, over an ALREADY MATERIALIZED
- * `keyManifest`. Same precondition as `verifyGrantSignatureMaterialized`. */
-export function verifyDeclarationSignatureMaterialized(declaration: unknown, keyManifest: JsonObject): boolean {
+/** `verifyDeclarationSignature`'s body, over the snapshot TREE.
+ * Same precondition as `verifyGrantSignatureData`. */
+export function verifyDeclarationSignatureData(declaration: unknown, keyManifest: JsonObject): boolean {
   try {
     if (!validDeclarationShape(declaration)) return false
     return verifySignedDocument(declaration, keyManifest, 'declared_at')
@@ -439,13 +443,13 @@ export function verifyDeclarationSignatureMaterialized(declaration: unknown, key
 /** `verifyGrant` for a cessation declaration: self-consistent manifest plus
  * `verifyDeclarationSignature`. Fails closed, never throws.
  *
- * `keyManifest` is materialized ONCE and both halves run against that one
- * reconstruction — same reasoning as `verifyGrant`. */
-export function verifyDeclaration(declaration: unknown, keyManifest: JsonObject): boolean {
+ * The handle's tree is taken ONCE and both halves run against it — same
+ * reasoning as `verifyGrant`. */
+export function verifyDeclaration(declaration: unknown, keyManifest: KeyManifest): boolean {
   try {
-    const materialized = materializeKeyManifest(keyManifest)
-    if (materialized === null) return false
-    return verifyKeyManifest(materialized) && verifyDeclarationSignatureMaterialized(declaration, materialized)
+    const data = manifestData(keyManifest)
+    if (data === null) return false
+    return verifyKeyManifest(data) && verifyDeclarationSignatureData(declaration, data)
   } catch {
     return false
   }
@@ -1009,7 +1013,7 @@ function fixedDateReached(
 // read after `evaluateGrant`'s `materializeTrustStore` pass, and its
 // self-consistency was already established by the floor's own `verifyGrant`
 // check before this function is reached. Hoisting that self-consistency check
-// ONCE below (`manifestOk`) and reading `verifyGrantSignatureMaterialized`
+// ONCE below (`manifestOk`) and reading `verifyGrantSignatureData`
 // per candidate, rather than the public `verifyGrant`, is what keeps this loop
 // — up to `MAX_GRANT_LATER_VERSIONS` candidates — from re-materializing (and
 // re-self-verifying) the SAME manifest once per candidate.
@@ -1025,7 +1029,7 @@ function resolveEffectiveGrant(
   const candidates = new Map<string, Record<string, unknown>>()
   candidates.set(floorHash, floor)
   for (const later of Array.isArray(laterGrants) ? laterGrants : []) {
-    if (!isPlainObject(later) || !manifestOk || !verifyGrantSignatureMaterialized(later, manifest)) continue
+    if (!isPlainObject(later) || !manifestOk || !verifyGrantSignatureData(later, manifest)) continue
     if (later['publisher'] !== floor['publisher']) continue
     const hash = grantHash(later as JsonObject)
     if (!candidates.has(hash)) candidates.set(hash, later)
@@ -1107,7 +1111,7 @@ function honorDeclarations(
     // `store` here is `evaluateGrant`'s already-materialized store (its
     // `materializeTrustStore` pass ran before `honorDeclarations` was
     // reached), so `declarationManifest` is already materialized data.
-    // `verifyDeclarationSignatureMaterialized` (not the public
+    // `verifyDeclarationSignatureData` (not the public
     // `verifyDeclaration`) is what avoids re-materializing it once per
     // supplied declaration — the manifest differs per declaration (publisher
     // vs. successor), so unlike `resolveEffectiveGrant`'s single hoisted
@@ -1119,7 +1123,7 @@ function honorDeclarations(
       !isPlainObject(declarationManifest) ||
       declarationManifest['issuer'] !== domain ||
       !verifyKeyManifest(declarationManifest as JsonObject) ||
-      !verifyDeclarationSignatureMaterialized(declaration, declarationManifest as JsonObject) ||
+      !verifyDeclarationSignatureData(declaration, declarationManifest as JsonObject) ||
       !declarationCoversGrant(declaration, effective)
     ) {
       ignored = true
@@ -1321,7 +1325,15 @@ export function evaluateGrant(
       ? grantTrustLadder(store, publisherId, store.manifests[publisherId])
       : GRANT_TRUST_TOFU
 
-  if (!isPlainObject(manifest) || !verifyGrant(floor, manifest as JsonObject)) {
+  // `manifest` is already a tree of the snapshot (`store.manifests`), never a
+  // caller's object, so the two halves of `verifyGrant` are spelled out over the
+  // twins rather than re-entering the public door — which now takes a handle and
+  // would have nothing to unwrap here.
+  if (
+    !isPlainObject(manifest) ||
+    !verifyKeyManifest(manifest as JsonObject) ||
+    !verifyGrantSignatureData(floor, manifest as JsonObject)
+  ) {
     return invalidIgnored(grantTrust)
   }
   // §18.1: the signer's `kid` DNS prefix MUST equal the resolving manifest's

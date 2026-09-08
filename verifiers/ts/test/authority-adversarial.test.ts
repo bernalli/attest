@@ -29,6 +29,8 @@ import {
   signBlock,
   type TestSigner,
 } from './helpers/grant-builder.js'
+import { keyManifest as manifestHandle } from './helpers/trust.js'
+import type { KeyManifest as ParsedKeyManifest } from '../src/trustMaterial.js'
 
 const PUBLISHER = 'publisher.example'
 const OTHER_PUBLISHER = 'other-publisher.example'
@@ -257,17 +259,17 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
     const keyManifest = manifestFor(PUB_ED)
     const document = makeAuthorization(PUB_ED)
 
-    expect(verifyAuthorizationSignature(document, keyManifest)).toBe(true)
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorizationSignature(document, manifestHandle(keyManifest))).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('round-trips a hybrid authorization only when both section 13 signature legs are present', () => {
     const keyManifest = manifestFor(PUB_HYBRID, HYBRID_KID)
     const document = makeAuthorization(PUB_HYBRID, {}, HYBRID_KID)
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
     delete ((document as Record<string, unknown>)['signature'] as Record<string, unknown>)['sig_ml_dsa_65']
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('hashes SHA-256(JCS(document)) over the entire signed document, signature included', () => {
@@ -289,8 +291,8 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
     // signed strict-JCS documents cross the wire as bigint, not as number.
     expect(isAuthorizationVersion(1)).toBe(true)
     expect(isAuthorizationVersion(1n)).toBe(true)
-    expect(verifyAuthorization(bigintDocument, keyManifest)).toBe(true)
-    expect(verifyAuthorization(numberDocument, keyManifest)).toBe(false)
+    expect(verifyAuthorization(bigintDocument, manifestHandle(keyManifest))).toBe(true)
+    expect(verifyAuthorization(numberDocument, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('accepts both null-prototype parsed objects and equivalent object literals', () => {
@@ -298,8 +300,8 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
     const parsedDocument = makeAuthorization(PUB_ED)
     const literalDocument = cloneAsObjectLiterals(parsedDocument)
 
-    expect(verifyAuthorization(parsedDocument, keyManifest)).toBe(true)
-    expect(verifyAuthorization(literalDocument, keyManifest)).toBe(true)
+    expect(verifyAuthorization(parsedDocument, manifestHandle(keyManifest))).toBe(true)
+    expect(verifyAuthorization(literalDocument, manifestHandle(keyManifest))).toBe(true)
   })
 
   it.each(['extra', '__proto__', 'constructor', 'toString'])(
@@ -309,7 +311,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
       const document = makeAuthorization(PUB_ED) as Record<string, unknown>
       Object.defineProperty(document, member, { value: 'surprise', enumerable: true, configurable: true })
 
-      expect(verifyAuthorization(document, keyManifest)).toBe(false)
+      expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
     },
   )
 
@@ -318,7 +320,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
     const document = makeAuthorization(PUB_ED) as Record<string, unknown>
     delete document['publisher']
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it.each(['Publisher.Example', 'publisher.example.', 'publi\u0441her.example'])(
@@ -327,7 +329,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
       const keyManifest = manifestFor(PUB_ED, PUB_KID, { issuer: publisherValue })
       const document = makeAuthorization(PUB_ED, { publisher: publisherValue })
 
-      expect(verifyAuthorization(document, keyManifest)).toBe(false)
+      expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
     },
   )
 
@@ -337,7 +339,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
 
     // Section 20.4 step 6 performs the caller-visible triple binding; this
     // primitive only authenticates the document's own signature.
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('requires the resolving key manifest to be self-consistent', () => {
@@ -345,7 +347,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
     const document = makeAuthorization(PUB_ED)
     keyManifest['issued_at'] = '2026-06-01T00:00:00Z'
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('requires signature.kid to resolve to a key entry', () => {
@@ -354,7 +356,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
     const signature = (document as Record<string, unknown>)['signature'] as Record<string, unknown>
     signature['kid'] = `${PUBLISHER}/keys/authority#missing`
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('checks issued_at against the signer key window, not the verifier clock', () => {
@@ -364,7 +366,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
     })
     const document = makeAuthorization(PUB_ED, { issued_at: '2020-06-01T00:00:00Z' })
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it.each(['2026-01-01T00:00:00Z', '2026-12-31T23:59:59Z'])(
@@ -373,7 +375,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
       const keyManifest = manifestFor(PUB_ED, PUB_KID, { validFrom: KEY_VALID_FROM, validTo: KEY_VALID_TO })
       const document = makeAuthorization(PUB_ED, { issued_at: issuedAt })
 
-      expect(verifyAuthorization(document, keyManifest)).toBe(true)
+      expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
     },
   )
 
@@ -381,7 +383,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
     const keyManifest = manifestFor(PUB_ED, PUB_KID, { status: 'retired' })
     const document = makeAuthorization(PUB_ED)
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it.each(['2026-02-01T00:00:00+00:00', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00'])(
@@ -390,7 +392,7 @@ describe('publisher authorization document authentication (v0.2 section 20.2)', 
       const keyManifest = manifestFor(PUB_ED)
       const document = makeAuthorization(PUB_ED, { issued_at: issuedAt })
 
-      expect(verifyAuthorization(document, keyManifest)).toBe(false)
+      expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
     },
   )
 })
@@ -400,7 +402,7 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
     const keyManifest = manifestFor(PUB_ED)
     const document = makeAuthorization(PUB_ED, { authorized_issuers: [] })
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
     expect(entryForIssuer(document, ISSUER)).toBeNull()
   })
 
@@ -409,8 +411,8 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
     const atLimit = makeAuthorizationWithEntries(manyEntries(MAX_AUTHORIZED_ISSUERS))
     const overLimit = makeAuthorizationWithEntries(manyEntries(MAX_AUTHORIZED_ISSUERS + 1))
 
-    expect(verifyAuthorization(atLimit, keyManifest)).toBe(true)
-    expect(verifyAuthorization(overLimit, keyManifest)).toBe(false)
+    expect(verifyAuthorization(atLimit, manifestHandle(keyManifest))).toBe(true)
+    expect(verifyAuthorization(overLimit, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects an over-limit authorized_issuers array before reading signature bytes', () => {
@@ -428,7 +430,7 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
     })
     document['signature'] = signature
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
     expect(signatureBytesRead).toBe(false)
   })
 
@@ -439,7 +441,7 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
       authorizedIssuer('a-store.example'),
     ])
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it.each([
@@ -465,7 +467,7 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
       },
     })
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
     expect(entryForIssuer(document, ISSUER)).toBeNull()
     expect(signatureBytesRead).toBe(false)
   })
@@ -476,7 +478,7 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
       const keyManifest = manifestFor(PUB_ED)
       const document = makeAuthorizationWithEntries([authorizedIssuer(issuerId)])
 
-      expect(verifyAuthorization(document, keyManifest)).toBe(false)
+      expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
     },
   )
 
@@ -488,7 +490,7 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
       Object.defineProperty(entry, member, { value: 'surprise', enumerable: true, configurable: true })
       const document = makeAuthorizationWithEntries([entry])
 
-      expect(verifyAuthorization(document, keyManifest)).toBe(false)
+      expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
     },
   )
 
@@ -498,7 +500,7 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
     delete entry['scope']
     const document = makeAuthorizationWithEntries([entry])
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
     expect(entryAuthorizesReceipt(entry, payload())).toBe(false)
   })
 
@@ -514,8 +516,8 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
     const extraDocument = makeAuthorization(PUB_ED) as Record<string, unknown>
     extraDocument['authorized_issuers'] = withExtra
 
-    expectFalseWithoutThrow(() => verifyAuthorization(sparseDocument, keyManifest))
-    expectFalseWithoutThrow(() => verifyAuthorization(extraDocument, keyManifest))
+    expectFalseWithoutThrow(() => verifyAuthorization(sparseDocument, manifestHandle(keyManifest)))
+    expectFalseWithoutThrow(() => verifyAuthorization(extraDocument, manifestHandle(keyManifest)))
   })
 
   it('carries unregistered permissions but requires code-point sorted, duplicate-free order', () => {
@@ -531,8 +533,8 @@ describe('authorized_issuers shape (v0.2 section 20.2)', () => {
 
     expect(privateUse < astral).toBe(false)
     expect(astral < privateUse).toBe(true)
-    expect(verifyAuthorization(codePointSorted, keyManifest)).toBe(true)
-    expect(verifyAuthorization(utf16SortedOnly, keyManifest)).toBe(false)
+    expect(verifyAuthorization(codePointSorted, manifestHandle(keyManifest))).toBe(true)
+    expect(verifyAuthorization(utf16SortedOnly, manifestHandle(keyManifest))).toBe(false)
   })
 })
 
@@ -690,10 +692,13 @@ describe('fail-closed behavior on hostile JS values', () => {
     const document = makeAuthorization(PUB_ED)
     const hostile = throwingObject()
 
-    expectFalseWithoutThrow(() => verifyAuthorization(hostile, keyManifest))
-    expectFalseWithoutThrow(() => verifyAuthorizationSignature(hostile, keyManifest))
-    expectFalseWithoutThrow(() => verifyAuthorization(document, hostile as JsonObject))
-    expectFalseWithoutThrow(() => verifyAuthorizationSignature(document, hostile as JsonObject))
+    expectFalseWithoutThrow(() => verifyAuthorization(hostile, manifestHandle(keyManifest)))
+    expectFalseWithoutThrow(() => verifyAuthorizationSignature(hostile, manifestHandle(keyManifest)))
+    // Cast rather than `manifestHandle(hostile)`: building a handle from it
+    // throws inside the FIXTURE (its `ownKeys` trap fires while canonicalizing),
+    // which would test the parser instead of the port.
+    expectFalseWithoutThrow(() => verifyAuthorization(document, hostile as unknown as ParsedKeyManifest))
+    expectFalseWithoutThrow(() => verifyAuthorizationSignature(document, hostile as unknown as ParsedKeyManifest))
   })
 
   it('entry selectors and membership predicates never throw on hostile entries or receipts', () => {
@@ -715,7 +720,7 @@ describe('fail-closed behavior on hostile JS values', () => {
     })
 
     for (const document of [null, 42, 'authorization', [], {}, getterDocument, throwingObject()]) {
-      expectFalseWithoutThrow(() => verifyAuthorization(document, keyManifest))
+      expectFalseWithoutThrow(() => verifyAuthorization(document, manifestHandle(keyManifest)))
       expectNullWithoutThrow(() => entryForIssuer(document, ISSUER))
     }
   })
@@ -724,6 +729,6 @@ describe('fail-closed behavior on hostile JS values', () => {
     const keyManifest = manifestFor(PUB_ED)
     const document = makeAuthorization(OTHER_ED)
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 })

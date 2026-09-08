@@ -30,6 +30,8 @@ import {
   signBlock,
   type TestSigner,
 } from './helpers/grant-builder.js'
+import { keyManifest as manifestHandle } from './helpers/trust.js'
+import type { KeyManifest as ParsedKeyManifest } from '../src/trustMaterial.js'
 
 const enc = new TextEncoder()
 
@@ -190,7 +192,7 @@ describe('publisher authorization document (v0.2 section 20.2)', () => {
     const document = buildAuthorization(PUB_ED)
 
     expect('sig_ml_dsa_65' in (document['signature'] as JsonObject)).toBe(false)
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('round-trips a hybrid authorization with both legs', () => {
@@ -199,14 +201,14 @@ describe('publisher authorization document (v0.2 section 20.2)', () => {
 
     expect('sig' in (document['signature'] as JsonObject)).toBe(true)
     expect('sig_ml_dsa_65' in (document['signature'] as JsonObject)).toBe(true)
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('accepts an empty authorized_issuers array on a first document', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_HYBRID)
     const document = buildAuthorization(PUB_HYBRID, { authorized_issuers: [] })
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('accepts several entries sorted by issuer_id', () => {
@@ -214,7 +216,7 @@ describe('publisher authorization document (v0.2 section 20.2)', () => {
     const entries = [entry({ issuer_id: OTHER_ISSUER }), entry()]
     const document = buildAuthorization(PUB_HYBRID, { authorized_issuers: entries })
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('hashes the entire signed document, signature included', () => {
@@ -241,7 +243,7 @@ describe('publisher authorization document (v0.2 section 20.2)', () => {
     const firstEntry = (document['authorized_issuers'] as JsonObject[])[0]!
     firstEntry['valid_to'] = '2030-01-01T00:00:00Z'
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a classical-only authorization against a hybrid key', () => {
@@ -249,7 +251,7 @@ describe('publisher authorization document (v0.2 section 20.2)', () => {
     const document = buildAuthorization(PUB_HYBRID)
     delete (document['signature'] as JsonObject)['sig_ml_dsa_65']
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a stray hybrid leg against a classical key', () => {
@@ -261,7 +263,7 @@ describe('publisher authorization document (v0.2 section 20.2)', () => {
       ml_dsa65.sign(canonicalBytes(body), STRAY_HYBRID.mldsaSecret!),
     )
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a document signed by a retired key', () => {
@@ -276,7 +278,7 @@ describe('publisher authorization document (v0.2 section 20.2)', () => {
     )
     const document = buildAuthorization(PUB_ED)
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a document issued outside the signer key window', () => {
@@ -298,8 +300,8 @@ describe('publisher authorization document (v0.2 section 20.2)', () => {
     )
     const document = buildAuthorization(PUB_ED)
 
-    expect(verifyAuthorization(document, beforeWindow)).toBe(false)
-    expect(verifyAuthorization(document, afterWindow)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(beforeWindow))).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(afterWindow))).toBe(false)
   })
 
   it('rejects a self-inconsistent manifest while the signature-only half still accepts it', () => {
@@ -307,15 +309,15 @@ describe('publisher authorization document (v0.2 section 20.2)', () => {
     const document = buildAuthorization(PUB_ED)
     keyManifest['issued_at'] = '2026-06-01T00:00:00Z'
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
-    expect(verifyAuthorizationSignature(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
+    expect(verifyAuthorizationSignature(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('rejects an unknown kid', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
     const document = buildAuthorization(PUB_ED, {}, `${PUBLISHER}/keys/authority#9`)
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 })
 
@@ -365,16 +367,16 @@ describe('publisher authorization shape', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
     const document = buildAuthorization(PUB_ED, overrides)
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects an unknown document member and a missing document member', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_HYBRID)
-    expect(verifyAuthorization(buildAuthorization(PUB_HYBRID, { extra: 'surprise' }), keyManifest)).toBe(false)
+    expect(verifyAuthorization(buildAuthorization(PUB_HYBRID, { extra: 'surprise' }), manifestHandle(keyManifest))).toBe(false)
 
     const missing = buildAuthorization(PUB_HYBRID)
     delete missing['issued_at']
-    expect(verifyAuthorization(missing, keyManifest)).toBe(false)
+    expect(verifyAuthorization(missing, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a non-object signature member', () => {
@@ -382,7 +384,7 @@ describe('publisher authorization shape', () => {
     const document = buildAuthorization(PUB_ED)
     document['signature'] = 'not-an-object'
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('accepts scopes that cover with only one non-empty half', () => {
@@ -390,8 +392,8 @@ describe('publisher authorization shape', () => {
     const seriesOnly = buildAuthorization(PUB_HYBRID, { authorized_issuers: [entry({ scope: scope(RECEIPT_SERIES, []) })] })
     const artifactsOnly = buildAuthorization(PUB_HYBRID, { authorized_issuers: [entry({ scope: scope(null, [RECEIPT_ART]) })] })
 
-    expect(verifyAuthorization(seriesOnly, keyManifest)).toBe(true)
-    expect(verifyAuthorization(artifactsOnly, keyManifest)).toBe(true)
+    expect(verifyAuthorization(seriesOnly, manifestHandle(keyManifest))).toBe(true)
+    expect(verifyAuthorization(artifactsOnly, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('carries unregistered permissions without rejecting the document', () => {
@@ -400,7 +402,7 @@ describe('publisher authorization shape', () => {
       authorized_issuers: [entry({ permissions: ['issue', 'resell-in-eu'] })],
     })
 
-    expect(verifyAuthorization(document, keyManifest)).toBe(true)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('rejects an authorization_version above the JCS integer ceiling without throwing', () => {
@@ -410,7 +412,7 @@ describe('publisher authorization shape', () => {
 
     const document = buildAuthorization(PUB_ED)
     document['authorization_version'] = 2n ** 53n
-    expect(verifyAuthorization(document, keyManifest)).toBe(false)
+    expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('enforces the 4096-entry document ceiling before entry validation', () => {
@@ -419,31 +421,71 @@ describe('publisher authorization shape', () => {
       entry({ issuer_id: `i${String(index).padStart(5, '0')}.example` }),
     )
 
-    expect(verifyAuthorization(buildAuthorization(PUB_ED, { authorized_issuers: entries.slice(0, MAX_AUTHORIZED_ISSUERS) }), keyManifest)).toBe(true)
-    expect(verifyAuthorization(buildAuthorization(PUB_ED, { authorized_issuers: entries }), keyManifest)).toBe(false)
+    expect(verifyAuthorization(buildAuthorization(PUB_ED, { authorized_issuers: entries.slice(0, MAX_AUTHORIZED_ISSUERS) }), manifestHandle(keyManifest))).toBe(true)
+    expect(verifyAuthorization(buildAuthorization(PUB_ED, { authorized_issuers: entries }), manifestHandle(keyManifest))).toBe(false)
+  })
+
+  // A hostile stand-in for a manifest: every reflective operation a port could
+  // perform on it reports itself and throws. Passed by CAST, never through
+  // `manifestHandle` — building a handle from it canonicalizes it first, and
+  // the resulting empty snapshot could not report anything, which is how the
+  // wrapped version of this test quietly stopped measuring.
+  function trapReportingManifest(): { manifest: ParsedKeyManifest; fired: () => boolean } {
+    let fired = false
+    const manifest = new Proxy(
+      {},
+      {
+        get(_t, name) {
+          fired = true
+          throw new Error(`key manifest was read at ${String(name)}`)
+        },
+        ownKeys() {
+          fired = true
+          throw new Error('key manifest was enumerated')
+        },
+        getOwnPropertyDescriptor(_t, name) {
+          fired = true
+          throw new Error(`key manifest descriptor was read at ${String(name)}`)
+        },
+      },
+    ) as unknown as ParsedKeyManifest
+    return { manifest, fired: () => fired }
+  }
+
+  const oversizedDocument = () => ({
+    authorization_version: 1n,
+    publisher: PUBLISHER,
+    authorized_issuers: new Array(MAX_AUTHORIZED_ISSUERS + 1).fill(null),
+    issued_at: AUTH_ISSUED_AT,
+    signature: {},
   })
 
   it('rejects an oversized document before reading the key manifest', () => {
-    let manifestRead = false
-    const hostileManifest = new Proxy(
-      {},
-      {
-        get(_target, name) {
-          manifestRead = true
-          throw new Error(`key manifest was read at ${String(name)}`)
-        },
-      },
-    ) as JsonObject
-    const document = {
-      authorization_version: 1n,
-      publisher: PUBLISHER,
-      authorized_issuers: new Array(MAX_AUTHORIZED_ISSUERS + 1).fill(null),
-      issued_at: AUTH_ISSUED_AT,
-      signature: {},
-    }
+    // The ORDER. Still the property this one measures, and still observable:
+    // the shape check runs first, so nothing reaches the manifest at all.
+    const { manifest, fired } = trapReportingManifest()
+    expect(verifyAuthorization(oversizedDocument(), manifest)).toBe(false)
+    expect(fired()).toBe(false)
 
-    expect(verifyAuthorization(document, hostileManifest)).toBe(false)
-    expect(manifestRead).toBe(false)
+    // Positive control, absent from the earlier shape of this test: an honest
+    // handle on the SAME document is refused too, so the `false` above is the
+    // document being oversized and not the manifest being wrong.
+    expect(verifyAuthorization(oversizedDocument(), manifestHandle(manifestFor(PUBLISHER, PUB_KID, PUB_ED)))).toBe(false)
+  })
+
+  it('runs no code belonging to a manifest that is not a handle, even for a well-formed document', () => {
+    // A DIFFERENT property from the one above, and it needs a document that
+    // gets PAST the shape check — otherwise the order alone explains the
+    // silence and this test measures nothing new. `manifestData` asks
+    // `#data in x`, which a Proxy can neither forward nor trap, so the port
+    // answers without touching the object.
+    //
+    // Measured, not assumed: giving the port back a fallback to the live object
+    // (`manifestData(m) ?? m`) turns this red while the order test above stays
+    // green — which is exactly why the two are written apart.
+    const { manifest, fired } = trapReportingManifest()
+    expect(verifyAuthorization(buildAuthorization(PUB_ED), manifest)).toBe(false)
+    expect(fired()).toBe(false)
   })
 
   it('refuses an oversized document on its count before walking the array', () => {
@@ -468,7 +510,7 @@ describe('publisher authorization shape', () => {
       signature: {},
     }
 
-    expect(verifyAuthorizationSignature(document, {} as JsonObject)).toBe(false)
+    expect(verifyAuthorizationSignature(document, manifestHandle({} as JsonObject))).toBe(false)
     expect(walked).toBe(false)
   })
 
@@ -491,7 +533,7 @@ describe('publisher authorization shape', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
     const inherited = buildAuthorization(PUB_ED)
     Object.setPrototypeOf(inherited, { extra: 'ignored' })
-    expect(verifyAuthorization(inherited, keyManifest)).toBe(true)
+    expect(verifyAuthorization(inherited, manifestHandle(keyManifest))).toBe(true)
 
     const document = buildAuthorization(PUB_ED)
     const sig = JSON.stringify(document['signature'])
@@ -502,7 +544,7 @@ describe('publisher authorization shape', () => {
       ),
     ) as JsonObject
     expect(Object.keys(withOwnProto)).toContain('__proto__')
-    expect(verifyAuthorization(withOwnProto, keyManifest)).toBe(false)
+    expect(verifyAuthorization(withOwnProto, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects sparse arrays and non-index own properties in authority shape arrays', () => {
@@ -559,7 +601,7 @@ describe('publisher authorization shape', () => {
       sparseArtifacts,
       extraArtifacts,
     ]) {
-      expect(verifyAuthorization(document, keyManifest)).toBe(false)
+      expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
     }
   })
 
@@ -574,8 +616,8 @@ describe('publisher authorization shape', () => {
       authorized_issuers: [entry({ permissions: [PERMISSION_ISSUE, astral, privateUse] })],
     })
 
-    expect(verifyAuthorization(codePointSorted, keyManifest)).toBe(true)
-    expect(verifyAuthorization(codeUnitSorted, keyManifest)).toBe(false)
+    expect(verifyAuthorization(codePointSorted, manifestHandle(keyManifest))).toBe(true)
+    expect(verifyAuthorization(codeUnitSorted, manifestHandle(keyManifest))).toBe(false)
   })
 
   const garbageDocuments: unknown[] = [null, 42, 'authorization', [], {}, { signature: null }, { authorization_version: 1 }]
@@ -585,20 +627,26 @@ describe('publisher authorization shape', () => {
     (_i, document) => {
       const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
 
-      expect(verifyAuthorization(document, keyManifest)).toBe(false)
-      expect(verifyAuthorizationSignature(document, keyManifest)).toBe(false)
+      expect(verifyAuthorization(document, manifestHandle(keyManifest))).toBe(false)
+      expect(verifyAuthorizationSignature(document, manifestHandle(keyManifest))).toBe(false)
     },
   )
 
   const garbageManifests: unknown[] = [null, 42, 'manifest', [], {}, { keys: null }]
 
+  // Cast, deliberately, and NOT `manifestHandle(...)`: none of these six is a
+  // document a handle can be built from, and wrapping them would move the
+  // failure into the fixture — the test would then measure `parseKeyManifest`
+  // and stop measuring the port. TypeScript refuses them at the call site now,
+  // which is the point; JavaScript does not, so what a port does when one
+  // arrives anyway is still a property worth pinning.
   it.each(garbageManifests.map((keyManifest, i) => [i, keyManifest] as const))(
     'never throws on garbage manifest (#%i)',
     (_i, keyManifest) => {
       const document = buildAuthorization(PUB_ED)
 
-      expect(verifyAuthorization(document, keyManifest as JsonObject)).toBe(false)
-      expect(verifyAuthorizationSignature(document, keyManifest as JsonObject)).toBe(false)
+      expect(verifyAuthorization(document, keyManifest as unknown as ParsedKeyManifest)).toBe(false)
+      expect(verifyAuthorizationSignature(document, keyManifest as unknown as ParsedKeyManifest)).toBe(false)
     },
   )
 })

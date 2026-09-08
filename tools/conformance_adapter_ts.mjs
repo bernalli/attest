@@ -203,7 +203,7 @@ function redemptionInput(dir) {
   return existsSync(p) ? loadJson(p) : null
 }
 
-// group 36 only: auditChain takes ONE trusted keyManifest, not a full
+// group 36 only: auditChain takes ONE trusted key manifest HANDLE, not a full
 // TrustStore — every group 36 leaf's manifests.json trusts exactly one
 // issuer, so its sole `manifests` value is that manifest.
 function soleKeyManifest(dir) {
@@ -215,7 +215,11 @@ function soleKeyManifest(dir) {
   if (issuers.length !== 1) {
     throw new Error(`${dir}: expected exactly one issuer, found ${issuers.length}`)
   }
-  return store.manifestFor(issuers[0]).data()
+  // The handle as the store built it. Unwrapping it with `.data()` and handing
+  // over the tree is what the ports stopped accepting: this adapter is a
+  // CONSUMER of the published package, so it has to spell the call the way a
+  // consumer can.
+  return store.manifestFor(issuers[0])
 }
 
 // group 36 (transfer-chain conformance corpus, v0.2 §17.5) only: a leaf

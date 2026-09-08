@@ -57,6 +57,7 @@ import {
   signRedemption,
   type TestSigner,
 } from './helpers/grant-builder.js'
+import { keyManifest as manifestHandle } from './helpers/trust.js'
 
 const PUBLISHER = 'pub.example'
 const SUCCESSOR = 'heritage.example'
@@ -244,7 +245,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     const document = makeGrant(PUB_ED)
 
     expect('sig_ml_dsa_65' in (document['signature'] as JsonObject)).toBe(false)
-    expect(verifyGrant(document, keyManifest)).toBe(true)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('round-trips a hybrid grant with both legs', () => {
@@ -253,7 +254,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
 
     expect('sig' in (document['signature'] as JsonObject)).toBe(true)
     expect('sig_ml_dsa_65' in (document['signature'] as JsonObject)).toBe(true)
-    expect(verifyGrant(document, keyManifest)).toBe(true)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('hashes the ENTIRE signed document, signature included', () => {
@@ -271,7 +272,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     const document = makeGrant(PUB_ED)
     document['jurisdiction'] = 'FR'
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('is a closed object: an unknown member is rejected', () => {
@@ -279,7 +280,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     const document = makeGrant(PUB_HYBRID)
     document['extra'] = 'surprise'
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a grant missing a member', () => {
@@ -287,7 +288,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     const document = makeGrant(PUB_HYBRID)
     delete document['jurisdiction']
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('fails closed on a classical-only grant against a hybrid key (§13 AND-rule)', () => {
@@ -295,7 +296,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     const document = makeGrant(PUB_HYBRID)
     delete (document['signature'] as JsonObject)['sig_ml_dsa_65']
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('fails closed on a stray PQ leg against a classical key (§13 AND-rule)', () => {
@@ -307,7 +308,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
       ml_dsa65.sign(canonicalBytes(body), STRAY_HYBRID.mldsaSecret!),
     )
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a grant signed by a retired key', () => {
@@ -322,7 +323,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     )
     const document = makeGrant(PUB_ED)
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a grant issued outside the signer key window', () => {
@@ -336,7 +337,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     )
     const document = makeGrant(PUB_ED) // issued_at 2026-02-01, before valid_from
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a grant against a self-inconsistent manifest, while the signature-only half still accepts it', () => {
@@ -344,10 +345,10 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     const document = makeGrant(PUB_ED)
     keyManifest['issued_at'] = '2026-06-01T00:00:00Z'
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
     // ...and the signature-only half, which presumes an already-checked
     // manifest, still accepts it: the two halves are distinct on purpose.
-    expect(verifyGrantSignature(document, keyManifest)).toBe(true)
+    expect(verifyGrantSignature(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   const malformedOverrides: Array<[string, Record<string, unknown>]> = [
@@ -400,7 +401,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
     const document = makeGrant(PUB_ED, overrides)
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   const garbageDocuments: unknown[] = [null, 42, 'grant', [], {}, { signature: null }]
@@ -410,7 +411,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     (_i, document) => {
       const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
 
-      expect(verifyGrant(document, keyManifest)).toBe(false)
+      expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
     },
   )
 
@@ -427,7 +428,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     const document = makeGrant(PUB_ED)
     document['grant_version'] = 2n ** 53n
 
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('does not invalidate a grant listing the reserved heartbeat-absence mode', () => {
@@ -438,7 +439,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
       activation: activation(['fixed-date', 'heartbeat-absence', 'publisher-declaration']),
     })
 
-    expect(verifyGrant(document, keyManifest)).toBe(true)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   // §18.2's "sorted, duplicate-free" is stated over Unicode, and Python's
@@ -463,7 +464,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     })
 
     expect(PRIVATE_USE < ASTRAL).toBe(false) // JS UTF-16 order says otherwise
-    expect(verifyGrant(document, keyManifest)).toBe(true)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('rejects modes sorted by UTF-16 code unit but NOT by code point', () => {
@@ -477,7 +478,7 @@ describe('sunset grant document (v0.2 §18.2)', () => {
     })
 
     expect(ASTRAL < PRIVATE_USE).toBe(true) // JS UTF-16 order would accept this
-    expect(verifyGrant(document, keyManifest)).toBe(false)
+    expect(verifyGrant(document, manifestHandle(keyManifest))).toBe(false)
   })
 })
 
@@ -494,7 +495,7 @@ describe('cessation declaration (v0.2 §18.4)', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
     const declaration = buildDeclaration(PUBLISHER, scope(), DECLARED_AT, PUB_ED, PUB_KID)
 
-    expect(verifyDeclaration(declaration, keyManifest)).toBe(true)
+    expect(verifyDeclaration(declaration, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('round-trips a hybrid declaration with both legs', () => {
@@ -502,7 +503,7 @@ describe('cessation declaration (v0.2 §18.4)', () => {
     const declaration = buildDeclaration(PUBLISHER, scope(), DECLARED_AT, PUB_HYBRID, PUB_KID)
 
     expect('sig_ml_dsa_65' in (declaration['signature'] as JsonObject)).toBe(true)
-    expect(verifyDeclaration(declaration, keyManifest)).toBe(true)
+    expect(verifyDeclaration(declaration, manifestHandle(keyManifest))).toBe(true)
   })
 
   it('is a closed object: an unknown member is rejected', () => {
@@ -510,7 +511,7 @@ describe('cessation declaration (v0.2 §18.4)', () => {
     const declaration = buildDeclaration(PUBLISHER, scope(), DECLARED_AT, PUB_HYBRID, PUB_KID)
     declaration['reason'] = 'bankruptcy'
 
-    expect(verifyDeclaration(declaration, keyManifest)).toBe(false)
+    expect(verifyDeclaration(declaration, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('fails closed on a classical-only declaration against a hybrid key', () => {
@@ -518,7 +519,7 @@ describe('cessation declaration (v0.2 §18.4)', () => {
     const declaration = buildDeclaration(PUBLISHER, scope(), DECLARED_AT, PUB_HYBRID, PUB_KID)
     delete (declaration['signature'] as JsonObject)['sig_ml_dsa_65']
 
-    expect(verifyDeclaration(declaration, keyManifest)).toBe(false)
+    expect(verifyDeclaration(declaration, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('checks the key window against declared_at, never the verifier clock', () => {
@@ -532,7 +533,7 @@ describe('cessation declaration (v0.2 §18.4)', () => {
     )
     const declaration = buildDeclaration(PUBLISHER, scope(), DECLARED_AT, PUB_ED, PUB_KID)
 
-    expect(verifyDeclaration(declaration, keyManifest)).toBe(false)
+    expect(verifyDeclaration(declaration, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('rejects a tampered declaration scope', () => {
@@ -540,7 +541,7 @@ describe('cessation declaration (v0.2 §18.4)', () => {
     const declaration = buildDeclaration(PUBLISHER, scope(), DECLARED_AT, PUB_ED, PUB_KID)
     ;(declaration['scope'] as JsonObject)['artifacts'] = [ART_A, ART_B, ART_C].sort()
 
-    expect(verifyDeclaration(declaration, keyManifest)).toBe(false)
+    expect(verifyDeclaration(declaration, manifestHandle(keyManifest))).toBe(false)
   })
 
   const garbageDeclarations: unknown[] = [null, 42, 'declaration', [], {}, { publisher: PUBLISHER }]
@@ -550,7 +551,7 @@ describe('cessation declaration (v0.2 §18.4)', () => {
     (_i, declaration) => {
       const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
 
-      expect(verifyDeclaration(declaration, keyManifest)).toBe(false)
+      expect(verifyDeclaration(declaration, manifestHandle(keyManifest))).toBe(false)
     },
   )
 

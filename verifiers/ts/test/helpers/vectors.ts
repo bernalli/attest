@@ -9,7 +9,7 @@ import { b64uDecode } from '../../src/b64u.js'
 import { loadsStrict } from '../../src/canon.js'
 import type { JsonObject, JsonValue } from '../../src/canon.js'
 import type { Disclosure } from '../../src/index.js'
-import { TrustStore, parseTrustStore } from '../../src/trustMaterial.js'
+import { KeyManifest, TrustStore, parseTrustStore } from '../../src/trustMaterial.js'
 import type { LogKey } from '../../src/tlog.js'
 import type { AnchorPolicy, PinnedHeader } from '../../src/anchor.js'
 
@@ -240,9 +240,11 @@ export function chainInput(dir: string): ChainInput | null {
     revocationView: parsed.revocation_view as JsonValue[],
   }
 }
-// group 36 only: auditChain takes ONE trusted keyManifest, not a full
-// TrustStore — every group 36 leaf's manifests.json trusts exactly one
-// issuer, so its sole `manifests` value is that manifest.
+// group 36 only: auditChain takes ONE trusted key manifest HANDLE, not a full
+// TrustStore — every group 36 leaf's manifests.json trusts exactly one issuer,
+// so its sole `manifests` value is that manifest. The handle is handed over as
+// the store built it: unwrapping it to `.data()` here and passing the tree is
+// exactly what the ports stopped accepting.
 /**
  * The one key manifest a group-36 leaf's store holds.
  *
@@ -252,13 +254,13 @@ export function chainInput(dir: string): ChainInput | null {
  * is asserted instead of assumed: group 36 audits a chain against ONE issuer,
  * and a leaf with two would be a fixture whose meaning nobody decided.
  */
-export function soleKeyManifest(dir: string): JsonObject {
+export function soleKeyManifest(dir: string): KeyManifest {
   const store = trustStore(dir)
   const issuers = store.issuers()
   if (issuers.length !== 1) {
     throw new Error(`${dir}: expected exactly one issuer, found ${issuers.length}`)
   }
-  return store.manifestFor(issuers[0]!)!.data()
+  return store.manifestFor(issuers[0]!)!
 }
 export function anchorPolicy(dir: string): AnchorPolicy | null {
   const p = join(dir, 'anchor-policy.json')

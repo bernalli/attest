@@ -1,17 +1,19 @@
 import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
 
-// NEVER RE-EXPORT THE `...Materialized` TWINS, NOR `classifyRevocation`.
-// They take a key manifest that the CALLER has already put through
-// `trustMaterial`, and they do not re-apply that boundary — the precondition
-// is the whole of their safety. Python states it with a `_` prefix a reader
-// cannot miss; TypeScript has no in-package visibility, so the twins are
-// exported at module level and only this note and `package.json`'s `exports`
-// map keep them off the published surface. One line added below would reopen
-// the class the trust-material boundary exists to close:
-//   verifyRecordSignatureMaterialized (revocation.ts and transfer.ts)
-//   verifyGrantSignatureMaterialized, verifyDeclarationSignatureMaterialized
-//   verifyAuthorizationSignatureMaterialized, verifyArtifactManifestMaterialized
+// NEVER RE-EXPORT THE `...Data` TWINS, NOR `storeData`/`manifestData`, NOR
+// `classifyRevocation`. The twins take the snapshot TREE a handle holds, and
+// they do not check where it came from — the precondition is the whole of their
+// safety. `storeData`/`manifestData` hand that tree OUT of the package, which is
+// the shape C-216 was about. Python states it with a `_` prefix a reader cannot
+// miss; TypeScript has no in-package visibility, so these are exported at module
+// level and only this note, the surface test (`index-surface.test.ts`) and
+// `package.json`'s `exports` map keep them off the published surface. One line
+// added below reopens the class the handle exists to close:
+//   verifyRecordSignatureData (revocation.ts and transfer.ts)
+//   verifyGrantSignatureData, verifyDeclarationSignatureData
+//   verifyAuthorizationSignatureData, verifyArtifactManifestData
+//   storeData, manifestData, StoreData
 //   classifyRevocation
 export const ATTEST_VERSION = '0.1'
 export const SUPPORTED_ATTEST_VERSIONS = ['0.1', '0.2'] as const
