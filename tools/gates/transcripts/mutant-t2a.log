@@ -1,5 +1,5 @@
 # mutant t2a: the brand check accepts a plain dict carrying the five member names
-# recorded 2026-09-08T14:36:27Z
+# recorded 2026-09-08T15:42:29Z
 
 # injected into src/attest/trust_material.py
 $ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf tests/test_trust_store_boundary.py::test_verify_answers_a_verdict_for_anything_but_a_snapshot tests/test_trust_store_boundary.py::test_the_evaluators_raise_for_anything_but_a_snapshot
@@ -55,7 +55,7 @@ tests/test_trust_store_boundary.py:483: Failed
 =========================== short test summary info ============================
 FAILED tests/test_trust_store_boundary.py::test_verify_answers_a_verdict_for_anything_but_a_snapshot[five-member-dict-{'manifests': {}, 'provenance': {}, 'cha]
 FAILED tests/test_trust_store_boundary.py::test_the_evaluators_raise_for_anything_but_a_snapshot[five-member-dict-{'manifests': {}, 'provenance': {}, 'cha]
-2 failed, 20 passed in 0.50s
+2 failed, 20 passed in 0.49s
 
 exit: 1
 

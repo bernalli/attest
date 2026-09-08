@@ -5041,8 +5041,8 @@ def gen_35_transfer() -> None:
         issued_at=TRANSFER_SIGNER_COMPROMISED_AT,
         extra_keys=[k2_entry_compromised],
     )
-    assert manifests.verify_key_manifest(manifest_l_v1) is True
-    assert manifests.check_continuity(manifest_l_v1, manifest_l_v2) is True
+    assert manifests.verify_key_manifest(_snapshot(manifest_l_v1)) is True
+    assert manifests.check_continuity(_snapshot(manifest_l_v1), _snapshot(manifest_l_v2)) is True
 
     record_l = _hybrid_sign_record(
         _transfer_record_body(
@@ -5062,11 +5062,14 @@ def gen_35_transfer() -> None:
     # against v1 (K2 still `active`) and NOT against v2 (K2 `compromised`) —
     # the fixture must exercise the gate this leaf pins, not some other
     # failure.
-    assert transfer.verify_record(record_l, manifest_l_v1) is True
+    assert transfer.verify_record(record_l, _snapshot(manifest_l_v1)) is True
+    # NOT `_snapshot`: `transfer.verify_authorization` shares its name with
+    # `authority.verify_authorization`, and only the latter takes trust
+    # material. This one's second argument is a b64u PUBLIC KEY string.
     assert transfer.verify_authorization(record_l, keys.b64u(BUYER_KP.pub)) is True
-    assert transfer.verify_record(record_l, manifest_l_v2) is False
-    assert revocation.verify_record(rev_l, manifest_l_v1) is True
-    assert revocation.verify_record(rev_l, manifest_l_v2) is False
+    assert transfer.verify_record(record_l, _snapshot(manifest_l_v2)) is False
+    assert revocation.verify_record(rev_l, _snapshot(manifest_l_v1)) is True
+    assert revocation.verify_record(rev_l, _snapshot(manifest_l_v2)) is False
 
     entry_l = {
         "type": "transfer-record",
