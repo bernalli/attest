@@ -6762,3 +6762,79 @@ def test_compromise_view_trusted_manifest_without_a_string_issuer_exits_2(
     err = capsys.readouterr().err
     assert str(trusted) in err
     assert "must carry a string 'issuer'" in err
+
+
+def test_import_refuses_a_bundle_whose_chain_would_poison_the_trust_dir(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The importer WRITES the files `--trust-dir` later reads, so it applies the
+    same classification. Before it did, a bundle carrying one manifest without a
+    string `issuer` imported at exit 0 and left a trust directory that `verify`
+    then refused WHOLE -- for every issuer in it, blaming the operator's
+    directory for a defect the bundle brought.
+
+    Measured 2026-09-08: with the `_classified_trust_manifest` call in
+    `_cmd_import` deleted, 441 tests across test_cli, test_bundle and
+    test_cli_overwrite stay green. The call reads as redundant beside the
+    loader's own check, which is exactly what a later cleanup removes.
+    """
+    rid = "01HZX0000000000000000000AA"
+    bundle_path = tmp_path / "hostile.attest"
+    with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            f"receipts/{rid}.attest.json",
+            canon.canonical_bytes({"payload": {"receipt_id": rid}}),
+        )
+        zf.writestr(
+            "manifests/good.example.json",
+            json.dumps(
+                {
+                    "issuer": "good.example",
+                    "key_manifests": [
+                        {"manifest_version": 1, "keys": []},
+                        {"issuer": "good.example", "manifest_version": 2, "keys": []},
+                    ],
+                }
+            ),
+        )
+    out_dir = tmp_path / "out"
+
+    rc = cli.main(["import", "--bundle", str(bundle_path), "--out-dir", str(out_dir)])
+
+    assert rc == 2
+    assert "import: trust-store entry for issuer 'good.example'" in capsys.readouterr().err
+    # Two-phase: the refusal comes before the first write, so nothing is left behind.
+    assert not (out_dir / "trust").exists()
+
+
+def test_import_still_writes_a_chain_whose_members_all_classify(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The positive control for the refusal above. Without it, an importer that
+    refused EVERY bundle would pass that test for the wrong reason."""
+    rid = "01HZX0000000000000000000AA"
+    bundle_path = tmp_path / "sound.attest"
+    with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            f"receipts/{rid}.attest.json",
+            canon.canonical_bytes({"payload": {"receipt_id": rid}}),
+        )
+        zf.writestr(
+            "manifests/good.example.json",
+            json.dumps(
+                {
+                    "issuer": "good.example",
+                    "key_manifests": [
+                        {"issuer": "good.example", "manifest_version": 1, "keys": []},
+                        {"issuer": "good.example", "manifest_version": 2, "keys": []},
+                    ],
+                }
+            ),
+        )
+    out_dir = tmp_path / "out"
+
+    assert cli.main(["import", "--bundle", str(bundle_path), "--out-dir", str(out_dir)]) == 0
+    capsys.readouterr()
+    # The directory the importer wrote is one its own loader accepts: that round
+    # trip is the property, not the file count.
+    assert cli._load_trust_dir(out_dir / "trust").issuers() == ("good.example",)
