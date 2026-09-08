@@ -37,6 +37,7 @@ from datetime import UTC
 from typing import Any
 
 from attest import anchor, canon, manifests, pq, revocation, tlog, transfer, verify
+from attest.dates import STRICT_UTC_FMT, is_strict_utc, render_strict_utc
 from attest.ulid import RECEIPT_ID_RE
 
 # Predicates and bounds borrowed from sibling modules, most of them private.
@@ -55,7 +56,11 @@ _resolve_compromise_cutoff = verify._resolve_compromise_cutoff
 _valid_holder_authorization_shape = transfer._valid_holder_authorization_shape
 _strict_b64u_decode = transfer._strict_b64u_decode
 
-_DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
+# The wire shape shown to a person, taken from the module that owns it. These
+# two messages DOCUMENT the format to whoever typed the wrong thing; a local
+# copy of it can drift from what the parser accepts, and then the message
+# names a shape no verifier uses — the silent form of the CLI dead end.
+_DATE_FMT = STRICT_UTC_FMT
 _COMPROMISED = "compromised"
 _ED25519_SIG_LEN = 64
 _ED25519_PUB_LEN = 32
@@ -179,11 +184,34 @@ def _round_trips(value: object) -> bool:
     `strptime` alone accepts `2025-8-1T0:0:0Z` (P34), which no conforming
     producer emits and which re-serializes to different bytes; comparing the
     reformatted string against the original is what refuses it.
+
+    Both sides of that comparison are plain strings. `str.__str__` is the
+    own-data spelling (`canon.own_data_copy`): without it the `==` asks the
+    VALUE whether it matches, because Python prefers a `str` subclass's
+    reflected operator, so an `__eq__` that raises answers with a
+    `RuntimeError` and one that denies calls a canonical timestamp invalid.
+    Both callers below hand this predicate values already copied by
+    `_own_list`/`_own_object`, so today only a direct caller can do that: the
+    line is defence in depth, kept because the predicate is private but not
+    local, and because a builder that stopped materializing would make it the
+    only defence overnight.
+
+    That division is measured, not assumed, and each half is pinned to the
+    guard that holds it in `tests/test_views.py`: removing this line reddens
+    only the predicate's own test, and removing a caller's copy reddens only
+    that caller's. With BOTH open — the state this module was never in — a
+    `RuntimeError` does escape `build_revocation_view`.
     """
     if not isinstance(value, str):
         return False
     try:
-        return manifests._parse_date(value).strftime(_DATE_FMT) == value
+        # INSIDE the try: `isinstance` is not a type check an object
+        # cannot forge. A non-`str` whose `__class__` property answers
+        # `str` passes the line above, and `str.__str__` then raises
+        # `TypeError` — which outside the try escapes this fail-closed
+        # predicate instead of answering False.
+        own = str.__str__(value)
+        return is_strict_utc(own)
     except (TypeError, ValueError):
         return False
 
@@ -721,7 +749,10 @@ def _cutoff_axis(
         return "not_established"
     if resolved.tzinfo is not None:
         resolved = resolved.astimezone(UTC)
-    return f"established:{resolved.strftime(_DATE_FMT)}"
+    # Rendered by the owner, not by `strftime`: glibc writes `%Y` below the
+    # year 1000 without padding, so a cutoff in that range would be reported
+    # as `established:999-…` — a spelling this package's own parsers refuse.
+    return f"established:{render_strict_utc(resolved.replace(tzinfo=None))}"
 
 
 def claim_capabilities(

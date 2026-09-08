@@ -18,7 +18,26 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and this command loads `--trust-dir` material at provenance `bundle`, so
   `verify` never reports `verified`.
 
+### Changed
+
+- `attest verify --crqc-horizon` accepts only the canonical spelling of an
+  ISO-8601 UTC instant. It previously went through a bare `strptime`, which
+  admits thirty other spellings of the same flag value -- non-ASCII decimal
+  digits, dropped leading zeros, a lowercase `t` or `z` -- and turned each into
+  a horizon the operator had not written. A script passing a spelling such as
+  `2030-1-1T0:0:0Z` must now pass `2030-01-01T00:00:00Z`.
+
 ### Fixed
+
+- `attest revoke --revoked-at` accepts the canonical spelling of every year the
+  format admits. The command re-serialized the parsed instant with `strftime`
+  to pin the bytes the signature commits to, and glibc renders `%Y` below the
+  year 1000 without padding, so every canonical year from `0001` to `0999` was
+  refused -- and refused by naming a remedy (`999-12-31T23:59:59Z`) the same
+  command could not parse, leaving no spelling of those instants that worked.
+  The TypeScript core accepted them throughout, so this closes a cross-language
+  divergence. The same canonicalization now runs in `attest revocation-view`
+  and in the transfer-side timestamp check, which shared the defect.
 
 - The itch poller issues only for a purchase status it recognizes as a
   completed sale. It previously skipped two known reversals and issued for

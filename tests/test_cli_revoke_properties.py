@@ -24,6 +24,7 @@ import contextlib
 import datetime
 import io
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +33,8 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from attest import canon, cli, keys, manifests, revocation, validate
+from attest import canon, cli, dates, keys, manifests, revocation, validate
+from tests.helpers import non_canonical_spellings
 from tests.test_cli import (
     ISSUER,
     KID,
@@ -51,6 +53,26 @@ from tests.test_cli import (
 PROPERTY_SETTINGS = settings(max_examples=24, deadline=None, derandomize=True)
 
 REVOKED_AT = "2026-07-03T00:00:00Z"
+
+# Instants whose canonical spelling has a year below 1000. `strftime` renders
+# `%Y` without padding on glibc, so a round trip built on it turns `0500` into
+# `500` and refuses the very spelling it just produced.
+_LOW_YEAR_INSTANTS = (
+    "0001-01-01T00:00:00Z",
+    "0500-06-15T12:30:45Z",
+    "0999-12-31T23:59:59Z",
+)
+
+# Spellings `strptime` accepts and the wire shape does not. DERIVED from the
+# shared corpus, not hand-listed: three examples chosen here would have been
+# three dropped zeros, and the families that actually reach a signing flag
+# unnoticed are the ones nobody types on purpose — non-ASCII digits and the
+# case of a separator `TimeRE` compiles with IGNORECASE. The operator flag
+# `--crqc-horizon` already gets the whole corpus; the flag whose value is
+# SIGNED must not get less.
+_NON_CANONICAL_SPELLINGS = tuple(value for _name, value in non_canonical_spellings(REVOKED_AT))
+
+_REMEDY = re.compile(r"write it exactly as '([^']*)'")
 
 
 @dataclass(frozen=True)
@@ -174,6 +196,10 @@ def assert_clean_outcome(rc: int, out: Path, captured: Captured, manifest_path: 
                 "2026-07-03T24:00:00Z",
             ]
         ),
+        # Canonical spellings whose year is below 1000. The oracle below and the
+        # command must agree on these; while the strategy never produced one,
+        # both were free to be wrong about them together.
+        st.sampled_from(_LOW_YEAR_INSTANTS),
     )
 )
 def test_revoked_at_that_does_not_round_trip_is_always_refused(
@@ -184,9 +210,21 @@ def test_revoked_at_that_does_not_round_trip_is_always_refused(
     case = env.scratch()
     rc, out, captured = env.run(case, revoked_at=revoked_at)
 
+    # The oracle is written from the SPEC, not from the code: it renders the
+    # year explicitly instead of asking `strftime`, and it does not call
+    # `attest.dates`. The previous version did `parsed.strftime(...) == value`,
+    # which is the very round trip the command used to perform — an oracle that
+    # reproduces the defect agrees with it on every input, so it certified the
+    # wrong answer for all 999 years below 1000 and would have gone RED against
+    # the correction. An oracle that calls, or restates, the code under test
+    # cannot contradict it.
     try:
-        parsed = datetime.datetime.strptime(revoked_at, revocation._DATE_FMT)
-        round_trips = parsed.strftime(revocation._DATE_FMT) == revoked_at
+        parsed = datetime.datetime.strptime(revoked_at, "%Y-%m-%dT%H:%M:%SZ")
+        canonical = (
+            f"{parsed.year:04d}-{parsed.month:02d}-{parsed.day:02d}"
+            f"T{parsed.hour:02d}:{parsed.minute:02d}:{parsed.second:02d}Z"
+        )
+        round_trips = canonical == revoked_at
     except ValueError:
         round_trips = False
 
@@ -197,6 +235,13 @@ def test_revoked_at_that_does_not_round_trip_is_always_refused(
         # predicate, since the verifier cannot parse what was signed. Naming
         # the flag pins that the round-trip guard is what refuses it.
         assert "--revoked-at" in captured.err
+    else:
+        # The direction the low-year samples were added for. Without it the
+        # oracle and the command are only compared where both say "refuse",
+        # and a gate that refused every canonical spelling would still pass:
+        # a canonical timestamp may be refused further down (key window,
+        # revocability class) but never AS A SPELLING.
+        assert "canonical spelling" not in captured.err
     assert_clean_outcome(rc, out, captured, env.manifest)
 
 
@@ -277,12 +322,12 @@ def test_the_refund_window_edge_is_inclusive_and_decides_whether_a_record_exists
     """
     case = env.scratch()
     payload_document = json.loads(env.receipt.read_text(encoding="utf-8"))["payload"]
-    issued_at = datetime.datetime.strptime(payload_document["issued_at"], revocation._DATE_FMT)
+    issued_at = datetime.datetime.strptime(payload_document["issued_at"], dates.STRICT_UTC_FMT)
     window_end = issued_at + datetime.timedelta(days=window_days)
     revoked_at = window_end + datetime.timedelta(seconds=offset_seconds)
     # The signer's own validity window opens at VALID_FROM and never closes;
     # anything before it would be refused for the signer, not for the deadline.
-    assume(revoked_at >= datetime.datetime.strptime(VALID_FROM, revocation._DATE_FMT))
+    assume(revoked_at >= datetime.datetime.strptime(VALID_FROM, dates.STRICT_UTC_FMT))
 
     payload = _write_payload(
         case,
@@ -291,7 +336,7 @@ def test_the_refund_window_edge_is_inclusive_and_decides_whether_a_record_exists
     )
     receipt = _issue(case, env.seed, payload, "envelope.json")
     rc, out, captured = env.run(
-        case, receipt=receipt, revoked_at=revoked_at.strftime(revocation._DATE_FMT)
+        case, receipt=receipt, revoked_at=revoked_at.strftime(dates.STRICT_UTC_FMT)
     )
 
     assert rc == (cli.EXIT_OK if offset_seconds <= 0 else cli.EXIT_USAGE_ERROR)
@@ -652,3 +697,44 @@ def test_a_hybrid_leg_from_another_key_is_refused_by_name(env: RevokeFixture) ->
     assert "does not match the signing key's ML-DSA-65 public key" in captured.err
     assert not out.exists()
     assert_clean_outcome(rc, out, captured, manifest)
+
+
+@pytest.mark.parametrize("revoked_at", _LOW_YEAR_INSTANTS + _NON_CANONICAL_SPELLINGS)
+def test_the_spelling_an_error_names_is_accepted_by_the_command_that_named_it(
+    env: RevokeFixture, revoked_at: str
+) -> None:
+    """When the command refuses a timestamp and NAMES the spelling to use
+    instead, that spelling must get past the same command's parse gate.
+
+    Asserted as a property rather than on the text of the message: a test that
+    pinned the wording would have seen a different string, been updated, and
+    stayed green — while the remedy it quotes remains unusable. What is fed
+    back here is whatever the command itself printed.
+    """
+    rc, _out, captured = env.run(env.scratch(), revoked_at=revoked_at)
+    named = _REMEDY.search(captured.err)
+    if named is None:
+        assert rc == 0 or "canonical spelling" not in captured.err
+        return
+
+    rc_again, _out_again, again = env.run(env.scratch(), revoked_at=named.group(1))
+    assert "must be an ISO-8601 UTC instant" not in again.err, (
+        f"the command refused {revoked_at!r}, told the user to write "
+        f"{named.group(1)!r}, and cannot parse that either"
+    )
+    assert _REMEDY.search(again.err) is None, (
+        f"the remedy named for {revoked_at!r} is itself non-canonical"
+    )
+    assert rc_again != cli.EXIT_USAGE_ERROR or "--revoked-at" not in again.err
+
+
+@pytest.mark.parametrize("revoked_at", _LOW_YEAR_INSTANTS)
+def test_a_canonical_low_year_is_not_refused_as_non_canonical(
+    env: RevokeFixture, revoked_at: str
+) -> None:
+    """C-217 on the CLI side. These ARE the canonical spellings of their
+    instants; the command may still refuse them further down (the fixture's key
+    window starts in 2026), but never as a spelling error."""
+    _rc, _out, captured = env.run(env.scratch(), revoked_at=revoked_at)
+    assert "canonical spelling" not in captured.err
+    assert "must be an ISO-8601 UTC instant" not in captured.err

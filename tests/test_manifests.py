@@ -12,7 +12,7 @@ from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from attest import canon, issue, keys, manifests, verify
-from tests.helpers import make_payload
+from tests.helpers import make_payload, non_canonical_spellings
 from tests.strategies import malformed_manifests as malformed
 
 ISSUER = "store.example.com"
@@ -407,6 +407,59 @@ def test_artifact_manifest_released_within_window_true() -> None:
         ISSUER, SERIES, 1, "2026-06-15T00:00:00Z", [_artifact()], KP1, KID1
     )
     assert manifests.verify_artifact_manifest(am, key_manifest)
+
+
+# --- non-canonical timestamps in a window bound ------------------------------
+
+# `_within_window` and `verify_artifact_manifest` are the two places this
+# module decides a verdict from a timestamp. Both must refuse a spelling that
+# `strptime` would parse WRONGLY, because the TypeScript core refuses it: the
+# same signed manifest must not be inside the window for one core and outside
+# it for the other.
+
+_WINDOW_ISSUED_AT = "2026-06-15T00:00:00Z"
+_WINDOW_VALID_FROM = "2026-01-01T00:00:00Z"
+_WINDOW_VALID_TO = "2026-12-31T00:00:00Z"
+
+
+def _window_entry(
+    valid_from: str = _WINDOW_VALID_FROM, valid_to: str = _WINDOW_VALID_TO
+) -> dict[str, Any]:
+    return manifests.key_entry(KID1, KP1.pub, valid_from, valid_to, "active")
+
+
+def test_within_window_accepts_the_canonical_spellings() -> None:
+    """Control: with every field canonical the instant IS inside the window."""
+    assert manifests._within_window(_WINDOW_ISSUED_AT, _window_entry())
+
+
+@pytest.mark.parametrize("name,issued_at", non_canonical_spellings(_WINDOW_ISSUED_AT))
+def test_within_window_refuses_a_non_canonical_issued_at(name: str, issued_at: str) -> None:
+    assert not manifests._within_window(issued_at, _window_entry())
+
+
+@pytest.mark.parametrize("name,valid_from", non_canonical_spellings(_WINDOW_VALID_FROM))
+def test_within_window_refuses_a_non_canonical_lower_bound(name: str, valid_from: str) -> None:
+    assert not manifests._within_window(_WINDOW_ISSUED_AT, _window_entry(valid_from=valid_from))
+
+
+@pytest.mark.parametrize("name,valid_to", non_canonical_spellings(_WINDOW_VALID_TO))
+def test_within_window_refuses_a_non_canonical_upper_bound(name: str, valid_to: str) -> None:
+    assert not manifests._within_window(_WINDOW_ISSUED_AT, _window_entry(valid_to=valid_to))
+
+
+@pytest.mark.parametrize("name,released_at", non_canonical_spellings("2026-06-15T00:00:00Z"))
+def test_artifact_manifest_with_non_canonical_released_at_does_not_verify(
+    name: str, released_at: str
+) -> None:
+    """The artifact-manifest twin of the key-window check: `released_at` is
+    signed, so a hostile issuer picks its spelling, and the two cores must
+    agree on whether it falls in the signing key's window."""
+    key_manifest = manifests.build_key_manifest(
+        ISSUER, 1, "2026-01-01T00:00:00Z", [_window_entry()], KP1, KID1
+    )
+    am = manifests.build_artifact_manifest(ISSUER, SERIES, 1, released_at, [_artifact()], KP1, KID1)
+    assert not manifests.verify_artifact_manifest(am, key_manifest)
 
 
 # --- G1 normative ceilings (attest-versioning.md §5 amendment) --------------

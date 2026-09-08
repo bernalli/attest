@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from attest import anchor, canon, keys, pq, tlog
-from attest.dates import MAX_REPRESENTABLE_UNIX_SECONDS
+from attest.dates import MAX_REPRESENTABLE_UNIX_SECONDS, parse_strict_utc
 
 # Public compatibility name for the shared timestamp bound.
 MAX_COSIGNATURE_TIMESTAMP: Final = MAX_REPRESENTABLE_UNIX_SECONDS
@@ -37,7 +37,6 @@ ROLE_CORROBORATION: Final = "corroboration"
 ROLE_SUNSET_ACTIVATION: Final = "sunset-activation"
 _KNOWN_ROLES: Final = frozenset({ROLE_CORROBORATION, ROLE_SUNSET_ACTIVATION})
 
-_DATE_FMT: Final = "%Y-%m-%dT%H:%M:%SZ"
 # `\Z`, never `$`: Python's `$` also matches just before a trailing newline,
 # while JavaScript's does not. The spec pins these grammars as `^...$`, but a
 # `$` here would accept `"bootstrap-1\n"` in Python and reject it in the
@@ -99,15 +98,26 @@ def _require_timestamp(value: object, field: str) -> datetime:
     if not isinstance(value, str):
         raise WitnessError(f"{field} must be a UTC ISO-8601 second timestamp")
     try:
-        parsed = datetime.strptime(value, _DATE_FMT)
-    except ValueError as exc:
+        parsed = parse_strict_utc(value)
+    # `TypeError` too: `isinstance` above is forgeable (an object whose
+    # `__class__` property answers `str` passes it), and `str.__str__` inside
+    # the parser then raises. Every caller of this function catches
+    # `WitnessError` and nothing else, so letting `TypeError` out would take
+    # `parse_policy` down instead of refusing one field.
+    except (TypeError, ValueError) as exc:
         raise WitnessError(f"{field} must be a UTC ISO-8601 second timestamp") from exc
     # Years 0000-0099 are refused: JavaScript's `Date.UTC` remaps them to
     # 1900-1999, so the TypeScript core cannot represent them and the same
-    # document would be admissible in one core only.
+    # document would be admissible in one core only. `requireTimestamp` in
+    # `verifiers/ts/src/witness.ts` states the same rule as an explicit
+    # `/^00\d\d-/` test. Both sides of the boundary are pinned in THIS core
+    # by `test_the_low_year_boundary_sits_exactly_where_the_typescript_core_puts_it`,
+    # and the rule in the OTHER core — which is what makes the line below a
+    # parity claim rather than a local preference — by
+    # `test_the_typescript_witness_gate_states_the_same_low_year_rule`. Without
+    # that second pin nothing executable connects the two, which is the shape
+    # C-217 already had once.
     if parsed.year < 100:
-        raise WitnessError(f"{field} must be a UTC ISO-8601 second timestamp")
-    if parsed.strftime(_DATE_FMT) != value:
         raise WitnessError(f"{field} must be a UTC ISO-8601 second timestamp")
     return parsed.replace(tzinfo=UTC)
 

@@ -33,7 +33,7 @@ from attest import (
     verify,
     views,
 )
-from tests.helpers import make_payload
+from tests.helpers import make_payload, non_canonical_spellings
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test-1#ed25519-1"
@@ -6158,3 +6158,22 @@ def test_reject_trust_names_every_unknown_value_it_found() -> None:
 )
 def test_reject_trust_accepts_well_formed_value_lists(raw: str, expected: set[str]) -> None:
     assert cli._parse_reject_trust(raw) == expected
+
+
+# --- --crqc-horizon: the flag had no negative coverage at all ----------------
+
+_CRQC_CANONICAL = "2030-01-01T00:00:00Z"
+
+
+def test_crqc_horizon_accepts_the_canonical_spelling() -> None:
+    assert cli._parse_crqc_horizon(_CRQC_CANONICAL) == 1893456000
+
+
+@pytest.mark.parametrize("name,value", non_canonical_spellings(_CRQC_CANONICAL))
+def test_crqc_horizon_refuses_every_non_canonical_spelling(name: str, value: str) -> None:
+    """An operator flag on trusted configuration, so nothing here is an attack —
+    but `strptime` accepted all of these and turned them into a horizon the
+    operator did not write. The flag had NO negative coverage in the tree: a
+    restriction would have landed with nothing watching it."""
+    with pytest.raises(cli.CliUsageError):
+        cli._parse_crqc_horizon(value)
