@@ -8,8 +8,9 @@ import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js'
 import { b64uEncode } from '../src/b64u.js'
 import { canonicalBytes, JsonObject, loadsStrict } from '../src/canon.js'
 import type { AnchorPolicy } from '../src/anchor.js'
-import type { TrustStore } from '../src/manifests.js'
+import type { TrustStore } from '../src/trustMaterial.js'
 import type { LogKey } from '../src/tlog.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const mockedStanding = vi.hoisted(() => ({ receipt: '', cutoff: '' }))
 
@@ -122,7 +123,7 @@ function store(
   manifest = issuerManifest(),
   chains: Record<string, JsonObject[]> = {},
 ): TrustStore {
-  return { manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' }, chains }
+  return parsedStore({ manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' }, chains })
 }
 
 function verifyWith(

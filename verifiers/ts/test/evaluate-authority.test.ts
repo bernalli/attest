@@ -15,7 +15,8 @@ import {
   MAX_AUTHORITY_DOCUMENTS,
 } from '../src/authority.js'
 import { AUTHORITY_WARN } from '../src/messages.js'
-import type { TrustStore } from '../src/manifests.js'
+import type { TrustStore } from '../src/trustMaterial.js'
+import { store as parsedStore } from './helpers/trust.js'
 import { parse, hybridSigner, signBlock, keyEntry, buildKeyManifest } from './helpers/grant-builder.js'
 import type { TestSigner } from './helpers/grant-builder.js'
 
@@ -88,7 +89,7 @@ function trustStoreOf(
   manifests: Record<string, JsonObject> = { [PUBLISHER]: PUB_MANIFEST },
   provenance: Record<string, string> = { [PUBLISHER]: 'tls' },
 ): TrustStore {
-  return { manifests, provenance, chains: {} }
+  return parsedStore({ manifests, provenance, chains: {} })
 }
 
 function receipt(publisherId: string | null = PUBLISHER, issuerId: string = ISSUER): unknown {

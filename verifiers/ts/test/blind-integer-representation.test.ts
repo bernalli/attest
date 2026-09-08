@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js'
 import { canonicalBytes, isOk, loadsStrict, verify } from '../src/index.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 type Jsonish = Record<string, unknown>
 
@@ -63,11 +64,12 @@ const numbersForSafeIntegers = (value: unknown): unknown => {
 const jsonTextWithRawValue = (field: string, valueSource: string): string =>
   `{"${field}":${valueSource},"ok":true}`
 
-const trustStore = (manifest: Jsonish): Jsonish => ({
-  manifests: { [ISSUER]: manifest },
-  provenance: { [ISSUER]: 'tls' },
-  chains: {},
-})
+const trustStore = (manifest: Jsonish): Jsonish =>
+  parsedStore({
+    manifests: { [ISSUER]: manifest },
+    provenance: { [ISSUER]: 'tls' },
+    chains: {},
+  } as never) as never
 
 const stage2Options = (): Jsonish => ({
   logKeys: [

@@ -7,13 +7,14 @@ import { canonicalBytes, loadsStrict } from '../src/canon.js'
 import type { JsonObject, JsonValue } from '../src/canon.js'
 import { verify, isOk } from '../src/verify.js'
 import { checkContinuity, chainContinuous } from '../src/manifests.js'
-import type { TrustStore } from '../src/manifests.js'
+import type { TrustStore } from '../src/trustMaterial.js'
 import { encodeEntry, parseCheckpoint, receiptCoreHash } from '../src/tlog.js'
 import type { LogKey } from '../src/tlog.js'
 import type { AnchorPolicy, PinnedHeader } from '../src/anchor.js'
 import { COMPROMISE_WARN } from '../src/messages.js'
 import { buildTree, signCheckpoint } from './helpers/tlog-builder.js'
 import type { HybridTestKeys } from './helpers/tlog-builder.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -118,9 +119,9 @@ function manifestV3OmittingCompromisedKid(): JsonObject {
 }
 
 function trustStore(manifest: JsonObject, chain?: JsonObject[]): TrustStore {
-  const store: TrustStore = { manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } }
-  if (chain !== undefined) store.chains = { [ISSUER]: chain }
-  return store
+  const doc: JsonObject = { manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } }
+  if (chain !== undefined) doc['chains'] = { [ISSUER]: chain }
+  return parsedStore(doc)
 }
 
 function receiptPayload(): JsonObject {

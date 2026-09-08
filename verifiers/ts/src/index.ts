@@ -20,7 +20,33 @@ export { verify, isOk } from './verify.js'
 export type { VerificationResult, Disclosure, VerifyTransparencyOptions } from './verify.js'
 export { loadsStrict, canonicalBytes, CanonError } from './canon.js'
 export type { JsonValue, JsonObject } from './canon.js'
-export type { TrustStore, KeyManifest, KeyEntry } from './manifests.js'
+export type { KeyEntry } from './manifests.js'
+
+/**
+ * Trust material enters as BYTES. These five names are the whole door.
+ *
+ * `TrustStore` and `KeyManifest` are CLASSES here, not interfaces, and that is
+ * the point rather than an implementation detail: an interface describes a
+ * shape, and anything can present a shape — including an object whose answers
+ * differ from the data it would serialize. Holding one of these is proof that
+ * this library parsed the bytes itself, which is a fact about provenance that
+ * no shape can imitate.
+ *
+ * A consumer builds one with `parseTrustStore(bytes)` / `parseKeyManifest(bytes)`
+ * and gets `TrustMaterialError` when the document is not admissible. What is
+ * NOT exported, and must never be: `storeData`, `manifestData`, the `…Data`
+ * twins of the internal modules, and `classifyRevocation`. Those take the
+ * snapshot's internal trees, and a single line re-exporting one of them hands
+ * a caller back the mutable tree the boundary exists to keep — the C-216
+ * family. `index-surface.test.ts` pins both halves of this sentence.
+ */
+export {
+  TrustStore,
+  KeyManifest,
+  TrustMaterialError,
+  parseTrustStore,
+  parseKeyManifest,
+} from './trustMaterial.js'
 
 /**
  * SHA-256 over raw bytes, hex-encoded.

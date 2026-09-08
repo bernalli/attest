@@ -26,6 +26,7 @@ import {
   type TestSigner,
 } from './helpers/grant-builder.js'
 import { buildTree, inclusionProof, signCheckpoint, type HybridTestKeys } from './helpers/tlog-builder.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -227,7 +228,7 @@ function envelopeBytes(payload: JsonObject): Uint8Array {
 }
 
 function trustStore(extraManifests: Record<string, JsonObject> = {}): TrustStore {
-  return {
+  return parsedStore({
     manifests: {
       [ISSUER]: ISSUER_MANIFEST,
       [PUBLISHER]: PUB_MANIFEST,
@@ -236,7 +237,7 @@ function trustStore(extraManifests: Record<string, JsonObject> = {}): TrustStore
       ...extraManifests,
     },
     provenance: { [ISSUER]: 'tls', [PUBLISHER]: 'bundle', [SUCCESSOR]: 'bundle', [OTHER]: 'bundle' },
-  }
+  })
 }
 
 function signRecord(body: Record<string, unknown>, signer: TestSigner = ISSUER_KEYS, kid = ISSUER_KID): JsonObject {

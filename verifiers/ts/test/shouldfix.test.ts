@@ -5,6 +5,7 @@ import { loadsStrict, canonicalBytes, JsonObject } from '../src/canon.js'
 import { b64uEncode } from '../src/b64u.js'
 import { checkContinuity } from '../src/manifests.js'
 import { verify } from '../src/verify.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 const parse = (m: unknown): JsonObject => loadsStrict(enc(JSON.stringify(m))) as JsonObject
@@ -61,7 +62,7 @@ it('verify downgrades trust when the chain tail is not the used manifest', () =>
     kidS, seedS,
   ))
   const unrelated = parse({ issuer: ISSUER, manifest_version: 5, keys: [{ kid: kidS, pub: pubX, valid_from: '2026-01-01T00:00:00Z', valid_to: null, status: 'active' }] })
-  const store = { manifests: { [ISSUER]: used }, provenance: { [ISSUER]: 'tls' }, chains: { [ISSUER]: [unrelated] } }
+  const store = parsedStore({ manifests: { [ISSUER]: used }, provenance: { [ISSUER]: 'tls' }, chains: { [ISSUER]: [unrelated] } })
 
   const r = verify(enc(JSON.stringify(envelope)), store)
   expect(r.signature).toBe('valid')

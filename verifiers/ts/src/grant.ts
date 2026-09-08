@@ -53,8 +53,7 @@ import {
   canonicalBytes, dumps, materializeArray, materializeValue, ownViewMember,
   VIEW_MEMBER_ABSENT, VIEW_MEMBER_NESTING,
 } from './canon.js'
-import type { TrustStore } from './manifests.js'
-import { materializeTrustStore, materializeKeyManifest } from './trustMaterial.js'
+import { TrustStore, type StoreData, storeData, materializeKeyManifest } from './trustMaterial.js'
 import { findKey, verifySignatureBlock, verifyKeyManifest, chainContinuous } from './manifests.js'
 import { parseStrictUtc, validStage3UtcTimestamp } from './dates.js'
 import { ISSUER_RE, HEX64_RE } from './tlog.js'
@@ -62,7 +61,7 @@ import { b64uDecode } from './b64u.js'
 import { verifyStrict } from './ed25519.js'
 import type { AnchorPolicy, AnchorVerdict } from './anchor.js'
 import { verifySeededAnchor, passesHorizon } from './anchor.js'
-import { GRANT_WARN } from './messages.js'
+import { GRANT_WARN, ERR } from './messages.js'
 
 const ACTIVE = 'active'
 export const MAX_JCS_INTEGER = 2n ** 53n - 1n
@@ -907,9 +906,9 @@ function pledgeOrNull(payload: unknown): Record<string, unknown> | null {
  * proves nothing about it, and two structurally identical manifests are the
  * same document (the same comparison verify.ts already makes for the issuer's
  * own chain). */
-export function grantTrustLadder(trustStore: TrustStore, domain: string, manifest: unknown): string {
-  const level = trustStore.provenance[domain] === PROVENANCE_TLS ? GRANT_TRUST_VERIFIED : GRANT_TRUST_TOFU
-  const chain = trustStore.chains?.[domain]
+export function grantTrustLadder(store: StoreData, domain: string, manifest: unknown): string {
+  const level = store.provenance[domain] === PROVENANCE_TLS ? GRANT_TRUST_VERIFIED : GRANT_TRUST_TOFU
+  const chain = store.chains[domain]
   if (chain && chain.length > 0) {
     let tailMatchesUsed = false
     try {
@@ -1006,7 +1005,7 @@ function fixedDateReached(
  * A byte-identical duplicate of a document already seen is deduplicated rather
  * than treated as equivocation: "two DISTINCT authenticated grants" is what
  * §18.3 rejects, and a replayed copy is not a second document. */
-// PRECONDITION: `manifest` is ALREADY MATERIALIZED — it is `trustStore.manifests[signer]`
+// PRECONDITION: `manifest` is ALREADY MATERIALIZED — it is `store.manifests[signer]`
 // read after `evaluateGrant`'s `materializeTrustStore` pass, and its
 // self-consistency was already established by the floor's own `verifyGrant`
 // check before this function is reached. Hoisting that self-consistency check
@@ -1091,7 +1090,7 @@ function resolveEffectiveGrant(
 function honorDeclarations(
   declarations: unknown,
   effective: Record<string, unknown>,
-  trustStore: TrustStore,
+  store: StoreData,
   warnings: string[],
 ): boolean {
   let honored = false
@@ -1105,7 +1104,7 @@ function honorDeclarations(
     // declaration signed under a key later marked `compromised` ceases to
     // authenticate, and a grant that had activated on it returns to `dormant`:
     // the safe direction, stated in §18.4 rather than left to be discovered.
-    // `trustStore` here is `evaluateGrant`'s already-materialized store (its
+    // `store` here is `evaluateGrant`'s already-materialized store (its
     // `materializeTrustStore` pass ran before `honorDeclarations` was
     // reached), so `declarationManifest` is already materialized data.
     // `verifyDeclarationSignatureMaterialized` (not the public
@@ -1114,7 +1113,7 @@ function honorDeclarations(
     // vs. successor), so unlike `resolveEffectiveGrant`'s single hoisted
     // `manifestOk` there is nothing to hoist across the whole loop; only the
     // per-candidate re-materialization is avoided.
-    const declarationManifest = typeof domain === 'string' ? trustStore.manifests[domain] : undefined
+    const declarationManifest = typeof domain === 'string' ? store.manifests[domain] : undefined
     if (
       role === null ||
       !isPlainObject(declarationManifest) ||
@@ -1242,14 +1241,17 @@ export function evaluateGrant(
   }
   // The trust-store boundary for callers who enter HERE (§18.7's custodian
   // asks this question without re-verifying the receipt). Below the capability
-  // gate, so a caller supplying no Stage 4 evidence pays nothing; when
-  // `verify()` is the caller the store is already materialized and this pass
-  // is redundant but harmless. Python parity: verify.py's `evaluate_grant`.
-  const materializedStore = materializeTrustStore(trustStore)
-  if (materializedStore === null) {
-    return { grant: GRANT_NOT_CHECKED, grant_trust: GRANT_TRUST_NOT_CHECKED, warnings }
-  }
-  trustStore = materializedStore
+  // gate, so a caller supplying no Stage 4 evidence pays nothing.
+  //
+  // A THROW and not a `not_checked` verdict, which is the change of behaviour
+  // this boundary brings: a store that is not a snapshot is trusted
+  // configuration supplied wrongly by the embedder, not evidence that came up
+  // short. Reporting `not_checked` would tell a caller who passed a live
+  // object the same thing it tells one who passed a snapshot holding nothing —
+  // and the first has a bug to fix. Python parity: verify.py's
+  // `evaluate_grant` raises `TypeError(_MSG_NOT_PARSED)` here.
+  const store = storeData(trustStore)
+  if (store === null) throw new TypeError(ERR.TRUST_STORE_NOT_PARSED)
   const notChecked = (): GrantVerdict => ({
     grant: GRANT_NOT_CHECKED,
     grant_trust: GRANT_TRUST_NOT_CHECKED,
@@ -1302,7 +1304,7 @@ export function evaluateGrant(
   const work = (payload as Record<string, unknown>)['work']
   const publisherId = isPlainObject(work) ? work['publisher_id'] : null
   const signer = signerDomain(floor)
-  const manifest = signer !== null ? trustStore.manifests[signer] : undefined
+  const manifest = signer !== null ? store.manifests[signer] : undefined
   // The ladder is scoped to the RECEIPT's declared `work.publisher_id` (§18.5,
   // "the trust store's provenance for the resolved `work.publisher_id`"), and
   // NEVER to whatever domain a supplied document happens to name in its `kid`.
@@ -1316,7 +1318,7 @@ export function evaluateGrant(
   // not a trust value borrowed from a stranger.
   let grantTrust =
     typeof publisherId === 'string'
-      ? grantTrustLadder(trustStore, publisherId, trustStore.manifests[publisherId])
+      ? grantTrustLadder(store, publisherId, store.manifests[publisherId])
       : GRANT_TRUST_TOFU
 
   if (!isPlainObject(manifest) || !verifyGrant(floor, manifest as JsonObject)) {
@@ -1364,7 +1366,7 @@ export function evaluateGrant(
   }
 
   // --- Step 9: the declaration path, scanned in FULL.
-  if (honorDeclarations(declarations, effective, trustStore, warnings)) {
+  if (honorDeclarations(declarations, effective, store, warnings)) {
     return { grant: GRANT_ACTIVATED, grant_trust: grantTrust, warnings }
   }
 

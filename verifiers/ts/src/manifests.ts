@@ -17,18 +17,13 @@ export interface KeyManifest {
   issuer: string; manifest_version: number; issued_at: string
   keys: KeyEntry[]; manifest_signature: { kid: string; sig: string }
 }
-export interface TrustStore {
-  manifests: Record<string, JsonObject>
-  provenance: Record<string, string>
-  chains?: Record<string, JsonObject[]>
-  // G2/G3 manifest currency (attest-versioning.md rev 4; v0.1 §7.2/§7.3
-  // amendment) — the artifact-manifest analog of manifests/chains above,
-  // scoped as issuer -> work.artifact_series -> manifest/history. Both
-  // optional and backward-compatible (mirrors chains?): absent means zero
-  // behavior change.
-  artifact_manifests?: Record<string, Record<string, JsonObject>>
-  artifact_manifest_chains?: Record<string, Record<string, JsonObject[]>>
-}
+// `interface TrustStore` was declared here, describing the shape an embedder
+// had to hand in. T3 removed it: the doors no longer take a shape, they take a
+// snapshot, and the five member trees are `StoreData` in `trustMaterial.ts`.
+// A shape can be imitated — that is what an interface is FOR — and imitating
+// it was the defect. Re-exported below so callers who imported the name from
+// here still resolve it, now to the class.
+export type { TrustStore, KeyManifest as ParsedKeyManifest, StoreData } from './trustMaterial.js'
 
 function asObject(v: JsonValue | undefined): JsonObject | null {
   return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as JsonObject) : null

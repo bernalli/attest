@@ -25,7 +25,8 @@ import type { JsonObject } from '../src/canon.js'
 import { b64uEncode } from '../src/b64u.js'
 import { verify, isOk } from '../src/verify.js'
 import { verifyKeyManifest, manifestSignatureIsAuthentic } from '../src/manifests.js'
-import type { TrustStore } from '../src/manifests.js'
+import type { TrustStore } from '../src/trustMaterial.js'
+import { store as parsedStore } from './helpers/trust.js'
 // Assert on the SHIPPED message builders, never on hand-copied substrings: a
 // negative substring assertion (`.some(e => e.includes('x'))` is false) passes
 // both when the branch did not fire and when someone renamed the message, and
@@ -70,7 +71,7 @@ function honestManifest(): JsonObject {
 }
 
 function trustStoreFor(manifest: JsonObject, provenance: 'tls' | 'tofu' = 'tls'): TrustStore {
-  return { manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: provenance } }
+  return parsedStore({ manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: provenance } })
 }
 
 function receiptPayloadV1(): JsonObject {

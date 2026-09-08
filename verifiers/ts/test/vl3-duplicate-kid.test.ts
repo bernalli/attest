@@ -6,6 +6,7 @@ import { duplicateKids, findKey, verifyKeyManifest } from '../src/manifests.js'
 import { manifestDuplicateKids } from '../src/messages.js'
 import { verify } from '../src/verify.js'
 import type { TrustStore } from '../src/manifests.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 // V-L.3 parity with src/attest/manifests.py and tests/test_manifests.py
 // (v0.1 §7.1, 2026-08-26 amendment).
@@ -108,7 +109,7 @@ describe('duplicate kid entries (v0.1 §7.1 amendment)', () => {
 const VALID_FROM = '2025-01-01T00:00:00Z'
 
 function trustStore(manifest: JsonObject): TrustStore {
-  return { manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } }
+  return parsedStore({ manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } })
 }
 
 function envelope(): { payload: JsonObject; signatures: unknown[] } {

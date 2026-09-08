@@ -13,6 +13,7 @@ import {
 import * as messages from '../src/messages.js'
 import { verifyRecord } from '../src/revocation.js'
 import { isOk, verify } from '../src/verify.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const enc = (value: string) => new TextEncoder().encode(value)
 const parse = (value: unknown): JsonObject => loadsStrict(enc(JSON.stringify(value))) as JsonObject
@@ -144,10 +145,10 @@ describe('v0.1 §7.1 duplicate kid manifest self-consistency', () => {
       const manifest = manifestWithUnrelatedDuplicate(order)
       expect(verifyKeyManifest(manifest)).toBe(false)
 
-      const result = verify(receiptBytes(), {
+      const result = verify(receiptBytes(), parsedStore({
         manifests: { [ISSUER]: manifest },
         provenance: { [ISSUER]: 'tls' },
-      })
+      }))
       expect(isOk(result)).toBe(false)
       expect(result.signature).toBe('invalid')
       expect(result.schema).toBe('invalid')

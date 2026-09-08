@@ -24,10 +24,9 @@ import {
   verifySignedDocument,
   withinCeiling,
 } from './grant.js'
-import type { TrustStore } from './manifests.js'
-import { materializeTrustStore, materializeKeyManifest } from './trustMaterial.js'
+import { TrustStore, type StoreData, storeData, materializeKeyManifest } from './trustMaterial.js'
 import { verifyKeyManifest } from './manifests.js'
-import { AUTHORITY_WARN } from './messages.js'
+import { AUTHORITY_WARN, ERR } from './messages.js'
 
 export const PERMISSION_ISSUE = 'issue'
 // Registered reserved and deliberately unreachable: delegation chains are out
@@ -405,7 +404,7 @@ function memberEquals(document: unknown, member: string, expected: unknown): boo
  * deduplicating by document hash BEFORE any shape work, so a view padded with
  * copies of one document costs one verification and not one per copy.
  *
- * PRECONDITION: `trustStore` is `evaluateAuthority`'s already-materialized
+ * PRECONDITION: `store` is `evaluateAuthority`'s already-materialized
  * store (its `materializeTrustStore` pass runs before this function is
  * reached), so `manifest` below is already materialized data. Reading it with
  * `verifyAuthorizationSignatureMaterialized` (not the public
@@ -414,7 +413,7 @@ function memberEquals(document: unknown, member: string, expected: unknown): boo
  * per-signer manifest once per candidate that names it. */
 function admittedAuthorizations(
   authorizations: unknown[],
-  trustStore: TrustStore,
+  store: StoreData,
   publisherId: string,
   authorityTrust: string,
   warnings: string[],
@@ -432,7 +431,7 @@ function admittedAuthorizations(
       continue
     }
     const signer = signerDomain(candidate)
-    const manifest = typeof signer === 'string' ? trustStore.manifests[signer] : undefined
+    const manifest = typeof signer === 'string' ? store.manifests[signer] : undefined
     if (
       manifest === undefined ||
       !verifyKeyManifest(manifest) ||
@@ -604,10 +603,9 @@ export function evaluateAuthority(
     warnings,
   })
   if (authorityView == null) return verdict(AUTHORITY_NOT_CHECKED, AUTHORITY_NOT_CHECKED)
-  // Same boundary, same placement rule, as `evaluateGrant`.
-  const materializedStore = materializeTrustStore(trustStore)
-  if (materializedStore === null) return verdict(AUTHORITY_NOT_CHECKED, AUTHORITY_NOT_CHECKED)
-  trustStore = materializedStore
+  // Same boundary, same placement rule, and the same throw, as `evaluateGrant`.
+  const store = storeData(trustStore)
+  if (store === null) throw new TypeError(ERR.TRUST_STORE_NOT_PARSED)
   // Admitted ONCE, before any member is read; every step below reads the
   // reconstruction and never the caller's object again.
   const view = admitAuthorityView(authorityView)
@@ -636,12 +634,12 @@ export function evaluateAuthority(
   // a domain named by a supplied document's kid -- those are still
   // attacker-supplied bytes here, and keying on them would let a blob that
   // authenticates against nothing pick any domain the verifier happens to know.
-  let authorityTrust = grantTrustLadder(trustStore, publisherId, trustStore.manifests[publisherId])
+  let authorityTrust = grantTrustLadder(store, publisherId, store.manifests[publisherId])
 
   // --- Step 6.
   let admitted: Map<string, Record<string, unknown>>
   ;[admitted, authorityTrust] = admittedAuthorizations(
-    authorizations, trustStore, publisherId, authorityTrust, warnings,
+    authorizations, store, publisherId, authorityTrust, warnings,
   )
 
   // --- Steps 7 and 8.

@@ -8,6 +8,7 @@ import {
   parse,
 } from './helpers/grant-builder.js'
 import { canonicalBytes } from '../src/canon.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 type Authority = 'not_checked' | 'no_publisher_claim' | 'self' | 'authorized' | 'unauthorized' | 'unattested'
 type AuthorityTrust = 'not_checked' | 'verified' | 'unauthenticated_tofu' | 'unverified_rotation' | 'signer_mismatch'
@@ -62,7 +63,7 @@ const thirdPartyManifest = buildKeyManifest(
 )
 
 function trustStore(provenance: 'tls' | 'tofu' = 'tls') {
-  return {
+  return parsedStore({
     manifests: {
       [PUBLISHER]: publisherManifest,
       [THIRD_PARTY]: thirdPartyManifest,
@@ -71,7 +72,7 @@ function trustStore(provenance: 'tls' | 'tofu' = 'tls') {
     chains: {},
     artifact_manifests: {},
     artifact_manifest_chains: {},
-  }
+  })
 }
 
 function payload(overrides: Record<string, unknown> = {}) {

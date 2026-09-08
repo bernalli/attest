@@ -5,14 +5,13 @@ import {
   ownArrayLength, MAX_ADMISSION_BYTES,
 } from './canon.js'
 import {
-  TrustStore, findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
+  findKey, withinValidity, chainContinuous, MAX_MANIFEST_KEYS, hasActiveEdOnlySibling,
   duplicateKids,
   artifactChainContinuous, verifyArtifactManifest, verifyArtifactManifestMaterialized,
   signableManifestBytes, verifySignatureBlock,
   manifestSignatureIsAuthentic,
 } from './manifests.js'
-import { materializeTrustStoreDetailed } from './trustMaterial.js'
-import { trustStoreUnreadable } from './messages.js'
+import { TrustStore, storeData } from './trustMaterial.js'
 import { verifyStrict, Ed25519LengthError } from './ed25519.js'
 import { verifyStrict as verifyMldsaStrict, ML_DSA_65_ALG } from './mldsa.js'
 import { b64uDecode } from './b64u.js'
@@ -200,31 +199,12 @@ function obj(v: JsonValue | undefined): JsonObject | null {
 // false }` → every revocation record is treated as forged → a genuinely REVOKED receipt
 // reports not_revoked (silent fail-open). Fail fast at the public boundary instead. Walks
 // arrays and plain objects only; non-plain values (e.g. Uint8Array) are not walked.
-/**
- * The ONE failure `assertCanonParsed` is allowed to throw for: a trust store
- * built with `JSON.parse`. That is a programming error in the embedder's own
- * code and the loud failure is the right one. It is a distinct class so that
- * `verify()` can let it through while turning every OTHER throw raised during
- * that walk — a hostile accessor's, say — into a verdict, which is what the
- * Python twin returns for the same store. `extends TypeError` keeps every
- * existing `instanceof TypeError` caller working.
- */
-class CanonParseContractError extends TypeError {}
-
-function assertCanonParsed(value: unknown, label: string): void {
-  if (typeof value === 'number')
-    throw new CanonParseContractError(`${label} must be parsed with loadsStrict (bigint integers), not JSON.parse — found a JS number`)
-  if (Array.isArray(value)) {
-    for (const item of value) assertCanonParsed(item, label)
-    return
-  }
-  if (value !== null && typeof value === 'object') {
-    const proto = Object.getPrototypeOf(value)
-    if (proto === Object.prototype || proto === null)
-      for (const k of Object.keys(value)) assertCanonParsed((value as Record<string, unknown>)[k], label)
-    // non-plain objects (Uint8Array, class instances, etc.) are intentionally not walked
-  }
-}
+// `assertCanonParsed` and its `CanonParseContractError` lived here, walking the
+// caller's trust store to catch a `JSON.parse`-built one. Both are gone with
+// the boundary: a store now arrives as a snapshot this library parsed from
+// bytes, so "was it parsed with loadsStrict?" is answered by the type of the
+// argument and cannot be asked wrongly. The walk was also the last place that
+// ran the caller's own accessors before the boundary did.
 
 function contentWarnings(payload: JsonObject): string[] {
   const w: string[] = []
@@ -976,29 +956,10 @@ export function verify(
   if (grantView !== null && (typeof grantView !== 'object' || Array.isArray(grantView)))
     throw new TypeError('grant_view must be an evidence object or None')
 
-  // Fail loud if the TRUST STORE was JSON.parse'd (JS numbers) rather than
-  // loadsStrict-parsed (bigint). The trust store is the verifier's own
-  // configuration, so a wrong parse there is a programming error and the loud
-  // failure is the right one. Does NOT walk envelopeBytes (parsed internally)
-  // or disclosure (holds raw Uint8Array fields).
-  // F5: this walk runs the caller's own accessors, and a member that THREW
-  // used to propagate out of `verify()` — where the Python twin returns a
-  // verdict for the same store. An embedder porting between the two cores got
-  // a different failure MODE for the same input, while the boundary's own
-  // documentation sells it on "rather than crashing an embedder's request
-  // handler". Only the JSON.parse contract violation stays a throw.
-  // The verdict is DEFERRED rather than returned here: `invalid` does not
-  // exist yet at this point, and deferring also puts the refusal at the same
-  // position the Python twin puts it — after the envelope checks — so a
-  // malformed envelope still reports its own reason first, in both cores.
-  let trustStoreUnreadableEarly = false
-  try {
-    assertCanonParsed(trustStore.manifests, 'trustStore.manifests')
-    if (trustStore.chains != null) assertCanonParsed(trustStore.chains, 'trustStore.chains')
-  } catch (error) {
-    if (error instanceof CanonParseContractError) throw error
-    trustStoreUnreadableEarly = true
-  }
+  // The trust store is read AFTER the envelope checks below, at the one place
+  // the snapshot is unwrapped. Nothing about it is examined here: a snapshot
+  // holds only data this library parsed, so there is no accessor to run early
+  // and no parse contract left to check.
   // The revocation view is NOT checked here any more, and its absence is the
   // point. This guard existed to stop a JSON.parse'd view from failing open in
   // silence, and it did it by THROWING out of a public surface for a property
@@ -1129,23 +1090,24 @@ export function verify(
 
   // The trust-store boundary, immediately before the FIRST read of it, so
   // every envelope refusal above keeps the verdict and the message it has
-  // always had. AFTER `assertCanonParsed` above, deliberately: that guard is a
-  // caller-contract check that must stay LOUD (a JSON.parse'd store is a
-  // programming error, not a verdict), and materializing first would turn its
-  // throw into an `invalid` result. See ./trustMaterial.ts for why the
-  // boundary and not a defensive spelling at every read.
-  if (trustStoreUnreadableEarly) return invalid(trustStoreUnreadable(null))
-  const materialized = materializeTrustStoreDetailed(trustStore)
-  if (materialized.store === null) return invalid(trustStoreUnreadable(materialized.member))
-  trustStore = materialized.store
+  // always had.
+  //
+  // `storeData` is not a materialization: it is the brand check. It answers
+  // `null` for everything that is not a snapshot this library built from
+  // bytes, and the five trees it returns are the ones parsed at that time.
+  // There is nothing here to ask a getter, and no container a Proxy can stand
+  // in for — which is the difference between refusing a hostile object and
+  // copying it well. See ./trustMaterial.ts.
+  const store = storeData(trustStore)
+  if (store === null) return invalid(ERR.TRUST_STORE_NOT_PARSED)
 
   // Trust resolution — AFTER payload/signatures checks, BEFORE step 1. Never reset later.
   const issuerBlock = obj(payload['issuer'])
   const issuerId = issuerBlock ? issuerBlock['id'] : undefined
   let issuerManifestForTransparency: JsonObject | undefined
   if (typeof issuerId === 'string') {
-    trust = trustStore.provenance[issuerId] === 'tls' ? 'verified' : 'unauthenticated_tofu'
-    issuerManifestForTransparency = trustStore.manifests[issuerId]
+    trust = store.provenance[issuerId] === 'tls' ? 'verified' : 'unauthenticated_tofu'
+    issuerManifestForTransparency = store.manifests[issuerId]
 
     // G1 ceiling + G6 detection preflight — moved ABOVE the chain handling
     // (2026-07-22 fix wave 2 round 2, finding I1 residual): the chain
@@ -1182,7 +1144,7 @@ export function verify(
       }
     }
 
-    const chain = trustStore.chains?.[issuerId]
+    const chain = store.chains[issuerId]
     // v0.1 §7.1 (2026-08-26 amendment): an ambiguous key manifest fails its
     // self-consistency check WHEREVER it is consumed. A held chain member is
     // consumed — by rotation continuity (§7.3) and by v0.2 §19.3's floor and
@@ -1199,7 +1161,7 @@ export function verify(
       // A chain that doesn't end at the manifest being used proves nothing about
       // it — value-compare the tail via its canonical form (2026-07-13 review,
       // finding 8).
-      const used = trustStore.manifests[issuerId]
+      const used = store.manifests[issuerId]
       const tailMatchesUsed = used != null && dumps(chain[chain.length - 1]!) === dumps(used)
       if (!chainContinuous(chain) || !tailMatchesUsed) trust = 'unverified_rotation'
     }
@@ -1212,9 +1174,9 @@ export function verify(
   const workBlock = obj(payload['work'])
   const artifactSeries = workBlock ? workBlock['artifact_series'] : undefined
   if (typeof issuerId === 'string' && typeof artifactSeries === 'string') {
-    const candidateArtifactManifest = trustStore.artifact_manifests?.[issuerId]?.[artifactSeries]
+    const candidateArtifactManifest = store.artifact_manifests[issuerId]?.[artifactSeries]
     if (candidateArtifactManifest != null) {
-      const amChain = trustStore.artifact_manifest_chains?.[issuerId]?.[artifactSeries]
+      const amChain = store.artifact_manifest_chains[issuerId]?.[artifactSeries]
       const members = [candidateArtifactManifest, ...(amChain ?? [])]
       const authenticated = issuerManifestForTransparency != null && members.every(
         // The MATERIALIZED twin: this runs once per chain member against ONE
@@ -1273,7 +1235,7 @@ export function verify(
   // turns out invalid (e.g. a compromised key) still reports whatever
   // standing the evidence actually earns — see `evaluateTransparencyClaim`.
   {
-    const chain = typeof issuerId === 'string' ? trustStore.chains?.[issuerId] : undefined
+    const chain = typeof issuerId === 'string' ? store.chains[issuerId] : undefined
     const rotationOk = rotationChainVerified(chain, issuerManifestForTransparency)
     const claimOutcome = evaluateTransparencyClaim(
       envelope,
@@ -1321,7 +1283,7 @@ export function verify(
 
     // Step 2 (shared with v0.1) — issuer binding
     if (typeof issuerId !== 'string') return invalid(ERR.MISSING_ISSUER_ID)
-    manifest = trustStore.manifests[issuerId]
+    manifest = store.manifests[issuerId]
     if (manifest == null) return invalid(noTrustedManifest(issuerId))
 
     // G1's manifest-keys ceiling and G6's mixed-keyset detection are both
@@ -1334,7 +1296,7 @@ export function verify(
     // Step 3 (shared with v0.1) — key resolution + status + validity window
     const entry = findKey(manifest, kid)
     if (entry == null) return invalid(noKeyInManifest(kid))
-    const chain = trustStore.chains?.[issuerId]
+    const chain = store.chains[issuerId]
     const authenticatedClaims = authenticatedCompromiseClaims(
       materializedCompromiseView, manifest, entry, chain, issuerId, kid, warnings,
     )
@@ -1389,7 +1351,7 @@ export function verify(
 
     // Step 2 — issuer binding
     if (typeof issuerId !== 'string') return invalid(ERR.MISSING_ISSUER_ID)
-    manifest = trustStore.manifests[issuerId]
+    manifest = store.manifests[issuerId]
     if (manifest == null) return invalid(noTrustedManifest(issuerId))
 
     // G1's manifest-keys ceiling is handled above, hoisted immediately after
@@ -1402,7 +1364,7 @@ export function verify(
     // Step 3 — key resolution + status + validity window
     const entry = findKey(manifest, kid)
     if (entry == null) return invalid(noKeyInManifest(kid))
-    const chain = trustStore.chains?.[issuerId]
+    const chain = store.chains[issuerId]
     const authenticatedClaims = authenticatedCompromiseClaims(
       materializedCompromiseView, manifest, entry, chain, issuerId, kid, warnings,
     )

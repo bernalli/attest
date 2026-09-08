@@ -16,7 +16,8 @@ import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js'
 import { loadsStrict, JsonObject } from '../src/canon.js'
 import { b64uEncode } from '../src/b64u.js'
 import { MAX_MANIFEST_KEYS } from '../src/manifests.js'
-import type { TrustStore } from '../src/manifests.js'
+import type { TrustStore } from '../src/trustMaterial.js'
+import { store as parsedStore } from './helpers/trust.js'
 import type { LogKey } from '../src/tlog.js'
 import type { AnchorPolicy } from '../src/anchor.js'
 
@@ -74,7 +75,30 @@ function oversizedManifest(): JsonObject {
 }
 
 function trustStore(manifest: JsonObject): TrustStore {
-  return { manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } }
+  return parsedStore({ manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } })
+}
+
+/**
+ * Did this call hand the oversized manifest to the canonicalizer?
+ *
+ * Asked by CONTENT, and it has to be. The assertion used to be `args[0] ===
+ * manifest`, object identity against the fixture the test holds — and a store
+ * is now a snapshot, whose trees are re-parsed clones of the document, never
+ * the caller's objects. Identity would therefore be false whether the ceiling
+ * ran first or not: the test would have passed vacuously, which is worse than
+ * failing, because it would have kept reporting that a guard it no longer
+ * watches is in place.
+ *
+ * By content it is also STRICTLY stronger than what it replaces: it catches a
+ * copy of the oversized manifest reaching the canonicalizer, which identity
+ * never could.
+ */
+function sawOversizedManifest(calls: Array<unknown[]>): boolean {
+  return calls.some(([arg]) => {
+    if (arg === null || typeof arg !== 'object') return false
+    const keys = (arg as Record<string, unknown>)['keys']
+    return Array.isArray(keys) && keys.length > MAX_MANIFEST_KEYS
+  })
 }
 
 function envelope(): { payload: JsonObject; signatures: unknown[] } {
@@ -92,6 +116,17 @@ function envelope(): { payload: JsonObject; signatures: unknown[] } {
 }
 
 describe('I1: key-manifest ceiling hoisted before canonicalization', () => {
+  // The oracle's own positive control, and it is not decoration: the two
+  // assertions below are of the form "the canonicalizer never saw it", and an
+  // oracle that could never answer YES would satisfy them on any code at all —
+  // which is precisely how the identity check this replaced had stopped
+  // meaning anything. So first: give it the thing it must recognise.
+  it('the oracle recognises the oversized manifest when it IS handed one', () => {
+    expect(sawOversizedManifest([[oversizedManifest()]])).toBe(true)
+    expect(sawOversizedManifest([[{ keys: [] }]])).toBe(false)
+    expect(sawOversizedManifest([[null]])).toBe(false)
+  })
+
   it('rejects an oversized manifest without ever canonicalizing it', () => {
     const manifest = oversizedManifest()
     const env = envelope()
@@ -129,8 +164,7 @@ describe('I1: key-manifest ceiling hoisted before canonicalization', () => {
 
     expect(result.schema).toBe('invalid')
     expect(result.signature).toBe('invalid')
-    const calledWithManifest = vi.mocked(canonicalBytes).mock.calls.some((args) => args[0] === manifest)
-    expect(calledWithManifest).toBe(false)
+    expect(sawOversizedManifest(vi.mocked(canonicalBytes).mock.calls)).toBe(false)
   })
 
   // Round-2 regression (review finding I1 residual): a NON-EMPTY rotation
@@ -140,11 +174,11 @@ describe('I1: key-manifest ceiling hoisted before canonicalization', () => {
   it('rejects an oversized manifest before chain handling canonicalizes it (non-empty chain)', () => {
     const manifest = oversizedManifest()
     const env = envelope()
-    const store: TrustStore = {
+    const store: TrustStore = parsedStore({
       manifests: { [ISSUER]: manifest },
       provenance: { [ISSUER]: 'tls' },
       chains: { [ISSUER]: [manifest] },
-    }
+    })
 
     vi.mocked(canonicalBytes).mockClear()
     vi.mocked(dumps).mockClear()
@@ -153,9 +187,7 @@ describe('I1: key-manifest ceiling hoisted before canonicalization', () => {
 
     expect(result.schema).toBe('invalid')
     expect(result.signature).toBe('invalid')
-    const dumpsSawManifest = vi.mocked(dumps).mock.calls.some((args) => args[0] === manifest)
-    expect(dumpsSawManifest).toBe(false)
-    const canonSawManifest = vi.mocked(canonicalBytes).mock.calls.some((args) => args[0] === manifest)
-    expect(canonSawManifest).toBe(false)
+    expect(sawOversizedManifest(vi.mocked(dumps).mock.calls)).toBe(false)
+    expect(sawOversizedManifest(vi.mocked(canonicalBytes).mock.calls)).toBe(false)
   })
 })
