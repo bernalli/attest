@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import sqlite3
 import stat
@@ -2227,6 +2228,38 @@ def test_cli_docstring_names_itch_dry_run_as_throwaway_ledger_command() -> None:
     assert "does NOT use `_build_deps`" in doc
 
 
+def _configured_rails() -> list[str]:
+    """Every platform rail, derived from the config a merchant actually copies.
+
+    A guard that carries its own list of rails goes stale on the commit that
+    adds one: the new rail is absent from the list, so the guard passes while
+    the docstring it watches omits it. `test_bridge_docs_onboarding` already
+    derives this set from `examples/bridge.toml` for the same reason; reusing
+    it keeps one derivation instead of two lists.
+    """
+    from test_bridge_docs_onboarding import _EXAMPLE_CONFIG, _platform_rails
+
+    rails = _platform_rails(_EXAMPLE_CONFIG.read_text(encoding="utf-8"))
+    assert rails, "no platform rails derived: the example config's shape has changed"
+    return rails
+
+
+def _routed_webhook_rails() -> list[str]:
+    """The rails `make_app` serves a webhook for, read from the routing itself.
+
+    Not every rail is a webhook rail — itch is polled — so this set is the
+    subset the lock argument has to enumerate, and asking the router is the
+    only way to know it that a new rail cannot get wrong.
+    """
+    source = (Path(cli.__file__).resolve().parent / "http.py").read_text(encoding="utf-8")
+    rails = sorted(set(re.findall(r'path == "/([a-z]+)/webhook"', source)))
+    assert rails, "no webhook routes found: the routing shape this test reads has changed"
+    configured = set(_configured_rails())
+    unknown = [rail for rail in rails if rail not in configured]
+    assert not unknown, f"routed rails absent from the example config: {unknown}"
+    return rails
+
+
 def test_cli_and_http_docstrings_name_every_webhook_rail() -> None:
     """The two module docstrings are the map an operator reads first.
 
@@ -2248,7 +2281,7 @@ def test_cli_and_http_docstrings_name_every_webhook_rail() -> None:
     cli_rails = cli_doc[start : cli_doc.index(closing, start) + len(closing)].lower()
     http_rails = (http.__doc__ or "").split("\n\n", 1)[0].lower()
 
-    for rail in ("stripe", "shopify", "itch", "paddle", "paypal"):
+    for rail in _configured_rails():
         assert rail in cli_rails, f"cli docstring's rail list omits {rail}"
         assert rail in http_rails, f"http docstring's opening line omits {rail}"
 
@@ -2260,7 +2293,7 @@ def test_threading_server_docstring_lists_the_webhook_platforms_it_serializes() 
     being added here leaves the safety argument quietly describing a smaller
     server than the one that runs."""
     doc = cli._ThreadingWSGIServer.__doc__ or ""
-    for platform in ("stripe", "shopify", "paddle", "paypal"):
+    for platform in _routed_webhook_rails():
         assert f'platform="{platform}"' in doc, f"lock argument omits {platform}"
 
 
