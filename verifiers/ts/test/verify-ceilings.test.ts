@@ -16,6 +16,7 @@ import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js'
 import { loadsStrict, JsonObject } from '../src/canon.js'
 import { b64uEncode } from '../src/b64u.js'
 import { MAX_MANIFEST_KEYS } from '../src/manifests.js'
+import { manifestExceedsKeys } from '../src/messages.js'
 import type { TrustStore } from '../src/trustMaterial.js'
 import { store as parsedStore } from './helpers/trust.js'
 import type { LogKey } from '../src/tlog.js'
@@ -92,6 +93,18 @@ function trustStore(manifest: JsonObject): TrustStore {
  * By content it is also STRICTLY stronger than what it replaces: it catches a
  * copy of the oversized manifest reaching the canonicalizer, which identity
  * never could.
+ *
+ * What it does NOT do, measured 2026-09-08 and stated here so nobody reads more
+ * into a green than it says: at the two sites below it cannot fail. Injecting
+ * the historical I1-residual defect (the ceiling de-hoisted BELOW the chain tail
+ * compare) leaves `dumps` and `canonicalBytes` with ZERO recorded calls, because
+ * `manifestSignatureIsAuthentic` carries its own keys ceiling
+ * (manifests.ts:201-202) and refuses the oversized manifest in the same
+ * preflight, before canonicalizing anything. `[].some(pred)` is false for every
+ * `pred`, so these two assertions pass on honest and defective code alike. They
+ * are kept as a second line that would bite if that other ceiling ever moved;
+ * what actually discriminates is the assertion on the refusal MESSAGE, which
+ * names this ceiling rather than merely observing that the verdict changed.
  */
 function sawOversizedManifest(calls: Array<unknown[]>): boolean {
   return calls.some(([arg]) => {
@@ -162,6 +175,11 @@ describe('I1: key-manifest ceiling hoisted before canonicalization', () => {
       },
     )
 
+    // The refusal must be THIS ceiling's, not merely some refusal: with the
+    // ceiling de-hoisted the verdict still changes, but it changes to
+    // "not self-consistent" from a different guard. Measured red against that
+    // exact mutant.
+    expect(result.errors).toContain(manifestExceedsKeys(MAX_MANIFEST_KEYS))
     expect(result.schema).toBe('invalid')
     expect(result.signature).toBe('invalid')
     expect(sawOversizedManifest(vi.mocked(canonicalBytes).mock.calls)).toBe(false)
@@ -185,6 +203,7 @@ describe('I1: key-manifest ceiling hoisted before canonicalization', () => {
 
     const result = verify(enc(JSON.stringify(env)), store, null, null, undefined)
 
+    expect(result.errors).toContain(manifestExceedsKeys(MAX_MANIFEST_KEYS))
     expect(result.schema).toBe('invalid')
     expect(result.signature).toBe('invalid')
     expect(sawOversizedManifest(vi.mocked(dumps).mock.calls)).toBe(false)

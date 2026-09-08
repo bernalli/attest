@@ -201,20 +201,87 @@ describe('who may build a trust-material handle', () => {
       ts.ScriptTarget.ESNext,
       true,
     )
+    // The two classes, and every LOCAL NAME bound to them in this file.
+    // Matching the identifier TEXT alone was blind to the very forms the
+    // comment above says a count misses: `import { TrustStore as TS }` and
+    // `const C = TrustStore` both reach the constructor under a name that is
+    // not the class's own. Measured 2026-09-08: text matching caught 3 of 8
+    // real construction forms.
+    const CLASSES: ReadonlySet<string> = new Set(['TrustStore', 'KeyManifest'])
+    const bound = new Set<string>(CLASSES)
+    const namespaces = new Set<string>()
+    const collect = (node: ts.Node): void => {
+      if (ts.isImportDeclaration(node) && node.importClause) {
+        const named = node.importClause.namedBindings
+        if (named && ts.isNamedImports(named)) {
+          for (const el of named.elements) {
+            if (CLASSES.has((el.propertyName ?? el.name).text)) bound.add(el.name.text)
+          }
+        }
+        if (named && ts.isNamespaceImport(named)) namespaces.add(named.name.text)
+      }
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer &&
+        ts.isIdentifier(node.initializer) &&
+        bound.has(node.initializer.text)
+      ) {
+        bound.add(node.name.text)
+      }
+      ts.forEachChild(node, collect)
+    }
+    collect(source)
+
+    /** The class a construction target names, under any spelling, or null. */
+    const handleName = (n: ts.Expression): string | null => {
+      if (ts.isIdentifier(n)) return bound.has(n.text) ? n.text : null
+      if (
+        ts.isPropertyAccessExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        namespaces.has(n.expression.text) &&
+        CLASSES.has(n.name.text)
+      ) {
+        return n.name.text
+      }
+      return null
+    }
+
     const found: string[] = []
     const walk = (node: ts.Node): void => {
-      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
-        const name = node.expression.text
-        if (name === 'TrustStore' || name === 'KeyManifest') found.push(name)
+      if (ts.isNewExpression(node)) {
+        const name = handleName(node.expression)
+        if (name !== null) found.push(name)
       }
-      // `Reflect.construct(TrustStore, …)` reaches the constructor without a
-      // `new`, so an AST walk that only looked at NewExpression would miss it.
+      // `class X extends TrustStore` reaches the constructor through `super()`.
+      if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.heritageClauses) {
+        for (const clause of node.heritageClauses) {
+          if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue
+          for (const t of clause.types) {
+            const name = handleName(t.expression)
+            if (name !== null) found.push(`extends ${name}`)
+          }
+        }
+      }
+      // `Reflect.construct(TrustStore, ...)` reaches the constructor without a
+      // `new`. Flagged unconditionally, and the BINDING form too: `const rc =
+      // Reflect.construct` hides the call site from a property-access match.
       if (
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
         ts.isIdentifier(node.expression.expression) &&
         node.expression.expression.text === 'Reflect' &&
         node.expression.name.text === 'construct'
+      ) {
+        found.push('Reflect.construct')
+      }
+      if (
+        ts.isVariableDeclaration(node) &&
+        node.initializer &&
+        ts.isPropertyAccessExpression(node.initializer) &&
+        ts.isIdentifier(node.initializer.expression) &&
+        node.initializer.expression.text === 'Reflect' &&
+        node.initializer.name.text === 'construct'
       ) {
         found.push('Reflect.construct')
       }
@@ -225,7 +292,13 @@ describe('who may build a trust-material handle', () => {
   }
 
   it('builds them only inside trustMaterial.ts', () => {
-    const others = readdirSync(SRC).filter((f) => f.endsWith('.ts') && f !== 'trustMaterial.ts')
+    // `recursive: true`: a no-op today (src/ is flat, measured 20 files either
+    // way) and the difference between a guard that derives its watched set from
+    // the structure and one that silently stops covering a subdirectory added
+    // tomorrow.
+    const others = readdirSync(SRC, { recursive: true })
+      .map((f) => String(f))
+      .filter((f) => f.endsWith('.ts') && f !== 'trustMaterial.ts')
     // The negative that makes this test non-decorative: if the walk found
     // nothing anywhere, an empty result would look like success. So assert the
     // owning file DOES construct them, first.
