@@ -5120,6 +5120,88 @@ def gen_35_transfer() -> None:
         anchor_policy=_empty_anchor_policy(),
     )
 
+    # --- (m) compromised-countersigner-cannot-back-the-transfer (TM-80,
+    # threat-model.md): 35l's twin, and the OTHER half of the same mechanism.
+    # 35l pins the half a `VerificationResult` can observe when BOTH
+    # side-documents are countersigned by K2: the revocation is set aside
+    # first, so the transfer claim is never consulted and the transfer
+    # record's own refusal is never reached. This leaf reverses exactly ONE
+    # signature — the `transferred` revocation is signed by K1
+    # (`ISSUER_KID`), which stays `active`, while the transfer record is
+    # 35l's own `record_l`, byte-for-byte, still countersigned by the
+    # `compromised` K2. The revocation now authenticates, so §17.3's
+    # key-authorization gate IS reached, refuses the record on its signer's
+    # current key status (v0.2 §17.1), and the transferred revocation is left
+    # unbacked: `revocation: "invalid_revocation_ignored"`,
+    # `transferred_revocation_unbacked`, `ok: true`.
+    #
+    # What this leaf BUYS, and why 35l could not: weakening the status check
+    # in `transfer.verify_record_signature` — accepting `compromised`
+    # alongside `active`, which is precisely the "repair" TM-80 declares
+    # non-conformant — left every other leaf in the corpus green. Under this
+    # leaf the record instead becomes a BACKED winner, and all three
+    # observables flip together: `ok` false, `revocation: "transferred"`, no
+    # warning. Sharing 35l's record and evidence is deliberate: the two
+    # fixtures differ in one signature, so the outcomes cannot diverge for
+    # any other reason. ---
+    rev_m = _hybrid_sign_record(
+        {"receipt_id": RECEIPT_ID, "status": "transferred", "revoked_at": TRANSFERRED_AT}
+    )
+    # Preconditions, and they are the leaf's real defence: three DIFFERENT
+    # construction mistakes (a `receipt_id` that does not match, a manifest
+    # that fails its own signature, a malformed `holder_authorization`) all
+    # produce the expected result byte-for-byte while leaving the mutant
+    # alive, so a green leaf proves nothing on its own. The historical v1/v2
+    # pair also differs in version, issuance time and manifest signature.
+    # Build a self-authenticating control from v2 itself: change ONLY K2's
+    # status and recompute the manifest signature. If this control cannot
+    # authenticate the same record, another refusal masks the status gate.
+    # The revocation asserts are 35l's, inverted: here it must authenticate
+    # against the manifest the trust store resolves.
+    manifest_m_active = copy.deepcopy(manifest_l_v2)
+    signer_m_active = manifests.find_key(manifest_m_active, TRANSFER_SIGNER_KID)
+    assert signer_m_active is not None and signer_m_active["status"] == "compromised"
+    signer_m_active["status"] = "active"
+    signable_m_active = manifests._signable(manifest_m_active)
+    manifest_m_active["manifest_signature"] = {
+        "kid": ISSUER_KID,
+        "sig": keys.b64u(keys.sign(signable_m_active, ISSUER_KP)),
+        "sig_ml_dsa_65": keys.b64u(_oracle_sign(signable_m_active)),
+    }
+    assert transfer.verify_record(record_l, manifest_m_active) is True, (
+        "35m: active-status control must authenticate the transfer record"
+    )
+    assert transfer.verify_record(record_l, manifest_l_v1) is True
+    assert transfer.verify_record(record_l, manifest_l_v2) is False
+    assert transfer.verify_authorization(record_l, keys.b64u(BUYER_KP.pub)) is True
+    assert revocation.verify_record(rev_m, manifest_l_v1) is True
+    assert revocation.verify_record(rev_m, manifest_l_v2) is True
+    assert record_l["receipt_id"] == RECEIPT_ID
+    write_vector(
+        "35-transfer/m-compromised-countersigner-cannot-back-the-transfer",
+        payload=None,
+        envelope=envelope_a,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, manifest_l_v2, "tls"),
+            chains={ISSUER_ID: [manifest_l_v1, manifest_l_v2]},
+        ),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "invalid_revocation_ignored",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": ["transferred_revocation_unbacked"],
+        },
+        revocation_record=rev_m,
+        transfer_view=[{"record": record_l, "evidence": evidence_l}],
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
+    )
+
 
 # --- vector 36: transfer-chain (v0.2 §17.5, chain-of-title audit) ----------
 

@@ -3506,7 +3506,8 @@ class TestPrivacyCorpusArtifactCounts:
             check_spec_docs.parse_pc_rows(stale_records), vectors
         )
         assert any(
-            "is not a figure this gate generated" in error and "'17'" in error for error in errors
+            "is not a figure this gate generated" in error and f"'{revocations - 7}'" in error
+            for error in errors
         )
 
         # The second drift was a TOTAL -- "92 JSON envelope inputs" where the
