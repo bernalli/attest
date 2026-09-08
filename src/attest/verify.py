@@ -46,6 +46,7 @@ from attest import (
 )
 from attest import grant as grant_module
 from attest import transparency as transparency_module
+from attest.dates import parse_strict_utc
 
 _ALG = "Ed25519"  # hard-coded — never selected from any field, mirrors issue.py
 _SUPPORTED_ATTEST_VERSIONS = frozenset({"0.1", "0.2"})
@@ -65,7 +66,6 @@ _KNOWN_EOL_VALUES = frozenset({"artifacts-remain-redownloadable", "escrow", "non
 # the same members, and guessing is exactly how two conforming implementations
 # reach different verdicts on identical input.
 _KNOWN_PLEDGE_TYPES = frozenset({"sunset-grant-v1"})
-_DATE_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 _STATUS_ACTIVE = "active"
 _STATUS_COMPROMISED = "compromised"
@@ -368,15 +368,17 @@ class _CompromiseClaim:
     vouching_signers: tuple[dict[str, Any], ...]
 
 
-def _parse_date(value: str) -> datetime:
-    if not isinstance(value, str) or not value.isascii():
-        raise ValueError("timestamp must use ASCII digits")
-    return datetime.strptime(value, _DATE_FMT)
+# The strict wire shape is owned by `attest.dates`, for the whole package.
+# TEMPORARY name: the call sites below still say `_parse_date`.
+_parse_date = parse_strict_utc
 
 
 def _within_validity(issued_at: str, entry: dict[str, Any]) -> bool:
-    """Fail closed on any malformed/missing date — an unparseable window
-    never resurrects a receipt into validity."""
+    """Fail closed on any malformed or missing date. `parse_strict_utc` refuses
+    both what `strptime` cannot parse and what it would parse WRONGLY (non-ASCII
+    digits, unpadded fields, lowercase `t`/`z`): a bound that is not the
+    canonical spelling of an instant never resurrects a receipt into validity,
+    and never lets one core accept a window the other rejects."""
     try:
         issued = _parse_date(issued_at)
         valid_from = _parse_date(entry["valid_from"])

@@ -5,7 +5,14 @@
 it never touches the Ledger (no sqlite file is created just to validate a
 config) and never contacts a platform. `serve`/`retry-failed`/`itch-import`
 need the full runtime (Ledger, Delivery, IssuingCore, the platform adapters),
-assembled by `_build_deps`. `serve` additionally starts the itch
+assembled by `_build_deps`: the webhook rails `stripe`, `shopify`, `paddle`
+and `paypal`, each wired only when its own config table is present, plus the
+polled `itch` rail. `retry-failed` can replay a dead letter only on a rail
+whose table is still configured, and it replays through the adapter's own
+`wants`/`normalize` rather than through the stored body alone — which is why
+a Paddle replay re-fetches the customer and a PayPal replay re-fetches the
+order: on those two rails the buyer's email lives on the provider's API and
+never on the event that was dead-lettered. `serve` additionally starts the itch
 `ItchPoller` on its own daemon thread when `[itch]` is configured (T9) — see
 `itch_adapter.py`'s module docstring for why that poller, not this CLI's
 `itch-import` or `http.py`'s `/itch/claim`, is the only code path that can
@@ -56,7 +63,9 @@ from attest_bridge.http import BridgeDeps, make_app
 from attest_bridge.itch_adapter import ItchAdapter, ItchPoller
 from attest_bridge.ledger import Ledger
 from attest_bridge.model import ClaimQueueFull, ConfigError
+from attest_bridge.paddle_adapter import PaddleAdapter
 from attest_bridge.pair import build_pair
+from attest_bridge.paypal_adapter import PayPalAdapter
 from attest_bridge.shopify_adapter import ShopifyAdapter
 from attest_bridge.signing import load_issuer
 from attest_bridge.stripe_adapter import StripeAdapter
@@ -107,11 +116,11 @@ class _ThreadingWSGIServer(socketserver.ThreadingMixIn, WSGIServer):
     it is the only code path that ever processes `platform="itch"`
     purchases (no itch webhook exists), so it can never race the webhook
     lock above, which only ever guards webhook-delivered work — today
-    `platform="stripe"` and `platform="shopify"`. All three platforms are
-    disjoint in the Ledger's `(platform, purchase_id)` key space, and the two
-    webhook rails share the single app lock, so they serialize against each
-    other as well. See `itch_adapter.py`'s `ItchPoller` docstring for the full
-    argument.
+    `platform="stripe"`, `platform="shopify"`, `platform="paddle"` and
+    `platform="paypal"`. All five platforms are disjoint in the Ledger's
+    `(platform, purchase_id)` key space, and the four webhook rails share the
+    single app lock, so they serialize against each other as well. See
+    `itch_adapter.py`'s `ItchPoller` docstring for the full argument.
     """
 
     daemon_threads = True
@@ -508,6 +517,28 @@ def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
         else None
     )
     itch = ItchAdapter(api_key=config.itch.api_key) if config.itch is not None else None
+    # Both constructors validate their credentials locally and contact nothing:
+    # `serve` must come up on a provider outage, and a bridge that phoned home
+    # at boot would turn a config check into an availability dependency.
+    paddle = (
+        PaddleAdapter(
+            webhook_secret=config.paddle.webhook_secret,
+            api_key=config.paddle.api_key,
+            environment=config.paddle.environment,
+        )
+        if config.paddle is not None
+        else None
+    )
+    paypal = (
+        PayPalAdapter(
+            client_id=config.paypal.client_id,
+            client_secret=config.paypal.client_secret,
+            webhook_id=config.paypal.webhook_id,
+            environment=config.paypal.environment,
+        )
+        if config.paypal is not None
+        else None
+    )
     return BridgeDeps(
         config=config,
         core=core,
@@ -517,6 +548,8 @@ def _build_deps(config_path: Path, *, log: logging.Logger) -> BridgeDeps:
         itch=itch,
         delivery=delivery,
         shopify=shopify,
+        paddle=paddle,
+        paypal=paypal,
     )
 
 
@@ -667,6 +700,24 @@ def _cmd_check_config(args: argparse.Namespace) -> int:
         config = load_config(Path(args.config))
         issuer = load_issuer(config.issuer)
         catalog = ProductCatalog(config.products)
+        # Construct exactly what `_build_deps` will construct. Both adapters
+        # validate locally and contact nothing, so this stays inside
+        # `check-config`'s contract (no Ledger, no platform) while closing the
+        # gap where the pre-flight prints "configured" for a rail that `serve`
+        # then refuses to start on.
+        if config.paddle is not None:
+            PaddleAdapter(
+                webhook_secret=config.paddle.webhook_secret,
+                api_key=config.paddle.api_key,
+                environment=config.paddle.environment,
+            )
+        if config.paypal is not None:
+            PayPalAdapter(
+                client_id=config.paypal.client_id,
+                client_secret=config.paypal.client_secret,
+                webhook_id=config.paypal.webhook_id,
+                environment=config.paypal.environment,
+            )
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return _RC_CONFIG_ERROR
@@ -686,6 +737,8 @@ def _cmd_check_config(args: argparse.Namespace) -> int:
     print(f"stripe: {'configured' if config.stripe is not None else 'not configured'}")
     print(f"shopify: {'configured' if config.shopify is not None else 'not configured'}")
     print(f"itch: {'configured' if config.itch is not None else 'not configured'}")
+    print(f"paddle: {'configured' if config.paddle is not None else 'not configured'}")
+    print(f"paypal: {'configured' if config.paypal is not None else 'not configured'}")
     print(f"delivery: {'smtp' if config.delivery is not None else 'download-link-only'}")
     return _RC_OK
 
@@ -740,6 +793,112 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
                 deps.core.process(deps.shopify.normalize(order))
             except Exception:  # still bad input, or a transient failure — leave unresolved
                 log.warning("retry-failed: shopify dead letter %d still failing", dead_letter.id)
+                continue
+            deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+            resolved += 1
+            continue
+        if dead_letter.platform == "paddle":
+            # The stored `raw_json` is the whole authenticated event, so the
+            # replay re-drives the same `wants`/`normalize` path the webhook
+            # took — the customer lookup that supplies the buyer's email included. No
+            # signature is re-verified: the body was already authenticated
+            # when it was stored, and a replayed transmission would not
+            # verify a second time anyway.
+            if deps.paddle is None:
+                log.warning(
+                    "retry-failed: paddle dead letter %d needs a [paddle] section to replay",
+                    dead_letter.id,
+                )
+                continue
+            try:
+                event = json.loads(dead_letter.raw_json)
+                if not isinstance(event, dict):
+                    # `http.py` dead-letters a SIGNED body that is not an object
+                    # (`test_signed_non_object_paddle_event_is_dead_lettered_and_
+                    # acknowledged`). Nothing can ever be issued from one, so
+                    # leaving it unresolved keeps `retry-failed` at exit 1 for
+                    # good and hides the next real dead letter behind a standing
+                    # alarm. Same rule as a non-actionable event: close it.
+                    log.info(
+                        "retry-failed: paddle dead letter %d carries no event object",
+                        dead_letter.id,
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
+                if not deps.paddle.wants(event):
+                    log.info(
+                        "retry-failed: paddle dead letter %d is not actionable", dead_letter.id
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
+                deps.core.process(deps.paddle.normalize(event))
+            except Exception as exc:  # still bad input, or a transient failure
+                # The exception CLASS, never its message: it separates a bad
+                # payload (`PurchaseRejected`) from a transient provider fault
+                # (`PaddleApiError`) from a bug in this bridge (`AttributeError`), and
+                # carries no purchase id and no credential of its own. Without
+                # it a permanent failure and one that will clear on the next
+                # run are the same line.
+                log.warning(
+                    "retry-failed: paddle dead letter %d still failing (%s)",
+                    dead_letter.id,
+                    type(exc).__name__,
+                )
+                continue
+            deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+            resolved += 1
+            continue
+        if dead_letter.platform == "paypal":
+            # The stored `raw_json` is the whole authenticated event, so the
+            # replay re-drives the same `wants`/`normalize` path the webhook
+            # took — the order fetch that supplies the buyer's email and the SKU included. No
+            # signature is re-verified: the body was already authenticated
+            # when it was stored, and a replayed transmission would not
+            # verify a second time anyway.
+            if deps.paypal is None:
+                log.warning(
+                    "retry-failed: paypal dead letter %d needs a [paypal] section to replay",
+                    dead_letter.id,
+                )
+                continue
+            try:
+                event = json.loads(dead_letter.raw_json)
+                if not isinstance(event, dict):
+                    # `http.py` dead-letters a SIGNED body that is not an object
+                    # (`test_signed_non_object_paypal_event_is_dead_lettered_and_
+                    # acknowledged`). Nothing can ever be issued from one, so
+                    # leaving it unresolved keeps `retry-failed` at exit 1 for
+                    # good and hides the next real dead letter behind a standing
+                    # alarm. Same rule as a non-actionable event: close it.
+                    log.info(
+                        "retry-failed: paypal dead letter %d carries no event object",
+                        dead_letter.id,
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
+                if not deps.paypal.wants(event):
+                    log.info(
+                        "retry-failed: paypal dead letter %d is not actionable", dead_letter.id
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
+                deps.core.process(deps.paypal.normalize(event))
+            except Exception as exc:  # still bad input, or a transient failure
+                # The exception CLASS, never its message: it separates a bad
+                # payload (`PurchaseRejected`) from a transient provider fault
+                # (`PayPalApiError`) from a bug in this bridge (`AttributeError`), and
+                # carries no purchase id and no credential of its own. Without
+                # it a permanent failure and one that will clear on the next
+                # run are the same line.
+                log.warning(
+                    "retry-failed: paypal dead letter %d still failing (%s)",
+                    dead_letter.id,
+                    type(exc).__name__,
+                )
                 continue
             deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
             resolved += 1

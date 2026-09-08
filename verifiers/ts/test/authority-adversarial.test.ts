@@ -64,7 +64,15 @@ function manifestFor(
     opts.issuer ?? PUBLISHER,
     1,
     MANIFEST_ISSUED_AT,
-    [keyEntry(kid, signer, opts.validFrom ?? KEY_VALID_FROM, { validTo: opts.validTo ?? null, status: opts.status })],
+    [
+      keyEntry(kid, signer, opts.validFrom ?? KEY_VALID_FROM, {
+        validTo: opts.validTo ?? null,
+        // `exactOptionalPropertyTypes` separates an ABSENT key from one set to
+        // `undefined`; `keyEntry` reads `opts.status ?? 'active'`, so omitting it
+        // is what passing `undefined` already meant.
+        ...(opts.status === undefined ? {} : { status: opts.status }),
+      }),
+    ],
     signer,
     kid,
   )

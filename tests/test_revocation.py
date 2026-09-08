@@ -5,8 +5,11 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+import pytest
+
 from attest import canon, keys, manifests, revocation
 from tests.helpers import key_manifest as kmh
+from tests.helpers import non_canonical_spellings
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#ed25519-1"
@@ -47,6 +50,29 @@ def test_build_record_shape() -> None:
 
 
 # --- verify_record ----------------------------------------------------------------
+# --- non-canonical revoked_at ------------------------------------------------
+
+# The record-level twin of the verify() test: `revoked_at` is signed by the
+# issuer, so its spelling is the issuer's choice, and §12.1 step 3 admits the
+# record only if that instant falls in the signing key's window. `strptime`
+# used to place a spelling that is not an instant; the TypeScript core never
+# did, so the same signed record authenticated in one core and not the other.
+
+
+@pytest.mark.parametrize("name,revoked_at", non_canonical_spellings("2026-07-03T00:00:00Z"))
+def test_non_canonical_revoked_at_does_not_verify(name: str, revoked_at: str) -> None:
+    record = revocation.build_record(RECEIPT_ID, "revoked", revoked_at, KP, KID)
+    assert not revocation.verify_record(record, kmh(_key_manifest()))
+
+
+@pytest.mark.parametrize("name,valid_from", non_canonical_spellings("2026-01-01T00:00:00Z"))
+def test_non_canonical_key_window_does_not_admit_a_record(name: str, valid_from: str) -> None:
+    """The bound's spelling, not the record's: a manifest whose window is
+    unreadable admits nothing, rather than admitting on a lucky parse."""
+    entries = [manifests.key_entry(KID, KP.pub, valid_from, None, "active")]
+    manifest = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entries, KP, KID)
+    record = revocation.build_record(RECEIPT_ID, "revoked", "2026-07-03T00:00:00Z", KP, KID)
+    assert not revocation.verify_record(record, kmh(manifest))
 
 
 def test_build_verify_record_roundtrip() -> None:

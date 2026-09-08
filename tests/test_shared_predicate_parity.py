@@ -27,7 +27,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from attest import anchor, bundle, cli, dates, revocation, transfer, ulid, validate, views, witness
+from attest import (
+    anchor,
+    bundle,
+    cli,
+    dates,
+    manifests,
+    revocation,
+    transfer,
+    ulid,
+    validate,
+    verify,
+    views,
+    witness,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TS_SRC = REPO_ROOT / "verifiers" / "ts" / "src"
@@ -54,6 +67,18 @@ def _sole_ts_declaration(pattern: str, name: str) -> str:
     found = re.findall(pattern, source)
     assert len(found) == 1, f"expected exactly one declaration in {name}, found {len(found)}"
     return str(found[0])
+
+
+# The four modules that used to declare their own `_parse_date` now share one.
+# TEMPORARY: Task 3 rewrites the call sites to name `dates.parse_strict_utc`
+# directly and deletes these aliases, and these three tests go with them. Until
+# then the identity is the whole guarantee — an alias that drifts back into a
+# private copy is exactly the failure this file exists to catch.
+@pytest.mark.parametrize(
+    "module", [verify, manifests, revocation, transfer], ids=lambda m: m.__name__
+)
+def test_every_window_check_parses_with_the_strict_utc_owner(module: object) -> None:
+    assert module._parse_date is dates.parse_strict_utc  # type: ignore[attr-defined]
 
 
 def test_every_python_declaration_of_the_representable_bound_agrees() -> None:

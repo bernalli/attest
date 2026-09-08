@@ -1,4 +1,4 @@
-# composite twins, regression proof — 2026-09-08T16:24:39Z
+# composite twins, regression proof — 2026-09-08T17:41:51Z
 # twins in scope for THIS run: all five (4 regressions + 1 watched premise)
 
 ## transfer._verify_record
@@ -6,7 +6,7 @@ no regression is written for this twin, and that is the finding:
 the public door `transfer.verify_record` is its only caller; the twin exists for symmetry with `revocation._verify_record`, which does have one
 what is measured instead: the call sites of the twin, from the AST
 result: PREMISE HOLDS (no internal caller)
-call sites: transfer.py:331 — the public door, and nothing else
+call sites: transfer.py:345 — the public door, and nothing else
 
 ## grant._verify_grant
 caller put back on the public door in src/attest/verify.py
@@ -40,7 +40,7 @@ FAILED tests/test_evaluate_grant.py::test_each_declaration_warning_is_emitted_at
 FAILED tests/test_evaluate_grant.py::test_the_successor_list_is_read_from_the_effective_grant
 FAILED tests/test_evaluate_grant.py::test_a_declaration_that_activated_suppresses_the_backstop_warning
 FAILED tests/test_evaluate_grant.py::test_verify_reports_an_activated_grant_without_touching_ok
-13 failed, 69 passed in 1.52s
+13 failed, 69 passed in 1.49s
 
 ## authority._verify_authorization
 caller put back on the public door in src/attest/verify.py
@@ -57,7 +57,7 @@ FAILED tests/test_evaluate_authority.py::test_valid_from_changed_on_a_shared_ent
 FAILED tests/test_evaluate_authority.py::test_non_admitted_documents_are_not_successor_witnesses
 FAILED tests/test_evaluate_authority.py::test_successor_exclusions_are_simultaneous_not_cascading
 FAILED tests/test_evaluate_authority.py::test_successor_discipline_uses_shared_window_helpers
-42 failed, 20 passed in 1.71s
+42 failed, 20 passed in 1.61s
 
 ## revocation._verify_record
 caller put back on the public door in src/attest/views.py
@@ -71,8 +71,8 @@ result: RED — the regression is named by a test
                 )
 E               attest.views.ViewError: revocation record 0 signature does not verify against the key manifest given: the signer must be an active key of a self-consistent manifest, with its validity window covering 'revoked_at'
 
-src/attest/views.py:621: ViewError
+src/attest/views.py:649: ViewError
 =========================== short test summary info ============================
 FAILED tests/test_trust_store_boundary.py::test_build_revocation_view_accepts_a_record_its_manifest_authenticates
-1 failed, 191 passed in 1.06s
+1 failed, 200 passed in 1.03s
 

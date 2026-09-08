@@ -10,8 +10,20 @@ from typing import Any
 
 import pytest
 
-from attest import anchor, canon, keys, manifests, pq, revocation, tlog, transfer, transparency
+from attest import (
+    anchor,
+    authority,
+    canon,
+    keys,
+    manifests,
+    pq,
+    revocation,
+    tlog,
+    transfer,
+    transparency,
+)
 from tests.helpers import key_manifest as kmh
+from tests.helpers import non_canonical_spellings
 
 ISSUER = "store.example.com"
 KID = f"{ISSUER}/keys/test#ed25519-1"
@@ -62,6 +74,115 @@ def _resign_record(record: dict[str, Any]) -> None:
     record["signature"] = manifests.sign_signature_block(
         canon.canonical_bytes(body), ISSUER_KP, KID
     )
+
+
+# --- non-canonical timestamps in a transfer record ---------------------------
+
+# `transferred_at` is signed by the holder AND by the issuer, so a record built
+# with a non-canonical spelling is genuine in every cryptographic sense — only
+# the timestamp is not the instant it claims to be. §17 places it in the
+# signing key's window exactly as §12.1 step 3 does for a revocation, and the
+# TypeScript core refuses these spellings, so accepting them here would let a
+# transfer take effect in one core and not the other.
+
+
+@pytest.mark.parametrize("name,transferred_at", non_canonical_spellings(AT))
+def test_non_canonical_transferred_at_does_not_verify(name: str, transferred_at: str) -> None:
+    record = _build_record(transferred_at=transferred_at)
+    assert not transfer.verify_record(record, kmh(_key_manifest()))
+
+
+@pytest.mark.parametrize("name,valid_from", non_canonical_spellings("2026-01-01T00:00:00Z"))
+def test_non_canonical_signer_window_does_not_admit_a_record(name: str, valid_from: str) -> None:
+    entries = [manifests.key_entry(KID, ISSUER_KP.pub, valid_from, None, "active")]
+    manifest = manifests.build_key_manifest(
+        ISSUER, 1, "2026-01-01T00:00:00Z", entries, ISSUER_KP, KID
+    )
+    assert not transfer.verify_record(_build_record(), kmh(manifest))
+
+
+@pytest.mark.parametrize("name,value", non_canonical_spellings(AT))
+def test_valid_utc_timestamp_refuses_non_canonical_spellings(name: str, value: str) -> None:
+    """The round-trip predicate that guards the admitted side-documents: it
+    already refused these, and must keep refusing them once it is the owner."""
+    assert not transfer._valid_utc_timestamp(value)
+
+
+# --- the side-document guard reads characters, not operators ------------------
+
+# `_valid_utc_timestamp` ends in `== value`, and Python gives a `str`
+# subclass's reflected operator the first word. Sixteen call sites across
+# `transfer`, `authority`, `grant` and `cli` treat this predicate as
+# fail-closed, so an `__eq__` that raises does not make it answer "no" — it
+# makes it answer with an exception, out of every one of them. Measured before
+# the fix: `authority._valid_authorization_shape` propagated the `RuntimeError`
+# to its caller on an otherwise CANONICAL timestamp.
+
+
+class _RaisingEq(str):
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("comparison invoked")
+
+    def __hash__(self) -> int:
+        return str.__hash__(self)
+
+
+class _LyingEq(str):
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __ne__(self, other: object) -> bool:
+        return False
+
+    def __hash__(self) -> int:
+        return str.__hash__(self)
+
+
+class _DenyingEq(str):
+    def __eq__(self, other: object) -> bool:
+        return False
+
+    def __ne__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return str.__hash__(self)
+
+
+_HOSTILE_EQ = pytest.mark.parametrize(
+    "hostile", [_RaisingEq, _LyingEq, _DenyingEq], ids=lambda c: c.__name__
+)
+
+
+@_HOSTILE_EQ
+def test_valid_utc_timestamp_judges_a_subclass_by_its_own_characters(hostile: type[str]) -> None:
+    """The same three answers a plain `str` would get. `_DenyingEq` is the case
+    that shows this is about correctness and not only about not raising: before
+    the fix it made a genuine canonical timestamp read as invalid."""
+    assert transfer._valid_utc_timestamp(hostile(AT)) is True
+    assert transfer._valid_utc_timestamp(hostile("\uff12\uff10\uff12\uff16" + AT[4:])) is False
+
+
+def test_valid_utc_timestamp_does_not_propagate_a_hostile_comparison() -> None:
+    """Pinned separately from the parametrized case above: this one is the
+    contract — a shape predicate returns a bool or nothing at all."""
+    assert transfer._valid_utc_timestamp(_RaisingEq(AT)) is True
+    assert transfer._valid_utc_timestamp(_RaisingEq("not-a-timestamp")) is False
+
+
+def test_a_hostile_comparison_does_not_escape_the_authorization_shape_check() -> None:
+    """The reachability that made this worth fixing inside Task 2 rather than
+    deferring: `_valid_utc_timestamp` is not a leaf, and `authority` reads its
+    documents with the own-data spellings (`dict.get`) precisely because they
+    arrive from outside."""
+    document = {
+        "authorization_version": 1,
+        "publisher": "publisher.example.com",
+        "authorized_issuers": [],
+        "issued_at": _RaisingEq("2026-01-01T00:00:00Z"),
+        "signature": {},
+    }
+    assert authority._valid_authorization_shape(document) is True
 
 
 # --- authorization_message ---------------------------------------------------

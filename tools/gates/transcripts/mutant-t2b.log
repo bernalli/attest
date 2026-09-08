@@ -1,5 +1,5 @@
 # mutant t2b: the first member of every chain is dropped at admission
-# recorded 2026-09-08T16:24:32Z
+# recorded 2026-09-08T17:41:37Z
 
 # injected into src/attest/trust_material.py
 $ <tree>/.venv/bin/python -m pytest -p no:cacheprovider -q -rf tests/test_trust_material_parse.py tests/test_trust_store_boundary.py
@@ -55,7 +55,7 @@ tests/test_trust_store_boundary.py:750: AssertionError
 =========================== short test summary info ============================
 FAILED tests/test_trust_material_parse.py::test_every_selector_hands_back_what_the_document_carried
 FAILED tests/test_trust_store_boundary.py::test_an_unreadable_chain_is_refused_not_deleted
-2 failed, 289 passed, 1 xfailed in 3.20s
+2 failed, 289 passed, 1 xfailed in 3.24s
 
 exit: 1
 

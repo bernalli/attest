@@ -137,8 +137,10 @@ Edit it:
   API key, the count is unknowable: setting `attest_product_key` asserts that
   the Checkout Session has exactly one purchasable line item.
 - Drop every platform table you don't sell through: `[shopify]` (see
-  [setup-shopify.md](setup-shopify.md)) and `[itch]` (see
-  [setup-itch.md](setup-itch.md)). A table left in the file is not inert —
+  [setup-shopify.md](setup-shopify.md)), `[itch]` (see
+  [setup-itch.md](setup-itch.md)), `[paddle]` (see
+  [setup-paddle.md](setup-paddle.md)) and `[paypal]` (see
+  [setup-paypal.md](setup-paypal.md)). A table left in the file is not inert —
   the bridge resolves the environment variable each one names at startup and
   refuses to start when it is unset, so a rail you never configured stops
   `check-config` before it prints anything. Drop the `[delivery]` table too
@@ -201,9 +203,11 @@ are testing uses: `check-config` resolves every `*_env` a surviving table
 names, and one left unset stops it with a `config error:` naming that
 variable — whatever it guards. `SMTP_PASSWORD` above is the shipped
 example's `[delivery]` table; if you dropped that table in step 3, drop the
-line too. `ITCH_API_KEY` and `SHOPIFY_WEBHOOK_SECRET` are the same story for
-the rails covered in [setup-itch.md](setup-itch.md) and
-[setup-shopify.md](setup-shopify.md).
+line too. `ITCH_API_KEY`, `SHOPIFY_WEBHOOK_SECRET`, `PADDLE_WEBHOOK_SECRET`,
+`PADDLE_API_KEY`, `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` are the same
+story for the rails covered in [setup-itch.md](setup-itch.md),
+[setup-shopify.md](setup-shopify.md), [setup-paddle.md](setup-paddle.md) and
+[setup-paypal.md](setup-paypal.md).
 
 Keep `STRIPE_API_KEY` exported if you want `check-config` to report
 `stripe: configured` against the untouched `bridge.toml` from step 3; with
@@ -228,6 +232,8 @@ products: price_1PxYzEXAMPLE
 stripe: configured
 shopify: not configured
 itch: not configured
+paddle: not configured
+paypal: not configured
 delivery: download-link-only
 ```
 <!-- @check-config-summary-end -->
@@ -332,9 +338,10 @@ themselves.
 
 See [deploy.md](deploy.md) for the three deploy targets (Docker Compose,
 Fly.io, Render — plus a caution on why Cloud Run isn't a safe fourth) and
-the four secret env vars (`STRIPE_WEBHOOK_SECRET`, `STRIPE_API_KEY`,
-`ITCH_API_KEY`, `SMTP_PASSWORD` — set only the ones your `bridge.toml`
-references).
+the secret env vars (`STRIPE_WEBHOOK_SECRET`, `STRIPE_API_KEY`,
+`SHOPIFY_WEBHOOK_SECRET`, `ITCH_API_KEY`, `PADDLE_WEBHOOK_SECRET`,
+`PADDLE_API_KEY`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`,
+`SMTP_PASSWORD` — set only the ones your `bridge.toml` references).
 
 ## 6. Wire up the Stripe webhook
 
