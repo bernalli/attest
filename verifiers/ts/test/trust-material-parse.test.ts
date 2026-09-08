@@ -246,6 +246,35 @@ const PUBLIC_MATERIAL = '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a
 const PLAIN_ISSUERS = ['store.example.com', 'shop.example.org', 'market.example.net']
 // Names that mean something to an object system and nothing to a JSON document.
 const SPECIAL_ISSUERS = ['__proto__', '', 'toString', 'constructor', 'hasOwnProperty']
+// Ids on which the two candidate orders DISAGREE: a surrogate code unit
+// (D800-DBFF) sorts below U+E000, so UTF-16 order puts the astral ids first
+// while CODE POINT order puts them last. Every other issuer fixture here is
+// BMP-only, where the two rules coincide -- which is why a divergence between
+// this core and the Python one survived a green suite on both sides.
+const ASTRAL_ORDER_ISSUERS = ['\u{10000}', '\ue000', '\uffff', 'a', '\u{1f600}']
+
+/**
+ * The order JCS gives member names, spelled out from the FORMAT.
+ *
+ * Deliberately NOT `canonicalKeyOrder`, and deliberately not a bare `.sort()`:
+ * an oracle that calls what the implementation calls cannot contradict it about
+ * the order, and `.sort()` IS what the implementation calls, so it agrees by
+ * construction. Written as an explicit code-unit comparison, this can disagree.
+ */
+function byUtf16CodeUnits(a: string, b: string): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    if (a.charCodeAt(i) !== b.charCodeAt(i)) return a.charCodeAt(i) - b.charCodeAt(i)
+  }
+  return a.length - b.length
+}
+
+/** The same names ordered by CODE POINT, which is the rule JCS does NOT use. */
+function byCodePoints(a: string, b: string): number {
+  const A = [...a].map((c) => c.codePointAt(0)!)
+  const B = [...b].map((c) => c.codePointAt(0)!)
+  for (let i = 0; i < Math.min(A.length, B.length); i++) if (A[i] !== B[i]) return A[i]! - B[i]!
+  return A.length - B.length
+}
 const SERIES = 'works/EXG-001'
 
 function keyManifestTree(issuer: string, version: number): JsonObject {
@@ -728,6 +757,35 @@ const LEXICAL_MUTANTS: Array<[string, Uint8Array, string]> = [
   // there and M8 here. Neither core produces an object, which is the property
   // that matters; the class differs and the plan says so rather than hiding it.
   ['a 4301-digit integer', documentWithLiteral('9'.repeat(4301)), 'M8'],
+  // The two paths of `scanTokens` the rest of the corpus never walks, and the
+  // reason they need a case each: the scanner is the ONLY part of the oracle
+  // that is hand-written (the Python twin gets both answers from `json.loads`
+  // hooks), so a defect in it makes the oracle agree with the boundary for the
+  // wrong reason -- which is indistinguishable from agreement.
+  //
+  // (a) STRING ESCAPES. A `\\"` inside a value must not end the string for the
+  // scanner. Deleting its escape handling desynchronises every key after this
+  // point, so the duplicate `chains` goes unseen and the oracle calls a
+  // refused document admissible (measured: this case turns that mutant red).
+  [
+    'an escaped quote in a manifest value, then a duplicate member',
+    new TextEncoder().encode(
+      '{"manifests":{"i":{"note":"a\\"b"}},"provenance":{},"chains":{},"chains":{}}',
+    ),
+    'M7',
+  ],
+  // (b) KEY POSITION. Strings inside an ARRAY are values, never keys. Three
+  // equal ones are needed, not two: with `expectKey` wrongly true after a
+  // comma, the second is recorded and only the third collides. The boundary
+  // does not validate manifest interiors, so this document is legal and must
+  // be admitted -- a scanner that miscounts it makes the oracle refuse it.
+  [
+    'a manifest interior carrying an array of three equal strings',
+    new TextEncoder().encode(
+      '{"manifests":{"i":{"tags":["x","x","x"]}},"provenance":{"i":"tls"}}',
+    ),
+    'accepted',
+  ],
 ]
 
 interface TypeMatrixCase {
@@ -1130,7 +1188,18 @@ describe('INV-1 conservation', () => {
 
   it('the issuer list comes from the manifests member, sorted', () => {
     const snapshot = parseStore(serialize(document(SPECIAL_ISSUERS)))
-    expect(snapshot.issuers()).toEqual([...SPECIAL_ISSUERS].sort())
+    expect(snapshot.issuers()).toEqual([...SPECIAL_ISSUERS].sort(byUtf16CodeUnits))
+  })
+
+  it('the issuer order is the one the signed bytes use', () => {
+    const snapshot = parseStore(serialize(document(ASTRAL_ORDER_ISSUERS, { artifacts: false })))
+    const expected = [...ASTRAL_ORDER_ISSUERS].sort(byUtf16CodeUnits)
+    expect(snapshot.issuers()).toEqual(expected)
+    // Non-vacuity, and it is the point of the fixture: on THESE ids the two
+    // candidate rules give different answers, so the assertion above can fail.
+    // On a BMP-only corpus it cannot -- which is how the old test stayed green
+    // while the two cores listed the same store in opposite orders.
+    expect(expected).not.toEqual([...ASTRAL_ORDER_ISSUERS].sort(byCodePoints))
   })
 
   it('every selector hands back what the document carried', () => {
@@ -1564,6 +1633,27 @@ describe('INV-4 contract refusal', () => {
     refusedAs(() => parseStore(new Uint8Array(new SharedArrayBuffer(64))), 'M10')
     expect(parseStore(foreignPlain), 'ordinary buffer, another realm').toBeInstanceOf(TrustStore)
     refusedAs(() => parseStore(foreignShared), 'M10')
+  })
+
+  it('the ORDER of the entry checks is what makes the second ceiling read dead', () => {
+    // D2. `documentBytes` reads the ceiling twice, and the second read is
+    // unreachable TODAY -- not by its own logic, but because three checks
+    // above it have already refused everything that could reach it. An order
+    // is a thing somebody changes tomorrow without knowing what leaned on it,
+    // so the order itself is pinned here: each input below is refused by BOTH
+    // its own class and the ceiling, and the class is what must win.
+    //
+    // Reordering any of these after the ceiling turns this red instead of
+    // quietly making the backstop load-bearing.
+    const oversize = MAX_ADMISSION_BYTES + 1
+    refusedAs(() => parseStore({ length: oversize }), 'M1') // M1 before M2
+    refusedAs(() => parseStore(new Int16Array(oversize / 2 + 1)), 'M9') // M9 before M2
+    refusedAs(() => parseStore(new Uint8Array(new SharedArrayBuffer(oversize))), 'M10') // M10 before M2
+    // And the ceiling still fires when nothing above it does, so the three
+    // assertions above are not passing because the ceiling stopped working.
+    const plain = new Uint8Array(oversize)
+    plain.fill(0x20)
+    refusedAs(() => parseStore(plain), 'M2')
   })
 
   it('an oversized live object is refused as a live object, not as a size', () => {

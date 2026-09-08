@@ -47,6 +47,35 @@ and the report format — and including the resulting report in the PR.
 The conformance vectors — not any single implementation's wording — are the
 contract.
 
+### Ordering strings: your language's default sort is probably the wrong rule
+
+JCS (RFC 8785) orders object member names by **UTF-16 code unit**. Several
+languages' default string sort does not:
+
+| language | default sort | matches JCS |
+|---|---|---|
+| JavaScript | UTF-16 code unit | yes (measured) |
+| Python | code point | **no** (measured) |
+| Go, Rust | UTF-8 byte | **no** — UTF-8 preserves code point order, so these behave like Python |
+
+The two orders agree on everything in the Basic Multilingual Plane and disagree
+the moment an **astral** character appears: astral characters encode as a
+surrogate pair starting at `0xD800`, so by code unit they sort *below* the
+`U+E000`–`U+FFFF` block and by code point *above* it. Measured:
+`sorted(["", "\U00010000"])` in Python gives `["", "\U00010000"]`
+while `["", "\U00010000"].sort()` in JavaScript gives the reverse.
+
+So: **anywhere product code orders strings that a caller can observe, take the
+order from the canonicalizer** (`canon.canonical_key_order` in Python,
+`canonicalKeyOrder` in `canon.ts`) rather than from the language. Say it
+explicitly even where your language's default happens to coincide — an
+undeclared coincidence is the next implicit premise.
+
+The case that separates the two rules is `ﬀ` (U+FB00) against `😀` (U+1F600):
+by code point `ﬀ` comes first, by code unit `😀` does. A test corpus without a
+case like that cannot tell the two rules apart, and every implementation will
+pass it while disagreeing with every other one.
+
 ## Verifying locally
 
 ```sh

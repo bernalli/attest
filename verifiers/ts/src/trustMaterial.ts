@@ -274,10 +274,29 @@ function isOrdinaryArrayBuffer(buffer: ArrayBufferLike): boolean {
 /**
  * `data` as a PRIVATE copy of its bytes, or a refusal.
  *
- * Order (section 5.2.1): M1, M9, M10, M2, M11, M2 again on the copy. The
- * ceiling is checked before the copy so an oversized input is refused without
- * being copied, and again after it because the first read and the copy are two
- * different observations of a buffer that can resize.
+ * Order (section 5.2.1): M1, M9, M10, M2, M11, M2 again on the copy.
+ *
+ * The ceiling before the copy is the one that does the work: it refuses an
+ * oversized input WITHOUT copying it.
+ *
+ * The ceiling after the copy is a BACKSTOP and is currently UNREACHABLE, which
+ * is stated here because the comment used to claim otherwise. The claim was
+ * that the two reads are "two different observations of a buffer that can
+ * resize"; they are not, given the three checks above them. A buffer that
+ * another agent can resize is a SharedArrayBuffer, and M10 has already refused
+ * every one of them -- fixed or growable -- three checks earlier. Between the
+ * remaining read and `new Uint8Array(data)` no caller code runs at all:
+ * `InitializeTypedArrayFromTypedArray` reads the source's internal slots and
+ * consults neither `Symbol.species`, nor `constructor`, nor a `length` or
+ * `byteLength` accessor, nor an index getter (measured 2026-09-08 across a
+ * Uint8Array subclass carrying all of those, a length-tracking view on a
+ * resizable buffer, and an instrumented `ArrayBuffer[Symbol.species]`: zero
+ * hooks fired, and the copy's length equalled the first read in every case).
+ *
+ * It is kept rather than deleted because it costs one comparison and it is the
+ * check that would still hold if the M10/M2 order were ever changed. What it
+ * must not be is REASONED FROM: the first read is not redundant, and removing
+ * it would let a 10 GB view be copied before being refused.
  *
  * The copy is what makes INV-5 true: after this returns, the caller can
  * overwrite the bytes, detach the buffer or resize it to nothing, and the
@@ -552,8 +571,17 @@ export class TrustStore {
     return loadsStrict(this.#canonical) as JsonObject
   }
 
+  /**
+   * The issuer ids, in the order the SIGNED BYTES put them in.
+   *
+   * `canonicalKeyOrder` and not a bare `.sort()`, even though in this language
+   * the two are the same call: the bare form is what let the Python twin drift
+   * to CODE POINT order without either suite being able to see it, because each
+   * suite used its own language's default sort as the oracle and so agreed with
+   * itself. Naming the rule is what makes it checkable that both cores use one.
+   */
   issuers(): string[] {
-    return Object.keys(this.#manifests).sort()
+    return canonicalKeyOrder(Object.keys(this.#manifests))
   }
 
   // D18 on all three selectors: the type check comes BEFORE any indexing, so a

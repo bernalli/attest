@@ -548,7 +548,23 @@ class TrustStore:
         return cast(dict[str, Any], canon.loads_strict(self._canonical))
 
     def issuers(self) -> tuple[str, ...]:
-        return tuple(sorted(self._manifests))
+        """The issuer ids, in the order the SIGNED BYTES put them in.
+
+        `sorted()` on `str` orders by CODE POINT. JCS -- and therefore
+        `canon.canonical_key_order`, and therefore the bytes `to_bytes()`
+        returns -- orders by UTF-16 CODE UNIT. The two rules disagree on any
+        store that mixes an astral issuer id with one in U+E000-U+FFFF, because
+        a surrogate code unit sorts BELOW U+E000 while an astral code point
+        sorts above U+FFFF. Measured 2026-09-08 on the same document: this core
+        answered ('\ue000', '\U00010000') and the TypeScript core answered the
+        reverse, so two conforming verifiers listed the same store differently.
+
+        One definition of "which of these names comes first", read from `canon`
+        and not restated here, is the entire reason `canonical_key_order` is
+        public -- and `_validated_store_document` already uses it to pick which
+        unknown member to name.
+        """
+        return tuple(sorted(self._manifests, key=canon.canonical_key_order))
 
     def manifest_for(self, issuer_id: object) -> KeyManifest | None:
         # D18: the type check comes BEFORE any hash or lookup, so a hostile

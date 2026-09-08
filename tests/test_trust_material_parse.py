@@ -922,10 +922,42 @@ def test_an_absent_member_stays_absent_and_an_empty_member_stays_empty(
         assert (marker in exported) is (member in tree), member
 
 
+def _utf16_code_units(name: str) -> tuple[int, ...]:
+    """`name` as the UTF-16 code units JCS orders member names by.
+
+    Decoded here from the FORMAT, and deliberately NOT `canon.canonical_key_order`:
+    an oracle that calls the helper the implementation calls cannot contradict it
+    about the order, and the order is the whole property. `sorted()` on `str` is
+    not the oracle either -- it orders by CODE POINT, which is the wrong rule and
+    was the defect.
+    """
+    raw = name.encode("utf-16-be", "surrogatepass")
+    return tuple(int.from_bytes(raw[i : i + 2], "big") for i in range(0, len(raw), 2))
+
+
+# Ids on which the two candidate rules DISAGREE: a surrogate code unit
+# (D800-DBFF) sorts below U+E000, so UTF-16 order puts the astral ids first
+# while code-point order puts them last. Every other issuer fixture in this file
+# is BMP-only, where the two rules coincide -- which is exactly why a divergence
+# between the two cores survived a green suite on both sides.
+ASTRAL_ORDER_ISSUERS = ("\U00010000", "\ue000", "\uffff", "a", "\U0001f600")
+
+
 def test_the_issuer_list_comes_from_the_manifests_member_sorted() -> None:
     tree = document(PLAIN_ISSUERS, chain_length=2)
     store = parse_store(serialize(tree))
-    assert store.issuers() == tuple(sorted(tree["manifests"]))
+    assert store.issuers() == tuple(sorted(tree["manifests"], key=_utf16_code_units))
+
+
+def test_the_issuer_order_is_the_one_the_signed_bytes_use() -> None:
+    store = parse_store(serialize(document(ASTRAL_ORDER_ISSUERS, artifacts=False)))
+    expected = tuple(sorted(ASTRAL_ORDER_ISSUERS, key=_utf16_code_units))
+    assert store.issuers() == expected
+    # Non-vacuity, and it is the point of the fixture: on THESE ids the two
+    # candidate rules really do give different answers, so the assertion above
+    # can fail. On a BMP-only corpus it cannot, which is how the old test passed
+    # while the two cores disagreed with each other.
+    assert expected != tuple(sorted(ASTRAL_ORDER_ISSUERS))
 
 
 def test_every_selector_hands_back_what_the_document_carried() -> None:
@@ -1910,15 +1942,18 @@ def test_a_direct_dunder_new_construction_fails_custody() -> None:
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "T1 residue, closed at T2 (plan section 5.1.3): verify.TrustStore is still the "
-        "live dataclass at T1, and four call sites construct it directly instead of "
-        "going through trust_material's handle -- measured 2026-09-08 on this worktree: "
-        "bundle.py:932 (import_bundle), cli.py:656 (_load_trust_dir), cli.py:1430 "
-        "(revoke), and verify.py:336 (_materialized_trust_store, where the bare name "
-        "`TrustStore` resolves to verify.py's own dataclass, not trust_material's). "
-        "T2 removes the dataclass and every one of these constructions; this pin turns "
-        "green on its own when it does, which is the point of leaving it xfail rather "
-        "than skipped."
+        "T1 residue, and it does NOT close at T2 -- it closes at T4b. verify.TrustStore "
+        "is still the live dataclass at T1, and four call sites construct it directly "
+        "instead of going through trust_material's handle -- measured 2026-09-08 on this "
+        "worktree: bundle.py:932 (import_bundle), cli.py:656 (_load_trust_dir), "
+        "cli.py:1430 (revoke), and verify.py:336 (_materialized_trust_store, where the "
+        "bare name `TrustStore` resolves to verify.py's own dataclass, not "
+        "trust_material's). T2 removes the dataclass and the two constructions in "
+        "bundle.py and verify.py; the TWO IN cli.py SURVIVE, because D-A3 keeps cli.py "
+        "out of T2 and moves it to T4b. So this pin stays xfail through T2 and turns "
+        "green at T4b. Said exactly, because the earlier wording claimed T2 removed "
+        "every one of them: whoever runs T2 would read that, find this still red, and "
+        "go looking for a mistake in their own work instead of in this sentence."
     ),
 )
 def test_no_other_module_in_attest_constructs_a_handle_directly() -> None:
