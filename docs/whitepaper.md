@@ -361,7 +361,8 @@ costs a transfer. A key declared **compromised** — stolen — does the opposit
 rejected from then on, and the marking, once seen by a verifier, cannot be unseen or reversed.
 Declaring one is a shipped command (`attest manifest rotate --compromise-kid`), and it is the
 seller's one lever that reaches backwards; sections 6 and 8 say how far it reaches, and why the
-rescue that would bound it has evidence no shipped tool can package.
+rescue that would bound it stops one step short — the declaration can now be packaged in the form
+a verifier reads, and it still cannot be dated.
 
 #### What you get
 
@@ -452,12 +453,13 @@ required to treat the disclosed identifier as personal data not to be kept. The 
 a key signed into the receipt at the time of sale: a verifier invents a fresh challenge, you sign
 it with the private half of that key, and the signed answer proves you hold the key without
 revealing anything and without being reusable, because the next challenge will be different.
-Both implementations know how to check such an answer, and the command-line verifier has inputs
-for the challenge and the response. No shipped tool produces the answer: the buyer's side of that
-exchange exists only as a library call, and the key it needs is empty by default on every receipt
-issued without an app on the buyer's side — which today is every receipt. So the proof a buyer
-can actually perform with what ships is the disclosure, and the stronger one is specified,
-checked and not yet in anyone's hands. Nothing obliges a verifier to ask for either; one that
+Both implementations know how to check such an answer, and the command-line tool now runs both
+halves of the exchange: one command mints a fresh challenge, another signs it with the buyer's
+key. What has not moved is the key. It is empty by default on every receipt issued without an app
+on the buyer's side, and today that is every receipt. So the exchange is shipped and has nothing
+to run against, which is a different problem from the one this document used to report: the proof
+a buyer can actually perform is still the disclosure, and the stronger one is specified, checked,
+executable, and waiting on a receipt that carries a key. Nothing obliges a verifier to ask for either; one that
 never asks sees a copy and an original as the same file.
 
 Now the sentence this document is careful about everywhere, because it is the one a green result
@@ -506,41 +508,72 @@ authenticate, so that you know how current its picture is. There is no appeal in
 and no reason is ever recorded; and a withdrawal does not reach your disk, a point section 9 comes
 back to.
 
-That is the mechanism as the verifier evaluates it, and it is complete in both implementations. It
-is not something a seller can do today, and this document says so in the same breath. The
-command-line tool on the project's main branch has no command that produces a revocation record. Its
-top-level verbs are `authority`, `check-artifact`, `disclose`, `export`, `grant`, `import`,
-`inspect`, `issue`, `keygen`, `log`, `manifest`, `transfer` and `verify` — read off the tool's own
-definition rather than off a list of what one would expect to find — and the only place it writes a
-record of this shape is inside a transfer, where the record says "transferred". The bridge skips a
-refunded order and issues nothing for it. On the verifier's side the picture is narrower still. The
-browser page and the downloadable file consult no revocation feed at all, so there the answer is
-always "unknown". And even handed a record, a verifier configured as those two are — one public log
-key pinned, no block headers pinned — could not honour a refund-window withdrawal, because for a
-verifier that evaluates log evidence the standard also requires proof that the record was publicly
-logged and timestamped inside the window, and with no headers pinned no timestamp can be
-established. Read every sentence about revocation in this document, then, as a rule the verifier
-enforces, exercised today by nobody.
+That is the mechanism as the verifier evaluates it, and it is complete in both implementations. For
+most of this project's life it was also a mechanism no seller could carry out, and earlier drafts of
+this document said so. That has changed, and the change is recent enough that it is worth being
+exact about what it did and did not fix. The command-line tool now signs a revocation record —
+`attest revoke` — and refuses to sign one a verifier would only ignore: against a receipt the seller
+sealed as irrevocable, with a date outside the window it declared, or with a key no longer in use.
+A second command, `attest revocation-view`, packages signed records into the array a verifier reads.
+That second one matters as much as the first, because a record nobody can hand over in the shape the
+standard expects is a signature in a drawer. Read off the tool's own definition rather than off a
+list of what one would expect to find, its top-level verbs are now `authority`, `binding`,
+`check-artifact`, `disclose`, `export`, `grant`, `import`, `inspect`, `issue`, `keygen`, `log`,
+`manifest`, `revocation-view`, `revoke`, `transfer` and `verify`.
 
-One more producer is missing, and it sits under the two above. The standard lets a receipt's
-existence be recorded in a public, append-only log, so that it can later be dated by the clock
-section 6 describes; it is what the rescue against a stolen key, and the logged refund window just
-mentioned, both start from. The shipped log commands are the log operator's — create a log, append
-an entry supplied as a file, sign a checkpoint, emit a proof — and none of them computes the entry a
-receipt would need; the only code that does is the generator of the project's own test corpus. No
-receipt issued with the shipped tools can be entered in a log today, so nothing built on logging
-protects any receipt today. The gap is in tooling, it is known, and it is listed among the open
-problems rather than left for a reader to discover.
+What has not changed is where a withdrawal actually bites, and the tool is the one that says so.
+Sign a refund-window record and it prints a warning before it writes the file: a verifier that
+weighs log evidence will disregard this record unless the record was itself logged and timestamped
+before the deadline — and the warning names the command that would log it. The last link in that
+chain is the subject of the next paragraph and of section 6. Beside the tool, the service that runs
+next to a checkout refuses to issue for an order already marked refunded or cancelled, which is the
+easy half of a refund; it has no path at all for a refund that arrives *after* a receipt has gone
+out, which is the half that would need the command above. And on the verifier's side: the browser
+page and the downloadable file never go and fetch a seller's withdrawal records — nothing in either
+reaches out to a network at all — though either will consult a revocation file you drop onto it
+yourself. Unless somebody hands one over, the answer there stays "unknown"; and even handed one, a
+verifier configured as those two are — one public log key pinned, no block headers pinned — could
+not honour a refund-window withdrawal, for exactly the reason the tool's own warning gives. Read
+every sentence about revocation in this document, then, as a rule the verifier enforces and a seller
+can now perform, on receipts that nobody has yet issued.
+
+One more producer used to be missing under the two above, and it has arrived. The standard lets a
+receipt's existence be recorded in a public, append-only log, so that it can later be dated by the
+clock section 6 describes; it is what the rescue against a stolen key, and the logged refund window
+just mentioned, both start from. The log commands used to be the log operator's alone — create a
+log, append an entry handed over as a file, sign a checkpoint, emit a proof — and none of them
+computed the entry a receipt would need; the only code that did was the generator of the project's
+own test fixtures. Two things now do. One command computes the entry for a signed document, a
+receipt among them, ready to be appended. And the issuing command takes an option that appends the
+receipt's own entry to the seller's log in the same act that signs it, without either half touching
+a network.
+
+The step after that one is where the gap now sits, and it is worth naming precisely rather than
+inheriting the older, larger complaint. Turning a log into a *date* needs the public attestation
+section 6 describes, obtained outside the tool, and a set of block headers to check it against that
+nothing ships with anything. So a receipt can be logged today and still cannot be dated by anyone
+who has not assembled that last part alone. Everything built on logging — the rescue on the
+seller's worst day, the logged refund window — waits on that step and on nothing else.
 
 What can and cannot be done today, in one place. A buyer can receive a receipt, keep it, verify it
-offline at trust on first use, show they hold its binding secret by disclosure, sign the
-authorization that starts a transfer where the receipt names a key of theirs, and share one
-receipt safely. A seller
-can generate keys, publish and rotate a manifest, declare a key stolen, issue receipts by hand or
-from a checkout, export bundles, counter-sign a transfer, and sign a preservation pledge. Neither
-can, with what ships: withdraw a receipt, enter one in a log, package a compromise declaration so
-that a verifier can bound it, or answer a binding challenge. The verifier evaluates all four. The
-rest of this document keeps the two lists apart.
+offline at trust on first use, show they hold its binding secret by disclosure, answer a fresh
+challenge with the buyer key where the receipt carries one, sign the authorization that starts a
+transfer, and share a single receipt safely. A seller can generate keys, publish and rotate a
+manifest, declare a key stolen and package that declaration in the form a verifier reads, issue
+receipts by hand or from a checkout and enter them in its own log as it signs them, withdraw one
+and hand the record over in the shape a verifier expects, export bundles, counter-sign a transfer,
+and sign a preservation pledge.
+
+What neither can do is put a *date* on any of it. That is now the single missing link, and naming
+it as one link rather than as a list is the honest description of where this project stands: the
+public attestation has to be obtained outside these tools, and no curated set of block headers to
+check it against ships with anything. Every defence in this document that turns on *order* rather
+than on signature — the rescue on the seller's worst day, the logged refund window, an old
+manifest beating an opportunistic new one — waits on that link and on nothing else. There is one
+further absence, and it is a fetch rather than a command: no tool here goes to a seller's own
+domain for its key material, so the strongest trust level stays out of reach, as the paragraph
+before last said. The rest of this document keeps what is shipped and what is specified apart, and
+from here the second list is short enough to hold in mind.
 
 > **In detail: the algorithm, the vocabulary, the two files, and each input's producer.** A
 > conforming verifier runs v0.1 §11 in order and stops at the first rejection: (0) parse the bytes
@@ -572,22 +605,31 @@ rest of this document keeps the two lists apart.
 > invalidate anything. Now the completeness check this document applies to every defence: for each
 > input the shipped `attest verify` accepts, who produces it. `--trust-dir`: manifests from
 > `manifest init`/`rotate` or an imported bundle — shipped, and the tool records their provenance as
-> `bundle` unconditionally, so `verified` is unreachable from it. `--revocations`: a JSON array of
-> records — no shipped producer; the only call to `revocation.build_record` in the tool sits in
-> `transfer record --revocation-out` and emits `status: "transferred"`. `--disclose-identifier`,
+> `bundle` unconditionally, so `verified` is unreachable from it. `--revocations`: the array a
+> verifier reads — `revocation-view`, shipped; `transfer record --revocation-out` still emits the
+> `status: "transferred"` member of the same family. `--transfer-view`: `transfer view` — shipped.
+> `--compromise-view`: `manifest compromise-view` — shipped, and it reports for each claim whether
+> the claim establishes the status floor, whether its signer could date a cutoff, and whether it
+> carries any anchor material at all. `--disclose-identifier`,
 > `--disclose-type`, `--disclose-salt`: the salt comes from `issue --salt-out` or the exported
-> `salts.json` — shipped. `--disclose-challenge-nonce`, `--disclose-challenge-sig`: consumed, and
-> the buyer-side signer (`commitment.sign_challenge`) has no caller in the tool — no producer.
-> `--transparency`: `log prove` emits evidence for an entry already in a log, but the `receipt`
-> entry itself (`tlog.receipt_core_hash`) is computed nowhere in the tool or the bridge; `log
-> append` takes the entry as a file the operator wrote — no producer for receipts. `--log-keys`,
+> `salts.json` — shipped. `--disclose-challenge-nonce`, `--disclose-challenge-sig`: `binding
+> challenge` and `binding respond` — shipped, the second being the buyer's side of the exchange
+> that used to exist only as a library call with no caller.
+> `--transparency` and `--revocation-evidence`: `log entry` computes the entry for a signed
+> document, a receipt among them; `issue --log-dir` appends a receipt's own entry in the act that
+> signs it; `log append` and `log sign-checkpoint` advance the log; and `log prove` emits the
+> evidence bundle, finding a receipt by its core hash rather than by an index the caller would have
+> to know. `--log-keys`,
 > `--anchor-policy`, `--crqc-horizon`, `--witness-policy`: verifier configuration the caller
 > supplies; no pinned block headers ship with anything. `--grant-view`: `grant issue`, `grant
-> declare` — shipped. `--authority-view`: `authority issue` — shipped. Three of `verify()`'s inputs
-> have no command-line flag at all: `transfer_view` (the record exists — `transfer record` writes it
-> — but the packaged verifier cannot be handed it), `compromise_view` (no flag, and no producer
-> anywhere) and `revocation_evidence` (no flag). The browser verifier passes `null` as its
-> revocation view, one pinned log key, and an anchor policy whose set of pinned headers is empty;
+> declare` — shipped. `--authority-view`: `authority issue` — shipped. `--reject-trust`: the
+> caller's own policy, not a document anyone signs. One producer is left without a shipped source,
+> and the tool says so in its own help rather than leaving it to be discovered: `log anchor`
+> attaches anchor material *obtained outside this process*, because acquiring a Bitcoin attestation
+> is out of the tool's scope and it never touches a network, and `log ots-convert` converts a path
+> only against a block header the caller already holds. The browser verifier passes one pinned log
+> key, an anchor policy whose set of pinned headers is empty, and as its revocation view whatever
+> the visitor has dropped on the page — `null` when nothing has been;
 > its page-level policy is `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'
 > data:; connect-src 'self'; base-uri 'none'; form-action 'none'`, and its end-to-end suite asserts
 > that verifying the sample produces no request to any host but its own, that the sample reports
@@ -750,13 +792,15 @@ written down.
 > when its inclusion in the issuer's transparency log is proven (§17.2); two logged records for the
 > same receipt are a double assignment and the earliest log index wins (§17.4); walking the chain
 > of title is a separate audit surface with fixed, byte-identical diagnostics (§17.5). What is
-> shipped, on the command-line tool on `main`: the holder's side of a transfer (`transfer
+> shipped, on the command-line tool: the holder's side of a transfer (`transfer
 > authorize`, which signs the outgoing holder's authorization with the buyer's own key), the
-> issuer's side (`transfer record`), the log operator's commands (`log`), and the redemption
+> issuer's side (`transfer record`), the packaging that lets a verifier be handed the result
+> (`transfer view`), the log operator's commands (`log`), and the redemption
 > challenge for a preservation pledge (`grant challenge`, `grant respond`, `grant verify`, §18.7).
 > The ordinary binding challenge for a receipt — the "prove this is yours" exchange described in
-> section 4 — is verified by both implementations as a library call, and no shipped command runs
-> that exchange. "One legitimate holder at a time" is therefore a licence term enforced by honest
+> section 4 — has both its halves as commands now, `binding challenge` and `binding respond`; what
+> it lacks is not a command but a receipt carrying a non-null `buyer.pubkey` to run against, which
+> no issued receipt does. "One legitimate holder at a time" is therefore a licence term enforced by honest
 > clients, and by issuers and markets refusing a receipt that fails it; the protocol supplies the
 > evidence and never the enforcement. Two measured facts bound the profile as shipped:
 > `license.transferable` is not read on the path that honours a transfer record (every combination
@@ -880,29 +924,38 @@ here first.
 
 This clock is built and specified, and implemented in both independent implementations — and it is
 running for essentially nobody. Timestamping is optional at three separate points, and switching it
-on requires clearing all three. The command that issues a receipt has no option for it: the log
-entry, the proof and the timestamp have to be produced afterwards by hand, in a sequence of separate
-commands, with the Bitcoin attestation obtained outside the tool. The verifying libraries in both
-languages ship with the check switched off unless the caller supplies log keys and a header policy.
-And the block headers a verifier would need in order to check a timestamp are not distributed with
-anything: no curated set of pinned headers ships in either package.
+on means clearing all three. The first has recently become easy: the command that issues a receipt
+now takes an option that enters that receipt in the seller's own log in the same act that signs it,
+so the log entry is no longer a separate operation performed by hand afterwards. The second has not
+moved, and it is the one that decides the matter: the attestation that turns a log into a *date* is
+obtained outside these tools. The tool says so in its own help and never touches a network — what
+it does is attach the material once someone has gone and got it. The third sits on the reader's
+side of the counter: the verifying libraries in both languages ship with the check switched off
+unless the caller supplies log keys and a header policy, and the block headers a verifier would
+need in order to check a timestamp are distributed with nothing. No curated set of pinned headers
+ships in either package.
 
 That includes ours. The verifier on this project's own website — the one anyone can drop a file
 into — is wired for the check and carries an empty set of headers, so it cannot establish a
 timestamp either.
 
-There is a further gap on the seller's side. To use the rule above, a verifier has to be shown the
-seller's compromise declaration in a particular authenticated form. Both implementations know how to
-consume that form. No tool this project ships knows how to produce it. So a seller who discovers a
-theft and publishes the declaration has, today, no way of packaging it so that a verifier can turn
-it into the cutoff the rule needs. And the order in which these gaps are closed matters: honouring
+There used to be a further gap on the seller's side, and it has closed — which sharpens the
+remaining one rather than removing it. To use the rule above, a verifier has to be shown the
+seller's compromise declaration in a particular authenticated form. Both implementations know how
+to consume that form, and a shipped command now produces it: it pairs the declaring manifest with
+its log evidence and reports, claim by claim, what that claim is actually capable of — whether it
+sets the status floor, whether its signer could date a cutoff, whether it carries any anchor
+material at all. Run it without log keys and a header policy and it tells you, in as many words,
+that no cutoff can be established. Which is the same missing link again: a seller who discovers a
+theft can package the declaration and cannot date it, so the cutoff the rule needs never comes into
+existence. And the order in which these gaps are closed matters: honouring
 timestamped receipts before anyone has timestamped a declaration would not protect buyers, it would
 protect everyone whose receipt carries a timestamp, a thief's forgeries included, because no cutoff
 would exist to stop them. The declaration has to be timestamped first.
 
 The summary is this. The clock exists, matches its specification in both implementations, and the
 defence it provides — the one that saves your receipt on the seller's worst day — currently protects
-no one who has not assembled the whole apparatus themselves. Since no store issues receipts yet, the
+no one who has not gone and fetched the last piece of it themselves. Since no store issues receipts yet, the
 number of real receipts it protects is zero. That is a gap in tooling and adoption rather than in
 the design, which makes it fixable, and it is not fixed.
 
@@ -937,10 +990,11 @@ seller's reason is commercial: "what you buy from me stays yours, even if I disa
 argument, and a whole DRM-free brand was built on the first half of it.
 
 Two limits sit next to that. No seller does this yet: the service exists, and the first store that
-runs it does not. And the service does not yet handle refunds — a refunded order is skipped, and
-there is no command a seller can run today to withdraw a receipt already issued. The standard
-defines how a withdrawal works and every verifier honours it; the tool that would let a seller
-perform one is not shipped (section 8).
+runs it does not. And the service handles only the easy half of a refund — an order already marked
+refunded or cancelled is skipped, so no receipt is issued for it, but nothing in the service reacts
+to a refund that arrives after a receipt has gone out. The seller would have to withdraw that
+receipt by hand, with the command-line tool, which can now do it; joining the two is work nobody
+has done, because nobody is running either (section 8).
 
 What the receipt adds to a file you already hold is what section 5 said the file lacks. A
 DRM-free download is anonymous. The receipt makes the purchase itself something that can be
@@ -1097,12 +1151,14 @@ merely optimistic.
 No shop issues attest receipts today. So the number of real receipts the rescue covers is zero, and
 it stays zero until a first shop both signs and logs.
 
-Getting there is opt-in at every step, and nothing is switched on by default — the issuing command
-has no option for it, the verifying libraries ship with the check disabled in both languages, no
-pinned block headers are distributed with anything, and the verifier on this project's own website
-carries an empty set of them. The evidence a verifier would need in order to learn that a key was
-declared compromised is consumed by both implementations and produced by neither. The defence is
-built and specified. It is not running.
+Getting there is opt-in at every step, and nothing is switched on by default. The issuing command
+will enter a receipt in the seller's own log if it is asked to; nothing here will go and fetch the
+public attestation that dates that log, which is obtained outside these tools by design. The
+verifying libraries ship with the check disabled in both languages. No pinned block headers are
+distributed with anything, and the verifier on this project's own website carries an empty set of
+them. The evidence a verifier needs in order to learn that a key was declared compromised is now
+produced as well as consumed — and with no headers to date it, being produced is not enough. The
+defence is built and specified. It is not running.
 
 And the rescue applies to the signature on **the receipt**, and to nothing else. A genuine transfer
 made *before* the declaration stops authenticating too, and the receipt reverts to whoever held it
@@ -1110,28 +1166,33 @@ before; that is deliberate and specified, because extending the cutoff to transf
 door to resurrected and doubly-assigned transfers. What is not deliberate is that nothing in the
 result tells the person holding the receipt why it happened.
 
-#### The seller's own levers are specified, not shipped
+#### The seller's levers exist now. What sits under them does not
 
-Several things this document says a seller *can* do are things the specification defines and the
-verifier evaluates — and no shipped tool performs. Say it once, plainly, because it is the
-difference between a protocol and a product.
+Several things this document says a seller *can* do were, for most of this project's life, things
+the specification defined, the verifier evaluated, and no shipped tool performed. That list has
+largely emptied, and saying so is more useful than repeating a complaint that has been answered.
 
-A seller cannot revoke a receipt today. The specification defines revocation records, the classes
-they act on — a refund window, a stated policy — and exactly how a verifier must treat them, and
-both implementations evaluate them correctly. But the command-line tool on the project's main
-branch has no command that produces one: the only place it writes a revocation record is inside a
-transfer, where the record says "transferred", never "revoked". The merchant bridge, which turns a
-paid order into a signed receipt, has no refund handling at all. So when this document says that an
-irrevocable receipt is immune to every revocation record, it is describing a rule the verifier
-enforces against a document nobody can currently issue.
+A seller can withdraw a receipt, within the class it sealed the receipt with, and hand the record
+over in the shape a verifier reads — and the tool refuses to sign a record the verifier would only
+throw away. A seller can enter a receipt in its own log in the act of signing it, and compute the
+log entry for the documents that travel beside it. A seller can package a compromise declaration
+together with its evidence, and be told, before the file is written, exactly what that package can
+and cannot do. A holder can answer a binding challenge. The merchant service is the laggard: it
+declines to issue for an order already refunded, and does nothing at all about a refund that
+arrives after a receipt has gone out — a gap in that service, not in the tool beside it.
 
-The same is true of the compromise declaration in the form a verifier needs to compute a cutoff
-(above), and of the whole anchoring flow (section 6). The pattern is general and it is measured, not
-inferred: of the defences the project's own adversarial review classifies as "known design", none
-today has a complete, shipped producer on the seller's side. What is shipped is issuing, verifying,
-transfer, and the preservation-pledge documents. Everything else in this document that begins "the
-seller can" should be read as "the specification lets the seller, and the verifier will honour it,
-once a tool exists".
+What has not arrived is the one thing all of those wait on. None of these documents can be
+**dated**. The attestation that would date them comes from outside these tools by design, and the
+block headers a verifier would check it against ship with nothing. So a revocation record can be
+signed and packaged and still be disregarded by a verifier that weighs log evidence; a compromise
+declaration can be published in exactly the right form and still establish no cutoff; a receipt can
+be logged and gain nothing from having been. Everything in this document that turns on *when*
+rather than on *who* stops at that line — and everything that turns on who works, and worked
+before. That is a narrower and more precise statement than the one this section used to make, and
+it is the one the tooling now supports.
+
+There is a second absence, of a different kind: no tool here fetches a seller's key material from
+the seller's own domain, so the strongest trust level is unreachable. The next limit is about that.
 
 #### The root of trust is a domain name, and a domain is a lease
 
