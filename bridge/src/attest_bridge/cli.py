@@ -754,13 +754,34 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
     resolved = 0
     for dead_letter in deps.ledger.unresolved_dead_letters():
         if dead_letter.platform == "itch":
+            if deps.itch is None:
+                # A missing section is a configuration fault, not a permanent
+                # one: restoring it replays this record, so it stays unresolved
+                # — same row as the other rails.
+                log.warning(
+                    "retry-failed: itch dead letter %d needs an [itch] section to replay",
+                    dead_letter.id,
+                )
+                continue
             try:
                 data = json.loads(dead_letter.raw_json)
                 claim = data.get("claim", data) if isinstance(data, dict) else None
                 email = claim.get("email") if isinstance(claim, dict) else None
                 game_id = claim.get("game_id") if isinstance(claim, dict) else None
-                if deps.itch is None or not isinstance(email, str) or not isinstance(game_id, str):
-                    raise ValueError("itch dead letter has no re-enqueueable claim")
+                if not isinstance(email, str) or not isinstance(game_id, str):
+                    # No address and no game: there is nothing to re-enqueue and
+                    # no number of replays can produce one. `ItchPoller` never
+                    # writes such a record, but leaving one unresolved would pin
+                    # `retry-failed` at exit 1 for good, and an alarm that never
+                    # clears hides the next real dead letter behind it. Close it,
+                    # enqueueing nothing.
+                    log.info(
+                        "retry-failed: itch dead letter %d carries no replayable claim",
+                        dead_letter.id,
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
                 deps.ledger.enqueue_claim(email, game_id, now=_now_rfc3339())
             except Exception as exc:
                 log.warning(
@@ -783,6 +804,24 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
                 continue
             try:
                 order = json.loads(dead_letter.raw_json)
+                if not isinstance(order, dict):
+                    # This rail's webhook cannot write such a record today: the
+                    # event key is the order id out of the signed body, so a
+                    # non-object body is refused with 400 before the Ledger is
+                    # touched (`test_signed_non_object_shopify_order_is_refused_
+                    # before_the_ledger`). The guard is here regardless, because
+                    # `dead_letters` is durable state that outlives the version
+                    # that wrote it and ONE unresolvable record pins
+                    # `retry-failed` at exit 1 for every rail at once — an alarm
+                    # that never clears hides the next real dead letter, the lost
+                    # purchase, behind it.
+                    log.info(
+                        "retry-failed: shopify dead letter %d carries no order object",
+                        dead_letter.id,
+                    )
+                    deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                    resolved += 1
+                    continue
                 if not deps.shopify.wants(order):
                     log.info(
                         "retry-failed: shopify dead letter %d is not actionable", dead_letter.id
@@ -910,6 +949,24 @@ def _cmd_retry_failed(args: argparse.Namespace) -> int:
             continue
         try:
             event = json.loads(dead_letter.raw_json)
+            if not isinstance(event, dict):
+                # `http.py` dead-letters a SIGNED body that is not an object
+                # (`test_signed_non_object_stripe_event_is_dead_lettered_and_
+                # acknowledged`, over exactly these five shapes): with no event
+                # id to key on it stores the body verbatim, so the record itself
+                # carries a non-object. Nothing can ever be issued from one, and
+                # `StripeAdapter.wants` raises `AttributeError` on every replay,
+                # so leaving it unresolved keeps `retry-failed` at exit 1 for
+                # good and hides the next real dead letter — the lost purchase —
+                # behind a standing alarm. Same rule as a non-actionable event:
+                # close it.
+                log.info(
+                    "retry-failed: stripe dead letter %d carries no event object",
+                    dead_letter.id,
+                )
+                deps.ledger.resolve_dead_letter(dead_letter.id, now=_now_rfc3339())
+                resolved += 1
+                continue
             if not deps.stripe.wants(event):
                 deps.log.info(
                     "retry-failed: stripe dead letter %d is not actionable", dead_letter.id

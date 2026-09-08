@@ -28,15 +28,17 @@ from attest_bridge import paddle_adapter as paddle_module
 from attest_bridge import paypal_adapter as paypal_module
 from attest_bridge.catalog import ProductCatalog, ProductTemplate
 from attest_bridge.delivery import DeliveryResult
+from attest_bridge.http import make_app
 from attest_bridge.itch_adapter import ItchAdapter, ItchApiError
 from attest_bridge.ledger import Ledger
 from attest_bridge.model import ConfigError
 from attest_bridge.paddle_adapter import PaddleAdapter
 from attest_bridge.paypal_adapter import PayPalAdapter
 from conftest import DISPLAY_NAME, ISSUER, KID, LEGAL_TEXT, LEGAL_TEXT_SHA256
+from test_bridge_http import _FROZEN_NOW, call_app
 from test_bridge_paddle import RecordingHttpGet, make_transaction_completed
 from test_bridge_paypal import FakePayPalApi, make_capture_completed
-from test_bridge_stripe_adapter import make_session_completed_event
+from test_bridge_stripe_adapter import make_session_completed_event, sign_stripe
 
 from attest import bundle, keys, pq
 from attest import verify as verify_mod
@@ -68,6 +70,17 @@ _PAYPAL_CLIENT_SECRET_ENV_VAR = "PAYPAL_CLIENT_SECRET_CLI_TEST"  # noqa: S105 - 
 # The webhook's own public identifier from PayPal's Developer Dashboard, not a
 # secret: it names which subscription a delivery must have been signed for.
 _PAYPAL_WEBHOOK_ID = "8PT597110X687430LKGECATA"
+_ITCH_AND_DELIVERY = """
+[itch]
+api_key_env = "ITCH_API_KEY"
+[delivery]
+smtp_host = "smtp.example.com"
+smtp_port = 587
+smtp_username = "merchant"
+smtp_password_env = "SMTP_PASSWORD"
+from_address = "receipts@example.com"
+info_url = "https://merchant.example.com/info"
+"""
 _SHOPIFY_VARIANT_PRODUCT = f"""
 [products.shopify_49148385]
 title = "The Long Dusk"
@@ -911,6 +924,164 @@ def test_retry_failed_closes_a_paypal_dead_letter_that_carries_no_event_object(
     assert rc == 0
     assert ledger.unresolved_dead_letters() == []
     assert api.get_calls == []
+
+
+@pytest.mark.parametrize("body", [[1, 2, 3], 7, "event", None, True])
+def test_retry_failed_closes_a_stripe_dead_letter_that_carries_no_event_object(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    body: object,
+) -> None:
+    """The same shape on the oldest rail, driven end to end through the real
+    WSGI app rather than from a hand-written row: a validly signed body that is
+    not an object reaches `http.py`'s "no usable event id" arm, which stores
+    `json.dumps(event)` verbatim -- so the dead letter's `raw_json` is itself a
+    non-object. `StripeAdapter.wants` then raises `AttributeError` on every
+    replay, the record never resolves, and `retry-failed` returns 1 for good;
+    a cron job alerting on that exit code stops meaning anything and hides
+    every later dead letter -- the lost purchases -- behind it.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    monkeypatch.setattr("attest_bridge.stripe_adapter.time.time", lambda: _FROZEN_NOW)
+    config_path = _write_config(
+        tmp_path, hybrid_keys, key_manifest, products_toml=_PRICE_TEST_PRODUCT
+    )
+    deps = cli._build_deps(config_path, log=logging.getLogger("test-retry-failed"))
+
+    signed_body = json.dumps(body).encode()
+    status, _, _ = call_app(
+        make_app(deps),
+        "POST",
+        "/stripe/webhook",
+        body=signed_body,
+        headers={
+            "Stripe-Signature": sign_stripe(signed_body, "whsec_real_test_secret", _FROZEN_NOW),
+            "Content-Type": "application/json",
+        },
+    )
+
+    # The source of these inputs is the app itself, not the test.
+    assert status.startswith("200")
+    dead_letters = deps.ledger.unresolved_dead_letters()
+    assert len(dead_letters) == 1
+    assert not isinstance(json.loads(dead_letters[0].raw_json), dict)
+
+    rc = cli.main(["retry-failed", "--config", str(config_path)])
+
+    assert rc == 0
+    assert deps.ledger.unresolved_dead_letters() == []
+
+
+@pytest.mark.parametrize("raw_json", ["[]", "7", '"order"', "null", "true"])
+def test_retry_failed_closes_a_shopify_dead_letter_that_carries_no_event_object(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    raw_json: str,
+) -> None:
+    """Shopify's webhook refuses a non-object body with 400 before the Ledger is
+    touched (`test_signed_non_object_shopify_order_is_refused_before_the_ledger`),
+    so today no such row is written on this rail. The replay path is guarded
+    anyway: the `dead_letters` table is durable state that outlives the version
+    that wrote it, one `if` in `http.py` separates that 400 from a stored row,
+    and a single unresolvable record is enough to pin `retry-failed` at exit 1
+    for every other rail too. Defenses come from the list of defenses this
+    replay loop has, not from re-reading a sister rail.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    monkeypatch.setenv(_SHOPIFY_ENV_VAR, "shpss_real_test_secret")
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+    ledger.add_dead_letter(
+        "shopify",
+        None,
+        "shopify order payload is not an object",
+        raw_json,
+        now="2026-09-08T10:00:00Z",
+    )
+    # Without this the closing assertion passes vacuously on a row that was
+    # never written.
+    assert len(ledger.unresolved_dead_letters()) == 1
+    config_path = _write_config(
+        tmp_path,
+        hybrid_keys,
+        key_manifest,
+        products_toml=_SHOPIFY_VARIANT_PRODUCT,
+        extra_toml=f'[shopify]\nwebhook_secret_env = "{_SHOPIFY_ENV_VAR}"\n',
+    )
+
+    rc = cli.main(["retry-failed", "--config", str(config_path)])
+
+    assert rc == 0
+    assert ledger.unresolved_dead_letters() == []
+
+
+@pytest.mark.parametrize("raw_json", ["[1, 2, 3]", "7", '"claim"', "null", "true", "{}"])
+def test_retry_failed_closes_an_itch_dead_letter_with_no_replayable_claim(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    raw_json: str,
+) -> None:
+    """Third preexisting rail, same standing alarm. `ItchPoller` only ever
+    stores an object carrying the claim's `email`/`game_id` (both `str` on
+    `Claim`), so no such row is written today either -- but a stored record
+    with no address and no game to re-enqueue can never become a claim however
+    many times it is replayed, and leaving it unresolved costs the same
+    permanent exit 1. Closing it must enqueue nothing.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+    monkeypatch.setenv("ITCH_API_KEY", "itch-test")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-test")
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+    ledger.add_dead_letter("itch", None, "abandoned", raw_json, now="2026-09-08T10:00:00Z")
+    assert len(ledger.unresolved_dead_letters()) == 1
+    config_path = _write_config(tmp_path, hybrid_keys, key_manifest, extra_toml=_ITCH_AND_DELIVERY)
+
+    rc = cli.main(["retry-failed", "--config", str(config_path)])
+
+    assert rc == 0
+    assert ledger.unresolved_dead_letters() == []
+    assert ledger.due_claims("2100-01-01T00:00:00Z") == []
+
+
+def test_retry_failed_needs_the_itch_section_to_replay(
+    tmp_path: Path,
+    hybrid_keys: pq.HybridSigningKeys,
+    key_manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The negative that keeps the guard above honest: a replayable claim whose
+    `[itch]` section is missing is a CONFIGURATION fault, not a permanent one.
+    It must stay unresolved -- restoring the section replays it -- so a guard
+    that closed everything it cannot replay would silently drop a confirmed
+    purchase. The two cases log differently because an operator acts on them
+    differently.
+    """
+    monkeypatch.setenv(_STRIPE_ENV_VAR, "whsec_real_test_secret")
+
+    ledger = Ledger(tmp_path / "ledger.sqlite3")
+    ledger.add_dead_letter(
+        "itch",
+        None,
+        "abandoned",
+        json.dumps({"email": "buyer@example.com", "game_id": "123456"}),
+        now="2026-09-08T10:00:00Z",
+    )
+    config_path = _write_config(tmp_path, hybrid_keys, key_manifest)
+
+    with caplog.at_level(logging.WARNING):
+        rc = cli.main(["retry-failed", "--config", str(config_path)])
+
+    assert rc == 1
+    assert len(ledger.unresolved_dead_letters()) == 1
+    assert "needs an [itch] section to replay" in caplog.text
 
 
 def test_retry_failed_names_the_exception_class_of_a_failed_replay(

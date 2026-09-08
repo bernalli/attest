@@ -333,7 +333,7 @@ def shopify_deps(
 
 def _post_webhook(
     deps: BridgeDeps,
-    order: dict[str, Any],
+    order: object,
     *,
     topic: str = "orders/paid",
     delivery_id: str = "delivery-1",
@@ -349,6 +349,25 @@ def _post_webhook(
     if delivery_id:
         headers["X-Shopify-Webhook-Id"] = delivery_id
     return call_app(make_app(deps), "POST", "/shopify/webhook", body=body, headers=headers)
+
+
+@pytest.mark.parametrize("order", [[1, 2, 3], 7, "order", None, True])
+def test_signed_non_object_shopify_order_is_refused_before_the_ledger(
+    shopify_deps: BridgeDeps, order: object
+) -> None:
+    """The Shopify counterpart of the Stripe row, and it lands differently on
+    purpose: the event key is the order id out of the signed body, so a body
+    with no usable id is refused outright before the Ledger is touched at all.
+    Pinned because the replay loop's guard for a non-object Shopify body
+    (`test_retry_failed_closes_a_shopify_dead_letter_that_carries_no_event_object`)
+    is defense in depth only as long as this row keeps that input out: if this
+    ever starts dead-lettering instead, that guard becomes load-bearing.
+    """
+    status, _, body = _post_webhook(shopify_deps, order)
+
+    assert status.startswith("400")
+    assert body == b"missing order id"
+    assert shopify_deps.ledger.unresolved_dead_letters() == []
 
 
 def test_e2e_signed_shopify_webhook_to_offline_verified_receipt(
