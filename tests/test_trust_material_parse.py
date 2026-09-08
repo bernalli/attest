@@ -1939,26 +1939,18 @@ def test_a_direct_dunder_new_construction_fails_custody() -> None:
     assert any("__new__ called directly" in v for v in violations), violations
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "T1 residue, and it does NOT close at T2 -- it closes at T4b. verify.TrustStore "
-        "is still the live dataclass at T1, and four call sites construct it directly "
-        "instead of going through trust_material's handle -- measured 2026-09-08 on this "
-        "worktree: bundle.py:932 (import_bundle), cli.py:656 (_load_trust_dir), "
-        "cli.py:1430 (revoke), and verify.py:336 (_materialized_trust_store, where the "
-        "bare name `TrustStore` resolves to verify.py's own dataclass, not "
-        "trust_material's). T2 removes the dataclass and the two constructions in "
-        "bundle.py and verify.py; the TWO IN cli.py SURVIVE, because D-A3 keeps cli.py "
-        "out of T2 and moves it to T4b. So this pin stays xfail through T2 and turns "
-        "green at T4b. Said exactly, because the earlier wording claimed T2 removed "
-        "every one of them: whoever runs T2 would read that, find this still red, and "
-        "go looking for a mistake in their own work instead of in this sentence."
-    ),
-)
 def test_no_other_module_in_attest_constructs_a_handle_directly() -> None:
     """5.6(d), cross-module half: "negli altri moduli di attest non esiste
     alcun Call a quei due nomi."
+
+    This was `xfail(strict=True)` from T1 until T4b, and the marker is gone
+    rather than left to pass quietly: four call sites built a handle directly
+    at T1 -- `bundle.py` and `verify.py`, closed by T2, and the two in `cli.py`
+    that D-A3 deliberately deferred to T4b. The strict marker is what made the
+    last of them ANNOUNCE itself: the moment `cli.py` stopped constructing, the
+    xfail turned into an XPASS and the suite went red asking to be told so.
+    A non-strict marker would have gone green in silence, and this pin would
+    have kept watching nothing.
     """
     import pathlib
 

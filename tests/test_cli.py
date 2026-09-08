@@ -30,6 +30,7 @@ from attest import (
     revocation,
     tlog,
     transfer,
+    trust_material,
     verify,
     views,
 )
@@ -493,7 +494,7 @@ def test_revoke_refund_window_exact_boundary_is_honored(tmp_path: Path, capsys: 
     assert "refund_window records are ignored by Stage-2 verifiers" in captured.err
     record = json.loads(out.read_text(encoding="utf-8"))
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert revocation.verify_record(record, manifest)
+    assert revocation.verify_record(record, km(manifest))
 
 
 def test_revoke_rejects_kid_absent_from_manifest_without_output(
@@ -617,7 +618,7 @@ def test_revoke_hybrid_manifest_with_matching_mldsa_seed_signs_both_legs(
     record = json.loads(out.read_text(encoding="utf-8"))
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert "sig_ml_dsa_65" in record["signature"]
-    assert revocation.verify_record(record, manifest)
+    assert revocation.verify_record(record, km(manifest))
 
 
 def test_revoke_hybrid_manifest_requires_mldsa_seed(tmp_path: Path, capsys: CapSys) -> None:
@@ -1175,7 +1176,7 @@ def test_manifest_rotate_produces_version_2_signed_by_version_1_key(tmp_path: Pa
     trusted = json.loads(manifest_path.read_text(encoding="utf-8"))
     candidate = json.loads(rotated_out.read_text(encoding="utf-8"))
     assert candidate["manifest_version"] == 2
-    assert manifests.check_continuity(trusted, candidate)
+    assert manifests.check_continuity(km(trusted), km(candidate))
 
 
 def test_manifest_artifacts_builds_signed_artifact_manifest(tmp_path: Path) -> None:
@@ -1217,7 +1218,7 @@ def test_manifest_artifacts_builds_signed_artifact_manifest(tmp_path: Path) -> N
     key_manifest = json.loads(key_manifest_path.read_text(encoding="utf-8"))
     artifact_manifest = json.loads(out.read_text(encoding="utf-8"))
     assert artifact_manifest["manifest_version"] == 1
-    assert manifests.verify_artifact_manifest(artifact_manifest, key_manifest)
+    assert manifests.verify_artifact_manifest(artifact_manifest, km(key_manifest))
 
 
 def test_manifest_artifacts_rejects_nonpositive_manifest_version(capsys: CapSys) -> None:
@@ -1259,12 +1260,167 @@ def test_load_trust_dir_scopes_artifact_chains_by_issuer_and_series(tmp_path: Pa
         (tmp_path / f"{issuer}.artifact.json").write_text(
             json.dumps({"issuer": issuer, "series": series, "version": 1}), encoding="utf-8"
         )
-    trust_store = cli._load_trust_dir(tmp_path)
-    assert set(trust_store.artifact_manifests) == {ISSUER, "other.example.com"}
-    assert trust_store.artifact_manifests[ISSUER][series]["issuer"] == ISSUER
-    assert (
-        trust_store.artifact_manifests["other.example.com"][series]["issuer"] == "other.example.com"
+    # Read through `data()`: the store is a snapshot now, and its members are
+    # reached by asking it rather than by touching an attribute.
+    artifact_manifests = cli._load_trust_dir(tmp_path).data()["artifact_manifests"]
+    assert set(artifact_manifests) == {ISSUER, "other.example.com"}
+    assert artifact_manifests[ISSUER][series]["issuer"] == ISSUER
+    assert artifact_manifests["other.example.com"][series]["issuer"] == "other.example.com"
+
+
+# --- --trust-dir, the origin that reads a DIRECTORY of files (recipe C1) ------
+#
+# Every refusal below names the file that carried the defect. That is the whole
+# difference from the shape this loader had before: a file it could not classify
+# was skipped with `continue`, so a directory of five manifests and one typo
+# verified against four of them and said nothing about the fifth. A trust store
+# assembled out of "the parts I could read" is the failure this rail exists to
+# prevent, and silence about which file was dropped is what made it invisible.
+
+
+def _trust_dir_with(tmp_path: Path, **files: str) -> Path:
+    trust_dir = tmp_path / "trust-dir"
+    trust_dir.mkdir()
+    for name, text in files.items():
+        (trust_dir / f"{name}.json").write_text(text, encoding="utf-8")
+    return trust_dir
+
+
+def _key_manifest_document(manifest_version: int = 1, issuer: str = ISSUER) -> str:
+    """The smallest document `--trust-dir` files under `keys` (no signature: the
+    loader classifies and admits, it does not verify)."""
+    return json.dumps({"issuer": issuer, "manifest_version": manifest_version, "keys": []})
+
+
+def test_load_trust_dir_names_the_file_that_is_not_an_object(tmp_path: Path) -> None:
+    trust_dir = _trust_dir_with(tmp_path, good=_key_manifest_document(), bad='["not an object"]')
+
+    with pytest.raises(cli.CliUsageError) as exc:
+        cli._load_trust_dir(trust_dir)
+
+    assert str(trust_dir / "bad.json") in str(exc.value)
+    assert "must be a JSON object" in str(exc.value)
+
+
+def test_load_trust_dir_names_the_file_whose_issuer_is_not_a_string(tmp_path: Path) -> None:
+    trust_dir = _trust_dir_with(
+        tmp_path, bad=json.dumps({"issuer": 7, "manifest_version": 1, "keys": []})
     )
+
+    with pytest.raises(cli.CliUsageError) as exc:
+        cli._load_trust_dir(trust_dir)
+
+    assert str(trust_dir / "bad.json") in str(exc.value)
+    assert "string 'issuer'" in str(exc.value)
+
+
+def test_load_trust_dir_names_the_file_that_is_neither_kind_of_manifest(tmp_path: Path) -> None:
+    """No `keys` makes it not a key manifest; no string `series` makes it not an
+    artifact manifest either. Before C1 this file was silently dropped."""
+    trust_dir = _trust_dir_with(tmp_path, bad=json.dumps({"issuer": ISSUER, "note": "neither"}))
+
+    with pytest.raises(cli.CliUsageError) as exc:
+        cli._load_trust_dir(trust_dir)
+
+    assert str(trust_dir / "bad.json") in str(exc.value)
+    assert "not a key manifest" in str(exc.value)
+
+
+def test_load_trust_dir_refuses_a_file_whose_object_repeats_a_member(tmp_path: Path) -> None:
+    """`canon.loads_strict`, not `json.loads`: a document whose meaning depends on
+    which duplicate a parser happens to keep is refused, never resolved by
+    position. `json.loads` keeps the LAST one and says nothing."""
+    trust_dir = _trust_dir_with(
+        tmp_path,
+        bad='{"issuer": "a.example.com", "issuer": "b.example.com", "keys": []}',
+    )
+
+    with pytest.raises(cli.CliUsageError) as exc:
+        cli._load_trust_dir(trust_dir)
+
+    assert str(trust_dir / "bad.json") in str(exc.value)
+
+
+def test_load_trust_dir_keeps_the_largest_integer_ijson_admits(tmp_path: Path) -> None:
+    """The positive control for the refusal below: 2**53 - 1 travels the recipe
+    whole. Without it, a loader that dropped or narrowed every large integer
+    would pass the refusal test for the wrong reason."""
+    trust_dir = _trust_dir_with(tmp_path, good=_key_manifest_document(2**53 - 1))
+
+    store = cli._load_trust_dir(trust_dir)
+
+    manifest = store.manifest_for(ISSUER)
+    assert manifest is not None
+    assert manifest.data()["manifest_version"] == 2**53 - 1
+
+
+def test_load_trust_dir_refuses_an_integer_outside_the_ijson_range(tmp_path: Path) -> None:
+    """`canon.loads_strict` admits integers `canonical_bytes` then refuses, so the
+    refusal happens HERE — while the directory that carried it is still the thing
+    being blamed — rather than downstream inside the verifier."""
+    trust_dir = _trust_dir_with(tmp_path, bad=_key_manifest_document(2**53))
+
+    with pytest.raises(cli.CliUsageError) as exc:
+        cli._load_trust_dir(trust_dir)
+
+    assert "--trust-dir" in str(exc.value)
+    assert "out of I-JSON safe range" in str(exc.value)
+
+
+def test_load_trust_dir_applies_the_aggregate_ceiling_before_reading_any_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ceiling is aggregate and it comes FIRST.
+
+    The directory also holds a file that is not an object, which the per-file
+    rule refuses by name. Getting the ceiling's message rather than that one is
+    what proves the sizes were summed before anything was read — an assertion on
+    "it raised" alone would be satisfied by either order.
+    """
+    trust_dir = _trust_dir_with(tmp_path, good=_key_manifest_document(), bad='["not an object"]')
+    monkeypatch.setattr(canon, "MAX_ADMISSION_BYTES", 8)
+
+    with pytest.raises(cli.CliUsageError) as exc:
+        cli._load_trust_dir(trust_dir)
+
+    assert "exceeds the admission ceiling" in str(exc.value)
+    assert "bad.json" not in str(exc.value)
+
+
+def test_load_trust_dir_admits_the_bytes_the_file_carried(tmp_path: Path) -> None:
+    """C1 and the one-manifest origins admit the SAME document.
+
+    The snapshot the directory yields for an issuer exports the same canonical
+    bytes as the snapshot built from that file's bytes on their own. A recipe
+    that re-serialized through `json.dumps`, reordered members, or narrowed an
+    integer would answer differently here while still verifying receipts.
+    """
+    document = _key_manifest_document(2**53 - 1)
+    trust_dir = _trust_dir_with(tmp_path, issuer=document)
+
+    store = cli._load_trust_dir(trust_dir)
+
+    admitted = store.manifest_for(ISSUER)
+    assert admitted is not None
+    on_its_own = trust_material.KeyManifest.from_bytes(document.encode())
+    assert admitted.to_bytes() == on_its_own.to_bytes()
+
+
+def test_verify_with_an_unclassifiable_trust_dir_file_exits_2(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """The refusal reaches the operator as exit 2 and a message, never a traceback."""
+    seed, _pub = _keygen(tmp_path, "issuer")
+    manifest_path = _manifest_init(tmp_path, seed, "manifest.json")
+    payload_path = _write_payload(tmp_path)
+    envelope_path = _issue(tmp_path, seed, payload_path)
+    trust_dir = _trust_dir(tmp_path, manifest_path)
+    (trust_dir / "stray.json").write_text('["not an object"]', encoding="utf-8")
+
+    rc = cli.main(["verify", str(envelope_path), "--trust-dir", str(trust_dir)])
+
+    assert rc == 2
+    assert "stray.json" in capsys.readouterr().err
 
 
 def test_manifest_artifacts_hybrid_roundtrips(tmp_path: Path) -> None:
@@ -1307,7 +1463,7 @@ def test_manifest_artifacts_hybrid_roundtrips(tmp_path: Path) -> None:
     key_manifest = json.loads(key_manifest_path.read_text(encoding="utf-8"))
     artifact_manifest = json.loads(out.read_text(encoding="utf-8"))
     assert "sig_ml_dsa_65" in artifact_manifest["manifest_signature"]
-    assert manifests.verify_artifact_manifest(artifact_manifest, key_manifest)
+    assert manifests.verify_artifact_manifest(artifact_manifest, km(key_manifest))
 
 
 def test_manifest_artifacts_hybrid_without_mldsa_key_errors(tmp_path: Path, capsys: CapSys) -> None:
@@ -1611,9 +1767,9 @@ def test_manifest_rotate_compromise_without_new_key(tmp_path: Path) -> None:
 
     v2 = json.loads(manifest_v2.read_text(encoding="utf-8"))
     v3 = json.loads(manifest_v3.read_text(encoding="utf-8"))
-    assert manifests.find_key(v3, KID)["status"] == "compromised"
-    assert manifests.verify_key_manifest(v3)
-    assert manifests.check_continuity(v2, v3)
+    assert manifests.find_key(km(v3), KID)["status"] == "compromised"
+    assert manifests.verify_key_manifest(km(v3))
+    assert manifests.check_continuity(km(v2), km(v3))
 
 
 def test_manifest_rotate_retire_flag(tmp_path: Path) -> None:
@@ -1674,7 +1830,7 @@ def test_manifest_rotate_retire_flag(tmp_path: Path) -> None:
     from attest import manifests
 
     v3 = json.loads(manifest_v3.read_text(encoding="utf-8"))
-    assert manifests.find_key(v3, KID)["status"] == "retired"
+    assert manifests.find_key(km(v3), KID)["status"] == "retired"
 
 
 def test_manifest_rotate_with_no_changes_exits_2(tmp_path: Path, capsys: CapSys) -> None:
@@ -1922,7 +2078,7 @@ def test_manifest_rotate_hybrid_roundtrips(tmp_path: Path) -> None:
 
     rotated = json.loads(rotated_out.read_text(encoding="utf-8"))
     assert "sig_ml_dsa_65" in rotated["manifest_signature"]
-    assert manifests.verify_key_manifest(rotated) is True
+    assert manifests.verify_key_manifest(km(rotated)) is True
 
 
 def test_manifest_rotate_hybrid_without_mldsa_key_errors(tmp_path: Path, capsys: CapSys) -> None:
@@ -2591,12 +2747,12 @@ def test_manifest_rotate_to_new_hybrid_key_roundtrips(tmp_path: Path) -> None:
 
     assert rc == 0
     candidate = json.loads(out.read_text(encoding="utf-8"))
-    assert manifests.find_key(candidate, kid_b)["pub_ml_dsa_65"] == mldsa_pub_b.read_text(
+    assert manifests.find_key(km(candidate), kid_b)["pub_ml_dsa_65"] == mldsa_pub_b.read_text(
         encoding="utf-8"
     )
-    assert manifests.verify_key_manifest(candidate) is True
+    assert manifests.verify_key_manifest(km(candidate)) is True
     assert manifests.check_continuity(
-        json.loads(manifest_v1.read_text(encoding="utf-8")), candidate
+        km(json.loads(manifest_v1.read_text(encoding="utf-8"))), km(candidate)
     )
 
 
@@ -4276,7 +4432,7 @@ def test_transfer_record_writes_self_verifying_record(tmp_path: Path) -> None:
         "holder_authorization",
         "signature",
     }
-    assert transfer.verify_record(record, key_manifest) is True
+    assert transfer.verify_record(record, km(key_manifest)) is True
     assert transfer.verify_authorization(record, keys.b64u(holder_kp.pub)) is True
     assert record["receipt_id"] == old_receipt_id
     assert record["new_receipt_id"] == new_receipt_id
@@ -4325,7 +4481,7 @@ def test_transfer_record_with_revocation_out_writes_transferred_revocation(
     key_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert revocation_record["status"] == "transferred"
     assert revocation_record["receipt_id"] == old_receipt_id
-    assert revocation.verify_record(revocation_record, key_manifest) is True
+    assert revocation.verify_record(revocation_record, km(key_manifest)) is True
 
 
 def test_transfer_record_hybrid_with_mldsa_seed(tmp_path: Path) -> None:
@@ -4388,7 +4544,7 @@ def test_transfer_record_hybrid_with_mldsa_seed(tmp_path: Path) -> None:
     record = json.loads(out.read_text(encoding="utf-8"))
     assert "sig_ml_dsa_65" in record["signature"]
     key_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert transfer.verify_record(record, key_manifest) is True
+    assert transfer.verify_record(record, km(key_manifest)) is True
 
 
 def test_transfer_record_seed_and_out_same_path_exits_2(tmp_path: Path) -> None:
@@ -5640,7 +5796,7 @@ def test_revocation_view_with_manifest_refuses_a_record_signed_by_a_retired_key(
         == 0
     )
     assert (
-        manifests.find_key(json.loads(manifest_v2.read_text(encoding="utf-8")), KID)["status"]
+        manifests.find_key(km(json.loads(manifest_v2.read_text(encoding="utf-8"))), KID)["status"]
         == "retired"
     )
 

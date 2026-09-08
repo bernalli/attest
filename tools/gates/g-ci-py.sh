@@ -60,18 +60,19 @@ gate_expect_rc 0 "gen_container_corpus.py --check: no drift from the committed c
 # exactly why this uses env+PYTHONPATH and never `cd` inside a compound
 # command.
 #
-# STAGED RED until T4b (D-A3). Both demos drive the real CLI, and `cli.py` is
-# the one caller the flip deliberately left behind: it hands a `dict` to
-# `manifests.verify_key_manifest`, which since T2 answers only to a parsed
-# handle. The plan's own census (P-29) lists these two as CI steps F6 can
-# influence; T2 reported zero red CI steps, which is the gap this closes.
+# The two demos drive the real CLI end to end, so they were red for as long as
+# `cli.py` handed a `dict` to a port that answers only to a parsed handle. T4b
+# migrated the CLI and the staged registration that lived here is deleted with
+# it -- kept past its cause, it would have gone on excusing a red the CLI
+# earned later.
 #
-# The positive control below is what makes the red ATTRIBUTABLE instead of
-# merely expected: the document the CLI builds is GOOD -- read as a handle it
-# passes its own self-verify -- and what refuses is the port, on the type. If
-# some day the demos went red because the manifest itself broke, this control
-# goes red first and the staged registration stops covering for it.
-gate_run "the CLI's manifest is sound; the door refuses its TYPE (D-A3)" -- \
+# The control below OUTLIVES the registration, and its meaning inverts with it:
+# it used to prove the demos' red was the port refusing a type rather than a
+# broken manifest, and it now pins that the port still refuses that type at
+# all. Both directions are asserted, so this is the one place in the gate where
+# a regression to the pre-T2 permissiveness shows up as itself rather than as
+# some downstream verdict.
+gate_run "the port refuses a live dict and admits the same document as a handle (D-A3)" -- \
   env PYTHONPATH="$GATE_TREE" "$GATE_PY" -c '
 from attest import canon, keys, manifests, trust_material
 kp = keys.from_seed(bytes(range(32)))
@@ -80,22 +81,20 @@ built = manifests.build_key_manifest("h.example", 1, "2026-01-01T00:00:00Z", [en
 handle = trust_material.KeyManifest.from_bytes(canon.canonical_bytes(built))
 as_dict = manifests.verify_key_manifest(built)
 as_handle = manifests.verify_key_manifest(handle)
-print("verify_key_manifest(dict, what cli.py hands it) ->", as_dict)
-print("verify_key_manifest(handle, same document)      ->", as_handle)
+print("verify_key_manifest(dict, what cli.py used to hand it) ->", as_dict)
+print("verify_key_manifest(handle, same document)             ->", as_handle)
 raise SystemExit(0 if as_dict is False and as_handle is True else 1)
 '
 gate_expect_rc 0 \
-  "the demos' red is the un-migrated CLI, not a broken manifest: the same document verifies as a handle"
+  "the boundary still holds in both directions: dict refused, same document admitted as a handle"
 
 gate_run "python -m demo.store_dies" -- \
   env PYTHONPATH="$GATE_TREE" "$GATE_PY" -m demo.store_dies
-gate_expect_staged_red 'built manifest does not self-verify' "T4b" \
-  "demo.store_dies: red on the un-migrated CLI (D-A3)"
+gate_expect_rc 0 "demo.store_dies: runs green through the migrated CLI"
 
 gate_run "python -m demo.pledge_dies" -- \
   env PYTHONPATH="$GATE_TREE" "$GATE_PY" -m demo.pledge_dies
-gate_expect_staged_red 'built manifest does not self-verify' "T4b" \
-  "demo.pledge_dies: red on the un-migrated CLI (D-A3)"
+gate_expect_rc 0 "demo.pledge_dies: runs green through the migrated CLI"
 
 # --- 4. conformance_runner.py, TS adapter, v0.2 subset ----------------------
 gate_need "node present (conformance TS adapter)" -- command -v node
@@ -151,46 +150,23 @@ gate_negative "conformance_runner.py --adapter 'false {leaf}' --subset v0.2 (ada
 gate_need "site/node_modules/.bin/esbuild present (importer_differential's browser bundle)" \
   -- test -x "$ESBUILD"
 
-# STAGED RED until T4, and the registration lives HERE rather than inside
-# importer_differential.py on purpose. That tool is a permanent CI step, and it
-# says of itself that a divergence the specification permits "is not something
-# to hide behind a green exit code" -- so it keeps reporting and keeps exiting
-# 1. What is temporary is not the divergence, it is this migration: recipe B1
-# landed in `bundle.import_bundle` at T2 and its twin B2 lands in
-# `site/src/bundle.ts` at T4, so between the two the Python side canonicalizes
-# the store document and the browser side does not yet.
+# The staged red that lived here until B2 is deleted, and what it was staging
+# is worth keeping in view: between T2 and now, recipe B1 canonicalized the
+# store document on the Python side while the browser side did not, so a
+# `manifest_version` of 2**53 failed the whole import on one road and landed
+# quietly on the other. B2 in `site/src/bundle.ts` closed it; the four
+# divergences are gone and the registration goes with them.
 #
-# Which core is right: the Python one. Section 9 draws the integer boundary
-# around canonical JSON, a `manifest_version` of 2**53 falls outside it, and
-# section 5.8 B1 prescribes that such a manifest fails the WHOLE import -- with
-# `idem` written against B2. The plan then asks (line 1613) for this step to be
-# green at T2, which it cannot be while B2 is scheduled for T4: that checklist
-# line was not satisfiable, and T4 restores it ("counts equal to T0").
-#
-# The pin is by NAME, and it is exact. Deriving the expected set from "whatever
-# `canonical_bytes` refuses" would make the oracle call the code under test:
-# the day that refusal changed, the expectation would follow it and this gate
-# would stay green through the change it exists to notice.
+# What replaces it is NOT `rc 0` on its own. That tool exits 1 for a missing
+# precondition as readily as for a divergence, and an empty divergence set is
+# also what a tool that compared nothing would report -- so the two assertions
+# below are the ones that carry the weight: the count of archives actually fed
+# to both importers, and the line only a completed comparison can print. An
+# empty set is a claim about a measurement; those two are the measurement.
 gate_run "importer_differential.py" -- "$GATE_PY" "$IMPORTER_DIFF"
-gate_expect_staged_red '^4 divergences across 1 families' "T4" \
-  "importer_differential.py: the two cores differ only where B1 landed without B2"
-
-# The four are two vectors on two browser roads. Only the two versions the
-# canonical profile refuses may appear here; their two in-range neighbours
-# (2**53-1 and -(2**53-1)) must NOT, and that is what makes the set the
-# discriminating observable rather than a plausible one.
-DIVERGENCES_SEEN="$(mktemp)"
-DIVERGENCES_DECLARED="$(mktemp)"
-gate_divergence_signatures "$GATE_OUT" > "$DIVERGENCES_SEEN"
-cat > "$DIVERGENCES_DECLARED" <<'DECLARED'
-out-of-range/version-past-integer-boundary road=intake(library.attest) reference=malformed browser=accept
-out-of-range/version-past-integer-boundary road=parseBundle reference=malformed browser=accept
-out-of-range/version-past-negative-boundary road=intake(library.attest) reference=malformed browser=accept
-out-of-range/version-past-negative-boundary road=parseBundle reference=malformed browser=accept
-DECLARED
-gate_expect_same_set "$DIVERGENCES_SEEN" "$DIVERGENCES_DECLARED" \
-  "the staged divergences are exactly the four declared, by vector, road and direction"
-rm -f "$DIVERGENCES_SEEN" "$DIVERGENCES_DECLARED"
+gate_expect_rc 0 "importer_differential.py: the two importers agree on every archive"
+gate_expect_marker '^0 divergences across 0 families' \
+  "importer_differential.py states the comparison came out empty, rather than staying silent"
 gate_expect_marker '^[0-9]+ archives fed to both importers at their own defaults' \
   "importer_differential.py prints how many archives it fed both importers, not just that it exited 0"
 

@@ -62,6 +62,7 @@ from attest import (
     revocation,
     tlog,
     transfer,
+    trust_material,
     validate,
     verify,
     views,
@@ -403,6 +404,43 @@ def _read_strict_json(path: Path, *, max_bytes: int, input_name: str) -> Any:
     )
 
 
+def _admit_key_manifest(manifest: dict[str, Any], what: str) -> trust_material.KeyManifest:
+    """The snapshot for a key manifest this command is holding as a tree.
+
+    Trust material reaches the library as BYTES even when the bytes are ours:
+    every door downstream reads a document the library parsed itself, not the
+    dict this frame happens to hold. `canonical_bytes` and not `json.dumps` --
+    it is the serialization the manifest signature already commits to, and it
+    is the one that refuses an integer the verifier would refuse later, while
+    `what` still names where it came from.
+    """
+    try:
+        return trust_material.KeyManifest.from_bytes(canon.canonical_bytes(manifest))
+    except (canon.CanonError, trust_material.TrustMaterialError) as exc:
+        raise CliUsageError(f"{what} is not a readable key manifest: {exc}") from exc
+
+
+def _read_key_manifest(path: Path, input_name: str) -> trust_material.KeyManifest:
+    """Read a key manifest FILE as the snapshot the trust-material doors take.
+
+    The bytes on disk are the document. That makes `canon.loads_strict` (inside
+    `from_bytes`) the reader for these inputs rather than `json.loads`, so a
+    manifest whose meaning depends on which duplicate member a parser happens
+    to keep is refused instead of resolved by position -- the same rule the
+    verifier's own admission path has always applied to trust material.
+    """
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError as exc:
+        raise CliUsageError(f"file not found: {path}") from exc
+    except OSError as exc:
+        raise CliUsageError(f"cannot read {path}: {exc}") from exc
+    try:
+        return trust_material.KeyManifest.from_bytes(raw)
+    except trust_material.TrustMaterialError as exc:
+        raise CliUsageError(f"cannot read {input_name} {path}: {exc}") from exc
+
+
 def _json_text(obj: Any) -> str:
     """The canonical on-disk serialization for every JSON file this CLI writes.
 
@@ -644,31 +682,70 @@ def _load_mldsa_kp(path: Path) -> pq.MLDSAKeyPair:
 
 
 def _load_trust_dir(trust_dir: Path) -> verify.TrustStore:
+    """Assemble the trust store a `--trust-dir` names, and refuse out loud.
+
+    Recipe C1. Two properties are worth stating because the shape before this
+    one had neither:
+
+    Nothing is skipped. A file this loader cannot classify used to be passed
+    over with `continue`, so a directory of five manifests and one typo built a
+    store out of four of them and said nothing. "Loaded successfully, minus the
+    part I could not read" is the sentence every refusal below exists to
+    prevent, and each one names the file that caused it.
+
+    The aggregate ceiling is applied to the SIZES, before a single file is
+    read. Per-file bounds do not compose: a thousand files just under one are a
+    thousand times the budget, and a directory is the one CLI input whose size
+    the operator does not see at a glance.
+
+    The store is then built the way every other origin builds one — a document
+    handed to the library as bytes it parses itself. `canonical_bytes` and not
+    `json.dumps`: the members came out of `loads_strict`, which admits integers
+    the canonicaliser refuses, and the refusal for one of those belongs here,
+    while the directory that carried it is still the thing being blamed.
+    """
     if not trust_dir.is_dir():
         raise CliUsageError(f"--trust-dir {trust_dir} is not a directory")
+
+    files = sorted(trust_dir.glob("*.json"))
+    try:
+        total_bytes = sum(path.stat().st_size for path in files)
+    except OSError as exc:
+        raise CliUsageError(f"cannot read --trust-dir {trust_dir}: {exc}") from exc
+    if total_bytes > canon.MAX_ADMISSION_BYTES:
+        raise CliUsageError(
+            f"--trust-dir {trust_dir} exceeds the admission ceiling "
+            f"({total_bytes} bytes over {canon.MAX_ADMISSION_BYTES})"
+        )
 
     by_issuer: dict[str, list[dict[str, Any]]] = {}
     # G2/G3 (attest-versioning.md rev 4): artifact manifests dropped into the
     # same --trust-dir are grouped by their own `(issuer, series)` pair — which the
     # spec requires to equal a receipt's `work.artifact_series` (v0.1 §7.2) —
-    # so `TrustStore.artifact_manifests`/`artifact_manifest_chains` end up
-    # keyed exactly the way `verify()` looks them up. Distinguished from key
-    # manifests by the absence of `keys[]` (a key manifest always carries it;
-    # an artifact manifest never does).
+    # so `artifact_manifests`/`artifact_manifest_chains` end up keyed exactly
+    # the way `verify()` looks them up. Distinguished from key manifests by the
+    # absence of `keys[]` (a key manifest always carries it; an artifact
+    # manifest never does).
     by_issuer_series: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for path in sorted(trust_dir.glob("*.json")):
-        manifest = _read_json(path)
+    for path in files:
+        raw = _read_bounded_bytes(
+            path, max_bytes=canon.MAX_ADMISSION_BYTES, input_name="--trust-dir"
+        )
+        manifest = _loads_strict(raw, path, "--trust-dir")
         if not isinstance(manifest, dict):
-            continue
+            raise CliUsageError(f"{path}: trust material must be a JSON object")
         issuer = manifest.get("issuer")
         if not isinstance(issuer, str):
-            continue
+            raise CliUsageError(f"{path}: trust material must carry a string 'issuer'")
         if "keys" in manifest:
             by_issuer.setdefault(issuer, []).append(manifest)
             continue
         series = manifest.get("series")
-        if isinstance(series, str):
-            by_issuer_series.setdefault((issuer, series), []).append(manifest)
+        if not isinstance(series, str):
+            raise CliUsageError(
+                f"{path}: not a key manifest (no 'keys') nor an artifact manifest (no 'series')"
+            )
+        by_issuer_series.setdefault((issuer, series), []).append(manifest)
 
     manifests_map: dict[str, dict[str, Any]] = {}
     provenance: dict[str, str] = {}
@@ -686,13 +763,20 @@ def _load_trust_dir(trust_dir: Path) -> verify.TrustStore:
         artifact_manifests_map.setdefault(issuer, {})[series] = am_ordered[-1]
         artifact_manifest_chains.setdefault(issuer, {})[series] = am_ordered
 
-    return verify.TrustStore(
-        manifests=manifests_map,
-        provenance=provenance,
-        chains=chains,
-        artifact_manifests=artifact_manifests_map,
-        artifact_manifest_chains=artifact_manifest_chains,
-    )
+    # All five members are present, empty ones included: this loader builds
+    # every one of them, so absence here would mean "the directory held none of
+    # these", which is what an empty member already says.
+    document = {
+        "manifests": manifests_map,
+        "provenance": provenance,
+        "chains": chains,
+        "artifact_manifests": artifact_manifests_map,
+        "artifact_manifest_chains": artifact_manifest_chains,
+    }
+    try:
+        return trust_material.TrustStore.from_bytes(canon.canonical_bytes(document))
+    except (canon.CanonError, trust_material.TrustMaterialError) as exc:
+        raise CliUsageError(f"--trust-dir {trust_dir}: {exc}") from exc
 
 
 def _safe_name(value: str) -> str:
@@ -1137,7 +1221,7 @@ def _cmd_manifest_init(args: argparse.Namespace) -> int:
     manifest = manifests.build_key_manifest(
         args.issuer, 1, args.issued_at, [entry], signing_kp, args.kid
     )
-    if not manifests.verify_key_manifest(manifest):
+    if not manifests.verify_key_manifest(_admit_key_manifest(manifest, "the built manifest")):
         raise CliUsageError(
             "built manifest does not self-verify; check that --seed and --mldsa-key are "
             "a valid matching keypair"
@@ -1157,8 +1241,11 @@ def _cmd_manifest_rotate(args: argparse.Namespace) -> int:
     if args.new_mldsa_pub is not None and _same_file_target(args.new_mldsa_pub, args.out):
         raise CliUsageError("--new-mldsa-pub and --out must be different paths")
 
-    existing = _read_json(args.manifest_in)
-    if not isinstance(existing, dict) or "keys" not in existing:
+    # `data()` re-parses the admitted bytes, so `existing` is a plain dict by
+    # construction and only the `keys` question is left to ask here.
+    existing_manifest = _read_key_manifest(args.manifest_in, "--in")
+    existing = existing_manifest.data()
+    if "keys" not in existing:
         raise CliUsageError(f"{args.manifest_in} is not a key manifest")
 
     retire_kids: list[str] = args.retire_kid or []
@@ -1198,7 +1285,7 @@ def _cmd_manifest_rotate(args: argparse.Namespace) -> int:
     # verifies the ML-DSA leg against the ENTRY's bound pub, so a mismatch here
     # produces a manifest that is cryptographically invalid at exit 0 (2026-07-13
     # adversarial review, Task 8 fix wave, finding 1/critical).
-    signer_entry = manifests.find_key(existing, args.signing_kid)
+    signer_entry = manifests.find_key(existing_manifest, args.signing_kid)
     mldsa_kp: pq.MLDSAKeyPair | None = None
     if signer_entry is not None:
         is_hybrid_signer = "pub_ml_dsa_65" in signer_entry
@@ -1248,7 +1335,9 @@ def _cmd_manifest_rotate(args: argparse.Namespace) -> int:
     # A candidate must be self-consistent AND directly continue the input
     # manifest: the signing key must be active in the input, its validity
     # window must cover this issuance, and the version must advance by one.
-    if not manifests.check_continuity(existing, manifest):
+    if not manifests.check_continuity(
+        existing_manifest, _admit_key_manifest(manifest, "the rotated manifest")
+    ):
         raise CliUsageError(
             "rotation does not continue the input manifest: the signing key must be active "
             "in it and the version must increment by one"
@@ -1273,8 +1362,9 @@ def _cmd_manifest_artifacts(args: argparse.Namespace) -> int:
     if args.mldsa_key is not None and _same_file_target(args.mldsa_key, args.out):
         raise CliUsageError("--mldsa-key and --out must be different paths")
 
-    key_manifest = _read_json(args.manifest_in)
-    if not isinstance(key_manifest, dict) or "keys" not in key_manifest:
+    signing_manifest = _read_key_manifest(args.manifest_in, "--in")
+    key_manifest = signing_manifest.data()
+    if "keys" not in key_manifest:
         raise CliUsageError(f"{args.manifest_in} is not a key manifest")
     artifacts = _read_json(args.artifacts)
     if not isinstance(artifacts, list):
@@ -1285,7 +1375,7 @@ def _cmd_manifest_artifacts(args: argparse.Namespace) -> int:
     # requires the manifest_signature shape to match "pub_ml_dsa_65" in the
     # entry, so any mismatch would otherwise create an invalid artifact
     # manifest at exit 0.
-    signer_entry = manifests.find_key(key_manifest, args.signing_kid)
+    signer_entry = manifests.find_key(signing_manifest, args.signing_kid)
     if signer_entry is None:
         raise CliUsageError(f"signing key {args.signing_kid!r} is not in {args.manifest_in}")
     is_hybrid_signer = "pub_ml_dsa_65" in signer_entry
@@ -1323,7 +1413,7 @@ def _cmd_manifest_artifacts(args: argparse.Namespace) -> int:
         args.signing_kid,
         manifest_version=args.manifest_version,
     )
-    if not manifests.verify_artifact_manifest(manifest, key_manifest):
+    if not manifests.verify_artifact_manifest(manifest, signing_manifest):
         raise CliUsageError(
             "built artifact manifest does not self-verify against --in; check that "
             "--signing-seed, --mldsa-key, issuer, signer status, and released-at match it"
@@ -1631,22 +1721,29 @@ def _cmd_revoke(args: argparse.Namespace) -> int:
             f"--revoked-at must be an ISO-8601 UTC instant spelled YYYY-MM-DDTHH:MM:SSZ: {exc}"
         ) from exc
 
-    manifest = _read_strict_json(
+    # The published ceiling for this input stays: the bytes are bounded first,
+    # and only then handed to the library as the document they are.
+    raw_manifest = _read_bounded_bytes(
         args.manifest, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--manifest"
     )
-    if not isinstance(manifest, dict) or not isinstance(manifest.get("keys"), list):
+    try:
+        key_manifest = trust_material.KeyManifest.from_bytes(raw_manifest)
+    except trust_material.TrustMaterialError as exc:
+        raise CliUsageError(f"cannot read --manifest {args.manifest}: {exc}") from exc
+    manifest = key_manifest.data()
+    if not isinstance(manifest.get("keys"), list):
         raise CliUsageError(f"{args.manifest} must contain a key manifest with a 'keys' array")
     if manifest.get("issuer") != issuer_id:
         raise CliUsageError(
             f"{args.manifest} is issued by {manifest.get('issuer')!r}, not by the receipt's "
             f"issuer {issuer_id!r}"
         )
-    if not manifests.verify_key_manifest(manifest):
+    if not manifests.verify_key_manifest(key_manifest):
         raise CliUsageError(f"{args.manifest} does not verify against its own listed keys")
 
     # Hybrid detection reads the manifest ENTRY, exactly as `manifest rotate`
     # does: the key material decides which legs a signature owes, never a flag.
-    entry = manifests.find_key(manifest, args.kid)
+    entry = manifests.find_key(key_manifest, args.kid)
     if entry is None:
         raise CliUsageError(f"--kid {args.kid!r} is not present in {args.manifest}")
     is_hybrid = "pub_ml_dsa_65" in entry
@@ -1685,11 +1782,18 @@ def _cmd_revoke(args: argparse.Namespace) -> int:
     # copy of the rule: a signer that is not `active`, a signer whose validity
     # window does not cover `revoked_at`, a `revoked_at` past the refund window,
     # and a receipt that does not verify against the manifest given.
-    result = verify.verify(
-        envelope_bytes,
-        verify.TrustStore(manifests={issuer_id: manifest}, provenance={issuer_id: "bundle"}),
-        [record],
-    )
+    # Recipe C2: the store this check runs against is built the way every other
+    # origin builds one -- a document handed over as bytes, with `chains`
+    # absent because a single `--manifest` carries no rotation history.
+    try:
+        trust_store = trust_material.TrustStore.from_bytes(
+            canon.canonical_bytes(
+                {"manifests": {issuer_id: manifest}, "provenance": {issuer_id: _PROVENANCE_BUNDLE}}
+            )
+        )
+    except (canon.CanonError, trust_material.TrustMaterialError) as exc:
+        raise CliUsageError(f"{args.manifest} is not readable trust material: {exc}") from exc
+    result = verify.verify(envelope_bytes, trust_store, [record])
     if result.revocation != "revoked":
         raise CliUsageError(
             "the verifier would not honor this record: "
@@ -1834,13 +1938,19 @@ def _cmd_revocation_view(args: argparse.Namespace) -> int:
         inputs.append(("--manifest", args.manifest))
     _reject_output_aliases(args.out, inputs)
 
-    key_manifest = None
+    # The manifest is TRUSTED MATERIAL, so it enters as bytes the library parses
+    # itself; the records beside it are EVIDENCE and keep their own rail. The
+    # published ceiling for this input is applied first, then the document is
+    # handed over whole.
+    key_manifest: trust_material.KeyManifest | None = None
     if args.manifest is not None:
-        key_manifest = _read_strict_json(
+        raw_manifest = _read_bounded_bytes(
             args.manifest, max_bytes=_MAX_STAGE2_INPUT_BYTES["json"], input_name="--manifest"
         )
-        if not isinstance(key_manifest, dict):
-            raise CliUsageError(f"--manifest {args.manifest} must contain a JSON object")
+        try:
+            key_manifest = trust_material.KeyManifest.from_bytes(raw_manifest)
+        except trust_material.TrustMaterialError as exc:
+            raise CliUsageError(f"cannot read --manifest {args.manifest}: {exc}") from exc
     records = [*_read_appended_view(args.append), *_read_view_inputs(args.record, "--record")]
 
     view = _built_view(lambda: views.build_revocation_view(records, key_manifest))
@@ -1932,6 +2042,28 @@ def _cmd_manifest_compromise_view(args: argparse.Namespace) -> int:
             f"--trusted-manifest {args.trusted_manifest} must contain a JSON object"
         )
     chain = _read_view_inputs(args.chain, "--chain") or None
+
+    # Recipe C4. `claim_capabilities` now SELECTS the trusted manifest and its
+    # chain out of one snapshot instead of taking them as two arguments, which
+    # is what closes the gap the old signature left open: a manifest from one
+    # issuer and a chain from another could not be told apart. The selector is
+    # the issuer the manifest declares, so it is checked HERE -- the refusal
+    # names the flag that carried the file, which the library cannot do.
+    trusted_issuer = trusted_manifest.get("issuer")
+    if not isinstance(trusted_issuer, str):
+        raise CliUsageError(
+            f"--trusted-manifest {args.trusted_manifest} must carry a string 'issuer'"
+        )
+    store_document: dict[str, Any] = {
+        "manifests": {trusted_issuer: trusted_manifest},
+        "provenance": {trusted_issuer: _PROVENANCE_BUNDLE},
+    }
+    if chain is not None:
+        store_document["chains"] = {trusted_issuer: chain}
+    try:
+        trusted_store = trust_material.TrustStore.from_bytes(canon.canonical_bytes(store_document))
+    except (canon.CanonError, trust_material.TrustMaterialError) as exc:
+        raise CliUsageError(f"--trusted-manifest and --chain are not readable: {exc}") from exc
     declarations = _read_view_inputs(args.manifest, "--manifest")
     evidence = _read_view_inputs(args.evidence, "--evidence")
     claims: list[Any] = [
@@ -1949,7 +2081,7 @@ def _cmd_manifest_compromise_view(args: argparse.Namespace) -> int:
     # trust material yields no classification at all, and a view published with
     # an unanswerable report is a view whose operator was told nothing.
     capabilities = [
-        _claim_capabilities(claim, trusted_manifest, chain, log_keys, anchor_policy)
+        _claim_capabilities(claim, trusted_store, trusted_issuer, log_keys, anchor_policy)
         for claim in view
     ]
 
@@ -2002,14 +2134,14 @@ def _cmd_manifest_compromise_view(args: argparse.Namespace) -> int:
 
 def _claim_capabilities(
     claim: dict[str, Any],
-    trusted_manifest: dict[str, Any],
-    chain: list[Any] | None,
+    trusted_store: verify.TrustStore,
+    issuer_id: str,
     log_keys: list[tlog.LogKey] | None,
     anchor_policy: anchor.AnchorPolicy | None,
 ) -> dict[str, dict[str, str]]:
     try:
         return views.claim_capabilities(
-            claim, trusted_manifest, chain, log_keys=log_keys, anchor_policy=anchor_policy
+            claim, trusted_store, issuer_id, log_keys=log_keys, anchor_policy=anchor_policy
         )
     except views.ViewError as exc:
         raise CliUsageError(str(exc)) from exc
@@ -2624,7 +2756,7 @@ def _key_manifest_log_entry(document: dict[str, Any], path: Path) -> dict[str, A
     refuses a claim whose manifest does not self-verify, so an entry logged for
     one is an entry no compromise claim could ever be built around.
     """
-    if not manifests.verify_key_manifest(document):
+    if not manifests.verify_key_manifest(_admit_key_manifest(document, str(path))):
         raise CliUsageError(f"{path} does not verify against its own listed keys")
     return views.key_manifest_log_entry(document)
 
@@ -4230,8 +4362,13 @@ def _cmd_import(args: argparse.Namespace) -> int:
     # clause is what keeps re-importing the same bundle idempotent.
     trust_writes: list[tuple[Path, str, _OverwritePlan]] = []
     planned_trust_paths: set[Path] = set()
-    for issuer, chain in imported.trust_store.chains.items():
-        for version_manifest in chain:
+    # Recipe C5: the imported store is a snapshot, so its rotation history is
+    # ASKED for rather than read off an attribute, and every manifest written
+    # to disk is that snapshot's own copy -- `data()` re-parses, so what lands
+    # in the file cannot be something a later reader would disagree about.
+    for issuer in imported.trust_store.issuers():
+        for member in imported.trust_store.chain_for(issuer):
+            version_manifest = member.data()
             version = _trust_manifest_version_for_filename(version_manifest, issuer)
             trust_path = trust_dir / f"{_safe_name(issuer)}.v{version}.json"
             trust_text = _json_text(version_manifest)
@@ -4312,7 +4449,7 @@ def _cmd_import(args: argparse.Namespace) -> int:
         {
             "out_dir": str(args.out_dir),
             "receipts": len(imported.receipts),
-            "issuers": sorted(imported.trust_store.manifests),
+            "issuers": list(imported.trust_store.issuers()),
             "proofs": len(imported.proofs),
         }
     )

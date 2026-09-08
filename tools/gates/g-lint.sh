@@ -34,29 +34,15 @@ gate_expect_rc 0 "ruff format --check: nothing left to reformat"
 
 gate_run "mypy --strict" -- "$MYPY" --strict "${MYPY_ROOTS[@]}"
 
-# STAGED RED until T4b. `cli.py` is the one caller T2 deliberately left behind,
-# so every one of these findings is a consequence of the flip landing in the
-# library while the CLI still hands it dicts. The decision not to silence it --
-# no `type: ignore`, no exclusion of the file, both of which would weaken the
-# gate permanently for a problem two tasks wide -- was taken when T2 was
-# written. What was missing is that the decision lived only in prose: the gate
-# still asked for `rc 0`, so it went red on an exit code and could not tell the
-# declared twenty from a twenty-first appearing somewhere else.
+# The staged red that lived here until T4b is GONE, and deleting it is the
+# point rather than an afterthought: `cli.py` was the one caller T2 left
+# behind, T4b migrated it, and a registration kept past its cause would bless
+# the next twenty findings instead of reporting them.
 #
-# The observable is therefore the SET OF FILES carrying errors, derived from
-# mypy's own output and compared against the one file declared. A finding in
-# any other module fails, and so does mypy going green: at that point T4b has
-# landed and this registration must be deleted rather than left to bless
-# whatever comes after it.
-MYPY_ERR_FILES="$(mktemp)"
-MYPY_ERR_DECLARED="$(mktemp)"
-grep -Eo '^[^ ]+\.py:[0-9]+: error:' <<< "$GATE_OUT" | sed 's/:.*//' | sort -u > "$MYPY_ERR_FILES"
-printf 'src/attest/cli.py\n' > "$MYPY_ERR_DECLARED"
-gate_expect_staged_red 'Found [0-9]+ errors in 1 file' "T4b" \
-  "mypy --strict: findings confined to the un-migrated CLI (D-A3)"
-gate_expect_same_set "$MYPY_ERR_FILES" "$MYPY_ERR_DECLARED" \
-  "every mypy finding is in the one file declared, and in no other"
-rm -f "$MYPY_ERR_FILES" "$MYPY_ERR_DECLARED"
+# What replaces it is the ordinary demand, plus the marker: `rc 0` alone would
+# also be satisfied by a mypy that read nothing, so the count of files checked
+# is asserted below against a set derived from the filesystem.
+gate_expect_rc 0 "mypy --strict: no findings anywhere in the checked roots"
 
 # Derive, right now, how many source files mypy was obligated to have read.
 # This is the "collection could be empty" guard from the family that made
