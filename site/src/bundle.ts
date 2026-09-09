@@ -450,8 +450,18 @@ export function parseBundle(
     // The WHOLE import fails, and only for these two: a manifest the library
     // cannot read is not dropped from the store, and the store does not become
     // one without that issuer, because "imported successfully, minus the part I
-    // could not read" is the sentence this refusal exists to prevent. Anything
-    // else propagates unchanged rather than being relabelled a bundle defect.
+    // could not read" is the sentence this refusal exists to prevent.
+    //
+    // The re-throw is a BACKSTOP and is currently UNREACHABLE, stated here
+    // because this comment used to read as a behaviour that had been measured.
+    // Everything the two calls above can raise is one of these two classes:
+    // `canonicalBytes` raises `CanonError` for every value it will not
+    // serialize, and `parseTrustStore` wraps its own parse and canonicalization
+    // failures in `TrustMaterialError`. No test can therefore tell this line
+    // from its absence -- measured: removing it leaves this file's suite at
+    // 77/77 green -- and it is kept because it costs one comparison and it is
+    // what keeps an unrelated failure from being relabelled a bundle defect if
+    // either call ever grows a third failure mode.
     if (!(e instanceof TrustMaterialError || e instanceof CanonError)) throw e
     throw new BundleError('bundle trust material is not readable: ' + e.message)
   }

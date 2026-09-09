@@ -915,6 +915,58 @@ describe('parseBundle: trust material the library will not admit fails the whole
       ),
     ).not.toThrow()
   })
+
+  it('is refused when the store DOCUMENT is over the admission ceiling, though the member is under it', () => {
+    // The same gap on the other axis §5.2 measures, and this one is reachable
+    // with a WELL-FORMED member. `MAX_ADMISSION_BYTES` is 10_000_000 and it
+    // applies to the store DOCUMENT; a bundle member is bounded only by the
+    // container's own, far larger, floor. So a manifest that canonicalizes on
+    // its own and is admitted as a member still puts the store over the
+    // ceiling, because the importer files it under `manifests` AND under
+    // `chains`.
+    //
+    // Measured on both importers at these sizes: a 4.0 MB member makes an 8.0 MB
+    // document and both accept it; a 5.1 MB member makes a 10.2 MB document and
+    // both refuse it with this same message. The pair is what makes the number a
+    // measurement rather than a comfortable choice, as GAP_DEPTH's positive
+    // control is above.
+    //
+    // The message AND the class, from ONE call. The message alone is not
+    // enough: it comes from the underlying `TrustMaterialError` and survives the
+    // wrapper being removed — measured, with the translation to `BundleError`
+    // deleted this test stayed green while the depth one went red. And the class
+    // alone is not enough either: the depth gap above throws the same wrapper,
+    // so a test asserting only it would pass on THAT branch and never touch this
+    // one. The class is what `intake` dispatches on (`intake.ts:373`): anything
+    // that is not a `BundleError` is re-thrown and reaches the page as a crash
+    // instead of a named refusal.
+    //
+    // `parseBundle` is called ONCE — each call canonicalizes ten megabytes, and
+    // two of them run past the default timeout.
+    const { issuer, km } = realManifest()
+    const big = { ...km, pad: 'x'.repeat(5_100_000) } as unknown as JsonObject
+    expect(() => canonicalBytes(big)).not.toThrow()
+    const zip = utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      [
+        'manifests/big.json',
+        canonicalBytes({
+          issuer,
+          key_manifests: [big],
+          artifact_manifests: [],
+        } as unknown as JsonObject),
+      ],
+      legalEntry(),
+    ])
+    let raised: unknown
+    try {
+      parseBundle(zip)
+    } catch (e) {
+      raised = e
+    }
+    expect(raised).toBeInstanceOf(BundleError)
+    expect((raised as Error).message).toMatch(/trust store exceeds the admission ceiling/)
+  })
 })
 
 // The twin of the reference importer's own outcome-class test
