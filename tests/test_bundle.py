@@ -991,7 +991,12 @@ def test_import_refuses_two_manifest_members_for_one_issuer(tmp_path: Path) -> N
         "duplicate-issuer.attest",
     )
 
-    with pytest.raises(bundle.BundleError, match="one issuer in more than one"):
+    # Exact name/content agreement makes this fail on the first member;
+    # agreeing names for one issuer would instead be duplicate ZIP members.
+    with pytest.raises(
+        bundle.BundleError,
+        match=re.escape("filename issuer 'a' does not match content issuer 'store.example.com'"),
+    ):
         bundle.import_bundle(hostile)
 
 
@@ -1486,6 +1491,20 @@ def test_import_accepts_an_archive_with_a_gap_between_members(tmp_path: Path) ->
     between two members is not a second reading of the file, and refusing one
     would tighten the rule past what the divergence needs."""
     honest = _corpus_bundle(tmp_path, "honest-gap-between-members", "gap.attest")
+    # The container corpus uses h.json for h.example. Keep the gap property,
+    # but make the manifest name sound at the importer boundary (C-244).
+    from tools.gen_container_corpus import Archive, Entry, build
+
+    with zipfile.ZipFile(honest) as archive:
+        entries = [
+            Entry(
+                name=("manifests/h.example.json" if name == "manifests/h.json" else name).encode(),
+                data=archive.read(name),
+                gap_before=7 if index else 0,
+            )
+            for index, name in enumerate(archive.namelist())
+        ]
+    honest.write_bytes(build(Archive(entries=entries)))
     imported = bundle.import_bundle(honest)
     assert len(imported.receipts) == 1
 
@@ -1535,13 +1554,22 @@ def test_import_keeps_an_issuer_named_after_an_object_member(tmp_path: Path) -> 
         "mylibrary",
     )
     hostile = tmp_path / "proto-issuer.attest"
-    blob = canon.dumps({"issuer": "__proto__", "key_manifests": [_key_manifest()]})
+    proto_kid = "__proto__/keys/test#ed25519-1"
+    proto_manifest = manifests.build_key_manifest(
+        "__proto__",
+        1,
+        "2026-01-01T00:00:00Z",
+        [manifests.key_entry(proto_kid, KP.pub, "2026-01-01T00:00:00Z")],
+        KP,
+        proto_kid,
+    )
+    blob = canon.dumps({"issuer": "__proto__", "key_manifests": [proto_manifest]})
     with zipfile.ZipFile(attest_path) as src, zipfile.ZipFile(hostile, "w") as dst:
         for info in src.infolist():
             if info.filename.startswith("manifests/"):
                 continue
             dst.writestr(info.filename, src.read(info.filename))
-        dst.writestr("manifests/attacker.json", blob)
+        dst.writestr("manifests/__proto__.json", blob)
 
     imported = bundle.import_bundle(hostile)
     assert list(imported.trust_store.issuers()) == ["__proto__"]
