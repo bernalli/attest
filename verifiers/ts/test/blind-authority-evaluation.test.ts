@@ -9,6 +9,7 @@ import {
 } from './helpers/grant-builder.js'
 import { canonicalBytes } from '../src/canon.js'
 import { store as parsedStore } from './helpers/trust.js'
+import type { TrustStore } from '../src/trustMaterial.js'
 
 type Authority = 'not_checked' | 'no_publisher_claim' | 'self' | 'authorized' | 'unauthorized' | 'unattested'
 type AuthorityTrust = 'not_checked' | 'verified' | 'unauthenticated_tofu' | 'unverified_rotation' | 'signer_mismatch'
@@ -144,7 +145,7 @@ function normalize(result: AuthorityResult): AuthorityResult {
 
 function expectAuthority(
   inputPayload: unknown,
-  inputTrustStore: unknown,
+  inputTrustStore: TrustStore,
   authorityView: unknown,
   expected: AuthorityResult,
 ) {
