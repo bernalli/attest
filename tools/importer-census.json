@@ -6,7 +6,7 @@
     "seed": 20260904
   },
   "totals": {
-    "archives": 462,
+    "archives": 485,
     "archive pairs": 1
   },
   "families": {
@@ -175,6 +175,35 @@
         "many-long-names",
         "unread-receipt-name-1200",
         "unread-receipt-name-65535"
+      ]
+    },
+    "manifest-identity": {
+      "unit": "archives",
+      "count": 23,
+      "vectors": [
+        "artifact_manifests-0-case",
+        "artifact_manifests-0-empty",
+        "artifact_manifests-0-mismatch",
+        "artifact_manifests-0-not-string",
+        "artifact_manifests-1-case",
+        "artifact_manifests-1-empty",
+        "artifact_manifests-1-mismatch",
+        "artifact_manifests-1-not-string",
+        "key_manifests-0-case",
+        "key_manifests-0-empty",
+        "key_manifests-0-mismatch",
+        "key_manifests-0-not-string",
+        "key_manifests-1-case",
+        "key_manifests-1-empty",
+        "key_manifests-1-mismatch",
+        "key_manifests-1-not-string",
+        "name-backslash",
+        "name-empty",
+        "name-nul",
+        "name-parent",
+        "name-slash",
+        "wrapper-case",
+        "wrapper-mismatch"
       ]
     },
     "mutation": {
