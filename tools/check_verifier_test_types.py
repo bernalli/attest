@@ -254,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
                 str(PROBE),
                 "--pretty",
                 "false",
+                "--noCheck",
+                "false",
                 "--listFiles",
                 "--noEmit",
                 "--incremental",
