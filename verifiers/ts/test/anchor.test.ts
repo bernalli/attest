@@ -514,7 +514,7 @@ describe('verifyAnchor never throws on malformed evidence', () => {
 
   it.each([[10n ** 5000n, 'huge-bigint'], ['x'.repeat(100_000), 'huge-string']])(
     'safely renders a hostile unknown kind (%s)',
-    (hostileKind) => {
+    (hostileKind, _label) => {
       const verdict = verifyAnchor(evidence([{ kind: hostileKind }]), checkpoint(), policy())
       expect(verdict.anchored).toBe(false)
       expect(verdict.warnings[0]!.startsWith('proof[0]: unknown proof kind ')).toBe(true)
