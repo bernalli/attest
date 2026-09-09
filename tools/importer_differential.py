@@ -266,7 +266,7 @@ def sound_entries() -> list[Entry]:
     text its terms are bound to, and one evidence member. Every vector below is
     this archive with one thing done to it, so a refusal is attributable."""
     return [
-        Entry(name=f"{MANIFESTS_PREFIX}h{MANIFESTS_SUFFIX}".encode(), data=_manifest()),
+        Entry(name=f"{MANIFESTS_PREFIX}{ISSUER}{MANIFESTS_SUFFIX}".encode(), data=_manifest()),
         Entry(name=_receipt_name(), data=_receipt()),
         Entry(name=_legal_name(), data=LEGAL_TEXT),
         Entry(name=_proof_name(), data=_proof()),
@@ -401,7 +401,7 @@ def family_duplicate_names() -> list[Vector]:
         ("receipt", Entry(name=_receipt_name(), data=_receipt())),
         (
             "manifest",
-            Entry(name=f"{MANIFESTS_PREFIX}h{MANIFESTS_SUFFIX}".encode(), data=_manifest()),
+            Entry(name=f"{MANIFESTS_PREFIX}{ISSUER}{MANIFESTS_SUFFIX}".encode(), data=_manifest()),
         ),
         ("legal", Entry(name=_legal_name(), data=LEGAL_TEXT)),
         ("proof", Entry(name=_proof_name(), data=_proof())),
