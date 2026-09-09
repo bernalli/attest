@@ -961,8 +961,8 @@ def test_import_refuses_colliding_trust_store_paths_from_one_bundle(
         tmp_path,
         "collision",
         [
-            ("slash", _manifest_blob("store/example", 1)),
-            ("underscore", _manifest_blob("store_example", 1)),
+            ("store:example", _manifest_blob("store:example", 1)),
+            ("store_example", _manifest_blob("store_example", 1)),
         ],
     )
     out_dir = tmp_path / "imported"
@@ -983,7 +983,9 @@ def test_import_rejects_invalid_manifest_version_before_building_trust_path(
     tmp_path: Path, capsys: CapSys, manifest_version: object
 ) -> None:
     bundle_path = _raw_manifest_bundle(
-        tmp_path, "bad-version", [("manifest", _manifest_blob("store.example", manifest_version))]
+        tmp_path,
+        "bad-version",
+        [("store.example", _manifest_blob("store.example", manifest_version))],
     )
     out_dir = tmp_path / "imported"
     capsys.readouterr()

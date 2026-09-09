@@ -9,19 +9,25 @@ re-testing crypto/schema logic already covered by the library's own suite.
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import hashlib
+import io
 import json
 import os
 import stat
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
 
 from attest import (
     anchor,
+    bundle,
     canon,
     cli,
     keys,
@@ -6838,3 +6844,239 @@ def test_import_still_writes_a_chain_whose_members_all_classify(
     # The directory the importer wrote is one its own loader accepts: that round
     # trip is the property, not the file count.
     assert cli._load_trust_dir(out_dir / "trust").issuers() == ("good.example",)
+
+
+# C-244: exercise the import boundary, including its downstream trust-dir reader.
+_IMPORT_ISSUER = st.text(
+    alphabet=st.characters(exclude_categories=("Cs",), exclude_characters="/\\\0"),
+    min_size=1,
+    max_size=16,
+)
+_IMPORT_PROPERTIES = settings(max_examples=40, deadline=None, derandomize=True)
+
+
+def _import_named_manifest(
+    root: Path,
+    name: str,
+    issuer: object,
+    *,
+    duplicate: bool = False,
+    nested: tuple[str, object, int] | None = None,
+) -> tuple[int, str, str]:
+    rid = "01HZX0000000000000000000AA"
+    path = root / "input.attest"
+    blob: dict[str, Any] = {
+        "issuer": issuer,
+        "key_manifests": [{"issuer": issuer, "manifest_version": 1, "keys": []}],
+    }
+    if nested is not None:
+        collection, nested_issuer, position = nested
+        blob[collection] = [
+            {"issuer": issuer, "manifest_version": v, "keys": []}
+            if collection == "key_manifests"
+            else {"issuer": issuer, "version": v, "series": "series", "artifacts": []}
+            for v in (1, 2)
+        ]
+        blob[collection][position]["issuer"] = nested_issuer
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            f"receipts/{rid}.attest.json", json.dumps({"payload": {"receipt_id": rid}})
+        )
+        # zipfile truncates names at NUL. Preserve that byte in both headers
+        # so the boundary receives the archive the property actually asks for.
+        archive.writestr(name.replace("\0", "?"), json.dumps(blob))
+        if duplicate:
+            archive.writestr(name, json.dumps(blob))
+    if "\0" in name:
+        path.write_bytes(path.read_bytes().replace(name.replace("\0", "?").encode(), name.encode()))
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = cli.main(["import", "--bundle", str(path), "--out-dir", str(root / "out")])
+    return rc, out.getvalue(), err.getvalue()
+
+
+@_IMPORT_PROPERTIES
+@given(file_issuer=_IMPORT_ISSUER, content_issuer=_IMPORT_ISSUER, agree=st.booleans())
+@example(file_issuer="good.example", content_issuer="evil.example", agree=False)
+@example(file_issuer="good.example", content_issuer="good.example", agree=True)
+@example(file_issuer="GOOD.example", content_issuer="good.example", agree=False)
+@example(file_issuer="cafe\u0301.example", content_issuer="caf\u00e9.example", agree=False)
+@example(file_issuer="cafe\u0301.example", content_issuer="cafe\u0301.example", agree=True)
+def test_import_manifest_identity_is_exact_content_equality(
+    file_issuer: str, content_issuer: str, agree: bool
+) -> None:
+    """Renaming alone must never silently change the accepted trust identity.
+
+    Generate both sides independently, plus matching names: an importer that
+    refuses everything cannot satisfy this property. No filesystem or Unicode
+    equivalence can substitute for equality of the actual issuer strings.
+    """
+    issuer = file_issuer if agree else content_issuer
+    name = f"manifests/{file_issuer}.json"
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        rc, out, err = _import_named_manifest(root, name, issuer)
+        if file_issuer == issuer:
+            assert rc == 0, err
+            assert err == ""
+            assert json.loads(out)["issuers"] == [issuer]
+            store = cli._load_trust_dir(root / "out" / "trust")
+            assert store.issuers() == (issuer,)
+            selected = store.manifest_for(issuer)
+            assert selected is not None
+            assert selected.data()["issuer"] == issuer
+        else:
+            assert rc == 2
+            assert err == (
+                f"error: manifest entry {name!r}: filename issuer {file_issuer!r} "
+                f"does not match content issuer {issuer!r}\n"
+            )
+            assert out == ""
+            assert not (root / "out").exists()
+
+
+@_IMPORT_PROPERTIES
+@given(
+    issuer=_IMPORT_ISSUER,
+    suffix=_IMPORT_ISSUER,
+    collection=st.sampled_from(["key_manifests", "artifact_manifests"]),
+    position=st.integers(min_value=0, max_value=1),
+    agree=st.booleans(),
+)
+@example(issuer="good.example", suffix="evil", collection="key_manifests", position=0, agree=False)
+def test_import_manifest_identity_covers_each_declared_content_issuer(
+    issuer: str, suffix: str, collection: str, position: int, agree: bool
+) -> None:
+    nested_issuer = issuer if agree else issuer + suffix
+    name = f"manifests/{issuer}.json"
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        rc, out, err = _import_named_manifest(
+            root, name, issuer, nested=(collection, nested_issuer, position)
+        )
+        if agree:
+            assert rc == 0, err
+            assert err == ""
+            assert json.loads(out)["issuers"] == [issuer]
+            assert cli._load_trust_dir(root / "out" / "trust").issuers() == (issuer,)
+        else:
+            assert rc == 2
+            assert err == (
+                f"error: manifest entry {name!r}: filename issuer {issuer!r} "
+                f"does not match content issuer {nested_issuer!r} in {collection}[{position}]\n"
+            )
+            assert out == ""
+            assert not (root / "out").exists()
+
+
+@_IMPORT_PROPERTIES
+@given(issuer=_IMPORT_ISSUER, separator=st.sampled_from(["/", "\\", "\0"]))
+def test_import_manifest_name_requires_one_nonempty_issuer_component(
+    issuer: str, separator: str
+) -> None:
+    # Even matching content cannot legitimize an empty or multi-component name.
+    for stem in ("", f"sub{separator}{issuer}", f"..{separator}{issuer}"):
+        name = f"manifests/{stem}.json"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rc, out, err = _import_named_manifest(root, name, stem or issuer)
+            assert rc == 2
+            assert err == (
+                f"error: manifest entry {name!r}: expected manifests/<issuer>.json "
+                "with one nonempty issuer component and no path separators or NUL\n"
+            )
+            assert out == ""
+            assert not (root / "out").exists()
+
+
+_IMPORT_NON_STRING = st.recursive(
+    st.one_of(st.none(), st.booleans(), st.integers(min_value=-(2**53) + 1, max_value=2**53 - 1)),
+    lambda children: st.one_of(
+        st.lists(children, max_size=3), st.dictionaries(_IMPORT_ISSUER, children, max_size=3)
+    ),
+    max_leaves=8,
+)
+
+
+@_IMPORT_PROPERTIES
+@given(
+    issuer=st.one_of(_IMPORT_NON_STRING, st.just("")),
+    location=st.sampled_from(["wrapper", "key_manifests", "artifact_manifests"]),
+    position=st.integers(min_value=0, max_value=1),
+)
+def test_import_manifest_content_requires_a_nonempty_string_issuer(
+    issuer: object, location: str, position: int
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        nested = None if location == "wrapper" else (location, issuer, position)
+        rc, out, err = _import_named_manifest(
+            root,
+            "manifests/good.example.json",
+            issuer if nested is None else "good.example",
+            nested=nested,
+        )
+        suffix = "" if nested is None else f" in {location}[{position}]"
+        assert rc == 2
+        assert err == (
+            "error: manifest entry 'manifests/good.example.json': "
+            f"content issuer must be a nonempty string; got {issuer!r}{suffix}\n"
+        )
+        assert out == ""
+        assert not (root / "out").exists()
+
+
+@_IMPORT_PROPERTIES
+@given(issuer=st.floats(allow_nan=False, allow_infinity=False))
+def test_import_manifest_float_issuer_is_refused_by_json_first(issuer: float) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        rc, out, err = _import_named_manifest(root, "manifests/good.example.json", issuer)
+        assert rc == 2
+        assert err == (
+            "error: manifest entry 'manifests/good.example.json' is not valid canonical JSON: "
+            "floats are not allowed in the attest-JCS profile\n"
+        )
+        assert out == ""
+        assert not (root / "out").exists()
+
+
+@pytest.mark.parametrize(
+    ("name", "duplicate"),
+    [
+        ("notes/good.example.json", False),
+        ("manifests/good.example.JSON", False),
+        ("/manifests/good.example.json", False),
+        ("manifests/good.example.json", True),
+    ],
+)
+def test_import_manifest_boundary_is_not_reached_for_unclaimed_or_duplicate_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, duplicate: bool
+) -> None:
+    """Measure the upstream decision, not just an exit code shared by two causes."""
+    manifest_reads: list[str] = []
+    original = bundle._loads
+
+    def recording_loads(data: bytes, *, label: str) -> Any:
+        if label.startswith("manifest entry"):
+            manifest_reads.append(label)
+        return original(data, label=label)
+
+    monkeypatch.setattr(bundle, "_loads", recording_loads)
+    if duplicate:
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            rc, out, err = _import_named_manifest(tmp_path, name, "evil.example", duplicate=True)
+        assert rc == 2
+        assert err == (
+            "error: bundle central directory repeats member name(s) — refusing to import: "
+            f"duplicated members shadow each other: {name!r}\n"
+        )
+        assert out == ""
+        assert not (tmp_path / "out").exists()
+    else:
+        rc, out, err = _import_named_manifest(tmp_path, name, "evil.example")
+        assert rc == 0, err
+        assert err == ""
+        assert json.loads(out)["issuers"] == []
+        assert not (tmp_path / "out" / "trust").exists()
+    assert manifest_reads == []

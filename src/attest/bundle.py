@@ -28,7 +28,9 @@ Two files come out of `export()`:
 `import_bundle()` to rely on): one JSON object per issuer,
 `{"issuer": ..., "key_manifests": [...], "artifact_manifests": [...]}`, each
 list sorted ascending by its own version field
-(`manifest_version`/`version`). `import_bundle()` treats the
+(`manifest_version`/`version`). The filename must agree exactly with the
+nonempty content issuer, without case folding or Unicode normalization;
+only the content issuer is used to build the imported store. `import_bundle()` treats the
 highest-`manifest_version` entry as the issuer's current key manifest
 (`TrustStore.manifests`) and the full sorted list as its rotation history
 (`TrustStore.chains`) — every issuer found in the bundle is trusted with
@@ -844,6 +846,12 @@ def import_bundle(
                 seen_receipt_ids.add(receipt_id)
                 receipts.append(envelope)
             elif filename.startswith("manifests/") and filename.endswith(".json"):
+                filename_issuer = filename[len("manifests/") : -len(".json")]
+                if not filename_issuer or any(c in filename_issuer for c in ("/", "\\", "\0")):
+                    raise BundleError(
+                        f"manifest entry {filename!r}: expected manifests/<issuer>.json "
+                        "with one nonempty issuer component and no path separators or NUL"
+                    )
                 blob = _loads(
                     _read(buf, members[filename], budget),
                     label=f"manifest entry {filename!r}",
@@ -852,16 +860,47 @@ def import_bundle(
                 # repo's exporter: a member that is not an object, a
                 # collection that is not an array, an entry that is not an
                 # object. Each is a bundle this importer has nothing to say
-                # about, so it is skipped exactly as an unreadable issuer
-                # already was — never an AttributeError or a TypeError from
+                # about, so it is skipped — never an AttributeError or a TypeError from
                 # the machinery, which names the wrong culprit.
                 if not isinstance(blob, dict):
                     continue
                 issuer = blob.get("issuer")
-                if not isinstance(issuer, str):
-                    continue
-                if issuer in key_manifests_by_issuer:
-                    raise BundleError("bundle lists one issuer in more than one manifest member")
+                if not isinstance(issuer, str) or not issuer:
+                    raise BundleError(
+                        f"manifest entry {filename!r}: content issuer must be a nonempty string; "
+                        f"got {issuer!r}"
+                    )
+                # A name is unsigned metadata: it can reject an ambiguous
+                # bundle, but must never supply the identity used below.
+                # Exact agreement plus the container's unique-name check also
+                # prevents two members from declaring the same issuer.
+                if filename_issuer != issuer:
+                    raise BundleError(
+                        f"manifest entry {filename!r}: filename issuer {filename_issuer!r} "
+                        f"does not match content issuer {issuer!r}"
+                    )
+                # The grouping wrapper is not signed either. Check every
+                # issuer declared by the documents it carries, including old
+                # versions: these are the identities a later loader reads.
+                for collection in ("key_manifests", "artifact_manifests"):
+                    entries = blob.get(collection)
+                    if not isinstance(entries, list):
+                        continue
+                    for index, entry in enumerate(entries):
+                        if not isinstance(entry, dict) or "issuer" not in entry:
+                            continue  # retain the existing classification of unshaped entries
+                        content_issuer = entry["issuer"]
+                        if not isinstance(content_issuer, str) or not content_issuer:
+                            raise BundleError(
+                                f"manifest entry {filename!r}: content issuer must be a nonempty "
+                                f"string; got {content_issuer!r} in {collection}[{index}]"
+                            )
+                        if content_issuer != issuer:
+                            raise BundleError(
+                                f"manifest entry {filename!r}: filename issuer {filename_issuer!r} "
+                                f"does not match content issuer {content_issuer!r} "
+                                f"in {collection}[{index}]"
+                            )
                 raw_key_manifests = blob.get("key_manifests")
                 key_manifests_by_issuer[issuer] = (
                     [item for item in raw_key_manifests if isinstance(item, dict)]

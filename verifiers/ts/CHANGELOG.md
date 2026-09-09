@@ -4,6 +4,23 @@ All notable changes to `attest-verifier` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Bundle import now requires a `manifests/<issuer>.json` name to contain one
+  nonempty issuer component (no slash, backslash or NUL). For object-shaped
+  wrappers, that component must agree exactly with the content issuer, including
+  every issuer declared in its key and artifact manifests. Missing, empty or
+  non-string wrapper issuers and empty or non-string declared nested issuers are
+  refused. Non-object bodies, non-array collections and absent nested issuer
+  fields keep their previous handling. Neither case folding nor Unicode
+  normalization is applied. The member name and grouping wrapper are
+  unsigned metadata: they can expose a conflict, but cannot decide identity or
+  confer trust. Imported identity still comes from the content. Bundles made by
+  other tools must follow the same naming convention as the exporter. Python
+  import and the site's TypeScript `parseBundle`/`intake` enforce the same rule.
+
 ## [0.9.5] — 2026-09-09
 
 ### Fixed

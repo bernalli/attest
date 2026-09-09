@@ -266,7 +266,7 @@ def sound_entries() -> list[Entry]:
     text its terms are bound to, and one evidence member. Every vector below is
     this archive with one thing done to it, so a refusal is attributable."""
     return [
-        Entry(name=f"{MANIFESTS_PREFIX}h{MANIFESTS_SUFFIX}".encode(), data=_manifest()),
+        Entry(name=f"{MANIFESTS_PREFIX}{ISSUER}{MANIFESTS_SUFFIX}".encode(), data=_manifest()),
         Entry(name=_receipt_name(), data=_receipt()),
         Entry(name=_legal_name(), data=LEGAL_TEXT),
         Entry(name=_proof_name(), data=_proof()),
@@ -401,7 +401,7 @@ def family_duplicate_names() -> list[Vector]:
         ("receipt", Entry(name=_receipt_name(), data=_receipt())),
         (
             "manifest",
-            Entry(name=f"{MANIFESTS_PREFIX}h{MANIFESTS_SUFFIX}".encode(), data=_manifest()),
+            Entry(name=f"{MANIFESTS_PREFIX}{ISSUER}{MANIFESTS_SUFFIX}".encode(), data=_manifest()),
         ),
         ("legal", Entry(name=_legal_name(), data=LEGAL_TEXT)),
         ("proof", Entry(name=_proof_name(), data=_proof())),
@@ -967,6 +967,73 @@ def family_no_receipts() -> list[Vector]:
     return vectors
 
 
+def family_manifest_identity() -> list[Vector]:
+    """The unsigned member NAME against every issuer the content declares.
+
+    `sound_entries()` names the manifest after ISSUER, so each vector below is
+    that archive with exactly one side moved. Written out from the naming rule
+    in the specification, never read back from either importer."""
+    vectors: list[Vector] = []
+    # The CONTENT names the malformed stem exactly, so the mismatch rule cannot
+    # fire: only a reader that judges the name's SHAPE refuses these. With the
+    # content left at ISSUER instead, every vector here would be refused for
+    # disagreeing and would prove the wrong rule.
+    for label, stem in (
+        ("empty", ""),
+        ("slash", f"sub/{ISSUER}"),
+        ("backslash", f"sub\\{ISSUER}"),
+        ("nul", f"sub\0{ISSUER}"),
+        ("parent", f"../{ISSUER}"),
+    ):
+        entries = sound_entries()
+        entries[0] = replace(
+            entries[0],
+            name=f"{MANIFESTS_PREFIX}{stem}{MANIFESTS_SUFFIX}".encode(),
+            data=_json_bytes({"issuer": stem, "key_manifests": []}),
+        )
+        vectors.append(_vector("manifest-identity", f"name-{label}", entries))
+    for label, named in (("mismatch", "other.example"), ("case", ISSUER.upper())):
+        entries = sound_entries()
+        entries[0] = replace(
+            entries[0],
+            name=f"{MANIFESTS_PREFIX}{named}{MANIFESTS_SUFFIX}".encode(),
+        )
+        vectors.append(_vector("manifest-identity", f"wrapper-{label}", entries))
+    for collection in ("key_manifests", "artifact_manifests"):
+        for position in (0, 1):
+            for label, value in (
+                ("mismatch", "other.example"),
+                ("case", ISSUER.upper()),
+                ("empty", ""),
+                ("not-string", 7),
+            ):
+                blob: dict[str, Any] = {
+                    "issuer": ISSUER,
+                    collection: [
+                        {
+                            "issuer": ISSUER,
+                            "manifest_version": version,
+                            "version": version,
+                            "series": "s",
+                            "keys": [],
+                            "artifacts": [],
+                        }
+                        for version in (1, 2)
+                    ],
+                }
+                blob[collection][position]["issuer"] = value
+                entries = sound_entries()
+                entries[0] = replace(entries[0], data=_json_bytes(blob))
+                vectors.append(
+                    _vector(
+                        "manifest-identity",
+                        f"{collection}-{position}-{label}",
+                        entries,
+                    )
+                )
+    return vectors
+
+
 DETERMINISTIC_FAMILIES: dict[str, Callable[[], list[Vector]]] = {
     "baseline": family_baseline,
     "duplicate-names": family_duplicate_names,
@@ -976,6 +1043,7 @@ DETERMINISTIC_FAMILIES: dict[str, Callable[[], list[Vector]]] = {
     "truncation": family_truncation,
     "central-order": family_central_order,
     "json-shape": family_json_shape,
+    "manifest-identity": family_manifest_identity,
     "duplicate-json-keys": family_duplicate_json_keys,
     "out-of-range": family_out_of_range,
     "semantic-duplicates": family_semantic_duplicates,

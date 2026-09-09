@@ -119,6 +119,11 @@ const MAX_QUOTED_MEMBER_CHARS = 60
 // diagnostic renderer: one rule, so the two cannot drift apart at the first
 // correction. This caller's only job is the in-band quoting and the cap.
 const quoted = (name: string): string => `"${neutralized(name, MAX_QUOTED_MEMBER_CHARS)}"`
+// The offending value, the way the reference importer names it. Never
+// JSON.stringify: `loadsStrict` yields bigint for integers and that throws,
+// which would turn a clean refusal into a crash on the commonest wrong type.
+const shown = (v: unknown): string =>
+  typeof v === 'string' ? quoted(v) : typeof v === 'bigint' ? String(v) : Array.isArray(v) ? 'a list' : v === null ? 'null' : typeof v === 'object' ? 'an object' : String(v)
 
 /** A content-address as it may appear in a message a person reads.
  *
@@ -318,22 +323,57 @@ export function parseBundle(
       receipts.push({ receiptId, bytes: memberBytes })
       payloads.push(payload)
     } else if (name.startsWith('manifests/') && name.endsWith('.json')) {
+      const filenameIssuer = name.slice('manifests/'.length, -'.json'.length)
+      if (!filenameIssuer || /[/\\\0]/.test(filenameIssuer))
+        throw new BundleError(
+          `manifest entry ${quoted(name)}: expected manifests/<issuer>.json ` +
+            'with one nonempty issuer component and no path separators or NUL',
+        )
       let blob: JsonObject | null
       try {
         blob = asObject(loadsStrict(read(member)))
       } catch {
         throw new BundleError(`manifest entry ${quoted(name)} is not valid canonical JSON`)
       }
-      const issuer = blob?.['issuer']
-      if (blob === null || typeof issuer !== 'string') continue // mirror the reference importer: skip unshaped blobs
-      // Duplicate member NAMES are refused by the container reader. Two DISTINCT
-      // members declaring ONE issuer are the same attack a level up, and keeping
-      // the last of them made the key list a receipt is checked against depend on
-      // member order rather than on anything the bundle states. A chain of
-      // versions for one issuer belongs INSIDE a member, under `key_manifests`,
-      // which is the shape the store below is built from.
-      if (keyManifestsByIssuer.has(issuer))
-        throw new BundleError('bundle lists one issuer in more than one manifest member')
+      if (blob === null) continue // mirror Python: non-object blobs contribute no issuer
+      const issuer = blob['issuer']
+      if (typeof issuer !== 'string' || !issuer)
+        throw new BundleError(
+          `manifest entry ${quoted(name)}: content issuer must be a nonempty string; ` +
+            `got ${shown(issuer)}`,
+        )
+      // The unsigned member name can reject an ambiguous bundle, never supply
+      // its trust identity. Compare the actual strings: no case folding or
+      // Unicode normalization. Exact agreement plus unique member names also
+      // prevents distinct members from declaring the same issuer.
+      if (filenameIssuer !== issuer)
+        throw new BundleError(
+          `manifest entry ${quoted(name)}: filename issuer ${quoted(filenameIssuer)} ` +
+            `does not match content issuer ${quoted(issuer)}`,
+        )
+      // The wrapper is unsigned too. Mirror Python for EVERY declared issuer,
+      // including old key versions and artifact manifests the site does not
+      // retain. Non-arrays, non-objects and absent nested issuer fields keep
+      // their existing classification; the trust parser still judges key data.
+      for (const collection of ['key_manifests', 'artifact_manifests']) {
+        const entries = blob[collection]
+        if (!Array.isArray(entries)) continue
+        for (const [index, value] of entries.entries()) {
+          const entry = asObject(value)
+          if (entry === null || !('issuer' in entry)) continue
+          const contentIssuer = entry['issuer']
+          if (typeof contentIssuer !== 'string' || !contentIssuer)
+            throw new BundleError(
+              `manifest entry ${quoted(name)}: content issuer must be a nonempty string; ` +
+                `got ${shown(contentIssuer)} in ${collection}[${index}]`,
+            )
+          if (contentIssuer !== issuer)
+            throw new BundleError(
+              `manifest entry ${quoted(name)}: filename issuer ${quoted(filenameIssuer)} ` +
+                `does not match content issuer ${quoted(contentIssuer)} in ${collection}[${index}]`,
+            )
+        }
+      }
       const raw = blob['key_manifests']
       const kms = Array.isArray(raw) ? raw.map(asObject).filter((m): m is JsonObject => m !== null) : []
       // `loadsStrict` admits integers the canonical profile does not, and the

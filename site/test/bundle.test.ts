@@ -426,7 +426,7 @@ describe('parseBundle: the trust store answers only for issuers the bundle named
     }
     return zipSync({
       ['receipts/01HZX0000000000000000000AA.attest.json']: envelope,
-      ['manifests/attacker.json']: canonicalBytes(blob),
+      ['manifests/__proto__.json']: canonicalBytes(blob),
       [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     })
   }
@@ -508,8 +508,8 @@ describe('parseBundle orders members the way the reference importer does', () =>
 // DISTINCT members that declare one issuer are the same attack a level up: the
 // archive names an issuer twice and the importer keeps whichever it happened to
 // read last, so the key list a receipt is checked against depends on member
-// order rather than on anything the bundle states. The reference importer makes
-// the same refusal, in the same words.
+// order rather than on anything the bundle states. Exact filename/content
+// agreement now refuses the conflicting name before it can claim that issuer.
 describe('parseBundle refuses semantic manifest duplicates', () => {
   const manifestFor = (issuer: string, version: bigint): Uint8Array => {
     const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
@@ -530,7 +530,7 @@ describe('parseBundle refuses semantic manifest duplicates', () => {
       ['manifests/b.json', manifestFor(issuer, 2n)],
       legalEntry(),
     ])
-    expect(() => parseBundle(zip)).toThrow(/one issuer in more than one manifest member/)
+    expect(() => parseBundle(zip)).toThrow(/filename issuer .* does not match content issuer/)
   })
 
   it('still accepts two manifest members that claim different issuers', () => {
@@ -538,8 +538,8 @@ describe('parseBundle refuses semantic manifest duplicates', () => {
     // sellers' key lists is the ordinary shape of a library.
     const zip = utf8Zip([
       [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
-      ['manifests/a.json', manifestFor('store.example.com', 1n)],
-      ['manifests/b.json', manifestFor('other.example.com', 1n)],
+      ['manifests/store.example.com.json', manifestFor('store.example.com', 1n)],
+      ['manifests/other.example.com.json', manifestFor('other.example.com', 1n)],
       legalEntry(),
     ])
     const { trustStore } = parseBundle(zip)
@@ -562,7 +562,7 @@ describe('parseBundle refuses semantic manifest duplicates', () => {
     } as JsonObject)
     const zip = utf8Zip([
       [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
-      ['manifests/only.json', blob],
+      [`manifests/${issuer}.json`, blob],
       legalEntry(),
     ])
     const { trustStore } = parseBundle(zip)
@@ -576,8 +576,8 @@ describe('parseBundle refuses semantic manifest duplicates', () => {
     const issuer = 'store.example.com'
     const zip = utf8Zip([
       [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
-      ['manifests/unshaped.json', canonicalBytes({ issuer: 1n } as unknown as JsonObject)],
-      ['manifests/real.json', manifestFor(issuer, 1n)],
+      ['manifests/unshaped.json', canonicalBytes([])],
+      [`manifests/${issuer}.json`, manifestFor(issuer, 1n)],
       legalEntry(),
     ])
     expect(parseBundle(zip).trustStore.issuers()).toEqual([issuer])
@@ -824,7 +824,7 @@ describe('parseBundle: a manifests/ member that is not shaped like one', () => {
   const withManifestMember = (body: Uint8Array): Uint8Array =>
     utf8Zip([
       [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
-      ['manifests/x.json', body],
+      ['manifests/a.example.json', body],
       legalEntry(),
     ])
 
@@ -833,10 +833,18 @@ describe('parseBundle: a manifests/ member that is not shaped like one', () => {
   })
 
   it.each([
-    ['an array', '[]'],
-    ['a string', '"x"'],
     ['an object with no issuer', '{"key_manifests":[]}'],
     ['an issuer that is not a string', '{"issuer":7,"key_manifests":[]}'],
+    ['an empty issuer', '{"issuer":"","key_manifests":[]}'],
+  ])('refuses %s', (_label, body) => {
+    expect(() => parseBundle(withManifestMember(enc(body)))).toThrow(
+      /content issuer must be a nonempty string/,
+    )
+  })
+
+  it.each([
+    ['an array', '[]'],
+    ['a string', '"x"'],
     ['key_manifests that is not an array', '{"issuer":"a.example","key_manifests":{"a":1}}'],
     ['key_manifests holding a non-object', '{"issuer":"a.example","key_manifests":[1]}'],
     ['no key_manifests at all', '{"issuer":"a.example"}'],
@@ -882,7 +890,7 @@ describe('parseBundle: trust material the library will not admit fails the whole
     } as unknown as JsonObject)
     return utf8Zip([
       [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
-      ['manifests/deep.json', body],
+      [`manifests/${issuer}.json`, body],
       legalEntry(),
     ])
   }
@@ -949,7 +957,7 @@ describe('parseBundle: trust material the library will not admit fails the whole
     const zip = utf8Zip([
       [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
       [
-        'manifests/big.json',
+        `manifests/${issuer}.json`,
         canonicalBytes({
           issuer,
           key_manifests: [big],

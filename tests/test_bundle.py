@@ -991,7 +991,12 @@ def test_import_refuses_two_manifest_members_for_one_issuer(tmp_path: Path) -> N
         "duplicate-issuer.attest",
     )
 
-    with pytest.raises(bundle.BundleError, match="one issuer in more than one"):
+    # Exact name/content agreement makes this fail on the first member;
+    # agreeing names for one issuer would instead be duplicate ZIP members.
+    with pytest.raises(
+        bundle.BundleError,
+        match=re.escape("filename issuer 'a' does not match content issuer 'store.example.com'"),
+    ):
         bundle.import_bundle(hostile)
 
 
@@ -1486,6 +1491,20 @@ def test_import_accepts_an_archive_with_a_gap_between_members(tmp_path: Path) ->
     between two members is not a second reading of the file, and refusing one
     would tighten the rule past what the divergence needs."""
     honest = _corpus_bundle(tmp_path, "honest-gap-between-members", "gap.attest")
+    # The container corpus uses h.json for h.example. Keep the gap property,
+    # but make the manifest name sound at the importer boundary (C-244).
+    from tools.gen_container_corpus import Archive, Entry, build
+
+    with zipfile.ZipFile(honest) as archive:
+        entries = [
+            Entry(
+                name=("manifests/h.example.json" if name == "manifests/h.json" else name).encode(),
+                data=archive.read(name),
+                gap_before=7 if index else 0,
+            )
+            for index, name in enumerate(archive.namelist())
+        ]
+    honest.write_bytes(build(Archive(entries=entries)))
     imported = bundle.import_bundle(honest)
     assert len(imported.receipts) == 1
 
@@ -1535,13 +1554,22 @@ def test_import_keeps_an_issuer_named_after_an_object_member(tmp_path: Path) -> 
         "mylibrary",
     )
     hostile = tmp_path / "proto-issuer.attest"
-    blob = canon.dumps({"issuer": "__proto__", "key_manifests": [_key_manifest()]})
+    proto_kid = "__proto__/keys/test#ed25519-1"
+    proto_manifest = manifests.build_key_manifest(
+        "__proto__",
+        1,
+        "2026-01-01T00:00:00Z",
+        [manifests.key_entry(proto_kid, KP.pub, "2026-01-01T00:00:00Z")],
+        KP,
+        proto_kid,
+    )
+    blob = canon.dumps({"issuer": "__proto__", "key_manifests": [proto_manifest]})
     with zipfile.ZipFile(attest_path) as src, zipfile.ZipFile(hostile, "w") as dst:
         for info in src.infolist():
             if info.filename.startswith("manifests/"):
                 continue
             dst.writestr(info.filename, src.read(info.filename))
-        dst.writestr("manifests/attacker.json", blob)
+        dst.writestr("manifests/__proto__.json", blob)
 
     imported = bundle.import_bundle(hostile)
     assert list(imported.trust_store.issuers()) == ["__proto__"]
@@ -1946,3 +1974,61 @@ def test_a_container_over_the_bound_is_refused_without_being_copied(
     monkeypatch.setattr(bundle.tempfile, "TemporaryFile", no_copies)
     with pytest.raises(bundle.BundleTooLargeError, match="will copy in order to read it"):
         bundle.import_bundle(oversized, max_container_bytes=1024)
+
+
+def _identity_bundle(tmp_path: Path, name: str, blob: object) -> Path:
+    """One receipt and one manifest member, named exactly as asked."""
+    path = tmp_path / "identity.attest"
+    rid = "01HZX0000000000000000000AA"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            f"receipts/{rid}.attest.json", json.dumps({"payload": {"receipt_id": rid}})
+        )
+        archive.writestr(name, json.dumps(blob))
+    return path
+
+
+@pytest.mark.parametrize(
+    ("name", "blob", "message"),
+    [
+        (
+            "manifests/sub/a.example.json",
+            {"issuer": "sub/a.example", "key_manifests": []},
+            "expected manifests/<issuer>.json",
+        ),
+        (
+            "manifests/a.example.json",
+            {"issuer": "a.example", "key_manifests": [{"issuer": "evil.example"}]},
+            "does not match content issuer 'evil.example' in key_manifests[0]",
+        ),
+        (
+            "manifests/a.example.json",
+            {"issuer": "a.example", "artifact_manifests": [{"issuer": ""}]},
+            "content issuer must be a nonempty string; got '' in artifact_manifests[0]",
+        ),
+        (
+            "manifests/a.example.json",
+            {"issuer": "", "key_manifests": []},
+            "content issuer must be a nonempty string; got ''",
+        ),
+        (
+            "manifests/a.example.json",
+            {"issuer": 7, "key_manifests": []},
+            "content issuer must be a nonempty string; got 7",
+        ),
+    ],
+)
+def test_import_identity_refusals_are_bundle_errors(
+    tmp_path: Path, name: str, blob: object, message: str
+) -> None:
+    """The CLI dispatches on the CLASS and shares exit 2 across eight of them,
+    so neither the exit code nor the printed text can pin which one was raised.
+    A library caller catching BundleError is the contract these refusals owe.
+
+    One case per RAISE SITE this change introduced, not per family: naming the
+    families ("the name's shape", "a declared issuer") hid the wrapper site,
+    which no test in this file pinned. Each case below is the only one that
+    turns red when its own site stops raising BundleError.
+    """
+    with pytest.raises(bundle.BundleError, match=re.escape(message)):
+        bundle.import_bundle(_identity_bundle(tmp_path, name, blob))
