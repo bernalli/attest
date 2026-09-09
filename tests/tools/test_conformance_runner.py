@@ -189,7 +189,7 @@ def test_in_v01_subset_rule(lid: str, expected: bool) -> None:
     assert cr.in_v01_subset(lid) is expected
 
 
-def test_select_subset_v01_is_exactly_66_leaves_of_the_real_corpus() -> None:
+def test_select_subset_v01_is_exactly_67_leaves_of_the_real_corpus() -> None:
     # 53 before the V-L guards (2026-08-26, v0.1 rev 10) added groups
     # 44-manifest-duplicate-kid (3 leaves) and 45-revocation-anchor-status (2),
     # both v0.1 conformance; 58 before the publisher-claim floor (2026-08-26,
@@ -201,12 +201,16 @@ def test_select_subset_v01_is_exactly_66_leaves_of_the_real_corpus() -> None:
     # (V01_EXTRA_GROUPS), one leaf each, both v0.1 conformance; 65 before v0.1
     # rev 18 (2026-09-07, §12.2's unrepresentable-deadline row) added
     # `23-revocation-refund-window/d-unrepresentable-no-matching-record`
-    # (group 23, <= V01_MAX_GROUP), also v0.1 conformance. The name carried the
-    # figure 61 for three corpus growths after it stopped being true; it names
-    # the asserted number again here.
+    # (group 23, <= V01_MAX_GROUP), also v0.1 conformance; 66 before
+    # `41-compromise-cutoff/v-broken-signature-member-still-floors` joined
+    # V01_EXTRA_LEAF_IDS beside `41f`, whose reason applies to it word for word.
+    # The name carried the figure 61 for three corpus growths after it stopped
+    # being true; it names the asserted number again here — and the name is a
+    # sede no search for the figure can reach, since `_` and digits are both
+    # word characters and `\b66\b` never matches inside an identifier.
     leaves = cr.find_leaf_dirs(REAL_VECTORS)
     subset = cr.select_subset(leaves, REAL_VECTORS, "v0.1")
-    assert len(subset) == 66
+    assert len(subset) == 67
 
 
 def test_select_subset_v02_is_the_full_real_corpus() -> None:

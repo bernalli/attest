@@ -76,7 +76,7 @@ describe('the tamper bench actually flips the verdict', () => {
     const t = applyTamper('drop-manifest', before, store())!
     expect(differingOffsets(before, t.envelopeBytes)).toEqual([])
     expect(t.edit).toBeNull()
-    expect(Object.keys(t.trustStore.manifests)).toEqual([])
+    expect(t.trustStore.issuers()).toEqual([])
 
     const run = runVerify(t.envelopeBytes, t.trustStore)
     expect(run.ok).toBe(false)

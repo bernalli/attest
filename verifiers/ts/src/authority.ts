@@ -24,10 +24,9 @@ import {
   verifySignedDocument,
   withinCeiling,
 } from './grant.js'
-import type { TrustStore } from './manifests.js'
-import { materializeTrustStore, materializeKeyManifest } from './trustMaterial.js'
+import { TrustStore, type StoreData, storeData, manifestData, type KeyManifest } from './trustMaterial.js'
 import { verifyKeyManifest } from './manifests.js'
-import { AUTHORITY_WARN } from './messages.js'
+import { AUTHORITY_WARN, ERR } from './messages.js'
 
 export const PERMISSION_ISSUE = 'issue'
 // Registered reserved and deliberately unreachable: delegation chains are out
@@ -148,30 +147,29 @@ export function authorizationHash(document: JsonObject): string {
  * belongs to section 20.4 evaluation. Fails closed and never throws.
  *
  * `keyManifest` is MATERIALIZED here, at the public boundary, before
- * `verifySignedDocument` reads `entry['status']`/`entry['valid_from']`/
- * `entry['valid_to']` off it — a plain property read a getter or a `Proxy`
- * trap on the caller's own object can steer, the same class grant.ts's
- * `verifyGrantSignature` and revocation.ts's `verifyRecordSignature` close for
- * their own manifest argument. In-module callers that already hold a
- * materialized manifest use `verifyAuthorizationSignatureMaterialized`, so the
- * boundary is one pass per public call and never one per candidate in a
- * loop. */
-export function verifyAuthorizationSignature(document: unknown, keyManifest: JsonObject): boolean {
+ * `keyManifest` is a HANDLE, and its tree is taken once here. It used to be the
+ * caller's own object: `verifySignedDocument` reads `entry['status']`/
+ * `entry['valid_from']`/`entry['valid_to']` off it, and on a live object those
+ * are plain property reads a getter or a `Proxy` trap can steer — the same
+ * class grant.ts's `verifyGrantSignature` and revocation.ts's
+ * `verifyRecordSignature` close for their own manifest argument. In-module
+ * callers that already hold the tree use `verifyAuthorizationSignatureData`, so
+ * the unwrap is one per public call and never one per candidate in a loop. */
+export function verifyAuthorizationSignature(document: unknown, keyManifest: KeyManifest): boolean {
   try {
-    const materialized = materializeKeyManifest(keyManifest)
-    if (materialized === null) return false
-    return verifyAuthorizationSignatureMaterialized(document, materialized)
+    const data = manifestData(keyManifest)
+    if (data === null) return false
+    return verifyAuthorizationSignatureData(document, data)
   } catch {
     return false
   }
 }
 
-/** `verifyAuthorizationSignature`'s body, over an ALREADY MATERIALIZED
- * `keyManifest`. PRECONDITION: `keyManifest` is the output of
- * `materializeKeyManifest` (or is otherwise known to hold only own data — no
- * getter, no Proxy). Calling this with a raw caller object reopens the class
- * the boundary exists to close. */
-export function verifyAuthorizationSignatureMaterialized(document: unknown, keyManifest: JsonObject): boolean {
+/** `verifyAuthorizationSignature`'s body, over the snapshot TREE.
+ * PRECONDITION: `keyManifest` is a tree obtained from `manifestData`/`storeData`
+ * — never a caller's object. Calling this with a live object reopens the class
+ * the handle exists to close, and nothing here would notice. */
+export function verifyAuthorizationSignatureData(document: unknown, keyManifest: JsonObject): boolean {
   try {
     if (!validAuthorizationShape(document)) return false
     return verifySignedDocument(document, keyManifest, 'issued_at')
@@ -184,16 +182,15 @@ export function verifyAuthorizationSignatureMaterialized(document: unknown, keyM
  * manifest, using the same active-key/window/hybrid AND-rule as its sibling
  * side-documents. Fails closed and never throws.
  *
- * `keyManifest` is materialized ONCE here and BOTH halves — the shape/
- * self-consistency check and the signature check — run against that one
- * reconstruction, never against a second read of the caller's object (mirrors
- * grant.ts's `verifyGrant`/revocation.ts's `verifyRecord`). */
-export function verifyAuthorization(document: unknown, keyManifest: JsonObject): boolean {
+ * The handle's tree is taken ONCE here and BOTH halves — the shape/
+ * self-consistency check and the signature check — run against that one tree
+ * (mirrors grant.ts's `verifyGrant`/revocation.ts's `verifyRecord`). */
+export function verifyAuthorization(document: unknown, keyManifest: KeyManifest): boolean {
   try {
     if (!validAuthorizationShape(document)) return false
-    const materialized = materializeKeyManifest(keyManifest)
-    if (materialized === null) return false
-    return verifyKeyManifest(materialized) && verifyAuthorizationSignatureMaterialized(document, materialized)
+    const data = manifestData(keyManifest)
+    if (data === null) return false
+    return verifyKeyManifest(data) && verifyAuthorizationSignatureData(document, data)
   } catch {
     return false
   }
@@ -405,16 +402,16 @@ function memberEquals(document: unknown, member: string, expected: unknown): boo
  * deduplicating by document hash BEFORE any shape work, so a view padded with
  * copies of one document costs one verification and not one per copy.
  *
- * PRECONDITION: `trustStore` is `evaluateAuthority`'s already-materialized
- * store (its `materializeTrustStore` pass runs before this function is
- * reached), so `manifest` below is already materialized data. Reading it with
- * `verifyAuthorizationSignatureMaterialized` (not the public
+ * PRECONDITION: `store` is the `StoreData` `evaluateAuthority` unwrapped from
+ * its `TrustStore` handle, so `manifest` below is a tree of the snapshot and
+ * never a caller's object. Reading it with
+ * `verifyAuthorizationSignatureData` (not the public
  * `verifyAuthorization`) is what keeps this loop — up to
  * `MAX_AUTHORITY_DOCUMENTS` candidates — from re-materializing the SAME
  * per-signer manifest once per candidate that names it. */
 function admittedAuthorizations(
   authorizations: unknown[],
-  trustStore: TrustStore,
+  store: StoreData,
   publisherId: string,
   authorityTrust: string,
   warnings: string[],
@@ -432,11 +429,11 @@ function admittedAuthorizations(
       continue
     }
     const signer = signerDomain(candidate)
-    const manifest = typeof signer === 'string' ? trustStore.manifests[signer] : undefined
+    const manifest = typeof signer === 'string' ? store.manifests[signer] : undefined
     if (
       manifest === undefined ||
       !verifyKeyManifest(manifest) ||
-      !verifyAuthorizationSignatureMaterialized(candidate, manifest)
+      !verifyAuthorizationSignatureData(candidate, manifest)
     ) {
       appendWarningOnce(warnings, AUTHORITY_WARN.INVALID_IGNORED)
       continue
@@ -604,10 +601,9 @@ export function evaluateAuthority(
     warnings,
   })
   if (authorityView == null) return verdict(AUTHORITY_NOT_CHECKED, AUTHORITY_NOT_CHECKED)
-  // Same boundary, same placement rule, as `evaluateGrant`.
-  const materializedStore = materializeTrustStore(trustStore)
-  if (materializedStore === null) return verdict(AUTHORITY_NOT_CHECKED, AUTHORITY_NOT_CHECKED)
-  trustStore = materializedStore
+  // Same boundary, same placement rule, and the same throw, as `evaluateGrant`.
+  const store = storeData(trustStore)
+  if (store === null) throw new TypeError(ERR.TRUST_STORE_NOT_PARSED)
   // Admitted ONCE, before any member is read; every step below reads the
   // reconstruction and never the caller's object again.
   const view = admitAuthorityView(authorityView)
@@ -636,12 +632,12 @@ export function evaluateAuthority(
   // a domain named by a supplied document's kid -- those are still
   // attacker-supplied bytes here, and keying on them would let a blob that
   // authenticates against nothing pick any domain the verifier happens to know.
-  let authorityTrust = grantTrustLadder(trustStore, publisherId, trustStore.manifests[publisherId])
+  let authorityTrust = grantTrustLadder(store, publisherId, store.manifests[publisherId])
 
   // --- Step 6.
   let admitted: Map<string, Record<string, unknown>>
   ;[admitted, authorityTrust] = admittedAuthorizations(
-    authorizations, trustStore, publisherId, authorityTrust, warnings,
+    authorizations, store, publisherId, authorityTrust, warnings,
   )
 
   // --- Steps 7 and 8.

@@ -21,10 +21,11 @@ import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js'
 import { canonicalBytes, loadsStrict } from '../src/canon.js'
 import type { JsonObject, JsonValue } from '../src/canon.js'
 import { b64uEncode } from '../src/b64u.js'
-import type { TrustStore } from '../src/manifests.js'
+import type { TrustStore } from '../src/trustMaterial.js'
 import type { AnchorPolicy, PinnedHeader } from '../src/anchor.js'
 import { evaluateGrant, grantHash } from '../src/grant.js'
 import { verify, isOk } from '../src/verify.js'
+import { store as parsedStore } from './helpers/trust.js'
 import {
   buildDeclaration,
   buildGrant,
@@ -228,11 +229,11 @@ function trustStoreOf(
   provenance: Record<string, string> = { [PUBLISHER]: 'bundle' },
   chains: Record<string, JsonObject[]> = {},
 ): TrustStore {
-  return {
+  return parsedStore({
     manifests: { [PUBLISHER]: PUB_MANIFEST, [SUCCESSOR]: SUCCESSOR_MANIFEST, ...extraManifests },
     provenance,
     chains,
-  }
+  })
 }
 
 function viewOf(document: JsonObject | null = null, members: Record<string, unknown> = {}): Record<string, unknown> {
@@ -487,7 +488,7 @@ describe('evaluateGrant — step 5: authentication and the domain binding', () =
   })
 
   it('ignores the grant when the publisher manifest cannot be resolved', () => {
-    const trustStore: TrustStore = { manifests: {}, provenance: {} }
+    const trustStore: TrustStore = parsedStore({ manifests: {}, provenance: {} })
 
     expect(evaluate(null, viewOf(), trustStore).grant).toBe('invalid_grant_ignored')
   })
@@ -1081,11 +1082,11 @@ function envelopeBytes(payload: JsonObject): Uint8Array {
 }
 
 function verifyStore(publisherChains: Record<string, JsonObject[]> = {}): TrustStore {
-  return {
+  return parsedStore({
     manifests: { [ISSUER]: ISSUER_MANIFEST, [PUBLISHER]: PUB_MANIFEST, [SUCCESSOR]: SUCCESSOR_MANIFEST },
     provenance: { [ISSUER]: 'tls', [PUBLISHER]: 'bundle' },
     chains: publisherChains,
-  }
+  })
 }
 
 describe('verify() integration — Stage 4 takes NO exception (D6)', () => {

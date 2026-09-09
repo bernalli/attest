@@ -16,6 +16,7 @@ import { classifyRevocation, verifyRecordSignature } from '../src/revocation.js'
 import { MAX_REPRESENTABLE_UNIX_SECONDS } from '../src/dates.js'
 import { RECEIPT_ID_RE } from '../src/ids.js'
 import { REFUND_WINDOW_UNREPRESENTABLE } from '../src/messages.js'
+import { keyManifest as manifestHandle } from './helpers/trust.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 const parse = (m: unknown): JsonObject => loadsStrict(enc(JSON.stringify(m))) as JsonObject
@@ -171,7 +172,7 @@ describe('a revocation record whose receipt_id is not a receipt id', () => {
       const record = signRecord(body, kid1, seed1)
       // The signature itself is genuine — this is the issuer's own active key.
       // Only the shape of the field is wrong, and that alone must stop it.
-      expect(verifyRecordSignature(parse(record), parse(keyManifest))).toBe(false)
+      expect(verifyRecordSignature(parse(record), manifestHandle(parse(keyManifest)))).toBe(false)
     })
   })
 
@@ -183,7 +184,7 @@ describe('a revocation record whose receipt_id is not a receipt id', () => {
       kid1,
       seed1,
     )
-    expect(verifyRecordSignature(parse(record), parse(keyManifest))).toBe(true)
+    expect(verifyRecordSignature(parse(record), manifestHandle(parse(keyManifest)))).toBe(true)
   })
 
   it('a malformed receipt_id cannot set the freshness anchor', () => {

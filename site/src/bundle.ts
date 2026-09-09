@@ -1,4 +1,4 @@
-import { loadsStrict, sha256Hex, canonicalBytes } from 'attest-verifier'
+import { loadsStrict, sha256Hex, canonicalBytes, parseTrustStore, TrustMaterialError, CanonError } from 'attest-verifier'
 import { canonicalMembers, readMember, ReadBudget, ContainerError, MAX_STORED_BYTES } from './container.js'
 import type { Member, ContainerCode } from './container.js'
 import { neutralized } from './untrusted-text.js'
@@ -343,11 +343,13 @@ export function parseBundle(
       // importing on one road and refused on the other is the one thing two
       // importers of one format may not do, whatever either of them decides.
       //
-      // This is the MINIMUM that makes the two agree, not recipe B2 in full:
-      // the store here is still assembled as a plain object rather than handed
-      // to `parseTrustStore`, which lands with the rest of the TypeScript
-      // consumers. `intake` reaches this same function, so the refusal covers
-      // both roads by structure and not by being written twice.
+      // Kept after recipe B2 landed, and not folded into the store's own
+      // refusal: `parseTrustStore` canonicalizes the WHOLE document, so it
+      // refuses the same integer — but names the store member it was in, not
+      // the bundle member it arrived in. This one names `manifest entry
+      // "<name>"`, which is the thing the holder can go and look at. `intake`
+      // reaches this same function, so both roads are covered by structure and
+      // not by being written twice.
       for (const km of kms) {
         try {
           canonicalBytes(km)
@@ -431,5 +433,38 @@ export function parseBundle(
     chains[issuer] = ordered
   }
 
-  return { receipts, trustStore: { manifests, provenance, chains }, proofs, legalTexts }
+  // The parser hands the caller a SNAPSHOT, so it builds the store document
+  // and lets the library parse it — the same door an embedder uses, and the
+  // spelling `bundle.py`'s `import_bundle` already uses (recipe B2 beside B1).
+  // `canonicalBytes` and never `JSON.stringify`: these members came out of
+  // `loadsStrict`, so `manifest_version` is a `bigint` and `JSON.stringify`
+  // would throw on the first real manifest while every hand-made fixture
+  // passed.
+  //
+  // `chains` is always present, as it has always been for an imported bundle,
+  // and ordered by manifest version.
+  let trustStore
+  try {
+    trustStore = parseTrustStore(canonicalBytes({ manifests, provenance, chains }))
+  } catch (e) {
+    // The WHOLE import fails, and only for these two: a manifest the library
+    // cannot read is not dropped from the store, and the store does not become
+    // one without that issuer, because "imported successfully, minus the part I
+    // could not read" is the sentence this refusal exists to prevent.
+    //
+    // The re-throw is a BACKSTOP and is currently UNREACHABLE, stated here
+    // because this comment used to read as a behaviour that had been measured.
+    // Everything the two calls above can raise is one of these two classes:
+    // `canonicalBytes` raises `CanonError` for every value it will not
+    // serialize, and `parseTrustStore` wraps its own parse and canonicalization
+    // failures in `TrustMaterialError`. No test can therefore tell this line
+    // from its absence -- measured: removing it leaves this file's suite at
+    // 77/77 green -- and it is kept because it costs one comparison and it is
+    // what keeps an unrelated failure from being relabelled a bundle defect if
+    // either call ever grows a third failure mode.
+    if (!(e instanceof TrustMaterialError || e instanceof CanonError)) throw e
+    throw new BundleError('bundle trust material is not readable: ' + e.message)
+  }
+
+  return { receipts, trustStore, proofs, legalTexts }
 }

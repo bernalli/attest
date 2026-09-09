@@ -29,6 +29,7 @@ vi.mock('../src/manifests.js', async (importOriginal) => {
 
 import { verifyKeyManifest, manifestSignatureIsAuthentic } from '../src/manifests.js'
 import { classifyRevocation, verifyRecord, verifyRecordSignature } from '../src/revocation.js'
+import { keyManifest as manifestHandle } from './helpers/trust.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 // Every fixture MUST go through loadsStrict so integers arrive as bigint.
@@ -91,7 +92,7 @@ describe('cached manifest self-verify (improvement #17)', () => {
 
   it('verifyRecordSignature accepts a valid record against a pre-verified manifest', () => {
     expect(verifyKeyManifest(keyManifest)).toBe(true) // documented precondition
-    expect(verifyRecordSignature(record(), keyManifest)).toBe(true)
+    expect(verifyRecordSignature(record(), manifestHandle(keyManifest))).toBe(true)
   })
 
   it('verifyRecordSignature rejects an unlisted signer kid', () => {
@@ -102,17 +103,17 @@ describe('cached manifest self-verify (improvement #17)', () => {
         seed1,
       ),
     )
-    expect(verifyRecordSignature(ghost, keyManifest)).toBe(false)
+    expect(verifyRecordSignature(ghost, manifestHandle(keyManifest))).toBe(false)
   })
 
   it('verifyRecordSignature rejects revoked_at before valid_from', () => {
-    expect(verifyRecordSignature(record('2025-12-31T23:59:59Z'), keyManifest)).toBe(false)
+    expect(verifyRecordSignature(record('2025-12-31T23:59:59Z'), manifestHandle(keyManifest))).toBe(false)
   })
 
   it('verifyRecord still requires manifest self-consistency (delegation)', () => {
-    expect(verifyRecord(record(), keyManifest)).toBe(true)
+    expect(verifyRecord(record(), manifestHandle(keyManifest))).toBe(true)
     const tampered = { ...keyManifest, issued_at: '2027-01-01T00:00:00Z' } as JsonObject
-    expect(verifyRecord(record(), tampered)).toBe(false)
+    expect(verifyRecord(record(), manifestHandle(tampered))).toBe(false)
   })
 })
 

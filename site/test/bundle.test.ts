@@ -52,7 +52,7 @@ describe('parseBundle', () => {
     // its members anything at all (v0.1 §14.1 specifies a wildcard), and an
     // attacker will name them something that reads like a verdict.
     expect(parsed.receipts[0].receiptId).toBe('01JZ5PDHT0000G40R40M30E209')
-    expect(parsed.trustStore.provenance[issuer]).toBe('bundle')
+    expect(parsed.trustStore.provenanceFor(issuer)).toBe('bundle')
     const run = runVerify(parsed.receipts[0].bytes, parsed.trustStore)
     expect(run.result.signature).toBe('valid')
     expect(run.result.trust).toBe('unauthenticated_tofu') // never 'verified' from a bundle
@@ -70,9 +70,9 @@ describe('parseBundle', () => {
       [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
     })
     const parsed = parseBundle(zip)
-    expect((parsed.trustStore.manifests[issuer] as JsonObject).manifest_version).toBe(2n)
-    expect(parsed.trustStore.chains?.[issuer]).toHaveLength(2)
-    expect((parsed.trustStore.chains?.[issuer][0] as JsonObject).manifest_version).toBe(1n)
+    expect(parsed.trustStore.manifestFor(issuer)!.data().manifest_version).toBe(2n)
+    expect(parsed.trustStore.chainFor(issuer)).toHaveLength(2)
+    expect(parsed.trustStore.chainFor(issuer)[0]!.data().manifest_version).toBe(1n)
   })
 
   it('rejects a bundle with zero receipts', () => {
@@ -433,9 +433,13 @@ describe('parseBundle: the trust store answers only for issuers the bundle named
 
   it('keeps an issuer named after an object member as an ordinary key', () => {
     const { trustStore } = parseBundle(protoBundle())
-    expect(Object.keys(trustStore.manifests)).toEqual(['__proto__'])
-    expect(Object.keys(trustStore.provenance)).toEqual(['__proto__'])
-    expect(Object.keys(trustStore.chains ?? {})).toEqual(['__proto__'])
+    // `issuers()` for the members a door enumerates, `data()` for the two it
+    // does not: the snapshot's own tree is the only surface that keeps "this
+    // member is absent" apart from "this member is empty", which is the very
+    // distinction a store built by hand used to erase.
+    expect(trustStore.issuers()).toEqual(['__proto__'])
+    expect(Object.keys(trustStore.data().provenance as JsonObject)).toEqual(['__proto__'])
+    expect(Object.keys(trustStore.data().chains as JsonObject)).toEqual(['__proto__'])
   })
 
   it('does not let one manifest stand for an issuer the bundle never named', () => {
@@ -448,9 +452,14 @@ describe('parseBundle: the trust store answers only for issuers the bundle named
     const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
     const real = (d.manifests as JsonObject)[victim] as JsonObject
     const { trustStore } = parseBundle(protoBundle({ [victim]: real }))
-    expect(trustStore.manifests[victim]).toBeUndefined()
-    expect(trustStore.provenance[victim]).toBeUndefined()
-    expect(trustStore.chains?.[victim]).toBeUndefined()
+    // Asked of the DOORS, which is where the answer would have come from: a
+    // manifest reachable through a polluted prototype is one `manifestFor`
+    // hands to the verifier, whatever the tree underneath looks like.
+    expect(trustStore.manifestFor(victim)).toBeNull()
+    expect(trustStore.provenanceFor(victim)).toBeNull()
+    expect(trustStore.chainFor(victim)).toEqual([])
+    // And of the tree, so an empty chain cannot pass for an absent one.
+    expect((trustStore.data().chains as JsonObject)[victim]).toBeUndefined()
   })
 
   it('answers nothing for a name every JavaScript object carries', () => {
@@ -458,9 +467,9 @@ describe('parseBundle: the trust store answers only for issuers the bundle named
     // issuer used to be handed a function where a manifest belongs.
     const { zip } = sampleZip()
     const { trustStore, proofs } = parseBundle(zip)
-    expect(trustStore.manifests['toString']).toBeUndefined()
-    expect(trustStore.provenance['toString']).toBeUndefined()
-    expect(trustStore.chains?.['toString']).toBeUndefined()
+    expect(trustStore.manifestFor('toString')).toBeNull()
+    expect(trustStore.provenanceFor('toString')).toBeNull()
+    expect(trustStore.chainFor('toString')).toEqual([])
     expect(proofs['toString']).toBeUndefined()
   })
 })
@@ -534,10 +543,9 @@ describe('parseBundle refuses semantic manifest duplicates', () => {
       legalEntry(),
     ])
     const { trustStore } = parseBundle(zip)
-    expect(Object.keys(trustStore.manifests).sort()).toEqual([
-      'other.example.com',
-      'store.example.com',
-    ])
+    // `issuers()` is already in the order the signed bytes put them in, so a
+    // `sort()` here would be a second ordering rule on top of the library's.
+    expect(trustStore.issuers()).toEqual(['other.example.com', 'store.example.com'])
   })
 
   it('lets one member carry an issuer twice in its own key_manifests', () => {
@@ -558,8 +566,8 @@ describe('parseBundle refuses semantic manifest duplicates', () => {
       legalEntry(),
     ])
     const { trustStore } = parseBundle(zip)
-    expect((trustStore.manifests[issuer] as JsonObject)['manifest_version']).toBe(2n)
-    expect(trustStore.chains?.[issuer]).toHaveLength(2)
+    expect(trustStore.manifestFor(issuer)!.data()['manifest_version']).toBe(2n)
+    expect(trustStore.chainFor(issuer)).toHaveLength(2)
   })
 
   it('does not count a member it skips as a claim on an issuer', () => {
@@ -572,7 +580,7 @@ describe('parseBundle refuses semantic manifest duplicates', () => {
       ['manifests/real.json', manifestFor(issuer, 1n)],
       legalEntry(),
     ])
-    expect(Object.keys(parseBundle(zip).trustStore.manifests)).toEqual([issuer])
+    expect(parseBundle(zip).trustStore.issuers()).toEqual([issuer])
   })
 })
 
@@ -834,8 +842,130 @@ describe('parseBundle: a manifests/ member that is not shaped like one', () => {
     ['no key_manifests at all', '{"issuer":"a.example"}'],
   ])('trusts no issuer from %s', (_label, body) => {
     const parsed = parseBundle(withManifestMember(enc(body)))
-    expect(Object.keys(parsed.trustStore.manifests)).toEqual([])
-    expect(Object.keys(parsed.trustStore.provenance)).toEqual([])
+    expect(parsed.trustStore.issuers()).toEqual([])
+    expect(Object.keys(parsed.trustStore.data().provenance as JsonObject)).toEqual([])
+  })
+})
+
+describe('parseBundle: trust material the library will not admit fails the whole import', () => {
+  // Reaching `parseTrustStore`'s refusal at all takes a document the checks
+  // BEFORE it admit, and there is exactly one gap: §18.4's depth ceiling is
+  // measured over the canonicalized view AS A WHOLE, and `chains` nests a
+  // manifest one level deeper than `manifests` does — object, issuer, ARRAY,
+  // manifest. An importer always builds `chains`, so a manifest can be admitted
+  // as a bundle member, canonicalize on its own, sit inside `manifests`, and
+  // still put the store document one level over the ceiling.
+  //
+  // Measured at these sizes (`nest(n)` is n+1 levels deep):
+  //   n=251  member ok, store ok
+  //   n=252  member ok, store ok WITHOUT chains, REFUSED with them  <- the gap
+  //   n=253  the bundle member itself is already refused
+  // A branch no input reaches is correct and does nothing, so the number is
+  // pinned here rather than chosen for comfort.
+  const GAP_DEPTH = 252
+  const nest = (levels: number): JsonObject => {
+    let value: JsonObject = {}
+    for (let i = 0; i < levels; i++) value = { a: value } as unknown as JsonObject
+    return value
+  }
+  const realManifest = (): { issuer: string; km: JsonObject } => {
+    const d = loadsStrict(new Uint8Array(readFileSync(join(V01, 'manifests.json')))) as JsonObject
+    const issuer = Object.keys(d.manifests as JsonObject)[0]!
+    return { issuer, km: (d.manifests as JsonObject)[issuer] as JsonObject }
+  }
+  const deepBundle = (levels: number): Uint8Array => {
+    const { issuer, km } = realManifest()
+    const body = canonicalBytes({
+      issuer,
+      key_manifests: [{ ...km, deep: nest(levels) }],
+      artifact_manifests: [],
+    } as unknown as JsonObject)
+    return utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      ['manifests/deep.json', body],
+      legalEntry(),
+    ])
+  }
+
+  it('names this refusal and not the per-member one, and imports nothing', () => {
+    const zip = deepBundle(GAP_DEPTH)
+    // The message carries the weight: the per-member check refuses with `is
+    // outside the canonical profile`, so a test asserting only `BundleError`
+    // would pass on THAT branch and never touch this one.
+    expect(() => parseBundle(zip)).toThrow(/bundle trust material is not readable/)
+    expect(() => parseBundle(zip)).toThrow(BundleError)
+    // Not "imported successfully, minus the part I could not read": there is no
+    // store to inspect, because the import did not happen.
+  })
+
+  it('is the store document that refuses it — the member and the manifest are admitted', () => {
+    // The control that makes the test above measure the gap it claims. If
+    // either of these ever throws, the refusal has moved upstream and the test
+    // above is passing on a branch it does not name.
+    const { issuer, km } = realManifest()
+    const deep = { ...km, deep: nest(GAP_DEPTH) } as unknown as JsonObject
+    expect(() => canonicalBytes(deep)).not.toThrow()
+    expect(() =>
+      loadsStrict(
+        canonicalBytes({
+          issuer,
+          key_manifests: [deep],
+          artifact_manifests: [],
+        } as unknown as JsonObject),
+      ),
+    ).not.toThrow()
+  })
+
+  it('is refused when the store DOCUMENT is over the admission ceiling, though the member is under it', () => {
+    // The same gap on the other axis §5.2 measures, and this one is reachable
+    // with a WELL-FORMED member. `MAX_ADMISSION_BYTES` is 10_000_000 and it
+    // applies to the store DOCUMENT; a bundle member is bounded only by the
+    // container's own, far larger, floor. So a manifest that canonicalizes on
+    // its own and is admitted as a member still puts the store over the
+    // ceiling, because the importer files it under `manifests` AND under
+    // `chains`.
+    //
+    // Measured on both importers at these sizes: a 4.0 MB member makes an 8.0 MB
+    // document and both accept it; a 5.1 MB member makes a 10.2 MB document and
+    // both refuse it with this same message. The pair is what makes the number a
+    // measurement rather than a comfortable choice, as GAP_DEPTH's positive
+    // control is above.
+    //
+    // The message AND the class, from ONE call. The message alone is not
+    // enough: it comes from the underlying `TrustMaterialError` and survives the
+    // wrapper being removed — measured, with the translation to `BundleError`
+    // deleted this test stayed green while the depth one went red. And the class
+    // alone is not enough either: the depth gap above throws the same wrapper,
+    // so a test asserting only it would pass on THAT branch and never touch this
+    // one. The class is what `intake` dispatches on (`intake.ts:373`): anything
+    // that is not a `BundleError` is re-thrown and reaches the page as a crash
+    // instead of a named refusal.
+    //
+    // `parseBundle` is called ONCE — each call canonicalizes ten megabytes, and
+    // two of them run past the default timeout.
+    const { issuer, km } = realManifest()
+    const big = { ...km, pad: 'x'.repeat(5_100_000) } as unknown as JsonObject
+    expect(() => canonicalBytes(big)).not.toThrow()
+    const zip = utf8Zip([
+      [`receipts/${VALID_RECEIPT_ID}.attest.json`, validEnvelope()],
+      [
+        'manifests/big.json',
+        canonicalBytes({
+          issuer,
+          key_manifests: [big],
+          artifact_manifests: [],
+        } as unknown as JsonObject),
+      ],
+      legalEntry(),
+    ])
+    let raised: unknown
+    try {
+      parseBundle(zip)
+    } catch (e) {
+      raised = e
+    }
+    expect(raised).toBeInstanceOf(BundleError)
+    expect((raised as Error).message).toMatch(/trust store exceeds the admission ceiling/)
   })
 })
 

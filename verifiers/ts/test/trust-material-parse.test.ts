@@ -1117,10 +1117,10 @@ describe('the assumptions this file is built on', () => {
 describe('the module graph initializes from either end', () => {
   it('a manifest-first import order still builds and reads a snapshot', () => {
     const handle = parseKeyManifest(canonicalBytes(manifestDoc('store.example.com')))
-    // At T1 `verifyArtifactManifest` still takes the DATA, not the handle: the
-    // ports flip in T3. What is exercised here is the initialization order,
-    // which is exercised whichever of the two shapes is passed.
-    expect(typeof verifyArtifactManifest({ series: 'x' }, handle.data())).toBe('boolean')
+    // Since T3b `verifyArtifactManifest` takes the HANDLE, not the tree. What is
+    // exercised here is the initialization order, which is exercised either way
+    // — but passing the handle is also what a caller can still spell.
+    expect(typeof verifyArtifactManifest({ series: 'x' }, handle)).toBe('boolean')
     expect(findKey(handle.data(), 'nothing')).toBeNull()
     const snapshot = parseTrustStore(storeBytes(SMALL_DOCUMENT))
     expect(snapshot.manifestFor(PLAIN_ISSUERS[0]!)).toBeInstanceOf(KeyManifest)

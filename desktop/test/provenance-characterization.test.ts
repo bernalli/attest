@@ -2,7 +2,8 @@ import { describe, expect, test } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { unzipSync } from 'fflate'
-import { canonicalBytes, loadsStrict } from 'attest-verifier'
+import { canonicalBytes, loadsStrict, parseTrustStore } from 'attest-verifier'
+import type { JsonObject } from 'attest-verifier'
 import { intake, trustStoreFromManifestBytes } from '../../site/src/intake.js'
 import { runVerify } from '../../site/src/run.js'
 import { desktopVerdict } from '../src/verdict.js'
@@ -68,7 +69,12 @@ describe('every provenance the app can reach lands short of green', () => {
     expect(result.kind).toBe('jobs')
     if (result.kind !== 'jobs') return
     const [job] = result.jobs
-    expect(Object.values(job.trustStore.provenance)).toEqual(['bundle'])
+    // Every entry the DOCUMENT carries, and not the entries reachable from
+    // `issuers()`: a provenance that names an issuer `manifests` never named
+    // is admitted by the §5.3 grammar, which checks member shapes and no
+    // agreement between members. This file pins ALL the provenance the app
+    // can reach, so the enumeration has to be the document's.
+    expect(Object.values(job.trustStore.data().provenance as JsonObject)).toEqual(['bundle'])
 
     const run = runVerify(job.envelopeBytes, job.trustStore, null, null, {})
     expect(run.result.trust).toBe('unauthenticated_tofu')
@@ -81,7 +87,12 @@ describe('every provenance the app can reach lands short of green', () => {
     expect(result.kind).toBe('jobs')
     if (result.kind !== 'jobs') return
     const [job] = result.jobs
-    expect(Object.values(job.trustStore.provenance)).toEqual(['embedded'])
+    // Every entry the DOCUMENT carries, and not the entries reachable from
+    // `issuers()`: a provenance that names an issuer `manifests` never named
+    // is admitted by the §5.3 grammar, which checks member shapes and no
+    // agreement between members. This file pins ALL the provenance the app
+    // can reach, so the enumeration has to be the document's.
+    expect(Object.values(job.trustStore.data().provenance as JsonObject)).toEqual(['embedded'])
 
     const run = runVerify(job.envelopeBytes, job.trustStore, null, null, {})
     expect(run.result.trust).toBe('unauthenticated_tofu')
@@ -110,7 +121,7 @@ describe('every provenance the app can reach lands short of green', () => {
     const store = trustStoreFromManifestBytes(keyManifest)
     expect(store, 'a single key manifest must be accepted on the user-supplied path').not.toBeNull()
     if (!store) return
-    expect(Object.values(store.provenance)).toEqual(['user-supplied'])
+    expect(Object.values(store.data().provenance as JsonObject)).toEqual(['user-supplied'])
 
     const run = runVerify(result.envelopeBytes, store, null, null, {})
     expect(run.result.trust).toBe('unauthenticated_tofu')
@@ -130,5 +141,28 @@ describe('every provenance the app can reach lands short of green', () => {
     const run = runVerify(result.jobs[0].envelopeBytes, result.jobs[0].trustStore, null, null, {})
     expect(run.ok).toBe(true)
     expect(desktopVerdict(run.ok, run.result.trust)).toBe('offline_limit')
+  })
+
+  test('the three assertions above count the DOCUMENT’s entries, not the ones a manifest reaches', () => {
+    // Without this, the three `Object.values(store.data().provenance)` above are
+    // correct and unguarded: every store the app builds today has one provenance
+    // entry per manifest, so reading them through `issuers().map(provenanceFor)`
+    // instead — which is what this file used to do — leaves all four tests green.
+    // Measured: it does. A stronger form nothing can falsify is not stronger.
+    //
+    // The §5.3 grammar checks the shape of each member and NO agreement between
+    // members, so a store carrying a provenance for a name `manifests` never
+    // names is admitted. Built here rather than reached through `intake`,
+    // because no road of the app produces one — which is exactly why the
+    // enumeration has to be the document's: what the app cannot produce today,
+    // it is not the assertion's job to assume forever.
+    const doc = {
+      manifests: { 'b.example': { issuer: 'b.example', keys: [] } },
+      provenance: { 'a.example': 'embedded', 'b.example': 'bundle' },
+    }
+    const store = parseTrustStore(new TextEncoder().encode(JSON.stringify(doc)))
+    expect(Object.values(store.data().provenance as JsonObject)).toEqual(['embedded', 'bundle'])
+    // The form this file used to use, named so the difference is on the record.
+    expect(store.issuers().map((i) => store.provenanceFor(i))).toEqual(['bundle'])
   })
 })

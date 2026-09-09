@@ -10,6 +10,7 @@ import { loadsStrict, canonicalBytes, JsonObject, JsonValue } from '../src/canon
 import { b64uEncode, b64uDecode } from '../src/b64u.js'
 import { verify } from '../src/verify.js'
 import type { TrustStore } from '../src/manifests.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 const parse = (v: unknown): JsonObject => loadsStrict(enc(JSON.stringify(v))) as JsonObject
@@ -70,7 +71,7 @@ function nonHybridManifest(): JsonObject {
 }
 
 function trustStore(manifest: JsonObject): TrustStore {
-  return { manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } }
+  return parsedStore({ manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } })
 }
 
 function envelopeBytes(envelope: unknown): Uint8Array {

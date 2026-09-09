@@ -33,6 +33,7 @@ import {
 } from '../src/transparency.js'
 import { MAX_TRANSPARENCY_EVIDENCE_LEN_, verify } from '../src/verify.js'
 import type { TrustStore } from '../src/manifests.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const enc = new TextEncoder()
 const h = (hex: string) => hexToBytes(hex)
@@ -702,9 +703,9 @@ function manifestV2(): JsonObject {
 }
 
 function receiptTrustStore(manifest: JsonObject, chains?: Record<string, JsonObject[]>): TrustStore {
-  const store: TrustStore = { manifests: { [RECEIPT_ISSUER]: manifest }, provenance: { [RECEIPT_ISSUER]: 'tls' } }
-  if (chains) store.chains = chains
-  return store
+  const doc: JsonObject = { manifests: { [RECEIPT_ISSUER]: manifest }, provenance: { [RECEIPT_ISSUER]: 'tls' } }
+  if (chains) doc.chains = chains
+  return parsedStore(doc)
 }
 
 const KM_ENTRY_V1 = { type: 'key-manifest', issuer: RECEIPT_ISSUER, manifest_version: 1n, manifest_sha256: MANIFEST_SHA256_V1 }

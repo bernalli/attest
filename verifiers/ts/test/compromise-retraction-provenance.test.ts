@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { canonicalBytes, verify } from '../src/index.js'
 import type { AnchorPolicy, JsonObject, JsonValue, LogKey, TrustStore, VerificationResult } from '../src/index.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const RETRACTED = 'compromise_marking_retracted'
 const ISSUER = 'store.example'
@@ -109,11 +110,11 @@ function receiptBytes(signingSeed: Uint8Array = SIGNER, kid = KID): Uint8Array {
 }
 
 function trustStore(trusted: JsonObject, chain?: JsonObject[]): TrustStore {
-  return {
+  return parsedStore({
     manifests: { [ISSUER]: trusted },
     provenance: { [ISSUER]: 'tls' },
     chains: chain === undefined ? {} : { [ISSUER]: chain },
-  }
+  })
 }
 
 function claimManifest(version: unknown, entries: JsonObject[] = [entry('compromised')]): JsonObject {
@@ -193,13 +194,13 @@ function vectorTrustStore(caseName: string, trustedVersion: bigint): TrustStore 
   const body: JsonObject = { ...trusted }
   delete body['manifest_signature']
   trusted.manifest_signature = signBlock(body, seed(4), signingKid)
-  return {
+  return parsedStore({
     manifests,
     provenance: raw.provenance,
     chains: toJcs(raw.chains) as Record<string, JsonObject[]>,
     artifact_manifests: toJcs(raw.artifact_manifests) as Record<string, Record<string, JsonObject>>,
     artifact_manifest_chains: toJcs(raw.artifact_manifest_chains) as Record<string, Record<string, JsonObject[]>>,
-  }
+  })
 }
 
 function vectorLogKeys(caseName: string): LogKey[] {

@@ -5,6 +5,7 @@ import { canonicalBytes, loadsStrict, type JsonObject } from '../src/canon.js'
 import { verify } from '../src/index.js'
 import type { TrustStore } from '../src/manifests.js'
 import { classifyRevocation } from '../src/revocation.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const enc = (value: string): Uint8Array => new TextEncoder().encode(value)
 const parse = (value: unknown): JsonObject => loadsStrict(enc(JSON.stringify(value))) as JsonObject
@@ -30,7 +31,7 @@ function signManifest(): JsonObject {
 }
 
 function trustStore(): TrustStore {
-  return { manifests: { [ISSUER]: signManifest() }, provenance: { [ISSUER]: 'tls' } }
+  return parsedStore({ manifests: { [ISSUER]: signManifest() }, provenance: { [ISSUER]: 'tls' } })
 }
 
 function signRecord(receiptId: string, status: unknown, revokedAt: string): JsonObject {

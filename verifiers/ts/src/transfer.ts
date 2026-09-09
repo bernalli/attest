@@ -31,19 +31,19 @@ import type { JsonObject, JsonValue } from './canon.js'
 import { canonicalBytes, dumps, CanonError, MAX_ADMISSION_BYTES, materializeArray } from './canon.js'
 import { verifyKeyManifest, findKey, verifySignatureBlock } from './manifests.js'
 import {
-  verifyRecordSignatureMaterialized as verifyRevocationRecordSignatureMaterialized,
+  verifyRecordSignatureData as verifyRevocationRecordSignatureData,
   MAX_REVOCATION_RECORDS,
 } from './revocation.js'
 import { parseStrictUtc, parseIsoLenient, validStage3UtcTimestamp } from './dates.js'
 import { b64uDecode, b64uEncode } from './b64u.js'
-import { materializeKeyManifest } from './trustMaterial.js'
+import { manifestData, type KeyManifest } from './trustMaterial.js'
 import { RECEIPT_ID_RE } from './ids.js'
 import { verifyStrict } from './ed25519.js'
 import type { LogKey } from './tlog.js'
 import { encodeEntry, TlogError } from './tlog.js'
 import type { AnchorPolicy } from './anchor.js'
 import { evaluateTransparency, validateLogKeys, validatePolicy, TransparencyError, TRANSPARENCY_LOGGED } from './transparency.js'
-import { pyRepr, codePointLength } from './messages.js'
+import { ERR, pyRepr, codePointLength } from './messages.js'
 
 function isObject(v: JsonValue | undefined): v is JsonObject {
   return v !== null && v !== undefined && typeof v === 'object' && !Array.isArray(v)
@@ -183,21 +183,22 @@ export function recordHash(record: JsonObject): string {
  */
 // `keyManifest` is MATERIALIZED here, at the public boundary, through the ONE
 // spelling of it — the same boundary `verify()` applies to the trust store.
-// The entry reads below (`entry['status']`, `entry['valid_to']`) go through
-// whatever accessor the caller's object defines while the signature check
-// reads own data, so without it a manifest is authentic and lying at once.
-// Hoisting callers use `verifyRecordSignatureMaterialized`.
+// The entry reads below (`entry['status']`, `entry['valid_to']`) would go
+// through whatever accessor a live object defined, while the signature check
+// read own data — so a manifest could be authentic and lying at once. A HANDLE
+// removes the two-answer object entirely; this unwraps it once.
+// Hoisting callers use `verifyRecordSignatureData`.
 // Python parity: transfer.py's `verify_record_signature`.
-export function verifyRecordSignature(record: JsonObject, keyManifest: JsonObject): boolean {
-  const materialized = materializeKeyManifest(keyManifest)
-  if (materialized === null) return false
-  return verifyRecordSignatureMaterialized(record, materialized)
+export function verifyRecordSignature(record: JsonObject, keyManifest: KeyManifest): boolean {
+  const data = manifestData(keyManifest)
+  if (data === null) return false
+  return verifyRecordSignatureData(record, data)
 }
 
-// `verifyRecordSignature`'s body, over an ALREADY MATERIALIZED manifest — see
-// revocation.ts's twin for why this is exported rather than module-local.
+// `verifyRecordSignature`'s body, over the snapshot TREE — see revocation.ts's
+// twin for why this is exported rather than module-local.
 // Python parity: transfer.py's `_verify_record_signature`.
-export function verifyRecordSignatureMaterialized(
+export function verifyRecordSignatureData(
   record: JsonObject,
   keyManifest: JsonObject,
 ): boolean {
@@ -246,12 +247,12 @@ export function verifyRecordSignatureMaterialized(
  * — never throws. Composes `verifyKeyManifest` + `verifyRecordSignature`;
  * loop-over-records callers hoist the former.
  */
-export function verifyRecord(record: JsonObject, keyManifest: JsonObject): boolean {
+export function verifyRecord(record: JsonObject, keyManifest: KeyManifest): boolean {
   try {
-    // Materialized ONCE, and both halves run against that one reconstruction.
-    const materialized = materializeKeyManifest(keyManifest)
-    if (materialized === null) return false
-    return verifyKeyManifest(materialized) && verifyRecordSignatureMaterialized(record, materialized)
+    // Unwrapped ONCE, and both halves run against that one tree.
+    const data = manifestData(keyManifest)
+    if (data === null) return false
+    return verifyKeyManifest(data) && verifyRecordSignatureData(record, data)
   } catch {
     return false
   }
@@ -437,7 +438,7 @@ function asObject(v: JsonValue | undefined): JsonObject | null {
  *    payloads[i].receipt_id` — none found -> errNoTransferRecord, and
  *    checks 2-7 below are skipped entirely; check 8 still runs
  *    independently.
- * 2. `verifyRecordSignatureMaterialized(record, ...)` -> issuer signature.
+ * 2. `verifyRecordSignatureData(record, ...)` -> issuer signature.
  * 3. `verifyAuthorization(record, payloads[i - 1].buyer.pubkey)` -> holder
  *    authorization, against the PREVIOUS receipt's own key.
  * 4. `recordLoggedStanding(...)` -> log inclusion.
@@ -480,23 +481,42 @@ export function auditChain(
   payloads: JsonObject[],
   transferView: JsonValue[],
   revocationView: JsonValue[],
-  keyManifest: JsonObject,
+  keyManifest: KeyManifest,
   logKeys: LogKey[],
   anchorPolicy: AnchorPolicy,
 ): ChainAuditResult {
   const linkCount = Math.max(payloads.length - 1, 0)
 
-  // The trust-material boundary, BEFORE the manifest's own self-verify —
+  // The handle is unwrapped once, in front of the manifest's own self-verify —
   // unlike the view admission below, which deliberately runs after it. The two
   // are not the same trade: admitting the views costs up to 64 claims and
-  // 10000 records, so it waits behind a cheap refusal; materializing the
-  // manifest is bounded by the manifest itself, and the self-verify has to run
-  // on the SAME reconstruction every later predicate reads, or the manifest
-  // can be self-consistent as an object and something else as data. A manifest
-  // that cannot be read as data is treated exactly like one that fails its
-  // self-verify: nothing it would sign can be trusted.
-  const materializedManifest = materializeKeyManifest(keyManifest)
-  if (materializedManifest === null || !verifyKeyManifest(materializedManifest)) {
+  // 10000 records, so it waits behind a cheap refusal; unwrapping is O(1), and
+  // the self-verify has to run on the SAME tree every later predicate reads.
+  //
+  // The two refusals below are NOT the same refusal, and that is why they are
+  // written apart. A non-handle is a CONTRACT violation — the caller never
+  // parsed this material, so there is no audit to report on and `valid` is
+  // false even with zero links, where an empty chain would otherwise be
+  // vacuously valid. A handle whose manifest fails its own self-verify is a
+  // FINDING about real material: an empty chain of it stays vacuously valid,
+  // as it was before handles existed.
+  const manifestTree = manifestData(keyManifest)
+  if (manifestTree === null) {
+    return {
+      valid: false,
+      linkStatus: Array.from({ length: linkCount }, () => 'invalid'),
+      // The refusal NAMES itself, and at zero links it is the only thing said:
+      // `valid: false` with an empty `errors` would be a rejection a caller
+      // cannot act on. Python parity: `transfer.py` puts the same message in
+      // the same position, ahead of the per-link errors.
+      errors: [
+        ERR.KEY_MANIFEST_NOT_PARSED,
+        ...Array.from({ length: linkCount }, (_, idx) => errIssuerSignatureInvalid(idx + 1)),
+      ],
+      warnings: [],
+    }
+  }
+  if (!verifyKeyManifest(manifestTree)) {
     return {
       valid: linkCount === 0,
       linkStatus: Array.from({ length: linkCount }, () => 'invalid'),
@@ -520,7 +540,7 @@ export function auditChain(
   const admittedTransferView = admitCallerRail(transferView, MAX_TRANSFER_CLAIMS)
   const admittedRevocationView = admitCallerRail(revocationView, MAX_REVOCATION_RECORDS)
 
-  const manifestIssuer = materializedManifest['issuer']
+  const manifestIssuer = manifestTree['issuer']
   const issuerIdForLog = typeof manifestIssuer === 'string' ? manifestIssuer : ''
 
   const errors: string[] = []
@@ -552,7 +572,7 @@ export function auditChain(
       errors.push(errNoTransferRecord(i))
       linkOk = false
     } else {
-      const sigOk = verifyRecordSignatureMaterialized(record, materializedManifest)
+      const sigOk = verifyRecordSignatureData(record, manifestTree)
       if (!sigOk) {
         errors.push(errIssuerSignatureInvalid(i))
         linkOk = false
@@ -592,7 +612,7 @@ export function auditChain(
           if (!c) continue
           const candidate = asObject(c['record'])
           if (!candidate || candidate === record || candidate['receipt_id'] !== prevReceiptId) continue
-          if (!verifyRecordSignatureMaterialized(candidate, materializedManifest)) continue
+          if (!verifyRecordSignatureData(candidate, manifestTree)) continue
           if (!(typeof prevPubkey === 'string' && verifyAuthorization(candidate, prevPubkey))) continue
           const candidateEvidence = (c['evidence'] ?? null) as JsonValue | null
           const candidateLeafIndex = recordLoggedStanding(candidate, candidateEvidence, issuerIdForLog, logKeys, anchorPolicy, warnings)
@@ -619,7 +639,7 @@ export function auditChain(
         r &&
         r['receipt_id'] === prevReceiptId &&
         r['status'] === RECORD_STATUS_TRANSFERRED &&
-        verifyRevocationRecordSignatureMaterialized(r, materializedManifest)
+        verifyRevocationRecordSignatureData(r, manifestTree)
       ) {
         backed = true
         break

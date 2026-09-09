@@ -35,6 +35,7 @@ import {
   evaluateActivationWitnessQuorum,
   parseWitnessPolicy,
   verifyRedemption,
+  parseTrustStore,
 } from '../verifiers/ts/dist/index.js'
 import { b64uDecode } from '../verifiers/ts/dist/b64u.js'
 
@@ -58,17 +59,21 @@ function envelopeBytes(dir) {
   return new Uint8Array(readFileSync(join(dir, 'envelope.json')))
 }
 
+/**
+ * The leaf's `manifests.json`, as the BYTES it is stored in.
+ *
+ * This rebuilt the document member by member and defaulted the three optional
+ * members to `{}` when the file omitted them. That default quietly destroyed a
+ * distinction the protocol makes: a store with NO `chains` and a store with an
+ * EMPTY `chains` are different documents, and the rebuild made them the same
+ * one for every vector — so no leaf could ever have proven the difference.
+ *
+ * The file is already in the document grammar, and `parseTrustStore` is on the
+ * package's public surface, which is the point: this adapter is meant to reach
+ * the library the way a consumer does, not through a shortcut of its own.
+ */
 function trustStore(dir) {
-  const d = loadJsonStrict(join(dir, 'manifests.json'))
-  return {
-    manifests: d.manifests,
-    provenance: d.provenance,
-    chains: d.chains ?? {},
-    // G2/G3 (attest-versioning.md rev 4, group 31 only) — every other leaf
-    // keeps these at the empty-object default, same convention as chains.
-    artifact_manifests: d.artifact_manifests ?? {},
-    artifact_manifest_chains: d.artifact_manifest_chains ?? {},
-  }
+  return parseTrustStore(new Uint8Array(readFileSync(join(dir, 'manifests.json'))))
 }
 
 function revocationView(dir) {
@@ -198,12 +203,23 @@ function redemptionInput(dir) {
   return existsSync(p) ? loadJson(p) : null
 }
 
-// group 36 only: auditChain takes ONE trusted keyManifest, not a full
+// group 36 only: auditChain takes ONE trusted key manifest HANDLE, not a full
 // TrustStore — every group 36 leaf's manifests.json trusts exactly one
 // issuer, so its sole `manifests` value is that manifest.
 function soleKeyManifest(dir) {
   const store = trustStore(dir)
-  return Object.values(store.manifests)[0]
+  const issuers = store.issuers()
+  // Asserted, not assumed: `Object.values(...)[0]` took whatever came first
+  // and would have kept working, silently reading one issuer's manifest, if a
+  // group 36 leaf ever grew a second one.
+  if (issuers.length !== 1) {
+    throw new Error(`${dir}: expected exactly one issuer, found ${issuers.length}`)
+  }
+  // The handle as the store built it. Unwrapping it with `.data()` and handing
+  // over the tree is what the ports stopped accepting: this adapter is a
+  // CONSUMER of the published package, so it has to spell the call the way a
+  // consumer can.
+  return store.manifestFor(issuers[0])
 }
 
 // group 36 (transfer-chain conformance corpus, v0.2 §17.5) only: a leaf

@@ -37,8 +37,8 @@ RUNNER_NAME = "attest-conformance-runner"
 
 # v0.1 subset rule (mirrors docs/spec/vectors/README.md verbatim): groups
 # whose leading integer is <= V01_MAX_GROUP, or in V01_EXTRA_GROUPS, plus the
-# extra leaf ids in V01_EXTRA_LEAF_IDS (35i, 37s and 41f: leaves a v0.1-only
-# verifier must reproduce, living inside otherwise-v0.2-only groups).
+# extra leaf ids in V01_EXTRA_LEAF_IDS (35i, 37s, 41f and 41v: leaves a
+# v0.1-only verifier must reproduce, living inside otherwise-v0.2-only groups).
 # 44, 45 and 46 are v0.1
 # conformance like 29/31: both exercise v0.1-only surfaces. 42 (the
 # publisher-claim floor, v0.1 §11.2 rev 11) is the same shape again: the
@@ -60,6 +60,16 @@ V01_EXTRA_LEAF_IDS = frozenset(
         # (its siblings carry the same one): the ABSENCE of the evidence
         # channel is.
         "41-compromise-cutoff/f-stage1-fail-closed",
+        # 41v: the same shape as 41f, and in the subset for the same reason
+        # spelled out there. It ships no Stage-2 material either, so the v0.2
+        # rescue is unreachable and a v0.1-only verifier must reproduce its
+        # verdict — here the absorbing `compromised` floor asserted by a chain
+        # member whose own signature does not verify, which is v0.1 in every
+        # part: `chains`, `unverified_rotation` and the floor all predate v0.2.
+        # Two leaves with the same file set and the same reason cannot sit on
+        # opposite sides of the subset: that is a contradiction in the subset,
+        # not a difference between the leaves.
+        "41-compromise-cutoff/v-broken-signature-member-still-floors",
     }
 )
 
@@ -109,9 +119,9 @@ def in_v01_subset(lid: str) -> bool:
 
     Applies the leading-integer group rule (a leaf's top-level directory name
     may carry a letter suffix, e.g. ``14b-...`` -> group 14) plus the pinned
-    extra leaf ids in ``V01_EXTRA_LEAF_IDS`` (``35i``, ``37s`` and ``41f``,
-    leaves inside otherwise-v0.2-only groups that a v0.1-only verifier must
-    still reproduce).
+    extra leaf ids in ``V01_EXTRA_LEAF_IDS`` (``35i``, ``37s``, ``41f`` and
+    ``41v``, leaves inside otherwise-v0.2-only groups that a v0.1-only verifier
+    must still reproduce).
     """
     if lid in V01_EXTRA_LEAF_IDS:
         return True

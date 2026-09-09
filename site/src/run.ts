@@ -2,7 +2,7 @@ import {
   verify, isOk, auditChain, evaluateActivationWitnessQuorum, verifyRedemption,
 } from 'attest-verifier'
 import type {
-  VerificationResult, Disclosure, TrustStore, JsonValue, JsonObject, VerifyTransparencyOptions,
+  VerificationResult, Disclosure, KeyManifest, TrustStore, JsonValue, JsonObject, VerifyTransparencyOptions,
   LogKey, AnchorPolicy, ChainAuditResult,
   WitnessPolicy, ActivationWitnessQuorumResult,
 } from 'attest-verifier'
@@ -94,7 +94,7 @@ export function runChainAudit(
   payloads: JsonObject[],
   transferView: JsonValue[],
   revocationView: JsonValue[],
-  keyManifest: JsonObject,
+  keyManifest: KeyManifest,
   logKeys: LogKey[],
   anchorPolicy: AnchorPolicy,
 ): ChainAuditResult {

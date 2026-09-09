@@ -9,6 +9,7 @@ import { ed25519 } from '@noble/curves/ed25519'
 import { loadsStrict, canonicalBytes, JsonObject } from '../src/canon.js'
 import { b64uEncode } from '../src/b64u.js'
 import { verify } from '../src/verify.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 const parse = (m: unknown): JsonObject => loadsStrict(enc(JSON.stringify(m))) as JsonObject
@@ -71,7 +72,7 @@ function envelopeBytes(): Uint8Array {
 }
 
 it('a TrustStore with no artifact_manifests entry is a zero-behavior-change baseline', () => {
-  const store = { manifests: { [ISSUER]: keyManifest }, provenance: { [ISSUER]: 'tls' } }
+  const store = parsedStore({ manifests: { [ISSUER]: keyManifest }, provenance: { [ISSUER]: 'tls' } })
   const r = verify(envelopeBytes(), store)
   expect(r.trust).toBe('verified')
   expect(r.warnings).toEqual([])
@@ -80,12 +81,12 @@ it('a TrustStore with no artifact_manifests entry is a zero-behavior-change base
 it('a monotone artifact-manifest chain keeps normal trust', () => {
   const am1 = parse(artifactManifest(1, 1))
   const am2 = parse(artifactManifest(2, 2))
-  const store = {
+  const store = parsedStore({
     manifests: { [ISSUER]: keyManifest },
     provenance: { [ISSUER]: 'tls' },
     artifact_manifests: { [ISSUER]: { [SERIES]: am2 } },
     artifact_manifest_chains: { [ISSUER]: { [SERIES]: [am1, am2] } },
-  }
+  })
   const r = verify(envelopeBytes(), store)
   expect(r.trust).toBe('verified')
   expect(r.warnings).not.toContain('artifact_manifest_unversioned')
@@ -94,12 +95,12 @@ it('a monotone artifact-manifest chain keeps normal trust', () => {
 it('a rollback (chain tail newer than the pinned manifest) yields unverified_rotation', () => {
   const am1 = parse(artifactManifest(1, 1))
   const am2 = parse(artifactManifest(2, 2))
-  const store = {
+  const store = parsedStore({
     manifests: { [ISSUER]: keyManifest },
     provenance: { [ISSUER]: 'tls' },
     artifact_manifests: { [ISSUER]: { [SERIES]: am1 } },
     artifact_manifest_chains: { [ISSUER]: { [SERIES]: [am1, am2] } },
-  }
+  })
   const r = verify(envelopeBytes(), store)
   expect(r.signature).toBe('valid')
   expect(r.trust).toBe('unverified_rotation')
@@ -107,11 +108,11 @@ it('a rollback (chain tail newer than the pinned manifest) yields unverified_rot
 
 it('a legacy (unversioned) pinned artifact manifest warns but does not reject', () => {
   const legacy = parse(artifactManifest(1, null))
-  const store = {
+  const store = parsedStore({
     manifests: { [ISSUER]: keyManifest },
     provenance: { [ISSUER]: 'tls' },
     artifact_manifests: { [ISSUER]: { [SERIES]: legacy } },
-  }
+  })
   const r = verify(envelopeBytes(), store)
   expect(r.warnings).toContain('artifact_manifest_unversioned')
   expect(r.trust).toBe('verified')
@@ -121,12 +122,12 @@ it('an unauthenticated artifact manifest is ignored before currency evaluation',
   const am1 = parse(artifactManifest(1, 1))
   const unsigned = parse(artifactManifest(2, 2))
   delete unsigned['manifest_signature']
-  const r = verify(envelopeBytes(), {
+  const r = verify(envelopeBytes(), parsedStore({
     manifests: { [ISSUER]: keyManifest },
     provenance: { [ISSUER]: 'tls' },
     artifact_manifests: { [ISSUER]: { [SERIES]: unsigned } },
     artifact_manifest_chains: { [ISSUER]: { [SERIES]: [am1, unsigned] } },
-  })
+  }))
   expect(r.trust).toBe('verified')
   expect(r.warnings).toEqual(['artifact_manifest_unauthenticated'])
 })
@@ -134,12 +135,12 @@ it('an unauthenticated artifact manifest is ignored before currency evaluation',
 it('a legacy-to-versioned artifact transition is warn-only', () => {
   const legacy = parse(artifactManifest(1, null))
   const versioned = parse(artifactManifest(2, 1))
-  const r = verify(envelopeBytes(), {
+  const r = verify(envelopeBytes(), parsedStore({
     manifests: { [ISSUER]: keyManifest },
     provenance: { [ISSUER]: 'tls' },
     artifact_manifests: { [ISSUER]: { [SERIES]: versioned } },
     artifact_manifest_chains: { [ISSUER]: { [SERIES]: [legacy, versioned] } },
-  })
+  }))
   expect(r.trust).toBe('verified')
   expect(r.warnings).toEqual(['artifact_manifest_unversioned'])
 })
@@ -150,12 +151,12 @@ it('a legacy pinned manifest after versioned history is warn-only (round-2 resid
   // downgrade. Currency must be skipped entirely on any legacy member.
   const versioned = parse(artifactManifest(1, 1))
   const legacy = parse(artifactManifest(2, null))
-  const r = verify(envelopeBytes(), {
+  const r = verify(envelopeBytes(), parsedStore({
     manifests: { [ISSUER]: keyManifest },
     provenance: { [ISSUER]: 'tls' },
     artifact_manifests: { [ISSUER]: { [SERIES]: legacy } },
     artifact_manifest_chains: { [ISSUER]: { [SERIES]: [versioned] } },
-  })
+  }))
   expect(r.trust).toBe('verified')
   expect(r.warnings).toEqual(['artifact_manifest_unversioned'])
 })
@@ -163,7 +164,7 @@ it('a legacy pinned manifest after versioned history is warn-only (round-2 resid
 it('artifact currency state is scoped to the receipt issuer and series', () => {
   const am1 = parse(artifactManifest(1, 1))
   const am2 = parse(artifactManifest(2, 2))
-  const r = verify(envelopeBytes(), {
+  const r = verify(envelopeBytes(), parsedStore({
     manifests: { [ISSUER]: keyManifest },
     provenance: { [ISSUER]: 'tls' },
     artifact_manifests: {
@@ -174,7 +175,7 @@ it('artifact currency state is scoped to the receipt issuer and series', () => {
       [ISSUER]: { [SERIES]: [am1, am2] },
       'other.example.com': { [SERIES]: [am1, am2] },
     },
-  })
+  }))
   expect(r.trust).toBe('verified')
   expect(r.warnings).toEqual([])
 })
@@ -182,11 +183,11 @@ it('artifact currency state is scoped to the receipt issuer and series', () => {
 it('an artifact-manifest issuer mismatch has its own warning and no trust effect', () => {
   const mismatched = parse(artifactManifest(1, 1))
   mismatched['issuer'] = 'other.example.com'
-  const r = verify(envelopeBytes(), {
+  const r = verify(envelopeBytes(), parsedStore({
     manifests: { [ISSUER]: keyManifest },
     provenance: { [ISSUER]: 'tls' },
     artifact_manifests: { [ISSUER]: { [SERIES]: mismatched } },
-  })
+  }))
   expect(r.trust).toBe('verified')
   expect(r.warnings).toEqual(['artifact_manifest_issuer_mismatch'])
 })

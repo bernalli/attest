@@ -3,10 +3,13 @@ import { verifyStrict } from './ed25519.js'
 import { verifyStrict as verifyMldsaStrict } from './mldsa.js'
 import { b64uDecode } from './b64u.js'
 import { parseStrictUtc } from './dates.js'
-// Value import only — `trustMaterial.ts`'s own import of this module (`TrustStore`)
-// is `import type`, which TypeScript always elides from emitted JS, so this does
-// not close a runtime cycle between the two modules.
-import { materializeKeyManifest } from './trustMaterial.js'
+// No runtime cycle: `trustMaterial.ts` does not import this module at all any
+// more — T3 moved `TrustStore` there, so the edge that used to need an
+// `import type` to stay elided is gone entirely. `ParsedKeyManifest` is the
+// CLASS: the local `KeyManifest` interface below is the document's SHAPE, and
+// the two must not be confused — a shape can be imitated, which is what the
+// handle exists to stop.
+import { manifestData, type KeyManifest as ParsedKeyManifest } from './trustMaterial.js'
 
 export type KeyStatus = 'active' | 'retired' | 'compromised'
 export interface KeyEntry {
@@ -17,18 +20,13 @@ export interface KeyManifest {
   issuer: string; manifest_version: number; issued_at: string
   keys: KeyEntry[]; manifest_signature: { kid: string; sig: string }
 }
-export interface TrustStore {
-  manifests: Record<string, JsonObject>
-  provenance: Record<string, string>
-  chains?: Record<string, JsonObject[]>
-  // G2/G3 manifest currency (attest-versioning.md rev 4; v0.1 §7.2/§7.3
-  // amendment) — the artifact-manifest analog of manifests/chains above,
-  // scoped as issuer -> work.artifact_series -> manifest/history. Both
-  // optional and backward-compatible (mirrors chains?): absent means zero
-  // behavior change.
-  artifact_manifests?: Record<string, Record<string, JsonObject>>
-  artifact_manifest_chains?: Record<string, Record<string, JsonObject[]>>
-}
+// `interface TrustStore` was declared here, describing the shape an embedder
+// had to hand in. T3 removed it: the doors no longer take a shape, they take a
+// snapshot, and the five member trees are `StoreData` in `trustMaterial.ts`.
+// A shape can be imitated — that is what an interface is FOR — and imitating
+// it was the defect. Re-exported below so callers who imported the name from
+// here still resolve it, now to the class.
+export type { TrustStore, KeyManifest as ParsedKeyManifest, StoreData } from './trustMaterial.js'
 
 function asObject(v: JsonValue | undefined): JsonObject | null {
   return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as JsonObject) : null
@@ -359,27 +357,26 @@ export function artifactChainContinuous(chain: JsonObject[]): boolean {
 // without the boundary the same manifest is authentic and lying at once, the
 // same class `verifyRecordSignature` (revocation.ts) and `verifyGrant`
 // (grant.ts) close. `manifest` — the artifact manifest UNDER EXAMINATION — is
-// deliberately NOT materialized here: it is the document a caller's own trust
-// store already holds as data (`TrustStore.artifact_manifests`, itself covered
-// by `materializeTrustStore`'s boundary), and it authenticates through its own
-// signature below, not through a read of `keyManifest`.
-export function verifyArtifactManifest(manifest: JsonObject, keyManifest: JsonObject): boolean {
+// deliberately NOT a handle: it is the document a caller's own trust store
+// already holds as data (`TrustStore.artifact_manifests`, itself parsed from
+// the store's bytes), and it authenticates through its own signature below,
+// not through a read of `keyManifest`.
+export function verifyArtifactManifest(manifest: JsonObject, keyManifest: ParsedKeyManifest): boolean {
   try {
-    const materialized = materializeKeyManifest(keyManifest)
-    if (materialized === null) return false
-    return verifyArtifactManifestMaterialized(manifest, materialized)
+    const data = manifestData(keyManifest)
+    if (data === null) return false
+    return verifyArtifactManifestData(manifest, data)
   } catch { return false }
 }
 
-// `verifyArtifactManifest`'s body, over an ALREADY MATERIALIZED `keyManifest`.
-// PRECONDITION: `keyManifest` is the output of `materializeKeyManifest` (or is
-// otherwise known to hold only own data — no getter, no Proxy). A caller that
-// already holds such a `keyManifest` and calls this in a loop — one issuer
-// manifest checked against several artifact-manifest chain members — pays the
-// materialization once instead of once per member; `verifyArtifactManifest`
-// itself remains the safe default for a caller holding only the raw,
-// possibly-accessor-backed object.
-export function verifyArtifactManifestMaterialized(manifest: JsonObject, keyManifest: JsonObject): boolean {
+// `verifyArtifactManifest`'s body, over the snapshot TREE.
+// PRECONDITION: `keyManifest` is a tree obtained from `manifestData`/`storeData`
+// — never a caller's object. A caller that already holds such a tree and calls
+// this in a loop — one issuer manifest checked against several
+// artifact-manifest chain members — pays the unwrap once instead of once per
+// member; `verifyArtifactManifest` is the entry point for a caller holding a
+// handle.
+export function verifyArtifactManifestData(manifest: JsonObject, keyManifest: JsonObject): boolean {
   try {
     const manifestVersion = manifest['manifest_version']
     if ('manifest_version' in manifest && (typeof manifestVersion !== 'bigint' || manifestVersion < 1n)) {

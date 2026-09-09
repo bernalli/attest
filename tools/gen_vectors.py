@@ -8303,6 +8303,71 @@ def gen_41_compromise_cutoff() -> None:
         compromise_view=[_claim(v2, claim_z)],
     )
 
+    # --- (v) broken-signature-member-still-floors -------------------------
+    # v0.1 §7.3 makes a `compromised` marking ABSORBING over the evidence a
+    # verifier HOLDS, and states no condition of authenticity on that evidence:
+    # "the entry for that `kid` in any manifest of that issuer's version
+    # history held in the §7.4 TrustStore chain". It can do so safely because
+    # the floor only ever moves trust in ONE direction — a held member can
+    # restrict, never widen. Every direction that widens (silencing a pinned
+    # compromise, extending a validity window, denying a §19.3 cutoff) is shut
+    # elsewhere, and leaf (z) above is where the cutoff case is pinned.
+    #
+    # Until this leaf, nothing in the corpus pinned the floor itself. Measured
+    # rather than assumed: of the fourteen leaves that hold a chain MEMBER,
+    # thirteen carry members whose own signature verifies, and the fourteenth
+    # (x) is refused for an AMBIGUOUS KID — a different rule, reached before
+    # this one. So the property that both cores implement, on a project whose
+    # thesis is that the two agree, could have been dropped in ONE of them and
+    # the corpus would have stayed green.
+    #
+    # The member is v2 with a single byte flipped in its `manifest_signature`:
+    # still a well-formed §7.1 manifest, still naming a signer kid the trusted
+    # manifest lists, no duplicate kids. Its ONLY defect is that the signature
+    # does not verify — asserted below in both directions, because a member
+    # that failed on SHAPE would satisfy the same expectation while proving
+    # something else entirely.
+    #
+    # The discriminating control is NOT in this leaf, and does not need to be:
+    # `26-hybrid/h-manifest-downgraded-continuity` already holds a member whose
+    # signature does not verify and which declares NOTHING, and expects
+    # `ok: true`. The two leaves together are what show the CONTENT decides —
+    # this one alone would be satisfied by a verifier that refused any receipt
+    # whose chain fails continuity.
+    v2_unsigned_declaration = copy.deepcopy(v2)
+    v2_unsigned_declaration["manifest_signature"]["sig"] = _flip_sig_byte(
+        v2_unsigned_declaration["manifest_signature"]["sig"]
+    )
+    assert manifests.verify_key_manifest(_snapshot(v2)) is True  # the control
+    assert manifests.verify_key_manifest(_snapshot(v2_unsigned_declaration)) is False
+    assert manifests.duplicate_kids(v2_unsigned_declaration["keys"]) == []
+    assert v2_unsigned_declaration["manifest_signature"]["kid"] == ROTATED_KID
+    broken_entry = manifests.find_key(_snapshot(v2_unsigned_declaration), ISSUER_KID)
+    assert broken_entry is not None and broken_entry["status"] == "compromised"
+    write_vector(
+        "41-compromise-cutoff/v-broken-signature-member-still-floors",
+        payload=payload,
+        envelope=envelope,
+        envelope_raw=None,
+        # The PINNED manifest declares nothing: v1 lists K `active`. The only
+        # place the compromise exists is the unauthenticated held member, so a
+        # verifier that ignored it would certify this receipt.
+        trust=_trust_material(
+            (ISSUER_ID, v1, "tls"),
+            chains={ISSUER_ID: [v2_unsigned_declaration]},
+        ),
+        expected={
+            "signature": "invalid",
+            "schema": "not_checked",
+            "revocation": "unknown",
+            "binding": "not_checked",
+            "trust": "unverified_rotation",
+            "ok": False,
+            "errors_contains": ["compromised"],
+            "warnings": [],
+        },
+    )
+
 
 # --- vector 42: publisher-claim (V-L.8, v0.1 §11.2 2026-08-26 amendment) ------
 

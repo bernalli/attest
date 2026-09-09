@@ -7,6 +7,12 @@ import { REPLACEMENT } from '../src/untrusted-text.js'
 import type { VerifyRun } from '../src/run.js'
 import type { ExhibitRun } from '../src/exhibits.js'
 import type { VerificationResult } from 'attest-verifier'
+// The renderers never read the store — it rides along inside `Tampered` and
+// `Exhibit`. It is the module's own empty snapshot rather than a hand-made
+// `{ manifests: {}, provenance: {} }`, because the second is a shape the
+// library no longer admits anywhere, and a fixture in a shape production
+// cannot produce is a fixture that measures a different system.
+import { EMPTY_TRUST } from '../src/intake.js'
 
 const result = (over: Partial<VerificationResult> = {}): VerificationResult => ({
   signature: 'valid', schema: 'valid', revocation: 'unknown',
@@ -25,7 +31,7 @@ describe('renderTamper says exactly what was done to the file', () => {
     const el = renderTamper({
       option,
       envelopeBytes: new Uint8Array(),
-      trustStore: { manifests: {}, provenance: {} },
+      trustStore: EMPTY_TRUST,
       edit: {
         path: 'payload.work.title', offset: 417,
         before: 'E', after: 'F', was: 'Example Game', now: 'Fxample Game',
@@ -43,7 +49,7 @@ describe('renderTamper says exactly what was done to the file', () => {
     const el = renderTamper({
       option: { id: 'drop-manifest', label: 'Take the keys away', what: 'Hides the manifest.' },
       envelopeBytes: new Uint8Array(),
-      trustStore: { manifests: {}, provenance: {} },
+      trustStore: EMPTY_TRUST,
       edit: null,
     })
     const text = el.textContent ?? ''
@@ -62,7 +68,7 @@ describe('the bench treats the value it turned as untrusted text', () => {
   const tampered = (was: string, now: string) => ({
     option: { id: 'title' as const, label: 'Change one letter', what: 'Turns a letter.' },
     envelopeBytes: new Uint8Array(),
-    trustStore: { manifests: {}, provenance: {} },
+    trustStore: EMPTY_TRUST,
     edit: { path: 'payload.work.title', offset: 417, before: 'E', after: 'F', was, now },
   })
 
@@ -106,7 +112,7 @@ describe('renderExhibit shows the fixture it is being held to', () => {
       label: 'Published before',
       story: 'A story a stranger can follow.',
       envelopeBytes: new Uint8Array(),
-      trustStore: { manifests: {}, provenance: {} },
+      trustStore: EMPTY_TRUST,
       options: {},
       expected: { signature: 'valid', ok: true },
     },
@@ -144,7 +150,7 @@ describe('renderExhibitTally counts the runs it was given', () => {
   const ok = (id: string): ExhibitRun => ({
     exhibit: {
       id, label: id, story: 's', envelopeBytes: new Uint8Array(),
-      trustStore: { manifests: {}, provenance: {} }, options: {}, expected: {},
+      trustStore: EMPTY_TRUST, options: {}, expected: {},
     },
     run: run(), mismatches: [], matches: true,
   })

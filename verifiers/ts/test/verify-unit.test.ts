@@ -4,13 +4,15 @@ import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js'
 import { verify, isOk } from '../src/verify.js'
 import { canonicalBytes, loadsStrict } from '../src/canon.js'
 import type { JsonObject, JsonValue } from '../src/canon.js'
-import type { TrustStore } from '../src/manifests.js'
+import type { TrustStore } from '../src/trustMaterial.js'
 import { authorizationMessage, recordHash } from '../src/transfer.js'
 import { encodeEntry, receiptCoreHash } from '../src/tlog.js'
 import { b64uEncode } from '../src/b64u.js'
 import { parsePolicy as parseWitnessPolicy } from '../src/witness.js'
 import { MAX_ENVELOPE_BYTES } from '../src/schema.js'
 import { buildTree, inclusionProof, signCheckpoint, type HybridTestKeys } from './helpers/tlog-builder.js'
+import { store as parsedStore } from './helpers/trust.js'
+import { ERR } from '../src/messages.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 const emptyStore = { manifests: {}, provenance: {} }
@@ -55,11 +57,42 @@ describe('verify unit', () => {
     expect(isOk({ signature: 'valid', schema: 'valid', revocation: 'transferred', binding: 'not_checked', trust: 'verified', warnings: [], errors: [] })).toBe(false)
   })
 
-  it('throws TypeError on a JSON.parse-d (number-typed) trust store', () => {
-    // Simulate the JSON.parse mistake: manifest_version is a JS number, not bigint.
-    const store = { manifests: { 'ex.com': { issuer: 'ex.com', manifest_version: 3 } }, provenance: {} }
-    expect(() => verify(enc('{}'), store as any)).toThrow(TypeError)
-    expect(() => verify(enc('{}'), store as any)).toThrow(/loadsStrict|bigint/)
+  // These two used to assert that `verify()` THREW for a JSON.parse-d trust
+  // store, caught by a walk that read the caller's members looking for JS
+  // numbers. The walk is gone with the boundary, and the property it protected
+  // did not go with it — it moved to where the store is built, and got
+  // stronger on the way: a caller can no longer reach `verify()` at all with a
+  // document the integer-only profile cannot represent, whereas the walk let
+  // one through whenever the bad number sat somewhere it did not look.
+  //
+  // Kept as a PAIR, for the reason the pair existed: a refusal test alone
+  // passes for an implementation that refuses everything.
+  it('refuses a JSON.parse-d (number-typed) trust store where it is built', () => {
+    const doc = { manifests: { 'ex.com': { issuer: 'ex.com', manifest_version: 3 } }, provenance: {} }
+    // Loud, and at the line the caller wrote — not a verdict returned much
+    // later from a call that had nothing to do with the mistake.
+    expect(() => parsedStore(doc as never)).toThrow(/not representable/)
+  })
+
+  it('accepts the same document when its integers are bigint', () => {
+    const doc = { manifests: { 'ex.com': { issuer: 'ex.com', manifest_version: 3n } }, provenance: {} }
+    expect(() => parsedStore(doc as never)).not.toThrow()
+  })
+
+  it('answers with a verdict, not a crash, when handed a live object', () => {
+    // The third member of the family: the store that IS representable but was
+    // never parsed by this library. `verify()` owes that caller a verdict —
+    // the Python twin returns one for the same input, and an embedder porting
+    // between the two cores must not get a different failure MODE.
+    // A WELL-FORMED envelope, deliberately: with `{}` the envelope checks
+    // refuse first and the verdict never reaches the store, so the test would
+    // have passed on a fixture that proves nothing about the boundary. That
+    // ordering is itself the property — every envelope refusal keeps the
+    // message it always had, and the store is read after them.
+    const live = { manifests: { 'ex.com': { issuer: 'ex.com', manifest_version: 3n } }, provenance: {} }
+    const result = verify(tEnvelopeBytes('policy'), live as never)
+    expect(result.errors).toContain(ERR.TRUST_STORE_NOT_PARSED)
+    expect(result.signature).toBe('invalid')
   })
   // The revocation view no longer throws for a JS number, and the property this
   // test protects is stronger than the one it used to pin. A JSON.parse'd record
@@ -86,10 +119,7 @@ describe('verify unit', () => {
     expect(result.revocation).toBe('revoked')
     expect(result.warnings).toContain(`revocation record for '${T_OLD_ID}' failed verification, ignored`)
   })
-  it('does not throw the guard for a loadsStrict-parsed (bigint) trust store', () => {
-    const store = { manifests: { 'ex.com': { issuer: 'ex.com', manifest_version: 3n } }, provenance: {} }
-    expect(() => verify(enc('{}'), store as any)).not.toThrow()
-  })
+
 })
 
 // --------------------------------------------------------------------------
@@ -134,7 +164,7 @@ function tKeyManifest(): JsonObject {
 }
 
 function tTrustStore(): TrustStore {
-  return { manifests: { [T_ISSUER]: tKeyManifest() }, provenance: { [T_ISSUER]: 'tls' } }
+  return parsedStore({ manifests: { [T_ISSUER]: tKeyManifest() }, provenance: { [T_ISSUER]: 'tls' } })
 }
 
 function tPayload(revocability: string, notTransferableBefore?: string): Record<string, unknown> {

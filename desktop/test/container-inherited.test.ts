@@ -123,10 +123,10 @@ describe('the desktop verifier inherits the trust store built from own names onl
     const result = intake('library.attest', sample)
     expect(result.kind).toBe('jobs')
     if (result.kind !== 'jobs') return
-    expect(Object.keys(result.jobs[0].trustStore.manifests).length).toBeGreaterThan(0)
+    expect(result.jobs[0].trustStore.issuers().length).toBeGreaterThan(0)
     for (const name of INHERITED) {
-      expect(result.jobs[0].trustStore.manifests[name]).toBeUndefined()
-      expect(result.jobs[0].trustStore.provenance[name]).toBeUndefined()
+      expect(result.jobs[0].trustStore.manifestFor(name)).toBeNull()
+      expect(result.jobs[0].trustStore.provenanceFor(name)).toBeNull()
     }
   })
 
@@ -135,8 +135,8 @@ describe('the desktop verifier inherits the trust store built from own names onl
     expect(result.kind).toBe('jobs')
     if (result.kind !== 'jobs') return
     for (const name of INHERITED) {
-      expect(result.jobs[0].trustStore.manifests[name]).toBeUndefined()
-      expect(result.jobs[0].trustStore.provenance[name]).toBeUndefined()
+      expect(result.jobs[0].trustStore.manifestFor(name)).toBeNull()
+      expect(result.jobs[0].trustStore.provenanceFor(name)).toBeNull()
     }
   })
 })

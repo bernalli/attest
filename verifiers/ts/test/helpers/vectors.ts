@@ -9,6 +9,7 @@ import { b64uDecode } from '../../src/b64u.js'
 import { loadsStrict } from '../../src/canon.js'
 import type { JsonObject, JsonValue } from '../../src/canon.js'
 import type { Disclosure } from '../../src/index.js'
+import { KeyManifest, TrustStore, parseTrustStore } from '../../src/trustMaterial.js'
 import type { LogKey } from '../../src/tlog.js'
 import type { AnchorPolicy, PinnedHeader } from '../../src/anchor.js'
 
@@ -43,18 +44,21 @@ export function envelopeBytes(dir: string): Uint8Array {
   if (existsSync(raw)) return new Uint8Array(readFileSync(raw)) // exact bytes; strict parser must reject dups
   return new Uint8Array(readFileSync(join(dir, 'envelope.json')))
 }
-export function trustStore(dir: string) {
-  const d = loadJsonStrict(join(dir, 'manifests.json'))
-  return {
-    manifests: d.manifests as Record<string, JsonObject>,
-    provenance: d.provenance as Record<string, string>,
-    chains: (d.chains ?? {}) as Record<string, JsonObject[]>,
-    // G2/G3 (attest-versioning.md rev 4, group 31 only) — keyed by issuer
-    // and then work.artifact_series; every other leaf keeps these at the
-    // empty-object default, same convention as chains.
-    artifact_manifests: (d.artifact_manifests ?? {}) as Record<string, Record<string, JsonObject>>,
-    artifact_manifest_chains: (d.artifact_manifest_chains ?? {}) as Record<string, Record<string, JsonObject[]>>,
-  }
+/**
+ * The corpus leaf's `manifests.json`, as the BYTES it is stored in.
+ *
+ * This used to rebuild the document member by member, defaulting the three
+ * optional members to `{}` when the file omitted them. That rebuild is what a
+ * consumer is no longer allowed to do, and the default was the reason: a leaf
+ * whose store has NO `chains` and one whose store has an EMPTY `chains` are
+ * different documents, and the rebuild made them the same one — so the corpus
+ * could not have caught an implementation that confused them either.
+ *
+ * The file is already in the document grammar (§5.3), so there is nothing to
+ * reconstruct: hand the parser the bytes.
+ */
+export function trustStore(dir: string): TrustStore {
+  return parseTrustStore(new Uint8Array(readFileSync(join(dir, 'manifests.json'))))
 }
 export function revocationView(dir: string): unknown[] | null {
   // Fourth loader of the same corpus, after the two conformance adapters and
@@ -236,12 +240,27 @@ export function chainInput(dir: string): ChainInput | null {
     revocationView: parsed.revocation_view as JsonValue[],
   }
 }
-// group 36 only: auditChain takes ONE trusted keyManifest, not a full
-// TrustStore — every group 36 leaf's manifests.json trusts exactly one
-// issuer, so its sole `manifests` value is that manifest.
-export function soleKeyManifest(dir: string): JsonObject {
+// group 36 only: auditChain takes ONE trusted key manifest HANDLE, not a full
+// TrustStore — every group 36 leaf's manifests.json trusts exactly one issuer,
+// so its sole `manifests` value is that manifest. The handle is handed over as
+// the store built it: unwrapping it to `.data()` here and passing the tree is
+// exactly what the ports stopped accepting.
+/**
+ * The one key manifest a group-36 leaf's store holds.
+ *
+ * `Object.values(store.manifests)[0]` before — which took whatever came first
+ * and would have kept working, silently reading one issuer's manifest, if a
+ * leaf ever grew a second. The snapshot has no member to index, so the count
+ * is asserted instead of assumed: group 36 audits a chain against ONE issuer,
+ * and a leaf with two would be a fixture whose meaning nobody decided.
+ */
+export function soleKeyManifest(dir: string): KeyManifest {
   const store = trustStore(dir)
-  return Object.values(store.manifests)[0]!
+  const issuers = store.issuers()
+  if (issuers.length !== 1) {
+    throw new Error(`${dir}: expected exactly one issuer, found ${issuers.length}`)
+  }
+  return store.manifestFor(issuers[0]!)!
 }
 export function anchorPolicy(dir: string): AnchorPolicy | null {
   const p = join(dir, 'anchor-policy.json')

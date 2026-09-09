@@ -1,17 +1,19 @@
 import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
 
-// NEVER RE-EXPORT THE `...Materialized` TWINS, NOR `classifyRevocation`.
-// They take a key manifest that the CALLER has already put through
-// `trustMaterial`, and they do not re-apply that boundary — the precondition
-// is the whole of their safety. Python states it with a `_` prefix a reader
-// cannot miss; TypeScript has no in-package visibility, so the twins are
-// exported at module level and only this note and `package.json`'s `exports`
-// map keep them off the published surface. One line added below would reopen
-// the class the trust-material boundary exists to close:
-//   verifyRecordSignatureMaterialized (revocation.ts and transfer.ts)
-//   verifyGrantSignatureMaterialized, verifyDeclarationSignatureMaterialized
-//   verifyAuthorizationSignatureMaterialized, verifyArtifactManifestMaterialized
+// NEVER RE-EXPORT THE `...Data` TWINS, NOR `storeData`/`manifestData`, NOR
+// `classifyRevocation`. The twins take the snapshot TREE a handle holds, and
+// they do not check where it came from — the precondition is the whole of their
+// safety. `storeData`/`manifestData` hand that tree OUT of the package, which is
+// the shape C-216 was about. Python states it with a `_` prefix a reader cannot
+// miss; TypeScript has no in-package visibility, so these are exported at module
+// level and only this note, the surface test (`index-surface.test.ts`) and
+// `package.json`'s `exports` map keep them off the published surface. One line
+// added below reopens the class the handle exists to close:
+//   verifyRecordSignatureData (revocation.ts and transfer.ts)
+//   verifyGrantSignatureData, verifyDeclarationSignatureData
+//   verifyAuthorizationSignatureData, verifyArtifactManifestData
+//   storeData, manifestData, StoreData
 //   classifyRevocation
 export const ATTEST_VERSION = '0.1'
 export const SUPPORTED_ATTEST_VERSIONS = ['0.1', '0.2'] as const
@@ -20,7 +22,33 @@ export { verify, isOk } from './verify.js'
 export type { VerificationResult, Disclosure, VerifyTransparencyOptions } from './verify.js'
 export { loadsStrict, canonicalBytes, CanonError } from './canon.js'
 export type { JsonValue, JsonObject } from './canon.js'
-export type { TrustStore, KeyManifest, KeyEntry } from './manifests.js'
+export type { KeyEntry } from './manifests.js'
+
+/**
+ * Trust material enters as BYTES. These five names are the whole door.
+ *
+ * `TrustStore` and `KeyManifest` are CLASSES here, not interfaces, and that is
+ * the point rather than an implementation detail: an interface describes a
+ * shape, and anything can present a shape — including an object whose answers
+ * differ from the data it would serialize. Holding one of these is proof that
+ * this library parsed the bytes itself, which is a fact about provenance that
+ * no shape can imitate.
+ *
+ * A consumer builds one with `parseTrustStore(bytes)` / `parseKeyManifest(bytes)`
+ * and gets `TrustMaterialError` when the document is not admissible. What is
+ * NOT exported, and must never be: `storeData`, `manifestData`, the `…Data`
+ * twins of the internal modules, and `classifyRevocation`. Those take the
+ * snapshot's internal trees, and a single line re-exporting one of them hands
+ * a caller back the mutable tree the boundary exists to keep — the C-216
+ * family. `index-surface.test.ts` pins both halves of this sentence.
+ */
+export {
+  TrustStore,
+  KeyManifest,
+  TrustMaterialError,
+  parseTrustStore,
+  parseKeyManifest,
+} from './trustMaterial.js'
 
 /**
  * SHA-256 over raw bytes, hex-encoded.

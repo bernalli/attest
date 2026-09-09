@@ -4,6 +4,7 @@ import { CanonError, JsonObject, JsonValue, canonicalBytes, loadsStrict } from '
 import { TrustStore } from '../src/manifests.js'
 import { b64uEncode } from '../src/b64u.js'
 import { verify } from '../src/verify.js'
+import { store as parsedStore } from './helpers/trust.js'
 
 const DEPTH_MESSAGE = 'maximum nesting depth exceeded'
 const ISSUER = 'store.example.com'
@@ -159,12 +160,12 @@ function trustStore(): TrustStore {
     }],
   }
   const sig = ed25519.sign(canonicalBytes(body), MANIFEST_SEED)
-  return {
+  return parsedStore({
     manifests: {
       [ISSUER]: { ...body, manifest_signature: { kid: KID, sig: b64uEncode(sig) } },
     },
     provenance: {},
-  }
+  })
 }
 
 describe('attest-JCS depth profile adversarial coverage', () => {

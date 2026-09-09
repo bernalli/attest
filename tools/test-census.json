@@ -3,11 +3,11 @@
   "regenerate": "npm test --prefix <suite> -- --reporter=default --reporter=json --outputFile.json=/tmp/<suite>-tests.json && python3 tools/check_test_census.py <suite> --report /tmp/<suite>-tests.json --update",
   "suites": {
     "site": {
-      "total": 880,
+      "total": 885,
       "files": {
         "test/b64u.test.ts": 3,
-        "test/bundle.test.ts": 75,
-        "test/conformance.test.ts": 252,
+        "test/bundle.test.ts": 78,
+        "test/conformance.test.ts": 254,
         "test/container-corpus.test.ts": 94,
         "test/container-properties.test.ts": 6,
         "test/container.test.ts": 15,
@@ -40,7 +40,7 @@
       }
     },
     "desktop": {
-      "total": 547,
+      "total": 548,
       "files": {
         "test/app.test.ts": 57,
         "test/card-hostile.test.ts": 35,
@@ -48,7 +48,7 @@
         "test/container-inherited.test.ts": 66,
         "test/inherited-copy.test.ts": 11,
         "test/inline.test.ts": 39,
-        "test/provenance-characterization.test.ts": 4,
+        "test/provenance-characterization.test.ts": 5,
         "test/rail-state.property.test.ts": 8,
         "test/shell-policy.test.ts": 300,
         "test/verdict.test.ts": 13

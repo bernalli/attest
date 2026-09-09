@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath, URL as NodeURL } from 'node:url'
-import { loadsStrict } from 'attest-verifier'
-import type { JsonObject, TrustStore, Disclosure, JsonValue, LogKey, AnchorPolicy, PinnedHeader } from 'attest-verifier'
+import { loadsStrict, parseTrustStore } from 'attest-verifier'
+import type { JsonObject, KeyManifest, TrustStore, Disclosure, JsonValue, LogKey, AnchorPolicy, PinnedHeader } from 'attest-verifier'
 
 // Use node:url's URL explicitly — under `@vitest-environment jsdom` the global
 // URL is jsdom's WHATWG implementation, which fileURLToPath doesn't recognize.
@@ -31,17 +31,22 @@ export function envelopeBytes(dir: string): Uint8Array {
   if (existsSync(raw)) return new Uint8Array(readFileSync(raw))
   return new Uint8Array(readFileSync(join(dir, 'envelope.json')))
 }
+/**
+ * The corpus leaf's `manifests.json`, as the BYTES it is stored in.
+ *
+ * This used to rebuild the document member by member, defaulting the four
+ * optional members to `{}` when the file omitted them. The default was the
+ * reason the rebuild had to go: a leaf whose store has NO `chains` and one
+ * whose store has an EMPTY `chains` are different documents, and the rebuild
+ * made them the same one — so no leaf of this corpus could have caught an
+ * implementation that confused them, on this loader's road.
+ *
+ * The file is already in the document grammar (§5.3): hand the parser the
+ * bytes. Same spelling as `verifiers/ts/test/helpers/vectors.ts` and
+ * `tools/conformance_adapter_ts.mjs`, which read the same file.
+ */
 export function trustStore(dir: string): TrustStore {
-  const d = loadJsonStrict(join(dir, 'manifests.json'))
-  return {
-    manifests: d.manifests as unknown as Record<string, JsonObject>,
-    provenance: d.provenance as unknown as Record<string, string>,
-    chains: (d.chains ?? {}) as unknown as Record<string, JsonObject[]>,
-    // G2/G3 (attest-versioning.md rev 4, group 31 only) — keyed by issuer
-    // and then work.artifact_series; mirrors verifiers/ts/test/helpers/vectors.ts.
-    artifact_manifests: (d.artifact_manifests ?? {}) as unknown as Record<string, Record<string, JsonObject>>,
-    artifact_manifest_chains: (d.artifact_manifest_chains ?? {}) as unknown as Record<string, Record<string, JsonObject[]>>,
-  }
+  return parseTrustStore(new Uint8Array(readFileSync(join(dir, 'manifests.json'))))
 }
 export function revocationView(dir: string): JsonValue[] | null {
   // Fifth loader of the same corpus (two conformance adapters,
@@ -168,12 +173,21 @@ export function chainInput(dir: string): ChainInput | null {
     revocationView: parsed.revocation_view as unknown as JsonValue[],
   }
 }
-// group 36 only: auditChain takes ONE trusted keyManifest, not a full
+// group 36 only: auditChain takes ONE trusted key manifest HANDLE, not a full
 // TrustStore — every group 36 leaf's manifests.json trusts exactly one
 // issuer, so its sole `manifests` value is that manifest.
-export function soleKeyManifest(dir: string): JsonObject {
+export function soleKeyManifest(dir: string): KeyManifest {
   const store = trustStore(dir)
-  return Object.values(store.manifests)[0]!
+  const issuers = store.issuers()
+  // Asserted, not assumed: `Object.values(...)[0]` took whatever came first
+  // and would have kept working, silently reading one issuer's manifest, if a
+  // group 36 leaf ever grew a second one.
+  if (issuers.length !== 1) {
+    throw new Error(`${dir}: expected exactly one issuer, found ${issuers.length}`)
+  }
+  // The handle as the store built it, never `.data()`: unwrapping it here and
+  // handing the tree on is exactly what the doors stopped accepting.
+  return store.manifestFor(issuers[0]!)!
 }
 export function anchorPolicy(dir: string): AnchorPolicy | null {
   const p = join(dir, 'anchor-policy.json')
