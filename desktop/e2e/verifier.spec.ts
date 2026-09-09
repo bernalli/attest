@@ -192,7 +192,7 @@ function vectorBundle(name: string): Uint8Array {
     )
   return zipSync({
     'receipts/r.attest.json': envelope,
-    'manifests/m.json': container,
+    [`manifests/${issuer}.json`]: container,
     [`legal/${legalDigest}.txt`]: VECTOR_LEGAL_TEXT,
   })
 }
