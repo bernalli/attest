@@ -119,6 +119,11 @@ const MAX_QUOTED_MEMBER_CHARS = 60
 // diagnostic renderer: one rule, so the two cannot drift apart at the first
 // correction. This caller's only job is the in-band quoting and the cap.
 const quoted = (name: string): string => `"${neutralized(name, MAX_QUOTED_MEMBER_CHARS)}"`
+// The offending value, the way the reference importer names it. Never
+// JSON.stringify: `loadsStrict` yields bigint for integers and that throws,
+// which would turn a clean refusal into a crash on the commonest wrong type.
+const shown = (v: unknown): string =>
+  typeof v === 'string' ? quoted(v) : typeof v === 'bigint' ? String(v) : Array.isArray(v) ? 'a list' : v === null ? 'null' : typeof v === 'object' ? 'an object' : String(v)
 
 /** A content-address as it may appear in a message a person reads.
  *
@@ -333,7 +338,10 @@ export function parseBundle(
       if (blob === null) continue // mirror Python: non-object blobs contribute no issuer
       const issuer = blob['issuer']
       if (typeof issuer !== 'string' || !issuer)
-        throw new BundleError(`manifest entry ${quoted(name)}: content issuer must be a nonempty string`)
+        throw new BundleError(
+          `manifest entry ${quoted(name)}: content issuer must be a nonempty string; ` +
+            `got ${shown(issuer)}`,
+        )
       // The unsigned member name can reject an ambiguous bundle, never supply
       // its trust identity. Compare the actual strings: no case folding or
       // Unicode normalization. Exact agreement plus unique member names also
@@ -356,8 +364,8 @@ export function parseBundle(
           const contentIssuer = entry['issuer']
           if (typeof contentIssuer !== 'string' || !contentIssuer)
             throw new BundleError(
-              `manifest entry ${quoted(name)}: content issuer must be a nonempty string ` +
-                `in ${collection}[${index}]`,
+              `manifest entry ${quoted(name)}: content issuer must be a nonempty string; ` +
+                `got ${shown(contentIssuer)} in ${collection}[${index}]`,
             )
           if (contentIssuer !== issuer)
             throw new BundleError(
