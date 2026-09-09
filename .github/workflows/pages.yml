@@ -30,9 +30,11 @@ jobs:
             verifiers/ts/package-lock.json
             site/package-lock.json
       - run: npm ci --prefix verifiers/ts
-      - run: npm run build --prefix verifiers/ts
+      - id: verifier_build
+        run: npm run build --prefix verifiers/ts
       - run: npm test --prefix verifiers/ts
-      - run: npm ci --prefix site
+      - id: site_install
+        run: npm ci --prefix site
       # The guard below is pointed at defects it must name before it is trusted to have
       # found none. A check that has only ever been seen passing is not known to catch
       # anything — the same reason gate G1 in desktop/test carries a negative self-test.
@@ -52,7 +54,7 @@ jobs:
       # Keep the typecheck measured after a red suite. This step is still fatal:
       # the condition changes when it runs, not how its failure is handled.
       - name: Build and typecheck site
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.verifier_build.outcome == 'success' && steps.site_install.outcome == 'success' }}
         run: npm run build --prefix site
       # The two container readers are judged against each other on archives
       # nobody chose. A disagreement here is the defect the canonical reader
