@@ -35,6 +35,11 @@ import type { KeyManifest as ParsedKeyManifest } from '../src/trustMaterial.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 const parse = (v: unknown): JsonObject => loadsStrict(enc(JSON.stringify(v))) as JsonObject
+const parseArray = (v: unknown): JsonValue[] => {
+  const parsed = loadsStrict(enc(JSON.stringify(v)))
+  if (!Array.isArray(parsed)) throw new TypeError('test fixture must be a JSON array')
+  return parsed
+}
 
 const ISSUER = 'store.example.com'
 const KID = `${ISSUER}/keys/test#ed25519-1`
@@ -486,11 +491,11 @@ describe('auditChain', () => {
     const record1 = chainTransferRecord(ID0, ID1, newHolderPub, holderSeed, AT)
     const record2 = chainTransferRecord(ID1, ID2, secondNewHolderPub, newHolderSeed, AT2)
     const [bundle1, bundle2] = chainLogBundle([record1, record2], hk)
-    const view = parse([
+    const view = parseArray([
       { record: record1, evidence: bundle1 },
       { record: record2, evidence: bundle2 },
     ])
-    const revView = parse([chainTransferredRevocation(ID0, AT), chainTransferredRevocation(ID1, AT2)])
+    const revView = parseArray([chainTransferredRevocation(ID0, AT), chainTransferredRevocation(ID1, AT2)])
 
     const res = auditChain([p0, p1, p2], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
@@ -507,8 +512,8 @@ describe('auditChain', () => {
 
     const record1 = chainTransferRecord(ID0, ID1, newHolderPub, holderSeed, AT)
     const bundle1 = chainLogBundle([record1], hk)[0]
-    const view = parse([{ record: record1, evidence: bundle1 }])
-    const revView = parse([chainTransferredRevocation(ID0, AT)])
+    const view = parseArray([{ record: record1, evidence: bundle1 }])
+    const revView = parseArray([chainTransferredRevocation(ID0, AT)])
 
     const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
@@ -526,11 +531,11 @@ describe('auditChain', () => {
     const lateRecord = chainTransferRecord(ID0, LOSING_ID, secondNewHolderPub, holderSeed, AT)
     // Log order: earlyRecord first (leaf_index 0), lateRecord second (1).
     const [earlyBundle, lateBundle] = chainLogBundle([earlyRecord, lateRecord], hk)
-    const view = parse([
+    const view = parseArray([
       { record: earlyRecord, evidence: earlyBundle },
       { record: lateRecord, evidence: lateBundle },
     ])
-    const revView = parse([chainTransferredRevocation(ID0, AT)])
+    const revView = parseArray([chainTransferredRevocation(ID0, AT)])
 
     const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
@@ -546,11 +551,11 @@ describe('auditChain', () => {
     const preFloorRecord = chainTransferRecord(ID0, LOSING_ID, secondNewHolderPub, holderSeed, AT)
     const validRecord = chainTransferRecord(ID0, ID1, newHolderPub, holderSeed, AT2)
     const [preFloorBundle, validBundle] = chainLogBundle([preFloorRecord, validRecord], hk)
-    const view = parse([
+    const view = parseArray([
       { record: preFloorRecord, evidence: preFloorBundle },
       { record: validRecord, evidence: validBundle },
     ])
-    const revView = parse([chainTransferredRevocation(ID0, AT2)])
+    const revView = parseArray([chainTransferredRevocation(ID0, AT2)])
 
     const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
@@ -565,8 +570,8 @@ describe('auditChain', () => {
     const p1 = chainPayload(ID1, newHolderPub)
     const record1 = chainTransferRecord(ID0, ID1, newHolderPub, holderSeed, AT)
     const bundle1 = chainLogBundle([record1], hk)[0]
-    const view = parse([{ record: record1, evidence: bundle1 }])
-    const revView = parse([chainTransferredRevocation(ID0, AT)])
+    const view = parseArray([{ record: record1, evidence: bundle1 }])
+    const revView = parseArray([chainTransferredRevocation(ID0, AT)])
 
     const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
@@ -581,7 +586,7 @@ describe('auditChain', () => {
 
     const record1 = chainTransferRecord(ID0, ID1, newHolderPub, holderSeed, AT)
     const bundle1 = chainLogBundle([record1], hk)[0]
-    const view = parse([{ record: record1, evidence: bundle1 }])
+    const view = parseArray([{ record: record1, evidence: bundle1 }])
 
     const res = auditChain([p0, p1], view, [], manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
@@ -594,8 +599,8 @@ describe('auditChain', () => {
     const p1 = chainPayload(ID1, newHolderPub)
 
     const record1 = chainTransferRecord(ID0, ID1, newHolderPub, holderSeed, AT)
-    const view = parse([{ record: record1, evidence: null }])
-    const revView = parse([chainTransferredRevocation(ID0, AT)])
+    const view = parseArray([{ record: record1, evidence: null }])
+    const revView = parseArray([chainTransferredRevocation(ID0, AT)])
     const hk = generateHybridLogKeys()
 
     const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
@@ -611,8 +616,8 @@ describe('auditChain', () => {
     const unrelatedHolderSeed = new Uint8Array(32).fill(27)
     const record1 = chainTransferRecord(ID0, ID1, newHolderPub, unrelatedHolderSeed, AT)
     const bundle1 = chainLogBundle([record1], hk)[0]
-    const view = parse([{ record: record1, evidence: bundle1 }])
-    const revView = parse([chainTransferredRevocation(ID0, AT)])
+    const view = parseArray([{ record: record1, evidence: bundle1 }])
+    const revView = parseArray([chainTransferredRevocation(ID0, AT)])
 
     const res = auditChain([p0, p1], view, revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 
@@ -624,7 +629,7 @@ describe('auditChain', () => {
     const p0 = chainPayload(ID0, holderPub)
     const p1 = chainPayload(ID1, newHolderPub)
     const hk = generateHybridLogKeys()
-    const revView = parse([chainTransferredRevocation(ID0, AT)])
+    const revView = parseArray([chainTransferredRevocation(ID0, AT)])
 
     const res = auditChain([p0, p1], [], revView, manifestHandle(keyManifest()), [transferLogKey(hk)], noHorizonPolicy())
 

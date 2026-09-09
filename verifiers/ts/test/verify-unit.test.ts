@@ -131,6 +131,11 @@ describe('verify unit', () => {
 // test/helpers/tlog-builder.ts, the same idiom sibling-hybrid.test.ts
 // established for hybrid-signed side-documents).
 const parse = (v: unknown): JsonObject => loadsStrict(enc(JSON.stringify(v))) as JsonObject
+const parseArray = (v: unknown): JsonValue[] => {
+  const parsed = loadsStrict(enc(JSON.stringify(v)))
+  if (!Array.isArray(parsed)) throw new TypeError('test fixture must be a JSON array')
+  return parsed
+}
 
 const T_ISSUER = 'store.example.com'
 const T_KID = `${T_ISSUER}/keys/test#ed25519-1`
@@ -274,7 +279,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const validClaim = parse({ record, evidence: bundle })
 
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: [validClaim],
       logKeys: [tLogKey(hk)],
       anchorPolicy: noHorizonPolicy(),
@@ -292,7 +297,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const validClaim = parse({ record, evidence: bundle })
 
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: [validClaim],
       logKeys: [tLogKey(hk)],
       anchorPolicy: noHorizonPolicy(),
@@ -305,7 +310,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
 
   it('ignores an unbacked transfer without a transferView at all', () => {
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: null,
       revocability: 'policy',
     })
@@ -322,7 +327,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     ['unserializable', (() => { const cyclic: unknown[] = []; cyclic.push(cyclic); return cyclic })() as unknown as JsonValue[]],
   ])('warns unbacked when the resolver never engages (%s)', (_name, transferView) => {
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView,
       revocability: 'policy',
     })
@@ -352,7 +357,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const plainClaim = parse({ record, evidence: bundle })
     let reads = 0
     const options = {
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       logKeys: [tLogKey(hk)],
       anchorPolicy: noHorizonPolicy(),
       revocability: 'policy',
@@ -385,7 +390,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const forgedClaim = parse({ record: forged, evidence: bundle })
 
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: [forgedClaim],
       logKeys: [tLogKey(hk)],
       anchorPolicy: noHorizonPolicy(),
@@ -403,7 +408,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const hk = generateHybridLogKeys()
 
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: [unloggedClaim],
       logKeys: [tLogKey(hk)],
       anchorPolicy: noHorizonPolicy(),
@@ -422,7 +427,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const claim = parse({ record, evidence: bundle })
 
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: [claim],
       logKeys: null,
       anchorPolicy: null,
@@ -444,7 +449,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const lateClaim = parse({ record: lateRecord, evidence: lateBundle })
 
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: [lateClaim, earlyClaim], // list order deliberately reversed
       logKeys: [tLogKey(hk)],
       anchorPolicy: noHorizonPolicy(),
@@ -462,7 +467,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const claim = parse({ record, evidence: bundle })
 
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: [claim, claim],
       logKeys: [tLogKey(hk)],
       anchorPolicy: noHorizonPolicy(),
@@ -480,7 +485,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const [earlyBundle, lateBundle] = tLogBundle([earlyRecord, lateRecord], hk)
 
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: [parse({ record: earlyRecord, evidence: earlyBundle }), parse({ record: lateRecord, evidence: lateBundle })],
       logKeys: [tLogKey(hk)],
       anchorPolicy: noHorizonPolicy(),
@@ -497,7 +502,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
     const claim = parse({ record, evidence: bundle })
 
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       transferView: [claim],
       logKeys: [tLogKey(hk)],
       anchorPolicy: noHorizonPolicy(),
@@ -520,7 +525,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
       const claim = parse({ record, evidence: bundle })
 
       const result = verifyWith({
-        revocationView: parse([tTransferredRevocationRecord()]),
+        revocationView: parseArray([tTransferredRevocationRecord()]),
         transferView: [claim],
         logKeys: [tLogKey(hk)],
         anchorPolicy: noHorizonPolicy(),
@@ -558,7 +563,7 @@ describe('verify(): Stage 3 transferred-class backing (§17.3)', () => {
 
   it('sees zero behavior change when transferView is never supplied at all', () => {
     const result = verifyWith({
-      revocationView: parse([tTransferredRevocationRecord()]),
+      revocationView: parseArray([tTransferredRevocationRecord()]),
       revocability: 'policy',
       supplyTransferView: false,
     })
