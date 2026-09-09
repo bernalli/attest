@@ -383,6 +383,17 @@ it never authenticates, so it can never set `T` either.
 | 45b | `b-matching-unknown-status` | the receipt's own `receipt_id`, `status: "recalled"` | identical to 45a — a matching record with an unregistered status neither revokes nor anchors |
 | 45c | `c-malformed-receipt-id-unknown-status` | `receipt_id: "01JBQ0000000000000000OTHER"` (26 characters, but `O` is outside Crockford's base32 alphabet), `status: "revoked"`, `revoked_at: "2025-08-01T00:00:00Z"` | identical to 45a — a genuinely signed, registered-status record with a malformed `receipt_id` fails to authenticate, so it neither revokes (it does not even match this receipt) nor anchors |
 
+## 46 — `46-manifest-unauthenticated`
+
+v0.1 §7.1/§11 step 2: a trusted key manifest must authenticate before any key
+is read from it. Both leaves retain `tls` provenance but supply a manifest
+edited after signing; `manifest_pristine.json` carries the untampered original.
+
+| Leaf | Name | Checks |
+| --- | --- | --- |
+| 46a | `a-signature-corrupted` | The manifest's own signature is replaced with zero bytes; its key material and the genuinely issuer-signed receipt are untouched → `signature: "invalid"`, `schema: "not_checked"`, `revocation: "unknown"`, `binding: "not_checked"`, `trust: "verified"`, `ok: false`, `errors_contains: ["is not self-consistent"]`, `warnings: []`. |
+| 46b | `b-key-swapped-forged-receipt` | A key entry's `pub` is replaced with the attacker's public key, leaving its `kid` and the manifest's own signature unchanged; the receipt is signed with the attacker's key under that same `kid` → identical to 46a. The manifest fails authentication before the substituted key can certify the forged receipt. |
+
 ## 47 — `47-oversized-view-transfer` (v0.1 rev 13)
 
 `_classify_revocation`'s oversized-view ceiling (§18.4) fails CLOSED for the `revocability: "none"` class exactly as it already does for `policy`/`refund_window`: a genuine, backed `status: "transferred"` record — the same fixture as `35-transfer/b-transferred-on-none-with-backing` — padded past `revocation.MAX_REVOCATION_RECORDS` with junk entries must not verify green with no warning at all, per v0.2 §17.3's key-authorization gate applying to every revocability class.
