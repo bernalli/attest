@@ -761,10 +761,10 @@ def _load_trust_dir(trust_dir: Path) -> verify.TrustStore:
         files = sorted(trust_dir.iterdir())
         for path in files:
             if not stat.S_ISREG(path.lstat().st_mode):
-                raise CliUsageError(f"--trust-dir {trust_dir}: {path} is not a regular file")
+                raise CliUsageError(f"--trust-dir {trust_dir}: {str(path)!r} is not a regular file")
             if not path.name.lower().endswith(".json"):
                 raise CliUsageError(
-                    f"--trust-dir {trust_dir}: {path} does not have a .json extension "
+                    f"--trust-dir {trust_dir}: {str(path)!r} does not have a .json extension "
                     "(case-insensitive)"
                 )
         declared_bytes = sum(path.stat().st_size for path in files)

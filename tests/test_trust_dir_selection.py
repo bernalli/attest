@@ -138,7 +138,9 @@ def test_json_files_preserve_the_verdict(
     _assert_verdict(envelope, trust_dir, capsys, denied=denied)
 
 
-@pytest.mark.parametrize("name", ["x.json.bak", "x.bak", "x.txt", "x", "x.json."])
+@pytest.mark.parametrize(
+    "name", ["x.json.bak", "x.bak", "x.txt", "x", "x.json.", "xjson", "json", "x.json.txt"]
+)
 def test_other_extensions_refuse_the_whole_directory(
     rotation: TrustFixture, capsys: CapSys, name: str
 ) -> None:
