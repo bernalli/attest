@@ -7054,16 +7054,28 @@ def test_import_manifest_float_issuer_is_refused_by_json_first(issuer: float) ->
 def test_import_manifest_boundary_is_not_reached_for_unclaimed_or_duplicate_members(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, duplicate: bool
 ) -> None:
-    """Measure the upstream decision, not just an exit code shared by two causes."""
+    """Unclaimed manifests stay unread; reserved-name refusals precede all member reads.
+
+    Duplicate names still fail at the container boundary before manifest parsing.
+    """
     manifest_reads: list[str] = []
+    member_reads: list[str] = []
     original = bundle._loads
+    original_read = bundle._read
 
     def recording_loads(data: bytes, *, label: str) -> Any:
         if label.startswith("manifest entry"):
             manifest_reads.append(label)
         return original(data, label=label)
 
+    def recording_read(
+        buf: bundle.Buffer, member: bundle.container.Member, budget: bundle.container.ReadBudget
+    ) -> bytes:
+        member_reads.append(member.name)
+        return original_read(buf, member, budget)
+
     monkeypatch.setattr(bundle, "_loads", recording_loads)
+    monkeypatch.setattr(bundle, "_read", recording_read)
     if duplicate:
         with pytest.warns(UserWarning, match="Duplicate name"):
             rc, out, err = _import_named_manifest(tmp_path, name, "evil.example", duplicate=True)
@@ -7074,6 +7086,16 @@ def test_import_manifest_boundary_is_not_reached_for_unclaimed_or_duplicate_memb
         )
         assert out == ""
         assert not (tmp_path / "out").exists()
+    elif name == "manifests/good.example.JSON":
+        rc, out, err = _import_named_manifest(tmp_path, name, "evil.example")
+        assert rc == 2
+        assert err == (
+            "error: invalid bundle member 'manifests/good.example.JSON'; "
+            "expected manifests/<issuer>.json with exact lowercase prefix and suffix\n"
+        )
+        assert out == ""
+        assert not (tmp_path / "out").exists()
+        assert member_reads == []
     else:
         rc, out, err = _import_named_manifest(tmp_path, name, "evil.example")
         assert rc == 0, err
