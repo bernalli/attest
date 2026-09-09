@@ -36,8 +36,10 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The CLI reads or builds trust material as serialized bytes.** Manifest
   inputs are parsed with `KeyManifest.from_bytes`, and `verify --trust-dir`
   builds a store document for `TrustStore.from_bytes`. The directory loader
-  refuses an unclassifiable JSON file by name instead of silently skipping
-  it, and bounds the aggregate input size. `attest import`
+  reads only immediate, case-sensitive `*.json` matches; other filenames and
+  subdirectories are ignored. It refuses an unclassifiable selected file by
+  name instead of silently skipping it, and bounds the aggregate size of the
+  selected files. `attest import`
   applies the same classification before writing trust-directory files. (#141)
 
 - **Breaking: TypeScript trust material also enters through byte parsers.**

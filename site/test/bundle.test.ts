@@ -966,7 +966,13 @@ describe('parseBundle: trust material the library will not admit fails the whole
     }
     expect(raised).toBeInstanceOf(BundleError)
     expect((raised as Error).message).toMatch(/trust store exceeds the admission ceiling/)
-  })
+    // Timeout, explicitly: this case builds a document just over the ten
+    // megabyte ceiling, so its cost is the ceiling and not the property. It
+    // measured 3817ms of the default 5000 on a developer machine and timed out
+    // on a shared runner (PR 144), which made a required check report the
+    // runner's load instead of the refusal it exists to pin. The assertion is
+    // that the document is refused, not that it is refused quickly.
+  }, 30_000)
 })
 
 // The twin of the reference importer's own outcome-class test
