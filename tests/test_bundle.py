@@ -1974,3 +1974,61 @@ def test_a_container_over_the_bound_is_refused_without_being_copied(
     monkeypatch.setattr(bundle.tempfile, "TemporaryFile", no_copies)
     with pytest.raises(bundle.BundleTooLargeError, match="will copy in order to read it"):
         bundle.import_bundle(oversized, max_container_bytes=1024)
+
+
+def _identity_bundle(tmp_path: Path, name: str, blob: object) -> Path:
+    """One receipt and one manifest member, named exactly as asked."""
+    path = tmp_path / "identity.attest"
+    rid = "01HZX0000000000000000000AA"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            f"receipts/{rid}.attest.json", json.dumps({"payload": {"receipt_id": rid}})
+        )
+        archive.writestr(name, json.dumps(blob))
+    return path
+
+
+@pytest.mark.parametrize(
+    ("name", "blob", "message"),
+    [
+        (
+            "manifests/sub/a.example.json",
+            {"issuer": "sub/a.example", "key_manifests": []},
+            "expected manifests/<issuer>.json",
+        ),
+        (
+            "manifests/a.example.json",
+            {"issuer": "a.example", "key_manifests": [{"issuer": "evil.example"}]},
+            "does not match content issuer 'evil.example' in key_manifests[0]",
+        ),
+        (
+            "manifests/a.example.json",
+            {"issuer": "a.example", "artifact_manifests": [{"issuer": ""}]},
+            "content issuer must be a nonempty string; got '' in artifact_manifests[0]",
+        ),
+        (
+            "manifests/a.example.json",
+            {"issuer": "", "key_manifests": []},
+            "content issuer must be a nonempty string; got ''",
+        ),
+        (
+            "manifests/a.example.json",
+            {"issuer": 7, "key_manifests": []},
+            "content issuer must be a nonempty string; got 7",
+        ),
+    ],
+)
+def test_import_identity_refusals_are_bundle_errors(
+    tmp_path: Path, name: str, blob: object, message: str
+) -> None:
+    """The CLI dispatches on the CLASS and shares exit 2 across eight of them,
+    so neither the exit code nor the printed text can pin which one was raised.
+    A library caller catching BundleError is the contract these refusals owe.
+
+    One case per RAISE SITE this change introduced, not per family: naming the
+    families ("the name's shape", "a declared issuer") hid the wrapper site,
+    which no test in this file pinned. Each case below is the only one that
+    turns red when its own site stops raising BundleError.
+    """
+    with pytest.raises(bundle.BundleError, match=re.escape(message)):
+        bundle.import_bundle(_identity_bundle(tmp_path, name, blob))
