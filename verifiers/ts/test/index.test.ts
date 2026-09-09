@@ -38,7 +38,9 @@ describe('sha256Hex', () => {
   it('hashes bytes, not text: one flipped bit changes the digest', () => {
     const bytes = enc('the deal this receipt preserves')
     const flipped = new Uint8Array(bytes)
-    flipped[0] ^= 0x01
+    const first = flipped[0]
+    if (first === undefined) throw new Error('non-empty fixture has no first byte')
+    flipped[0] = first ^ 0x01
     expect(api.sha256Hex(flipped)).not.toBe(api.sha256Hex(bytes))
   })
 

@@ -99,7 +99,10 @@ describe('the cost contract', () => {
     const base = baseCheckpoint()
     const note = noteOf(base)
     const broken = edLeg(w1, note, BASE_T)
-    broken[broken.length - 1] ^= 0xff
+    const last = broken.length - 1
+    const finalByte = broken[last]
+    if (finalByte === undefined) throw new Error('witness signature fixture is empty')
+    broken[last] = finalByte ^ 0xff
     const text = base + line(w1.name, broken) + line(w1.name, pqLeg(w1, note, BASE_T))
     expect(run(text, [pinDoc(w1)], { n: 1, m: 1 }).valid).toBe(false)
     expect(counts.ed).toBe(1)

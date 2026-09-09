@@ -141,15 +141,14 @@ describe('verify(): an ambiguous issuer manifest is refused whole', () => {
     const pair = [entry(kid1, pub1, 'active'), entry(kid1, pub1, 'compromised')]
     const env = enc(JSON.stringify(envelope()))
 
-    const results = [pair, [...pair].reverse()].map((keys) =>
-      verify(env, trustStore(manifestOf(keys)), null, null, undefined),
-    )
+    const forward = verify(env, trustStore(manifestOf(pair)), null, null, undefined)
+    const reversed = verify(env, trustStore(manifestOf([...pair].reverse())), null, null, undefined)
 
-    for (const result of results) {
+    for (const result of [forward, reversed]) {
       expect(result.signature).toBe('invalid')
       expect(result.errors.some((e) => e.includes('duplicate kid'))).toBe(true)
     }
-    expect(results[0].errors).toEqual(results[1].errors)
+    expect(forward.errors).toEqual(reversed.errors)
   })
 
   it('leaves a clean single-key manifest verifying', () => {
