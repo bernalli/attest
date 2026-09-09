@@ -21,6 +21,14 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   other tools must follow the same naming convention as the exporter. Python
   import and the site's TypeScript `parseBundle`/`intake` enforce the same rule.
 
+## [0.9.6] — 2026-09-09
+
+No change to this package's published code: `verifiers/ts/src` is byte-identical to
+0.9.5, and only a test file differs. Released to keep the two packages' version numbers
+in step with `attest-receipts` 0.9.6, which carries a security fix to its trust directory
+loader. That defect does not arise here: this package has no directory loader — it takes
+trust material as bytes and never selects it by file name.
+
 ## [0.9.5] — 2026-09-09
 
 ### Fixed
