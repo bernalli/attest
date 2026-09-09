@@ -49,7 +49,11 @@ jobs:
           npm test --prefix site -- --reporter=default --reporter=json \
             --outputFile.json="$RUNNER_TEMP/site-tests.json"
       - run: python3 tools/check_test_census.py site --report "$RUNNER_TEMP/site-tests.json"
-      - run: npm run build --prefix site
+      # Keep the typecheck measured after a red suite. This step is still fatal:
+      # the condition changes when it runs, not how its failure is handled.
+      - name: Build and typecheck site
+        if: ${{ !cancelled() }}
+        run: npm run build --prefix site
       # The two container readers are judged against each other on archives
       # nobody chose. A disagreement here is the defect the canonical reader
       # exists to close — same bytes, two conforming verifiers, two answers —
