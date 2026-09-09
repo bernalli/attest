@@ -43,7 +43,20 @@ COMPILED verifier, so a stale build measures the previous revision's logic:
     npm ci --prefix verifiers/ts && npm run build --prefix verifiers/ts
     npm ci --prefix site
 
-Exit status is non-zero when any divergence is found.
+Exit status: 0 for agreement, 1 for a failed measurement or divergence, and
+3 for a census mismatch, and 78 for an absent prerequisite (no measurement).
+An absent or unreadable census is a census failure, never an absent
+prerequisite: the pin is committed, so losing it is the property breaking and
+not the environment being incomplete.
+
+The committed tools/importer-census.json pins executed identities in two distinct
+units: differential archives and reference-only archive-pair cases. A default
+run checks the entire pinned census even if the generator registry shrinks.
+Explicit --families/--count/--seed runs check only their stated scope (an empty
+run still fails); --update-census requires the full pinned default invocation.
+It admits additions after a completed, agreeing run. Removals and renames require
+an explicit edit of the committed census before updating. The generator never
+reads that census. --selftest exercises the guard without Node or a corpus run.
 """
 
 from __future__ import annotations
@@ -1263,11 +1276,21 @@ def python_projection(attest: Path, private: Path | None = None, **caps: int) ->
     }
 
 
+class MissingPrerequisite(RuntimeError):
+    """The environment cannot supply a measurement."""
+
+
 def build_ts_bundle(out_dir: Path) -> Path:
     """Bundle the browser importer's two entry points for the adapter."""
     if not ESBUILD.exists():
-        raise SystemExit(
+        raise MissingPrerequisite(
             f"missing {ESBUILD} — run `npm ci --prefix site` before the importer differential"
+        )
+    if shutil.which("node") is None:
+        raise MissingPrerequisite("missing node on PATH")
+    if not (REPO_ROOT / "verifiers/ts/dist/index.js").is_file():
+        raise MissingPrerequisite(
+            "missing verifier build — run `npm run build --prefix verifiers/ts`"
         )
     bundle = out_dir / "importer.mjs"
     result = subprocess.run(  # noqa: S603 -- fixed argv list, no shell
@@ -1444,7 +1467,9 @@ def pair_vectors() -> list[Vector]:
     ]
 
 
-def run_pair_family(work: Path, keep: Path | None) -> list[Divergence]:
+def run_pair_family(
+    work: Path, keep: Path | None, completed: list[ExecutedCase]
+) -> list[Divergence]:
     """Check the property §14.4 states about a pair, on the reference importer.
 
     Not a differential: the browser importer is handed one file at a time and
@@ -1461,6 +1486,7 @@ def run_pair_family(work: Path, keep: Path | None) -> list[Divergence]:
         private.write_bytes(vector.private)
         alone = python_projection(attest, None, max_total_bytes=SCALED_PAIR_BOUND)
         together = python_projection(attest, private, max_total_bytes=SCALED_PAIR_BOUND)
+        completed.append(ExecutedCase("archive pairs", vector.family, vector.name))
         required = {"outcome": ACCEPT}
         if together.get("outcome") != ACCEPT or alone.get("outcome") != ACCEPT:
             divergences.append(
@@ -1483,6 +1509,345 @@ def run_pair_family(work: Path, keep: Path | None) -> list[Divergence]:
                 shutil.copy2(attest, keep / attest.name)
                 shutil.copy2(private, keep / private.name)
     return divergences
+
+
+# ---------------------------------------------------------------------------
+# The committed census: expectations never come from the generator registry.
+# ---------------------------------------------------------------------------
+
+DEFAULT_CENSUS = REPO_ROOT / "tools/importer-census.json"
+DEFAULT_COUNT = 300
+DEFAULT_SEED = 20260904
+UNITS = ("archives", "archive pairs")
+MUTATION_RECIPE = "seed{seed}-{index:05d}"
+
+
+@dataclass(frozen=True)
+class FamilyRun:
+    unit: str
+    vectors: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ExecutedCase:
+    unit: str
+    family: str
+    name: str
+
+
+def observed_census(completed: list[ExecutedCase]) -> dict[str, FamilyRun]:
+    grouped: dict[str, FamilyRun] = {}
+    for case in completed:
+        previous = grouped.get(case.family, FamilyRun(case.unit, ()))
+        if previous.unit != case.unit:
+            raise ValueError(f"{case.family}: mixed measurement units")
+        grouped[case.family] = FamilyRun(case.unit, (*previous.vectors, case.name))
+    return grouped
+
+
+def census_totals(families: dict[str, FamilyRun]) -> dict[str, int]:
+    return {
+        unit: sum(len(f.vectors) for f in families.values() if f.unit == unit) for unit in UNITS
+    }
+
+
+def compare_census(
+    observed: dict[str, FamilyRun],
+    expected: dict[str, FamilyRun],
+    *,
+    updating: bool = False,
+) -> list[str]:
+    """Name losses against an independent, committed expectation, even on update.
+
+    Removing a leaf leaves its family present AND nonempty: presence predicates
+    miss that loss by construction. Deleting a registry entry makes declared and
+    observed families fall TOGETHER: comparing those two is circular and returns
+    true as the corpus shrinks. Only the committed census stays put when code
+    moves. Updates may admit additions; removals/renames need an explicit census
+    edit visible in review, never an expectation regenerated from this run.
+    """
+    problems: list[str] = []
+    if not observed:
+        problems.append("the run completed no cases")
+    for family in sorted(expected.keys() - observed.keys()):
+        entry = expected[family]
+        problems.append(
+            f"{family}: the census expects {len(entry.vectors)} {entry.unit}; "
+            "the run completed none"
+        )
+    for family, entry in sorted(observed.items()):
+        if len(set(entry.vectors)) != len(entry.vectors):
+            problems.append(f"{family}: duplicate executed vector identities")
+        if not entry.vectors:
+            problems.append(f"{family}: the run completed 0 {entry.unit}")
+        if family not in expected:
+            if not updating:
+                problems.append(
+                    f"{family}: unregistered family ({len(entry.vectors)} {entry.unit})"
+                )
+            continue
+        pinned = expected[family]
+        if entry.unit != pinned.unit:
+            problems.append(f"{family}: unit {entry.unit!r}, the census records {pinned.unit!r}")
+        missing = sorted(set(pinned.vectors) - set(entry.vectors))
+        extra = sorted(set(entry.vectors) - set(pinned.vectors))
+        if missing:
+            problems.append(
+                f"{family}: {len(entry.vectors)} {entry.unit}, "
+                f"the census records {len(pinned.vectors)}; missing: {', '.join(missing)}"
+            )
+        if extra and not updating:
+            problems.append(f"{family}: unregistered vectors: {', '.join(extra)}")
+    actual_totals, pinned_totals = census_totals(observed), census_totals(expected)
+    for unit in UNITS:
+        actual, pinned_total = actual_totals[unit], pinned_totals[unit]
+        if actual < pinned_total or (actual != pinned_total and not updating):
+            problems.append(f"total {unit}: run {actual}, census {pinned_total}")
+    return problems
+
+
+def _census_integer(value: Any, label: str, minimum: int = 0) -> int:
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{label}: expected an integer >= {minimum}")
+    return value
+
+
+def load_importer_census(path: Path) -> tuple[dict[str, FamilyRun], int, int]:
+    """Validate the file before expanding its one compact, pinned recipe."""
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON member {key!r}")
+            result[key] = value
+        return result
+
+    def invalid_constant(value: str) -> None:
+        raise ValueError(f"non-JSON number {value}")
+
+    data = json.loads(
+        path.read_text(encoding="utf-8"), object_pairs_hook=unique, parse_constant=invalid_constant
+    )
+    if not isinstance(data, dict) or set(data) != {
+        "why",
+        "regenerate",
+        "invocation",
+        "totals",
+        "families",
+    }:
+        raise ValueError("census: expected why, regenerate, invocation, totals and families")
+    invocation = data["invocation"]
+    if not isinstance(invocation, dict) or set(invocation) != {"count", "seed"}:
+        raise ValueError("census invocation: expected count and seed")
+    count = _census_integer(invocation["count"], "invocation.count", 1)
+    seed = _census_integer(invocation["seed"], "invocation.seed")
+    families = data["families"]
+    if not isinstance(families, dict) or not families:
+        raise ValueError("census families: expected a nonempty object")
+    expected: dict[str, FamilyRun] = {}
+    for family, entry in families.items():
+        if not isinstance(family, str) or not family or not isinstance(entry, dict):
+            raise ValueError("census family: expected a name and object")
+        generated = "generated" in entry
+        fields = {"unit", "count", "generated" if generated else "vectors"}
+        if set(entry) != fields or entry["unit"] not in UNITS:
+            raise ValueError(f"{family}: invalid census fields or unit")
+        n = _census_integer(entry["count"], f"{family}.count", 1)
+        if generated:
+            if (
+                family != "mutation"
+                or entry["unit"] != "archives"
+                or entry["generated"] != MUTATION_RECIPE
+                or n != count
+            ):
+                raise ValueError(f"{family}: invalid mutation recipe or invocation count")
+            names = [MUTATION_RECIPE.format(seed=seed, index=i) for i in range(count)]
+        else:
+            names = entry["vectors"]
+        if (
+            not isinstance(names, list)
+            or any(not isinstance(v, str) or not v for v in names)
+            or len(names) != n
+            or len(set(names)) != n
+        ):
+            raise ValueError(f"{family}: expected {n} unique vector names")
+        expected[family] = FamilyRun(entry["unit"], tuple(names))
+    totals = data["totals"]
+    if not isinstance(totals, dict) or set(totals) != set(UNITS):
+        raise ValueError("census totals: expected separate archives and archive pairs")
+    for unit in UNITS:
+        _census_integer(totals[unit], f"totals.{unit}")
+    if totals != census_totals(expected):
+        raise ValueError("census totals disagree with vector identities")
+    return expected, count, seed
+
+
+def write_importer_census(
+    path: Path, observed: dict[str, FamilyRun], count: int, seed: int
+) -> None:
+    entries: dict[str, Any] = {}
+    for family, entry in sorted(observed.items()):
+        recipe_names = tuple(MUTATION_RECIPE.format(seed=seed, index=i) for i in range(count))
+        names = tuple(sorted(entry.vectors))
+        content = (
+            {"generated": MUTATION_RECIPE}
+            if family == "mutation" and names == recipe_names
+            else {"vectors": list(names)}
+        )
+        entries[family] = {"unit": entry.unit, "count": len(names), **content}
+    data = {
+        "why": "Executed cases by unit, family and vector. Code changes cannot silently lower this "
+        "committed expectation. Removing or renaming a case requires an explicit census edit.",
+        "regenerate": "uv run --frozen python tools/importer_differential.py --update-census "
+        "(full default run; additions only)",
+        "invocation": {"count": count, "seed": seed},
+        "totals": census_totals(observed),
+        "families": entries,
+    }
+    # Replace only after a complete serialization; an interruption cannot leave
+    # half a JSON document. The caller has already compared against the old file.
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+    ) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(json.dumps(data, indent=2) + "\n")
+            handle.close()
+            # NamedTemporaryFile is 0600 and `replace` carries that mode to the
+            # destination, so regenerating would silently narrow the committed
+            # file. Git tracks only the exec bit, so the change never surfaces
+            # in review. Set before the replacement, which stays atomic.
+            temporary.chmod(path.stat().st_mode & 0o777 if path.exists() else 0o644)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def report_census(observed: dict[str, FamilyRun], problems: list[str], *, scoped: bool) -> None:
+    for family, entry in sorted(observed.items()):
+        print(f"  corpus: {family}: {len(entry.vectors)} {entry.unit}")
+    totals = census_totals(observed)
+    for unit in UNITS:
+        nfamilies = sum(entry.unit == unit for entry in observed.values())
+        print(f"{totals[unit]} {unit} across {nfamilies} families completed")
+    print(
+        f"{sum(totals.values())} cases across {len(observed)} families "
+        "(case count; archives and archive pairs are distinct units)"
+    )
+    scope = "selected invocation" if scoped else "full default invocation"
+    print(f"census ({scope}): {'DIFFERS' if problems else 'MATCHES'}")
+    for problem in problems:
+        print(f"CENSUS: {problem}", file=sys.stderr)
+
+
+def census_update_scope(
+    families: list[str] | None, count: int, seed: int, pinned_count: int, pinned_seed: int
+) -> bool:
+    # In particular, do not compare a mutable registry with itself here.
+    return families is None and count == pinned_count and seed == pinned_seed
+
+
+def census_selftest() -> int:
+    """Name each guarded defect; cases assert the specific diagnostic, not just red."""
+    archive = FamilyRun("archives", ("a", "b"))
+    pair = FamilyRun("archive pairs", ("pair",))
+    healthy = {"alpha": archive, "pair-floor": pair}
+    cases: list[tuple[str, dict[str, FamilyRun], bool, str | None]] = [
+        ("healthy corpus", healthy, False, None),
+        ("missing family", {"alpha": archive}, False, "pair-floor: the census expects"),
+        (
+            "missing leaf in nonempty family",
+            {**healthy, "alpha": replace(archive, vectors=("a",))},
+            False,
+            "missing: b",
+        ),
+        (
+            "renamed family",
+            {"renamed": archive, "pair-floor": pair},
+            False,
+            "alpha: the census expects",
+        ),
+        (
+            "renamed leaf at unchanged count",
+            {**healthy, "alpha": replace(archive, vectors=("a", "c"))},
+            False,
+            "missing: b",
+        ),
+        ("unregistered family", {**healthy, "new": archive}, False, "new: unregistered family"),
+        (
+            "unregistered leaf",
+            {**healthy, "alpha": replace(archive, vectors=("a", "b", "c"))},
+            False,
+            "unregistered vectors: c",
+        ),
+        (
+            "duplicate executed identity",
+            {**healthy, "alpha": replace(archive, vectors=("a", "b", "b"))},
+            False,
+            "duplicate executed vector identities",
+        ),
+        (
+            "empty pair family",
+            {**healthy, "pair-floor": replace(pair, vectors=())},
+            False,
+            "pair-floor: the run completed 0 archive pairs",
+        ),
+        (
+            "wrong unit",
+            {**healthy, "pair-floor": replace(pair, unit="archives")},
+            False,
+            "pair-floor: unit",
+        ),
+        ("no execution", {}, False, "the run completed no cases"),
+        (
+            "totals derived from executed names",
+            {**healthy, "alpha": replace(archive, vectors=("a",))},
+            False,
+            "total archives: run 1, census 2",
+        ),
+        (
+            "update refuses missing leaf",
+            {**healthy, "alpha": replace(archive, vectors=("a",))},
+            True,
+            "missing: b",
+        ),
+        (
+            "update refuses missing pair family",
+            {"alpha": archive},
+            True,
+            "pair-floor: the census expects",
+        ),
+        (
+            "update admits additions",
+            {**healthy, "new": archive, "alpha": replace(archive, vectors=("a", "b", "c"))},
+            True,
+            None,
+        ),
+    ]
+    passed = 0
+    for label, observed, updating, named in cases:
+        problems = compare_census(observed, healthy, updating=updating)
+        ok = not problems if named is None else any(named in problem for problem in problems)
+        passed += ok
+        print(
+            f"  {'ok' if ok else 'FAIL'} {label}"
+            + (f" -> {named}" if named else "")
+            + (f"; got {problems}" if not ok else "")
+        )
+    scope_cases = [
+        ("update accepts full defaults", None, 300, 20260904, True),
+        ("update refuses explicit family selection", ["alpha"], 300, 20260904, False),
+        ("update refuses nondefault count", None, 1, 20260904, False),
+        ("update refuses nondefault seed", None, 300, 1, False),
+    ]
+    for label, families, count, seed, wanted in scope_cases:
+        ok = census_update_scope(families, count, seed, 300, 20260904) == wanted
+        passed += ok
+        print(f"  {'ok' if ok else 'FAIL'} {label}")
+    total = len(cases) + len(scope_cases)
+    print(f"selftest: {passed}/{total}")
+    return 0 if passed == total else 1
 
 
 # ---------------------------------------------------------------------------
@@ -1527,11 +1892,12 @@ def _describe(projection: dict[str, Any]) -> str:
 
 
 def report(
-    vectors: list[Vector],
+    completed: list[ExecutedCase],
     outcomes: dict[str, dict[str, int]],
     divergences: list[Divergence],
 ) -> None:
-    print(f"{len(vectors)} archives fed to both importers at their own defaults")
+    archives = sum(case.unit == "archives" for case in completed)
+    print(f"{archives} archives fed to both importers at their own defaults")
     for side in sorted(outcomes):
         counts = outcomes[side]
         line = ", ".join(f"{name}={counts[name]}" for name in sorted(counts))
@@ -1605,10 +1971,21 @@ def _tally(outcomes: dict[str, dict[str, int]], side: str, projection: dict[str,
     counts[outcome] = counts.get(outcome, 0) + 1
 
 
-def run(families: list[str], count: int, seed: int, keep: Path | None) -> int:
+def run(
+    families: list[str],
+    count: int,
+    seed: int,
+    keep: Path | None,
+    *,
+    expected: dict[str, FamilyRun],
+    census_path: Path = DEFAULT_CENSUS,
+    updating: bool = False,
+    scoped: bool = False,
+) -> int:
     divergences: list[Divergence] = []
     outcomes: dict[str, dict[str, int]] = {}
     vectors = collect(families, count, seed)
+    completed: list[ExecutedCase] = []
 
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -1630,6 +2007,7 @@ def run(families: list[str], count: int, seed: int, keep: Path | None) -> int:
             _tally(outcomes, "reference importer", reference)
             _tally(outcomes, "browser parseBundle", parsed)
             _tally(outcomes, "browser intake", intook)
+            completed.append(ExecutedCase("archives", vector.family, vector.name))
             for label, mine, other in (
                 ("browser parseBundle", reference, parsed),
                 (
@@ -1687,7 +2065,7 @@ def run(families: list[str], count: int, seed: int, keep: Path | None) -> int:
                     )
 
         if PAIR_FAMILY in families:
-            pair_found = run_pair_family(work, keep)
+            pair_found = run_pair_family(work, keep, completed)
             divergences.extend(pair_found)
             for divergence in pair_found:
                 print(
@@ -1699,31 +2077,136 @@ def run(families: list[str], count: int, seed: int, keep: Path | None) -> int:
                     file=sys.stderr,
                 )
 
-    report(vectors, outcomes, divergences)
-    return 1 if any(not divergence.advisory for divergence in divergences) else 0
+    report(completed, outcomes, divergences)
+    try:
+        observed = observed_census(completed)
+    except ValueError as exc:
+        # A ledger that cannot be grouped is a census failure. Uncaught, it
+        # leaves a traceback and process status 1 -- the class this tool
+        # reserves for a measured divergence.
+        scope = "selected invocation" if scoped else "full default invocation"
+        print(f"census ({scope}): DIFFERS")
+        print(f"CENSUS: {exc}", file=sys.stderr)
+        if updating:
+            print(
+                "refusing to update the census: expected cases are absent or invalid",
+                file=sys.stderr,
+            )
+        return 3
+    problems = compare_census(observed, expected, updating=updating)
+    report_census(observed, problems, scoped=scoped)
+    if problems:
+        if updating:
+            print(
+                "refusing to update the census: expected cases are absent or invalid",
+                file=sys.stderr,
+            )
+        return 3
+    if any(not divergence.advisory for divergence in divergences):
+        if updating:
+            print("refusing to update the census: importer measurement failed", file=sys.stderr)
+        return 1
+    if updating:
+        write_importer_census(census_path, observed, count, seed)
+        print("census updated from the completed run")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--count", type=int, default=300, help="archives in the randomised stratum")
-    parser.add_argument("--seed", type=int, default=20260904)
+    parser.add_argument(
+        "--count", type=int, default=None, help="archives in the randomised stratum (default: 300)"
+    )
+    parser.add_argument("--seed", type=int, default=None, help="random seed (default: 20260904)")
     parser.add_argument(
         "--families",
-        default=",".join(ALL_FAMILIES),
+        default=None,
         help="comma-separated subset of: " + ", ".join(ALL_FAMILIES),
     )
     parser.add_argument("--keep", type=Path, default=None)
     parser.add_argument("--list-families", action="store_true", help="print the families and exit")
+    parser.add_argument("--census", type=Path, default=DEFAULT_CENSUS)
+    parser.add_argument(
+        "--update-census", action="store_true", help="admit additions from a full run"
+    )
+    parser.add_argument("--selftest", action="store_true", help="exercise named census defects")
     args = parser.parse_args(argv)
+    if args.selftest:
+        return census_selftest()
     if args.list_families:
         for family in ALL_FAMILIES:
             print(family)
         return 0
-    families = [name.strip() for name in args.families.split(",") if name.strip()]
+    explicit_parameters = args.count is not None or args.seed is not None
+    args.count = DEFAULT_COUNT if args.count is None else args.count
+    args.seed = DEFAULT_SEED if args.seed is None else args.seed
+    if args.count < 1 or args.seed < 0:
+        parser.error("--count must be positive and --seed must be non-negative")
+    selected = (
+        [name.strip() for name in args.families.split(",") if name.strip()]
+        if args.families is not None
+        else None
+    )
+    families = list(ALL_FAMILIES) if selected is None else selected
     unknown = [name for name in families if name not in ALL_FAMILIES]
     if unknown:
-        raise SystemExit(f"unknown families: {', '.join(unknown)}")
-    return run(families, args.count, args.seed, args.keep)
+        parser.error(f"unknown families: {', '.join(unknown)}")
+    if len(set(families)) != len(families):
+        parser.error("duplicate selected families")
+    try:
+        try:
+            expected, pinned_count, pinned_seed = load_importer_census(args.census)
+        except (ValueError, OSError) as exc:
+            # An absent census is the removal of the pin itself, never a fact
+            # about the environment. 78 is this repo's "did not measure, not a
+            # failure of the property" status (tools/gates/_lib.sh): every
+            # lesser corruption of this same file already exits 3, and total
+            # removal -- the strongest attack on a committed expectation --
+            # must not be the one mutation that reads as skippable.
+            print(f"CENSUS SCHEMA: {exc}", file=sys.stderr)
+            if args.update_census:
+                # Same class as a refused update scope, for a stronger reason:
+                # an update admits ADDITIONS to a baseline, so with nothing
+                # readable to add to there is no addition to recognise -- only
+                # an absence to bless, which is what must never happen here.
+                print(
+                    "refusing to update the census: the existing census could not be read, "
+                    "so this run has no baseline to be an addition to",
+                    file=sys.stderr,
+                )
+            return 3
+        full_defaults = census_update_scope(
+            selected, args.count, args.seed, pinned_count, pinned_seed
+        )
+        if args.update_census and not full_defaults:
+            print(
+                "refusing to update the census: requires full default invocation", file=sys.stderr
+            )
+            return 3
+        if selected is not None:
+            expected = {name: entry for name, entry in expected.items() if name in selected}
+        if (
+            explicit_parameters
+            and "mutation" in expected
+            and (args.count, args.seed) != (pinned_count, pinned_seed)
+        ):
+            expected["mutation"] = FamilyRun(
+                "archives",
+                tuple(MUTATION_RECIPE.format(seed=args.seed, index=i) for i in range(args.count)),
+            )
+        return run(
+            families,
+            args.count,
+            args.seed,
+            args.keep,
+            expected=expected,
+            census_path=args.census,
+            updating=args.update_census,
+            scoped=selected is not None or explicit_parameters,
+        )
+    except MissingPrerequisite as exc:
+        print(f"PRECONDITION ABSENT: {exc}", file=sys.stderr)
+        return 78
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point

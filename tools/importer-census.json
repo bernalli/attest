@@ -1,0 +1,290 @@
+{
+  "why": "Executed cases by unit, family and vector. Code changes cannot silently lower this committed expectation. Removing or renaming a case requires an explicit census edit.",
+  "regenerate": "uv run --frozen python tools/importer_differential.py --update-census (full default run; additions only)",
+  "invocation": {
+    "count": 300,
+    "seed": 20260904
+  },
+  "totals": {
+    "archives": 462,
+    "archive pairs": 1
+  },
+  "families": {
+    "baseline": {
+      "unit": "archives",
+      "count": 1,
+      "vectors": [
+        "sound-bundle"
+      ]
+    },
+    "cap-boundary": {
+      "unit": "archives",
+      "count": 6,
+      "vectors": [
+        "container-at-floor",
+        "container-one-past-floor",
+        "members-at-floor",
+        "members-one-past-floor",
+        "single-member-at-floor",
+        "single-member-one-past-floor"
+      ]
+    },
+    "central-order": {
+      "unit": "archives",
+      "count": 24,
+      "vectors": [
+        "permutation-0123",
+        "permutation-0132",
+        "permutation-0213",
+        "permutation-0231",
+        "permutation-0312",
+        "permutation-0321",
+        "permutation-1023",
+        "permutation-1032",
+        "permutation-1203",
+        "permutation-1230",
+        "permutation-1302",
+        "permutation-1320",
+        "permutation-2013",
+        "permutation-2031",
+        "permutation-2103",
+        "permutation-2130",
+        "permutation-2301",
+        "permutation-2310",
+        "permutation-3012",
+        "permutation-3021",
+        "permutation-3102",
+        "permutation-3120",
+        "permutation-3201",
+        "permutation-3210"
+      ]
+    },
+    "declared-vs-produced": {
+      "unit": "archives",
+      "count": 9,
+      "vectors": [
+        "legal-csize+1",
+        "legal-csize+64",
+        "legal-csize-1",
+        "legal-usize+1",
+        "legal-usize+64",
+        "legal-usize-1",
+        "manifest-local-csize-off",
+        "proof-local-name-differs",
+        "receipt-crc-wrong"
+      ]
+    },
+    "duplicate-json-keys": {
+      "unit": "archives",
+      "count": 4,
+      "vectors": [
+        "manifest-issuer-twice",
+        "proof-entry-twice",
+        "receipt-id-twice",
+        "receipt-payload-twice"
+      ]
+    },
+    "duplicate-names": {
+      "unit": "archives",
+      "count": 5,
+      "vectors": [
+        "repeat-legal",
+        "repeat-manifest",
+        "repeat-proof",
+        "repeat-receipt",
+        "repeat-receipt-other-content"
+      ]
+    },
+    "intake-route": {
+      "unit": "archives",
+      "count": 7,
+      "vectors": [
+        "carries-keys",
+        "carries-salts",
+        "clean",
+        "newline",
+        "single-null",
+        "stub-prefix",
+        "utf8-bom"
+      ]
+    },
+    "json-shape": {
+      "unit": "archives",
+      "count": 35,
+      "vectors": [
+        "manifest-issuer-not-string",
+        "manifest-key-manifest-not-object",
+        "manifest-key-manifests-absent",
+        "manifest-key-manifests-empty",
+        "manifest-key-manifests-not-array",
+        "manifest-no-issuer",
+        "manifest-not-json",
+        "manifest-top-level-array",
+        "manifest-version-boolean",
+        "manifest-version-negative",
+        "manifest-version-not-integer",
+        "proof-array",
+        "proof-empty-object",
+        "proof-name-bad-grammar",
+        "proof-name-bare-prefix",
+        "proof-name-nested",
+        "proof-name-no-suffix",
+        "proof-not-json",
+        "proof-null",
+        "proof-number",
+        "proof-string",
+        "receipt-empty",
+        "receipt-empty-object",
+        "receipt-extra-top-level",
+        "receipt-no-payload",
+        "receipt-no-receipt-id",
+        "receipt-not-json",
+        "receipt-payload-array-of-pairs",
+        "receipt-payload-not-object",
+        "receipt-receipt-id-lowercase",
+        "receipt-receipt-id-not-string",
+        "receipt-receipt-id-out-of-alphabet",
+        "receipt-receipt-id-too-short",
+        "receipt-top-level-array",
+        "receipt-top-level-string"
+      ]
+    },
+    "legal-hash": {
+      "unit": "archives",
+      "count": 7,
+      "vectors": [
+        "content-one-byte-longer",
+        "digest-case-flipped",
+        "digest-lies-about-content",
+        "digest-matches-content",
+        "name-not-digest-shaped",
+        "referenced-digest-absent",
+        "unreferenced-legal-member"
+      ]
+    },
+    "long-names": {
+      "unit": "archives",
+      "count": 9,
+      "vectors": [
+        "filler-name-1",
+        "filler-name-1200",
+        "filler-name-255",
+        "filler-name-65534",
+        "filler-name-65535",
+        "filler-name-8192",
+        "many-long-names",
+        "unread-receipt-name-1200",
+        "unread-receipt-name-65535"
+      ]
+    },
+    "mutation": {
+      "unit": "archives",
+      "count": 300,
+      "generated": "seed{seed}-{index:05d}"
+    },
+    "no-receipts": {
+      "unit": "archives",
+      "count": 4,
+      "vectors": [
+        "empty-directory",
+        "manifests-and-legal-only",
+        "receipt-wrong-prefix",
+        "receipt-wrong-suffix"
+      ]
+    },
+    "not-a-container": {
+      "unit": "archives",
+      "count": 4,
+      "vectors": [
+        "bare-envelope-bytes",
+        "bare-envelope-with-manifest",
+        "empty-file",
+        "two-bytes"
+      ]
+    },
+    "out-of-range": {
+      "unit": "archives",
+      "count": 14,
+      "vectors": [
+        "comment-len-past-comment",
+        "counts-disagree",
+        "disk-start-nonzero",
+        "entry-count-one-long",
+        "entry-count-one-short",
+        "entry-count-sentinel",
+        "extra-len-past-extra",
+        "lho-past-file",
+        "name-len-past-name",
+        "version-at-integer-boundary",
+        "version-negative-boundary",
+        "version-past-integer-boundary",
+        "version-past-negative-boundary",
+        "zip64-locator"
+      ]
+    },
+    "pair-floor": {
+      "unit": "archive pairs",
+      "count": 1,
+      "vectors": [
+        "each-within-4194304-together-over"
+      ]
+    },
+    "semantic-duplicates": {
+      "unit": "archives",
+      "count": 8,
+      "vectors": [
+        "same-issuer-falling-version-a-then-b",
+        "same-issuer-falling-version-b-then-a",
+        "same-issuer-rising-version-a-then-b",
+        "same-issuer-rising-version-b-then-a",
+        "same-issuer-same-version-a-then-b",
+        "same-issuer-same-version-b-then-a",
+        "second-proof-other-id",
+        "two-members-one-receipt-id"
+      ]
+    },
+    "stored-floor": {
+      "unit": "archives",
+      "count": 1,
+      "vectors": [
+        "declares-one-past-the-floor"
+      ]
+    },
+    "truncation": {
+      "unit": "archives",
+      "count": 13,
+      "vectors": [
+        "cut-1-from-end",
+        "cut-2-from-end",
+        "cut-21-from-end",
+        "cut-22-from-end",
+        "cut-46-from-end",
+        "cut-at-16pc",
+        "cut-at-1pc",
+        "cut-at-32pc",
+        "cut-at-50pc",
+        "cut-at-75pc",
+        "cut-at-8pc",
+        "cut-at-90pc",
+        "cut-at-99pc"
+      ]
+    },
+    "unreferenced-regions": {
+      "unit": "archives",
+      "count": 11,
+      "vectors": [
+        "directory-trailing-bytes",
+        "eocd-comment",
+        "gap-1",
+        "gap-3",
+        "gap-4",
+        "gap-4096",
+        "gap-512",
+        "prefix-one-byte",
+        "prefix-pk-lookalike",
+        "prefix-stub",
+        "suffix-bytes"
+      ]
+    }
+  }
+}
