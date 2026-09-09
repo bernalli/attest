@@ -6,6 +6,42 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.6] — 2026-09-09
+
+### Security
+
+- **A key marked compromised could be silently ignored when its manifest carried a name
+  the trust directory loader did not select.** `--trust-dir` chose what to read with
+  `glob("*.json")` and passed over everything else without a word — another extension, a
+  `.bak`, anything below the top level. The material a trust directory holds is not only
+  material that *authorises*: a successor manifest is also what marks a key compromised,
+  so omitting it did not narrow trust, it widened it.
+
+  Measured on 0.9.5, same receipt and byte-identical contents, changing only the file
+  name: as `x.json` the receipt is rejected with `key <issuer>/keys/<id> is compromised`;
+  as `x.JSON` it verifies `ok=true` with no error and no warning. Two controls point the
+  other way, so the direction of the failure was measured rather than deduced — reading
+  the code suggested it failed closed, and it did not.
+
+  `attest import` writes `<issuer>.v<N>.json`, so a directory built only by that command
+  was never affected. The exposure was in directories assembled another way: material
+  saved by hand, a backup left beside the file it copied, a directory organised into
+  subfolders, or a file saved as `Manifest.JSON` on a case-insensitive filesystem — the
+  default on macOS and Windows.
+
+- **A named pipe in the trust directory made verification hang indefinitely.** A FIFO
+  called `x.json` was opened and waited on for a writer that never came. Local denial of
+  service, closed by the same change.
+
+### Changed
+
+- The trust directory loader matches `.json` case-insensitively, and refuses the whole
+  directory — naming the entry and the reason — if it holds anything else: another
+  extension, a `.bak`, a subdirectory, a symlink, a FIFO. The inventory is checked before
+  any file is read, so an unsupported entry can no longer yield a partial trust store.
+  A directory built by `attest import` is unaffected.
+
+
 ### Fixed
 
 - Bundle import now requires a `manifests/<issuer>.json` name to contain one
