@@ -733,20 +733,15 @@ def _trust_manifest_version(manifest: dict[str, Any]) -> int:
 def _load_trust_dir(trust_dir: Path) -> verify.TrustStore:
     """Assemble the trust store a `--trust-dir` names, and refuse out loud.
 
-    Recipe C1. Two properties are worth stating because the shape before this
-    one had neither:
+    Every entry must be a regular file whose name ends in `.json`, ignoring
+    case. Refuse the whole directory, naming the entry, if anything else is
+    present, including subdirectories and symlinks. Ambiguity is refused at
+    the boundary: silently omitting a successor manifest can remove a key's
+    compromise marking and turn a rejected receipt into an accepted one.
 
-    Nothing that this loader READS is skipped. A file it cannot classify used to
-    be passed over with `continue`, so a directory of five manifests and one typo
-    built a store out of four of them and said nothing. "Loaded successfully,
-    minus the part I could not read" is the sentence every refusal below exists
-    to prevent, and each one names the file that caused it.
-
-    What it reads is `*.json`, and that selection is NOT part of the promise:
-    a manifest saved as `manifest.JSON` or `manifest.json.bak` is invisible here
-    and produces an empty store rather than a refusal. `verify` then answers "no
-    trusted manifest for issuer X", which is true and does not mention the file
-    sitting unread beside it.
+    Every selected file is parsed and classified, or refused by name. The
+    inventory is checked before reading any file; an unsupported entry never
+    yields a partial trust store.
 
     The aggregate ceiling is applied to the SIZES, before a single file is
     read. Per-file bounds do not compose: a thousand files just under one are a
@@ -762,8 +757,16 @@ def _load_trust_dir(trust_dir: Path) -> verify.TrustStore:
     if not trust_dir.is_dir():
         raise CliUsageError(f"--trust-dir {trust_dir} is not a directory")
 
-    files = sorted(trust_dir.glob("*.json"))
     try:
+        files = sorted(trust_dir.iterdir())
+        for path in files:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise CliUsageError(f"--trust-dir {trust_dir}: {path} is not a regular file")
+            if not path.name.lower().endswith(".json"):
+                raise CliUsageError(
+                    f"--trust-dir {trust_dir}: {path} does not have a .json extension "
+                    "(case-insensitive)"
+                )
         declared_bytes = sum(path.stat().st_size for path in files)
     except OSError as exc:
         raise CliUsageError(f"cannot read --trust-dir {trust_dir}: {exc}") from exc
