@@ -6,6 +6,8 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.4] — 2026-09-09
+
 ### Added
 
 - `attest verify --reject-trust VALUE[,VALUE...]` refuses a receipt whose
@@ -20,6 +22,36 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking: Python trust stores are parsed from serialized bytes.** Callers
+  who built `verify.TrustStore(manifests=..., provenance=...)` must serialize
+  those members in a store document, pass its bytes to
+  `verify.TrustStore.from_bytes(data)`, and hand the resulting snapshot to the
+  verifier. For the common two-member store, with `canon` and `verify` imported
+  from `attest`, the migration is
+  `store = verify.TrustStore.from_bytes(canon.canonical_bytes({"manifests": manifests, "provenance": provenance}))`.
+  Include any existing `chains`, `artifact_manifests` and
+  `artifact_manifest_chains` in that document too. The old keyword constructor
+  now raises `TypeError` at argument binding instead of failing quietly. (#141)
+
+- **The CLI reads or builds trust material as serialized bytes.** Manifest
+  inputs are parsed with `KeyManifest.from_bytes`, and `verify --trust-dir`
+  builds a store document for `TrustStore.from_bytes`. The directory loader
+  refuses an unclassifiable JSON file by name instead of silently skipping
+  it, and bounds the aggregate input size. `attest import`
+  applies the same classification before writing trust-directory files. (#141)
+
+- **Breaking: TypeScript trust material also enters through byte parsers.**
+  `attest-verifier` now exports `parseTrustStore`, `parseKeyManifest`,
+  `TrustMaterialError`, and the `TrustStore` and `KeyManifest` snapshot classes.
+  Replace a live store literal with
+  `const store = parseTrustStore(canonicalBytes({ manifests, provenance }))`,
+  preserving any optional store members, and pass that snapshot to `verify`.
+  Pass `parseKeyManifest(bytes)` to APIs taking a trusted key manifest,
+  including `auditChain`. At the store check, `verify` returns an invalid
+  result for a live object; `evaluateGrant` and `evaluateAuthority` now throw
+  `TypeError` for one when evidence is supplied, instead of quietly returning
+  `not_checked` for unreadable trust material. (#142)
+
 - `attest verify --crqc-horizon` accepts only the canonical spelling of an
   ISO-8601 UTC instant. It previously went through a bare `strptime`, which
   admits thirty other spellings of the same flag value -- non-ASCII decimal
@@ -28,6 +60,13 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `2030-1-1T0:0:0Z` must now pass `2030-01-01T00:00:00Z`.
 
 ### Fixed
+
+- **The importer differential gate checks a committed corpus census.**
+  Completed cases are compared by family and vector identity against
+  `tools/importer-census.json`, with separate totals for differential archives
+  and reference-only archive pairs. Missing cases or an empty run fail the
+  gate; reports identify whether the comparison covered the full default
+  invocation or an explicitly selected scope. (#143)
 
 - `attest revoke --revoked-at` accepts the canonical spelling of every year the
   format admits. The command re-serialized the parsed instant with `strftime`

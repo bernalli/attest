@@ -4,6 +4,30 @@ All notable changes to `attest-verifier` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] — 2026-09-09
+
+### Changed
+
+- **Breaking: trust stores must be parsed from serialized bytes.** The package
+  now exports `parseTrustStore`, `parseKeyManifest`, `TrustMaterialError`, and
+  the `TrustStore` and `KeyManifest` snapshot classes. Replace a live store
+  literal with
+  `const store = parseTrustStore(canonicalBytes({ manifests, provenance }))`,
+  preserving any optional store members, and pass the snapshot to `verify`.
+  Both functions in that migration line are exported by `attest-verifier`.
+  An already serialized store can go directly to `parseTrustStore(bytes)`.
+  At the store check, `verify` returns an invalid result for a live object;
+  `evaluateGrant` and `evaluateAuthority` now throw `TypeError` for one when
+  evidence is supplied, instead of quietly returning `not_checked` for
+  unreadable trust material. (#142)
+
+- **Trusted key-manifest arguments take parsed snapshots too.** Pass
+  `parseKeyManifest(bytes)` to the grant, declaration, publisher-authorization
+  and transfer verification APIs, and to `auditChain`. A manifest obtained
+  with `store.manifestFor(issuer)` is already a snapshot: pass it directly
+  rather than its `.data()` result. A live manifest makes `auditChain` return
+  `valid: false` with a named refusal, including when there are no links. (#142)
+
 ## [0.9.3] — 2026-09-06
 
 ### Fixed
