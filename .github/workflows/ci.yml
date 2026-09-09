@@ -81,8 +81,8 @@ jobs:
       - run: uv run --frozen python tools/check_spec_docs.py
       # Discover leaves from disk, then require their authoritative group-table rows.
       # Exercise missing coverage before trusting a passing repository check.
-      - run: python3 tools/check_leaf_coverage.py --selftest
-      - run: python3 tools/check_leaf_coverage.py
+      - run: uv run --frozen python tools/check_leaf_coverage.py --selftest
+      - run: uv run --frozen python tools/check_leaf_coverage.py
       # The container corpus is generated, and a corpus edited by hand is a
       # corpus nobody can regenerate: this fails on any drift between the
       # committed leaves and what the generator produces today.
