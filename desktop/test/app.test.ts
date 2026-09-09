@@ -49,6 +49,18 @@ function member(prefix: string): Uint8Array {
   return found[name]
 }
 const containerBytes = () => member('manifests/')
+// The member NAME as the sample carries it, not a name of our own. An importer
+// refuses a bundle whose manifest filename disagrees with the issuer the manifest
+// declares, so a hand-built bundle around the sample's manifest has to keep its
+// name too - the same reason legalMember() takes the legal text's name from the
+// sample instead of writing one here.
+function memberName(prefix: string): string {
+  const found = unzipSync(sampleBytes())
+  const name = Object.keys(found).find((n) => n.startsWith(prefix))
+  if (!name) throw new Error(`the sample bundle has no ${prefix} member`)
+  return name
+}
+const containerName = () => memberName('manifests/')
 const bareEnvelope = () => member('receipts/')
 
 // The deal the sample's receipt refers to, under the name it travelled with. An
@@ -91,7 +103,7 @@ function twoReceiptBundle(): Uint8Array {
   return zipSync({
     [`receipts/${receiptLabel()}.attest.json`]: first,
     [`receipts/${SECOND_ID}.attest.json`]: new TextEncoder().encode(altered),
-    'manifests/m.json': containerBytes(),
+    [containerName()]: containerBytes(),
     [legalName]: legalText,
   })
 }
