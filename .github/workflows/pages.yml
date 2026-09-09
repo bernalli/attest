@@ -18,6 +18,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  site-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            verifiers/ts/package-lock.json
+            site/package-lock.json
+      - run: npm ci --prefix verifiers/ts
+      - run: npm run build --prefix verifiers/ts
+      - run: npm ci --prefix site
+      - name: Build and typecheck site
+        run: npm run build --prefix site
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -49,7 +66,6 @@ jobs:
           npm test --prefix site -- --reporter=default --reporter=json \
             --outputFile.json="$RUNNER_TEMP/site-tests.json"
       - run: python3 tools/check_test_census.py site --report "$RUNNER_TEMP/site-tests.json"
-      - run: npm run build --prefix site
       # The two container readers are judged against each other on archives
       # nobody chose. A disagreement here is the defect the canonical reader
       # exists to close — same bytes, two conforming verifiers, two answers —
@@ -143,7 +159,7 @@ jobs:
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: test
+    needs: [test, site-typecheck]
     runs-on: ubuntu-latest
     permissions:
       pages: write

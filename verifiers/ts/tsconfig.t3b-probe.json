@@ -1,0 +1,20 @@
+// Typecheck probe for the verifier tests. The production tsconfig.json covers only
+// src/, and Vitest transpiles test/ without typechecking it, so a type error in a
+// test is invisible to every command this repository runs.
+//
+// Measured 2026-09-09 on a clean tree: this probe reports 100 diagnostics and the
+// standard typecheck reports 0. Appending `const x: number = "s"` to a verifier test
+// takes this probe to 101 and leaves the standard typecheck at 0. Note what does NOT
+// discriminate: the probe exits 2 either way, because of the diagnostics it already
+// reports, so the observable is the diagnostic, not the exit code.
+//
+// It has no caller ON PURPOSE, and those 100 diagnostics are the reason: that is
+// C-215. A gate wired to this config would be red on a healthy tree, and a gate that
+// cannot be green is a blocked merge queue, not a guard. The caller lands with the
+// commit that closes C-215 -- that is the commit whose green it would certify, and
+// it must assert the diagnostic count, not the exit code.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": "." },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
