@@ -160,12 +160,14 @@ For everyone who will not sign voluntarily, there is no technical mechanism
 here that compels adoption. Any regulatory route is external to the protocol.
 The standard is published in the open, with two independent implementations,
 a conformance suite and an active IETF draft behind it. The reference code is
-Apache-2.0, whose patent grant reaches that code and no further, and the
-specification is CC BY 4.0, which states outright that patent rights are not
-licensed under it. Nothing here charges a fee to implement attest, and nothing
-here is yet a patent commitment to anyone implementing the specification
-independently of that code — the documents say what they cover, and stop short
-of "royalty-free".
+Apache-2.0, whose patent grant reaches that code. The specification is CC BY
+4.0, which grants no patent rights on its own; that gap is closed by
+[PATENTS.md](../PATENTS.md), an irrevocable, royalty-free promise by the author
+not to assert patent claims against anyone implementing the specification. Two
+limits are stated in that document: it reaches what the specification sets out
+in detail rather than technology the specification adopts from another
+standard, and it ends for a party who brings or joins patent litigation of
+their own over attest. Nothing here charges a fee to implement attest.
 
 And the open bet is adoption itself. No store signs attest receipts today,
 and no regulator mandates them. If that never changes, attest stays a
