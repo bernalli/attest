@@ -20,10 +20,11 @@
 # on desktop produced exactly 35 failures, all `[webkit] ...`, all
 # "browserType.launch: Executable doesn't exist at .../webkit-2336/pw_run.sh" — a gate that
 # reported those as red would be measuring a download that never happened, not the code
-# (D-G1c). So every browser type the suite is about to launch is checked BEFORE launching,
-# and its build ID is derived from `playwright install --dry-run`'s own output on THIS tree's
-# THIS node_modules, right now — never a version pinned in this script, which would drift the
-# next time either tree's package-lock.json moves.
+# (D-G1c). So every browser type the suite is about to launch is checked and launch-probed
+# BEFORE the suite, and its build ID is derived from `playwright install --dry-run`'s own
+# output on THIS tree's THIS node_modules, right now — never a version pinned in this script,
+# which would drift the next time either tree's package-lock.json moves. An installed browser
+# that cannot start is the same missing precondition as an absent executable, not a product red.
 #
 # Which browser TYPES each suite launches is read from its own playwright.config.ts, current
 # as of this gate's writing: site declares no `projects`, so Playwright runs its one implicit
@@ -135,6 +136,43 @@ for bt in "${BROWSER_TYPES[@]}"; do
   gate_say "checking: $bdir/INSTALLATION_COMPLETE"
   gate_say "if missing, install with: npx --prefix $SUITE_DIR playwright install $bt"
   gate_need "$bt (build $bid) is installed for $SUITE" -- test -f "$bdir/INSTALLATION_COMPLETE"
+
+  executable="$(cd "$SUITE_DIR" && node -e '
+    const browserType = require("playwright-core")[process.argv[1]];
+    if (!browserType) process.exit(1);
+    process.stdout.write(browserType.executablePath());
+  ' "$bt" 2>/dev/null)"
+  executable_rc=$?
+  if [ "$executable_rc" -ne 0 ] || [ -z "$executable" ] || [ ! -x "$executable" ]; then
+    gate_say "PRECONDITION MISSING: $bt browser executable is absent or not executable."
+    gate_say "expected: ${executable:-<playwright could not resolve a path>}"
+    gate_say "install with: npx --prefix $SUITE_DIR playwright install $bt"
+    gate_say "GATE $GATE_ID SKIPPED precondition=browser-executable-absent browser=$bt"
+    exit 78
+  fi
+
+  LAUNCH_LOG="$TRANSCRIPTS/${TAG}-e2e-${SUITE}.${bt}-launch.log"
+  (cd "$SUITE_DIR" && node -e '
+    const browserType = require("playwright-core")[process.argv[1]];
+    (async () => {
+      const browser = await browserType.launch({ headless: true });
+      await browser.close();
+    })().catch((error) => {
+      process.stderr.write((error instanceof Error ? error.stack : String(error)) + "\n");
+      process.exit(1);
+    });
+  ' "$bt") > "$LAUNCH_LOG" 2>&1
+  launch_rc=$?
+  gate_say "--- $bt browser launch probe ($SUITE)"
+  [ ! -s "$LAUNCH_LOG" ] || gate_say "$(cat "$LAUNCH_LOG")"
+  gate_say "exit: $launch_rc"
+  if [ "$launch_rc" -ne 0 ]; then
+    gate_say "PRECONDITION MISSING: $bt browser executable exists but will not launch."
+    gate_say "executable: $executable"
+    gate_say "GATE $GATE_ID SKIPPED precondition=browser-launch-failed browser=$bt"
+    exit 78
+  fi
+  gate_say "precondition ok: $bt browser executable launches for $SUITE"
 done
 
 # --- Property: the suite runs under CI=1 and reports more than zero passed -----------------
