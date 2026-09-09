@@ -8,6 +8,7 @@ import { verifyKeyManifest, checkContinuity } from '../src/manifests.js'
 import { verify } from '../src/verify.js'
 import { validatePayload } from '../src/schema.js'
 import { computeCommitment } from '../src/commitment.js'
+import { store as trustSnapshot } from './helpers/trust.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 const parse = (m: unknown): JsonObject => loadsStrict(enc(JSON.stringify(m))) as JsonObject
@@ -60,9 +61,19 @@ it('verify rejects a key with an unknown status even with a valid signature', ()
   const payload = basePayload()
   const sig = b64uEncode(ed25519.sign(canonicalBytes(parse(payload)), seedS))
   const envelope = { payload, signatures: [{ kid: kidS, alg: 'Ed25519', sig }] }
-  const manifest = parse({ issuer: ISSUER, keys: [{ kid: kidS, pub: pubS, valid_from: '2026-01-01T00:00:00Z', valid_to: null, status: 'frobnicate' }] })
-  const store = { manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } }
+  const manifest = parse(signManifest(
+    { issuer: ISSUER, keys: [{ kid: kidS, pub: pubS, valid_from: '2026-01-01T00:00:00Z', valid_to: null, status: 'frobnicate' }] },
+    kidS,
+    seedS,
+  ))
+  const store = trustSnapshot({ manifests: { [ISSUER]: manifest }, provenance: { [ISSUER]: 'tls' } })
   const r = verify(enc(JSON.stringify(envelope)), store)
+  // The assertion names the REASON, not just the verdict. `signature: 'invalid'`
+  // alone did not pin this property: with the store passed as a live object the
+  // verifier refused it at the trust-material boundary, and with the manifest
+  // unsigned it refused it for self-inconsistency - so swapping the status for
+  // 'active' left all five tests green. Measured 2026-09-09.
+  expect(r.errors).toContain(`key ${kidS} has unusable status`)
   expect(r.signature).toBe('invalid')
 })
 
