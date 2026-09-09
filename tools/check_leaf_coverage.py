@@ -171,7 +171,9 @@ def check(vectors: Path, index: Path, spec: Path) -> tuple[list[str], str]:
                     problems.append(f"{source}:{table.line}: leaf table has no group heading")
                     continue
                 for candidate in groups:
-                    integer = int(re.match(r"\d+", candidate)[0])
+                    digits = re.match(r"\d+", candidate)
+                    assert digits is not None  # candidate matched [0-9]+[a-z]? in disk_groups
+                    integer = int(digits[0])
                     if candidate not in SPEC_TABLES and scope[0] <= integer <= scope[1]:
                         group_tables[candidate].append((source, table))
 
@@ -190,6 +192,8 @@ def check(vectors: Path, index: Path, spec: Path) -> tuple[list[str], str]:
                         code += id_match[2]
                     if code in SPEC_TABLES:
                         continue  # An abbreviated duplicate is not the authority.
+                    assert scope is not None  # this branch only runs after the scope-is-None
+                    # continue above, in the same `else:` arm of the outer if/else
                     if not scope[0] <= int(id_match[1]) <= scope[1]:
                         problems.append(f"{location}: row {row_id} is outside its group's table")
                         continue
@@ -214,16 +218,16 @@ def check(vectors: Path, index: Path, spec: Path) -> tuple[list[str], str]:
                 for leaf in leaves:
                     relative = leaf.relative_to(group).as_posix()
                     if leaf == group:
-                        names = {group.name, group.name.partition("-")[2]}
+                        alias_names = {group.name, group.name.partition("-")[2]}
                     else:
-                        names = {
+                        alias_names = {
                             relative,
                             group.name + "/" + relative,
                             group.name.partition("-")[2] + "/" + relative,
                             code + relative,
                             code + relative.partition("-")[0],
                         }
-                    for name in names:
+                    for name in alias_names:
                         aliases.setdefault(name, set()).add(leaf)
                 for token in tokens:
                     matches = aliases.get(token, set())
