@@ -451,6 +451,14 @@ if [ "$SBOM_ENV_TOUCHED" -eq 1 ]; then
   restore "npm ci --prefix verifiers/ts"
 fi
 
+# ---------------------------------------------------- pages.yml: site-typecheck
+run pages.yml:site-typecheck - "npm ci --prefix verifiers/ts"
+run pages.yml:site-typecheck - "npm run build --prefix verifiers/ts"
+run pages.yml:site-typecheck - "npm ci --prefix site"
+# `npm test` does not run the typecheck: site/package.json puts `tsc --noEmit`
+# in `build`, so this independent job carries the typecheck explicitly.
+run pages.yml:site-typecheck - "npm run build --prefix site"
+
 # ------------------------------------------------------------- pages.yml: test
 run pages.yml:test - "npm ci --prefix verifiers/ts"
 run pages.yml:test - "npm run build --prefix verifiers/ts"
@@ -462,10 +470,6 @@ run pages.yml:test - "npm ci --prefix site"
 run pages.yml:test - "python3 tools/check_test_census.py --selftest"
 run pages.yml:test - 'npm test --prefix site -- --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/site-tests.json"'
 run pages.yml:test - 'python3 tools/check_test_census.py site --report "$RUNNER_TEMP/site-tests.json"'
-# The typecheck runs here because `npm test` does not run it: site/package.json
-# puts `tsc --noEmit` in `build`, and `test` is `vitest run` alone. So the site
-# build includes a separate typecheck that `npm test` does not invoke.
-run pages.yml:test - "npm run build --prefix site"
 run pages.yml:test - "python3 tools/container_differential.py --count 500 --seed 20260902"
 SITE_ABSENT="$(browser_missing site chromium)"
 if [ -n "$SITE_ABSENT" ]; then
