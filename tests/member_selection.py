@@ -31,6 +31,28 @@ FORMS = {
     "proofs": (RID, ".json", "proofs/<ULID>.json"),
 }
 AXES = ("prefix-case", "suffix-case", "absent", "appended", "combined")
+# v0.1 rev 20: enumerate path prefixes and root separators from the spec,
+# then combine each with every ASCII root case, independently of the guard.
+SEPARATOR_FORMS = (
+    ("", "\\"),
+    ("/", "/"),
+    ("./", "/"),
+    ("/", "\\"),
+    ("./", "\\"),
+    ("\\", "/"),
+    (".\\", "/"),
+    ("\\", "\\"),
+    (".\\", "\\"),
+    ("/./", "/"),
+    ("./\\./.\\", "\\"),
+)
+SUCCESSOR_NAMES = (
+    f"MANIFESTS/{ISSUER}.JSON",
+    f"manifests\\{ISSUER}.json",
+    f"Manifests\\{ISSUER}.json",
+    f"/manifests/{ISSUER}.json",
+    f"./manifests/{ISSUER}.json",
+)
 
 
 def ascii_cases(text: str) -> list[str]:

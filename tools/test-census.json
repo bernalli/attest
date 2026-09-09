@@ -3,10 +3,10 @@
   "regenerate": "npm test --prefix <suite> -- --reporter=default --reporter=json --outputFile.json=/tmp/<suite>-tests.json && python3 tools/check_test_census.py <suite> --report /tmp/<suite>-tests.json --update",
   "suites": {
     "site": {
-      "total": 943,
+      "total": 1025,
       "files": {
         "test/b64u.test.ts": 3,
-        "test/bundle.test.ts": 136,
+        "test/bundle.test.ts": 218,
         "test/conformance.test.ts": 254,
         "test/container-corpus.test.ts": 94,
         "test/container-properties.test.ts": 6,

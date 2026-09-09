@@ -41,6 +41,7 @@ Actor names are the canonical ones fixed in `attest-threat-model.md` §2 and are
 
 | Date | Change |
 | --- | --- |
+| 2026-09-09 (v0.1 rev 20; v0.2 rev 15) | §2.14 records the separate separator and path-prefix reservation amendment. Rejection exposes the original quoted name without normalizing it; free receipt intermediate names and all privacy classifications remain unchanged. |
 | 2026-09-09 (v0.1 rev 19; v0.2 rev 14) | §2.14 records the new reserved-root admission restriction. Receipt intermediate names remain free and potentially identifying; distinct unknown roots remain accepted. Control-visible diagnostics expose the rejected member name to the recipient. No signed field or privacy classification changes. |
 | 2026-07-18 | Initial publication: §1 status and scope, §2 data inventory, §3 what each observer learns, §4 pseudonymity and unlinkability limits, §5 log privacy, §6 GDPR annex, §7 testable claims. |
 | 2026-09-01 (v0.2 rev 11) | Reviewed the newly normed, already-enforced serialized-evidence admission ceiling. It changes no field, artifact, observer, disclosure path, or data flow; all existing privacy classifications remain unchanged. |
@@ -281,6 +282,8 @@ An evidence bundle is entirely untrusted input, evaluated at most one per claim,
 | `README.html` | potentially personal, user-controlled | Generated and human-readable. The specifications fix what it MUST explain — what the bundle is, how to verify it if the issuing store no longer exists, which file MUST NOT be shared (v0.1 §14.1), and that a `proofs/` entry is corroboration rather than authenticity (v0.2 §14) — never what else it may render. In practice it renders the bundle's own contents for a human, which is the whole receipt set in readable form. |
 
 The new admission rule in v0.1 §14.1 (rev 19) reserves only `receipts/`, `manifests/`, `legal/`, and `proofs/` and their ASCII case variants. Members there must use the exact lowercase prefix and current family form. Between `receipts/` and `.attest.json`, names remain unconstrained, including dots, uppercase letters, and subpaths: the amendment does not remove their ability to carry identifying text. Rejection diagnostics quote the member name with visible control characters, so that name is also disclosed through diagnostics. The archive is not closed to unknown roots: `future-evidence/receipt.cbor`, `witness-notes/note.v3`, and the typo `receipt/example.attest.json` remain ignored, as does `README.html`. Previously accepted future suffixes within reserved roots, roots differing only by ASCII case, and directory markers such as `receipts/` now cause whole-archive rejection. This is a new admission restriction, not a pre-existing privacy guarantee.
+
+The separate v0.1 rev 20 amendment also reserves those roots when reached through backslash separators or leading slash/dot-slash tokens, including their combinations and ASCII root case variants. Such names now require whole-archive rejection; importers must not normalize or rewrite them. The diagnostic still discloses the original quoted name, not a repaired path. Receipt intermediate names, including backslashes within them, remain free; distinct future roots remain ignored. No signed field, observer, disclosure channel, or privacy classification changes.
 
 ### 2.15 Private bundle `<name>.private.attest` (v0.1 §14.2)
 

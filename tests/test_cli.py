@@ -7048,6 +7048,9 @@ def test_import_manifest_float_issuer_is_refused_by_json_first(issuer: float) ->
         ("notes/good.example.json", False),
         ("manifests/good.example.JSON", False),
         ("/manifests/good.example.json", False),
+        ("manifests\\good.example.json", False),
+        ("Manifests\\good.example.json", False),
+        ("./manifests/good.example.json", False),
         ("manifests/good.example.json", True),
     ],
 )
@@ -7086,11 +7089,11 @@ def test_import_manifest_boundary_is_not_reached_for_unclaimed_or_duplicate_memb
         )
         assert out == ""
         assert not (tmp_path / "out").exists()
-    elif name == "manifests/good.example.JSON":
+    elif name != "notes/good.example.json":
         rc, out, err = _import_named_manifest(tmp_path, name, "evil.example")
         assert rc == 2
         assert err == (
-            "error: invalid bundle member 'manifests/good.example.JSON'; "
+            f"error: invalid bundle member {name!r}; "
             "expected manifests/<issuer>.json with exact lowercase prefix and suffix\n"
         )
         assert out == ""
@@ -7134,10 +7137,17 @@ def _selection_initial_import(tmp_path: Path, capsys: CapSys) -> Path:
 @pytest.mark.parametrize(
     "member",
     [
-        f"MANIFESTS/{selection.ISSUER}.JSON",
+        *selection.SUCCESSOR_NAMES,
         f"manifests/{selection.ISSUER}.json\nSUCCESS\t\x1b[31m.bak",
     ],
-    ids=["successor-beside-old", "control-characters"],
+    ids=[
+        "successor-beside-old",
+        "backslash",
+        "mixed-backslash",
+        "leading-slash",
+        "dot-slash",
+        "control-characters",
+    ],
 )
 def test_member_selection_cli_persistent_refusal(
     tmp_path: Path, capsys: CapSys, monkeypatch: pytest.MonkeyPatch, member: str

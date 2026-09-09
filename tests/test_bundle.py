@@ -2092,8 +2092,11 @@ def test_member_selection_excluded_receipt(tmp_path: Path, beside_valid: bool) -
     )
 
 
+@pytest.mark.parametrize("member", selection.SUCCESSOR_NAMES)
 @pytest.mark.parametrize("beside_old", [False, True], ids=["isolated", "beside-old"])
-def test_member_selection_restrictive_successor(tmp_path: Path, beside_old: bool) -> None:
+def test_member_selection_restrictive_successor(
+    tmp_path: Path, beside_old: bool, member: str
+) -> None:
     entries = selection.members()
     old, successor = selection.manifest_history()
     assert (
@@ -2110,12 +2113,52 @@ def test_member_selection_restrictive_successor(tmp_path: Path, beside_old: bool
     result = verify.verify(selection.signed_receipt(), imported.trust_store)
     assert result.ok is False
     assert any("is compromised" in error for error in result.errors)
-    member = f"MANIFESTS/{selection.ISSUER}.JSON"
     hostile = dict(entries)
     if not beside_old:
         del hostile[selection.MANIFEST]
     hostile[member] = selection.wrapper(successor)
     _selection_refusal(tmp_path, hostile, member, "manifests")
+
+
+@pytest.mark.parametrize("family", selection.FORMS)
+@pytest.mark.parametrize(("leading", "separator"), selection.SEPARATOR_FORMS)
+def test_member_selection_separator_matrix(
+    tmp_path: Path, family: str, leading: str, separator: str
+) -> None:
+    entries = selection.members(two_receipts=True)
+    entries[selection.PROOF] = (
+        selection.VECTORS / "28-transparency/a-logged-trust-unchanged/transparency.json"
+    ).read_bytes()
+    assert len(_selection_control(tmp_path, entries).receipts) == 2
+    stem, suffix, _ = selection.FORMS[family]
+    source = f"{family}/{stem}{suffix}"
+    for root in selection.ascii_cases(family):
+        member = f"{leading}{root}{separator}{stem}{suffix}"
+        _selection_refusal(tmp_path, selection.renamed(entries, source, member), member, family)
+
+
+@pytest.mark.parametrize("family", selection.FORMS)
+@pytest.mark.parametrize("ending", ["", "example", "example.json.bak"])
+def test_member_selection_separator_invalid_form(tmp_path: Path, family: str, ending: str) -> None:
+    member = f"./{family}\\{ending}"
+    _selection_refusal(tmp_path, {**selection.members(), member: b"not JSON"}, member, family)
+
+
+@pytest.mark.parametrize(
+    ("member", "family"),
+    [(name, "manifests") for name in selection.SUCCESSOR_NAMES[1:]]
+    + [(f"legal\\{selection.DIGEST}.txt", "legal")],
+)
+def test_member_selection_separator_inventory_refusal(
+    tmp_path: Path, member: str, family: str
+) -> None:
+    entries = selection.members()
+    _selection_control(tmp_path, entries)
+    entries[member] = b"ignored extension; not JSON"
+    _selection_refusal(tmp_path, entries, member, family)
+    # Selection still wins when a canonical receipt would fail payload parsing.
+    entries[selection.RECEIPT] = b"not JSON"
+    _selection_refusal(tmp_path, entries, member, family)
 
 
 _LEGAL_SELECTION_FIELDS = [
@@ -2168,6 +2211,16 @@ def test_member_selection_directory_marker(tmp_path: Path, family: str) -> None:
         "\uff52\uff45\uff43\uff45\uff49\uff50\uff54\uff53/example.JSON",
         "proofs",
         "README.html",
+        "../manifests/example.json",
+        "other/../manifests/example.json",
+        "C:\\manifests\\example.json",
+        "%2fmanifests/example.json",
+        "./future-evidence\\receipt.cbor",
+        "/witness-notes/note.v3",
+        "./receipt\\example.attest.json",
+        "./receipt\u017f\\example.JSON",
+        "/\uff52\uff45\uff43\uff45\uff49\uff50\uff54\uff53/example.JSON",
+        "./manifests",
     ],
 )
 def test_member_selection_future_and_outside_controls(tmp_path: Path, name: str) -> None:
@@ -2176,7 +2229,8 @@ def test_member_selection_future_and_outside_controls(tmp_path: Path, name: str)
 
 
 @pytest.mark.parametrize(
-    "middle", ["MiXeD.name.v2", "folder/Another.File", "", "note\nreceipt\tname"]
+    "middle",
+    ["MiXeD.name.v2", "folder/Another.File", "folder\\Another.File", "", "note\nreceipt\tname"],
 )
 def test_member_selection_free_receipt_name_control(tmp_path: Path, middle: str) -> None:
     entries = selection.renamed(
@@ -2204,10 +2258,10 @@ def test_member_selection_existing_proof_path_control(tmp_path: Path, member: st
     )
 
 
-def test_member_selection_duplicate_precedence_control(tmp_path: Path) -> None:
+@pytest.mark.parametrize("member", ["RECEIPTS/excluded.JSON", "./RECEIPTS\\excluded.JSON"])
+def test_member_selection_duplicate_precedence_control(tmp_path: Path, member: str) -> None:
     entries = selection.members()
     _selection_control(tmp_path, entries)
-    member = "RECEIPTS/excluded.JSON"
     path = selection.archive(tmp_path / "duplicate.attest", {**entries, member: b"{}"})
     with zipfile.ZipFile(path, "a") as output, pytest.warns(UserWarning, match="Duplicate name"):
         output.writestr(member, b"{}")
@@ -2219,7 +2273,8 @@ def test_member_selection_duplicate_precedence_control(tmp_path: Path) -> None:
     assert "expected receipts/" not in str(caught.value)
 
 
-def test_member_selection_private_precedence_control(tmp_path: Path) -> None:
+@pytest.mark.parametrize("member", ["RECEIPTS/excluded.JSON", "./RECEIPTS\\excluded.JSON"])
+def test_member_selection_private_precedence_control(tmp_path: Path, member: str) -> None:
     entries = selection.members()
     _selection_control(tmp_path, entries)
     with pytest.raises(bundle.BundleError, match="private"):
@@ -2228,19 +2283,21 @@ def test_member_selection_private_precedence_control(tmp_path: Path) -> None:
                 tmp_path / "private.attest",
                 {
                     **entries,
-                    "RECEIPTS/excluded.JSON": b"{}",
+                    member: b"{}",
                     "salts.json": b"{}",
                 },
             )
         )
 
 
+@pytest.mark.parametrize(
+    "member", ["receipts/zz-excluded.ATTEST.JSON", "./receipts\\zz-excluded.attest.json"]
+)
 def test_member_selection_inventory_before_payload_parsing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, member: str
 ) -> None:
     entries = selection.members()
     _selection_control(tmp_path, entries)
-    member = "receipts/zz-excluded.ATTEST.JSON"
     reads: list[str] = []
     original = bundle._loads
 

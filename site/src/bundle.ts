@@ -250,14 +250,18 @@ function proofMemberReceiptId(name: string): string {
   return receiptId
 }
 
-/** Reserve only ASCII case variants of known roots (v0.1 section 14.1).
+/** Reserve ASCII root cases and separator/prefix variants (v0.1 section 14.1).
  * Inventory admission precedes payload reads: silently skipping a member can
  * discard a restrictive manifest or one receipt beside another. The family
  * readers retain their path, identity and integrity checks; receipt names
  * between the prefix and suffix remain free.
  */
 function validateMemberSelection(name: string): void {
-  const root = name.slice(0, name.indexOf('/') + 1)
+  let root = name.slice(0, name.indexOf('/') + 1)
+  // Rev 20: classify the root only. Never repair the member name used by
+  // lookup, payload readers or writes; admission below judges the original.
+  const alternateRoot = /^(?:[\\/]|\.[\\/])*([^\\/]+)[\\/]/.exec(name)
+  if (alternateRoot !== null) root = alternateRoot[1] + '/'
   const reservedRoot = root.replace(/[A-Z]/g, letter => letter.toLowerCase())
   for (const [prefix, suffix, form] of [
     ['receipts/', '.attest.json', 'receipts/*.attest.json'],

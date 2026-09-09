@@ -747,7 +747,7 @@ def _refuse_private_material(members: dict[str, container.Member]) -> None:
 
 
 def _validate_member_selection(filename: str) -> None:
-    """Reserve only ASCII case variants of known roots (v0.1 section 14.1).
+    """Reserve ASCII root cases and separator/prefix variants (v0.1 section 14.1).
 
     Inventory admission precedes payload reads: silently skipping a member can
     discard a restrictive manifest or one receipt beside another. The family
@@ -755,6 +755,11 @@ def _validate_member_selection(filename: str) -> None:
     between the prefix and suffix remain free.
     """
     root = filename[: filename.find("/") + 1]
+    # Rev 20: classify the root only. Never repair the member name used by
+    # lookup, payload readers or writes; admission below judges the original.
+    alternate_root = re.match(r"^(?:[\\/]|\.[\\/])*([^\\/]+)[\\/]", filename)
+    if alternate_root is not None:
+        root = alternate_root[1] + "/"
     reserved_root = re.sub(r"[A-Z]", lambda match: match[0].lower(), root)
     for prefix, suffix, form in (
         ("receipts/", ".attest.json", "receipts/*.attest.json"),

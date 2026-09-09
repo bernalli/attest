@@ -1082,6 +1082,19 @@ const selectionForms = {
   proofs: [VALID_RECEIPT_ID, '.json', 'proofs/<ULID>.json'],
 } as const
 const selectionAxes = ['prefix-case', 'suffix-case', 'absent', 'appended', 'combined'] as const
+// v0.1 rev 20: spec-derived path prefixes/root separators, each crossed with
+// every ASCII root spelling. No importer predicate supplies the expectations.
+const selectionSeparatorForms = [
+  ['', '\\'], ['/', '/'], ['./', '/'], ['/', '\\'], ['./', '\\'],
+  ['\\', '/'], ['.\\', '/'], ['\\', '\\'], ['.\\', '\\'], ['/./', '/'], ['./\\./.\\', '\\'],
+] as const
+const selectionSuccessorNames = [
+  'MANIFESTS/store.example.com.JSON',
+  'manifests\\store.example.com.json',
+  'Manifests\\store.example.com.json',
+  '/manifests/store.example.com.json',
+  './manifests/store.example.com.json',
+] as const
 type SelectionFamily = keyof typeof selectionForms
 type SelectionAxis = typeof selectionAxes[number]
 const selectionFamilies = Object.keys(selectionForms) as SelectionFamily[]
@@ -1222,7 +1235,7 @@ describe('member-selection red-first', () => {
     selectionRefusal(selectionRename(entries, selectionReceipt, member), member, 'receipts')
   })
 
-  it.each([false, true])('restrictive successor beside-old=%s', besideOld => {
+  it.each(selectionSuccessorNames.flatMap(member => [false, true].map(besideOld => ({ member, besideOld }))))('restrictive successor $member beside-old=$besideOld', ({ member, besideOld }) => {
     const entries = selectionMembers()
     const [old, successor] = selectionHistory()
     expect(selectionControl(entries).trustStore.manifestFor('store.example.com')!.data()).toEqual(old)
@@ -1230,9 +1243,41 @@ describe('member-selection red-first', () => {
     const run = runVerify(selectionSignedReceipt(), compliant.trustStore)
     expect(run.ok).toBe(false)
     expect(run.result.errors.some(error => error.includes('is compromised'))).toBe(true)
-    const member = 'MANIFESTS/store.example.com.JSON'
     if (!besideOld) delete entries[selectionManifest]
     selectionRefusal({ ...entries, [member]: selectionWrapper(successor) }, member, 'manifests')
+  })
+
+  for (const [leading, separator] of selectionSeparatorForms) {
+    it.each(selectionFamilies)(`separator matrix ${JSON.stringify([leading, separator])} %s`, family => {
+      const entries = { ...selectionMembers(true), [selectionProof]: evidenceBytes() }
+      expect(selectionControl(entries).receipts).toHaveLength(2)
+      const [stem, suffix] = selectionForms[family]
+      const source = `${family}/${stem}${suffix}`
+      for (const root of asciiCases(family)) {
+        const member = `${leading}${root}${separator}${stem}${suffix}`
+        selectionRefusal(selectionRename(entries, source, member), member, family)
+      }
+    })
+  }
+
+  for (const ending of ['', 'example', 'example.json.bak']) {
+    it.each(selectionFamilies)(`separator invalid form ${JSON.stringify(ending)} %s`, family => {
+      const member = `./${family}\\${ending}`
+      selectionRefusal({ ...selectionMembers(), [member]: selectionEncoder.encode('not JSON') }, member, family)
+    })
+  }
+
+  it.each([
+    ...selectionSuccessorNames.slice(1).map(member => ({ member, family: 'manifests' as const })),
+    { member: `legal\\${LEGAL_DIGEST}.txt`, family: 'legal' as const },
+  ])('separator inventory refusal $member', ({ member, family }) => {
+    const entries = selectionMembers()
+    selectionControl(entries)
+    entries[member] = selectionEncoder.encode('ignored extension; not JSON')
+    selectionRefusal(entries, member, family)
+    // Selection still wins when a canonical receipt would fail payload parsing.
+    entries[selectionReceipt] = selectionEncoder.encode('not JSON')
+    selectionRefusal(entries, member, family)
   })
 
   const fields = [
@@ -1267,11 +1312,16 @@ describe('member-selection red-first', () => {
     'future-evidence/receipt.cbor', 'witness-notes/note.v3', 'receipt/example.attest.json',
     'receıpts/example.ATTEST.JSON', 'receipts-extra/example.JSON', 'README.html',
     'receipt\u017f/example.JSON', '\uff52\uff45\uff43\uff45\uff49\uff50\uff54\uff53/example.JSON', 'proofs',
+    '../manifests/example.json', 'other/../manifests/example.json',
+    'C:\\manifests\\example.json', '%2fmanifests/example.json',
+    './future-evidence\\receipt.cbor', '/witness-notes/note.v3',
+    './receipt\\example.attest.json', './receipt\u017f\\example.JSON',
+    '/\uff52\uff45\uff43\uff45\uff49\uff50\uff54\uff53/example.JSON', './manifests',
   ])('outside control %s', member => {
     expect(selectionControl({ ...selectionMembers(), [member]: selectionEncoder.encode('ignored extension; not JSON') }).receipts).toHaveLength(1)
   })
 
-  it.each(['MiXeD.name.v2', 'folder/Another.File', '', 'note\nreceipt\tname'])('free receipt name control %j', middle => {
+  it.each(['MiXeD.name.v2', 'folder/Another.File', 'folder\\Another.File', '', 'note\nreceipt\tname'])('free receipt name control %j', middle => {
     const entries = selectionRename(selectionMembers(), selectionReceipt, `receipts/${middle}.attest.json`)
     expect(selectionControl(entries).receipts[0].receiptId).toBe(VALID_RECEIPT_ID)
   })
@@ -1282,10 +1332,9 @@ describe('member-selection red-first', () => {
     selectionRefusal(selectionRename(entries, selectionProof, member), member, 'proofs')
   })
 
-  it('duplicate precedence control', () => {
+  it.each(['RECEIPTS/excluded.JSON', './RECEIPTS\\excluded.JSON'])('duplicate precedence control %s', member => {
     const entries = selectionMembers()
     selectionControl(entries)
-    const member = 'RECEIPTS/excluded.JSON'
     const bytes = utf8Zip([...Object.entries(entries), [member, selectionSignedReceipt()], [member, selectionSignedReceipt()]])
     let caught: unknown
     try { parseBundle(bytes) } catch (error) { caught = error }
@@ -1301,11 +1350,11 @@ describe('member-selection red-first', () => {
     expect((caught as Error).message).not.toContain('expected receipts/')
   })
 
-  it('private precedence control', () => {
+  it.each(['RECEIPTS/excluded.JSON', './RECEIPTS\\excluded.JSON'])('private precedence control %s', member => {
     const entries = selectionMembers()
     selectionControl(entries)
     expect(() => parseBundle(utf8Zip(Object.entries({
-      ...entries, 'RECEIPTS/excluded.JSON': selectionSignedReceipt(), 'salts.json': selectionEncoder.encode('{}'),
+      ...entries, [member]: selectionSignedReceipt(), 'salts.json': selectionEncoder.encode('{}'),
     })))).toThrow(PrivateBundleError)
   })
 
