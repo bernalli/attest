@@ -6,6 +6,23 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.5] — 2026-09-09
+
+### Fixed
+
+- The release workflow no longer reads a successful publish as a malformed `dist/`.
+  Its post-publish check re-used a pre-publish invariant — that `dist/` holds exactly
+  the wheel and the sdist — and the publisher writes a PEP 740 attestation beside each
+  distribution, so the check refused every release that actually reached PyPI. It now
+  selects the two gated distributions by name and admits their attestations, while any
+  other file in `dist/` still fails and is named. The strict count stays where it
+  belongs, in the step that runs before publishing.
+
+  The library is byte-for-byte what 0.9.4 ships. This version exists because the 0.9.4
+  run published `attest-receipts` to PyPI and then failed that check, so the npm job
+  never ran and `attest-verifier` 0.9.4 was never published. **0.9.5 is the first
+  version of both packages to carry the trust-material fix.**
+
 ## [0.9.4] — 2026-09-09
 
 ### Added

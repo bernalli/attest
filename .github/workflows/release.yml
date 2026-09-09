@@ -411,14 +411,17 @@ jobs:
 
           registry = "PyPI"
           subprocess.run(["sha256sum", "-c", "gated-artifacts.sha256"], check=True)
-          files = sorted(Path("dist").iterdir())
-          if (
-              len(files) != 2
-              or not Path(f"dist/attest_receipts-{version}.tar.gz").is_file()
-              or len(list(Path("dist").glob(f"attest_receipts-{version}-*.whl"))) != 1
-              or not all(file.is_file() for file in files)
-          ):
-              raise SystemExit("cannot determine: expected this tag's wheel and sdist")
+          dist = Path("dist")
+          files = sorted([dist / f"attest_receipts-{version}.tar.gz", *dist.glob(f"attest_receipts-{version}-*.whl")])
+          if len(files) != 2 or not all(file.is_file() for file in files):
+              raise SystemExit(f"cannot determine: expected this tag's wheel and sdist; candidates: {files}")
+          allowed = set(files)
+          if phase == "verify":
+              # The publisher leaves PEP 740 sidecars beside the gated distributions.
+              allowed.update(file.with_name(file.name + ".publish.attestation") for file in files)
+          for file in sorted(dist.iterdir()):
+              if file not in allowed or not file.is_file():
+                  raise SystemExit(f"cannot determine: unexpected file in dist/: {file.name}")
           wanted = {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in files}
 
 

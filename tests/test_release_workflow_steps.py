@@ -1522,6 +1522,50 @@ def test_publish_preflight_ignores_ambient_states(tmp_path: Path, job: str) -> N
     _publish_state(tmp_path, "identical")
 
 
+@pytest.mark.parametrize("prior", ["absent", "identical"])
+def test_publish_pypi_verify_accepts_publisher_attestations(tmp_path: Path, prior: str) -> None:
+    routes = _publish_seed(tmp_path, "pypi")
+    for name in (
+        "attest_receipts-9.9.9.tar.gz.publish.attestation",
+        "attest_receipts-9.9.9-py3-none-any.whl.publish.attestation",
+    ):
+        (tmp_path / "dist" / name).write_text("{}", encoding="utf-8")
+    # Registry fixtures serve only the wheel and sdist: attestations must not
+    # enter `wanted`, even though the publisher leaves them beside those files.
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, "pypi", "verify", prior=prior)
+    assert "expected this tag's wheel and sdist" not in result.stdout + result.stderr, (
+        result.stdout + result.stderr
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PyPI serves the bytes this run gated" in result.stdout
+    assert (tmp_path / "step-output").read_text() == ""
+
+
+@pytest.mark.parametrize(
+    "extra_name",
+    [
+        "stray.txt",
+        "attest_receipts-9.9.8-py3-none-any.whl.publish.attestation",
+    ],
+    ids=["stray-file", "orphan-attestation"],
+)
+def test_publish_pypi_verify_refuses_unexpected_dist_entries(
+    tmp_path: Path, extra_name: str
+) -> None:
+    routes = _publish_seed(tmp_path, "pypi")
+    dist = tmp_path / "dist"
+    for file in tuple(dist.iterdir()):
+        (dist / f"{file.name}.publish.attestation").write_text("{}", encoding="utf-8")
+    (dist / extra_name).write_text("{}", encoding="utf-8")
+    _stub_registry_http(tmp_path, routes)
+    result = _publish_run(tmp_path, "pypi", "verify")
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert extra_name in result.stdout + result.stderr, result.stdout + result.stderr
+    assert not (tmp_path / "http-calls.jsonl").exists()
+    assert (tmp_path / "step-output").read_text() == ""
+
+
 @pytest.mark.parametrize("job", ["pypi", "npm"])
 @pytest.mark.parametrize("outcome", ["identical", "absent", "divergent", "partial"])
 def test_publish_post_publish_proves_bytes(tmp_path: Path, job: str, outcome: str) -> None:
