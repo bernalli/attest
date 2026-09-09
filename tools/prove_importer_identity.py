@@ -204,7 +204,13 @@ process.stdout.write(JSON.stringify(results))
 
 
 def main() -> int:
+    # Every check below is an `assert`, so `-O` would strip the whole
+    # measurement and leave the success line untouched. A run that cannot
+    # measure is not a passing run.
+    if not __debug__:
+        raise SystemExit("refusing to measure with assertions disabled (-O)")
     matrix = cases()
+    compared = 0
     with tempfile.TemporaryDirectory(prefix="ol14-identity-") as directory:
         work = Path(directory)
         compiled = d.build_ts_bundle(work)
@@ -258,6 +264,7 @@ def main() -> int:
                         "issuers": list(case.issuers),
                         "receipts": [RECEIPT],
                     }, (case.label, side, observed)
+                compared += 1
             if case.label in ("hostile", "matching"):
                 out, err = io.StringIO(), io.StringIO()
                 destination = work / f"{case.label}-import"
@@ -290,9 +297,16 @@ def main() -> int:
                     )
                 )
     refused = sum(case.issuers is None for case in matrix)
+    # `compared` counts comparisons that PASSED, one per case per side; the
+    # case count alone is what the matrix was built from and would print
+    # unchanged had nothing been checked at all.
+    expected = len(matrix) * 3
+    if compared != expected:
+        raise SystemExit(f"measured {compared} comparisons, expected {expected}")
     print(
         f"identity matrix: {len(matrix)} cases, {refused} refused, "
-        f"{len(matrix) - refused} accepted; Python/parseBundle/intake MATCH"
+        f"{len(matrix) - refused} accepted; {compared} comparisons executed "
+        "across Python/parseBundle/intake; MATCH"
     )
     return 0
 
