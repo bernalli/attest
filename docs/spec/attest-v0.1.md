@@ -2,7 +2,7 @@
 
 - **Status**: Normative, v0.1
 - **Date**: 2026-07-02
-- **Grounding**: this document is grounded in the reference implementation in `src/attest/` and the conformance vectors in [`docs/spec/vectors/`](vectors/). It introduces no design decision not already present in one of those two sources.
+- **Grounding**: this document is grounded in the reference implementation in `src/attest/` and the conformance vectors in [`docs/spec/vectors/`](vectors/). Exception: rev 19 ratifies a new bundle member-admission rule ahead of its implementation; red-first importer tests specify the pending behavior.
 - **Companion artifacts**: JSON Schema — [`docs/spec/schema/attest-receipt.schema.json`](schema/attest-receipt.schema.json); conformance vectors — [`docs/spec/vectors/`](vectors/).
 
 ## 1. Conformance language
@@ -477,6 +477,23 @@ MUST contain:
 
 Member names within a bundle MUST be unique. `receipts/` member names are keyed by `receipt_id`, so an export implementation MUST refuse to produce a bundle in which two receipts share one `receipt_id` (2026-08-26 amendment): the colliding members would shadow each other on name-based reads. An import implementation MUST reject a bundle whose central directory repeats any member name, rather than resolve the name to one entry silently — the two reference importers previously disagreed on the same duplicated bundle (name-based reads return the last entry twice; a record-keyed browser unzip collapses the pair to one), and neither raised a signal. Both entries remain physically present in such an archive; recovery of an already-circulating duplicated bundle is an operator action (extract by entry, re-export), never something a verifying importer guesses at. This rule has no conformance vector: the vector corpus has no bundle surface (§15 feeds `verify()` and its sibling audit surfaces), so the pre/post behavior is pinned by implementation tests in both reference importers instead.
 
+**Reserved member namespaces (new admission rule, 2026-09-09, rev 19).** After the container checks (including duplicate names and resource limits) and separation of private material, an importer MUST validate the shareable archive's member inventory against the following rule, before producing any partial result or writing any imported material. A violation MUST reject the **entire archive** as `malformed`, surfaced as `BundleError` by the reference APIs. It MUST NOT be reported as `resource-limit` or as an invalid receipt signature: a receipt excluded by its name has not been verified.
+
+The reserved roots are `receipts/`, `manifests/`, `legal/`, and `proofs/`, including every ASCII upper/lower-case spelling of each root. Only ASCII letters in the root are compared without regard to case for this reservation test. It MUST NOT use spelling distance, content inspection, Unicode normalization, or Unicode case folding. A member occupying a reserved root MUST then use the **exact lowercase prefix** and the current family form:
+
+| Root | Admitted member form |
+| --- | --- |
+| `receipts/` | `receipts/*.attest.json`: the intermediate name remains free, including dots, uppercase letters, and subpaths. Import MUST NOT require it to be a ULID or equal the signed `receipt_id`; identity comes from the payload. |
+| `manifests/` | `manifests/<issuer>.json`: one nonempty issuer component, without slash, backslash, or NUL; the existing agreement with the wrapper's and contained documents' issuers still applies. |
+| `legal/` | `legal/<sha256>.txt`: the lowercase hexadecimal SHA-256 of the member's bytes; existing integrity and referenced-text completeness checks still apply, including integrity of unreferenced texts. |
+| `proofs/` | `proofs/<ULID>.json`, with the ULID grammar and evidence semantics specified in [v0.2 §14](attest-v0.2.md#14-bundle-transparency-evidence-the-proofs-member). |
+
+A different, absent, or appended suffix (such as `.ATTEST.JSON`, `.JSON`, `.TXT`, or `.json.bak`), a differently cased prefix, or a combination of these MUST cause rejection, never automatic correction. Directory markers such as `receipts/` also occupy the reserved namespace and fail its family form. The diagnostic MUST identify the offending **member** with quoting that makes control characters visible and state the **reason**, including the expected exact prefix and family form. Reference API diagnostics use `expected receipts/*.attest.json`, `expected manifests/<issuer>.json`, `expected legal/<sha256>.txt`, or `expected proofs/<ULID>.json` for these selection failures. Existing proof-path and duplicate-name refusals remain distinct; the container's duplicate-name refusal takes precedence.
+
+Outside these reserved roots, admission is unchanged: importers MUST NOT reject a member merely because it belongs to an unknown family. For example, `future-evidence/receipt.cbor` and `witness-notes/note.v3` remain acceptable ignored extensions, `README.html` remains ignored metadata, and the typo `receipt/example.attest.json` remains ignored. This rule does not promise to detect every omission or to interpret a future family.
+
+**Compatibility cost and rationale.** This is a new admission restriction, not an editorial clarification or a pre-existing general prohibition on unknown members. Earlier importers could silently skip a restrictive successor manifest while consuming an older wrapper, thereby losing a compromise marking; they could also return only the recognized receipt in a bundle carrying another under an excluded name. Archives previously accepted with a future suffix under a reserved root, a new root differing from a reserved root only by ASCII case, or a directory marker such as `receipts/` are now rejected. Distinct future roots remain available. This deliberate tightening is sanctioned by [attest-versioning §2](attest-versioning.md#2-the-additive-pattern); no signed receipt bytes or verification algorithm change, but archive admission does.
+
 ### 14.2 `<name>.private.attest` (secrets)
 
 MUST contain `salts.json` (`receipt_id → salt`) and, if used, `keys/` (per-receipt buyer keypairs, §8.2). This file MUST be named and documented as private, and a conforming CLI implementation MUST warn whenever it is accessed.
@@ -572,6 +589,8 @@ The conformance vectors under [`docs/spec/vectors/`](vectors/) are the attest co
 This appendix outlines, but v0.1 does not build, a registry layer: independent nodes replicating key/artifact manifests, license/policy texts, and revocation records, plus optional receipt-existence proofs anchored via Merkle roots. Nothing in this specification's conformance requirement (§15) depends on a registry node existing. A future revision of this specification will normatize the registry-node wire format if and when it ships.
 
 ## Revision log
+
+- **2026-09-09 (rev 19)**: §14.1 adds reserved-root member admission before partial results or writes, with whole-archive `malformed` rejection and member-specific, control-visible diagnostics. This is a new restriction, ratified before implementation and pinned by red-first importer tests. ASCII case variants, future suffixes inside reserved roots, and directory markers previously accepted are now rejectable; distinct future roots remain accepted. Receipt intermediate names remain free. — vectors: none (bundle surface; Python and browser importer tests)
 
 - **2026-09-07 (rev 18)**: §12.2 gains a fourth row for a `refund_window` deadline later than `9999-12-31T23:59:59Z`. Once the preceding verification gates and §12.4 admission have succeeded, a non-empty view requires `revocation: "unknown"` with `refund window is outside the representable timestamp range`, independently of whether any record matches; the error makes `ok` false and survives v0.2 §17.3's possible relabeling. Empty or absent views remain unevaluated; oversized views retain §12.4's diagnostic and precedence. The existing refund-window row applies to representable deadlines. This ratifies the reference cores' behavior for canonical UTC timestamps; the old table permitted acceptance with a non-empty admitted view containing no matching record. The new requirement can change acceptance to refusal, never refusal to acceptance, and is the thirteenth sanctioned instance in attest-versioning.md §2. — vectors: 23-revocation-refund-window
 

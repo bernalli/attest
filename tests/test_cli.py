@@ -40,6 +40,7 @@ from attest import (
     verify,
     views,
 )
+from tests import member_selection as selection
 from tests.helpers import key_manifest as km
 from tests.helpers import make_payload, non_canonical_spellings
 
@@ -7080,3 +7081,116 @@ def test_import_manifest_boundary_is_not_reached_for_unclaimed_or_duplicate_memb
         assert json.loads(out)["issuers"] == []
         assert not (tmp_path / "out" / "trust").exists()
     assert manifest_reads == []
+
+
+# --- Reserved-root admission must precede persistent import writes -----------
+
+
+def _selection_disk_snapshot(root: Path) -> dict[str, bytes | None]:
+    return {
+        str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+        for path in root.rglob("*")
+    }
+
+
+def _selection_initial_import(tmp_path: Path, capsys: CapSys) -> Path:
+    out = tmp_path / "library"
+    assert not out.exists()
+    path = selection.archive(tmp_path / "initial.attest", selection.members())
+    assert cli.main(["import", "--bundle", str(path), "--out-dir", str(out)]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out)["receipts"] == 1
+    receipt = out / "receipts" / f"{selection.RID}.attest.json"
+    assert cli.main(["verify", str(receipt), "--trust-dir", str(out / "trust")]) == 0
+    verdict = json.loads(capsys.readouterr().out)
+    assert verdict["ok"] is True
+    assert verdict["schema"] == "valid"
+    return out
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        f"MANIFESTS/{selection.ISSUER}.JSON",
+        f"manifests/{selection.ISSUER}.json\nSUCCESS\t\x1b[31m.bak",
+    ],
+    ids=["successor-beside-old", "control-characters"],
+)
+def test_member_selection_cli_persistent_refusal(
+    tmp_path: Path, capsys: CapSys, monkeypatch: pytest.MonkeyPatch, member: str
+) -> None:
+    out = _selection_initial_import(tmp_path, capsys)
+    before = _selection_disk_snapshot(out)
+    _, successor = selection.manifest_history()
+    entries = {**selection.members(two_receipts=True), member: selection.wrapper(successor)}
+    text = b"new unreferenced legal material"
+    entries[f"legal/{hashlib.sha256(text).hexdigest()}.txt"] = text
+    path = selection.archive(tmp_path / "successor.attest", entries)
+    writes: list[str] = []
+    original = cli._write_json_file
+
+    def recording_write(path: Path, data: Any) -> None:
+        writes.append(str(path))
+        original(path, data)
+
+    original_text = cli._write_json_text
+    original_bytes = Path.write_bytes
+
+    def recording_text(path: Path, text: str, **kwargs: Any) -> None:
+        writes.append(str(path))
+        original_text(path, text, **kwargs)
+
+    def recording_bytes(path: Path, data: bytes) -> int:
+        if path.is_relative_to(out):
+            writes.append(str(path))
+        return original_bytes(path, data)
+
+    monkeypatch.setattr(cli, "_write_json_file", recording_write)
+    monkeypatch.setattr(cli, "_write_json_text", recording_text)
+    monkeypatch.setattr(Path, "write_bytes", recording_bytes)
+    rc = cli.main(["import", "--bundle", str(path), "--out-dir", str(out)])
+    captured = capsys.readouterr()
+    after = _selection_disk_snapshot(out)
+    failures = []
+    if rc != cli.EXIT_USAGE_ERROR:
+        failures.append(f"expected malformed import rc 2, got {rc}; stderr={captured.err!r}")
+    if captured.out:
+        failures.append(f"partial success output: {captured.out!r}")
+    if repr(member) not in captured.err or "expected manifests/<issuer>.json" not in captured.err:
+        failures.append(f"missing member/reason diagnostic: {captured.err!r}")
+    if after != before:
+        failures.append(f"persistent state changed; added={sorted(after.keys() - before.keys())!r}")
+    if writes:
+        failures.append(f"writes occurred before refusal: {writes!r}")
+    for control in ("\nSUCCESS", "\t", "\x1b"):
+        if control in captured.err:
+            failures.append(f"raw control in diagnostic: {control!r}")
+    assert "signature invalid" not in captured.err.lower()
+    assert "resource-limit" not in captured.err.lower()
+    assert not failures, "\n".join(failures)
+
+
+def test_member_selection_cli_conforming_successor_control(tmp_path: Path, capsys: CapSys) -> None:
+    out = _selection_initial_import(tmp_path, capsys)
+    before = _selection_disk_snapshot(out)
+    old, successor = selection.manifest_history()
+    entries = {
+        **selection.members(two_receipts=True),
+        selection.MANIFEST: selection.wrapper(old, successor),
+    }
+    path = selection.archive(tmp_path / "conforming-successor.attest", entries)
+    assert cli.main(["import", "--bundle", str(path), "--out-dir", str(out)]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out)["receipts"] == 2
+    after = _selection_disk_snapshot(out)
+    assert all(after[name] == content for name, content in before.items())
+    assert (out / "receipts" / f"{selection.NEW_RID}.attest.json").exists()
+    trust = cli._load_trust_dir(out / "trust")
+    assert trust.manifest_for(selection.ISSUER).data() == successor
+    receipt = out / "receipts" / f"{selection.RID}.attest.json"
+    assert cli.main(["verify", str(receipt), "--trust-dir", str(out / "trust")]) == 1
+    verdict = json.loads(capsys.readouterr().out)
+    assert verdict["ok"] is False
+    assert any("is compromised" in error for error in verdict["errors"])

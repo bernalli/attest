@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { createPrivateKey, sign } from 'node:crypto'
 import { zipSync } from 'fflate'
 import { loadsStrict, canonicalBytes, sha256Hex } from 'attest-verifier'
 import type { JsonObject } from 'attest-verifier'
 import { parseBundle, BundleError, BundleTooLargeError, PrivateBundleError, DEFAULT_CAPS } from '../src/bundle.js'
 import { intake } from '../src/intake.js'
+import { canonicalMembers, ContainerError } from '../src/container.js'
 import { runVerify } from '../src/run.js'
 import { VECTORS_ROOT, logKeys, anchorPolicy } from './helpers/vectors.js'
 // Aliased: this file already defines a local `storedZip` that does NOT set
@@ -1068,5 +1070,268 @@ describe('parseBundle refuses a manifest outside the canonical profile', () => {
     const result = intake('bundle.attest', bundleWithVersion('9007199254740992'))
     expect(result.kind).toBe('rejected')
     expect(JSON.stringify(result)).toMatch(/outside the canonical profile/)
+  })
+})
+
+// Reserved-root admission, v0.1 §14.1 rev 19. Generate names from the
+// normative roots/forms, without importing any member-selection predicate.
+const selectionForms = {
+  receipts: [VALID_RECEIPT_ID, '.attest.json', 'receipts/*.attest.json'],
+  manifests: ['store.example.com', '.json', 'manifests/<issuer>.json'],
+  legal: [LEGAL_DIGEST, '.txt', 'legal/<sha256>.txt'],
+  proofs: [VALID_RECEIPT_ID, '.json', 'proofs/<ULID>.json'],
+} as const
+const selectionAxes = ['prefix-case', 'suffix-case', 'absent', 'appended', 'combined'] as const
+type SelectionFamily = keyof typeof selectionForms
+type SelectionAxis = typeof selectionAxes[number]
+const selectionFamilies = Object.keys(selectionForms) as SelectionFamily[]
+const selectionReceipt = `receipts/${VALID_RECEIPT_ID}.attest.json`
+const selectionNewId = '01JZ5PDHT0000G40R40M30E20A'
+const selectionManifest = 'manifests/store.example.com.json'
+const selectionProof = `proofs/${VALID_RECEIPT_ID}.json`
+const selectionEncoder = new TextEncoder()
+
+function asciiCases(text: string): string[] {
+  let values = ['']
+  for (const character of text) {
+    const choices = character >= 'a' && character <= 'z' ? [character, character.toUpperCase()] : [character]
+    values = values.flatMap(prefix => choices.map(choice => prefix + choice))
+  }
+  return values
+}
+
+function selectionInvalidNames(family: SelectionFamily, axis: SelectionAxis): string[] {
+  const [stem, suffix] = selectionForms[family]
+  const prefixes = asciiCases(family).slice(1)
+  const suffixes = asciiCases(suffix).slice(1)
+  if (axis === 'prefix-case') return prefixes.map(root => `${root}/${stem}${suffix}`)
+  if (axis === 'suffix-case') return suffixes.map(ending => `${family}/${stem}${ending}`)
+  if (axis === 'absent') return [`${family}/${stem}`]
+  if (axis === 'appended') return [`${family}/${stem}${suffix}.bak`]
+  // Every prefix with absent/appended/uppercase suffix, every suffix with
+  // uppercase prefix and .bak. Not the full Cartesian product of both axes.
+  return [...new Set([
+    ...prefixes.flatMap(root => ['', suffix + '.bak', suffix.toUpperCase()].map(ending => `${root}/${stem}${ending}`)),
+    ...suffixes.map(ending => `${family.toUpperCase()}/${stem}${ending}`),
+    ...suffixes.map(ending => `${family}/${stem}${ending}.bak`),
+  ])].sort()
+}
+
+function selectionDocument(leaf: string, name: string): JsonObject {
+  return loadsStrict(new Uint8Array(readFileSync(join(VECTORS_ROOT, leaf, name)))) as JsonObject
+}
+
+function selectionHistory(): [JsonObject, JsonObject] {
+  return ['u-stale-pin-not-a-retraction', 'a-rescued-anchored-before-cutoff'].map(leaf => {
+    const doc = selectionDocument(`41-compromise-cutoff/${leaf}`, 'manifests.json')
+    return (doc.manifests as JsonObject)['store.example.com'] as JsonObject
+  }) as [JsonObject, JsonObject]
+}
+
+function selectionWrapper(...versions: JsonObject[]): Uint8Array {
+  return canonicalBytes({ issuer: 'store.example.com', key_manifests: versions, artifact_manifests: [] })
+}
+
+function selectionSignedReceipt(rid = VALID_RECEIPT_ID, field: readonly [string, string] | null = null, digest = LEGAL_DIGEST): Uint8Array {
+  const envelope = selectionDocument('01-valid-minimal', 'envelope.json')
+  const payload = envelope.payload as JsonObject
+  payload.receipt_id = rid
+  if (field !== null) {
+    const [section, key] = field
+    ;(payload[section] as JsonObject)[key] = digest
+    if (key === 'eol_commitment_sha256') (payload[section] as JsonObject).eol_commitment_uri = 'https://store.example.com/eol'
+  }
+  // Fixed corpus seed, test only. Sign altered payloads so the controls
+  // independently prove schema and signature validity before name mutation.
+  const privateKey = createPrivateKey({
+    key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.alloc(32, 1)]),
+    format: 'der', type: 'pkcs8',
+  })
+  const signature = sign(null, canonicalBytes(payload), privateKey).toString('base64url')
+  return canonicalBytes({ payload, signatures: [{ ...(envelope.signatures as JsonObject[])[0], sig: signature }] })
+}
+
+function selectionMembers(twoReceipts = false): Record<string, Uint8Array> {
+  const [old] = selectionHistory()
+  const entries: Record<string, Uint8Array> = {
+    [selectionReceipt]: selectionSignedReceipt(),
+    [selectionManifest]: selectionWrapper(old),
+    [`legal/${LEGAL_DIGEST}.txt`]: LEGAL_TEXT,
+    'README.html': selectionEncoder.encode('<p>Shareable receipt bundle; keep the private bundle private.</p>'),
+  }
+  if (twoReceipts) entries[`receipts/${selectionNewId}.attest.json`] = selectionSignedReceipt(selectionNewId)
+  return entries
+}
+
+function selectionRename(entries: Record<string, Uint8Array>, source: string, target: string): Record<string, Uint8Array> {
+  expect(target in entries).toBe(false)
+  return Object.fromEntries(Object.entries(entries).map(([name, data]) => [name === source ? target : name, data]))
+}
+
+function selectionControl(entries: Record<string, Uint8Array>): ReturnType<typeof parseBundle> {
+  const parsed = parseBundle(utf8Zip(Object.entries(entries)))
+  for (const receipt of parsed.receipts) {
+    const run = runVerify(receipt.bytes, parsed.trustStore)
+    expect(run.result.schema, JSON.stringify(run.result.errors)).toBe('valid')
+    expect(run.result.signature, JSON.stringify(run.result.errors)).toBe('valid')
+    expect(run.ok, JSON.stringify(run.result.errors)).toBe(true)
+  }
+  return parsed
+}
+
+function selectionRefusal(entries: Record<string, Uint8Array>, member: string, family: SelectionFamily): void {
+  const bytes = utf8Zip(Object.entries(entries))
+  let caught: unknown
+  try { parseBundle(bytes) } catch (error) { caught = error }
+  expect(caught, `member ${JSON.stringify(member)} was accepted`).toBeInstanceOf(BundleError)
+  expect((caught as Error).constructor).toBe(BundleError) // malformed, never resource-limit
+  const message = (caught as Error).message
+  expect(message).toContain(JSON.stringify(member))
+  expect(message).toContain(`expected ${selectionForms[family][2]}`)
+  expect(message.toLowerCase()).not.toContain('signature invalid')
+  // The caller must receive a malformed refusal, not jobs or a declined read.
+  const result = intake('member-selection.attest', bytes)
+  expect(result.kind).toBe('rejected')
+  if (result.kind === 'rejected') {
+    expect(result.declined).toBeUndefined()
+    expect(result.reason).toBe(message)
+  }
+}
+
+describe('member-selection red-first', () => {
+  for (const axis of selectionAxes) {
+    it.each(selectionFamilies)(`case matrix ${axis} %s`, family => {
+      const entries = { ...selectionMembers(true), [selectionProof]: evidenceBytes() }
+      expect(selectionControl(entries).receipts).toHaveLength(2)
+      const [stem, suffix] = selectionForms[family]
+      const source = `${family}/${stem}${suffix}`
+      const names = selectionInvalidNames(family, axis)
+      const failures: string[] = []
+      for (const member of names) {
+        try { selectionRefusal(selectionRename(entries, source, member), member, family) }
+        catch (error) { failures.push(`${JSON.stringify(member)}: ${(error as Error).message}`) }
+      }
+      expect(failures.length, `${failures.length}/${names.length} selection contract failures; first: ${failures[0]}; last: ${failures.at(-1)}`).toBe(0)
+    })
+  }
+
+  it.each([false, true])('excluded receipt beside-valid=%s', besideValid => {
+    const entries = selectionMembers(besideValid)
+    expect(selectionControl(entries).receipts).toHaveLength(besideValid ? 2 : 1)
+    const member = `receipts/${VALID_RECEIPT_ID}.ATTEST.JSON`
+    selectionRefusal(selectionRename(entries, selectionReceipt, member), member, 'receipts')
+  })
+
+  it.each([false, true])('restrictive successor beside-old=%s', besideOld => {
+    const entries = selectionMembers()
+    const [old, successor] = selectionHistory()
+    expect(selectionControl(entries).trustStore.manifestFor('store.example.com')!.data()).toEqual(old)
+    const compliant = parseBundle(utf8Zip(Object.entries({ ...entries, [selectionManifest]: selectionWrapper(...(besideOld ? [old, successor] : [successor])) })))
+    const run = runVerify(selectionSignedReceipt(), compliant.trustStore)
+    expect(run.ok).toBe(false)
+    expect(run.result.errors.some(error => error.includes('is compromised'))).toBe(true)
+    const member = 'MANIFESTS/store.example.com.JSON'
+    if (!besideOld) delete entries[selectionManifest]
+    selectionRefusal({ ...entries, [member]: selectionWrapper(successor) }, member, 'manifests')
+  })
+
+  const fields = [
+    ['license', 'legal_text_sha256'], ['survivability', 'mirror_policy_sha256'],
+    ['survivability', 'eol_commitment_sha256'], null,
+  ] as const
+  for (const corrupt of [false, true]) {
+    it.each(fields.map(field => ({ field, label: field?.join('.') ?? 'unreferenced' })))(`legal corrupt=${corrupt} field=$label`, ({ field }) => {
+      const text = selectionEncoder.encode('member-selection additional legal document')
+      const digest = sha256Hex(text)
+      const source = `legal/${digest}.txt`
+      const entries = { ...selectionMembers(), [source]: text }
+      entries[selectionReceipt] = selectionSignedReceipt(VALID_RECEIPT_ID, field, digest)
+      expect(selectionControl(entries).legalTexts[digest]).toEqual(text)
+      if (corrupt) {
+        entries[source] = selectionEncoder.encode('corrupt legal text, with a correct ZIP CRC')
+        expect(() => parseBundle(utf8Zip(Object.entries(entries)))).toThrow(/integrity/)
+      }
+      const member = `legal/${digest}.TXT`
+      selectionRefusal(selectionRename(entries, source, member), member, 'legal')
+    })
+  }
+
+  it.each(selectionFamilies)('directory marker %s', family => {
+    const entries = selectionMembers()
+    selectionControl(entries)
+    const member = family + '/'
+    selectionRefusal({ ...entries, [member]: new Uint8Array() }, member, family)
+  })
+
+  it.each([
+    'future-evidence/receipt.cbor', 'witness-notes/note.v3', 'receipt/example.attest.json',
+    'receıpts/example.ATTEST.JSON', 'receipts-extra/example.JSON', 'README.html',
+    'receipt\u017f/example.JSON', '\uff52\uff45\uff43\uff45\uff49\uff50\uff54\uff53/example.JSON', 'proofs',
+  ])('outside control %s', member => {
+    expect(selectionControl({ ...selectionMembers(), [member]: selectionEncoder.encode('ignored extension; not JSON') }).receipts).toHaveLength(1)
+  })
+
+  it.each(['MiXeD.name.v2', 'folder/Another.File', '', 'note\nreceipt\tname'])('free receipt name control %j', middle => {
+    const entries = selectionRename(selectionMembers(), selectionReceipt, `receipts/${middle}.attest.json`)
+    expect(selectionControl(entries).receipts[0].receiptId).toBe(VALID_RECEIPT_ID)
+  })
+
+  it.each([`proofs/${VALID_RECEIPT_ID}.txt`, `proofs/nested/${VALID_RECEIPT_ID}.json`, 'proofs/not-a-ulid.json'])('existing proof path control %s', member => {
+    const entries = { ...selectionMembers(), [selectionProof]: evidenceBytes() }
+    selectionControl(entries)
+    selectionRefusal(selectionRename(entries, selectionProof, member), member, 'proofs')
+  })
+
+  it('duplicate precedence control', () => {
+    const entries = selectionMembers()
+    selectionControl(entries)
+    const member = 'RECEIPTS/excluded.JSON'
+    const bytes = utf8Zip([...Object.entries(entries), [member, selectionSignedReceipt()], [member, selectionSignedReceipt()]])
+    let caught: unknown
+    try { parseBundle(bytes) } catch (error) { caught = error }
+    expect((caught as Error).constructor).toBe(BundleError)
+    expect((caught as Error).message).toContain('central directory repeats member name')
+    // Container diagnostics predate selection admission and do not expose
+    // member names. Pin the inventory error's member separately.
+    let inventoryError: unknown
+    try { canonicalMembers(bytes, DEFAULT_CAPS) } catch (error) { inventoryError = error }
+    expect(inventoryError).toBeInstanceOf(ContainerError)
+    expect((inventoryError as ContainerError).code).toBe('duplicate-name')
+    expect((inventoryError as ContainerError).member).toBe(member)
+    expect((caught as Error).message).not.toContain('expected receipts/')
+  })
+
+  it('private precedence control', () => {
+    const entries = selectionMembers()
+    selectionControl(entries)
+    expect(() => parseBundle(utf8Zip(Object.entries({
+      ...entries, 'RECEIPTS/excluded.JSON': selectionSignedReceipt(), 'salts.json': selectionEncoder.encode('{}'),
+    })))).toThrow(PrivateBundleError)
+  })
+
+  it('control characters in selection diagnostics', () => {
+    const entries = selectionMembers()
+    selectionControl(entries)
+    const member = 'manifests/store.example.com.json\nSUCCESS\t\u001b[31m.bak'
+    selectionRefusal(selectionRename(entries, selectionManifest, member), member, 'manifests')
+  })
+})
+
+
+describe('member-selection logged proof', () => {
+  it.each([`PROOFS/${VALID_RECEIPT_ID}.json`, `proofs/${VALID_RECEIPT_ID}.txt`])('%s', member => {
+    const entries = {
+      ...selectionMembers(),
+      [selectionReceipt]: new Uint8Array(readFileSync(join(V28, 'envelope.json'))),
+      [selectionProof]: evidenceBytes(),
+    }
+    const parsed = selectionControl(entries)
+    const run = runVerify(entries[selectionReceipt], parsed.trustStore, null, null, {
+      transparency: parsed.proofs[VALID_RECEIPT_ID], logKeys: logKeys(V28), anchorPolicy: anchorPolicy(V28),
+    })
+    expect(run.ok).toBe(true)
+    expect(run.result.transparency).toBe('logged')
+    expect(run.result.corroboration).toBe('logged')
+    selectionRefusal(selectionRename(entries, selectionProof, member), member, 'proofs')
   })
 })

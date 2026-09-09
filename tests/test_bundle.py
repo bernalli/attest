@@ -31,6 +31,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from attest import bundle, buyer_surface, canon, container, issue, keys, manifests, verify
+from tests import member_selection as selection
 from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
@@ -2032,3 +2033,259 @@ def test_import_identity_refusals_are_bundle_errors(
     """
     with pytest.raises(bundle.BundleError, match=re.escape(message)):
         bundle.import_bundle(_identity_bundle(tmp_path, name, blob))
+
+
+# --- Reserved-root member admission: v0.1 rev 19, red-first -------------------
+
+
+def _selection_control(tmp_path: Path, entries: dict[str, bytes]) -> bundle.ImportedBundle:
+    imported = bundle.import_bundle(selection.archive(tmp_path / "control.attest", entries))
+    for receipt in imported.receipts:
+        result = verify.verify(json.dumps(receipt).encode(), imported.trust_store)
+        assert result.schema == "valid", result.errors
+        assert result.signature == "valid", result.errors
+        assert result.ok is True, result.errors
+    return imported
+
+
+def _selection_refusal(tmp_path: Path, entries: dict[str, bytes], member: str, family: str) -> None:
+    path = selection.archive(tmp_path / "negative.attest", entries)
+    with pytest.raises(bundle.BundleError) as caught:
+        bundle.import_bundle(path)
+    assert type(caught.value) is bundle.BundleError  # malformed, never resource-limit
+    message = str(caught.value)
+    assert repr(member) in message, message
+    assert f"expected {selection.FORMS[family][2]}" in message, message
+    assert "signature invalid" not in message.lower(), message
+
+
+@pytest.mark.parametrize("family", selection.FORMS)
+@pytest.mark.parametrize("axis", selection.AXES)
+def test_member_selection_case_matrix(tmp_path: Path, family: str, axis: str) -> None:
+    entries = selection.members(two_receipts=True)
+    entries[selection.PROOF] = (
+        selection.VECTORS / "28-transparency/a-logged-trust-unchanged/transparency.json"
+    ).read_bytes()
+    assert len(_selection_control(tmp_path, entries).receipts) == 2
+    stem, suffix, _ = selection.FORMS[family]
+    source = f"{family}/{stem}{suffix}"
+    failures = []
+    names = selection.invalid_names(family, axis)
+    for member in names:
+        try:
+            _selection_refusal(tmp_path, selection.renamed(entries, source, member), member, family)
+        except (AssertionError, pytest.fail.Exception) as error:
+            failures.append(f"{member!r}: {error}")
+    assert not failures, (
+        f"{len(failures)}/{len(names)} selection contract failures; "
+        f"first: {failures[0]}; last: {failures[-1]}"
+    )
+
+
+@pytest.mark.parametrize("beside_valid", [False, True], ids=["alone", "beside-valid"])
+def test_member_selection_excluded_receipt(tmp_path: Path, beside_valid: bool) -> None:
+    entries = selection.members(two_receipts=beside_valid)
+    assert len(_selection_control(tmp_path, entries).receipts) == (2 if beside_valid else 1)
+    member = f"receipts/{selection.RID}.ATTEST.JSON"
+    _selection_refusal(
+        tmp_path, selection.renamed(entries, selection.RECEIPT, member), member, "receipts"
+    )
+
+
+@pytest.mark.parametrize("beside_old", [False, True], ids=["isolated", "beside-old"])
+def test_member_selection_restrictive_successor(tmp_path: Path, beside_old: bool) -> None:
+    entries = selection.members()
+    old, successor = selection.manifest_history()
+    assert (
+        _selection_control(tmp_path, entries).trust_store.manifest_for(selection.ISSUER).data()
+        == old
+    )
+    compliant = {
+        **entries,
+        selection.MANIFEST: selection.wrapper(*((old, successor) if beside_old else (successor,))),
+    }
+    imported = bundle.import_bundle(
+        selection.archive(tmp_path / "successor-control.attest", compliant)
+    )
+    result = verify.verify(selection.signed_receipt(), imported.trust_store)
+    assert result.ok is False
+    assert any("is compromised" in error for error in result.errors)
+    member = f"MANIFESTS/{selection.ISSUER}.JSON"
+    hostile = dict(entries)
+    if not beside_old:
+        del hostile[selection.MANIFEST]
+    hostile[member] = selection.wrapper(successor)
+    _selection_refusal(tmp_path, hostile, member, "manifests")
+
+
+_LEGAL_SELECTION_FIELDS = [
+    ("license", "legal_text_sha256"),
+    ("survivability", "mirror_policy_sha256"),
+    ("survivability", "eol_commitment_sha256"),
+    None,
+]
+
+
+@pytest.mark.parametrize(
+    "field", _LEGAL_SELECTION_FIELDS, ids=["license", "mirror", "eol", "unreferenced"]
+)
+@pytest.mark.parametrize("corrupt", [False, True], ids=["intact", "corrupt"])
+def test_member_selection_legal(
+    tmp_path: Path, field: tuple[str, str] | None, corrupt: bool
+) -> None:
+    text = b"member-selection additional legal document"
+    digest = hashlib.sha256(text).hexdigest()
+    source = f"legal/{digest}.txt"
+    entries = {**selection.members(), source: text}
+    entries[selection.RECEIPT] = selection.signed_receipt(legal_field=field, digest=digest)
+    assert _selection_control(tmp_path, entries).legal_texts[digest] == text
+    if corrupt:
+        entries[source] = b"corrupt legal text, with a correct ZIP CRC"
+        # The content-addressed control must fail integrity, not ZIP structure.
+        with pytest.raises(bundle.BundleError, match="failed its own integrity check"):
+            bundle.import_bundle(selection.archive(tmp_path / "integrity-control.attest", entries))
+    member = f"legal/{digest}.TXT"
+    _selection_refusal(tmp_path, selection.renamed(entries, source, member), member, "legal")
+
+
+@pytest.mark.parametrize("family", selection.FORMS)
+def test_member_selection_directory_marker(tmp_path: Path, family: str) -> None:
+    entries = selection.members()
+    _selection_control(tmp_path, entries)
+    member = f"{family}/"
+    _selection_refusal(tmp_path, {**entries, member: b""}, member, family)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "future-evidence/receipt.cbor",
+        "witness-notes/note.v3",
+        "receipt/example.attest.json",
+        "rece\u0131pts/example.ATTEST.JSON",
+        "receipts-extra/example.JSON",
+        "receipt\u017f/example.JSON",
+        "\uff52\uff45\uff43\uff45\uff49\uff50\uff54\uff53/example.JSON",
+        "proofs",
+        "README.html",
+    ],
+)
+def test_member_selection_future_and_outside_controls(tmp_path: Path, name: str) -> None:
+    entries = {**selection.members(), name: b"ignored extension; not JSON"}
+    assert len(_selection_control(tmp_path, entries).receipts) == 1
+
+
+@pytest.mark.parametrize(
+    "middle", ["MiXeD.name.v2", "folder/Another.File", "", "note\nreceipt\tname"]
+)
+def test_member_selection_free_receipt_name_control(tmp_path: Path, middle: str) -> None:
+    entries = selection.renamed(
+        selection.members(), selection.RECEIPT, f"receipts/{middle}.attest.json"
+    )
+    assert (
+        _selection_control(tmp_path, entries).receipts[0]["payload"]["receipt_id"] == selection.RID
+    )
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        f"proofs/{selection.RID}.txt",
+        f"proofs/nested/{selection.RID}.json",
+        "proofs/not-a-ulid.json",
+    ],
+)
+def test_member_selection_existing_proof_path_control(tmp_path: Path, member: str) -> None:
+    entries = selection.members()
+    entries[selection.PROOF] = b"{}"
+    _selection_control(tmp_path, entries)
+    _selection_refusal(
+        tmp_path, selection.renamed(entries, selection.PROOF, member), member, "proofs"
+    )
+
+
+def test_member_selection_duplicate_precedence_control(tmp_path: Path) -> None:
+    entries = selection.members()
+    _selection_control(tmp_path, entries)
+    member = "RECEIPTS/excluded.JSON"
+    path = selection.archive(tmp_path / "duplicate.attest", {**entries, member: b"{}"})
+    with zipfile.ZipFile(path, "a") as output, pytest.warns(UserWarning, match="Duplicate name"):
+        output.writestr(member, b"{}")
+    with pytest.raises(bundle.BundleError) as caught:
+        bundle.import_bundle(path)
+    assert type(caught.value) is bundle.BundleError
+    assert "central directory repeats member name" in str(caught.value)
+    assert repr(member) in str(caught.value)
+    assert "expected receipts/" not in str(caught.value)
+
+
+def test_member_selection_private_precedence_control(tmp_path: Path) -> None:
+    entries = selection.members()
+    _selection_control(tmp_path, entries)
+    with pytest.raises(bundle.BundleError, match="private"):
+        bundle.import_bundle(
+            selection.archive(
+                tmp_path / "private.attest",
+                {
+                    **entries,
+                    "RECEIPTS/excluded.JSON": b"{}",
+                    "salts.json": b"{}",
+                },
+            )
+        )
+
+
+def test_member_selection_inventory_before_payload_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entries = selection.members()
+    _selection_control(tmp_path, entries)
+    member = "receipts/zz-excluded.ATTEST.JSON"
+    reads: list[str] = []
+    original = bundle._loads
+
+    def record(data: bytes, *, label: str) -> Any:
+        reads.append(label)
+        return original(data, label=label)
+
+    monkeypatch.setattr(bundle, "_loads", record)
+    try:
+        _selection_refusal(
+            tmp_path,
+            {**entries, member: selection.signed_receipt(selection.NEW_RID)},
+            member,
+            "receipts",
+        )
+    finally:
+        assert reads == [], f"payload parsing preceded member admission: {reads}"
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        f"PROOFS/{selection.RID}.json",
+        f"proofs/{selection.RID}.txt",
+    ],
+    ids=["uppercase-prefix", "wrong-suffix"],
+)
+def test_member_selection_logged_proof(tmp_path: Path, member: str) -> None:
+    from tests.test_vectors import _anchor_policy, _log_keys
+
+    leaf = selection.VECTORS / "28-transparency/a-logged-trust-unchanged"
+    entries = selection.members()
+    entries[selection.RECEIPT] = (leaf / "envelope.json").read_bytes()
+    entries[selection.PROOF] = (leaf / "transparency.json").read_bytes()
+    imported = _selection_control(tmp_path, entries)
+    result = verify.verify(
+        entries[selection.RECEIPT],
+        imported.trust_store,
+        transparency=imported.proofs[selection.RID],
+        log_keys=_log_keys(leaf),
+        anchor_policy=_anchor_policy(leaf),
+    )
+    assert result.ok is True
+    assert result.transparency == "logged"
+    assert result.corroboration == "logged"
+    _selection_refusal(
+        tmp_path, selection.renamed(entries, selection.PROOF, member), member, "proofs"
+    )
