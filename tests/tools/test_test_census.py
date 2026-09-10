@@ -21,8 +21,19 @@ _SPEC.loader.exec_module(census)
 
 
 def documents(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    files = {"a.test.ts": 1, "b.test.ts": 2}
+    # A real report carries a fullName on every assertion, so the fixture does too: a
+    # fixture that omits a field production always sends measures a domain that does
+    # not exist.
+    titles = {name: [f"{name} case {i}" for i in range(n)] for name, n in files.items()}
     expected: dict[str, Any] = {
-        "suites": {"site": {"total": 3, "files": {"a.test.ts": 1, "b.test.ts": 2}}}
+        "suites": {
+            "site": {
+                "total": 3,
+                "files": files,
+                "digests": {name: census.name_digest(names) for name, names in titles.items()},
+            }
+        }
     }
     report = {
         "numTotalTests": 3,
@@ -31,8 +42,13 @@ def documents(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         "numPendingTests": 0,
         "numTodoTests": 0,
         "testResults": [
-            {"name": str(root / name), "assertionResults": [{"status": "passed"}] * n}
-            for name, n in expected["suites"]["site"]["files"].items()
+            {
+                "name": str(root / name),
+                "assertionResults": [
+                    {"status": "passed", "fullName": title} for title in titles[name]
+                ],
+            }
+            for name in files
         ],
     }
     return expected, report
@@ -42,7 +58,7 @@ def load(root: Path, kind: str, value: Any) -> Any:
     path = root / "input.json"
     path.write_text(json.dumps(value))
     if kind == "census":
-        return census.load_census(path, "site")
+        return census.load_census(path, "site", with_digests=True)
     return census.read_report(path, root)
 
 
@@ -105,7 +121,12 @@ def test_order_is_irrelevant_but_duplicate_files_are_refused(order: list[int], f
         expected["suites"]["site"]["files"] = dict(
             reversed(list(expected["suites"]["site"]["files"].items()))
         )
-        assert load(root, "report", report)[0] == load(root, "census", expected)
+        run = load(root, "report", report)
+        pinned = load(root, "census", expected)
+        # Counts AND digests survive a permutation: the digest sorts the names, so
+        # reordering a table is not a defect while substituting one is.
+        assert run[0] == pinned[0]
+        assert run[1] == pinned[1]
         duplicate = {"name": entries[0]["name"], "assertionResults": []}
         report["testResults"].insert(0 if first else 2, duplicate)
         with pytest.raises(SystemExit):
@@ -122,7 +143,7 @@ def test_duplicate_members_and_every_truncation_are_refused(kind: str) -> None:
 
         def reader() -> Any:
             if kind == "census":
-                return census.load_census(path, "site")
+                return census.load_census(path, "site", with_digests=True)
             return census.read_report(path, root)
 
         for end in range(len(raw)):
@@ -136,7 +157,7 @@ def test_duplicate_members_and_every_truncation_are_refused(kind: str) -> None:
                 reader()
 
 
-@pytest.mark.parametrize("field", ["total", "files", "extra"])
+@pytest.mark.parametrize("field", ["total", "files", "digests", "extra"])
 def test_census_requires_its_exact_suite_fields(field: str) -> None:
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -168,6 +189,11 @@ def test_report_requires_consumed_fields_and_typed_assertions() -> None:
             [None],
             [{"status": []}],
             [{}],
+            # A missing, empty or non-string fullName is refused the same way: the
+            # digest is only worth what the field it hashes is worth.
+            [{"status": "passed"}],
+            [{"status": "passed", "fullName": ""}],
+            [{"status": "passed", "fullName": 7}],
         )
         for value in bad_assertions:
             _, report = documents(root)
@@ -175,7 +201,7 @@ def test_report_requires_consumed_fields_and_typed_assertions() -> None:
             with pytest.raises(SystemExit):
                 load(root, "report", report)
         original["extraReporterMetadata"] = {"version": 1}
-        assert load(root, "report", original)[1] == 3
+        assert load(root, "report", original)[2] == 3
 
 
 @pytest.mark.parametrize(

@@ -16,8 +16,24 @@ demands the three agree:
 
   * every test file on disk was collected and ran at least one test;
   * every file the run reported is in the census, with the census's count;
+  * every file ran the census's set of test NAMES, not merely as many of them;
   * the run's own total equals the sum of the census;
   * nothing was skipped or left todo -- a pending test is an absent test.
+
+The third of those was added after a review of the vitest 3 -> 4 bump asked the question
+this file could not answer: can the runner measure something ELSE and stay green? It
+could. A count per file does not see a case whose name and body were replaced by
+another, and that is not a hypothetical either -- the same major bump rewrote five
+`it.each` titles of this repository at an unchanged total, and the only thing that
+noticed was a diff someone ran by hand once. So the census pins a sha256 over each
+file's sorted `fullName` values as well as its count. Renaming a test is then a
+registered act (`--update`), not an inference.
+
+`load_census` and `write_census` are shared with tools/check_verifier_test_types.py,
+whose census counts DIAGNOSTICS per file and for which a digest of test names means
+nothing. Both callers therefore state their choice explicitly through a keyword-only
+argument with no default: forgetting it is a TypeError, never a census silently
+checked on counts alone.
 
 Usage, per suite (`site` and `desktop` are directory names):
 
@@ -29,14 +45,15 @@ Adding or removing tests is expected to move these numbers; `--update` rewrites 
 census from a report. It REFUSES to do so while a file on disk is missing from that
 report, because blessing an absence is the one thing this file exists to prevent.
 
-`--selftest` runs the comparison against synthetic inputs -- one healthy, four broken --
-and checks it names each defect. A guard that has only ever been seen passing is not
-known to catch anything.
+`--selftest` runs the comparison against synthetic inputs -- one healthy, six broken --
+and checks it names each defect, then runs the whole CLI against twelve more. A guard
+that has only ever been seen passing is not known to catch anything.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections.abc import Iterable
@@ -103,13 +120,32 @@ def _count(value: object, label: str) -> int:
     return value
 
 
-def read_report(report_path: Path, suite_root: Path) -> tuple[dict[str, int], int, int, int]:
+def _is_sha256_hex(value: str) -> bool:
+    return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def name_digest(full_names: Iterable[str]) -> str:
+    """A file's set of test names, as one hex digest.
+
+    Sorted, so reordering a table is not a defect; a list rather than a set, so two
+    cases that legitimately share a `fullName` stay two. NUL-joined because no test
+    name can contain a NUL, which is what keeps 'a' + 'bc' from colliding with
+    'ab' + 'c'.
+    """
+    joined = "\x00".join(sorted(full_names)).encode("utf-8")
+    return hashlib.sha256(joined).hexdigest()
+
+
+def read_report(
+    report_path: Path, suite_root: Path
+) -> tuple[dict[str, int], dict[str, str], int, int, int]:
     """Admit the report before comparing counts; never coerce malformed input."""
     report = _json_object(report_path)
     entries = report.get("testResults")
     if not isinstance(entries, list):
         raise SystemExit("testResults: expected an array")
     counts: dict[str, int] = {}
+    digests: dict[str, str] = {}
     statuses = dict.fromkeys(("passed", "failed", "pending", "todo"), 0)
     # vitest's own JsonReporter (site/node_modules/vitest/dist/chunks/index.*.js,
     # StatusMap + numPendingTests filter) emits the per-assertion status "skipped"
@@ -138,6 +174,7 @@ def read_report(report_path: Path, suite_root: Path) -> tuple[dict[str, int], in
         assertions = entry.get("assertionResults")
         if not isinstance(assertions, list):
             raise SystemExit(f"{relative}: assertionResults must be an array")
+        full_names: list[str] = []
         for assertion in assertions:
             if not isinstance(assertion, dict):
                 raise SystemExit(f"{relative}: an assertion must be an object")
@@ -146,7 +183,12 @@ def read_report(report_path: Path, suite_root: Path) -> tuple[dict[str, int], in
             if bucket is None:
                 raise SystemExit(f"{relative}: invalid assertion status")
             statuses[bucket] += 1
+            full_name = assertion.get("fullName")
+            if not isinstance(full_name, str) or not full_name:
+                raise SystemExit(f"{relative}: an assertion must carry a non-empty fullName")
+            full_names.append(full_name)
         counts[relative] = len(assertions)
+        digests[relative] = name_digest(full_names)
     total = _count(report.get("numTotalTests"), "numTotalTests")
     if total != sum(counts.values()):
         raise SystemExit("numTotalTests disagrees with assertionResults")
@@ -158,7 +200,7 @@ def read_report(report_path: Path, suite_root: Path) -> tuple[dict[str, int], in
     ):
         if _count(report.get(field), field) != statuses[status]:
             raise SystemExit(f"{field} disagrees with assertion statuses")
-    return counts, total, statuses["pending"], statuses["todo"]
+    return counts, digests, total, statuses["pending"], statuses["todo"]
 
 
 def compare(
@@ -170,6 +212,8 @@ def compare(
     run_total: int,
     pending: int,
     todo: int,
+    run_digests: dict[str, str],
+    census_digests: dict[str, str],
 ) -> list[str]:
     """Every disagreement between the files on disk, the run, and the census."""
     problems: list[str] = []
@@ -204,6 +248,17 @@ def compare(
             problems.append(
                 f"{suite}: {name} ran {run[name]} test(s), the census records {census[name]}."
             )
+        elif run_digests[name] != census_digests[name]:
+            # Same count, different names: a substitution the count cannot see. This is
+            # the axis a major runner bump moves -- vitest 4 rewrote five `it.each`
+            # titles of this repository at an unchanged total -- and the axis on which a
+            # count-only census is green for having measured nothing.
+            problems.append(
+                f"{suite}: {name} ran {run[name]} test(s), the count the census records, but a "
+                f"different set of test names (digest {run_digests[name][:12]}, the census "
+                f"records {census_digests[name][:12]}). A renamed or substituted case is "
+                "registered, not inferred."
+            )
 
     expected_total = sum(census.values())
     if run_total != expected_total:
@@ -219,30 +274,63 @@ def compare(
     return problems
 
 
-def load_census(census_path: Path, suite: str) -> dict[str, int]:
+def load_census(
+    census_path: Path, suite: str, *, with_digests: bool
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Read one suite's census. `with_digests` says which census this is.
+
+    Keyword-only and without a default on purpose. This loader serves two censuses:
+    this file's, where a per-file digest of test NAMES is the point, and the verifier
+    type census, which counts diagnostics and has no names to pin. A default would let
+    a caller inherit the weaker contract by omission -- and a census checked on counts
+    alone prints exactly the same green as one pinned by name.
+    """
     data = _json_object(census_path)
     suites = data.get("suites")
     if not isinstance(suites, dict) or suite not in suites:
         raise SystemExit(f"{census_path}: no census for suite {suite!r}")
     selected = suites[suite]
-    if not isinstance(selected, dict) or set(selected) != {"total", "files"}:
-        raise SystemExit(f"{suite}: expected exactly total and files")
+    expected_fields = {"total", "files", "digests"} if with_digests else {"total", "files"}
+    if not isinstance(selected, dict) or set(selected) != expected_fields:
+        raise SystemExit(f"{suite}: expected exactly {', '.join(sorted(expected_fields))}")
     files = selected["files"]
     if not isinstance(files, dict):
         raise SystemExit(f"{suite}: files must be an object")
     counts = {name: _count(value, name) for name, value in files.items()}
+    digests: dict[str, str] = {}
+    if with_digests:
+        raw = selected["digests"]
+        if not isinstance(raw, dict):
+            raise SystemExit(f"{suite}: digests must be an object")
+        if set(raw) != set(counts):
+            raise SystemExit(f"{suite}: digests and files must cover the same test files")
+        for name, value in raw.items():
+            if not isinstance(value, str) or not _is_sha256_hex(value):
+                raise SystemExit(f"{suite}: {name}: digest must be a sha256 hex string")
+        digests = dict(raw)
     total = _count(selected["total"], f"{suite}.total")
     if total != sum(counts.values()):
         raise SystemExit(f"{suite}: census total {total} disagrees with its file counts")
-    return counts
+    return counts, digests
 
 
-def write_census(census_path: Path, suite: str, run: dict[str, int], run_total: int) -> None:
+def write_census(
+    census_path: Path,
+    suite: str,
+    run: dict[str, int],
+    run_total: int,
+    *,
+    digests: dict[str, str] | None,
+) -> None:
+    """Rewrite one suite's census. `digests=None` is the diagnostics census."""
     data = _json_object(census_path)
-    data["suites"][suite] = {
+    entry: dict[str, Any] = {
         "total": run_total,
         "files": {name: run[name] for name in sorted(run)},
     }
+    if digests is not None:
+        entry["digests"] = {name: digests[name] for name in sorted(run)}
+    data["suites"][suite] = entry
     census_path.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 
 
@@ -264,7 +352,14 @@ def selftest_cli() -> int:
             json.dumps(
                 {
                     "suites": {
-                        str(suite): {"total": 8, "files": counts},
+                        str(suite): {
+                            "total": 8,
+                            "files": counts,
+                            "digests": {
+                                name: name_digest([f"{name} case {i}" for i in range(n)])
+                                for name, n in counts.items()
+                            },
+                        },
                     }
                 }
             ),
@@ -272,15 +367,25 @@ def selftest_cli() -> int:
         )
         report_path = root / "report.json"
 
-        def report(values: dict[str, int], skipped: bool = False) -> None:
+        def report(
+            values: dict[str, int], skipped: bool = False, rename: str | None = None
+        ) -> None:
             total = sum(values.values())
             entries: list[dict[str, Any]] = [
                 {
                     "name": str(suite / name),
-                    "assertionResults": [{"status": "passed"} for _ in range(n)],
+                    "assertionResults": [
+                        {"status": "passed", "fullName": f"{name} case {i}"} for i in range(n)
+                    ],
                 }
                 for name, n in values.items()
             ]
+            if rename is not None:
+                # Same file, same count, one different name: the substitution a
+                # per-file count cannot see.
+                for entry in entries:
+                    if entry["name"].endswith(rename) and entry["assertionResults"]:
+                        entry["assertionResults"][0]["fullName"] = "a name nobody registered"
             if skipped:
                 entries[0]["assertionResults"][0]["status"] = "skipped"
             report_path.write_text(
@@ -332,6 +437,8 @@ def selftest_cli() -> int:
         ):
             report(values)
             check(label, 1, expected)
+        report(counts, rename="test/b.test.ts")
+        check("renamed test at unchanged count", 1, "different set of test names")
         report(counts, skipped=True)
         check("skipped test", 1, "1 test(s) pending")
         report(counts)
@@ -353,6 +460,11 @@ def selftest_cli() -> int:
 
 def selftest() -> int:
     """Point the comparison at defects it must name, and report each case."""
+    names = {
+        "test/a.test.ts": [f"a case {i}" for i in range(3)],
+        "test/b.test.ts": [f"b case {i}" for i in range(5)],
+    }
+    pinned = {name: name_digest(titles) for name, titles in names.items()}
     healthy = {
         "suite": "demo",
         "disk": {"test/a.test.ts", "test/b.test.ts"},
@@ -361,6 +473,8 @@ def selftest() -> int:
         "run_total": 8,
         "pending": 0,
         "todo": 0,
+        "run_digests": dict(pinned),
+        "census_digests": dict(pinned),
     }
     cases: list[tuple[str, dict[str, object], str]] = [
         (
@@ -388,6 +502,18 @@ def selftest() -> int:
             "not in the census",
         ),
         ("a skipped test", {"pending": 1}, "pending"),
+        (
+            "a file whose test names changed at an unchanged count",
+            {
+                "run_digests": {
+                    **pinned,
+                    "test/b.test.ts": name_digest(
+                        ["a name nobody registered", *names["test/b.test.ts"][1:]]
+                    ),
+                }
+            },
+            "different set of test names",
+        ),
     ]
 
     failures = 0
@@ -404,7 +530,7 @@ def selftest() -> int:
         else:
             failures += 1
             print(f"  FAIL {label} -> {expected!r} not named; got {problems}")
-    print(f"selftest: {6 - failures}/6")
+    print(f"selftest: {len(cases) + 1 - failures}/{len(cases) + 1}")
     cli_failures = selftest_cli()
     return 1 if failures or cli_failures else 0
 
@@ -428,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"no such suite directory: {suite_root}")
 
     on_disk = disk_files(suite_root)
-    run, run_total, pending, todo = read_report(args.report, suite_root)
+    run, run_digests, run_total, pending, todo = read_report(args.report, suite_root)
 
     if args.update:
         problems = compare(
@@ -439,21 +565,26 @@ def main(argv: list[str] | None = None) -> int:
             run_total=run_total,
             pending=pending,
             todo=todo,
+            run_digests=run_digests,
+            census_digests=run_digests,
         )
         if problems:
             raise SystemExit("refusing to update the census: " + "; ".join(problems))
-        write_census(args.census, args.suite, run, run_total)
+        write_census(args.census, args.suite, run, run_total, digests=run_digests)
         print(f"census updated for {args.suite}: {len(run)} file(s), {run_total} test(s)")
         return 0
 
+    census_counts, census_digests = load_census(args.census, args.suite, with_digests=True)
     problems = compare(
         suite=args.suite,
         disk=on_disk,
         run=run,
-        census=load_census(args.census, args.suite),
+        census=census_counts,
         run_total=run_total,
         pending=pending,
         todo=todo,
+        run_digests=run_digests,
+        census_digests=census_digests,
     )
     if problems:
         for problem in problems:

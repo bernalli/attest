@@ -228,7 +228,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # A missing committed pin is a census failure, not a missing prerequisite.
     try:
-        census = load_census(args.census, SUITE)
+        # This census counts diagnostics per file: there are no test names to pin,
+        # so it declares the count-only contract rather than inheriting it.
+        census, _ = load_census(args.census, SUITE, with_digests=False)
     except (OSError, SystemExit) as exc:
         print(f"invalid census: {exc}", file=sys.stderr)
         return 1
@@ -287,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
             print(problem, file=sys.stderr)
         return 1 if run else 2
     if args.update:
-        write_census(args.census, SUITE, run, total)
+        write_census(args.census, SUITE, run, total, digests=None)
         print(f"census updated for {SUITE}: {len(run)} file(s), {total} diagnostic(s)")
     else:
         print(f"{SUITE}: {total} diagnostic(s) -- matches the census")
