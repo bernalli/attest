@@ -122,7 +122,10 @@ describe('the hybrid AND rule', () => {
     const base = baseCheckpoint()
     const note = noteOf(base)
     const broken = edLeg(w1, note, BASE_T)
-    broken[broken.length - 1] ^= 0xff
+    const last = broken.length - 1
+    const finalByte = broken[last]
+    if (finalByte === undefined) throw new Error('witness signature fixture is empty')
+    broken[last] = finalByte ^ 0xff
     const text = base + line(w1.name, broken) + line(w1.name, pqLeg(w1, note, BASE_T))
     const p = policy([pinDoc(w1)], { n: 1, m: 1 })
     expect(evaluate(text, p, { anchorTime: BASE_T }).valid).toBe(false)
@@ -132,7 +135,10 @@ describe('the hybrid AND rule', () => {
     const base = baseCheckpoint()
     const note = noteOf(base)
     const broken = pqLeg(w1, note, BASE_T)
-    broken[broken.length - 1] ^= 0xff
+    const last = broken.length - 1
+    const finalByte = broken[last]
+    if (finalByte === undefined) throw new Error('witness signature fixture is empty')
+    broken[last] = finalByte ^ 0xff
     const text = base + line(w1.name, edLeg(w1, note, BASE_T)) + line(w1.name, broken)
     const p = policy([pinDoc(w1)], { n: 1, m: 1 })
     expect(evaluate(text, p, { anchorTime: BASE_T }).valid).toBe(false)

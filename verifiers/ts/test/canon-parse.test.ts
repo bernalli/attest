@@ -27,8 +27,9 @@ describe('loadsStrict', () => {
   })
   it('preserves NFD (no NFC normalization)', () => {
     const v = loadsStrict(enc('{"t":"Cafe\\u0301"}')) as Record<string, string>
-    expect(v['t']).toBe('Café') // still decomposed, length 5
-    expect(v['t'].length).toBe(5)
+    const text = v['t']
+    expect(text).toBe('Café') // still decomposed, length 5
+    expect(text?.length).toBe(5)
   })
   it('parses nested arrays/objects and booleans/null', () => {
     const v = loadsStrict(enc('{"a":[true,false,null,1]}')) as any

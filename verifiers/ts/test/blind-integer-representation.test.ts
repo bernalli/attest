@@ -594,15 +594,18 @@ describe('blind grant-view admission is per member and getter-free', () => {
     // must also catch an ordinary property read added after reconstruction.
     const descriptorReads = new Map<string, number>()
     const valueReads = new Map<string, number>()
+    const deliver = (prop: string | symbol) => {
+      const name = String(prop)
+      valueReads.set(name, (valueReads.get(name) ?? 0) + 1)
+      if (prop === 'grant') return floor
+      if (prop === 'declarations') return [declarationDocument()]
+      return undefined
+    }
     const proxy = new Proxy(
       {},
       {
         get(_target, prop) {
-          const name = String(prop)
-          valueReads.set(name, (valueReads.get(name) ?? 0) + 1)
-          if (prop === 'grant') return floor
-          if (prop === 'declarations') return [declarationDocument()]
-          return undefined
+          return deliver(prop)
         },
         has() {
           return true
@@ -613,7 +616,7 @@ describe('blind grant-view admission is per member and getter-free', () => {
         getOwnPropertyDescriptor(_target, prop) {
           const name = String(prop)
           descriptorReads.set(name, (descriptorReads.get(name) ?? 0) + 1)
-          return { configurable: true, enumerable: true, value: this.get?.(_target, prop, proxy) }
+          return { configurable: true, enumerable: true, value: deliver(prop) }
         },
       },
     )
