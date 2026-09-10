@@ -89,6 +89,8 @@ jobs:
       - run: uv run --frozen python tools/gen_container_corpus.py --check
       # Compare importer outcomes at their defaults, including the browser
       # parser and file-intake paths, on the generated archive families.
+      # member-selection also checks each road against its specification
+      # oracle; the committed census refuses missing families or archives.
       # This complements the reader-level differential in pages.yml.
       # The Python environment, built TS verifier and site dependencies needed
       # by this command are prepared earlier in this job.
