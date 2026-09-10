@@ -250,6 +250,35 @@ function proofMemberReceiptId(name: string): string {
   return receiptId
 }
 
+/** Reserve ASCII root cases and separator/prefix variants (v0.1 section 14.1).
+ * Inventory admission precedes payload reads: silently skipping a member can
+ * discard a restrictive manifest or one receipt beside another. The family
+ * readers retain their path, identity and integrity checks; receipt names
+ * between the prefix and suffix remain free.
+ */
+function validateMemberSelection(name: string): void {
+  let root = name.slice(0, name.indexOf('/') + 1)
+  // Rev 20: classify the root only. Never repair the member name used by
+  // lookup, payload readers or writes; admission below judges the original.
+  const alternateRoot = /^(?:[\\/]|\.[\\/])*([^\\/]+)[\\/]/.exec(name)
+  if (alternateRoot !== null) root = alternateRoot[1] + '/'
+  const reservedRoot = root.replace(/[A-Z]/g, letter => letter.toLowerCase())
+  for (const [prefix, suffix, form] of [
+    ['receipts/', '.attest.json', 'receipts/*.attest.json'],
+    ['manifests/', '.json', 'manifests/<issuer>.json'],
+    ['legal/', '.txt', 'legal/<sha256>.txt'],
+    ['proofs/', '.json', 'proofs/<ULID>.json'],
+  ]) {
+    if (reservedRoot !== prefix) continue
+    if (!name.startsWith(prefix) || !name.endsWith(suffix))
+      throw new BundleError(
+        `invalid bundle member ${JSON.stringify(name)}; expected ${form} ` +
+          'with exact lowercase prefix and suffix',
+      )
+    return
+  }
+}
+
 export function parseBundle(
   bytes: Uint8Array,
   caps: Caps = DEFAULT_CAPS,
@@ -288,6 +317,8 @@ export function parseBundle(
   for (const member of members)
     if (member.name === 'salts.json' || member.name.startsWith('keys/'))
       throw new PrivateBundleError(PRIVATE_MSG)
+
+  for (const member of members) validateMemberSelection(member.name)
 
   // Members are read ON DEMAND, and only the ones a family below claims. The
   // reference importer does the same, and reading every member here instead
