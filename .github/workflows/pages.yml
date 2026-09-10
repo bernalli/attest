@@ -48,12 +48,20 @@ jobs:
             site/package-lock.json
       - run: npm ci --prefix verifiers/ts
       - run: npm run build --prefix verifiers/ts
-      - run: npm test --prefix verifiers/ts
-      - run: npm ci --prefix site
       # The guard below is pointed at defects it must name before it is trusted to have
       # found none. A check that has only ever been seen passing is not known to catch
       # anything — the same reason gate G1 in desktop/test carries a negative self-test.
+      # It runs before the first suite it judges, not after.
       - run: python3 tools/check_test_census.py --selftest
+      # The verifier's own suite is the one this repository leans on hardest and the one
+      # that had no census: a major bump of the runner could have collected fewer tests
+      # from the same files and this job would still have been green. Asserted per file,
+      # like the two browser shells below.
+      - run: |
+          npm test --prefix verifiers/ts -- --reporter=default --reporter=json \
+            --outputFile.json="$RUNNER_TEMP/verifier-tests.json"
+      - run: python3 tools/check_test_census.py verifiers/ts --report "$RUNNER_TEMP/verifier-tests.json"
+      - run: npm ci --prefix site
       # The suite's total is ASSERTED, not printed. `site/test/rail-state.property.test.ts`
       # imported `desktop/src/app.ts`; this job installs site/node_modules and not
       # desktop/node_modules, so `attest-verifier` did not resolve and vitest collected
