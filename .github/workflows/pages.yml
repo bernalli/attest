@@ -48,6 +48,11 @@ jobs:
             site/package-lock.json
       - run: npm ci --prefix verifiers/ts
       - run: npm run build --prefix verifiers/ts
+      # Same discipline as the census guard below: the selftest runs BEFORE the gate it
+      # validates, not after. A guard whose negative control has not run yet is a guard
+      # nobody has seen catch anything.
+      - run: python3 tools/check_verifier_test_types.py --selftest
+      - run: python3 tools/check_verifier_test_types.py
       # The guard below is pointed at defects it must name before it is trusted to have
       # found none. A check that has only ever been seen passing is not known to catch
       # anything — the same reason gate G1 in desktop/test carries a negative self-test.
