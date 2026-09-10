@@ -76,6 +76,8 @@ gate_expect_marker 'a new file nobody registered -> named' \
   "selftest names: a file the run reports that is missing from the census"
 gate_expect_marker 'a skipped test -> named' \
   "selftest names: a pending/skipped test"
+gate_expect_marker 'a file whose test names changed at an unchanged count -> named' \
+  "selftest names: a substituted test name at an unchanged per-file count"
 
 # --- Property 5: the build succeeds -------------------------------------------------------
 gate_run "npm run build (desktop)" -- npm --prefix "$DESK_DIR" run build
