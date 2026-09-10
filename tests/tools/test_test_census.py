@@ -205,7 +205,7 @@ def test_report_requires_consumed_fields_and_typed_assertions() -> None:
 
 
 SCALAR_TITLES = st.text(
-    alphabet=st.characters(exclude_categories=("Cs",), exclude_characters="\x00"),
+    alphabet=st.characters(exclude_categories=["Cs"], exclude_characters="\x00"),
     min_size=1,
     max_size=30,
 )
