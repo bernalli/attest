@@ -536,7 +536,13 @@ describe('evaluateTransparency: steps 6-7 (anchors + horizon)', () => {
 // --------------------------------------------------------------------------
 
 describe('evaluateTransparency: never throws on malformed evidence', () => {
-  it.each([null, [], 'not-a-dict', 42, true])('non-object evidence (%s)', (bad) => {
+  it.each([
+    ['null', null],
+    ['array', []],
+    ['not-a-dict', 'not-a-dict'],
+    ['42', 42],
+    ['true', true],
+  ])('non-object evidence (%s)', (_label, bad) => {
     const result = evaluate(bad)
     expect(result.transparency).toBe(TRANSPARENCY_NOT_CHECKED)
     expect(result.warnings).toEqual(['evidence_invalid'])

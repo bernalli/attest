@@ -429,7 +429,13 @@ describe('multiple proofs', () => {
 // --------------------------------------------------------------------------
 
 describe('verifyAnchor never throws on malformed evidence', () => {
-  it.each([null, [], 'not-a-dict', 42, true])('non-object evidence (%s)', (bad) => {
+  it.each([
+    ['null', null],
+    ['array', []],
+    ['not-a-dict', 'not-a-dict'],
+    ['42', 42],
+    ['true', true],
+  ])('non-object evidence (%s)', (_label, bad) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const verdict = verifyAnchor(bad as any, checkpoint(), policy())
     expect(verdict.anchored).toBe(false)
@@ -469,7 +475,13 @@ describe('verifyAnchor never throws on malformed evidence', () => {
     expect(verdict.warnings).toEqual(['evidence.proofs exceeds max length 64'])
   })
 
-  it.each([null, 'string', 42, [], true])('ignores a non-object proof entry with a warning (%s)', (badProof) => {
+  it.each([
+    ['null', null],
+    ['string', 'string'],
+    ['42', 42],
+    ['array', []],
+    ['true', true],
+  ])('ignores a non-object proof entry with a warning (%s)', (_label, badProof) => {
     const verdict = verifyAnchor(evidence([badProof]), checkpoint(), policy())
     expect(verdict.anchored).toBe(false)
     const typeName = badProof === null ? 'NoneType' : typeof badProof === 'boolean' ? 'bool' : Array.isArray(badProof) ? 'list' : typeof badProof === 'string' ? 'str' : 'int'
