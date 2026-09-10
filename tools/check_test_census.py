@@ -260,35 +260,59 @@ def selftest_cli() -> int:
         for name in counts:
             (suite / name).write_text("// census fixture\n", encoding="utf-8")
         census_path = root / "census.json"
-        census_path.write_text(json.dumps({"suites": {
-            str(suite): {"total": 8, "files": counts},
-        }}), encoding="utf-8")
+        census_path.write_text(
+            json.dumps(
+                {
+                    "suites": {
+                        str(suite): {"total": 8, "files": counts},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
         report_path = root / "report.json"
 
         def report(values: dict[str, int], skipped: bool = False) -> None:
             total = sum(values.values())
             entries: list[dict[str, Any]] = [
-                {"name": str(suite / name),
-                 "assertionResults": [{"status": "passed"} for _ in range(n)]}
+                {
+                    "name": str(suite / name),
+                    "assertionResults": [{"status": "passed"} for _ in range(n)],
+                }
                 for name, n in values.items()
             ]
             if skipped:
                 entries[0]["assertionResults"][0]["status"] = "skipped"
-            report_path.write_text(json.dumps({
-                "numTotalTests": total,
-                "numPassedTests": total - int(skipped),
-                "numFailedTests": 0,
-                "numPendingTests": int(skipped),
-                "numTodoTests": 0,
-                "testResults": entries,
-            }), encoding="utf-8")
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "numTotalTests": total,
+                        "numPassedTests": total - int(skipped),
+                        "numFailedTests": 0,
+                        "numPendingTests": int(skipped),
+                        "numTodoTests": 0,
+                        "testResults": entries,
+                    }
+                ),
+                encoding="utf-8",
+            )
 
         def check(label: str, code: int, expected: str) -> None:
             nonlocal failures
             result = subprocess.run(  # noqa: S603 -- own script and synthetic local fixtures
-                [sys.executable, str(Path(__file__).resolve()), str(suite),
-                 "--census", str(census_path), "--report", str(report_path)],
-                capture_output=True, text=True, check=False, timeout=30,
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    str(suite),
+                    "--census",
+                    str(census_path),
+                    "--report",
+                    str(report_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
             )
             output = result.stdout + result.stderr
             if result.returncode != code or expected not in output:
