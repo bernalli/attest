@@ -6,6 +6,12 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.7] — 2026-09-10
+
+No change to this package's published code. Released to keep the two packages' version
+numbers in step with `attest-receipts` 0.9.7, which fixes its bundle importer. That defect
+does not arise here: `attest-verifier` has no bundle importer.
+
 ## [0.9.6] — 2026-09-09
 
 No change to this package's published code: `verifiers/ts/src` is byte-identical to
