@@ -6,7 +6,7 @@ import { sha256 } from '@noble/hashes/sha2'
 import { bytesToHex } from '@noble/curves/utils.js'
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js'
 import { canonicalBytes, loadsStrict, CanonError } from '../src/canon.js'
-import type { JsonObject } from '../src/canon.js'
+import type { JsonObject, JsonValue } from '../src/canon.js'
 import { b64uEncode } from '../src/b64u.js'
 import {
   MAX_AUTHORITY_DOCUMENTS,
@@ -551,7 +551,7 @@ describe('publisher authorization shape', () => {
     const keyManifest = manifestFor(PUBLISHER, PUB_KID, PUB_ED)
 
     const sparseIssuers = buildAuthorization(PUB_ED, { authorized_issuers: [] })
-    const issuerHoles = [] as unknown[]
+    const issuerHoles: JsonValue[] = []
     issuerHoles.length = 1
     sparseIssuers['authorized_issuers'] = issuerHoles
 
@@ -564,7 +564,7 @@ describe('publisher authorization shape', () => {
     const sparsePermissions = buildAuthorization(PUB_ED, {
       authorized_issuers: [entry({ permissions: [] })],
     })
-    const permissionHoles = [] as unknown[]
+    const permissionHoles: JsonValue[] = []
     permissionHoles.length = 1
     ;((sparsePermissions['authorized_issuers'] as JsonObject[])[0]! as Record<string, unknown>)['permissions'] =
       permissionHoles

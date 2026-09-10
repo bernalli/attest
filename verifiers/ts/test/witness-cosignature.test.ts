@@ -245,7 +245,10 @@ describe('everything that must not count', () => {
   it('rejects a corrupted signature', () => {
     const cp = checkpoint()
     const bad = blob(cp)
-    bad[bad.length - 1] ^= 0xff
+    const last = bad.length - 1
+    const finalByte = bad[last]
+    if (finalByte === undefined) throw new Error('cosignature fixture is empty')
+    bad[last] = finalByte ^ 0xff
     expect(evaluate(cp, [[WITNESS_NAME, bad]], policyDoc(b64uEncode(witnessPub))).witnessed).toBe(
       false,
     )

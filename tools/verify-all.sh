@@ -465,12 +465,15 @@ run pages.yml:site-typecheck - "npm run build --prefix site"
 # ------------------------------------------------------------- pages.yml: test
 run pages.yml:test - "npm ci --prefix verifiers/ts"
 run pages.yml:test - "npm run build --prefix verifiers/ts"
-run pages.yml:test - "npm test --prefix verifiers/ts"
+run pages.yml:test - "python3 tools/check_verifier_test_types.py --selftest"
+run pages.yml:test - "python3 tools/check_verifier_test_types.py"
+run pages.yml:test - "python3 tools/check_test_census.py --selftest"
+run pages.yml:test - 'npm test --prefix verifiers/ts -- --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/verifier-tests.json"'
+run pages.yml:test - 'python3 tools/check_test_census.py verifiers/ts --report "$RUNNER_TEMP/verifier-tests.json"'
 run pages.yml:test - "npm ci --prefix site"
 # The suite writes a JSON report and the census asserts it: a test file that stops
 # being collected has to be red here too, not only a smaller number in the table
 # below. The selftest runs first, for the same reason it does in the workflow.
-run pages.yml:test - "python3 tools/check_test_census.py --selftest"
 run pages.yml:test - 'npm test --prefix site -- --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/site-tests.json"'
 run pages.yml:test - 'python3 tools/check_test_census.py site --report "$RUNNER_TEMP/site-tests.json"'
 run pages.yml:test - "python3 tools/container_differential.py --count 500 --seed 20260902"

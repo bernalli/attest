@@ -536,7 +536,13 @@ describe('evaluateTransparency: steps 6-7 (anchors + horizon)', () => {
 // --------------------------------------------------------------------------
 
 describe('evaluateTransparency: never throws on malformed evidence', () => {
-  it.each([null, [], 'not-a-dict', 42, true])('non-object evidence (%s)', (bad) => {
+  it.each([
+    ['null', null],
+    ['array', []],
+    ['not-a-dict', 'not-a-dict'],
+    ['42', 42],
+    ['true', true],
+  ])('non-object evidence (%s)', (_label, bad) => {
     const result = evaluate(bad)
     expect(result.transparency).toBe(TRANSPARENCY_NOT_CHECKED)
     expect(result.warnings).toEqual(['evidence_invalid'])
@@ -717,7 +723,7 @@ const KM_ENTRY_V2 = { type: 'key-manifest', issuer: RECEIPT_ISSUER, manifest_ver
  * verify()'s public `transparency` option uses, matching every other
  * JSON-serializable input on this verifier's public surface — see
  * verify.ts's module comment). */
-function singleEntryEvidence(entry: Record<string, unknown>, checkpointText: string): Record<string, unknown> {
+function singleEntryEvidence(entry: JsonObject, checkpointText: string): JsonObject {
   return { entry: { ...entry }, leaf_index: 0n, tree_size: 1n, inclusion_proof: [], checkpoint: checkpointText }
 }
 
@@ -830,11 +836,15 @@ describe('verify(): Stage 2 integration', () => {
   })
 
   it('equivocation detected via verify() warns but leaves ok unaffected', () => {
-    const evidence = bundleEvidence({ prior_checkpoint: CP_FORK2, consistency_proof: [...REAL_EXTENSION_PROOF] })
-    // JsonValue convention: leaf_index/tree_size as bigint at the verify()
-    // API boundary (see singleEntryEvidence's doc comment).
-    evidence['leaf_index'] = 1n
-    evidence['tree_size'] = 3n
+    const evidence: JsonObject = {
+      entry: { ...RECEIPT_ENTRY },
+      leaf_index: 1n,
+      tree_size: 3n,
+      inclusion_proof: [...PROOF_INDEX_1],
+      checkpoint: CP_BUNDLE3,
+      prior_checkpoint: CP_FORK2,
+      consistency_proof: [...REAL_EXTENSION_PROOF],
+    }
     const result = verify(envelopeBytes(envelopeV1()), receiptTrustStore(manifestV1()), null, null, undefined as unknown as number, {
       transparency: evidence,
       logKeys: [HK_A],
@@ -1002,7 +1012,7 @@ describe('verify(): Stage 2 integration', () => {
     // JsonValue convention: every numeric field must be bigint at this
     // (pre-materialization) level, matching this verifier's other
     // JSON-serializable inputs — see singleEntryEvidence's doc comment.
-    const ops: unknown[][] = []
+    const ops: JsonValue[][] = []
     const nonEmptyOperands = MAX_TOTAL_OP_HEX_LEN_ / MAX_OP_HEX_LEN_
     expect(Number.isInteger(nonEmptyOperands)).toBe(true)
     expect(2 * nonEmptyOperands).toBeLessThanOrEqual(MAX_OPS_PER_PROOF_)

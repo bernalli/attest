@@ -347,8 +347,8 @@ describe('compromise retraction provenance', () => {
   )
 
   it.each([
-    [entry('active'), entry('compromised')],
-    [entry('compromised'), entry('active')],
+    [[entry('active'), entry('compromised')]],
+    [[entry('compromised'), entry('active')]],
   ])('trusted duplicate compromised entries suppress retraction in both orders', (trustedEntries) => {
     const trusted = manifest(3n, trustedEntries)
     const source = manifest(2n, [entry('compromised')])

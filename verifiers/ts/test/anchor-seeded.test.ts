@@ -323,7 +323,13 @@ describe('verifySeededAnchor: ots proof negatives', () => {
 // --------------------------------------------------------------------------
 
 describe('verifySeededAnchor never throws on malformed evidence', () => {
-  it.each([null, [], 'not-a-dict', 42, true])('non-object evidence (%s)', (bad) => {
+  it.each([
+    ['null', null],
+    ['array', []],
+    ['not-a-dict', 'not-a-dict'],
+    ['42', 42],
+    ['true', true],
+  ])('non-object evidence (%s)', (_label, bad) => {
     const verdict = verifySeededAnchor(bad, SEED, policy())
     expect(verdict.anchored).toBe(false)
     expect(verdict.anchoredBefore).toBeNull()
@@ -351,7 +357,13 @@ describe('verifySeededAnchor never throws on malformed evidence', () => {
     expect(verdict.warnings).toEqual([])
   })
 
-  it.each([null, 'string', 42, [], true])('ignores a non-object proof entry with a warning (%s)', (badProof) => {
+  it.each([
+    ['null', null],
+    ['string', 'string'],
+    ['42', 42],
+    ['array', []],
+    ['true', true],
+  ])('ignores a non-object proof entry with a warning (%s)', (_label, badProof) => {
     const verdict = verifySeededAnchor(evidence([badProof]), SEED, policy())
     expect(verdict.anchored).toBe(false)
     expect(verdict.warnings).toEqual([`proof[0]: must be an object, got ${pyTypeName(badProof)}`])
