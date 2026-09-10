@@ -246,6 +246,111 @@ def write_census(census_path: Path, suite: str, run: dict[str, int], run_total: 
     census_path.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 
 
+def selftest_cli() -> int:
+    """Exercise discovery, report admission and the actual process exit status."""
+    import subprocess
+    from tempfile import TemporaryDirectory
+
+    failures = 0
+    with TemporaryDirectory(prefix="test-census-selftest-") as tmp:
+        root = Path(tmp)
+        suite = root / "suite"
+        (suite / "test").mkdir(parents=True)
+        counts = {"test/a.test.ts": 3, "test/b.test.ts": 5}
+        for name in counts:
+            (suite / name).write_text("// census fixture\n", encoding="utf-8")
+        census_path = root / "census.json"
+        census_path.write_text(
+            json.dumps(
+                {
+                    "suites": {
+                        str(suite): {"total": 8, "files": counts},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        report_path = root / "report.json"
+
+        def report(values: dict[str, int], skipped: bool = False) -> None:
+            total = sum(values.values())
+            entries: list[dict[str, Any]] = [
+                {
+                    "name": str(suite / name),
+                    "assertionResults": [{"status": "passed"} for _ in range(n)],
+                }
+                for name, n in values.items()
+            ]
+            if skipped:
+                entries[0]["assertionResults"][0]["status"] = "skipped"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "numTotalTests": total,
+                        "numPassedTests": total - int(skipped),
+                        "numFailedTests": 0,
+                        "numPendingTests": int(skipped),
+                        "numTodoTests": 0,
+                        "testResults": entries,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        def check(label: str, code: int, expected: str) -> None:
+            nonlocal failures
+            result = subprocess.run(  # noqa: S603 -- own script and synthetic local fixtures
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    str(suite),
+                    "--census",
+                    str(census_path),
+                    "--report",
+                    str(report_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            output = result.stdout + result.stderr
+            if result.returncode != code or expected not in output:
+                failures += 1
+                print(f"  FAIL CLI {label}: exit {result.returncode}; {output!r}")
+            else:
+                print(f"  ok   CLI {label}")
+
+        report(counts)
+        check("healthy", 0, "2 test file(s), 8 test(s) -- matches the census")
+        for label, values, expected in (
+            ("added test", {**counts, "test/b.test.ts": 6}, "ran 6 test(s)"),
+            ("removed test", {**counts, "test/b.test.ts": 4}, "ran 4 test(s)"),
+            ("uncollected file", {"test/a.test.ts": 3}, "collected NO tests"),
+            ("empty file", {**counts, "test/b.test.ts": 0}, "ran 0 tests"),
+            ("empty report", {}, "collected NO tests"),
+        ):
+            report(values)
+            check(label, 1, expected)
+        report(counts, skipped=True)
+        check("skipped test", 1, "1 test(s) pending")
+        report(counts)
+        nested = suite / "test" / "nested"
+        nested.mkdir()
+        extra = nested / "new.test.ts"
+        extra.write_text("// uncollected fixture\n", encoding="utf-8")
+        check("new nested file not collected", 1, "test/nested/new.test.ts")
+        extra.unlink()
+        report_path.write_text("{", encoding="utf-8")
+        check("malformed report", 1, str(report_path))
+        report_path.unlink()
+        check("missing report", 1, "FileNotFoundError")
+        report(counts)
+        suite.rename(root / "absent-suite")
+        check("missing suite", 1, "no such suite directory")
+    return 1 if failures else 0
+
+
 def selftest() -> int:
     """Point the comparison at defects it must name, and report each case."""
     healthy = {
@@ -300,7 +405,8 @@ def selftest() -> int:
             failures += 1
             print(f"  FAIL {label} -> {expected!r} not named; got {problems}")
     print(f"selftest: {6 - failures}/6")
-    return 1 if failures else 0
+    cli_failures = selftest_cli()
+    return 1 if failures or cli_failures else 0
 
 
 def main(argv: list[str] | None = None) -> int:

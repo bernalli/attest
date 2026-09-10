@@ -174,6 +174,10 @@ gate_run "importer_differential.py" -- "$GATE_PY" "$IMPORTER_DIFF"
 gate_expect_rc 0 "importer_differential.py: the two importers agree on every archive"
 gate_expect_marker '^0 divergences across 0 families' \
   "importer_differential.py reached its report (this restates the exit code; it does not measure)"
+gate_expect_marker '^0 expected-outcome mismatches$' \
+  "importer_differential.py agrees with every explicit specification oracle"
+gate_expect_marker '^  oracle: member-selection: [1-9][0-9]* archives checked on all three roads ' \
+  "member-selection checked prescribed outcomes on Python, browser parse and file intake"
 gate_expect_marker '^[0-9]+ archives fed to both importers at their own defaults' \
   "importer_differential.py prints how many archives it fed both importers, not just that it exited 0"
 # The archive count above cannot tell 462 from 1: MEASURED (2026-09-09) every

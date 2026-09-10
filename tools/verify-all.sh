@@ -413,6 +413,7 @@ run ci.yml:python - "python3 tools/check_leaf_coverage.py --selftest"
 run ci.yml:python - "python3 tools/check_leaf_coverage.py"
 run ci.yml:python - "uv run --frozen python tools/gen_container_corpus.py --check"
 run ci.yml:python - "uv run --frozen python tools/importer_differential.py --selftest"
+# Includes member-selection outcome oracles and the full committed census.
 run ci.yml:python - "uv run --frozen python tools/importer_differential.py"
 run ci.yml:python - "uv run --frozen python tools/gen_vectors.py --check"
 run ci.yml:python - "uv run --frozen python -m demo.store_dies"
