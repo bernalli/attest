@@ -746,6 +746,37 @@ def _refuse_private_material(members: dict[str, container.Member]) -> None:
         raise BundleError(_PRIVATE_MSG)
 
 
+def _validate_member_selection(filename: str) -> None:
+    """Reserve ASCII root cases and separator/prefix variants (v0.1 section 14.1).
+
+    Inventory admission precedes payload reads: silently skipping a member can
+    discard a restrictive manifest or one receipt beside another. The family
+    readers retain their path, identity and integrity checks; receipt names
+    between the prefix and suffix remain free.
+    """
+    root = filename[: filename.find("/") + 1]
+    # Rev 20: classify the root only. Never repair the member name used by
+    # lookup, payload readers or writes; admission below judges the original.
+    alternate_root = re.match(r"^(?:[\\/]|\.[\\/])*([^\\/]+)[\\/]", filename)
+    if alternate_root is not None:
+        root = alternate_root[1] + "/"
+    reserved_root = re.sub(r"[A-Z]", lambda match: match[0].lower(), root)
+    for prefix, suffix, form in (
+        ("receipts/", ".attest.json", "receipts/*.attest.json"),
+        ("manifests/", ".json", "manifests/<issuer>.json"),
+        ("legal/", ".txt", "legal/<sha256>.txt"),
+        ("proofs/", ".json", "proofs/<ULID>.json"),
+    ):
+        if reserved_root != prefix:
+            continue
+        if not filename.startswith(prefix) or not filename.endswith(suffix):
+            raise BundleError(
+                f"invalid bundle member {filename!r}; expected {form} "
+                "with exact lowercase prefix and suffix"
+            )
+        return
+
+
 def _read(buf: Buffer, member: container.Member, budget: container.ReadBudget) -> bytes:
     try:
         return container.read_member(buf, member, budget)
@@ -834,6 +865,8 @@ def import_bundle(
             max_total_bytes=max_total_bytes,
         )
         _refuse_private_material(members)
+        for filename in members:
+            _validate_member_selection(filename)
         for filename in sorted(members):
             if filename.startswith("receipts/") and filename.endswith(".attest.json"):
                 envelope = _loads(
