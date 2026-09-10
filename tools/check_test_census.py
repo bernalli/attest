@@ -128,11 +128,17 @@ def name_digest(full_names: Iterable[str]) -> str:
     """A file's set of test names, as one hex digest.
 
     Sorted, so reordering a table is not a defect; a list rather than a set, so two
-    cases that legitimately share a `fullName` stay two. NUL-joined because no test
-    name can contain a NUL, which is what keeps 'a' + 'bc' from colliding with
-    'ab' + 'c'.
+    cases that legitimately share a `fullName` stay two. The admitted domain excludes
+    NUL and lone surrogates explicitly: NUL separates names, and UTF-8 encodes them.
+    Reject unsupported titles instead of blessing an ambiguous serialization.
     """
-    joined = "\x00".join(sorted(full_names)).encode("utf-8")
+    names = sorted(full_names)
+    if any("\x00" in name for name in names):
+        raise ValueError("fullName must not contain NUL")
+    try:
+        joined = "\x00".join(names).encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("fullName must contain Unicode scalar values") from exc
     return hashlib.sha256(joined).hexdigest()
 
 
@@ -188,7 +194,10 @@ def read_report(
                 raise SystemExit(f"{relative}: an assertion must carry a non-empty fullName")
             full_names.append(full_name)
         counts[relative] = len(assertions)
-        digests[relative] = name_digest(full_names)
+        try:
+            digests[relative] = name_digest(full_names)
+        except ValueError as exc:
+            raise SystemExit(f"{relative}: {exc}") from exc
     total = _count(report.get("numTotalTests"), "numTotalTests")
     if total != sum(counts.values()):
         raise SystemExit("numTotalTests disagrees with assertionResults")

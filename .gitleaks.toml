@@ -29,10 +29,11 @@ regexes = ['''^ed25519_key\.parent$''']
 # digest with the entropy of a secret. It is a sha256 over that file's test names
 # (tools/check_test_census.py, `name_digest`) — derived from the repository's own
 # public content, reproducible by anyone who runs the suite. The exemption is
-# written as the digest's exact shape rather than as the file, so anything in that
-# census that is NOT a sha256 is still scanned.
+# constrained to a complete test-file digest member on a line in this exact file.
+# This recognizes syntax, not provenance; unrelated members remain scanned.
 [[rules.allowlists]]
 description = "sha256 of a test file's test names, pinned by the suite census"
 condition = "AND"
-paths = ['''tools/test-census\.json''']
-regexes = ['''^[0-9a-f]{64}$''']
+paths = ['''(^|/)tools/test-census\.json$''']
+regexTarget = "line"
+regexes = ['''^\s*"[^"\r\n]*\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$''']
