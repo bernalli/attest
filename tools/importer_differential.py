@@ -43,7 +43,8 @@ COMPILED verifier, so a stale build measures the previous revision's logic:
     npm ci --prefix verifiers/ts && npm run build --prefix verifiers/ts
     npm ci --prefix site
 
-Exit status: 0 for agreement, 1 for a failed measurement or divergence, and
+Exit status: 0 for agreement with every supplied oracle, 1 for a failed
+measurement, oracle mismatch or divergence, and
 3 for a census mismatch, and 78 for an absent prerequisite (no measurement).
 An absent or unreadable census is a census failure, never an absent
 prerequisite: the pin is committed, so losing it is the property breaking and
@@ -84,6 +85,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from attest import bundle as py_importer  # noqa: E402
 from attest import canon  # noqa: E402
 from attest.ulid import RECEIPT_ID_RE  # noqa: E402
+from tests import member_selection as selection  # noqa: E402
 
 # A ZIP encoder with every structural field overridable, shared with the
 # container bench. It writes archives; it holds no opinion about which ones are
@@ -207,6 +209,10 @@ class Vector:
     #: The review finding this vector reproduces, when it reproduces one.
     finding: str = ""
     note: str = ""
+    #: An independent outcome prescribed by the specification. None retains
+    #: the agreement-only contract of existing families. An explicit oracle
+    #: is checked on all three roads, even when both cores agree incorrectly.
+    expected_outcome: str | None = None
 
 
 ISSUER = "h.example"
@@ -370,6 +376,7 @@ def _vector(
     advisory: bool = False,
     finding: str = "",
     note: str = "",
+    expected_outcome: str | None = None,
     post: Callable[[bytes], bytes] | None = None,
     **archive: Any,
 ) -> Vector:
@@ -384,6 +391,7 @@ def _vector(
         advisory=advisory,
         finding=finding,
         note=note,
+        expected_outcome=expected_outcome,
     )
 
 
@@ -391,6 +399,127 @@ def family_baseline() -> list[Vector]:
     """The archive every other vector is a mutation of. If the two importers
     disagree here, nothing below means anything."""
     return [_vector("baseline", "sound-bundle", sound_entries())]
+
+
+def family_member_selection() -> list[Vector]:
+    """§14.1 rev 20: reserved roots reject aliases, outside roots stay open.
+
+    Expectations label constructions from the spec, never classify names
+    with either importer's predicate (or a copy of its regex). The shared
+    fixture owns ASCII cases and separator forms. Each hostile name is an
+    additional member beside a sound bundle: disabling selection must not
+    be hidden by a missing receipt or missing referenced legal text.
+    """
+    members = selection.members()
+    members[selection.PROOF] = _proof(selection.RID)
+    base = [Entry(name=name.encode(), data=data) for name, data in members.items()]
+    vectors = [_vector("member-selection", "exact-family-forms", base, expected_outcome=ACCEPT)]
+
+    def append(label: str, name: str, expected: str, data: bytes = b"ignored extension") -> None:
+        vectors.append(
+            _vector(
+                "member-selection",
+                label,
+                # ZIP bit 11 declares the UTF-8 names sent to both cores.
+                # Without it non-ASCII vectors fail container admission first.
+                [*base, Entry(name=name.encode(), data=data, flags=0x800)],
+                expected_outcome=expected,
+                note=f"member {name!r}",
+            )
+        )
+
+    for family, (stem, suffix, _) in selection.FORMS.items():
+        data = members[f"{family}/{stem}{suffix}"]
+        for axis in selection.AXES:
+            for index, name in enumerate(selection.invalid_names(family, axis)):
+                append(f"case-{family}-{axis}-{index:04d}", name, MALFORMED, data)
+        for index, (leading, separator) in enumerate(selection.SEPARATOR_FORMS):
+            for root in selection.ascii_cases(family):
+                append(
+                    f"separator-{family}-{index:02d}-{root}",
+                    f"{leading}{root}{separator}{stem}{suffix}",
+                    MALFORMED,
+                    data,
+                )
+        for index, name in enumerate(
+            (f"{family}/", f"{family}\\", *(f"./{family}\\{s}" for s in ("", "x", "x.json.bak")))
+        ):
+            append(f"marker-{family}-{index}", name, MALFORMED)
+        # Repeated/mixed leading tokens beyond the shared separator matrix.
+        for index, leading in enumerate(("//", "./././", "/\\", "\\/")):
+            append(f"leading-{family}-{index}", f"{leading}{family}/{stem}{suffix}", MALFORMED)
+
+    for index, name in enumerate(
+        (
+            "a\\b/c",
+            "/",
+            "//",
+            "\\",
+            ".\\manifests",
+            "..\\manifests",
+            "manifests",
+            "./manifests",
+            "proofs",
+            "receipts",
+            "legal",
+            "../manifests/example.json",
+            "..\\manifests\\example.json",
+            "other/../manifests/example.json",
+            "C:\\manifests\\example.json",
+            "%2fmanifests/example.json",
+            "re\u017feipts/example.json",
+            "\uff52eceipts/example.json",
+            "future-evidence/receipt.cbor",
+            "witness-notes/note.v3",
+            "receipt/example.attest.json",
+            "rece\u0131pts/example.ATTEST.JSON",
+            "receipts-extra/example.JSON",
+            "receipt\u017f/example.JSON",
+            "\uff52\uff45\uff43\uff45\uff49\uff50\uff54\uff53/example.JSON",
+            "./future-evidence\\receipt.cbor",
+            "/witness-notes/note.v3",
+            "./receipt\\example.attest.json",
+            "./receipt\u017f\\example.JSON",
+            "/\uff52\uff45\uff43\uff45\uff49\uff50\uff54\uff53/example.JSON",
+        )
+    ):
+        append(f"outside-{index:02d}", name, ACCEPT)
+
+    for index, middle in enumerate(
+        ("MiXeD.name.v2", "folder/Another.File", "a\\b", "", "note\nreceipt\tname")
+    ):
+        append(
+            f"free-receipt-{index}",
+            f"receipts/{middle}.attest.json",
+            ACCEPT,
+            _receipt(SECOND_RECEIPT_ID, legal=None),
+        )
+
+    # Admission of the root does not waive the family's existing path rules.
+    append("manifest-inner-backslash", "manifests/\\x.json", MALFORMED)
+
+    for point in (0x1F600, 0x10000, 0x10FFFF):
+        astral = chr(point)
+        # UTF-8 ZIP names reach Python as code points and JS as UTF-16 units.
+        # Neither half of these surrogate pairs is a slash or a backslash.
+        # The oracle is by position, not by executing a Unicode regex.
+        for label, name, expected in (
+            ("root-before", f"{astral}manifests/x.json", ACCEPT),
+            ("root-after", f"manifests{astral}/x.json", ACCEPT),
+            ("other-component", f"{astral}/manifests/x.json", ACCEPT),
+            ("leading-other-root", f"./{astral}\\manifests/x.json", ACCEPT),
+            ("backslash", f"manifests\\{astral}.json", MALFORMED),
+            ("leading", f"./manifests/{astral}.json", MALFORMED),
+            ("mixed-case", f"/\\MaNiFeStS\\{astral}.JSON", MALFORMED),
+            ("free-receipt", f"receipts/a\\{astral}/b.attest.json", ACCEPT),
+        ):
+            append(
+                f"astral-{point:06x}-{label}",
+                name,
+                expected,
+                _receipt(SECOND_RECEIPT_ID, legal=None),
+            )
+    return vectors
 
 
 def family_duplicate_names() -> list[Vector]:
@@ -1036,6 +1165,7 @@ def family_manifest_identity() -> list[Vector]:
 
 DETERMINISTIC_FAMILIES: dict[str, Callable[[], list[Vector]]] = {
     "baseline": family_baseline,
+    "member-selection": family_member_selection,
     "duplicate-names": family_duplicate_names,
     "long-names": family_long_names,
     "unreferenced-regions": family_unreferenced_regions,
@@ -1641,7 +1771,7 @@ def compare_census(
         entry = expected[family]
         problems.append(
             f"{family}: the census expects {len(entry.vectors)} {entry.unit}; "
-            "the run completed none"
+            f"the run completed 0 {entry.unit}"
         )
     for family, entry in sorted(observed.items()):
         if len(set(entry.vectors)) != len(entry.vectors):
@@ -2052,6 +2182,8 @@ def run(
 ) -> int:
     divergences: list[Divergence] = []
     outcomes: dict[str, dict[str, int]] = {}
+    oracle_checked: dict[str, dict[str, int]] = {}
+    oracle_mismatches = 0
     vectors = collect(families, count, seed)
     completed: list[ExecutedCase] = []
 
@@ -2076,6 +2208,40 @@ def run(
             _tally(outcomes, "browser parseBundle", parsed)
             _tally(outcomes, "browser intake", intook)
             completed.append(ExecutedCase("archives", vector.family, vector.name))
+            if vector.expected_outcome is not None:
+                _tally(oracle_checked, vector.family, {"outcome": vector.expected_outcome})
+                for label, observed in (
+                    ("reference importer", reference),
+                    ("browser parseBundle", parsed),
+                    ("browser intake", intook),
+                ):
+                    if observed.get("outcome") == vector.expected_outcome:
+                        continue
+                    oracle_mismatches += 1
+                    print(
+                        f"ORACLE MISMATCH {vector.family}/{vector.name}: {label}: "
+                        f"expected {vector.expected_outcome}, observed {_describe(observed)}"
+                        + (f" — {vector.note}" if vector.note else ""),
+                        file=sys.stderr,
+                    )
+                    if keep is not None:
+                        keep.mkdir(parents=True, exist_ok=True)
+                        stem = f"{vector.family}--{vector.name}--oracle"
+                        _materialise(keep / f"{stem}.attest", vector)
+                        (keep / f"{stem}.json").write_text(
+                            json.dumps(
+                                {
+                                    "expected_outcome": vector.expected_outcome,
+                                    "reference importer": reference,
+                                    "browser parseBundle": parsed,
+                                    "browser intake": intook,
+                                },
+                                indent=2,
+                                sort_keys=True,
+                            )
+                            + "\n",
+                            encoding="utf-8",
+                        )
             for label, mine, other in (
                 ("browser parseBundle", reference, parsed),
                 (
@@ -2146,6 +2312,13 @@ def run(
                 )
 
     report(completed, outcomes, divergences)
+    for family, counts in sorted(oracle_checked.items()):
+        prescribed = ", ".join(f"{outcome}={n}" for outcome, n in sorted(counts.items()))
+        print(
+            f"  oracle: {family}: {sum(counts.values())} archives checked on all three roads "
+            f"({prescribed})"
+        )
+    print(f"{oracle_mismatches} expected-outcome mismatches")
     try:
         observed = observed_census(completed)
     except ValueError as exc:
@@ -2170,7 +2343,7 @@ def run(
                 file=sys.stderr,
             )
         return 3
-    if any(not divergence.advisory for divergence in divergences):
+    if oracle_mismatches or any(not divergence.advisory for divergence in divergences):
         if updating:
             print("refusing to update the census: importer measurement failed", file=sys.stderr)
         return 1
