@@ -58,15 +58,18 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   monotone: across 11,887 generated names, 1,654 moved from admitted to refused and **none**
   moved the other way.
 
-  An attacker cannot trigger this remotely; it requires control over the names inside a
-  bundle the verifier chooses to import. What makes it worth an advisory is who gains: the
+  Exploitation requires the victim to import a bundle whose member names the attacker
+  controls; the bundle may be delivered remotely. What makes it worth an advisory is who gains: the
   party holding the compromised key is exactly the party for whom the successor manifest
   going unread is useful, and a bundle is a file that party may well have produced.
 
-  **Workaround for 0.9.6 and earlier:** before importing a bundle from a party you do not
-  control, list its members and check that every entry sits under exactly one of
-  `receipts/`, `manifests/`, `legal/`, `proofs/` — lower case, forward slash, no leading
-  `/`, `./`, `\` or `.\` — with the expected extension in lower case.
+  **Workaround for 0.9.6 and earlier:** before importing a shareable `.attest` bundle
+  from a party you do not control, list its members. Allow the generated `README.html`;
+  require every other entry to match `receipts/*.attest.json`, `manifests/<issuer>.json`,
+  `legal/<sha256>.txt`, or `proofs/<ULID>.json`, with the exact lowercase prefix and
+  suffix and no leading `/`, `./`, `\` or `.\`. This conservative check also excludes
+  unknown extension families. If any entry fails it, do not import the archive — and do
+  not rename its members to make them pass.
 
 ## [0.9.6] — 2026-09-09
 
