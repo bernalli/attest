@@ -6,6 +6,68 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.7] — 2026-09-10
+
+### Security
+
+- **A key marked compromised could be silently ignored when the manifest that marks it
+  carried a name the bundle importer did not select.** `attest import` chose its members
+  by matching a reserved root (`manifests/`, `receipts/`, `legal/`, `proofs/`) and an
+  expected extension, and passed over every other entry without a word. A member the
+  dispatcher does not select is not imported, not reported, and not counted: the import
+  proceeds without it and exits 0.
+
+  It is the same shape as the trust-directory defect fixed in 0.9.6, one layer up. What a
+  bundle carries is not only material that *authorises*: a successor manifest is also what
+  marks a key compromised, so dropping it did not narrow trust, it widened it.
+
+  Measured on 0.9.6, importing into a trust directory that already held the older, still
+  authorising version of the same manifest. Byte-identical contents; only the member name
+  changes:
+
+  | member name | verify exit | ok | errors |
+  |---|---:|---|---|
+  | `manifests/<issuer>.json` | 1 | false | key is compromised |
+  | `manifests/<issuer>.JSON` | **0** | **true** | **none** |
+
+  The class is wider than letter case. The same drop happened for
+  `manifests\<issuer>.json`, `Manifests\<issuer>.json`, `/manifests/<issuer>.json` and
+  `./manifests/<issuer>.json`. The backslash forms matter on their own: on Windows a member
+  stored as `manifests\x.json` *extracts* as `manifests/x.json`, so a third party inspecting
+  the archive sees the compromise marking present while the importer ignores it — precisely
+  the property the rule exists to protect.
+
+  The other reserved roots dropped members just as quietly, with smaller consequences: a
+  bundle carrying two receipts imported one and exited 0 when the second was named
+  `receipts/<id>.ATTEST.JSON`; a `legal/` text whose name changed case was skipped *before*
+  its hash was checked; a `proofs/` member under a mis-cased root turned
+  `transparency: logged` into `not_checked` while the receipt still verified `ok=true`.
+
+  A reserved root is now admitted in its exact form, or the archive is refused, naming the
+  member and the reason. The check runs on the inventory — after the container checks and
+  **before any member is read** — so an unsupported name can never produce a partially
+  imported bundle.
+
+  The normative half matters as much as the code: importers **MUST NOT normalize** such
+  names into a reserved root. The archive is refused; the member name is never rewritten,
+  never repaired, and never handed to member lookup, payload parsing or filesystem writes.
+  Repairing the name would reintroduce the same ambiguity one layer down.
+
+  Names that were legal before stay legal, including backslashes inside a receipt's free
+  intermediate name (`receipts/a\b.attest.json`). The tightening was measured to be
+  monotone: across 11,887 generated names, 1,654 moved from admitted to refused and **none**
+  moved the other way.
+
+  An attacker cannot trigger this remotely; it requires control over the names inside a
+  bundle the verifier chooses to import. What makes it worth an advisory is who gains: the
+  party holding the compromised key is exactly the party for whom the successor manifest
+  going unread is useful, and a bundle is a file that party may well have produced.
+
+  **Workaround for 0.9.6 and earlier:** before importing a bundle from a party you do not
+  control, list its members and check that every entry sits under exactly one of
+  `receipts/`, `manifests/`, `legal/`, `proofs/` — lower case, forward slash, no leading
+  `/`, `./`, `\` or `.\` — with the expected extension in lower case.
+
 ## [0.9.6] — 2026-09-09
 
 ### Security
