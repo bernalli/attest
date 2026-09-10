@@ -22,3 +22,18 @@ description = "a path built from a variable whose name contains 'key'"
 condition = "AND"
 paths = ['''tools/gen_site_sample\.py''']
 regexes = ['''^ed25519_key\.parent$''']
+
+# The same rule fires on tools/test-census.json, and for the same shape of reason:
+# one of the test files it pins is named `c57-findkey-type-guard.test.ts`, so the
+# JSON member NAME contains "key", and the value beside it is a 64-character hex
+# digest with the entropy of a secret. It is a sha256 over that file's test names
+# (tools/check_test_census.py, `name_digest`) — derived from the repository's own
+# public content, reproducible by anyone who runs the suite. The exemption is
+# constrained to a complete test-file digest member on a line in this exact file.
+# This recognizes syntax, not provenance; unrelated members remain scanned.
+[[rules.allowlists]]
+description = "sha256 of a test file's test names, pinned by the suite census"
+condition = "AND"
+paths = ['''(^|/)tools/test-census\.json$''']
+regexTarget = "line"
+regexes = ['''^\s*"[^"\r\n]*\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$''']

@@ -159,10 +159,12 @@ def test_main_uses_the_pin_and_update_admits_both_directions(
         assert ("decreased" if count == 0 else "increased") in captured.err
         assert "--update" in captured.err
     assert census.main(["--update"]) == 0
-    assert census.load_census(census.DEFAULT_CENSUS, census.SUITE) == {
-        "test/a.test.ts": count,
-        "test/b.test.ts": 0,
-    }
+    # This census pins diagnostic counts, not test names: it declares the count-only
+    # contract, and gets an empty digest map back.
+    assert census.load_census(census.DEFAULT_CENSUS, census.SUITE, with_digests=False) == (
+        {"test/a.test.ts": count, "test/b.test.ts": 0},
+        {},
+    )
     assert census.main([]) == 0
 
 
