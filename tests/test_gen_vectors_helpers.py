@@ -38,3 +38,29 @@ def test_text_max_depth_counts_brackets_outside_strings_only() -> None:
     assert gen_vectors._text_max_depth('{"a": [1, [2]]}') == 3
     assert gen_vectors._text_max_depth('{"a": "ignore ] } [ { these"}') == 1
     assert gen_vectors._text_max_depth('{"a": "esc \\" ] "}') == 1
+
+
+def test_live_key_entry_hands_back_the_live_entry_not_a_copy() -> None:
+    """The whole reason the helper exists: `manifests.find_key` returns a COPY,
+    and a generator that edits a fixture before re-signing it needs the
+    opposite. A copy here drops the edit in silence, which is what leaf 35m's
+    named control catches at generation time and nothing catches here."""
+    manifest = {"keys": [{"kid": "a", "status": "compromised"}, {"kid": "b"}]}
+    entry = gen_vectors._live_key_entry(manifest, "a")
+    entry["status"] = "active"
+    assert manifest["keys"][0]["status"] == "active"
+
+
+def test_live_key_entry_refuses_an_ambiguous_kid() -> None:
+    """Duplicate `keys[]` entries make array ORDER decide which one is edited --
+    the same reason the library refuses to resolve an ambiguous kid. Raised,
+    never asserted, so `python -O` cannot remove it."""
+    manifest = {"keys": [{"kid": "a", "status": "compromised"}, {"kid": "a", "status": "active"}]}
+    with pytest.raises(ValueError, match="expected exactly one"):
+        gen_vectors._live_key_entry(manifest, "a")
+
+
+def test_live_key_entry_refuses_an_absent_kid() -> None:
+    manifest = {"keys": [{"kid": "a"}]}
+    with pytest.raises(ValueError, match="expected exactly one"):
+        gen_vectors._live_key_entry(manifest, "zz")

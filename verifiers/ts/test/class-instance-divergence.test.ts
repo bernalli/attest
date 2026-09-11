@@ -228,7 +228,7 @@ describe('class-instance divergence (v0.2 §18.4, deliberate)', () => {
 
         if (kind === 'own-accessor') {
           // An accessor is REFUSED, not skipped (canon.ts's `ownDataCopy`
-          // doc comment, "data or code decides first"): a reconstruction
+          // doc comment, "data-or-code decides first"): a reconstruction
           // that silently drops the key `row` carries is not `row`, so the
           // WHOLE unit is set aside rather than admitted with that one
           // member missing. The two data-property kinds below (inherited,

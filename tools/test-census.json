@@ -3,11 +3,11 @@
   "regenerate": "npm test --prefix <suite> -- --reporter=default --reporter=json --outputFile.json=/tmp/<suite>-tests.json && python3 tools/check_test_census.py <suite> --report /tmp/<suite>-tests.json --update",
   "suites": {
     "site": {
-      "total": 1025,
+      "total": 1026,
       "files": {
         "test/b64u.test.ts": 3,
         "test/bundle.test.ts": 218,
-        "test/conformance.test.ts": 254,
+        "test/conformance.test.ts": 255,
         "test/container-corpus.test.ts": 94,
         "test/container-properties.test.ts": 6,
         "test/container.test.ts": 15,
@@ -41,7 +41,7 @@
       "digests": {
         "test/b64u.test.ts": "064a5edb044e2cf3d80ad2e04d637689c89eb45a708c9a1f460659a6adfc23b6",
         "test/bundle.test.ts": "45dfb2c8215becce188c8bab4e3534bdbff23af1dbaae396c59613423ff0eaa7",
-        "test/conformance.test.ts": "43eb9864954f15430c1c519f080efbd2ec9ef103bd2759dca1b6c4244cc75599",
+        "test/conformance.test.ts": "0f43e3718afaaa566166cc0e1e5208dcbb1f7f7852f39b46f3ccf8dd9c527598",
         "test/container-corpus.test.ts": "854d2a5fb59f8e74657c24409f2cf7984eff82a5accf2605950e81574ee1eb10",
         "test/container-properties.test.ts": "256f572567122c734de13305b820277588a97bd23bf668e92d11e3298b43cc1d",
         "test/container.test.ts": "5e7dc75bbb9bb69d8108dff237be5a9241e1db2a98c5ff40e698f29861aa09f3",
