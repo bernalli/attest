@@ -1188,15 +1188,22 @@ before; that is deliberate and specified, because extending the cutoff to transf
 door to resurrected and doubly-assigned transfers. What is not deliberate is that nothing in the
 result tells the person holding the receipt why it happened.
 
-#### A compromise declaration only counts if it is read, and twice it was not
+#### A compromise declaration only counts if it is read, and three times it was not
 
 The limit above is a property of the design: the declaration is absorbing because a stolen key has
 to be stoppable in one move. What follows is not. That move arrives as a document — a successor
 manifest marking the key `compromised` — and the document changes nothing unless the tool holding
-the trust material picks it up. Twice, in consecutive releases of the shipped package, it did not,
-and both times a receipt the declaration should have condemned came back clean.
+the trust material picks it up. Three times it did not, and each time a receipt the declaration
+should have condemned came back clean; all three are published advisories. Once the declaration
+was reached but not trusted to its own bytes: an application that handed the libraries live
+objects of its own, rather than data parsed from bytes, could supply trust material whose answers
+differed from the bytes it serializes, and a key the issuer's signed manifest marked
+`compromised` verified as valid with no error and no warning — GHSA-qm5c-8f82-jr7m, alone among
+the three in naming both packages, and closed in both before either of the releases below. The
+other two were never reached at all, for the name the declaration carried, and they fell in
+consecutive releases of the Python package. Those two are what the rest of this section is about.
 
-The shape was the same on both occasions, and both are published advisories against the package.
+The shape was the same on both occasions.
 `attest verify --trust-dir` chose what to read with a glob for `*.json` and passed over every other
 entry without a word: the same manifest, byte-identical, stored as `x.JSON` rather than `x.json`
 turned a run that exited 1 with `ok: false` and an error naming the key as compromised into one
@@ -1224,7 +1231,7 @@ cannot be caused remotely; the bundle case needs the holder to import an archive
 someone else chose, and an archive can be delivered. A later review widened the second beyond
 letter case, to backslash separators and leading `/` or `./` tokens, which is where it takes its
 sharpest form: on Windows a member stored as `manifests\<issuer>.json` extracts as
-`manifests/<issuer>.json`, so a third party listing the archive sees the compromise marking sitting
+`manifests/<issuer>.json`, so a third party extracting the archive sees the compromise marking sitting
 there while the importer passes over it.
 
 What both measure is the distance between a specification and the thing implementing it. v0.1 §7.3
@@ -1238,9 +1245,12 @@ more: v0.1 §14.1 reserves the four roots in every ASCII case spelling, requires
 one to carry the exact lowercase form, has the archive refused whole when it does not, and forbids
 an importer from repairing the name, because guessing at the name that was meant reintroduces the
 ambiguity one layer further down. Both readers now settle the question on the inventory, before any
-member or file is read, so an unsupported name cannot produce a partial result. What does not
-follow is that the class is closed: it belongs to any reader that decides what to look at by the
-name of the thing it is looking at, and nothing in the design prevents a third.
+member or file is read, so an unsupported name cannot produce a partial result — though they settle
+it differently, and deliberately: a trust directory is assembled by hand, on filesystems that may
+not distinguish case, so its loader reads `Manifest.JSON` and refuses only what is not a JSON file
+at all; an archive is machine-written, and there a name is refused unless it is exact. What does
+not follow is that the class is closed: it belongs to any reader that decides what to look at by
+the name of the thing it is looking at, and nothing in the design prevents a third.
 
 #### The seller's levers exist now. What sits under them does not
 

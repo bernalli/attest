@@ -57,8 +57,10 @@ _CITATION_TOKEN_RE = re.compile(
 )
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
 _FENCED_BLOCK_RE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1", re.MULTILINE | re.DOTALL)
-# The working note at the end of the file is removed before publication and
-# refers to the whitepaper's own sections with `§`; it is not part of the text.
+# A drafting round may append a working note as `## Part C`, which refers to the
+# whitepaper's own sections with `§` and is not part of the published text. The
+# document carries none today; the guard stays so that one added by a later round
+# is excluded from the citation scan, and the fixture below keeps it honest.
 _WORKING_NOTE_HEADING_RE = re.compile(r"^## Part C\b", re.MULTILINE)
 
 
