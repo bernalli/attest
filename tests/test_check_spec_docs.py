@@ -256,6 +256,27 @@ def _minimal_versioning() -> str:
         "| --- | --- | --- | --- |\n"
         "| `sunset-grant-v1` | active | v0.2 §18 | v0.2 §18.2 |\n"
         "\n"
+        "### 6.6 Warning literals\n\n"
+        "| Literal | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `anchor_note_only` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n"
+        "\n"
+        "### 6.12 Anchor proof kinds\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `ots` | active | v0.2 | v0.2 §11.1 |\n"
+        "| `rfc3161` | active | v0.2 | v0.2 §11.1 |\n"
+        "\n"
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1, not this one.\n\n"
+        "### 6.13 Anchor profiles\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `note-v1` | deprecated-for-issuance | v0.2 | v0.2 §11.1.1 |\n"
+        "| `signed-note-v2` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n"
+        "\n"
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1.1, not this one.\n\n"
         "## Revision log\n\n"
         "- **2026-07-22 (rev 1)**: document introduced — vectors: none\n"
     )
@@ -4240,3 +4261,113 @@ def test_a_duplicated_7_3_heading_is_reported_rather_than_silently_first_wins() 
         scoped + unscoped_tail, _tm_with_verdict(_SCOPED_VERDICT)
     )
     assert any("'### 7.3' appears 2 times" in e for e in errors), errors
+
+
+# --- §6.12/§6.13, the two anchor registries and their governing document ------
+#
+# These are the first registries in §6 whose governing document is NOT this
+# document, and saying so is the whole point: §6's chapeau assigns one only up
+# to §6.5, so a subsection that stays silent leaves a Specification-Required
+# registry with no specification named.
+
+
+def _versioning_with_anchor_registries(
+    kinds: str = "| `ots` | active | v0.2 | v0.2 §11.1 |\n"
+    "| `rfc3161` | active | v0.2 | v0.2 §11.1 |\n",
+    kinds_governing: str = (
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1, not this one.\n"
+    ),
+    profiles: str = "| `note-v1` | deprecated-for-issuance | v0.2 | v0.2 §11.1.1 |\n"
+    "| `signed-note-v2` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n",
+    warning: str = "| `anchor_note_only` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n",
+) -> str:
+    head = "| Name | State | Introduced | Reference |\n| --- | --- | --- | --- |\n"
+    return (
+        "### 6.6 Warning literals\n\n"
+        "| Literal | State | Introduced | Reference |\n| --- | --- | --- | --- |\n"
+        f"{warning}\n"
+        f"### 6.12 Anchor proof kinds\n\n{head}{kinds}\n{kinds_governing}\n"
+        f"### 6.13 Anchor profiles\n\n{head}{profiles}\n"
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1.1, not this one.\n"
+    )
+
+
+def test_the_anchor_registries_are_accepted_when_complete() -> None:
+    assert (
+        check_spec_docs.check_versioning_anchor_registries(_versioning_with_anchor_registries())
+        == []
+    )
+
+
+def test_a_missing_anchor_kind_row_is_reported() -> None:
+    errors = check_spec_docs.check_versioning_anchor_registries(
+        _versioning_with_anchor_registries(kinds="| `ots` | active | v0.2 | v0.2 §11.1 |\n")
+    )
+    assert any("§6.12 registry missing active-state row for `rfc3161`" in e for e in errors), errors
+
+
+def test_the_legacy_profile_may_not_be_quietly_promoted_to_active() -> None:
+    """`note-v1` is deprecated-for-issuance; `active` would contradict §11.1.1."""
+    errors = check_spec_docs.check_versioning_anchor_registries(
+        _versioning_with_anchor_registries(
+            profiles="| `note-v1` | active | v0.2 | v0.2 §11.1.1 |\n"
+            "| `signed-note-v2` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n"
+        )
+    )
+    assert any("deprecated-for-issuance-state row for `note-v1`" in e for e in errors), errors
+
+
+def test_a_registry_that_does_not_name_its_governing_document_is_reported() -> None:
+    """Specification Required, with no specification named, cannot be registered in."""
+    errors = check_spec_docs.check_versioning_anchor_registries(
+        _versioning_with_anchor_registries(kinds_governing="Registered here.\n")
+    )
+    assert any("§6.12 does not name its governing document" in e for e in errors), errors
+
+
+def test_the_deprecated_profiles_warning_must_be_registered_too() -> None:
+    """`anchor_note_only` is what `deprecated-for-issuance` means in practice."""
+    errors = check_spec_docs.check_versioning_anchor_registries(
+        _versioning_with_anchor_registries(warning="| `other` | active | v0.2 | v0.2 §1 |\n")
+    )
+    assert any("`anchor_note_only`" in e for e in errors), errors
+
+
+def test_the_anchor_registry_check_fails_closed_without_its_headings() -> None:
+    errors = check_spec_docs.check_versioning_anchor_registries("### 6.1 Signature suites\n\nx\n")
+    assert any("missing required heading '### 6.12 Anchor proof kinds'" in e for e in errors), (
+        errors
+    )
+    assert any("missing required heading '### 6.13 Anchor profiles'" in e for e in errors), errors
+
+
+def test_a_fenced_example_cannot_stand_in_for_the_anchor_registries() -> None:
+    """An illustrative fence must not satisfy a registry the document no longer has."""
+    real = _versioning_with_anchor_registries()
+    impostor = (
+        "```markdown\n"
+        "### 6.12 Anchor proof kinds\n\n"
+        "| Name | State | Introduced | Reference |\n| --- | --- | --- | --- |\n"
+        "| `ots` | active | v0.2 | illustrative only |\n"
+        "| `rfc3161` | active | v0.2 | illustrative only |\n\n"
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1, not this one.\n"
+        "```\n\n"
+    ) + real[real.index("### 6.13 Anchor profiles") :]
+    errors = check_spec_docs.check_versioning_anchor_registries(impostor)
+    assert any("missing required heading '### 6.12 Anchor proof kinds'" in e for e in errors), (
+        errors
+    )
+
+
+def test_a_duplicated_anchor_registry_heading_is_reported_rather_than_first_wins() -> None:
+    """A drifted second copy must not be vouched for by the first, well-formed one."""
+    drifted = _versioning_with_anchor_registries() + (
+        "\n### 6.12 Anchor proof kinds\n\n"
+        "| Name | State | Introduced | Reference |\n| --- | --- | --- | --- |\n"
+        "| `ots` | unsafe | v9 | drifted copy |\n"
+    )
+    errors = check_spec_docs.check_versioning_anchor_registries(drifted)
+    assert any("'### 6.12 Anchor proof kinds' appears 2 times" in e for e in errors), errors

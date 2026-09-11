@@ -1314,6 +1314,15 @@ _VERSIONING_REQUIRED_ACTIVE_PLEDGE_TYPES: tuple[str, ...] = ("`sunset-grant-v1`"
 
 def _registry_rows(versioning: str, heading: str) -> tuple[str, list[str]]:
     """Return a registry subsection's body, or an error naming the missing heading."""
+    # Same first-wins resolution closed for '### 7.3' and '#### TM-32': a
+    # duplicated heading would let the first, well-formed copy vouch for a
+    # second, drifted one. Fail closed rather than read whichever came first.
+    duplicates = re.findall(rf"^### {re.escape(heading)}$", versioning, re.MULTILINE)
+    if len(duplicates) > 1:
+        return "", [
+            f"'### {heading}' appears {len(duplicates)} times; "
+            "the registry read would be whichever came first"
+        ]
     match = re.search(
         rf"^### {re.escape(heading)}$([\s\S]*?)(?=^### |^## |\Z)", versioning, re.MULTILINE
     )
@@ -1381,6 +1390,66 @@ def check_versioning_stage4_registries(versioning: str) -> list[str]:
             pattern = rf"^\| {re.escape(entry)} \| {state} \|"
             if re.search(pattern, rows, re.MULTILINE) is None:
                 errors.append(f"{section} registry missing {state}-state row for {noun} {entry}")
+    return errors
+
+
+# §6.12 and §6.13 register the two anchor vocabularies v0.2 §11.1 and §11.1.1
+# have defined since v0.2 rev 4. Both differ from every registry above them in
+# one way that has to survive an edit: their governing document is v0.2, not
+# this one. §6's chapeau assigns a governing document only up to §6.5, so a
+# subsection that does not name its own leaves a registry under "Specification
+# Required" with no specification named — which is how the gap these two close
+# would reopen one subsection at a time.
+_VERSIONING_ANCHOR_REGISTRIES: tuple[tuple[str, str, tuple[tuple[str, str], ...], str], ...] = (
+    (
+        "6.12 Anchor proof kinds",
+        "§6.12",
+        (("`ots`", "active"), ("`rfc3161`", "active")),
+        "This registry's governing document is [`attest-v0.2.md`](attest-v0.2.md) §11.1,",
+    ),
+    (
+        "6.13 Anchor profiles",
+        "§6.13",
+        (("`note-v1`", "deprecated-for-issuance"), ("`signed-note-v2`", "active")),
+        "This registry's governing document is [`attest-v0.2.md`](attest-v0.2.md) §11.1.1,",
+    ),
+)
+
+
+def check_versioning_anchor_registries(versioning: str) -> list[str]:
+    """§6.12/§6.13 carry their rows AND name v0.2 as their governing document."""
+    # An illustrative fence reads exactly like a real registry subsection —
+    # heading, header row, separator, rows — so scanning fences would let an
+    # example stand in for the registry itself, including for one that has been
+    # deleted. Same rationale as collect_errors() and check_tm32_compromise_scope();
+    # attest-versioning.md carries no fence today, which is exactly why the guard
+    # has to be in place before it does.
+    versioning = _strip_fenced_blocks(versioning)
+    errors: list[str] = []
+    for heading, section, rows, governing in _VERSIONING_ANCHOR_REGISTRIES:
+        body, heading_errors = _registry_rows(versioning, heading)
+        errors.extend(heading_errors)
+        if heading_errors:
+            continue
+        for name, state in rows:
+            if re.search(rf"^\| {re.escape(name)} \| {state} \|", body, re.MULTILINE) is None:
+                errors.append(f"{section} registry missing {state}-state row for {name}")
+        if governing not in body:
+            errors.append(
+                f"{section} does not name its governing document; a registry whose "
+                "registration policy is Specification Required, with no specification named, "
+                "cannot be registered in"
+            )
+    # `anchor_note_only` is the classification §6.13's deprecated profile carries;
+    # registering the profile without its warning would leave the state's meaning
+    # pointing at an unregistered literal.
+    warnings, warning_errors = _registry_rows(versioning, "6.6 Warning literals")
+    errors.extend(warning_errors)
+    if (
+        not warning_errors
+        and re.search(r"^\| `anchor_note_only` \| active \|", warnings, re.MULTILINE) is None
+    ):
+        errors.append("§6.6 registry missing active-state row for warning `anchor_note_only`")
     return errors
 
 
@@ -2993,6 +3062,7 @@ def collect_errors(
     errors += check_v02_chain_audit_literals(spec_v02)
     errors += check_v01_not_transferable_before_row(spec_v01)
     errors += [f"attest-versioning.md: {e}" for e in check_versioning_stage4_registries(versioning)]
+    errors += [f"attest-versioning.md: {e}" for e in check_versioning_anchor_registries(versioning)]
     errors += check_v02_stage4_preservation_pledge(spec_v02)
     errors += check_v01_publisher_id_row(spec_v01)
     errors += check_v01_preservation_pledge_row(spec_v01)

@@ -127,6 +127,7 @@ This registry's first entry is populated by the receipt-transfer profile named a
 | `compromise_rescue_receipt_after_cutoff` | active | v0.2 rev 9 | v0.2 §19 |
 | `compromise_cutoff_claim_ignored` | active | v0.2 rev 9 | v0.2 §19 |
 | `compromise_marking_retracted` | active | v0.1 rev 8 | v0.1 §7.3 |
+| `anchor_note_only` | active | v0.2 rev 4 | v0.2 §11.1.1, §10.2 step 6 — the classification a `note-v1`/absent-profile anchor carries; it records what the anchor commits to, and never withholds standing (§6.13) |
 
 The `witness_independence_not_established` row is the sole P1.1b warning literal. It records that timestamped witness observation does not establish organizational independence; it is not a positive independence inference.
 
@@ -175,7 +176,31 @@ The vocabulary is open and versioned: an unrecognized `license.preservation_pled
 
 The vocabulary follows §18.2's directional rule: unregistered values are carried, never fatal.
 
+### 6.12 Anchor proof kinds
+
+| Name | State | Introduced | Reference |
+| --- | --- | --- | --- |
+| `ots` | active | v0.2 | v0.2 §11.1 — a hash-only Bitcoin block-header commitment; the only kind that can establish `anchored_before` or PQ-surviving standing |
+| `rfc3161` | active | v0.2 | v0.2 §11.1 — accepted as OPAQUE classical corroboration; sets `anchored: true`, never `anchored_before`, never `pq_surviving` |
+
+**This registry's governing document is [`attest-v0.2.md`](attest-v0.2.md) §11.1, not this one.** The test is where a registered value's *obligations* live, not where its name is written down. §6.1 is governed by this document because §4, here, states what each of its states obliges an issuer and a verifier to do. This registry has no such local counterpart: what a proof of a given kind may establish — `anchored_before`, PQ-surviving standing, survival of a configured CRQC horizon — is defined in v0.2 §11.1 and nowhere else, and an amendment to this table alone would change none of it.
+
+**The State column here is the lifecycle axis — may a kind still be produced, must a verifier still process it — and NOT §4's.** §4's three states are scoped to the signature suites of §6.1 and carry §4's own obligations; `active` there promises "No downgrade." That promise is not made here. Both kinds are `active` because both may still be produced and both MUST still be processed; what a proof of each kind is *worth* is a separate axis, stated in the Reference column and governed by v0.2 §11.1 — an `rfc3161`-only verdict never passes a configured `crqc_horizon` (v0.2 §11.3) while it is `active`, which is precisely the downgrade §4's `active` forbids for a suite. Reading §4's row into this table would make the table promise the opposite of §11.3.
+
+### 6.13 Anchor profiles
+
+| Name | State | Introduced | Reference |
+| --- | --- | --- | --- |
+| `note-v1` | deprecated-for-issuance | v0.2 | v0.2 §11.1.1 — the legacy commitment, over `checkpoint.note_bytes` alone; the field absent (or `null`) means this profile |
+| `signed-note-v2` | active | v0.2 rev 4 | v0.2 §11.1.1 — the commitment over `checkpoint.signed_note_bytes`, the checkpoint's full signed text |
+
+**This registry's governing document is [`attest-v0.2.md`](attest-v0.2.md) §11.1.1, not this one — and more strictly than §6.12.** §11.1.1 requires a conforming implementation to REJECT any `anchor_profile` value other than those above. An unregistered value is therefore not carried-and-warned the way §6.7's open vocabularies are: it is refused. A value entered in this table without a §11.1.1 amendment would be rejected by every conforming verifier, including one run by whoever registered it.
+
+**`deprecated-for-issuance` is a state of this registry alone, and it is deliberately NOT §4's `deprecated`.** It means what §11.1.1 already requires: newly-produced anchors MUST use `signed-note-v2`, while `note-v1` and absent-profile anchors keep verifying and keep their standing forever (§3, eternal verifiability), classified with the warning `anchor_note_only` (§6.6). §4's three states govern the signature suites of §6.1 and nothing else, and its `deprecated` only SHOULD warn, where here the classification is not optional — reusing that word would attach one name to two different obligations. `note-v1` is not `unsafe` in any sense: nothing about it stops verifying, and no classification is capped.
+
 ## Revision log
+
+- **2026-09-11 (rev 14)**: §6.12 and §6.13 added — the anchor proof `kind` registry (`ots` and `rfc3161`, both active) and the `anchor_profile` registry (`note-v1` deprecated-for-issuance, `signed-note-v2` active): the two vocabularies v0.2 §11.1 and §11.1.1 have defined since v0.2 rev 4 with no registry to enter them in, so a new value had no procedure to arrive by. Each subsection names v0.2 as its own governing document rather than this one, because a kind's verification weight and a profile's acceptance are defined there and nowhere else — and §11.1.1 REJECTS an unregistered profile, so registering one here alone would name a value every conforming verifier refuses. §6.6 registers `anchor_note_only`, the classification a legacy-profile anchor has carried since v0.2 rev 4. Every value registered is one both reference implementations already implement: no observable verification behaviour changes. — vectors: none
 
 - **2026-09-09 (rev 13)**: §2 sanctions the fifteenth instance, v0.1 rev 20's separator and path-prefix reservation (linked by v0.2 rev 15). Records the residual omission closed, mandatory rejection rather than normalization, and the compatibility cost on archives accepted by rev 19. — vectors: none (bundle importer tests)
 
