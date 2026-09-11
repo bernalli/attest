@@ -1190,6 +1190,60 @@ before; that is deliberate and specified, because extending the cutoff to transf
 door to resurrected and doubly-assigned transfers. What is not deliberate is that nothing in the
 result tells the person holding the receipt why it happened.
 
+#### A compromise declaration only counts if it is read, and twice it was not
+
+The limit above is a property of the design: the declaration is absorbing because a stolen key has
+to be stoppable in one move. What follows is not. That move arrives as a document — a successor
+manifest marking the key `compromised` — and the document changes nothing unless the tool holding
+the trust material picks it up. Twice, in consecutive releases of the shipped package, it did not,
+and both times a receipt the declaration should have condemned came back clean.
+
+The shape was the same on both occasions, and both are published advisories against the package.
+`attest verify --trust-dir` chose what to read with a glob for `*.json` and passed over every other
+entry without a word: the same manifest, byte-identical, stored as `x.JSON` rather than `x.json`
+turned a run that exited 1 with `ok: false` and an error naming the key as compromised into one
+that exited 0 with `ok: true` and no errors at all — GHSA-9q95-hh5r-r5cv, fixed in 0.9.6. The
+bundle importer then did it to a member of a reserved root: a bundle whose successor manifest was
+carried as `manifests/<issuer>.JSON`, imported into a trust directory already holding the older and
+still authorising version of it, dropped the successor and reported `ok: true` where the correctly
+named member reported `ok: false` and the compromise. That is GHSA-f8p4-49r9-wc6f, fixed in 0.9.7,
+and the same silent drop reached the other reserved roots with smaller consequences: a second
+receipt not imported, a legal text skipped before its hash was checked, a proof member turning
+`transparency: logged` into `not_checked` while the receipt still verified. Both fixes are in the
+version this document describes.
+
+The direction is the part worth stating. A reader that skips material it does not recognise is
+usually failing safe, because the material it skips is material that *authorises*. Here it is not:
+the document that authorises a key is the same document that withdraws it, so material dropped in
+silence does not narrow trust, it widens it. Both advisories record the controls that establish
+that direction by measurement rather than by reading — with no successor present at all the tools
+say so out loud, and with healthy material they accept what deserves accepting — and the first
+records that reading the code had suggested the opposite.
+
+Both report a measured failure, not a demonstrated attack, and the two are not equally reachable.
+The trust-directory case needs a name a file already carries in the verifier's own directory and
+cannot be caused remotely; the bundle case needs the holder to import an archive whose member names
+someone else chose, and an archive can be delivered. A later review widened the second beyond
+letter case, to backslash separators and leading `/` or `./` tokens, which is where it takes its
+sharpest form: on Windows a member stored as `manifests\<issuer>.json` extracts as
+`manifests/<issuer>.json`, so a third party listing the archive sees the compromise marking sitting
+there while the importer passes over it.
+
+What both measure is the distance between a specification and the thing implementing it. v0.1 §7.3
+makes a `compromised` marking absorbing, and it had already named silent omission as the way such a
+marking gets unmade: a successor manifest may not quietly drop a key it inherited, because dropping
+one is how a compromise stops being visible without anyone withdrawing it. The omission arrived one
+layer below, where nothing was specified and nothing could have been — which files a command-line
+flag decides to read is not a property of the format. That was decided by a glob, and the glob was
+the whole of the defence. For bundles the specification did have something to say and now says
+more: v0.1 §14.1 reserves the four roots in every ASCII case spelling, requires a member occupying
+one to carry the exact lowercase form, has the archive refused whole when it does not, and forbids
+an importer from repairing the name, because guessing at the name that was meant reintroduces the
+ambiguity one layer further down. Both readers now settle the question on the inventory, before any
+member or file is read, so an unsupported name cannot produce a partial result. What does not
+follow is that the class is closed: it belongs to any reader that decides what to look at by the
+name of the thing it is looking at, and nothing in the design prevents a third.
+
 #### The seller's levers exist now. What sits under them does not
 
 Several things this document says a seller *can* do were, for most of this project's life, things
