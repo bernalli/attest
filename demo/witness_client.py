@@ -3,9 +3,15 @@ did not have, and the joins that go with it.
 
 attest can build a transparency log, sign its checkpoint, and prove an entry's
 inclusion; `witness/` can cosign a checkpoint somebody submits to it. Nothing
-in between existed: no code anywhere built a C2SP submission body, and nothing
-carried the cosignature the witness returns back into the inclusion evidence a
-verifier reads. `demo/witness_cosigns.py` needs both, so both live here.
+usable in between existed. A submission body is built in three places, all of
+them test-local helpers inside `witness/tests/` (`_body` in
+`test_witness_service.py` and `test_witness_http.py`, one inline in
+`test_witness_cli.py`): not importable from here, unbounded, and each a copy of
+the last. And nothing anywhere carried the cosignature the witness returns back
+into the inclusion evidence a verifier reads — `attest log prove` copies
+`LOG/checkpoint` verbatim, which the witness's lines never reach, and emits no
+`witness_policy_epoch`. `demo/witness_cosigns.py` needs both, so both live
+here.
 
 Non-normative, exactly like `demo/custodian.py`: there is no `attest log
 cosign` command and this is not one. It is the reference for what an operator
@@ -116,6 +122,11 @@ def evidence_with_cosignature(
     existing = evidence.get("checkpoint")
     if not isinstance(existing, str):
         raise ValueError("evidence carries no `checkpoint` note to add a cosignature to")
+    if not isinstance(witness_policy_epoch, str) or not witness_policy_epoch:
+        raise ValueError(
+            "witness_policy_epoch must be a non-empty string naming the epoch the "
+            f"verifier is to resolve, got {witness_policy_epoch!r}"
+        )
     if split_note(cosigned_checkpoint).body != split_note(existing).body:
         raise ValueError("the cosigned note is a different checkpoint from the evidence's own")
     updated = dict(evidence)

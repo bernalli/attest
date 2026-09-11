@@ -106,6 +106,42 @@ def test_a_submission_refuses_a_proof_node_that_is_not_a_sha256_hash() -> None:
         witness_client.build_submission(4, SAMPLE_NOTE, proof=[b"short"])
 
 
+def test_a_submission_refuses_a_boolean_as_a_tree_size() -> None:
+    """`True` is an `int` in Python, so without the type guard it renders as
+    `old 1`: a size nobody chose, spelled correctly enough that the witness
+    would compare against it. A witness compares sizes for a living."""
+    with pytest.raises(ValueError, match="old size"):
+        witness_client.build_submission(True, SAMPLE_NOTE)
+
+
+def test_a_submission_refuses_a_proof_node_that_is_not_bytes() -> None:
+    """A 32-character `str` has the right length and is not a hash. Without
+    the type half of the guard the length check admits it, and the failure
+    lands inside `base64.b64encode` as a `TypeError` the caller cannot act
+    on — a bound this client exists to check before the round trip."""
+    with pytest.raises(ValueError, match="32 bytes"):
+        witness_client.build_submission(4, SAMPLE_NOTE, proof=["x" * 32])
+
+
+def test_evidence_refuses_an_epoch_that_names_nothing() -> None:
+    """The trap this module's own docstring names, closed on the writing side.
+
+    v0.2 s10.2 step 8 is normatively SILENT (s11.4): an epoch the verifier
+    cannot resolve leaves `corroboration: "logged"` with no warning and no
+    condition named. Measured through the real CLI: an empty string, a
+    `None` and a typo all produce exit 0, `ok: true` and `"logged"` — a
+    cosigned note reported as if nobody had cosigned it. Every other
+    precondition of this join already refuses loudly; this one has to as
+    well, because the verifier by design will not.
+    """
+    evidence = {"entry": {"type": "receipt"}, "checkpoint": SAMPLE_NOTE}
+    merged = witness_client.cosigned_note(SAMPLE_NOTE, COSIGNATURE_LINES)
+
+    for epoch in ("", None, 1):
+        with pytest.raises(ValueError, match="witness_policy_epoch"):
+            witness_client.evidence_with_cosignature(evidence, merged, witness_policy_epoch=epoch)
+
+
 # --- the note join: a cosignature is APPENDED, never substituted -------------
 
 COSIGNATURE_LINES = (
@@ -739,3 +775,72 @@ def test_the_two_evidence_bundles_differ_in_the_cosignature_and_nowhere_else(
     }
     assert differing == {"checkpoint"}
     assert without["witness_policy_epoch"] == with_lines["witness_policy_epoch"]
+
+
+def _doctored(outcomes: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    """A copy of a REAL run's outcomes with one recorded verdict changed.
+
+    Built from a real run rather than written by hand: a fabricated outcomes
+    dict would drift from the one `main` actually reads, and would then pin
+    the fabrication instead of the conjunction. Copied, never mutated in
+    place — the run is a module-scoped fixture every test below shares.
+    """
+    doctored: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in outcomes.items()
+    }
+    doctored.update(changes)
+    return doctored
+
+
+def test_the_entry_point_returns_zero_for_the_run_it_just_made(
+    demo: tuple[dict[str, Any], str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`main` is what `ci.yml` and the G-CI-PY gate read: their entire verdict
+    on this demo is its exit code."""
+    outcomes, _ = demo
+    monkeypatch.setattr(witness_cosigns, "run_demo", lambda _workspace: _doctored(outcomes))
+
+    assert witness_cosigns.main() == 0
+    capsys.readouterr()
+
+
+def test_the_entry_point_returns_one_when_the_cosignature_did_not_count(
+    demo: tuple[dict[str, Any], str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The clause carrying the demo's whole claim, checked by making it false.
+
+    A zero-exit assertion alone cannot see this: `main`'s conjunction gutted
+    to `ok = True` still returns 0. Measured on this tree — with the whole
+    conjunction replaced by a constant, the suite stayed 29/29 green, so the
+    exit code CI trusts rested on something no test exercised.
+    """
+    outcomes, _ = demo
+    degraded = _doctored(
+        outcomes,
+        verify_witnessed=dict(outcomes["verify_witnessed"], corroboration="logged"),
+    )
+    monkeypatch.setattr(witness_cosigns, "run_demo", lambda _workspace: degraded)
+
+    assert witness_cosigns.main() == 1
+    capsys.readouterr()
+
+
+def test_the_entry_point_returns_one_when_the_witness_cosigned_a_fork(
+    demo: tuple[dict[str, Any], str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Step 9's clause. A witness that cosigned the fork is the one failure
+    this demo exists to rule out, so the entry point must not report success
+    for a run in which it happened."""
+    outcomes, _ = demo
+    monkeypatch.setattr(
+        witness_cosigns, "run_demo", lambda _workspace: _doctored(outcomes, fork_refusal_status=200)
+    )
+
+    assert witness_cosigns.main() == 1
+    capsys.readouterr()

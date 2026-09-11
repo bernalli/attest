@@ -46,10 +46,11 @@ The scenario, step by step:
      holding its own keys can do. The witness refuses it (C2SP 422), and goes
      on vouching only for the head it actually saw.
 
-Two joins in this chain did not exist before this demo, and they live in
-`demo/witness_client.py`: nothing in the repository built a C2SP submission
-body, and nothing carried the returned cosignature back into the evidence a
-verifier reads. Like `demo/custodian.py`, that module is non-normative — there
+Two joins in this chain had no usable implementation before this demo, and
+they live in `demo/witness_client.py`: a C2SP submission body was built only by
+test-local helpers under `witness/tests/`, which nothing outside that package
+can import, and nothing at all carried the returned cosignature back into the
+evidence a verifier reads. Like `demo/custodian.py`, that module is non-normative — there
 is no `attest log cosign` command and it is not one.
 
 Run it from the repository root: `.venv/bin/python -m demo.witness_cosigns`

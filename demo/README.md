@@ -227,9 +227,10 @@ keys would observe nothing.
    actually saw.
 
 Step 8 is the whole demo, and step 9 is why it is worth anything. Two joins
-this chain needs did not exist in the repository before: nothing built a C2SP
-submission body, and nothing carried a returned cosignature back into the
-evidence a verifier reads. Both live in `witness_client.py`, which also
+this chain needs had no usable implementation before: a C2SP submission body
+was built only by test-local helpers under `witness/tests/`, which nothing
+outside that package can import, and nothing at all carried a returned
+cosignature back into the evidence a verifier reads. Both live in `witness_client.py`, which also
 refuses the one substitution that would make "add a cosignature" mean
 something else — a cosigned note whose body is a different checkpoint from
 the one the evidence's inclusion proof is about.
