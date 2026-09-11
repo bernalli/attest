@@ -579,6 +579,16 @@ The conformance vectors under [`docs/spec/vectors/`](vectors/) are the attest co
 > The normative, maintained threat model is [`attest-threat-model.md`](attest-threat-model.md);
 > privacy analysis lives in [`attest-privacy.md`](attest-privacy.md).
 
+> **Annotated (2026-09-11), row left verbatim.** The `Issuer key compromise` row below
+> summarises the one-key-per-period discipline as bounding "the blast radius". The
+> normative text has said otherwise since rev 8: §7.3 bounds the **forgery** exposure of
+> a compromise and states that per-period keys do NOT bound the invalidation reach of a
+> compromise marking itself, since any still-active key may mark any other key
+> `compromised`. The row is not rewritten — this appendix records what this
+> specification asserted at a date, and a published snapshot that changes after being
+> superseded leaves a reader comparing two versions with no way to tell why. §7.3
+> governs; this annotation is the disagreement, on the record rather than erased.
+
 | Threat | Answer |
 | --- | --- |
 | Receipt forgery | Pinned-ruleset Ed25519 (§10) + issuer key manifests (§7.1). |

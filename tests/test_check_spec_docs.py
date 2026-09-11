@@ -3970,3 +3970,205 @@ def test_duplicate_and_unknown_parts_do_not_generate_totals(tmp_path: Path) -> N
                 "cannot be stated here"
                 for number in figures
             ]
+
+
+# --- v0.1 §7.3's per-period key scope, and the two summaries of it ------------
+#
+# §7.3 says per-period keys bound the FORGERY exposure of a compromise and do
+# NOT bound the invalidation reach of the marking itself. Two summaries restate
+# it, and the two are governed differently on purpose: TM-32's verdict is
+# maintained, so it must agree with §7.3; Appendix A is a superseded snapshot,
+# so its row is left verbatim and an annotation above it carries the
+# disagreement. The reds must therefore be distinguishable — one naming the
+# verdict, one naming the appendix — or a reader cannot tell which fell.
+
+_SCOPED_BODY = (
+    "Issuers SHOULD use one signing key per period to bound the **forgery** exposure of a "
+    "compromise — per-period keys do NOT bound the invalidation reach of a compromise "
+    "marking itself, since any still-active key may publish a manifest marking any other "
+    "key `compromised`."
+)
+
+
+def _v01_with_scope(body: str = _SCOPED_BODY) -> str:
+    return (
+        "## 7. Keys\n\n### 7.3 Rotation continuity and key compromise\n\n"
+        f"{body}\n\n### 7.4 Next\n\nOther.\n"
+    )
+
+
+def _tm_with_verdict(verdict: str) -> str:
+    return (
+        "#### TM-31 — Something else\n\n- **Verdict:** Mitigated — unrelated.\n\n"
+        f"#### TM-32 — Compromise of both hybrid legs (full signer compromise)\n\n"
+        f"- **Verdict:** Mitigated — v0.1 §7.3.  {verdict}\n"
+        "- **Residual risk:** The retroactive invalidation is indiscriminate by design.\n"
+    )
+
+
+_SCOPED_VERDICT = (
+    "The one-key-per-period discipline bounds the forgery exposure to a single period, and "
+    "does not bound the invalidation reach of the marking itself."
+)
+
+
+def test_tm32_verdict_must_not_promise_an_unscoped_bound() -> None:
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        _v01_with_scope(),
+        _tm_with_verdict(
+            "The one-key-per-period discipline bounds the blast radius to a single period."
+        ),
+    )
+    assert any("TM-32's verdict promises an unscoped bound" in e for e in errors), errors
+    assert all(e.startswith("attest-threat-model.md:") for e in errors), errors
+
+
+def test_tm32_verdict_must_name_both_halves_of_the_scope() -> None:
+    """A rewrite that avoids the literal phrase but still promises a bare bound."""
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        _v01_with_scope(),
+        _tm_with_verdict("The one-key-per-period discipline limits the damage to a single period."),
+    )
+    assert any("must name both halves" in e for e in errors), errors
+
+
+def test_a_scoped_verdict_is_accepted() -> None:
+    assert (
+        check_spec_docs.check_tm32_compromise_scope(
+            _v01_with_scope(), _tm_with_verdict(_SCOPED_VERDICT)
+        )
+        == []
+    )
+
+
+def test_a_forgery_qualified_blast_radius_is_not_an_unscoped_bound() -> None:
+    """v0.2 §19.6 item 2's `bound its forgery blast radius` is scoped and must pass."""
+    pattern = check_spec_docs._PER_PERIOD_UNSCOPED_RE
+    assert pattern.search("per-period keys bound its forgery blast radius") is None
+    assert pattern.search("per-period keys bound the blast radius") is not None
+
+
+def test_the_verdict_check_fails_closed_when_the_body_stops_scoping() -> None:
+    """Without §7.3's anchor there is nothing left for the verdict to agree with."""
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        _v01_with_scope("Issuers SHOULD use one signing key per period."),
+        _tm_with_verdict(_SCOPED_VERDICT),
+    )
+    assert errors == [
+        "attest-v0.1.md: §7.3 no longer scopes the per-period key discipline (missing "
+        "['bound the **forgery** exposure', 'do NOT bound the invalidation reach']); "
+        "TM-32's verdict has nothing left to agree with"
+    ]
+
+
+def test_the_verdict_check_fails_closed_when_tm32_is_missing() -> None:
+    errors = check_spec_docs.check_tm32_compromise_scope(_v01_with_scope(), "#### TM-31 — Other\n")
+    assert errors == ["attest-threat-model.md: TM-32's verdict line is missing"]
+
+
+_ANNOTATION = (
+    "> **Annotated.** The `Issuer key compromise` row below summarises per-period keys as "
+    'bounding "the blast radius"; §7.3 bounds the forgery exposure and denies any bound on '
+    "the invalidation reach. The row is not rewritten.\n"
+)
+_HISTORICAL_ROW = (
+    "| Issuer key compromise | Fail-closed (§7.3); per-period keys bound the blast radius. |\n"
+)
+
+
+def _v01_appendix(annotation: str = _ANNOTATION, row: str = _HISTORICAL_ROW) -> str:
+    return (
+        "## Appendix A — Threat model summary (non-normative)\n\n"
+        "> **Superseded.** Retained for historical continuity.\n\n"
+        f"{annotation}\n"
+        "| Threat | Answer |\n| --- | --- |\n"
+        "| Receipt forgery | Pinned ruleset. |\n"
+        f"{row}"
+    )
+
+
+def test_the_annotated_appendix_is_accepted() -> None:
+    assert check_spec_docs.check_appendix_a_annotation(_v01_appendix()) == []
+
+
+def test_appendix_a_row_must_carry_an_annotation() -> None:
+    errors = check_spec_docs.check_appendix_a_annotation(_v01_appendix(annotation=""))
+    assert any("the note above the table must record that it does" in e for e in errors), errors
+    assert all(e.startswith("attest-v0.1.md:") for e in errors), errors
+
+
+def test_an_annotation_that_misdescribes_its_own_row_is_reported() -> None:
+    """Correcting the historical row silently would leave the note describing a ghost."""
+    errors = check_spec_docs.check_appendix_a_annotation(
+        _v01_appendix(
+            row="| Issuer key compromise | Fail-closed (§7.3); per-period keys bound the "
+            "forgery exposure. |\n"
+        )
+    )
+    assert errors == [
+        "attest-v0.1.md: Appendix A's annotation attributes 'blast radius' to a row that no "
+        "longer says it; correct the annotation or drop it, since an annotation that "
+        "misdescribes its own row is worse than none"
+    ]
+
+
+def test_the_row_itself_cannot_stand_in_for_the_note_about_it() -> None:
+    """The row names the phrase, so only the prose above the table may satisfy the check."""
+    errors = check_spec_docs.check_appendix_a_annotation(_v01_appendix(annotation=""))
+    assert errors != []
+
+
+def test_the_appendix_check_fails_closed_without_its_heading() -> None:
+    errors = check_spec_docs.check_appendix_a_annotation("## Appendix B — Other\n\nBody.\n")
+    assert errors == [
+        "attest-v0.1.md: missing required heading "
+        "'## Appendix A — Threat model summary (non-normative)'"
+    ]
+
+
+def test_the_appendix_check_fails_closed_without_the_row() -> None:
+    errors = check_spec_docs.check_appendix_a_annotation(
+        _v01_appendix(row="| Stolen bundle | Per-receipt salts. |\n")
+    )
+    assert errors == ["attest-v0.1.md: Appendix A's 'Issuer key compromise' row is missing"]
+
+
+def test_the_two_surfaces_produce_reds_that_name_different_documents() -> None:
+    """A red that does not say which of the two fell is worth half of one that does."""
+    verdict_red = check_spec_docs.check_tm32_compromise_scope(
+        _v01_with_scope(),
+        _tm_with_verdict("The one-key-per-period discipline bounds the blast radius."),
+    )
+    appendix_red = check_spec_docs.check_appendix_a_annotation(_v01_appendix(annotation=""))
+    assert verdict_red and appendix_red
+    assert all("TM-32" in e and "Appendix A" not in e for e in verdict_red), verdict_red
+    assert all("Appendix A" in e and "TM-32" not in e for e in appendix_red), appendix_red
+
+
+def test_main_calls_the_tm32_scope_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Pins the main() wiring. Neither this check nor the appendix one below is
+    # reachable through collect_errors(), so main() could stop calling them and
+    # every fixture-driven test here would still pass.
+    real = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+    scoped = "bounds the forgery exposure to a single period"
+    assert real.count(scoped) == 1
+    drifted = tmp_path / "attest-threat-model.md"
+    drifted.write_text(real.replace(scoped, "bounds the blast radius to a single period"), "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_THREAT_MODEL_PATH", drifted)
+
+    assert main() == 1
+
+
+def test_main_calls_the_appendix_a_annotation_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    real = (SPEC_DIR / "attest-v0.1.md").read_text(encoding="utf-8")
+    start = real.index("> **Annotated (")
+    end = real.index("\n\n", start) + len("\n\n")
+    stripped = real[:start] + real[end:]
+    assert "> **Annotated (" not in stripped
+    drifted = tmp_path / "attest-v0.1.md"
+    drifted.write_text(stripped, "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_SPEC_V01_PATH", drifted)
+
+    assert main() == 1

@@ -1543,6 +1543,145 @@ def check_receipt_id_pattern(spec_v01: str, schema: dict[str, object]) -> list[s
     return []
 
 
+# v0.1 §7.3 states the one-key-per-period discipline in scoped form: per-period
+# keys bound the FORGERY exposure of a compromise, and do NOT bound the
+# invalidation reach of the marking itself, since any still-active key may mark
+# any other key `compromised`. Two summaries restate that discipline away from
+# the normative body, and each is governed differently.
+#
+# TM-32's verdict is maintained and normative, so it is held to §7.3 and must
+# say what §7.3 says. It carried the unscoped form while §7.3 already said the
+# opposite, and it contradicted its own residual risk two lines below.
+#
+# Appendix A is not. It is a snapshot of what this specification asserted at a
+# date, superseded in 2026-07 and kept verbatim; a published snapshot that
+# changes after being superseded leaves a reader comparing two versions with no
+# way to tell why. So its row is deliberately NOT held to §7.3 — the annotation
+# above it is, and `check_appendix_a_annotation` below is what keeps the
+# disagreement on the record instead of erased.
+#
+# The two are checked separately, with distinct messages, because a red that
+# does not say WHICH of the two fell is worth half of one that does.
+#
+# Neither is wired into `collect_errors()`. Both pin a surface identified by
+# NAME in the real documents — one threat-model entry by its number, one
+# appendix by its title — while `collect_errors()` is exercised against minimal
+# fixtures that legitimately carry neither, and whose threat model holds a
+# single TM-01. Wiring them there would force every fixture to grow a TM-32 and
+# an appendix to stay clean, which would make the fixtures describe this pair of
+# checks rather than the structure they exist to test. `main()` calls them
+# directly, the same arrangement `check_standards_relationship()` and
+# `check_tm80_leaf_tense()` already use, and `test_main_exits_zero_on_the_real_docs`
+# is what keeps them running.
+#
+# The anchor forms are checked first and fail closed: they are what the verdict
+# is compared AGAINST, so a check that kept scoring the verdict after the body
+# stopped saying this would report on a rule that no longer exists.
+_PER_PERIOD_ANCHOR_FORMS: tuple[str, ...] = (
+    "bound the **forgery** exposure",
+    "do NOT bound the invalidation reach",
+)
+# What a maintained summary must say: both halves, the bound and its limit.
+# Requiring the pair is what makes this a comparison rather than a blocklist — a
+# rewrite that avoids the literal phrase below while still promising an
+# unqualified bound ("per-period keys limit the damage") fails on the missing
+# halves instead of slipping through.
+_PER_PERIOD_REQUIRED_HALVES: tuple[str, ...] = ("forgery", "invalidation reach")
+# The literal unscoped form, kept as its own check so the error can quote what
+# it found. `bound its forgery blast radius` (v0.2 §19.6 item 2) is scoped and
+# must not match, so the qualifier cannot sit between the verb and the noun.
+_PER_PERIOD_UNSCOPED_RE = re.compile(r"bounds?\s+(?:the|its)\s+blast\s+radius", re.IGNORECASE)
+_TM32_VERDICT_RE = re.compile(
+    r"^#### TM-32 [^\n]*$[\s\S]*?^- \*\*Verdict:\*\*(?P<body>[^\n]*)$", re.MULTILINE
+)
+
+
+def check_tm32_compromise_scope(spec_v01: str, threat_model: str) -> list[str]:
+    """TM-32's verdict carries v0.1 §7.3's scope on the per-period key discipline."""
+    section = re.search(r"^### 7\.3 [^\n]*$([\s\S]*?)(?=^### |^## |\Z)", spec_v01, re.MULTILINE)
+    if section is None:
+        return ["attest-v0.1.md: missing required heading '### 7.3'"]
+    missing_anchor = [form for form in _PER_PERIOD_ANCHOR_FORMS if form not in section.group(1)]
+    if missing_anchor:
+        return [
+            "attest-v0.1.md: §7.3 no longer scopes the per-period key discipline "
+            f"(missing {missing_anchor!r}); TM-32's verdict has nothing left to agree with"
+        ]
+
+    match = _TM32_VERDICT_RE.search(threat_model)
+    if match is None:
+        return ["attest-threat-model.md: TM-32's verdict line is missing"]
+    verdict = match.group("body")
+
+    errors: list[str] = []
+    unscoped = _PER_PERIOD_UNSCOPED_RE.search(verdict)
+    if unscoped is not None:
+        errors.append(
+            "attest-threat-model.md: TM-32's verdict promises an unscoped bound "
+            f"({unscoped.group(0)!r}); v0.1 §7.3 bounds the forgery exposure only"
+        )
+    missing = [half for half in _PER_PERIOD_REQUIRED_HALVES if half not in verdict]
+    if missing:
+        errors.append(
+            "attest-threat-model.md: TM-32's verdict must name both halves of v0.1 §7.3's "
+            f"scope (missing {missing!r})"
+        )
+    return errors
+
+
+_V01_APPENDIX_A_HEADING = "## Appendix A — Threat model summary (non-normative)"
+# The annotation must carry the pointer (§7.3) and both halves of what §7.3
+# says, or it records that something is wrong without recording what.
+_V01_APPENDIX_A_ANNOTATION_FORMS: tuple[str, ...] = (
+    "Issuer key compromise",
+    "§7.3",
+    "forgery",
+    "invalidation reach",
+)
+# The phrase the annotation attributes to the row it annotates. Checking it
+# against the row is the second measurement, and it is about the annotation's
+# truth, not the row's: were the row ever corrected, the annotation would start
+# describing a sentence that is no longer there.
+_V01_APPENDIX_A_ANNOTATED_PHRASE = "blast radius"
+_V01_APPENDIX_A_ROW_RE = re.compile(r"^\| Issuer key compromise \|[^\n]*$", re.MULTILINE)
+
+
+def check_appendix_a_annotation(spec_v01: str) -> list[str]:
+    """Appendix A's superseded row is annotated, and the annotation is true of it."""
+    appendix = re.search(
+        rf"^{re.escape(_V01_APPENDIX_A_HEADING)}$([\s\S]*?)(?=^## |\Z)", spec_v01, re.MULTILINE
+    )
+    if appendix is None:
+        return [f"attest-v0.1.md: missing required heading {_V01_APPENDIX_A_HEADING!r}"]
+    body = appendix.group(1)
+
+    row_match = _V01_APPENDIX_A_ROW_RE.search(body)
+    if row_match is None:
+        return ["attest-v0.1.md: Appendix A's 'Issuer key compromise' row is missing"]
+    # Only the prose above the table can carry the annotation; the row itself
+    # names the phrase, so scanning the whole appendix would let the row stand
+    # in for the note about it.
+    notes = body[: row_match.start()]
+    notes = notes[: notes.index("| Threat | Answer |")] if "| Threat | Answer |" in notes else notes
+
+    errors: list[str] = []
+    missing = [form for form in _V01_APPENDIX_A_ANNOTATION_FORMS if form not in notes]
+    if missing:
+        errors.append(
+            "attest-v0.1.md: Appendix A's 'Issuer key compromise' row contradicts v0.1 §7.3 "
+            "and is kept verbatim, so the note above the table must record that it does "
+            f"(missing {missing!r})"
+        )
+    elif _V01_APPENDIX_A_ANNOTATED_PHRASE not in row_match.group(0):
+        errors.append(
+            "attest-v0.1.md: Appendix A's annotation attributes "
+            f"{_V01_APPENDIX_A_ANNOTATED_PHRASE!r} to a row that no longer says it; correct the "
+            "annotation or drop it, since an annotation that misdescribes its own row is "
+            "worse than none"
+        )
+    return errors
+
+
 def check_revision_logs(spec_v01: str, spec_v02: str) -> list[str]:
     """Both normative specs have non-empty revision logs with valid entries."""
     return _check_revision_log(spec_v01, "attest-v0.1.md") + _check_revision_log(
@@ -2907,6 +3046,8 @@ def main() -> int:
     errors += check_conformance_self_certification()
     errors += check_corpus_counts()
     errors += check_tm80_leaf_tense()
+    errors += check_tm32_compromise_scope(spec_v01, threat_model)
+    errors += check_appendix_a_annotation(spec_v01)
     errors += check_coined_terms()
     errors += check_package_version_lockstep()
     for error in errors:
