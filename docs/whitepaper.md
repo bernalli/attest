@@ -1,4 +1,4 @@
-<!-- @whitepaper-sync v0.1-rev=18 v0.2-rev=13 package=0.9.3 -->
+<!-- @whitepaper-sync v0.1-rev=20 v0.2-rev=16 package=0.9.7 -->
 # Own what you buy
 
 *A whitepaper on durable digital possession: the seller signs a receipt, you hold the file, anyone
