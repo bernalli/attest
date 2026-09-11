@@ -34,6 +34,14 @@ leaves every other member byte-for-byte as it was — receipt, manifest, legal
 text and proof included, so the page's transparency row keeps saying what it
 said. A test holds the committed README to the template, and this flag is
 how it is brought back into line.
+
+`--refresh-proof PATH` is the same idea for the one member that can grow
+stronger without the receipt changing: the inclusion evidence. A later proof
+for the same log entry — one that has since been anchored — replaces
+`proofs/<receipt_id>.json` and nothing else, so the published bundle carries
+the best evidence available for a receipt that was logged once and stays
+logged once. It refuses evidence whose log entry describes a different
+receipt.
 """
 
 from __future__ import annotations
@@ -65,6 +73,17 @@ DEFAULT_LOG_DIR = REPO_ROOT / "site" / "public" / "log"
 # every checkpoint and every proof already issued.
 LOG_ORIGIN = "attest-receipts.org/log"
 LOG_KEY_NAME = LOG_ORIGIN
+# The anchoring policy this repository publishes for that log, and the one a
+# visitor's verifier is meant to be configured with. The self-check below reads
+# it instead of writing a copy of its own, because a copy can only ever agree
+# with itself. Measured consequence, and it is the intended one: a
+# `crqc_horizon` in that file drops an unanchored sample to `not_checked`, so
+# the self-check refuses to publish rather than quietly ship a sample that has
+# stopped backing the claim the page makes about it. Regeneration stops until
+# the sample is anchored.
+SHIPPED_ANCHOR_POLICY = (
+    REPO_ROOT / "docs" / "trust" / "attest-receipts.org-log" / "anchor-policy.json"
+)
 
 ISSUER = "store.nebula.example"
 KID = f"{ISSUER}/keys/2026-q3#ed25519-1"
@@ -106,8 +125,17 @@ def _run_cli_json(argv: list[str]) -> dict[str, Any]:
 
 def _run_cli_capture(argv: list[str]) -> tuple[int, dict[str, Any]]:
     """Invoke a CLI verb whose exit code is part of the outcome; parse JSON."""
-    rc, stdout, _stderr = _run_cli(argv)
-    return rc, dict(json.loads(stdout))
+    rc, stdout, stderr = _run_cli(argv)
+    try:
+        return rc, dict(json.loads(stdout))
+    except json.JSONDecodeError as exc:
+        # A verb that refuses its arguments writes the reason to stderr and no
+        # report at all. Saying which verb and why beats a decode error, and it
+        # matters most for the inputs this script does not write itself: the
+        # published anchor policy it reads is edited by hand, elsewhere.
+        raise RuntimeError(
+            f"attest {argv[0]} produced no report (rc={rc}): {stderr or stdout}"
+        ) from exc
 
 
 def _log_keys_document(ed25519_pub_b64u: str, mldsa_pub_b64u: str) -> list[dict[str, str]]:
@@ -242,6 +270,96 @@ def refresh_readme(attest_path: Path) -> bool:
     with zipfile.ZipFile(replacement, "w", zipfile.ZIP_DEFLATED) as zf:
         for info, data in members:
             if info.filename == "README.html":
+                zf.writestr(info.filename, fresh)
+            else:
+                zf.writestr(info, data)
+    replacement.replace(attest_path)
+    return True
+
+
+def refresh_proof(attest_path: Path, evidence_path: Path) -> bool:
+    """Rewrite `proofs/<receipt_id>.json` inside an existing shareable bundle.
+
+    An inclusion proof gains standing over time without the receipt changing
+    at all: the same log entry, in the same checkpoint, acquires an anchor long
+    after the bundle was exported. Re-exporting to carry the stronger evidence
+    would mint a new signing key and log a second entry for a receipt that is
+    already logged, so this rewrites ONLY that member and leaves every other
+    one byte-for-byte as it was. The member is written the way
+    `attest.bundle.export` writes it, so the result is what a fresh export
+    carrying this evidence would produce. Returns True if the member changed,
+    False if the bundle already carried exactly this evidence.
+
+    Refuses evidence whose log entry describes a different receipt. The log
+    holds one entry per published sample, so reaching for the wrong file is the
+    easy mistake — and afterwards it is not a detectable one, because the
+    bundle still opens and its receipt still verifies while the proof beside it
+    is about somebody else's.
+
+    Refuses, for the same reason, a file that is not inclusion evidence at all.
+    One carrying the right `core_sha256` and nothing else clears that check and
+    installs a proof that proves nothing: same undetectable end state, reached
+    from the other side — the bundle opens, the receipt verifies, and the
+    transparency claim the page makes has quietly lost its backing.
+
+    Refuses anything that is not a shareable `.attest`, for the same reason
+    `refresh_readme` does: the private half is not what gets published.
+    """
+    if not attest_path.name.endswith(".attest") or attest_path.name.endswith(".private.attest"):
+        raise RuntimeError(f"not a shareable bundle: {attest_path.name}")
+
+    with zipfile.ZipFile(attest_path) as zf:
+        members = [(info, zf.read(info)) for info in zf.infolist()]
+
+    receipts = [data for info, data in members if info.filename.startswith("receipts/")]
+    if len(receipts) != 1:
+        raise RuntimeError(
+            f"{attest_path.name} carries {len(receipts)} receipts, not 1: "
+            "which proof to replace is not decidable"
+        )
+    envelope = json.loads(receipts[0])
+    receipt_id = envelope["payload"]["receipt_id"]
+    wanted = tlog.receipt_core_hash(envelope)
+
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    entry = evidence.get("entry") if isinstance(evidence, dict) else None
+    found = entry.get("core_sha256") if isinstance(entry, dict) else None
+    if found != wanted:
+        raise RuntimeError(
+            f"{evidence_path.name} is not this bundle's evidence: its log entry names "
+            f"core_sha256 {found}, and {attest_path.name}'s receipt hashes to {wanted}"
+        )
+
+    # Parsing the checkpoint and holding it to this log's origin is what
+    # separates inclusion evidence from a stub shaped like one. The check above
+    # only ever asked WHICH receipt the file names, never whether the file is
+    # evidence.
+    try:
+        origin = tlog.parse_checkpoint(evidence["checkpoint"]).origin
+    except (KeyError, TypeError, tlog.TlogError) as exc:
+        raise RuntimeError(
+            f"{evidence_path.name} carries no parseable checkpoint, so it is not "
+            f"inclusion evidence for {attest_path.name}: {exc}"
+        ) from exc
+    if origin != LOG_ORIGIN:
+        raise RuntimeError(
+            f"{evidence_path.name} is evidence from log {origin!r}, not {LOG_ORIGIN!r}"
+        )
+
+    member = f"proofs/{receipt_id}.json"
+    current = [data for info, data in members if info.filename == member]
+    if len(current) != 1:
+        raise RuntimeError(f"{attest_path.name} carries {len(current)} {member} members, not 1")
+    fresh = json.dumps(evidence).encode("utf-8")
+    if current[0] == fresh:
+        return False
+
+    # Written beside the original and swapped in whole: a bundle is never left
+    # half-rewritten on disk if this process dies mid-way.
+    replacement = attest_path.with_name(attest_path.name + ".tmp")
+    with zipfile.ZipFile(replacement, "w", zipfile.ZIP_DEFLATED) as zf:
+        for info, data in members:
+            if info.filename == member:
                 zf.writestr(info.filename, fresh)
             else:
                 zf.writestr(info, data)
@@ -446,10 +564,6 @@ def main(
         transparency_report: dict[str, Any] | None = None
         if logging_enabled:
             assert log_keys_path is not None
-            anchor_policy_path = ws / "anchor-policy.json"
-            anchor_policy_path.write_text(
-                json.dumps({"pinned_headers": {}, "crqc_horizon": None}), encoding="utf-8"
-            )
             imported_proof = next((import_dir / "proofs").glob("*.json"))
             rc_t, transparency_report = _run_cli_capture(
                 [
@@ -462,7 +576,7 @@ def main(
                     "--log-keys",
                     str(log_keys_path),
                     "--anchor-policy",
-                    str(anchor_policy_path),
+                    str(SHIPPED_ANCHOR_POLICY),
                 ]
             )
             if rc_t != 0 or transparency_report.get("transparency") != "logged":
@@ -517,11 +631,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--log-mldsa-key", type=Path, default=None, help="log signer's ML-DSA-65 key file"
     )
-    p.add_argument(
+    # One member at a time: asking for both in one run would have to pick an
+    # order, and the losing flag would be ignored without saying so.
+    refresh = p.add_mutually_exclusive_group()
+    refresh.add_argument(
         "--refresh-readme",
         action="store_true",
         help="rewrite only README.html inside the committed demo.attest from the "
         "current template; mints no key, touches no log, changes no other member",
+    )
+    refresh.add_argument(
+        "--refresh-proof",
+        type=Path,
+        default=None,
+        help="rewrite only proofs/<receipt_id>.json inside the committed demo.attest "
+        "from the evidence file at this path; refuses evidence for another receipt",
     )
     return p.parse_args(argv)
 
@@ -532,6 +656,11 @@ if __name__ == "__main__":
         target = args.out_dir / "demo.attest"
         changed = refresh_readme(target)
         print(json.dumps({"attest": str(target), "readme_refreshed": changed}, indent=2))
+        sys.exit(0)
+    if args.refresh_proof is not None:
+        target = args.out_dir / "demo.attest"
+        changed = refresh_proof(target, args.refresh_proof)
+        print(json.dumps({"attest": str(target), "proof_refreshed": changed}, indent=2))
         sys.exit(0)
     report = main(
         args.out_dir,
