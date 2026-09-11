@@ -3125,6 +3125,50 @@ def check_tm80_leaf_tense() -> list[str]:
     return errors
 
 
+# README.md states how many attacks the catalog holds. Nothing derived that
+# number from the catalog, so it drifted: it read 78 while the catalog held 80,
+# and the two entries added in between were invisible to every gate. A count
+# written by hand in a public surface is a measurement claim like any other —
+# it needs the thing it claims to measure on the other side of a comparison,
+# or it is only as fresh as the last reader who remembered.
+_README_PATH = _REPO_ROOT / "README.md"
+_README_CATALOG_RE = re.compile(r"(\d+) attacks catalogued")
+
+
+def check_readme_catalog_count() -> list[str]:
+    """README.md's catalog size equals the number of entries the catalog has.
+
+    Fail-closed on a missing sentence: a guard whose subject has been reworded
+    reports green for the wrong reason. Not wired into `collect_errors()` --
+    like `check_tm80_leaf_tense()` it reads the filesystem rather than
+    cross-referencing another document's parsed structure, so `main()` calls it.
+    """
+    # An illustrative fence -- or an XML comment -- reads exactly like the real
+    # sentence, so scanning them raw would let non-operative content satisfy this
+    # guard's own subject; README.md already carries fenced blocks. Same
+    # rationale as collect_errors(), applied to BOTH sides of the comparison.
+    readme = _strip_xml_comments(_strip_fenced_blocks(_README_PATH.read_text(encoding="utf-8")))
+    matches = _README_CATALOG_RE.findall(readme)
+    if not matches:
+        return [
+            "README.md: the sentence stating how many attacks the threat model catalogues "
+            f"is gone (pattern {_README_CATALOG_RE.pattern!r}); it is what ties that number "
+            "to the catalog"
+        ]
+    if len(matches) > 1:
+        return [f"README.md: {len(matches)} catalog-size claims; the check would read the first"]
+    # Illustrative fences read exactly like the real entry; same rationale as
+    # collect_errors().
+    entries = len(parse_tm_ids(_strip_fenced_blocks(_THREAT_MODEL_PATH.read_text("utf-8"))))
+    claimed = int(matches[0])
+    if claimed != entries:
+        return [
+            f"README.md claims {claimed} attacks catalogued; attest-threat-model.md has "
+            f"{entries} entries"
+        ]
+    return []
+
+
 def main() -> int:
     threat_model = _THREAT_MODEL_PATH.read_text(encoding="utf-8")
     privacy = _PRIVACY_PATH.read_text(encoding="utf-8")
@@ -3141,6 +3185,7 @@ def main() -> int:
     errors += check_conformance_self_certification()
     errors += check_corpus_counts()
     errors += check_tm80_leaf_tense()
+    errors += check_readme_catalog_count()
     errors += check_tm32_compromise_scope(spec_v01, threat_model)
     errors += check_appendix_a_annotation(spec_v01)
     errors += check_coined_terms()

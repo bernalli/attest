@@ -242,7 +242,7 @@ Eight pieces of work go beyond what a test suite can show. All of them are on
   negative controls that must falsify. Each theorem states its own scope in the
   theory file; nothing is claimed more broadly there than the prover checked, and
   a CI checker pins those statements so the claims cannot drift from the proofs.
-- **[Threat model](docs/spec/attest-threat-model.md).** 78 attacks catalogued
+- **[Threat model](docs/spec/attest-threat-model.md).** 81 attacks catalogued
   across the whole receipt lifecycle, each either mitigated or recorded as out of
   scope with a reason, a traceability matrix, and the protocol gaps the exercise
   found left tracked in the open instead of quietly fixed.

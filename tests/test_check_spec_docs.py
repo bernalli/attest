@@ -4371,3 +4371,105 @@ def test_a_duplicated_anchor_registry_heading_is_reported_rather_than_first_wins
     )
     errors = check_spec_docs.check_versioning_anchor_registries(drifted)
     assert any("'### 6.12 Anchor proof kinds' appears 2 times" in e for e in errors), errors
+
+
+# --- README's catalog size, tied to the catalog --------------------------------
+#
+# The number drifted to 78 while the catalog held 80, because nothing derived
+# one from the other. These pin the tie, not the number.
+
+
+def test_the_readme_catalog_count_matches_the_catalog() -> None:
+    assert check_spec_docs.check_readme_catalog_count() == []
+
+
+def test_a_readme_catalog_count_that_drifts_is_reported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    real = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    match = check_spec_docs._README_CATALOG_RE.search(real)
+    assert match is not None
+    drifted = tmp_path / "README.md"
+    drifted.write_text(real.replace(match.group(0), "78 attacks catalogued"), "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", drifted)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("claims 78 attacks catalogued" in e for e in errors), errors
+
+
+def test_the_catalog_count_check_fails_closed_when_the_sentence_is_reworded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A guard whose subject has been reworded reports green for the wrong reason."""
+    reworded = tmp_path / "README.md"
+    reworded.write_text("# attest\n\nEvery attack we could think of is catalogued.\n", "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", reworded)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+def test_two_catalog_claims_are_reported_rather_than_first_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doubled = tmp_path / "README.md"
+    doubled.write_text("81 attacks catalogued. Elsewhere: 12 attacks catalogued.\n", "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", doubled)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("2 catalog-size claims" in e for e in errors), errors
+
+
+def test_main_calls_the_readme_catalog_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pins the main() wiring: collect_errors() cannot reach this check."""
+    real = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    match = check_spec_docs._README_CATALOG_RE.search(real)
+    assert match is not None
+    drifted = tmp_path / "README.md"
+    drifted.write_text(real.replace(match.group(0), "1 attacks catalogued"), "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", drifted)
+
+    assert main() == 1
+
+
+def test_a_fenced_catalog_claim_cannot_stand_in_for_the_real_sentence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An illustrative fence reads exactly like the real sentence.
+
+    README.md already carries fenced blocks, so this is reachable input rather
+    than a corner: the guard's own subject must not be satisfiable by
+    non-operative content.
+    """
+    fenced = tmp_path / "README.md"
+    fenced.write_text(
+        "# attest\n\nFor example:\n\n```\n- **Threat model.** 81 attacks catalogued\n```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", fenced)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+def test_a_fenced_tm_entry_is_not_counted_as_a_catalog_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The catalog side of the same property: a fenced sample entry is not an entry."""
+    real_tm = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+    with_fenced_entry = tmp_path / "attest-threat-model.md"
+    with_fenced_entry.write_text(
+        real_tm
+        + "\n```\n#### TM-99 — an illustrative sample, not an entry\n\n"
+        + "- **Verdict:** Out of scope — v0.1 §7.3.\n```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_THREAT_MODEL_PATH", with_fenced_entry)
+
+    assert check_spec_docs.check_readme_catalog_count() == []
