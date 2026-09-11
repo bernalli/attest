@@ -36,7 +36,7 @@ from attest_witness.service import WitnessService, origin_hash
 from attest_witness.store import WitnessStore
 from pqcrypto.sign import ml_dsa_65
 
-from attest import keys, pq, tlog
+from attest import keys, pq, tlog, witness
 from demo import witness_client, witness_cosigns
 from tools.ci_required import ci_prerequisites_required
 
@@ -139,7 +139,12 @@ def test_evidence_refuses_an_epoch_that_names_nothing() -> None:
 
     for epoch in ("", None, 1):
         with pytest.raises(ValueError, match="witness_policy_epoch"):
-            witness_client.evidence_with_cosignature(evidence, merged, witness_policy_epoch=epoch)
+            witness_client.evidence_with_cosignature(
+                evidence,
+                merged,
+                witness_policy_epoch=epoch,
+                witness_policy_bytes=WITNESS_POLICY_BYTES,
+            )
 
 
 # --- the note join: a cosignature is APPENDED, never substituted -------------
@@ -206,6 +211,17 @@ def test_a_cosigned_note_refuses_cosignature_lines_that_are_not_terminated() -> 
 
 OTHER_NOTE = SAMPLE_NOTE.replace("\n1\n", "\n2\n", 1)
 
+# The verifier's own trusted configuration, built by the demo's own builder so
+# these tests resolve epochs against the document shape the demo really writes
+# — not a second copy of it. `log_origin` is SAMPLE_NOTE's, because an epoch
+# that does not list a checkpoint's origin resolves to nothing for it.
+WITNESS_POLICY_BYTES = witness.policy_bytes(
+    witness_cosigns._witness_policy_document(
+        base64.urlsafe_b64encode(b"w" * 32).rstrip(b"=").decode("ascii"),
+        log_origin="log.example",
+    )
+)
+
 
 def test_evidence_is_repointed_at_the_cosigned_note_and_names_the_epoch() -> None:
     """`attest log prove` writes the note in LOG/checkpoint, which the
@@ -217,7 +233,10 @@ def test_evidence_is_repointed_at_the_cosigned_note_and_names_the_epoch() -> Non
     merged = witness_client.cosigned_note(SAMPLE_NOTE, COSIGNATURE_LINES)
 
     updated = witness_client.evidence_with_cosignature(
-        evidence, merged, witness_policy_epoch="bootstrap-1"
+        evidence,
+        merged,
+        witness_policy_epoch="bootstrap-1",
+        witness_policy_bytes=WITNESS_POLICY_BYTES,
     )
 
     assert updated["checkpoint"] == merged
@@ -233,7 +252,12 @@ def test_evidence_is_not_mutated_in_place() -> None:
     evidence = {"entry": {"type": "receipt"}, "checkpoint": SAMPLE_NOTE}
     merged = witness_client.cosigned_note(SAMPLE_NOTE, COSIGNATURE_LINES)
 
-    witness_client.evidence_with_cosignature(evidence, merged, witness_policy_epoch="bootstrap-1")
+    witness_client.evidence_with_cosignature(
+        evidence,
+        merged,
+        witness_policy_epoch="bootstrap-1",
+        witness_policy_bytes=WITNESS_POLICY_BYTES,
+    )
 
     assert evidence == {"entry": {"type": "receipt"}, "checkpoint": SAMPLE_NOTE}
 
@@ -247,14 +271,111 @@ def test_evidence_refuses_a_cosigned_note_for_a_different_checkpoint() -> None:
 
     with pytest.raises(ValueError, match="different checkpoint"):
         witness_client.evidence_with_cosignature(
-            evidence, foreign, witness_policy_epoch="bootstrap-1"
+            evidence,
+            foreign,
+            witness_policy_epoch="bootstrap-1",
+            witness_policy_bytes=WITNESS_POLICY_BYTES,
         )
+
+
+def test_evidence_refuses_an_epoch_the_verifiers_policy_does_not_define() -> None:
+    """A typo in an epoch name is well-formed, so no check of FORM can catch
+    it — and v0.2 s10.2 step 8 resolves an unknown epoch to nothing in
+    SILENCE (s11.4). Measured before this guard existed: `bootstrap-l` for
+    `bootstrap-1` produced exit 0, `ok: true`, `corroboration: "logged"` and
+    `warnings: []` — the same output as a run where no witness cosigned at
+    all. The only thing that can tell the two apart is the document the
+    verifier will resolve the name against, so this client resolves it there
+    first and names what it found."""
+    evidence = {"entry": {"type": "receipt"}, "checkpoint": SAMPLE_NOTE}
+    merged = witness_client.cosigned_note(SAMPLE_NOTE, COSIGNATURE_LINES)
+
+    with pytest.raises(witness_client.UnknownPolicyEpoch) as raised:
+        witness_client.evidence_with_cosignature(
+            evidence,
+            merged,
+            witness_policy_epoch="bootstrap-l",
+            witness_policy_bytes=WITNESS_POLICY_BYTES,
+        )
+
+    message = str(raised.value)
+    assert "witness_policy_epoch" in message
+    assert "bootstrap-l" in message
+    assert "bootstrap-1" in message
+
+
+def test_evidence_refuses_an_epoch_that_does_not_cover_this_logs_origin() -> None:
+    """The second condition the verifier resolves in silence: an epoch that
+    resolves by name still corroborates nothing for a checkpoint whose origin
+    it does not list (`witness.evaluate_corroboration`, fail-closed on
+    `log_origins`). Named apart from the unknown-epoch case because the
+    operator's repair is a different one — the epoch is right, its scope is
+    not."""
+    foreign = SAMPLE_NOTE.replace("log.example", "log.other.example")
+    evidence = {"entry": {"type": "receipt"}, "checkpoint": foreign}
+    merged = witness_client.cosigned_note(foreign, COSIGNATURE_LINES)
+
+    with pytest.raises(witness_client.EpochDoesNotCoverLog) as raised:
+        witness_client.evidence_with_cosignature(
+            evidence,
+            merged,
+            witness_policy_epoch="bootstrap-1",
+            witness_policy_bytes=WITNESS_POLICY_BYTES,
+        )
+
+    message = str(raised.value)
+    assert "log.other.example" in message
+    assert "log.example" in message
+
+
+def test_evidence_refuses_a_policy_document_it_cannot_read() -> None:
+    """Constraint on the redesign itself: the case where the authority cannot
+    be consulted must be LOUD, not a branch that degrades to the comfortable
+    outcome. A policy this client cannot parse is not a policy that resolves
+    nothing — it is a different condition with a different repair, so it
+    carries its own type.
+
+    The parsed document is the third input on purpose: handing over the dict
+    instead of the bytes the verifier loads is the mistake an operator
+    actually makes, and left alone it surfaces as `AttributeError: \'dict\'
+    object has no attribute \'decode\'` — loud, but naming nothing a caller
+    can act on."""
+    evidence = {"entry": {"type": "receipt"}, "checkpoint": SAMPLE_NOTE}
+    merged = witness_client.cosigned_note(SAMPLE_NOTE, COSIGNATURE_LINES)
+
+    for unreadable in (b"{}", b"not json at all", {"schema": "attest-witness-policy-v1"}, None):
+        with pytest.raises(witness_client.UnreadableWitnessPolicy) as raised:
+            witness_client.evidence_with_cosignature(
+                evidence,
+                merged,
+                witness_policy_epoch="bootstrap-1",
+                witness_policy_bytes=unreadable,
+            )
+        assert "witness_policy_bytes" in str(raised.value)
+
+
+def test_the_policy_mismatches_are_one_family_and_the_unreadable_one_is_not() -> None:
+    """`UnknownPolicyEpoch` and `EpochDoesNotCoverLog` are both "the authority
+    does not agree with the name you gave"; an unreadable document is "the
+    authority could not be consulted". A caller that cannot tell those two
+    kinds apart is back to treating a configuration typo like malformed data,
+    which is the confusion this redesign exists to remove."""
+    assert issubclass(witness_client.UnknownPolicyEpoch, witness_client.WitnessPolicyMismatch)
+    assert issubclass(witness_client.EpochDoesNotCoverLog, witness_client.WitnessPolicyMismatch)
+    assert not issubclass(
+        witness_client.UnreadableWitnessPolicy, witness_client.WitnessPolicyMismatch
+    )
+    assert issubclass(witness_client.WitnessPolicyMismatch, ValueError)
+    assert issubclass(witness_client.UnreadableWitnessPolicy, ValueError)
 
 
 def test_evidence_refuses_a_bundle_with_no_checkpoint_of_its_own() -> None:
     with pytest.raises(ValueError, match="no `checkpoint`"):
         witness_client.evidence_with_cosignature(
-            {"entry": {}}, SAMPLE_NOTE, witness_policy_epoch="bootstrap-1"
+            {"entry": {}},
+            SAMPLE_NOTE,
+            witness_policy_epoch="bootstrap-1",
+            witness_policy_bytes=WITNESS_POLICY_BYTES,
         )
 
 

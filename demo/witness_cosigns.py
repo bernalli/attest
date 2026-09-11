@@ -75,7 +75,7 @@ from attest_witness.http import make_app
 from attest_witness.service import WitnessService, origin_hash
 from attest_witness.store import WitnessStore
 
-from attest import issue, keys, pq, tlog
+from attest import issue, keys, pq, tlog, witness
 from demo import _driver, witness_client
 
 _narrate = _driver.narrate
@@ -149,14 +149,18 @@ def _witness_config_text(
     )
 
 
-def _witness_policy_document(ed25519_pub_b64u: str) -> dict[str, Any]:
+def _witness_policy_document(
+    ed25519_pub_b64u: str, *, log_origin: str = LOG_ORIGIN
+) -> dict[str, Any]:
     """The verifier's OWN trusted configuration (v0.2 s11.4).
 
     It travels on the same rail as pinned log keys — packaged with the
     verifier, never read off the evidence bundle. The evidence only names the
     epoch; this document says who that epoch pins. `log_origins` is not
     decoration: an epoch that does not list a checkpoint's origin corroborates
-    nothing for it.
+    nothing for it — which is why `log_origin` is a parameter and not the
+    constant inlined: the same document shape has to be buildable for another
+    log to show what happens when the epoch does not cover this one.
     """
     return {
         "schema": "attest-witness-policy-v1",
@@ -165,7 +169,7 @@ def _witness_policy_document(ed25519_pub_b64u: str) -> dict[str, Any]:
                 "epoch_id": EPOCH_ID,
                 "not_before": EPOCH_START,
                 "not_after": None,
-                "log_origins": [LOG_ORIGIN],
+                "log_origins": [log_origin],
                 "threshold": {"n": 1, "m": 1},
                 "witnesses": [
                     {
@@ -461,14 +465,36 @@ def run_demo(workspace: Path) -> dict[str, Any]:
             ]
         )
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        # The verifier's OWN trusted configuration, built here rather than in
+        # step 8 because the evidence cannot honestly name an epoch before the
+        # document that defines it exists. Written once and used twice, from
+        # the SAME bytes: `attest verify --witness-policy` loads this file, and
+        # `evidence_with_cosignature` resolves EPOCH_ID against these bytes
+        # before it will write the member. A name and the document that gives
+        # it meaning cannot drift apart if there is only one of each.
+        witness_policy_path = verifier_dir / "witness-policy.json"
+        witness_policy_bytes = witness.policy_bytes(
+            _witness_policy_document(witness_ed25519_pub_b64u)
+        )
+        witness_policy_path.write_bytes(witness_policy_bytes)
         # `log prove` writes the note in LOG/checkpoint, which the witness's
         # lines never reach, and emits no `witness_policy_epoch`. Both joins
         # are this demo's own work — see demo/witness_client.py.
-        unwitnessed = dict(evidence)
-        unwitnessed["witness_policy_epoch"] = EPOCH_ID
         witnessed = witness_client.evidence_with_cosignature(
-            evidence, cosigned_checkpoint, witness_policy_epoch=EPOCH_ID
+            evidence,
+            cosigned_checkpoint,
+            witness_policy_epoch=EPOCH_ID,
+            witness_policy_bytes=witness_policy_bytes,
         )
+        # The control bundle: the same evidence and the same epoch, with the
+        # note that does NOT carry the witness's lines. The member is copied
+        # from the checked bundle rather than assigned from the constant, so
+        # this demo has exactly one place that produces `witness_policy_epoch`
+        # and it is the one that resolved it. A reference with a second,
+        # unchecked spelling of the same member is a reference that teaches
+        # the unchecked one.
+        unwitnessed = dict(evidence)
+        unwitnessed["witness_policy_epoch"] = witnessed["witness_policy_epoch"]
         outcomes["evidence_unwitnessed"] = unwitnessed
         outcomes["evidence_witnessed"] = witnessed
         unwitnessed_path = verifier_dir / "evidence-unwitnessed.json"
@@ -505,10 +531,6 @@ def run_demo(workspace: Path) -> dict[str, Any]:
         anchor_policy_path = verifier_dir / "anchor-policy.json"
         anchor_policy_path.write_text(
             json.dumps({"pinned_headers": {}, "crqc_horizon": None}), encoding="utf-8"
-        )
-        witness_policy_path = verifier_dir / "witness-policy.json"
-        witness_policy_path.write_text(
-            json.dumps(_witness_policy_document(witness_ed25519_pub_b64u)), encoding="utf-8"
         )
         outcomes["witness_policy_epoch"] = EPOCH_ID
 

@@ -26,6 +26,21 @@ speaks cleartext HTTP, because the witness binds loopback and TLS belongs to
 whatever is in front of it. And it retries nothing: a 409 carries the size
 the witness holds precisely so a caller can resynchronise, and deciding
 whether to is the caller's, not this module's.
+
+And it resolves an epoch only as far as a writer can. v0.2 s10.2 step 8
+resolves one in four steps, every one of them silent on failure: the
+identifier must be known to the policy, the epoch must list the checkpoint's
+origin, the epoch's window must cover the moment the cosignature claims, and
+the pin must have standing at that moment. `_require_resolvable_epoch` closes
+the first two, which are the two a client can decide without re-deriving a
+cosignature's key-id and timestamp — and re-deriving them here would make
+this module a second opinion about what a cosignature says, which is exactly
+the shape of check that certifies its own mistake. The other two remain
+silent, measured and not assumed: an epoch named correctly, listing the right
+origin, whose window closed in 2020 still verifies `ok: true`,
+`corroboration: "logged"`, `warnings: []`. Closing them wants a public
+"parse one cosignature blob" entry point in `attest.witness`, which is a
+change to the shipped core rather than to this demo.
 """
 
 from __future__ import annotations
@@ -36,8 +51,97 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from attest import tlog, witness
+
 # C2SP tlog-witness bounds a consistency-proof line at a base64 SHA-256 hash.
 _SHA256_LEN = 32
+
+
+class WitnessPolicyMismatch(ValueError):
+    """The verifier's policy document does not agree with the epoch named.
+
+    A family, not a single condition, because the two members below send an
+    operator to two different repairs. What they share is the one thing a
+    caller must be able to branch on: the bundle would have named an epoch
+    that resolves to nothing, and v0.2 s11.4 makes the verifier say so in
+    silence.
+    """
+
+
+class UnknownPolicyEpoch(WitnessPolicyMismatch):
+    """No epoch in the policy document carries the identifier named.
+
+    The typo case. A mistyped identifier is perfectly well formed, so no
+    check of shape can see it — only the document that defines the names can.
+    """
+
+
+class EpochDoesNotCoverLog(WitnessPolicyMismatch):
+    """The epoch resolves by name but does not list this checkpoint's origin.
+
+    `witness.evaluate_corroboration` fails closed on `log_origins`, and just
+    as silently: the epoch is right and its scope is wrong, which is a
+    different repair from a wrong name and therefore a different type.
+    """
+
+
+class UnreadableWitnessPolicy(ValueError):
+    """The policy document could not be read, so nothing was resolved.
+
+    Deliberately NOT a `WitnessPolicyMismatch`: "the authority disagrees with
+    you" and "the authority could not be consulted" are different facts, and
+    a redesign that answered them with one exception would have moved the
+    silence one step rather than removed it.
+    """
+
+
+def _require_resolvable_epoch(
+    witness_policy_bytes: object, witness_policy_epoch: str, checkpoint_text: str
+) -> None:
+    """Resolve the named epoch the way the verifier will, and refuse loudly.
+
+    The authority is the `attest-witness-policy-v1` document the verifier is
+    handed, parsed from the SAME BYTES through the SAME entry point the
+    verifier uses (`witness.load_policy`, as `attest verify --witness-policy`
+    does). Re-implementing the lookup here would make this a second opinion
+    about what an epoch is; going through `witness` makes it the first one.
+
+    Two conditions are checked, and they are exactly the two that v0.2 s10.2
+    step 8 resolves BEFORE it ever looks at a signature — the two whose
+    failure s11.4 keeps silent, and so the two an operator can never learn
+    about from the verdict.
+    """
+    if not isinstance(witness_policy_bytes, bytes):
+        raise UnreadableWitnessPolicy(
+            "witness_policy_bytes must be the bytes of the policy document the verifier "
+            f"will be given, not {type(witness_policy_bytes).__name__}; the parsed object "
+            "is not interchangeable with them (a JSON `1.0` is refused on the byte path "
+            "and indistinguishable from `1` once in memory)"
+        )
+    try:
+        policy = witness.load_policy(witness_policy_bytes)
+    except ValueError as exc:
+        raise UnreadableWitnessPolicy(
+            f"witness_policy_bytes is not a policy document the verifier will load: {exc}"
+        ) from exc
+
+    epoch = policy.epoch(witness_policy_epoch)
+    if epoch is None:
+        defined = ", ".join(repr(known.epoch_id) for known in policy.epochs) or "no epoch"
+        raise UnknownPolicyEpoch(
+            f"witness_policy_epoch {witness_policy_epoch!r} resolves to nothing in the "
+            f"policy the verifier will read, which defines {defined}; a verifier given "
+            "this bundle would report `logged` and, by v0.2 s11.4, name no condition"
+        )
+
+    origin = tlog.parse_checkpoint(checkpoint_text).origin
+    if origin not in epoch.log_origins:
+        covered = ", ".join(repr(listed) for listed in epoch.log_origins) or "no origin"
+        raise EpochDoesNotCoverLog(
+            f"epoch {witness_policy_epoch!r} does not list this checkpoint's origin "
+            f"{origin!r}; it covers {covered}, and an epoch that does not list an "
+            "origin corroborates nothing for it — silently"
+        )
 
 
 def build_submission(old_size: int, checkpoint_text: str, proof: Sequence[bytes] = ()) -> bytes:
@@ -101,7 +205,11 @@ def cosigned_note(checkpoint_text: str, cosignature_lines: str) -> str:
 
 
 def evidence_with_cosignature(
-    evidence: dict[str, Any], cosigned_checkpoint: str, *, witness_policy_epoch: str
+    evidence: dict[str, Any],
+    cosigned_checkpoint: str,
+    *,
+    witness_policy_epoch: str,
+    witness_policy_bytes: bytes,
 ) -> dict[str, Any]:
     """`attest log prove` evidence, re-pointed at the COSIGNED note.
 
@@ -112,6 +220,16 @@ def evidence_with_cosignature(
     holding a witness policy reports `corroboration: "logged"` and names no
     condition — step 8's silence is normative (s11.4), so a missing member is
     indistinguishable from a witness that did not count.
+
+    The epoch is a CLAIM, checked here, not a value taken on trust. Naming it
+    is the caller's (s10.2: evidence names an epoch, and the verifier never
+    substitutes the current one for one that fails to resolve), but whether
+    that name means anything is the policy document's, so this function
+    requires that document and resolves the name against it — see
+    `_require_resolvable_epoch`. The parameter has no default and no `None` branch on
+    purpose: "the authority was not consulted" is not a state this function
+    can be in, because an optional check would have restored exactly the
+    silence it exists to remove.
 
     The substitution is guarded: the cosigned note's BODY must be the body the
     evidence already carried. A note for another tree, or another log, carries
@@ -129,6 +247,7 @@ def evidence_with_cosignature(
         )
     if split_note(cosigned_checkpoint).body != split_note(existing).body:
         raise ValueError("the cosigned note is a different checkpoint from the evidence's own")
+    _require_resolvable_epoch(witness_policy_bytes, witness_policy_epoch, cosigned_checkpoint)
     updated = dict(evidence)
     updated["checkpoint"] = cosigned_checkpoint
     updated["witness_policy_epoch"] = witness_policy_epoch

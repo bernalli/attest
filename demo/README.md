@@ -213,7 +213,10 @@ keys would observe nothing.
    note, never substituted for it. Its monitoring endpoint then serves that
    cosigned note to anyone who asks.
 7. `attest log prove` writes the inclusion evidence, which is re-pointed at
-   the cosigned note and told which witness-policy epoch to read.
+   the cosigned note and told which witness-policy epoch to read. The epoch
+   is not taken on trust: the demo writes the verifier's witness policy
+   first, and the client resolves the name against those same bytes before
+   it will put it in the bundle.
 8. `attest verify` runs **twice**, over the same receipt, the same pinned log
    keys and the same witness policy. Without the cosignature lines:
    `corroboration: "logged"`. With them: `corroboration: "witnessed"`, plus
@@ -239,10 +242,29 @@ Two traps an operator meets here, stated because both cost a wrong answer
 rather than an error. `attest verify` needs `--anchor-policy` to be supplied
 even when there is no anchor to evaluate: with `--transparency` and
 `--log-keys` alone the verdict comes back `transparency: "not_checked"` and
-the warning `transparency_config_missing`. And a missing
-`witness_policy_epoch` in the evidence reports `corroboration: "logged"` and
-names no condition at all — step 8's silence is normative (v0.2 §11.4), so
-an omitted member is indistinguishable from a witness that did not count.
+the warning `transparency_config_missing`. And a `witness_policy_epoch` that
+the verifier cannot resolve — missing, or present and simply mistyped —
+reports `corroboration: "logged"` and names no condition at all: step 8's
+silence is normative (v0.2 §11.4), so it is indistinguishable from a witness
+that did not count.
+
+The mistyped case is the one worth dwelling on, because no check of shape can
+reach it: `bootstrap-l` for `bootstrap-1` is a perfectly well-formed string,
+and there is nothing to compare it against unless you hold the document that
+defines the epoch names. That document is the verifier's witness policy, so
+`evidence_with_cosignature` requires it and resolves the epoch there — by
+name, and then against the epoch's `log_origins` — refusing with
+`UnknownPolicyEpoch` or `EpochDoesNotCoverLog` rather than writing a member
+that means nothing. The argument has no default: an optional check would have
+put the silence back one step, which is the only place it could still hide.
+
+Two of step 8's four resolution conditions stay silent, and the demo says so
+rather than implying it closed them all: an epoch named correctly and listing
+the right origin, but whose validity window has closed, still verifies
+`ok: true` with `corroboration: "logged"` and no warning. Deciding that here
+means re-deriving a cosignature's key-id and timestamp, which would make the
+client a second opinion about what a cosignature says — see the note at the
+top of `witness_client.py`.
 
 ## How to run them
 
