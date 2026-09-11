@@ -4229,8 +4229,8 @@ def test_a_duplicated_tm32_entry_is_reported_rather_than_silently_first_wins() -
     assert any("TM-32 appears 2 times" in e for e in errors), errors
 
 
-def test_a_duplicated_7_3_heading_does_not_let_the_first_copy_vouch() -> None:
-    """The scoped copy above must not satisfy the anchor for an unscoped §7.3."""
+def test_a_duplicated_7_3_heading_is_reported_rather_than_silently_first_wins() -> None:
+    """The scoped copy above must not vouch for a second, unscoped '### 7.3'."""
     scoped = _v01_with_scope()
     unscoped_tail = (
         "### 7.3 Rotation continuity and key compromise\n\n"
@@ -4239,6 +4239,4 @@ def test_a_duplicated_7_3_heading_does_not_let_the_first_copy_vouch() -> None:
     errors = check_spec_docs.check_tm32_compromise_scope(
         scoped + unscoped_tail, _tm_with_verdict(_SCOPED_VERDICT)
     )
-    # Documented behaviour: the first §7.3 is the one measured. Pinned so that a
-    # future change to which copy wins is a red rather than a silent shift.
-    assert errors == []
+    assert any("'### 7.3' appears 2 times" in e for e in errors), errors

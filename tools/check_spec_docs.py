@@ -1592,6 +1592,9 @@ _PER_PERIOD_REQUIRED_HALVES: tuple[str, ...] = ("forgery", "invalidation reach")
 # must not match, so the qualifier cannot sit between the verb and the noun.
 _PER_PERIOD_UNSCOPED_RE = re.compile(r"bounds?\s+(?:the|its)\s+blast\s+radius", re.IGNORECASE)
 _TM32_HEADING_RE = re.compile(r"^#### TM-32 ", re.MULTILINE)
+# Same rationale one heading level up: a duplicated '### 7.3' would let the
+# first, well-formed copy vouch for a second, drifted one.
+_V01_73_HEADING_RE = re.compile(r"^### 7\.3 ", re.MULTILINE)
 # The scan may not cross into the next entry. A TM-32 that loses its verdict
 # line would otherwise adopt TM-33's: green on a verdict that does not exist,
 # or a red naming the wrong entry.
@@ -1607,6 +1610,12 @@ def check_tm32_compromise_scope(spec_v01: str, threat_model: str) -> list[str]:
     # collect_errors() and check_tm80_leaf_tense().
     spec_v01 = _strip_fenced_blocks(spec_v01)
     threat_model = _strip_fenced_blocks(threat_model)
+    section_headings = _V01_73_HEADING_RE.findall(spec_v01)
+    if len(section_headings) > 1:
+        return [
+            f"attest-v0.1.md: '### 7.3' appears {len(section_headings)} times; "
+            "the scope anchor would be whichever came first"
+        ]
     section = re.search(r"^### 7\.3 [^\n]*$([\s\S]*?)(?=^### |^## |\Z)", spec_v01, re.MULTILINE)
     if section is None:
         return ["attest-v0.1.md: missing required heading '### 7.3'"]
