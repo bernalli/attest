@@ -4,23 +4,21 @@
 *A whitepaper on durable digital possession: the seller signs a receipt, you hold the file, anyone
 can verify it offline — even after the store is gone.*
 
-> **Status: complete draft, sixth round (September 2026).** Every section of the outline in
-> Part A is written in full in Part B. Part C is a short note for the project's owner, listing
-> the decisions that remain genuinely theirs, each with the text chosen in the meantime; it is
-> removed before publication. Every factual claim in Part B was checked against the specification,
-> the code and the running demonstrations on the day of writing, and every claim about a law or a
-> regulator's act against the published text of that act; sources are named inline, in the notes
-> of section 15, or in the outline. Nothing in this document is a promise the repository cannot
-> keep. The comment at the top of this file names the specification revisions and the package
-> version the text describes; a test in the repository fails when they move, so the document
-> cannot fall behind what it describes without someone noticing. The gate was installed in the
-> fourth round, once every section of the outline had been written out in full; both rounds since
-> exist because what this document reports on changed under it, and sentences that were true when
-> they were written had stopped being true. This one absorbed two revisions of v0.1 and three of
-> v0.2, four package releases, two further payment rails in the checkout service, and a patent
-> covenant that the colophon still described as absent. They are marked nowhere, because a
-> document that annotates its own corrections is harder to read than one that is simply correct;
-> what is annotated instead is the repository, whose history holds both states.
+> **Status: complete draft, sixth round (September 2026).** Every section of the outline in Part A
+> is written in full in Part B. Every factual claim in Part B was checked against the
+> specification, the code and the running demonstrations on the day of writing, and every claim
+> about a law or a regulator's act against the published text of that act; sources are named
+> inline, in the notes of section 15, or in the outline. Nothing in this document is a promise the
+> repository cannot keep. The comment at the top of this file names the specification revisions
+> and the package version the text describes; a test in the repository fails when they move, so
+> the document cannot fall behind what it describes without someone noticing. The gate was
+> installed in the fourth round, once every section of the outline had been written out in full;
+> both rounds since exist because what this document reports on changed under it, and sentences
+> that were true when they were written had stopped being true. This one absorbed two revisions of
+> v0.1 and three of v0.2, four package releases, two further payment rails in the checkout
+> service, and a patent covenant that the colophon still described as absent. They are marked
+> nowhere, because a document that annotates its own corrections is harder to read than one that
+> is simply correct; what is annotated instead is the repository, whose history holds both states.
 
 ---
 
@@ -1997,118 +1995,3 @@ written, the note says so.
     delivery platform down for longer than ninety days — on its own site; both read on 3 September
     2026. Their tallies of activations are counted in different units and are deliberately not
     compared here.
-
----
-
-## Part C — Nota per il proprietario (non fa parte del testo; si toglie prima della pubblicazione)
-
-*Elenco corto: solo le decisioni che restano davvero tue, dove due letture ragionevoli portano a
-testo diverso. Per ciascuna, la mia raccomandazione e il testo scelto nel frattempo. Le decisioni
-prese e chiuse in questo giro stanno in coda, una riga ciascuna, perché nessuno le ridomandi.*
-
-1. ~~**Il marcatore descrive due revisioni che su questo branch non ci sono ancora.**~~ **Chiusa,
-   e il modo in cui si è chiusa merita due righe.** Il giro precedente aveva messo il marcatore a
-   v0.1 rev 17 / v0.2 rev 12 su un branch che stava a 16/11, di proposito, per costringere
-   l'ordine di merge: prima le spec, poi il whitepaper che le descrive. La previsione allegata —
-   «diventa verde senza altre modifiche appena il branch è rebasato sopra quelle due revisioni» —
-   **non si è avverata**, ed è la stessa famiglia di errore che il gate esiste per intercettare.
-   `main` non si è fermato a 17/12: è arrivato a **18/13**, e il pacchetto da 0.9.1 a **0.9.3**.
-   Dopo il rebase il gate segnava tre disallineamenti, non zero. Alzare il marcatore non era
-   quindi un adempimento ma un'affermazione — dire che il testo descrive quelle revisioni e quel
-   pacchetto — e il grosso di questo giro è stato renderla vera. La parte cara non erano le due
-   revisioni di spec ma la 0.9.3: ha spedito le leve del venditore che il documento dichiarava
-   assenti, e la tesi «specificate, non spedite» reggeva otto sezioni. Alla chiusura di quel
-   giro il marcatore era a 18/13/0.9.3 e il gate era verde; il sesto giro lo ha portato a
-   20/16/0.9.7. **Niente da decidere qui.**
-2. **Titolo e sottotitolo.** «Own what you buy» resta (tagline ratificata). Il sottotitolo dice
-   ora «durable digital possession» e la tesi «layer of possession»: la spec dice testualmente che
-   una ricevuta «is not a claim of "ownership"». **Raccomando così.** Alternativa: un sottotitolo
-   senza il sostantivo («a whitepaper on keeping what you buy»).
-3. **I due difetti vivi restano fuori da §8** (il canale della dichiarazione di compromissione; i
-   punti ciechi dei tetti), perché la sequenza decisa è fix → release → advisory e il whitepaper li
-   pubblicherebbe prima. Il testo ne dice la famiglia. **La sequenza è tua**: se il whitepaper esce
-   dopo l'advisory, le due voci rientrano in §8.
-   **Nota di questo giro, che rende la voce più pesante di prima e non la cambia**: §6 e §8 ora
-   dicono che la dichiarazione di compromissione *si può impacchettare*, perché il comando esiste
-   e l'ho verificato. Il documento è quindi più affermativo su quel percorso di quanto fosse
-   quando questa decisione è stata presa, mentre i difetti vivi stanno proprio lì. Non ho cambiato
-   la decisione — non è mia — ma la finestra fra pubblicazione e advisory è ora meno innocua:
-   prima il documento diceva «non spedito» e nessuno andava a guardare.
-4. **Nomi di prodotti e di archivi.** Il corpo nomina le **cinque** integrazioni del servizio
-   di checkout (Stripe, Shopify, Paddle, PayPal, itch.io); i due archivi accademici sono
-   descritti nel corpo e nominati solo nelle note (§15, nota 20). **Questo giro ha cambiato la
-   premessa della decisione, e va detto**: la giustificazione era «perché la FAQ pubblica lo fa
-   già», e la FAQ (`docs/faq.md`, riga 147, su questo branch e su `main`) ne nomina ancora
-   **tre** — Stripe, itch.io, Shopify. Paddle e PayPal li nomina ora solo il whitepaper.
-   **Raccomando** di allineare la FAQ prima della pubblicazione, così la premessa torna vera.
-   Alternative: «i checkout più comuni» nel corpo e i cinque nomi nelle note; oppure tenere i
-   cinque nomi e accettare che il whitepaper preceda la FAQ.
-5. **Il manifesto V-F.1 è assorbito e va ritirato, non pubblicato accanto.** Ne ho ripreso
-   struttura e frasi dove reggevano. La sua clausola sulla catena («tutto ciò che una catena
-   farebbe è già fatto da log e firme, o è una liability») contraddice v0.2 §11.1 e non
-   sopravvive qui: §6 scrive la posizione vera. **Raccomando che il whitepaper prevalga e il
-   manifesto sia archiviato.** Alternativa: pubblicarlo come testo breve emendato nel lessico di
-   §5–§6.
-6. **Titolo di §5.** «The trilemma» (il testo lo tratta come argomento, non come teorema).
-   **Raccomando di tenerlo.** Alternativa: «A key to a door, not to a file» come titolo, lasciando
-   la parola nel corpo.
-7. **Lunghezza di §4 e §8.** §4 ha tredici paragrafi contro i nove previsti; il di più è il
-   criterio di completezza (ogni difesa accanto al suo produttore o alla sua assenza). Tagliare
-   vuol dire scegliere quale produttore mancante tacere. **Raccomando di non tagliare.**
-8. **Pubblicità di questo file.** Il branch non è pushato. Il documento è pronto per la lettura
-   e porta ancora questa Part C: la pubblicazione (PR, sito, `docs/`) è un gesto tuo, e la Part C
-   va tolta nello stesso atto.
-
-*Decisioni prese in questo giro, chiuse (una riga ciascuna):*
-
-- **La superficie spedita è stata rimisurata, non riletta**, ed è il grosso del giro: la 0.9.3 ha
-  aggiunto `revoke`, `revocation-view`, `binding {challenge,respond}`, `log entry`,
-  `manifest compromise-view`, `transfer view` e `issue --log-dir`, più un flag di `verify` per
-  ciascuno dei tre input che non ne avevano. Le catene che il testo ora afferma sono state
-  ESEGUITE, non lette da un help: revoca fino a `revocation: "revoked"`/`ok: false`; i due rifiuti
-  di `revoke` (ricevuta irrevocabile, data fuori finestra); la sfida di binding fino a
-  `"binding": "proven"` con controllo negativo; `issue --log-dir` fino a `leaf_index 0`; e
-  `log prove --receipt` fino al bundle `{checkpoint, entry, inclusion_proof, leaf_index,
-  tree_size}` — che è la forma richiesta **meno** il membro `anchors`. Il link mancante è quindi
-  mostrato, non asserito, ed è uno solo: la datazione.
-- **Tre difetti miei, trovati dal mandato d'attacco e non dalla rilettura**, tutti nella stessa
-  direzione: correggendo un documento troppo negativo l'ho reso, in tre punti, più affermativo
-  dell'evidenza (una frase sulla rete che contraddiceva il documento stesso; un «te lo dice in
-  tante parole» su un testo che non avevo letto; una verità vacua). Tutti e tre corretti. Il
-  dettaglio delle quattordici domande e del loro esito sta nel registro di ricerca del progetto,
-  fuori da questo repo.
-
-- **B2: perimetro dichiarato, nessun cambio di spec.** Il fronte B1 ha chiuso il 5 settembre con
-  verdetto «non risolvibile come posto»; §5 rende i due argomenti (i fatti che restano veri; la
-  serratura senza chi la ripari), con un'immagine sola — «a key to a door, never to a file» — e i
-  tre poli rinominati (free copying, non transferability). Nessuna promessa di soluzione futura;
-  l'argomento anti-elusione è detto perché è in v0.1 §2; la caratterizzazione legale del dossier
-  non entra: una frase neutra, nessuna norma citata.
-- D24, entrambe le parti: §4, §5 e §8 scrivono `proven` come possesso di un segreto, mai
-  partecipazione; `buyer.acceptance` è «planned and not yet specified», mai esistente.
-- Trasferimento, due vincoli misurati il 5 settembre e resi in §5 e §13 come limiti, non come
-  garanzie: un transfer record autentica solo con la chiave `active`, quindi una rotazione
-  ordinaria lo annulla (la regola della finestra a `transferred_at` è lavoro dichiarato); e
-  `license.transferable` non è letto dal verificatore che onora un trasferimento (è una
-  dichiarazione firmata, non una regola applicata). Il testo non dice mai che un trasferimento
-  «resta» né che il venditore «permette» tramite il flag.
-- Sezione 2: apertura con Amazon/*1984* (2009), poi Microsoft, Sony/StudioCanal, *The Crew*, coi
-  vincoli di formulazione verificati alla fonte; il nesso *The Crew* → iniziativa europea è smentito
-  nel testo stesso, con la fonte in nota.
-- Sezione 9 a sé, nella sola forma difendibile: primo anello (accesso legale accessibile sposta
-  consumo), tetto dichiarato, studi ostili citati per primi, e la dichiarazione che nessuno studio
-  esiste sull'usato digitale legale ↔ pirateria. Nessuna citazione di norme anti-elusione.
-- Art. 8(7): il whitepaper non dice che la ricevuta «è» la conferma né che la assolve; allineato al
-  README ratificato («un formato in cui la conferma può viaggiare»).
-- Il nome dell'Internet-Draft compare in §12: repo e Datatracker ora coincidono
-  (`ietf/draft-martinalli-open-purchase-receipts.xml`; Datatracker letto il 5 settembre).
-- `attest transfer authorize` è del compratore (firma l'autorizzazione dell'holder uscente con la
-  chiave del compratore): il draft precedente lo attribuiva al venditore; corretto in §4 e §5.
-- La verifica del 1° settembre (struttura, bozza a otto sezioni, tabelle claim per claim) vale
-  come archivio di verifica, non come testo.
-- I nomi dei due file sono quelli spediti (`.attest` e `.private.attest`); nessuna denominazione
-  non ratificata compare.
-- Surety e il *New York Times* restano, con la nota che dichiara il grado della fonte (nota 6).
-- La frase sull'esenzione di AB 2426 e il testo di §17500.6 sono stati riletti sul sito legislativo
-  della California il 5 settembre, da qui: la riserva del giro precedente («fonte primaria non
-  raggiungibile») è chiusa.
