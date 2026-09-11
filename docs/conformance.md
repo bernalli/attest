@@ -51,7 +51,7 @@ import, before any leaf is checked.)
   with that leaf's absolute path in every argv token, splits the template with
   `shlex.split`, and invokes it as a fixed argv list (`shell=False` — never a
   shell string).
-- `--subset` selects `v0.1` (67 leaves) or `v0.2` (all leaves, currently 226) —
+- `--subset` selects `v0.1` (67 leaves) or `v0.2` (all leaves, currently 227) —
   see §4.
 - `--report FILE` additionally writes the machine-readable JSON report (§6)
   to `FILE`.
@@ -63,7 +63,7 @@ The runner prints one `FAIL <leaf-id>` block (with its mismatches) per
 non-passing leaf, then exactly one summary line:
 
 ```
-CONFORMANT (v0.2): 226/226 leaves pass — corpus revision <hex12>
+CONFORMANT (v0.2): 227/227 leaves pass — corpus revision <hex12>
 NOT CONFORMANT (v0.1): 64/67 leaves pass — 3 failing
 ```
 
@@ -136,7 +136,7 @@ either as a worked example of the contract above.
 
 ## 4. Subsets
 
-- **v0.2** — every leaf in the corpus (currently 226). Measures conformance
+- **v0.2** — every leaf in the corpus (currently 227). Measures conformance
   against `docs/spec/attest-v0.2.md`.
 - **v0.1** — the 67-leaf subset: every leaf whose top-level group directory's
   leading integer is ≤ 25, plus groups `29-limits`,
@@ -153,7 +153,7 @@ either as a worked example of the contract above.
   ships any Stage-2 material, so the v0.2 rescue is out of reach and a v0.1-only
   verifier must reproduce their verdicts — see `docs/spec/vectors/README.md` for
   the full membership rationale. A v0.1-only implementation (one that never accepts v0.2's hybrid
-  profile) is measured against this subset, not against all 226.
+  profile) is measured against this subset, not against all 227.
 
 ## 5. The claim process
 
@@ -217,10 +217,10 @@ from PyPI or npm; the 0.9.7 rows record release preparation before publication.
 
 | Implementation | Subset | Leaves passed | Corpus revision | Date | Command |
 | --- | --- | --- | --- | --- | --- |
-| attest (Python reference) 0.9.7 | v0.2 | 226/226 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-10 | `uv run --directory . --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
-| attest (Python reference) 0.9.7 | v0.1 | 67/67 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-10 | `uv run --directory . --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
-| attest-verifier (TypeScript) 0.9.7 | v0.2 | 226/226 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-10 | `npm run build --prefix verifiers/ts && uv run --directory . --frozen python tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
-| attest-verifier (TypeScript) 0.9.7 | v0.1 | 67/67 | `7d326564aa6292132843abce395d8c6f6303c39fe1ebb8680813b37f49e1b483` | 2026-09-10 | `npm run build --prefix verifiers/ts && uv run --directory . --frozen python tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
+| attest (Python reference) 0.9.7 | v0.2 | 227/227 | `77cc1b58df389cfb51a376ea397813b2ecf3d310a4288c8325b19c22a35314b5` | 2026-09-11 | `uv run --directory . --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.2` |
+| attest (Python reference) 0.9.7 | v0.1 | 67/67 | `77cc1b58df389cfb51a376ea397813b2ecf3d310a4288c8325b19c22a35314b5` | 2026-09-11 | `uv run --directory . --frozen python tools/conformance_runner.py --adapter ".venv/bin/python tools/conformance_adapter_py.py {leaf}" --subset v0.1` |
+| attest-verifier (TypeScript) 0.9.7 | v0.2 | 227/227 | `77cc1b58df389cfb51a376ea397813b2ecf3d310a4288c8325b19c22a35314b5` | 2026-09-11 | `npm run build --prefix verifiers/ts && uv run --directory . --frozen python tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.2` |
+| attest-verifier (TypeScript) 0.9.7 | v0.1 | 67/67 | `77cc1b58df389cfb51a376ea397813b2ecf3d310a4288c8325b19c22a35314b5` | 2026-09-11 | `npm run build --prefix verifiers/ts && uv run --directory . --frozen python tools/conformance_runner.py --adapter "node tools/conformance_adapter_ts.mjs {leaf}" --subset v0.1` |
 
 A third-party implementation adds a row here (or in its own repo/README,
 linking back to this process) the same way: run §2's command, record the

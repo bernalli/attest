@@ -38,6 +38,7 @@ import {
   parse,
   signBlock,
 } from './helpers/grant-builder.js'
+import { store } from './helpers/trust.js'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -118,10 +119,11 @@ function envelopeBytes(p: JsonObject): Uint8Array {
   )
 }
 
-const trustStore = (): TrustStore => ({
-  manifests: { [ISSUER]: ISSUER_MANIFEST },
-  provenance: { [ISSUER]: 'tls' },
-})
+const trustStore = (): TrustStore =>
+  store({
+    manifests: { [ISSUER]: ISSUER_MANIFEST },
+    provenance: { [ISSUER]: 'tls' },
+  })
 
 /** A GENUINELY SIGNED revocation record for this receipt. */
 function signedRecord(): Record<string, unknown> {
@@ -186,7 +188,7 @@ describe('class-instance divergence (v0.2 §18.4, deliberate)', () => {
   })
 
   it.each(['receipt_id', 'status', 'revoked_at', 'signature'])(
-    'omits %s unless it is enumerable own data',
+    'omits %s unless it is enumerable own data, and refuses it whole as an accessor',
     (member) => {
       const record = signedRecord()
       const expected = { ...record }
@@ -223,7 +225,24 @@ describe('class-instance divergence (v0.2 §18.4, deliberate)', () => {
 
         const admitted = materializeValue(row)
         expect(reads, 'OWN_ACCESSOR_MUST_NOT_EXECUTE').toBe(0)
-        expect(admitted, 'ADMISSION_MUST_OMIT_' + kind + '_' + member).toEqual(parse(expected))
+
+        if (kind === 'own-accessor') {
+          // An accessor is REFUSED, not skipped (canon.ts's `ownDataCopy`
+          // doc comment, "data or code decides first"): a reconstruction
+          // that silently drops the key `row` carries is not `row`, so the
+          // WHOLE unit is set aside rather than admitted with that one
+          // member missing. The two data-property kinds below (inherited,
+          // non-enumerable) are not code — they are JSON-form decisions —
+          // and keep the old "member omitted, rest admitted" outcome; only
+          // the accessor case changed. The normative paragraph pinned at
+          // the bottom of this file is untouched: its precondition is "all
+          // record members as enumerable OWN data", which an accessor does
+          // not satisfy, so this refusal sits outside what it governs.
+          expect(admitted, 'ADMISSION_MUST_REFUSE_own-accessor_' + member).toBeNull()
+        } else {
+          expect(admitted, 'ADMISSION_MUST_OMIT_' + kind + '_' + member).toEqual(parse(expected))
+        }
+
         const result = verifyWith(row)
         expect(reads, 'VERIFY_MUST_NOT_EXECUTE_OWN_ACCESSOR').toBe(0)
         expect(result.signature).toBe('valid')

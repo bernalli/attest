@@ -116,6 +116,25 @@ def _snapshot(manifest: dict[str, Any]) -> trust_material.KeyManifest:
     return trust_material.KeyManifest.from_bytes(canon.canonical_bytes(manifest))
 
 
+def _live_key_entry(manifest: dict[str, Any], kid: str) -> dict[str, Any]:
+    """The LIVE `keys[]` entry for `kid`, for in-place fixture surgery.
+
+    `manifests.find_key` is the public door and hands back a COPY by design: a
+    caller must not be able to change what the next reader sees. A generator
+    that edits a fixture before re-signing it needs the opposite. It refuses an
+    ambiguous kid for the same reason the library door does -- with a raised
+    error, not an `assert`, so `-O` cannot remove the refusal.
+    """
+    entries = [
+        entry
+        for entry in manifest.get("keys", [])
+        if isinstance(entry, dict) and entry.get("kid") == kid
+    ]
+    if len(entries) != 1:
+        raise ValueError(f"expected exactly one keys[] entry for {kid!r}, found {len(entries)}")
+    return entries[0]
+
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_VECTORS_DIR = REPO_ROOT / "docs" / "spec" / "vectors"
 #: Where the `write_*` helpers put a leaf. `generate()` retargets it for the
@@ -5159,7 +5178,7 @@ def gen_35_transfer() -> None:
     # The revocation asserts are 35l's, inverted: here it must authenticate
     # against the manifest the trust store resolves.
     manifest_m_active = copy.deepcopy(manifest_l_v2)
-    signer_m_active = manifests.find_key(manifest_m_active, TRANSFER_SIGNER_KID)
+    signer_m_active = _live_key_entry(manifest_m_active, TRANSFER_SIGNER_KID)
     assert signer_m_active is not None and signer_m_active["status"] == "compromised"
     signer_m_active["status"] = "active"
     signable_m_active = manifests._signable(manifest_m_active)
@@ -5168,14 +5187,14 @@ def gen_35_transfer() -> None:
         "sig": keys.b64u(keys.sign(signable_m_active, ISSUER_KP)),
         "sig_ml_dsa_65": keys.b64u(_oracle_sign(signable_m_active)),
     }
-    assert transfer.verify_record(record_l, manifest_m_active) is True, (
+    assert transfer.verify_record(record_l, _snapshot(manifest_m_active)) is True, (
         "35m: active-status control must authenticate the transfer record"
     )
-    assert transfer.verify_record(record_l, manifest_l_v1) is True
-    assert transfer.verify_record(record_l, manifest_l_v2) is False
+    assert transfer.verify_record(record_l, _snapshot(manifest_l_v1)) is True
+    assert transfer.verify_record(record_l, _snapshot(manifest_l_v2)) is False
     assert transfer.verify_authorization(record_l, keys.b64u(BUYER_KP.pub)) is True
-    assert revocation.verify_record(rev_m, manifest_l_v1) is True
-    assert revocation.verify_record(rev_m, manifest_l_v2) is True
+    assert revocation.verify_record(rev_m, _snapshot(manifest_l_v1)) is True
+    assert revocation.verify_record(rev_m, _snapshot(manifest_l_v2)) is True
     assert record_l["receipt_id"] == RECEIPT_ID
     write_vector(
         "35-transfer/m-compromised-countersigner-cannot-back-the-transfer",

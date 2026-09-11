@@ -49,7 +49,7 @@ error. The closedness is in canonicalization and semantics, not in what
 fields a payload may carry: attest's signing step is not a choice among
 proof suites but one mandatory canonicalization profile, attest-JCS (v0.1
 §9), whose canonical bytes are checked by dedicated fixtures and signature
-verification in both reference implementations. The 226-leaf corpus tests
+verification in both reference implementations. The 227-leaf corpus tests
 the specified results for its inputs; it does not prove equality on every
 possible input. A canonical-byte mismatch prevents verification of the
 affected signature. Choosing a purpose-built envelope over a Verifiable
@@ -161,7 +161,7 @@ is that trading that no-canonicalization simplicity for a strict, narrow,
 corpus-enforced canonicalizer is the safer engineering trade-off when the
 signed bytes must be recoverable from a parsed JSON object in any language,
 rather than preserved from whichever producer happened to serialize the
-wire form. The 226-leaf conformance corpus makes this choice testable by
+wire form. The 227-leaf conformance corpus makes this choice testable by
 replaying shared fixtures through both reference verifiers; dedicated
 canonical-byte fixtures test serialization, while the result comparisons
 follow each leaf's exact or substring expectations.
