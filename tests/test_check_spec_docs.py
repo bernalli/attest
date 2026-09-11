@@ -4172,3 +4172,73 @@ def test_main_calls_the_appendix_a_annotation_check(
     monkeypatch.setattr(check_spec_docs, "_SPEC_V01_PATH", drifted)
 
     assert main() == 1
+
+
+# --- not-well-formed inputs for the two per-period scope checks ---------------
+#
+# Both checks pin a surface by NAME inside a raw document, so the malformed
+# inputs that matter are the ones that put a second candidate in front of the
+# real one: a fenced example, a duplicated heading, a lost verdict line whose
+# scan then walks into the next entry.
+
+
+def test_a_fenced_example_cannot_stand_in_for_the_real_appendix() -> None:
+    """A fenced markdown sample reads exactly like the real appendix."""
+    fence = "## 3. Example\n\n```markdown\n" + _v01_appendix() + "```\n\n"
+    unannotated = _v01_appendix(annotation="")
+    assert check_spec_docs.check_appendix_a_annotation(fence + unannotated) != []
+
+
+def test_a_fenced_example_cannot_stand_in_for_section_7_3() -> None:
+    fenced = "## 2. Example\n\n```markdown\n" + _v01_with_scope() + "```\n\n"
+    unscoped = _v01_with_scope("Issuers SHOULD use one signing key per period.")
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        fenced + unscoped, _tm_with_verdict(_SCOPED_VERDICT)
+    )
+    assert any("no longer scopes the per-period key discipline" in e for e in errors), errors
+
+
+def test_a_fenced_verdict_cannot_stand_in_for_tm32s_own() -> None:
+    fenced_tm = (
+        "```markdown\n" + _tm_with_verdict(_SCOPED_VERDICT) + "```\n\n"
+        "#### TM-32 — Compromise of both hybrid legs (full signer compromise)\n\n"
+        "- **Verdict:** Mitigated.  The discipline bounds the blast radius.\n"
+    )
+    errors = check_spec_docs.check_tm32_compromise_scope(_v01_with_scope(), fenced_tm)
+    assert any("unscoped bound" in e for e in errors), errors
+
+
+def test_a_lost_verdict_line_does_not_borrow_the_next_entrys() -> None:
+    """Without a section bound the scan reaches TM-33 and judges the wrong entry."""
+    orphaned = (
+        "#### TM-32 — Compromise of both hybrid legs (full signer compromise)\n\n"
+        "- **Impact:** Arbitrary receipts.\n\n"
+        "#### TM-33 — Log signing-key compromise\n\n"
+        "- **Verdict:** Mitigated.  Bounds the forgery exposure, not the invalidation reach.\n"
+    )
+    assert check_spec_docs.check_tm32_compromise_scope(_v01_with_scope(), orphaned) == [
+        "attest-threat-model.md: TM-32's verdict line is missing"
+    ]
+
+
+def test_a_duplicated_tm32_entry_is_reported_rather_than_silently_first_wins() -> None:
+    doubled = _tm_with_verdict(_SCOPED_VERDICT) + _tm_with_verdict(
+        "The discipline bounds the blast radius."
+    )
+    errors = check_spec_docs.check_tm32_compromise_scope(_v01_with_scope(), doubled)
+    assert any("TM-32 appears 2 times" in e for e in errors), errors
+
+
+def test_a_duplicated_7_3_heading_does_not_let_the_first_copy_vouch() -> None:
+    """The scoped copy above must not satisfy the anchor for an unscoped §7.3."""
+    scoped = _v01_with_scope()
+    unscoped_tail = (
+        "### 7.3 Rotation continuity and key compromise\n\n"
+        "Issuers SHOULD use one signing key per period.\n\n### 7.4 Next\n\nOther.\n"
+    )
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        scoped + unscoped_tail, _tm_with_verdict(_SCOPED_VERDICT)
+    )
+    # Documented behaviour: the first §7.3 is the one measured. Pinned so that a
+    # future change to which copy wins is a red rather than a silent shift.
+    assert errors == []

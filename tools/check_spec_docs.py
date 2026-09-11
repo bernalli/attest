@@ -1591,13 +1591,22 @@ _PER_PERIOD_REQUIRED_HALVES: tuple[str, ...] = ("forgery", "invalidation reach")
 # it found. `bound its forgery blast radius` (v0.2 §19.6 item 2) is scoped and
 # must not match, so the qualifier cannot sit between the verb and the noun.
 _PER_PERIOD_UNSCOPED_RE = re.compile(r"bounds?\s+(?:the|its)\s+blast\s+radius", re.IGNORECASE)
+_TM32_HEADING_RE = re.compile(r"^#### TM-32 ", re.MULTILINE)
+# The scan may not cross into the next entry. A TM-32 that loses its verdict
+# line would otherwise adopt TM-33's: green on a verdict that does not exist,
+# or a red naming the wrong entry.
 _TM32_VERDICT_RE = re.compile(
-    r"^#### TM-32 [^\n]*$[\s\S]*?^- \*\*Verdict:\*\*(?P<body>[^\n]*)$", re.MULTILINE
+    r"^#### TM-32 [^\n]*$(?:(?!^#### )[\s\S])*?^- \*\*Verdict:\*\*(?P<body>[^\n]*)$",
+    re.MULTILINE,
 )
 
 
 def check_tm32_compromise_scope(spec_v01: str, threat_model: str) -> list[str]:
     """TM-32's verdict carries v0.1 §7.3's scope on the per-period key discipline."""
+    # Illustrative fences read exactly like the real heading; same rationale as
+    # collect_errors() and check_tm80_leaf_tense().
+    spec_v01 = _strip_fenced_blocks(spec_v01)
+    threat_model = _strip_fenced_blocks(threat_model)
     section = re.search(r"^### 7\.3 [^\n]*$([\s\S]*?)(?=^### |^## |\Z)", spec_v01, re.MULTILINE)
     if section is None:
         return ["attest-v0.1.md: missing required heading '### 7.3'"]
@@ -1608,6 +1617,12 @@ def check_tm32_compromise_scope(spec_v01: str, threat_model: str) -> list[str]:
             f"(missing {missing_anchor!r}); TM-32's verdict has nothing left to agree with"
         ]
 
+    headings = _TM32_HEADING_RE.findall(threat_model)
+    if len(headings) > 1:
+        return [
+            f"attest-threat-model.md: TM-32 appears {len(headings)} times; "
+            "the verdict scanned would be whichever came first"
+        ]
     match = _TM32_VERDICT_RE.search(threat_model)
     if match is None:
         return ["attest-threat-model.md: TM-32's verdict line is missing"]
@@ -1648,6 +1663,7 @@ _V01_APPENDIX_A_ROW_RE = re.compile(r"^\| Issuer key compromise \|[^\n]*$", re.M
 
 def check_appendix_a_annotation(spec_v01: str) -> list[str]:
     """Appendix A's superseded row is annotated, and the annotation is true of it."""
+    spec_v01 = _strip_fenced_blocks(spec_v01)
     appendix = re.search(
         rf"^{re.escape(_V01_APPENDIX_A_HEADING)}$([\s\S]*?)(?=^## |\Z)", spec_v01, re.MULTILINE
     )
