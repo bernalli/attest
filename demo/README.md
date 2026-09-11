@@ -1,6 +1,6 @@
-# The two demos
+# The three demos
 
-Two questions, in the order people actually ask them.
+Three questions, in the order people actually ask them.
 
 **`store_dies.py` — the store dies, the receipt survives.** When you buy
 something digital, the seller signs a receipt and hands it to you: that is
@@ -18,11 +18,21 @@ later dies. The pledge's trigger fires. An archive that has held its own
 copy all along hands that copy over — but only to someone who can prove,
 right there and then, that they hold the receipt's binding secret.
 
-Neither demo is part of the protocol. attest defines a receipt format and a
-verifier; it does not distribute content, and there is no `attest custodian`
-command. The archive gate in the second demo is `custodian.py`, a
-non-normative reference that lives here in `demo/`, outside the installed
-package and outside the conformance surface.
+**`witness_cosigns.py` — somebody else saw the same head.** Which answers
+the question underneath both of the others: *how do I know the log is showing
+me the same tree it shows everyone?* A signature says who signed; it never
+says how many different things they signed. A log that holds its own keys can
+publish two self-consistent branches, and every proof from either verifies.
+A witness reads the log's head, refuses to sign one that is not an extension
+of the head it signed last, and cosigns the rest — so a verifier can tell a
+head somebody observed from a head nobody did.
+
+None of the three is part of the protocol. attest defines a receipt format
+and a verifier; it does not distribute content, and there is no `attest
+custodian` command, nor an `attest log cosign` one. The archive gate in the
+second demo is `custodian.py`, and the submission client in the third is
+`witness_client.py` — both non-normative references that live here in
+`demo/`, outside the installed package and outside the conformance surface.
 
 ## `store_dies.py`
 
@@ -179,6 +189,60 @@ restriction. What people holding the same permission may then do among
 themselves is a consequence of the licence they were granted, not a
 component of attest, and nothing in this repository implements it.
 
+## `witness_cosigns.py`
+
+Three parties this time, and they are separate on purpose: a store, a
+transparency-log operator, and a witness. A witness that shared the log's
+keys would observe nothing.
+
+1. Each generates its own key pair — the log and the witness hybrid, because
+   checkpoint authentication and cosignature both have an ML-DSA-65 leg.
+2. The store publishes its key manifest; the log operator creates an empty
+   log.
+3. The store issues Casey's receipt **into** the log (`issue --log-dir`). The
+   entry is the one the CLI computes from the receipt it has just signed —
+   not a row written by hand beside it.
+4. The log's offline signer signs the checkpoint. That step holds the log's
+   keys; the appending step never does.
+5. The witness is configured with that one log pinned, and served over real
+   HTTP on a loopback port. Its allowlist is the whole of what it trusts:
+   there is no default and no wildcard.
+6. The checkpoint is submitted with C2SP's `add-checkpoint` body. The witness
+   answers `200` with two signature lines — the interoperable Ed25519 `0x04`
+   leg and attest's namespaced ML-DSA-65 one — which are **appended** to the
+   note, never substituted for it. Its monitoring endpoint then serves that
+   cosigned note to anyone who asks.
+7. `attest log prove` writes the inclusion evidence, which is re-pointed at
+   the cosigned note and told which witness-policy epoch to read.
+8. `attest verify` runs **twice**, over the same receipt, the same pinned log
+   keys and the same witness policy. Without the cosignature lines:
+   `corroboration: "logged"`. With them: `corroboration: "witnessed"`, plus
+   `witness_independence_not_established` — which every witnessed verdict
+   carries, because one witness is one observer and nothing here establishes
+   that it is independent of the log. The demo runs both.
+9. **The fork.** The log signs a second, different tree of the same size: a
+   genuine signature over dishonest contents, which is precisely what a log
+   holding its own keys can do. The witness refuses it — C2SP `422`, the
+   consistency proof does not verify — and goes on serving the head it
+   actually saw.
+
+Step 8 is the whole demo, and step 9 is why it is worth anything. Two joins
+this chain needs did not exist in the repository before: nothing built a C2SP
+submission body, and nothing carried a returned cosignature back into the
+evidence a verifier reads. Both live in `witness_client.py`, which also
+refuses the one substitution that would make "add a cosignature" mean
+something else — a cosigned note whose body is a different checkpoint from
+the one the evidence's inclusion proof is about.
+
+Two traps an operator meets here, stated because both cost a wrong answer
+rather than an error. `attest verify` needs `--anchor-policy` to be supplied
+even when there is no anchor to evaluate: with `--transparency` and
+`--log-keys` alone the verdict comes back `transparency: "not_checked"` and
+the warning `transparency_config_missing`. And a missing
+`witness_policy_epoch` in the evidence reports `corroboration: "logged"` and
+names no condition at all — step 8's silence is normative (v0.2 §11.4), so
+an omitted member is indistinguishable from a witness that did not count.
+
 ## How to run them
 
 From the repository root, with narration printed to stdout:
@@ -186,26 +250,42 @@ From the repository root, with narration printed to stdout:
 ```
 .venv/bin/python -m demo.store_dies
 .venv/bin/python -m demo.pledge_dies
+.venv/bin/python -m demo.witness_cosigns
 ```
 
 As integration tests:
 
 ```
-.venv/bin/pytest tests/test_demo_e2e.py tests/test_demo_pledge_e2e.py -v
+.venv/bin/pytest tests/test_demo_e2e.py tests/test_demo_pledge_e2e.py \
+                 tests/test_demo_witness_e2e.py -v
 ```
 
-Both are fully offline and hermetic — everything happens inside a fresh
-temporary directory (`tempfile.TemporaryDirectory` for the manual run,
-pytest's `tmp_path` for the tests), and each demo only ever deletes its own
-`store/` subdirectory, never anything outside that workspace. A test asserts
-that boundary directly, with a canary file placed just outside it.
+All three are hermetic — everything happens inside a fresh temporary
+directory (`tempfile.TemporaryDirectory` for the manual run, pytest's
+`tmp_path` for the tests) — and each has a test that proves that boundary
+directly, with a canary file placed just outside it. The first two only ever
+delete their own `store/` subdirectory and nothing outside their workspace;
+the third deletes nothing at all.
 
-Every step of both demos is asserted programmatically, not eyeballed: the
-pytest wrappers check each verb's exit code and JSON result against the
-exact values the design promises, and the second one additionally pins that
-the dormant refusal is recorded **while the declaration does not yet exist
-on disk**. A refusal narrated after the trigger has already been minted
-would be theatre.
+Only the third touches a socket, and that is the point of it: it binds a
+witness on `127.0.0.1` with an ephemeral port and submits over real HTTP,
+because a demo that called the WSGI app in-process while narrating
+"submitted to the witness" would be narrating something that did not happen.
+The server is closed on the way out, including on the error path, and a test
+checks the port is no longer answering once the run returns. Nothing leaves
+the loopback interface.
+
+Every step of all three demos is asserted programmatically, not eyeballed:
+the pytest wrappers check each verb's exit code and JSON result against the
+exact values the design promises. The second additionally pins that the
+dormant refusal is recorded **while the declaration does not yet exist on
+disk** — a refusal narrated after the trigger has already been minted would
+be theatre. The third judges the witness's cosignature against an oracle
+re-derived from v0.2 §9.2 — the key id, the signed payload, the blob layout
+and the line framing written out from the specification, with the signatures
+checked by the raw primitives — because an oracle built out of the code that
+produces a cosignature agrees with a wrong implementation as readily as with
+a right one.
 
 ## The files you must never share
 
@@ -224,3 +304,10 @@ is what Casey signs the archive's challenge with.
 Both are written owner-only (`0600`) from creation, exactly like the CLI's
 own secret-writing paths — they are real secret material, not scaffolding,
 and a test checks the mode on both.
+
+The third demo adds none of the buyer's, and two of somebody else's: the
+log's signing keys and the witness's. Both are written by `attest keygen`,
+which is where their `0600` comes from, and both are online keys by the
+nature of the role — a witness signs on every accepted submission. In a real
+deployment the log's signer is the one that is not: `attest log append` never
+holds it, and only `attest log sign-checkpoint`, run separately, does.

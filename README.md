@@ -314,6 +314,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv -e '.[dev]'
 ```sh
 .venv/bin/python -m demo.store_dies
 .venv/bin/python -m demo.pledge_dies
+.venv/bin/python -m demo.witness_cosigns
 ```
 
 ```sh

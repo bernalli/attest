@@ -418,6 +418,7 @@ run ci.yml:python - "uv run --frozen python tools/importer_differential.py"
 run ci.yml:python - "uv run --frozen python tools/gen_vectors.py --check"
 run ci.yml:python - "uv run --frozen python -m demo.store_dies"
 run ci.yml:python - "uv run --frozen python -m demo.pledge_dies"
+run ci.yml:python - "uv run --frozen python -m demo.witness_cosigns"
 # uvx downloads the pinned xml2rfc on first use, so this one needs the network
 # even though the build itself is offline (--no-network).
 external ci.yml:python "uvx" \
