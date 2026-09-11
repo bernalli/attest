@@ -345,6 +345,12 @@ def refresh_proof(attest_path: Path, evidence_path: Path) -> bool:
         raise RuntimeError(
             f"{evidence_path.name} is evidence from log {origin!r}, not {LOG_ORIGIN!r}"
         )
+    missing = [f for f in ("inclusion_proof", "leaf_index", "tree_size") if f not in evidence]
+    if missing:
+        raise RuntimeError(
+            f"{evidence_path.name} carries a checkpoint but no {', '.join(missing)}, so it is "
+            f"not inclusion evidence for {attest_path.name}"
+        )
 
     member = f"proofs/{receipt_id}.json"
     current = [data for info, data in members if info.filename == member]

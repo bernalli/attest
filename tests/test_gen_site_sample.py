@@ -384,6 +384,50 @@ def test_refresh_proof_refuses_a_file_that_is_not_evidence(tmp_path: Path) -> No
         gen.refresh_proof(attest_path, stub)
     assert _members(attest_path) == members
 
+    # A checkpoint alone is not evidence either: it says the log published a
+    # tree, not that this receipt is in it. Measured, the bundle such a file
+    # installs verifies to transparency='not_checked' — the same unbacked claim.
+    checkpoint_only = tmp_path / "checkpoint-only-evidence.json"
+    real = json.loads(members[_sole_member_under(members, "proofs/")])
+    checkpoint_only.write_text(
+        json.dumps(
+            {
+                "entry": {"core_sha256": tlog.receipt_core_hash(envelope)},
+                "checkpoint": real["checkpoint"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="not inclusion evidence"):
+        gen.refresh_proof(attest_path, checkpoint_only)
+    assert _members(attest_path) == members
+
+
+def test_refresh_proof_refuses_evidence_from_another_log(tmp_path: Path) -> None:
+    """Evidence for the right receipt, in the right shape, from the wrong log.
+
+    A checkpoint is the only part of an evidence file that names the log it
+    came from. A second log that had also logged this receipt would produce a
+    file clearing every other check here, and the published sample would then
+    send a visitor to a log this project does not publish. The refusal names
+    the origin it found, because that is what identifies the file.
+    """
+    gen = _load_generator()
+    log_dir = tmp_path / "log"
+    attest_path = _logged_sample(gen, tmp_path / "sample", log_dir, _mint_log_keys(tmp_path))
+    members = _members(attest_path)
+    evidence = json.loads(members[_sole_member_under(members, "proofs/")])
+
+    foreign = dict(evidence)
+    foreign["checkpoint"] = evidence["checkpoint"].replace(gen.LOG_ORIGIN, "other.example/log", 1)
+    assert tlog.parse_checkpoint(foreign["checkpoint"]).origin == "other.example/log"
+    path = tmp_path / "another-logs-evidence.json"
+    path.write_text(json.dumps(foreign), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match=r"is evidence from log 'other\.example/log'"):
+        gen.refresh_proof(attest_path, path)
+    assert _members(attest_path) == members
+
 
 # --- the bundle actually published, not a fresh one --------------------------
 
