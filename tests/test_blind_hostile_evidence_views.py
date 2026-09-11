@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from attest import authority, grant, keys, manifests, pq, verify
+from attest import authority, canon, grant, keys, manifests, pq, verify
 from tests.helpers import key_manifest, make_payload, store
 
 ISSUER = "store.example"
@@ -439,3 +439,23 @@ def test_only_a_non_object_top_level_view_raises(bad_view: object) -> None:
         _evaluate_grant(_grant(), bad_view)
     with pytest.raises(TypeError):
         _evaluate_authority(bad_view)
+
+
+def test_the_admission_byte_ceiling_actually_refuses_an_oversized_member() -> None:
+    """The ceiling refuses; it is not enough that nothing raised.
+
+    Its siblings above assert only `verdict is not None`. Both evaluators are
+    typed to return a verdict and never None, so that assertion is true for
+    every input short of an escaping exception -- and removing the byte
+    ceiling does not raise, it silently admits. Measured: deleting the ceiling
+    check leaves this whole file green. What has to be pinned is the refusal
+    itself.
+    """
+    oversized = "x" * (canon.MAX_ADMISSION_BYTES + 1)
+
+    admitted_big, materialized_big = canon.admit_value(oversized, 0)
+    admitted_small, _ = canon.admit_value("x" * 16, 0)
+
+    assert admitted_big is False
+    assert materialized_big is None
+    assert admitted_small is True

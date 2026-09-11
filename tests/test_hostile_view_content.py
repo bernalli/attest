@@ -1028,3 +1028,27 @@ def test_malformed_grant_array_member_is_absent_not_whole_view_refusal() -> None
     assert result.grant == "dormant"
     assert result.grant_trust == "verified"
     assert result.ok is True
+
+
+def test_admission_reserves_the_nesting_a_reconstructed_view_costs() -> None:
+    """An element admitted at the boundary still canonicalizes once re-embedded.
+
+    The two reconstruction tests above build their view from elements well
+    inside the profile, so the reserved headroom never decides anything: with
+    the reservation set to zero they stay green. The boundary is where the
+    reservation is the whole difference -- measured, the element one level past
+    it is refused with the reservation and ADMITTED-BUT-UNCANONICALIZABLE
+    without it, which is precisely the state the reservation exists to prevent.
+    """
+    depth = canon.MAX_DEPTH - 1
+    element: object = "leaf"
+    for _ in range(depth):
+        element = [element]
+
+    admitted, materialized = canon.admit_value(element, canon.VIEW_ARRAY_ELEMENT_NESTING)
+
+    assert admitted is False, (
+        "an element this deep cannot be re-embedded in a view and stay representable, "
+        "so admission must refuse it rather than hand back a value that cannot be written"
+    )
+    assert materialized is None

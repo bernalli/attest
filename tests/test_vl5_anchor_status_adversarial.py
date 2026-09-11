@@ -15,6 +15,7 @@ KID = f"{ISSUER}/keys/test#ed25519-1"
 KP = keys.from_seed(bytes([9]) * 32)
 OTHER_RECEIPT_ID = "01J1V5B4M9Z8QWERTY99999999"
 OLDER = "2026-07-05T00:00:00Z"
+LATER = "2026-08-01T00:00:00Z"
 FUTURE = "2099-01-01T00:00:00Z"
 
 
@@ -117,3 +118,24 @@ def test_genuine_transferred_record_still_anchors() -> None:
     result = _verify([record])
 
     assert result.revocation == f"not_revoked_as_of:{OLDER}"
+
+
+@pytest.mark.parametrize("records_in_reverse", [False, True])
+def test_t_is_the_later_of_two_genuine_statements(records_in_reverse: bool) -> None:
+    """Two GENUINE statements at different times: T is the later one, either order.
+
+    The sibling above is named for the order-independent maximum, but its view
+    holds one genuine record and one unregistered decoy -- and the decoy is
+    dropped by the status filter before the comparison. Only one timestamp ever
+    reaches the running maximum, so the branch that chooses between two is
+    never exercised: measured, replacing that comparison with "the newest
+    record always wins" leaves the whole suite green. Two genuine statements
+    are what make the choice observable.
+    """
+    earlier = _record(OTHER_RECEIPT_ID, "revoked", OLDER)
+    later = _record("01J1V5B4M9Z8QWERTY77777777", "revoked", LATER)
+    records = [later, earlier] if records_in_reverse else [earlier, later]
+
+    result = _verify(records)
+
+    assert result.revocation == f"not_revoked_as_of:{LATER}"

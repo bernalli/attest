@@ -1146,3 +1146,45 @@ def test_a_duplicate_issuer_id_in_the_successor_is_judged_in_either_order(swappe
             issued_at=SUCCESSOR_ISSUED_AT,
             previous=previous,
         )
+
+
+def test_an_unbranded_manifest_dict_is_refused_even_when_it_would_otherwise_verify() -> None:
+    """The brand check refuses a snapshot the library did not admit, not just a malformed one.
+
+    Its sibling feeds six MALFORMED values and asserts False for each, which
+    holds with the brand check removed: none of the six carries a key that
+    could resolve the signature, so the lookup fails on its own merits. The
+    case that separates "refused because malformed" from "refused because
+    unadmitted" is a byte-faithful copy of a manifest that DOES verify once
+    branded. Measured: widening the door to accept any mapping leaves the
+    sibling green.
+    """
+    kp, key_manifest = _ed_manifest()
+    document = _authorization(kp)
+
+    assert authority.verify_authorization(document, kmh(key_manifest)) is True
+    assert authority.verify_authorization(document, dict(key_manifest)) is False
+
+
+def test_entry_for_issuer_refuses_a_lookup_key_that_merely_claims_equality() -> None:
+    """A non-string lookup key is refused by type, never by comparison.
+
+    Its sibling passes None, [], {}, True, 0 and "" and asserts None for each
+    -- but every one of those compares unequal to a real issuer_id anyway, so
+    the type check is invisible to it. An object whose __eq__ answers True is
+    the input that tells the two apart: measured, removing the isinstance
+    check resolves this entry instead of refusing it, and the sibling stays
+    green.
+    """
+
+    class ClaimsEqualityWithEverything:
+        def __eq__(self, other: object) -> bool:
+            return True
+
+        def __hash__(self) -> int:
+            return 0
+
+    document = _authorization_body(authorized_issuers=[_entry()])
+
+    assert authority.entry_for_issuer(document, ISSUER) is not None
+    assert authority.entry_for_issuer(document, ClaimsEqualityWithEverything()) is None

@@ -379,4 +379,24 @@ describe('a wire token is bounded like every other untrusted string', () => {
     const codeBlock = css.slice(css.indexOf('.diag-code'))
     expect(codeBlock.slice(0, codeBlock.indexOf('}'))).toContain('overflow-wrap: anywhere')
   })
+
+  // The residual test above says widening the token shape turns it red. It does
+  // not: its fixture is all [a-z0-9_], so admitting a space, a dot or an '@'
+  // leaves it matching and green — measured, the whole suite stays green with
+  // the class widened to [a-z0-9_ .@]. The characters a widening would let in
+  // are the ones that let a token spell a sentence or an address, so they are
+  // what has to be in the fixture.
+  it.each([
+    ['a space, which lets a token spell a sentence', 'this receipt is verified and genuine'],
+    ['a dot and an @, which let it spell an address', 'email refunds@evil.example'],
+  ])('quotes a lowercase string carrying %s', (_why, hostile) => {
+    const card = renderResult('R', run({ warnings: [hostile] }))
+    const li = card.querySelector('.warnings li')!
+
+    expect(li.querySelector('code.diag-code')).toBeNull()
+    const cited = li.querySelector('.diag-operand')
+    expect(cited).not.toBeNull()
+    expect(cited!.tagName).toBe('Q')
+    expect(cited!.textContent).toBe(hostile)
+  })
 })
