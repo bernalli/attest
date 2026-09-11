@@ -81,7 +81,7 @@ import shutil
 import sys
 import tempfile
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -114,6 +114,25 @@ from attest import (
 def _snapshot(manifest: dict[str, Any]) -> trust_material.KeyManifest:
     """The document as trust material: the ports take snapshots, not trees."""
     return trust_material.KeyManifest.from_bytes(canon.canonical_bytes(manifest))
+
+
+def _live_key_entry(manifest: dict[str, Any], kid: str) -> dict[str, Any]:
+    """The LIVE `keys[]` entry for `kid`, for in-place fixture surgery.
+
+    `manifests.find_key` is the public door and hands back a COPY by design: a
+    caller must not be able to change what the next reader sees. A generator
+    that edits a fixture before re-signing it needs the opposite. It refuses an
+    ambiguous kid for the same reason the library door does -- with a raised
+    error, not an `assert`, so `-O` cannot remove the refusal.
+    """
+    entries = [
+        entry
+        for entry in manifest.get("keys", [])
+        if isinstance(entry, dict) and entry.get("kid") == kid
+    ]
+    if len(entries) != 1:
+        raise ValueError(f"expected exactly one keys[] entry for {kid!r}, found {len(entries)}")
+    return entries[0]
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -5120,6 +5139,88 @@ def gen_35_transfer() -> None:
         anchor_policy=_empty_anchor_policy(),
     )
 
+    # --- (m) compromised-countersigner-cannot-back-the-transfer (TM-80,
+    # threat-model.md): 35l's twin, and the OTHER half of the same mechanism.
+    # 35l pins the half a `VerificationResult` can observe when BOTH
+    # side-documents are countersigned by K2: the revocation is set aside
+    # first, so the transfer claim is never consulted and the transfer
+    # record's own refusal is never reached. This leaf reverses exactly ONE
+    # signature — the `transferred` revocation is signed by K1
+    # (`ISSUER_KID`), which stays `active`, while the transfer record is
+    # 35l's own `record_l`, byte-for-byte, still countersigned by the
+    # `compromised` K2. The revocation now authenticates, so §17.3's
+    # key-authorization gate IS reached, refuses the record on its signer's
+    # current key status (v0.2 §17.1), and the transferred revocation is left
+    # unbacked: `revocation: "invalid_revocation_ignored"`,
+    # `transferred_revocation_unbacked`, `ok: true`.
+    #
+    # What this leaf BUYS, and why 35l could not: weakening the status check
+    # in `transfer.verify_record_signature` — accepting `compromised`
+    # alongside `active`, which is precisely the "repair" TM-80 declares
+    # non-conformant — left every other leaf in the corpus green. Under this
+    # leaf the record instead becomes a BACKED winner, and all three
+    # observables flip together: `ok` false, `revocation: "transferred"`, no
+    # warning. Sharing 35l's record and evidence is deliberate: the two
+    # fixtures differ in one signature, so the outcomes cannot diverge for
+    # any other reason. ---
+    rev_m = _hybrid_sign_record(
+        {"receipt_id": RECEIPT_ID, "status": "transferred", "revoked_at": TRANSFERRED_AT}
+    )
+    # Preconditions, and they are the leaf's real defence: three DIFFERENT
+    # construction mistakes (a `receipt_id` that does not match, a manifest
+    # that fails its own signature, a malformed `holder_authorization`) all
+    # produce the expected result byte-for-byte while leaving the mutant
+    # alive, so a green leaf proves nothing on its own. The historical v1/v2
+    # pair also differs in version, issuance time and manifest signature.
+    # Build a self-authenticating control from v2 itself: change ONLY K2's
+    # status and recompute the manifest signature. If this control cannot
+    # authenticate the same record, another refusal masks the status gate.
+    # The revocation asserts are 35l's, inverted: here it must authenticate
+    # against the manifest the trust store resolves.
+    manifest_m_active = copy.deepcopy(manifest_l_v2)
+    signer_m_active = _live_key_entry(manifest_m_active, TRANSFER_SIGNER_KID)
+    assert signer_m_active is not None and signer_m_active["status"] == "compromised"
+    signer_m_active["status"] = "active"
+    signable_m_active = manifests._signable(manifest_m_active)
+    manifest_m_active["manifest_signature"] = {
+        "kid": ISSUER_KID,
+        "sig": keys.b64u(keys.sign(signable_m_active, ISSUER_KP)),
+        "sig_ml_dsa_65": keys.b64u(_oracle_sign(signable_m_active)),
+    }
+    assert transfer.verify_record(record_l, _snapshot(manifest_m_active)) is True, (
+        "35m: active-status control must authenticate the transfer record"
+    )
+    assert transfer.verify_record(record_l, _snapshot(manifest_l_v1)) is True
+    assert transfer.verify_record(record_l, _snapshot(manifest_l_v2)) is False
+    assert transfer.verify_authorization(record_l, keys.b64u(BUYER_KP.pub)) is True
+    assert revocation.verify_record(rev_m, _snapshot(manifest_l_v1)) is True
+    assert revocation.verify_record(rev_m, _snapshot(manifest_l_v2)) is True
+    assert record_l["receipt_id"] == RECEIPT_ID
+    write_vector(
+        "35-transfer/m-compromised-countersigner-cannot-back-the-transfer",
+        payload=None,
+        envelope=envelope_a,
+        envelope_raw=None,
+        trust=_trust_material(
+            (ISSUER_ID, manifest_l_v2, "tls"),
+            chains={ISSUER_ID: [manifest_l_v1, manifest_l_v2]},
+        ),
+        expected={
+            "signature": "valid",
+            "schema": "valid",
+            "revocation": "invalid_revocation_ignored",
+            "binding": "not_checked",
+            "trust": "verified",
+            "ok": True,
+            "errors": [],
+            "warnings": ["transferred_revocation_unbacked"],
+        },
+        revocation_record=rev_m,
+        transfer_view=[{"record": record_l, "evidence": evidence_l}],
+        log_keys=[_log_key()],
+        anchor_policy=_empty_anchor_policy(),
+    )
+
 
 # --- vector 36: transfer-chain (v0.2 §17.5, chain-of-title audit) ----------
 
@@ -5387,8 +5488,8 @@ PLEDGE_PUBLISHER_ID = "pub.example"
 PLEDGE_SUCCESSOR_ID = "heritage.example"
 PLEDGE_MARKETPLACE_ID = "marketplace.example"
 
-PLEDGE_PUBLISHER_KP = keys.from_seed(bytes([37]) * 32)
-PLEDGE_SUCCESSOR_KP = keys.from_seed(bytes([38]) * 32)
+PLEDGE_PUBLISHER_KP = keys.from_seed(bytes([142]) * 32)
+PLEDGE_SUCCESSOR_KP = keys.from_seed(bytes([143]) * 32)
 PLEDGE_MARKETPLACE_KP = keys.from_seed(bytes([39]) * 32)
 
 PLEDGE_PUBLISHER_KID = f"{PLEDGE_PUBLISHER_ID}/keys/2025-01#ed25519-1"
@@ -9226,6 +9327,7 @@ def generate(out: Path) -> int:
     build a second tree without disturbing the committed one.
     """
     global VECTORS_DIR
+    _assert_distinct_signing_keys()
     previous = VECTORS_DIR
     VECTORS_DIR = out
     try:
@@ -9350,6 +9452,52 @@ def check(out: Path) -> int:
             print(f"  {name} (hand-authored, missing)", file=sys.stderr)
         return 1
     return 0
+
+
+def _assert_distinct_signing_keys() -> None:
+    """Every module-level Ed25519 keypair MUST have its own public key.
+
+    A seed reused for a second identity gives two ROLES one key, and a leaf
+    that should distinguish them can then pass because they happen to be the
+    same party. Two such collisions existed here: `bytes([37])` and
+    `bytes([38])` were spelled once as named constants for group 36 and again,
+    five thousand lines away, as INLINE literals for group 37 — which is why
+    looking for the constant's name found nothing.
+
+    Enumeration walks this module's own namespace rather than a list written
+    beside it, and descends into containers: ten of the thirty-one keypairs
+    live inside `WITNESS_ED_KPS`, and a check that read only module attributes
+    would report thirty-one as twenty-one and miss whichever collision hid in
+    there. Seeds built by arithmetic (`bytes([41 + index])`) are invisible to a
+    text search for the literal, so the public keys are compared instead of the
+    seeds: it is the property that matters, and it holds however the seed was
+    spelled.
+    """
+
+    def walk(value: object, path: str, depth: int = 0) -> Iterator[tuple[str, str]]:
+        if depth > 3:
+            return
+        if isinstance(value, keys.SigningKeyPair):
+            yield path, keys.b64u(value.pub)
+        elif isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                yield from walk(item, f"{path}[{index}]", depth + 1)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from walk(item, f"{path}[{key!r}]", depth + 1)
+
+    seen: dict[str, str] = {}
+    collisions: list[str] = []
+    for name, value in sorted(globals().items()):
+        if name.startswith("__"):
+            continue
+        for path, pub in walk(value, name):
+            if pub in seen:
+                collisions.append(f"{seen[pub]} and {path} share a public key")
+            else:
+                seen[pub] = path
+    if collisions:
+        raise AssertionError("reused signing seed: " + "; ".join(collisions))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -24,7 +24,7 @@
     },
     "signature": {
       "kid": "pub.example/keys/2025-01#ed25519-1",
-      "sig": "tUdyW-WTneRCWI2TQ6EQ92ay1UZdLy5WYbchMuUxkXg6fnwtWAtvRfhMiF2KVSf3jIXoukEiRsPJEs9BLhNBCw"
+      "sig": "KldnQsuTzAIr6kVjczrDtgcsENSzlHiVTkkkMCQv7tcLAuL-c4zrYYg3B24X9GwnQjUc3M4ecXYIJ4kM7rqeDg"
     },
     "unprotected_build": true
   }

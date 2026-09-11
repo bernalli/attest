@@ -17,6 +17,7 @@
         "test/canon-depth-profile-adversarial.test.ts": 0,
         "test/canon-parse.test.ts": 0,
         "test/canon-serialize.test.ts": 0,
+        "test/class-instance-divergence.test.ts": 0,
         "test/commitment.test.ts": 0,
         "test/compromise-adversarial.test.ts": 0,
         "test/compromise-retraction-provenance.test.ts": 0,
