@@ -13,13 +13,14 @@ can verify it offline — even after the store is gone.*
 > of section 15, or in the outline. Nothing in this document is a promise the repository cannot
 > keep. The comment at the top of this file names the specification revisions and the package
 > version the text describes; a test in the repository fails when they move, so the document
-> cannot fall behind what it describes without someone noticing. It did move, and the test did
-> fail: each round after the first exists because what this document reports on changed under it,
-> and sentences that were true when they were written had stopped being true. This one absorbed
-> two revisions of v0.1 and three of v0.2, four package releases, two further payment rails in the
-> checkout service, and a patent covenant that the colophon still described as absent. They are marked
-> nowhere, because a document that annotates its own corrections is harder to read than one that
-> is simply correct; what is annotated instead is the repository, whose history holds both states.
+> cannot fall behind what it describes without someone noticing. The gate was installed in the
+> fourth round, once every section of the outline had been written out in full; both rounds since
+> exist because what this document reports on changed under it, and sentences that were true when
+> they were written had stopped being true. This one absorbed two revisions of v0.1 and three of
+> v0.2, four package releases, two further payment rails in the checkout service, and a patent
+> covenant that the colophon still described as absent. They are marked nowhere, because a
+> document that annotates its own corrections is harder to read than one that is simply correct;
+> what is annotated instead is the repository, whose history holds both states.
 
 ---
 
@@ -762,7 +763,8 @@ their own file says otherwise, and only an audit of the recorded chain of title,
 re-issuing the transfer under a current key, tells them apart. The project's threat model
 catalogues this as TM-80, and — this is the part worth pausing on — the outcome is now pinned in
 the public conformance corpus as the *intended* one, so that a verifier cannot quietly "repair"
-it. It took two cases to do it, because the first could only reach half of the mechanism. The reason for pinning it is a lesson about verification itself: two independent
+it. It took two cases to do it, because the first could only reach half of the mechanism. The
+reason for pinning it is a lesson about verification itself: two independent
 implementations agreeing is not a safety net when both can reach the same wrong answer by
 different routes, and a behaviour that no document declares is indistinguishable from an
 accident. The rule that would close it — judge a transfer record against the key's validity
@@ -1961,8 +1963,9 @@ prese e chiuse in questo giro stanno in coda, una riga ciascuna, perché nessuno
    quindi un adempimento ma un'affermazione — dire che il testo descrive quelle revisioni e quel
    pacchetto — e il grosso di questo giro è stato renderla vera. La parte cara non erano le due
    revisioni di spec ma la 0.9.3: ha spedito le leve del venditore che il documento dichiarava
-   assenti, e la tesi «specificate, non spedite» reggeva otto sezioni. Ora il marcatore è a
-   18/13/0.9.3 e il gate è verde. **Niente da decidere qui.**
+   assenti, e la tesi «specificate, non spedite» reggeva otto sezioni. Alla chiusura di quel
+   giro il marcatore era a 18/13/0.9.3 e il gate era verde; il sesto giro lo ha portato a
+   20/16/0.9.7. **Niente da decidere qui.**
 2. **Titolo e sottotitolo.** «Own what you buy» resta (tagline ratificata). Il sottotitolo dice
    ora «durable digital possession» e la tesi «layer of possession»: la spec dice testualmente che
    una ricevuta «is not a claim of "ownership"». **Raccomando così.** Alternativa: un sottotitolo
@@ -1977,11 +1980,15 @@ prese e chiuse in questo giro stanno in coda, una riga ciascuna, perché nessuno
    quando questa decisione è stata presa, mentre i difetti vivi stanno proprio lì. Non ho cambiato
    la decisione — non è mia — ma la finestra fra pubblicazione e advisory è ora meno innocua:
    prima il documento diceva «non spedito» e nessuno andava a guardare.
-4. **Nomi di prodotti e di archivi.** Il corpo nomina le tre integrazioni del servizio di checkout
-   (Stripe, itch.io, Shopify) perché la FAQ pubblica lo fa già; i due archivi accademici sono
-   descritti nel corpo e nominati solo nelle note (§15, nota 20). **Raccomando così.** Alternativa:
-   «i checkout più comuni» nel corpo e i nomi nelle note; oppure nominare gli archivi anche nel
-   corpo.
+4. **Nomi di prodotti e di archivi.** Il corpo nomina le **cinque** integrazioni del servizio
+   di checkout (Stripe, Shopify, Paddle, PayPal, itch.io); i due archivi accademici sono
+   descritti nel corpo e nominati solo nelle note (§15, nota 20). **Questo giro ha cambiato la
+   premessa della decisione, e va detto**: la giustificazione era «perché la FAQ pubblica lo fa
+   già», e la FAQ (`docs/faq.md`, riga 147, su questo branch e su `main`) ne nomina ancora
+   **tre** — Stripe, itch.io, Shopify. Paddle e PayPal li nomina ora solo il whitepaper.
+   **Raccomando** di allineare la FAQ prima della pubblicazione, così la premessa torna vera.
+   Alternative: «i checkout più comuni» nel corpo e i cinque nomi nelle note; oppure tenere i
+   cinque nomi e accettare che il whitepaper preceda la FAQ.
 5. **Il manifesto V-F.1 è assorbito e va ritirato, non pubblicato accanto.** Ne ho ripreso
    struttura e frasi dove reggevano. La sua clausola sulla catena («tutto ciò che una catena
    farebbe è già fatto da log e firme, o è una liability») contraddice v0.2 §11.1 e non
