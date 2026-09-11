@@ -4,7 +4,7 @@
 *A whitepaper on durable digital possession: the seller signs a receipt, you hold the file, anyone
 can verify it offline — even after the store is gone.*
 
-> **Status: complete draft, fifth round (September 2026).** Every section of the outline in
+> **Status: complete draft, sixth round (September 2026).** Every section of the outline in
 > Part A is written in full in Part B. Part C is a short note for the project's owner, listing
 > the decisions that remain genuinely theirs, each with the text chosen in the meantime; it is
 > removed before publication. Every factual claim in Part B was checked against the specification,
@@ -14,8 +14,10 @@ can verify it offline — even after the store is gone.*
 > keep. The comment at the top of this file names the specification revisions and the package
 > version the text describes; a test in the repository fails when they move, so the document
 > cannot fall behind what it describes without someone noticing. It did move, and the test did
-> fail: the fifth round exists because the tooling this document reports on changed under it, and
-> several sentences that were true when they were written had stopped being true. They are marked
+> fail: each round after the first exists because what this document reports on changed under it,
+> and sentences that were true when they were written had stopped being true. This one absorbed
+> two revisions of v0.1 and three of v0.2, four package releases, two further payment rails in the
+> checkout service, and a patent covenant that the colophon still described as absent. They are marked
 > nowhere, because a document that annotates its own corrections is harder to read than one that
 > is simply correct; what is annotated instead is the repository, whose history holds both states.
 
@@ -53,16 +55,16 @@ Conventions that hold for every section:
 | 2 | Someone paid, and has nothing | Has this actually happened to people like me? | four verified cases, one per market — Amazon/*1984* (2009), Microsoft ebook store (2019), Sony/StudioCanal on PlayStation (1 September 2026, seller's own notice), Ubisoft/*The Crew* (2023–24); `README.md` opening; the verified case notes of 1 September | 10 paragraphs |
 | 3 | **What you actually bought** | What exactly is the thing I am missing? | `README.md` "What attest is"; v0.1 §2 "What a receipt is" (quoted), §4–§6 (the envelope, the fields, immutability and the irrevocability conditional), §8.1 (the commitment), §14 (the two files) | 7 paragraphs |
 | 4 | **How it works** | What does the seller give me, and how does a stranger check it? | `README.md` "How it works, for humans"; `docs/faq.md` "What does 'verify offline' actually check, and what can't it tell me?", "Who can revoke my receipt, and what would I see?", "Is this centralized?"; v0.1 §7 (keys), §8 (buyer binding), §11 (the algorithm and its vocabulary), §12 (revocation records), §13–§14 (disclose and the two files); `site/index.html` CSP and `site/e2e/site.spec.ts` for the browser verifier, `desktop/README.md` for the downloadable one. Revocation is described as a mechanism the verifier evaluates and a seller can now perform: the command-line tool's top-level verbs, read from the tool's own definition, are `authority`, `binding`, `check-artifact`, `disclose`, `export`, `grant`, `import`, `inspect`, `issue`, `keygen`, `log`, `manifest`, `revocation-view`, `revoke`, `transfer`, `verify`, and the `revoke` → `revocation-view` → `verify` chain was run end to end before the paragraph was written (the verifier reports `revocation: "revoked"`, `ok: false`). The checkout service declines an order already marked refunded and does nothing about a refund arriving after issuance; the web and downloadable verifiers fetch no revocation feed, though both read one a visitor drops on them, and pin no block headers. Every input `verify` accepts is listed with its producer, or the absence of one (`src/attest/cli.py`, `src/attest/verify.py`, `site/src/trusted-log.ts`) | 13 paragraphs + In detail |
-| 5 | **The trilemma** | If a file can be copied perfectly, how can it be *mine*? | the internal analysis of duplication and the free-copying/exclusivity/survival contradiction (research notes of 24 August, formalised in the research record of 5 September: the three poles named precisely, the two arguments for why the triple fails, the verdict "not resolvable as stated, declare the perimeter, no specification change"); v0.1 §8 (the two bindings); v0.2 §17 (issuer-mediated transfer, log-required honouring, earliest-logged-wins, holder binding); `docs/faq.md` "Is attest a DRM system…"; `src/attest/cli.py` for which side of each mechanism has a shipped command (the holder's transfer authorization, the issuer's transfer record, its packaging for a verifier, pledge redemption and the ordinary binding challenge all do; what the last one lacks is a receipt carrying a buyer key to run against); the two measured limits on transfer — a record authenticates only while its key is `active`, so a retirement or a compromise marking un-honours it and leaves one purchase with two green receipts (threat model TM-80, pinned by a leaf of the corpus), and `license.transferable` is read only as a schema cross-check, never on the honouring path — stated as limits, not guarantees | 12 paragraphs + In detail |
+| 5 | **The trilemma** | If a file can be copied perfectly, how can it be *mine*? | the internal analysis of duplication and the free-copying/exclusivity/survival contradiction (research notes of 24 August, formalised in the research record of 5 September: the three poles named precisely, the two arguments for why the triple fails, the verdict "not resolvable as stated, declare the perimeter, no specification change"); v0.1 §8 (the two bindings); v0.2 §17 (issuer-mediated transfer, log-required honouring, earliest-logged-wins, holder binding); `docs/faq.md` "Is attest a DRM system…"; `src/attest/cli.py` for which side of each mechanism has a shipped command (the holder's transfer authorization, the issuer's transfer record, its packaging for a verifier, pledge redemption and the ordinary binding challenge all do; what the last one lacks is a receipt carrying a buyer key to run against); the two measured limits on transfer — a record authenticates only while its key is `active`, so a retirement or a compromise marking un-honours it and leaves one purchase with two green receipts (threat model TM-80, pinned by two leaves of the corpus, one for each half of the mechanism), and `license.transferable` is read only as a schema cross-check, never on the honouring path — stated as limits, not guarantees | 12 paragraphs + In detail |
 | 6 | **The clock** | Why is Bitcoin in here, if this is not a blockchain thing? | v0.2 §11.1–§11.3 (anchoring), §19 (the anchored-cutoff rescue); `src/attest/cli.py` (`issue --log-dir` enters a receipt in the seller's log as it signs it; there is still no anchoring flag on `issue`, and `log anchor` attaches material obtained outside the tool, which never touches a network), `src/attest/verify.py` and `verifiers/ts/src/verify.ts` (anchoring off by default), `site/src/trusted-log.ts` (`pinnedHeaders: {}`); `docs/faq.md` "Why not blockchain / NFT?" | 13 paragraphs + In detail |
-| 7 | **Two tracks, one standard** | Who would ever issue one of these? | `README.md` "What attest is" (both tracks); `docs/faq.md` "Nobody forces a seller…"; `bridge/src/attest_bridge/` (the three checkout adapters; refunded orders skipped); Directive 2011/83/EU of 25 October 2011, Article 8(7) and Article 2(10), read on the published text; the European Commission's reply of 16 June 2026 to the *Stop Destroying Videogames* citizens' initiative, read on press release IP/26/1369; California AB 2426 (Chapter 513, Statutes of 2024; in force 1 January 2025), Business and Professions Code section 17500.6 read on the codified text | 12 paragraphs + In detail |
+| 7 | **Two tracks, one standard** | Who would ever issue one of these? | `README.md` "What attest is" (both tracks); `docs/faq.md` "Nobody forces a seller…"; `bridge/src/attest_bridge/` (the five checkout adapters; refunded orders skipped); Directive 2011/83/EU of 25 October 2011, Article 8(7) and Article 2(10), read on the published text; the European Commission's reply of 16 June 2026 to the *Stop Destroying Videogames* citizens' initiative, read on press release IP/26/1369; California AB 2426 (Chapter 513, Statutes of 2024; in force 1 January 2025), Business and Professions Code section 17500.6 read on the codified text | 12 paragraphs + In detail |
 | 8 | **What it does not do** | Where is the catch? | v0.1 §7.3, §7.4; v0.2 §15, §18.6, §18.7, §19.5, §19.6, §20; `docs/spec/attest-threat-model.md` §6.2, §7, TM-44, TM-68, TM-74, TM-78, TM-80; measured behaviour of `demo/store_dies.py`; `docs/faq.md` limits paragraph | 20 paragraphs + In detail |
 | 9 | Copying, piracy, and what this is not for | Is this DRM? Does it stop piracy? Does it help pirates? | v0.1 §2 (out of scope: DRM, hosting, resale); `docs/faq.md` "Is attest a DRM system, a store, or a way to pirate games?"; the evidence review on second-hand markets and piracy in the September paper (hostile studies first, then the applicability limit, then the ceiling, then the unmeasured gap) | 7 paragraphs |
 | 10 | Why it is worth having anyway | What does each party actually gain? | `README.md` seller paragraph; `docs/faq.md` "Nobody forces a seller…"; v0.1 §6.1 (the irrevocable-goods conditional and AB 2426); v0.2 §18 (the preservation pledge as a zero-cost signature) | 7 paragraphs |
 | 11 | After the store is gone | Practically, what do I do with the receipt on the day it matters? | `docs/faq.md` "The store that signed my receipts shut down…"; v0.2 §18 (preservation pledge, activation modes); `demo/README.md`; both demonstrations, run. Every seller-side act named here (revoking, declaring a compromise, re-issuing) is stated with whether a shipped tool performs it — today all of them do, and dating any of them does not | 8 paragraphs |
 | 12 | Where this actually is | What exists today, and what is only designed? | `README.md` "Status"; `docs/conformance.md`; the IETF Datatracker entry for `draft-martinalli-open-purchase-receipts-00` (individual submission, Informational, no standing), read on the Datatracker; the name is given because the repository's `ietf/` source and the Datatracker now carry the same one | 4 paragraphs |
 | 13 | Open problems | What is still unsolved, with a name? | `docs/spec/attest-threat-model.md` §6.3; TM-68; the adversarial question list of 1 September (long-term custody of block headers; re-attestation with no signer; the domain as a lease); the provenance of the buyer's key (research record of 5 September); the two measured transfer limits; and the general fact, measured on the command-line tool and the checkout service: **the defences exist in the specification and in the verifier, and the seller's tools for all but one of them now exist too** — revocation, a receipt's log entry and a packaged compromise declaration all ship; *dating* any of them does not, because the attestation is obtained outside these tools by design and no curated block headers ship with anything | 9 paragraphs |
-| 14 | What is needed now, and colophon | What should I do, and on what terms is all this offered? | `README.md` seller and contact paragraphs; `LICENSE`, `LICENSE-docs`; `docs/faq.md` on the patent boundary | 5 paragraphs |
+| 14 | What is needed now, and colophon | What should I do, and on what terms is all this offered? | `README.md` seller and contact paragraphs; `LICENSE`, `LICENSE-docs`, `PATENTS.md` (the non-assertion covenant, its scope limit and its defensive termination, read on the covenant itself); `docs/faq.md` on the patent boundary | 5 paragraphs |
 | 15 | Notes | Where does each external fact come from? | numbered sources for the external facts of sections 2, 5, 6, 7, 8, 9, 10 and 11; internal facts link to the live surface instead | as needed |
 
 Every section is written. Section 0 is the front matter and section 15 the notes; the order in
@@ -371,8 +373,9 @@ a verifier reads, and it still cannot be dated.
 #### What you get
 
 At checkout, the seller's tools sign a receipt for the purchase and deliver it to you. Both shipped
-issuing tools — the command-line `attest issue`, and the bridge that runs beside a Stripe, itch.io
-or Shopify checkout and signs on each paid order — can write a copy of the seller's key manifest
+issuing tools — the command-line `attest issue`, and the bridge that runs beside a Stripe,
+Shopify, Paddle, PayPal or itch.io checkout and signs on each paid order — can write a copy of the
+seller's key manifest
 into the receipt's unsigned delivery block, so that a single receipt file carries enough to be
 verified on its own. Beyond that you get a **bundle**: a `.attest` file, an ordinary zip archive,
 containing your receipts, the seller's key and artifact manifests, the licence texts every receipt
@@ -757,9 +760,9 @@ it is worse than "a transfer that stops holding". Both people end up with a rece
 and reports `ok`: the one who sold and the one who bought. Nothing either of them can see in
 their own file says otherwise, and only an audit of the recorded chain of title, or the seller
 re-issuing the transfer under a current key, tells them apart. The project's threat model
-catalogues this as TM-80, and — this is the part worth pausing on — the outcome is now pinned by
-a case in the public conformance corpus as the *intended* one, so that a verifier cannot quietly
-"repair" it. The reason for pinning it is a lesson about verification itself: two independent
+catalogues this as TM-80, and — this is the part worth pausing on — the outcome is now pinned in
+the public conformance corpus as the *intended* one, so that a verifier cannot quietly "repair"
+it. It took two cases to do it, because the first could only reach half of the mechanism. The reason for pinning it is a lesson about verification itself: two independent
 implementations agreeing is not a safety net when both can reach the same wrong answer by
 different routes, and a behaviour that no document declares is indistinguishable from an
 accident. The rule that would close it — judge a transfer record against the key's validity
@@ -820,8 +823,13 @@ written down.
 > to a chain-of-title audit (v0.2 §17.5). The two markings are one mechanism, threat model TM-80 says
 > so, and neither one's consequence for a completed transfer has been decided; a rule that
 > judges the record against the key's validity window at `transferred_at` is declared work and not
-> yet specified. The corpus pins the compromised variant as intended rather than accidental, so an
-> implementation that honours the record anyway is non-conforming and not improved. The three
+> yet specified. The corpus pins the compromised variant as intended rather than accidental, in
+> both of its halves: one case where the revocation itself fails to authenticate, so the old
+> receipt simply revives, and a second where the revocation authenticates and the transfer record
+> behind it is refused on its signer's status instead, leaving the revocation unbacked. The second
+> exists because the first could not exercise it — where the revocation fails first, the record's
+> own refusal is never reached. An implementation that honours the record anyway is non-conforming
+> and not improved. The three
 > properties named above, the two arguments for why
 > the triple fails, and the recommendation that no specification change follow from them are the
 > subject of the project's research record of 5 September 2026; the door the receipt opens is the
@@ -994,8 +1002,9 @@ routes rather than one — and why neither of them is a hope.
 **The first track works today and needs nobody's permission.** Wherever files are sold without
 locks — the DRM-free catalogues, itch.io, publishers selling direct from their own site — the
 buyer already walks away with the file. A seller there can add the receipt this afternoon. The
-project ships a small service that runs beside an existing checkout — Stripe, itch.io and Shopify
-are the ones it speaks to — and turns each paid order into a signed receipt delivered to the buyer.
+project ships a small service that runs beside an existing checkout — Stripe, Shopify, Paddle,
+PayPal and itch.io are the ones it speaks to — and turns each paid order into a signed receipt
+delivered to the buyer.
 No platform has to agree, no regulator has to act, and there is no central service to join. The
 seller's reason is commercial: "what you buy from me stays yours, even if I disappear" is a selling
 argument, and a whole DRM-free brand was built on the first half of it.
@@ -1113,10 +1122,12 @@ not up to this project. The second track runs on a slower clock, and nobody here
 > exemption is subdivision (b)(4)(C), and its wording on "permanent offline download to an external
 > storage source to be used without a connection to the internet" is quoted from the codified
 > text. On the seller's side, the first track is exercised with the shipped issuing tools (`attest
-> issue` and the bridge's Stripe, itch.io and Shopify adapters) and the shipped transfer commands;
-> declaring a key compromised is a shipped command too (`manifest rotate --compromise-kid`);
-> revoking a receipt, packaging a compromise declaration in the form a verifier needs for a cutoff,
-> and anchoring are not (sections 6 and 8). Nothing on the second track is a tool: it is a
+> issue` and the bridge's five checkout adapters) and the shipped transfer commands; declaring a
+> key compromised is a shipped command too (`manifest rotate --compromise-kid`), and so are
+> withdrawing a receipt and handing the record over in the shape a verifier reads (`attest revoke`,
+> `attest revocation-view`) and packaging a compromise declaration in the form a verifier needs for
+> a cutoff (`manifest compromise-view`). Anchoring is the one that is not, which is what sections 6
+> and 8 are about. Nothing on the second track is a tool: it is a
 > conformance profile and an argument, and this document says so.
 
 ---
@@ -1787,10 +1798,16 @@ the privacy analysis, the formal model and the demonstrations are in one public 
 `github.com/bernalli/attest`, and a receipt can be verified in a browser with nothing installed
 at `attest-receipts.org`. The reference code is licensed Apache-2.0, whose patent grant reaches
 that code and no further; the specification and its documentation are CC BY 4.0, which states
-outright that it licenses no patent rights. Nothing here charges a fee to implement any of it,
-and nothing here is yet a patent commitment to someone implementing the specification
-independently of that code: the licences say what they cover, and stop short of the words
-"royalty-free". There is nothing to join and no permission of ours to ask. Corrections to
+outright that it licenses no patent rights. Between them they leave a gap for anyone who
+implements the specification without copying the code, and a third document closes it:
+`PATENTS.md`, an irrevocable, royalty-free promise not to assert patents against anyone who
+implements the specification, binding on the author's successors and on anyone a claim is later
+transferred to. Two things bound it, and both are written into it rather than left to be found:
+it reaches the functionality the specification itself sets out in detail, and not technology the
+specification only adopts by pointing at another standard; and it ends for a party who brings or
+joins patent litigation of their own over this work. Nothing here charges a fee to implement any
+of it, and under that promise nothing can. There is nothing to join and no permission of ours to
+ask. Corrections to
 anything in this document are more welcome than agreement with it; section 8 exists because a
 hostile reading of an earlier text was right.
 
