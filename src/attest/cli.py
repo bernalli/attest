@@ -5260,7 +5260,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--block-headers",
         required=True,
         type=Path,
-        help="JSON array of {height, header_hash, merkle_root, time}",
+        help=(
+            "JSON array of {height, header_hash, merkle_root, time}. Byte order: "
+            "header_hash as explorers print it (the byte-reversed sha256d of the "
+            "80-byte header); merkle_root in the header's OWN byte order (bytes 36-68 "
+            "of the raw header - NOT the byte-reversed value getblockheader prints); "
+            "time as the header's uint32"
+        ),
     )
     p.add_argument("--out-dir", required=True, type=Path)
     p.set_defaults(func=_cmd_log_ots_convert)

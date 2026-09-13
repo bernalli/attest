@@ -37,3 +37,23 @@ condition = "AND"
 paths = ['''(^|/)tools/test-census\.json$''']
 regexTarget = "line"
 regexes = ['''^\s*"[^"\r\n]*\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$''']
+
+# And a third time, in a conformance vector. The member is named `token_b64`, so
+# the keyword rule fires, and base64 of anything has the entropy of a secret. The
+# value decodes to the ASCII string `attest-vectors-28k-fake-tsa-token`: the
+# vector exists to pin how a verifier treats an RFC 3161 timestamp it cannot
+# validate, so the token must be present and must NOT be a real one. Nothing is
+# hidden here that is not already public — this file has been on the default
+# branch since the vector was added.
+#
+# Why the exemption is shaped this way: it names ONE file and ONE member. A
+# second vector that needs the same thing gets its own line, deliberately, rather
+# than a `docs/spec/vectors/**` wildcard that would stop scanning the one corpus
+# an outside contributor can add files to. Every other member of this same file
+# remains scanned.
+[[rules.allowlists]]
+description = "a deliberately fake RFC 3161 token, carried by the vector that pins unvalidatable timestamps"
+condition = "AND"
+paths = ['''(^|/)docs/spec/vectors/28-transparency/k-rfc3161-only/transparency\.json$''']
+regexTarget = "line"
+regexes = ['''^\s*"token_b64"\s*:\s*"[A-Za-z0-9+/]+={0,2}"\s*,?\s*$''']

@@ -256,6 +256,27 @@ def _minimal_versioning() -> str:
         "| --- | --- | --- | --- |\n"
         "| `sunset-grant-v1` | active | v0.2 §18 | v0.2 §18.2 |\n"
         "\n"
+        "### 6.6 Warning literals\n\n"
+        "| Literal | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `anchor_note_only` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n"
+        "\n"
+        "### 6.12 Anchor proof kinds\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `ots` | active | v0.2 | v0.2 §11.1 |\n"
+        "| `rfc3161` | active | v0.2 | v0.2 §11.1 |\n"
+        "\n"
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1, not this one.\n\n"
+        "### 6.13 Anchor profiles\n\n"
+        "| Name | State | Introduced | Reference |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `note-v1` | deprecated-for-issuance | v0.2 | v0.2 §11.1.1 |\n"
+        "| `signed-note-v2` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n"
+        "\n"
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1.1, not this one.\n\n"
         "## Revision log\n\n"
         "- **2026-07-22 (rev 1)**: document introduced — vectors: none\n"
     )
@@ -3970,3 +3991,723 @@ def test_duplicate_and_unknown_parts_do_not_generate_totals(tmp_path: Path) -> N
                 "cannot be stated here"
                 for number in figures
             ]
+
+
+# --- v0.1 §7.3's per-period key scope, and the two summaries of it ------------
+#
+# §7.3 says per-period keys bound the FORGERY exposure of a compromise and do
+# NOT bound the invalidation reach of the marking itself. Two summaries restate
+# it, and the two are governed differently on purpose: TM-32's verdict is
+# maintained, so it must agree with §7.3; Appendix A is a superseded snapshot,
+# so its row is left verbatim and an annotation above it carries the
+# disagreement. The reds must therefore be distinguishable — one naming the
+# verdict, one naming the appendix — or a reader cannot tell which fell.
+
+_SCOPED_BODY = (
+    "Issuers SHOULD use one signing key per period to bound the **forgery** exposure of a "
+    "compromise — per-period keys do NOT bound the invalidation reach of a compromise "
+    "marking itself, since any still-active key may publish a manifest marking any other "
+    "key `compromised`."
+)
+
+
+def _v01_with_scope(body: str = _SCOPED_BODY) -> str:
+    return (
+        "## 7. Keys\n\n### 7.3 Rotation continuity and key compromise\n\n"
+        f"{body}\n\n### 7.4 Next\n\nOther.\n"
+    )
+
+
+def _tm_with_verdict(verdict: str) -> str:
+    return (
+        "#### TM-31 — Something else\n\n- **Verdict:** Mitigated — unrelated.\n\n"
+        f"#### TM-32 — Compromise of both hybrid legs (full signer compromise)\n\n"
+        f"- **Verdict:** Mitigated — v0.1 §7.3.  {verdict}\n"
+        "- **Residual risk:** The retroactive invalidation is indiscriminate by design.\n"
+    )
+
+
+_SCOPED_VERDICT = (
+    "The one-key-per-period discipline bounds the forgery exposure to a single period, and "
+    "does not bound the invalidation reach of the marking itself."
+)
+
+
+def test_tm32_verdict_must_not_promise_an_unscoped_bound() -> None:
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        _v01_with_scope(),
+        _tm_with_verdict(
+            "The one-key-per-period discipline bounds the blast radius to a single period."
+        ),
+    )
+    assert any("TM-32's verdict promises an unscoped bound" in e for e in errors), errors
+    assert all(e.startswith("attest-threat-model.md:") for e in errors), errors
+
+
+def test_tm32_verdict_must_name_both_halves_of_the_scope() -> None:
+    """A rewrite that avoids the literal phrase but still promises a bare bound."""
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        _v01_with_scope(),
+        _tm_with_verdict("The one-key-per-period discipline limits the damage to a single period."),
+    )
+    assert any("must name both halves" in e for e in errors), errors
+
+
+def test_a_scoped_verdict_is_accepted() -> None:
+    assert (
+        check_spec_docs.check_tm32_compromise_scope(
+            _v01_with_scope(), _tm_with_verdict(_SCOPED_VERDICT)
+        )
+        == []
+    )
+
+
+def test_a_forgery_qualified_blast_radius_is_not_an_unscoped_bound() -> None:
+    """v0.2 §19.6 item 2's `bound its forgery blast radius` is scoped and must pass."""
+    pattern = check_spec_docs._PER_PERIOD_UNSCOPED_RE
+    assert pattern.search("per-period keys bound its forgery blast radius") is None
+    assert pattern.search("per-period keys bound the blast radius") is not None
+
+
+def test_the_verdict_check_fails_closed_when_the_body_stops_scoping() -> None:
+    """Without §7.3's anchor there is nothing left for the verdict to agree with."""
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        _v01_with_scope("Issuers SHOULD use one signing key per period."),
+        _tm_with_verdict(_SCOPED_VERDICT),
+    )
+    assert errors == [
+        "attest-v0.1.md: §7.3 no longer scopes the per-period key discipline (missing "
+        "['bound the **forgery** exposure', 'do NOT bound the invalidation reach']); "
+        "TM-32's verdict has nothing left to agree with"
+    ]
+
+
+def test_the_verdict_check_fails_closed_when_tm32_is_missing() -> None:
+    errors = check_spec_docs.check_tm32_compromise_scope(_v01_with_scope(), "#### TM-31 — Other\n")
+    assert errors == ["attest-threat-model.md: TM-32's verdict line is missing"]
+
+
+_ANNOTATION = (
+    "> **Annotated.** The `Issuer key compromise` row below summarises per-period keys as "
+    'bounding "the blast radius"; §7.3 bounds the forgery exposure and denies any bound on '
+    "the invalidation reach. The row is not rewritten.\n"
+)
+_HISTORICAL_ROW = (
+    "| Issuer key compromise | Fail-closed (§7.3); per-period keys bound the blast radius. |\n"
+)
+
+
+def _v01_appendix(annotation: str = _ANNOTATION, row: str = _HISTORICAL_ROW) -> str:
+    return (
+        "## Appendix A — Threat model summary (non-normative)\n\n"
+        "> **Superseded.** Retained for historical continuity.\n\n"
+        f"{annotation}\n"
+        "| Threat | Answer |\n| --- | --- |\n"
+        "| Receipt forgery | Pinned ruleset. |\n"
+        f"{row}"
+    )
+
+
+def test_the_annotated_appendix_is_accepted() -> None:
+    assert check_spec_docs.check_appendix_a_annotation(_v01_appendix()) == []
+
+
+def test_appendix_a_row_must_carry_an_annotation() -> None:
+    errors = check_spec_docs.check_appendix_a_annotation(_v01_appendix(annotation=""))
+    assert any("the note above the table must record that it does" in e for e in errors), errors
+    assert all(e.startswith("attest-v0.1.md:") for e in errors), errors
+
+
+def test_an_annotation_that_misdescribes_its_own_row_is_reported() -> None:
+    """Correcting the historical row silently would leave the note describing a ghost."""
+    errors = check_spec_docs.check_appendix_a_annotation(
+        _v01_appendix(
+            row="| Issuer key compromise | Fail-closed (§7.3); per-period keys bound the "
+            "forgery exposure. |\n"
+        )
+    )
+    assert errors == [
+        "attest-v0.1.md: Appendix A's annotation attributes 'blast radius' to a row that no "
+        "longer says it; correct the annotation or drop it, since an annotation that "
+        "misdescribes its own row is worse than none"
+    ]
+
+
+def test_the_row_itself_cannot_stand_in_for_the_note_about_it() -> None:
+    """The row names the phrase, so only the prose above the table may satisfy the check."""
+    errors = check_spec_docs.check_appendix_a_annotation(_v01_appendix(annotation=""))
+    assert errors != []
+
+
+def test_the_appendix_check_fails_closed_without_its_heading() -> None:
+    errors = check_spec_docs.check_appendix_a_annotation("## Appendix B — Other\n\nBody.\n")
+    assert errors == [
+        "attest-v0.1.md: missing required heading "
+        "'## Appendix A — Threat model summary (non-normative)'"
+    ]
+
+
+def test_the_appendix_check_fails_closed_without_the_row() -> None:
+    errors = check_spec_docs.check_appendix_a_annotation(
+        _v01_appendix(row="| Stolen bundle | Per-receipt salts. |\n")
+    )
+    assert errors == ["attest-v0.1.md: Appendix A's 'Issuer key compromise' row is missing"]
+
+
+def test_the_two_surfaces_produce_reds_that_name_different_documents() -> None:
+    """A red that does not say which of the two fell is worth half of one that does."""
+    verdict_red = check_spec_docs.check_tm32_compromise_scope(
+        _v01_with_scope(),
+        _tm_with_verdict("The one-key-per-period discipline bounds the blast radius."),
+    )
+    appendix_red = check_spec_docs.check_appendix_a_annotation(_v01_appendix(annotation=""))
+    assert verdict_red and appendix_red
+    assert all("TM-32" in e and "Appendix A" not in e for e in verdict_red), verdict_red
+    assert all("Appendix A" in e and "TM-32" not in e for e in appendix_red), appendix_red
+
+
+def test_main_calls_the_tm32_scope_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Pins the main() wiring. Neither this check nor the appendix one below is
+    # reachable through collect_errors(), so main() could stop calling them and
+    # every fixture-driven test here would still pass.
+    real = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+    scoped = "bounds the forgery exposure to a single period"
+    assert real.count(scoped) == 1
+    drifted = tmp_path / "attest-threat-model.md"
+    drifted.write_text(real.replace(scoped, "bounds the blast radius to a single period"), "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_THREAT_MODEL_PATH", drifted)
+
+    assert main() == 1
+
+
+def test_main_calls_the_appendix_a_annotation_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    real = (SPEC_DIR / "attest-v0.1.md").read_text(encoding="utf-8")
+    start = real.index("> **Annotated (")
+    end = real.index("\n\n", start) + len("\n\n")
+    stripped = real[:start] + real[end:]
+    assert "> **Annotated (" not in stripped
+    drifted = tmp_path / "attest-v0.1.md"
+    drifted.write_text(stripped, "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_SPEC_V01_PATH", drifted)
+
+    assert main() == 1
+
+
+# --- not-well-formed inputs for the two per-period scope checks ---------------
+#
+# Both checks pin a surface by NAME inside a raw document, so the malformed
+# inputs that matter are the ones that put a second candidate in front of the
+# real one: a fenced example, a duplicated heading, a lost verdict line whose
+# scan then walks into the next entry.
+
+
+def test_a_fenced_example_cannot_stand_in_for_the_real_appendix() -> None:
+    """A fenced markdown sample reads exactly like the real appendix."""
+    fence = "## 3. Example\n\n```markdown\n" + _v01_appendix() + "```\n\n"
+    unannotated = _v01_appendix(annotation="")
+    assert check_spec_docs.check_appendix_a_annotation(fence + unannotated) != []
+
+
+def test_a_fenced_example_cannot_stand_in_for_section_7_3() -> None:
+    fenced = "## 2. Example\n\n```markdown\n" + _v01_with_scope() + "```\n\n"
+    unscoped = _v01_with_scope("Issuers SHOULD use one signing key per period.")
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        fenced + unscoped, _tm_with_verdict(_SCOPED_VERDICT)
+    )
+    assert any("no longer scopes the per-period key discipline" in e for e in errors), errors
+
+
+def test_a_fenced_verdict_cannot_stand_in_for_tm32s_own() -> None:
+    fenced_tm = (
+        "```markdown\n" + _tm_with_verdict(_SCOPED_VERDICT) + "```\n\n"
+        "#### TM-32 — Compromise of both hybrid legs (full signer compromise)\n\n"
+        "- **Verdict:** Mitigated.  The discipline bounds the blast radius.\n"
+    )
+    errors = check_spec_docs.check_tm32_compromise_scope(_v01_with_scope(), fenced_tm)
+    assert any("unscoped bound" in e for e in errors), errors
+
+
+def test_a_lost_verdict_line_does_not_borrow_the_next_entrys() -> None:
+    """Without a section bound the scan reaches TM-33 and judges the wrong entry."""
+    orphaned = (
+        "#### TM-32 — Compromise of both hybrid legs (full signer compromise)\n\n"
+        "- **Impact:** Arbitrary receipts.\n\n"
+        "#### TM-33 — Log signing-key compromise\n\n"
+        "- **Verdict:** Mitigated.  Bounds the forgery exposure, not the invalidation reach.\n"
+    )
+    assert check_spec_docs.check_tm32_compromise_scope(_v01_with_scope(), orphaned) == [
+        "attest-threat-model.md: TM-32's verdict line is missing"
+    ]
+
+
+def test_a_duplicated_tm32_entry_is_reported_rather_than_silently_first_wins() -> None:
+    doubled = _tm_with_verdict(_SCOPED_VERDICT) + _tm_with_verdict(
+        "The discipline bounds the blast radius."
+    )
+    errors = check_spec_docs.check_tm32_compromise_scope(_v01_with_scope(), doubled)
+    assert any("TM-32 appears 2 times" in e for e in errors), errors
+
+
+def test_a_duplicated_7_3_heading_is_reported_rather_than_silently_first_wins() -> None:
+    """The scoped copy above must not vouch for a second, unscoped '### 7.3'."""
+    scoped = _v01_with_scope()
+    unscoped_tail = (
+        "### 7.3 Rotation continuity and key compromise\n\n"
+        "Issuers SHOULD use one signing key per period.\n\n### 7.4 Next\n\nOther.\n"
+    )
+    errors = check_spec_docs.check_tm32_compromise_scope(
+        scoped + unscoped_tail, _tm_with_verdict(_SCOPED_VERDICT)
+    )
+    assert any("'### 7.3' appears 2 times" in e for e in errors), errors
+
+
+# --- §6.12/§6.13, the two anchor registries and their governing document ------
+#
+# These are the first registries in §6 whose governing document is NOT this
+# document, and saying so is the whole point: §6's chapeau assigns one only up
+# to §6.5, so a subsection that stays silent leaves a Specification-Required
+# registry with no specification named.
+
+
+def _versioning_with_anchor_registries(
+    kinds: str = "| `ots` | active | v0.2 | v0.2 §11.1 |\n"
+    "| `rfc3161` | active | v0.2 | v0.2 §11.1 |\n",
+    kinds_governing: str = (
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1, not this one.\n"
+    ),
+    profiles: str = "| `note-v1` | deprecated-for-issuance | v0.2 | v0.2 §11.1.1 |\n"
+    "| `signed-note-v2` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n",
+    warning: str = "| `anchor_note_only` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n",
+) -> str:
+    head = "| Name | State | Introduced | Reference |\n| --- | --- | --- | --- |\n"
+    return (
+        "### 6.6 Warning literals\n\n"
+        "| Literal | State | Introduced | Reference |\n| --- | --- | --- | --- |\n"
+        f"{warning}\n"
+        f"### 6.12 Anchor proof kinds\n\n{head}{kinds}\n{kinds_governing}\n"
+        f"### 6.13 Anchor profiles\n\n{head}{profiles}\n"
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1.1, not this one.\n"
+    )
+
+
+def test_the_anchor_registries_are_accepted_when_complete() -> None:
+    assert (
+        check_spec_docs.check_versioning_anchor_registries(_versioning_with_anchor_registries())
+        == []
+    )
+
+
+def test_a_missing_anchor_kind_row_is_reported() -> None:
+    errors = check_spec_docs.check_versioning_anchor_registries(
+        _versioning_with_anchor_registries(kinds="| `ots` | active | v0.2 | v0.2 §11.1 |\n")
+    )
+    assert any("§6.12 registry missing active-state row for `rfc3161`" in e for e in errors), errors
+
+
+def test_the_legacy_profile_may_not_be_quietly_promoted_to_active() -> None:
+    """`note-v1` is deprecated-for-issuance; `active` would contradict §11.1.1."""
+    errors = check_spec_docs.check_versioning_anchor_registries(
+        _versioning_with_anchor_registries(
+            profiles="| `note-v1` | active | v0.2 | v0.2 §11.1.1 |\n"
+            "| `signed-note-v2` | active | v0.2 rev 4 | v0.2 §11.1.1 |\n"
+        )
+    )
+    assert any("deprecated-for-issuance-state row for `note-v1`" in e for e in errors), errors
+
+
+def test_a_registry_that_does_not_name_its_governing_document_is_reported() -> None:
+    """Specification Required, with no specification named, cannot be registered in."""
+    errors = check_spec_docs.check_versioning_anchor_registries(
+        _versioning_with_anchor_registries(kinds_governing="Registered here.\n")
+    )
+    assert any("§6.12 does not name its governing document" in e for e in errors), errors
+
+
+def test_the_deprecated_profiles_warning_must_be_registered_too() -> None:
+    """`anchor_note_only` is what `deprecated-for-issuance` means in practice."""
+    errors = check_spec_docs.check_versioning_anchor_registries(
+        _versioning_with_anchor_registries(warning="| `other` | active | v0.2 | v0.2 §1 |\n")
+    )
+    assert any("`anchor_note_only`" in e for e in errors), errors
+
+
+def test_the_anchor_registry_check_fails_closed_without_its_headings() -> None:
+    errors = check_spec_docs.check_versioning_anchor_registries("### 6.1 Signature suites\n\nx\n")
+    assert any("missing required heading '### 6.12 Anchor proof kinds'" in e for e in errors), (
+        errors
+    )
+    assert any("missing required heading '### 6.13 Anchor profiles'" in e for e in errors), errors
+
+
+def test_a_fenced_example_cannot_stand_in_for_the_anchor_registries() -> None:
+    """An illustrative fence must not satisfy a registry the document no longer has."""
+    real = _versioning_with_anchor_registries()
+    impostor = (
+        "```markdown\n"
+        "### 6.12 Anchor proof kinds\n\n"
+        "| Name | State | Introduced | Reference |\n| --- | --- | --- | --- |\n"
+        "| `ots` | active | v0.2 | illustrative only |\n"
+        "| `rfc3161` | active | v0.2 | illustrative only |\n\n"
+        "This registry's governing document is "
+        "[`attest-v0.2.md`](attest-v0.2.md) §11.1, not this one.\n"
+        "```\n\n"
+    ) + real[real.index("### 6.13 Anchor profiles") :]
+    errors = check_spec_docs.check_versioning_anchor_registries(impostor)
+    assert any("missing required heading '### 6.12 Anchor proof kinds'" in e for e in errors), (
+        errors
+    )
+
+
+def test_a_duplicated_anchor_registry_heading_is_reported_rather_than_first_wins() -> None:
+    """A drifted second copy must not be vouched for by the first, well-formed one."""
+    drifted = _versioning_with_anchor_registries() + (
+        "\n### 6.12 Anchor proof kinds\n\n"
+        "| Name | State | Introduced | Reference |\n| --- | --- | --- | --- |\n"
+        "| `ots` | unsafe | v9 | drifted copy |\n"
+    )
+    errors = check_spec_docs.check_versioning_anchor_registries(drifted)
+    assert any("'### 6.12 Anchor proof kinds' appears 2 times" in e for e in errors), errors
+
+
+# --- README's catalog size, tied to the catalog --------------------------------
+#
+# The number drifted to 78 while the catalog held 80, because nothing derived
+# one from the other. These pin the tie, not the number.
+
+
+def test_the_readme_catalog_count_matches_the_catalog() -> None:
+    assert check_spec_docs.check_readme_catalog_count() == []
+
+
+def test_a_readme_catalog_count_that_drifts_is_reported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    real = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    match = check_spec_docs._README_CATALOG_RE.search(real)
+    assert match is not None
+    drifted = tmp_path / "README.md"
+    drifted.write_text(real.replace(match.group(0), "78 attacks catalogued"), "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", drifted)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("claims 78 attacks catalogued" in e for e in errors), errors
+
+
+def test_the_catalog_count_check_fails_closed_when_the_sentence_is_reworded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A guard whose subject has been reworded reports green for the wrong reason."""
+    reworded = tmp_path / "README.md"
+    reworded.write_text("# attest\n\nEvery attack we could think of is catalogued.\n", "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", reworded)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+def test_two_catalog_claims_are_reported_rather_than_first_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doubled = tmp_path / "README.md"
+    doubled.write_text("81 attacks catalogued. Elsewhere: 12 attacks catalogued.\n", "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", doubled)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("2 catalog-size claims" in e for e in errors), errors
+
+
+def test_main_calls_the_readme_catalog_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pins the main() wiring: collect_errors() cannot reach this check."""
+    real = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    match = check_spec_docs._README_CATALOG_RE.search(real)
+    assert match is not None
+    drifted = tmp_path / "README.md"
+    drifted.write_text(real.replace(match.group(0), "1 attacks catalogued"), "utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", drifted)
+
+    assert main() == 1
+
+
+def test_a_fenced_catalog_claim_cannot_stand_in_for_the_real_sentence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An illustrative fence reads exactly like the real sentence.
+
+    README.md already carries fenced blocks, so this is reachable input rather
+    than a corner: the guard's own subject must not be satisfiable by
+    non-operative content.
+    """
+    fenced = tmp_path / "README.md"
+    fenced.write_text(
+        "# attest\n\nFor example:\n\n```\n- **Threat model.** 81 attacks catalogued\n```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", fenced)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+def test_a_fenced_tm_entry_is_not_counted_as_a_catalog_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The catalog side of the same property: a fenced sample entry is not an entry."""
+    real_tm = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+    with_fenced_entry = tmp_path / "attest-threat-model.md"
+    with_fenced_entry.write_text(
+        real_tm
+        + "\n```\n#### TM-99 — an illustrative sample, not an entry\n\n"
+        + "- **Verdict:** Out of scope — v0.1 §7.3.\n```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_THREAT_MODEL_PATH", with_fenced_entry)
+
+    assert check_spec_docs.check_readme_catalog_count() == []
+
+
+# --- FID-9 giro 2: regression fixtures for the five re-review findings -------
+#
+# The giro-2 re-review found all five PATCHes from giro 1 applied verbatim,
+# and none of them protected: reverting each defect left the same 397 tests
+# green. These fixtures close that gap -- one per finding -- plus the
+# negative/positive suite the NEW-DEFECT (N1) PATCH prescribed for the
+# consolidated fence+comment helper it introduced.
+
+
+def test_an_html_comment_catalog_claim_cannot_stand_in_for_the_real_sentence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """HIGH 1's other half: an HTML comment reads exactly like the real
+    sentence, same as the fence case above -- the giro-2 re-review found
+    this side unprotected (removing only the comment strip on the README
+    side left all 397 tests green)."""
+    commented = tmp_path / "README.md"
+    commented.write_text(
+        "# attest\n\n<!--\n- **Threat model.** 81 attacks catalogued\n-->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", commented)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+def test_the_h13_rider_still_scopes_the_indistinguishable_claim() -> None:
+    """HIGH 2: the rider claimed NO instrument ever tells a legitimate
+    successor from a seizure -- false for a cooperative handover at the
+    same domain, which ordinary continuous rotation (v0.1 §7.3) makes
+    distinguishable. The fix narrows the claim to the case where the
+    predecessor can no longer sign. This is prose with no check function
+    behind it (the giro-2 re-review measured this directly: reverting the
+    claim left checker and all 397 tests green), so the fixture pins the
+    scoping qualifier attached to the claim it must qualify, and the
+    specific closing sentence the PATCH replaced -- both against the real,
+    committed document, since a copy in tmp_path would test nothing about
+    what ships."""
+    text = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+
+    assert (
+        "Where the predecessor can no longer sign, the benign case is "
+        "indistinguishable from the hostile one"
+    ) in text, "the qualifier that scopes the claim to the unsignable case is gone"
+    assert "does not exist in this revision." not in text, (
+        "the old, unqualified closing sentence the PATCH removed is back"
+    )
+
+
+def test_the_manifest_marking_restriction_is_stated_as_v0_2_section_19_5_states_it() -> None:
+    """MEDIUM 3: the entry claimed nothing restricts WHICH keys may publish a
+    compromise marking -- v0.2 §19.5 restricts it to still-active keys, in
+    the very parenthetical the entry paraphrased away. No check function
+    validates this prose; the fixture pins the false universal's absence
+    and the corrected sentence's presence, against the real document."""
+    text = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+
+    old = (
+        "Nothing in either specification restricts WHICH keys may publish a "
+        "compromise marking (v0.2 §19.5, TM-75), and this entry is the "
+        "identity-side instance of that gap."
+    )
+    assert old not in text, "the false universal MEDIUM 3 removed is back"
+    assert (
+        "v0.2 §19.5 places any FURTHER restriction on WHICH keys may publish "
+        "a manifest marking another key `compromised` out of scope"
+    ) in text, "the corrected, scoped restriction is gone"
+
+
+def test_verified_trust_label_is_not_said_to_carry_no_continuity_signal() -> None:
+    """MEDIUM 4: v0.1 §7.4 said no label in the spec speaks to continuity of
+    control -- but §7.4 itself defines `verified` as absent a discontinuous
+    rotation (§7.3), which is exactly such a label. No check function
+    validates this prose; the fixture pins the false universal's absence
+    and the corrected sentence's presence, against the real document."""
+    text = (SPEC_DIR / "attest-v0.1.md").read_text(encoding="utf-8")
+
+    old = (
+        "it does not say that this is the same party that controlled it "
+        "when any given receipt was signed, and no label in this "
+        "specification says so."
+    )
+    assert old not in text, "the false universal MEDIUM 4 removed is back"
+    assert (
+        "only the manifest-version chain of §7.3 speaks to that, and only "
+        "as far back as the verifier's own history reaches"
+    ) in text, "the corrected clause naming §7.3's chain is gone"
+
+
+def test_tm76_no_longer_claims_the_unsupported_comparison_to_tm81() -> None:
+    """LOW 5: TM-76 claimed its residual risk weighs more than the
+    issuer-side one -- unsupported once TM-81 documented an issuer-side
+    direction that invalidates an entire signed history. No check function
+    validates this prose; the fixture pins the false comparison's absence
+    and the corrected, sibling framing's presence, against the real
+    document."""
+    text = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+
+    assert "weighs more here than it does for issuers" not in text, (
+        "the unsupported comparison LOW 5 removed is back"
+    )
+    assert ("is not the lighter case this entry once called it") in text, (
+        "the corrected sibling framing (TM-76 vs TM-81) is gone"
+    )
+
+
+# --- N1 -- the new fence/comment guard on both catalog-size call sites -------
+#
+# check_readme_catalog_count() now runs both the README sentence and the
+# threat-model catalog through _catalog_operative_text(): a single state
+# machine (not two independent regex substitutions) that (a) requires a
+# fence's closing line to use the same delimiter character and be at least
+# as long as the opening run, (b) leaves an unclosed fence or comment
+# excluding everything to EOF, and (c) treats a marker of one kind as inert
+# while inside a span of the other kind.
+
+
+@pytest.mark.parametrize("marker", ["`", "~"])
+@pytest.mark.parametrize("width", [3, 4, 5, 8])
+def test_an_unclosed_fence_cannot_supply_the_readme_catalog_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, marker: str, width: int
+) -> None:
+    path = tmp_path / "README.md"
+    path.write_text(f"# attest\n\n{marker * width}\n81 attacks catalogued\n", encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("marker", ["`", "~"])
+@pytest.mark.parametrize("width", [4, 5, 8])
+def test_a_shorter_inner_fence_cannot_close_the_readme_catalog_fence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, marker: str, width: int
+) -> None:
+    """A shorter run of the SAME character does not close a fence
+    (CommonMark): a naive scan that treats any run of >=3 as a closer would
+    read the inner, shorter run as the close and expose the claim below it."""
+    path = tmp_path / "README.md"
+    path.write_text(
+        f"{marker * width}\n{marker * (width - 1)}\n81 attacks catalogued\n{marker * width}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("ending", ["-->\n", ""])
+def test_an_html_comment_readme_claim_cannot_supply_the_sentence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ending: str
+) -> None:
+    """Closed normally, or truncated to EOF: either way the sentence inside
+    stays hidden."""
+    path = tmp_path / "README.md"
+    path.write_text("# attest\n\n<!--\n81 attacks catalogued\n" + ending, encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+def test_a_commented_out_tm81_is_not_counted_as_a_catalog_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The catalog side of the same property, for comments rather than
+    fences: TM-81 wrapped in an HTML comment must not be counted, and the
+    real README's claim of 81 then drifts against the now-80-entry catalog."""
+    real_tm = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+    start = real_tm.index("#### TM-81 —")
+    end = real_tm.index("\n## 5. Traceability", start)
+    commented = tmp_path / "attest-threat-model.md"
+    commented.write_text(
+        real_tm[:start] + "<!--\n" + real_tm[start:end] + "-->\n" + real_tm[end:],
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_THREAT_MODEL_PATH", commented)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("has 80 entries" in e for e in errors), errors
+
+
+def test_a_commented_sample_tm_entry_does_not_inflate_the_catalog_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other direction: an illustrative TM-99 wrapped in an HTML comment
+    must not be counted either -- the real README's claim of 81 stays
+    correct against the still-81-entry catalog."""
+    real_tm = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+    with_commented_sample = tmp_path / "attest-threat-model.md"
+    with_commented_sample.write_text(
+        real_tm + "\n<!--\n#### TM-99 — sample\n-->\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(check_spec_docs, "_THREAT_MODEL_PATH", with_commented_sample)
+
+    assert check_spec_docs.check_readme_catalog_count() == []
+
+
+def test_the_real_sentence_survives_next_to_a_fenced_example(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Positive control (PATCH item 5): a real claim plus a fenced example
+    naming a DIFFERENT count reads as exactly one claim, not two -- the
+    example is non-operative, not a second sentence competing with the
+    real one."""
+    path = tmp_path / "README.md"
+    path.write_text(
+        "# attest\n\n81 attacks catalogued.\n\nFor example:\n\n```\n99 attacks catalogued\n```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    assert check_spec_docs.check_readme_catalog_count() == []
+
+
+def test_the_real_sentence_survives_next_to_a_commented_example(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Positive control (PATCH item 5), the comment variant, and block order
+    reversed relative to the case above: the comment comes first, the real
+    sentence after -- order must not matter to the state machine."""
+    path = tmp_path / "README.md"
+    path.write_text(
+        "# attest\n\n<!-- 99 attacks catalogued -->\n\n81 attacks catalogued.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    assert check_spec_docs.check_readme_catalog_count() == []

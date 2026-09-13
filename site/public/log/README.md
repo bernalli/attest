@@ -48,7 +48,7 @@ We would rather say that here than let the word "transparency" imply it.
 The public keys that verify these checkpoints are **not published in this directory,
 on purpose**. A verifier must pin log keys out of band — taking them from the log
 they are meant to check would be circular. They ship inside each verifier, and are
-listed in the project's documentation.
+listed in the project's documentation (`docs/trust/` in the repository).
 
 ## If this log stops
 

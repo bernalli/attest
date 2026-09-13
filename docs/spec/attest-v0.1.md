@@ -231,7 +231,7 @@ An artifact manifest is valid only if: its resolving key manifest is self-consis
 
 ### 7.4 Offline verification and trust bootstrapping
 
-Offline verification MUST work from a local trust store of key manifests (a `TrustStore`: per-issuer manifest, per-issuer provenance, optional per-issuer manifest-version chain). A manifest obtained from the issuer's own domain over TLS is the v0.1 root of trust; a verifier that resolved a manifest this way MUST report `trust: "verified"` (absent a discontinuous rotation, §7.3). A manifest that arrived by any other path — e.g. embedded in an export bundle, never independently fetched over TLS — is **unauthenticated TOFU** and MUST be reported as `trust: "unauthenticated_tofu"`, never silently upgraded to `"verified"`.
+Offline verification MUST work from a local trust store of key manifests (a `TrustStore`: per-issuer manifest, per-issuer provenance, optional per-issuer manifest-version chain). A manifest obtained from the issuer's own domain over TLS is the v0.1 root of trust; a verifier that resolved a manifest this way MUST report `trust: "verified"` (absent a discontinuous rotation, §7.3). A manifest that arrived by any other path — e.g. embedded in an export bundle, never independently fetched over TLS — is **unauthenticated TOFU** and MUST be reported as `trust: "unauthenticated_tofu"`, never silently upgraded to `"verified"`. **Domain-rooted provenance attests control of the name at the moment of resolution, and never continuity of the party that controlled it before.** `trust: "verified"` says that the manifest was served, over TLS, by whoever controls `issuer.id` now; it does not by itself say that this is the same party that controlled it when any given receipt was signed — only the manifest-version chain of §7.3 speaks to that, and only as far back as the verifier's own history reaches. A verifier holding the issuer's manifest-version chain detects a discontinuity (§7.3) and reports `"unverified_rotation"`; a verifier holding no history has nothing to compare against and cannot distinguish a succession from a seizure (attest-threat-model.md TM-81).
 
 ## 8. Buyer commitment and binding
 
@@ -578,6 +578,16 @@ The conformance vectors under [`docs/spec/vectors/`](vectors/) are the attest co
 > **Superseded (2026-07-18).** This summary is retained for historical continuity.
 > The normative, maintained threat model is [`attest-threat-model.md`](attest-threat-model.md);
 > privacy analysis lives in [`attest-privacy.md`](attest-privacy.md).
+
+> **Annotated (2026-09-11), row left verbatim.** The `Issuer key compromise` row below
+> summarises the one-key-per-period discipline as bounding "the blast radius". The
+> normative text has said otherwise since rev 8: §7.3 bounds the **forgery** exposure of
+> a compromise and states that per-period keys do NOT bound the invalidation reach of a
+> compromise marking itself, since any still-active key may mark any other key
+> `compromised`. The row is not rewritten — this appendix records what this
+> specification asserted at a date, and a published snapshot that changes after being
+> superseded leaves a reader comparing two versions with no way to tell why. §7.3
+> governs; this annotation is the disagreement, on the record rather than erased.
 
 | Threat | Answer |
 | --- | --- |
