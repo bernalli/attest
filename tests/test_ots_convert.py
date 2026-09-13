@@ -1009,6 +1009,89 @@ def test_log_ots_convert_zero_survivors_writes_the_report_and_fails(
     assert list(out_dir.glob("proof-*.json")) == []
 
 
+def test_log_ots_convert_names_a_display_order_merkle_root_in_report_and_stderr(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """An OTS path replays onto the raw header's own byte order, while
+    `getblockheader` and block explorers print `merkle_root` reversed. An
+    operator who copies the field from either therefore hands the converter the
+    replay backwards, and that one mismatch is named for what it is — on stderr
+    and in the report — instead of the generic wording a wrong header or a
+    corrupt op-chain also produces. The second half of the test supplies the
+    same path in wire order and expects a proof, so the diagnosis is pinned to
+    the reversal rather than to every header the converter turns down."""
+
+    height = 700_000
+    evidence = _minimal_anchor_evidence()
+    seed = _expected_seed_from_evidence(evidence)
+    # One `sha256` op and nothing else, so the root the operator owes is the
+    # hash of the seed; the expected value is computed here from the shape of
+    # the path, never by asking the converter what it replayed.
+    wire_order_root = hashlib.sha256(seed).digest()
+    ots_path = tmp_path / "stamp.ots"
+    ots_path.write_bytes(_ots_with_tree(TAG_SHA256 + _bitcoin_attestation(height), digest=seed))
+    evidence_path = _write_json(tmp_path / "evidence.json", evidence)
+
+    def _run(headers_path: Path, out_dir: Path) -> int:
+        return cli.main(
+            [
+                "log",
+                "ots-convert",
+                "--ots",
+                str(ots_path),
+                "--evidence",
+                str(evidence_path),
+                "--block-headers",
+                str(headers_path),
+                "--out-dir",
+                str(out_dir),
+            ]
+        )
+
+    display_order_out = tmp_path / "display-order"
+    capsys.readouterr()
+    rc = _run(
+        _write_json(
+            tmp_path / "display-order-headers.json",
+            [_header(height, wire_order_root[::-1].hex()).__dict__],
+        ),
+        display_order_out,
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "byte-reversed" in captured.err
+    assert "display order" in captured.err
+    assert f"Bitcoin height {height}" in captured.err
+    report = json.loads((display_order_out / "conversion-report.json").read_text(encoding="utf-8"))
+    assert report["converted"] == 0
+    assert report["skipped"] == 1
+    reason = report["paths"][0]["reason"]
+    assert reason is not None
+    assert "byte-reversed" in reason
+    assert report["paths"][0]["proof_file"] is None
+    assert list(display_order_out.glob("proof-*.json")) == []
+
+    wire_order_out = tmp_path / "wire-order"
+    capsys.readouterr()
+    rc = _run(
+        _write_json(
+            tmp_path / "wire-order-headers.json", [_header(height, wire_order_root.hex()).__dict__]
+        ),
+        wire_order_out,
+    )
+    stdout = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert stdout["proofs"] == 1
+    assert json.loads((wire_order_out / f"proof-0-{height}.json").read_text(encoding="utf-8")) == {
+        "ops": [["sha256"]],
+        "header_merkle_root": wire_order_root.hex(),
+        "header_hash": _header(height, wire_order_root.hex()).header_hash,
+        "header_time": 1_700_000_000,
+    }
+
+
 def test_log_ots_convert_report_counts_and_links_every_row_to_its_file(
     tmp_path: Path, capsys: CapSys
 ) -> None:
@@ -1677,3 +1760,38 @@ def test_anchored_before_composes_over_two_converted_bitcoin_paths(
         assert len(json.loads(composed.read_text(encoding="utf-8"))["anchors"]["proofs"]) == 2
     assert _transparency(older_then_newer) == older_time
     assert _transparency(newer_then_older) == older_time
+
+
+def test_log_ots_convert_help_states_the_merkle_root_byte_order(
+    capsys: CapSys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The help states which byte order each field is owed in.
+
+    The two hash fields of a block header are printed in OPPOSITE orders by the
+    tools an operator reaches for: a node prints the header hash reversed, and
+    prints the merkle root reversed too — but an OpenTimestamps path replays
+    onto the merkle root as the raw header carries it. Copying that field from
+    a node or an explorer is therefore the one mistake this help exists to
+    prevent, and it is stated where the operator is already looking.
+    """
+
+    # argparse fills to the terminal width and textwrap breaks on hyphens, so a
+    # narrow console would split these phrases across lines and no substring
+    # check would survive.
+    monkeypatch.setenv("COLUMNS", "2000")
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["log", "ots-convert", "--help"])
+    assert exc_info.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+
+    assert "Byte order" in help_text
+    # merkle_root: the header's own order.
+    assert "bytes 36-68" in help_text
+    assert "NOT the byte-reversed value" in help_text
+    # header_hash: the opposite order, and the half nothing else guards — conversion never
+    # compares this field to anything, so a hash in the wrong order converts and is pinned.
+    # If this help stops saying which order it wants, no other test goes red.
+    assert "header_hash as explorers print it" in help_text
+    assert "byte-reversed sha256d" in help_text
+    # The promise that must not fall out while rewriting this help.
+    assert "performs no network I/O" in help_text
