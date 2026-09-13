@@ -1314,6 +1314,15 @@ _VERSIONING_REQUIRED_ACTIVE_PLEDGE_TYPES: tuple[str, ...] = ("`sunset-grant-v1`"
 
 def _registry_rows(versioning: str, heading: str) -> tuple[str, list[str]]:
     """Return a registry subsection's body, or an error naming the missing heading."""
+    # Same first-wins resolution closed for '### 7.3' and '#### TM-32': a
+    # duplicated heading would let the first, well-formed copy vouch for a
+    # second, drifted one. Fail closed rather than read whichever came first.
+    duplicates = re.findall(rf"^### {re.escape(heading)}$", versioning, re.MULTILINE)
+    if len(duplicates) > 1:
+        return "", [
+            f"'### {heading}' appears {len(duplicates)} times; "
+            "the registry read would be whichever came first"
+        ]
     match = re.search(
         rf"^### {re.escape(heading)}$([\s\S]*?)(?=^### |^## |\Z)", versioning, re.MULTILINE
     )
@@ -1381,6 +1390,66 @@ def check_versioning_stage4_registries(versioning: str) -> list[str]:
             pattern = rf"^\| {re.escape(entry)} \| {state} \|"
             if re.search(pattern, rows, re.MULTILINE) is None:
                 errors.append(f"{section} registry missing {state}-state row for {noun} {entry}")
+    return errors
+
+
+# §6.12 and §6.13 register the two anchor vocabularies v0.2 §11.1 and §11.1.1
+# have defined since v0.2 rev 4. Both differ from every registry above them in
+# one way that has to survive an edit: their governing document is v0.2, not
+# this one. §6's chapeau assigns a governing document only up to §6.5, so a
+# subsection that does not name its own leaves a registry under "Specification
+# Required" with no specification named — which is how the gap these two close
+# would reopen one subsection at a time.
+_VERSIONING_ANCHOR_REGISTRIES: tuple[tuple[str, str, tuple[tuple[str, str], ...], str], ...] = (
+    (
+        "6.12 Anchor proof kinds",
+        "§6.12",
+        (("`ots`", "active"), ("`rfc3161`", "active")),
+        "This registry's governing document is [`attest-v0.2.md`](attest-v0.2.md) §11.1,",
+    ),
+    (
+        "6.13 Anchor profiles",
+        "§6.13",
+        (("`note-v1`", "deprecated-for-issuance"), ("`signed-note-v2`", "active")),
+        "This registry's governing document is [`attest-v0.2.md`](attest-v0.2.md) §11.1.1,",
+    ),
+)
+
+
+def check_versioning_anchor_registries(versioning: str) -> list[str]:
+    """§6.12/§6.13 carry their rows AND name v0.2 as their governing document."""
+    # An illustrative fence reads exactly like a real registry subsection —
+    # heading, header row, separator, rows — so scanning fences would let an
+    # example stand in for the registry itself, including for one that has been
+    # deleted. Same rationale as collect_errors() and check_tm32_compromise_scope();
+    # attest-versioning.md carries no fence today, which is exactly why the guard
+    # has to be in place before it does.
+    versioning = _strip_fenced_blocks(versioning)
+    errors: list[str] = []
+    for heading, section, rows, governing in _VERSIONING_ANCHOR_REGISTRIES:
+        body, heading_errors = _registry_rows(versioning, heading)
+        errors.extend(heading_errors)
+        if heading_errors:
+            continue
+        for name, state in rows:
+            if re.search(rf"^\| {re.escape(name)} \| {state} \|", body, re.MULTILINE) is None:
+                errors.append(f"{section} registry missing {state}-state row for {name}")
+        if governing not in body:
+            errors.append(
+                f"{section} does not name its governing document; a registry whose "
+                "registration policy is Specification Required, with no specification named, "
+                "cannot be registered in"
+            )
+    # `anchor_note_only` is the classification §6.13's deprecated profile carries;
+    # registering the profile without its warning would leave the state's meaning
+    # pointing at an unregistered literal.
+    warnings, warning_errors = _registry_rows(versioning, "6.6 Warning literals")
+    errors.extend(warning_errors)
+    if (
+        not warning_errors
+        and re.search(r"^\| `anchor_note_only` \| active \|", warnings, re.MULTILINE) is None
+    ):
+        errors.append("§6.6 registry missing active-state row for warning `anchor_note_only`")
     return errors
 
 
@@ -1541,6 +1610,170 @@ def check_receipt_id_pattern(spec_v01: str, schema: dict[str, object]) -> list[s
             f"schema pattern {schema_pattern!r}"
         ]
     return []
+
+
+# v0.1 §7.3 states the one-key-per-period discipline in scoped form: per-period
+# keys bound the FORGERY exposure of a compromise, and do NOT bound the
+# invalidation reach of the marking itself, since any still-active key may mark
+# any other key `compromised`. Two summaries restate that discipline away from
+# the normative body, and each is governed differently.
+#
+# TM-32's verdict is maintained and normative, so it is held to §7.3 and must
+# say what §7.3 says. It carried the unscoped form while §7.3 already said the
+# opposite, and it contradicted its own residual risk two lines below.
+#
+# Appendix A is not. It is a snapshot of what this specification asserted at a
+# date, superseded in 2026-07 and kept verbatim; a published snapshot that
+# changes after being superseded leaves a reader comparing two versions with no
+# way to tell why. So its row is deliberately NOT held to §7.3 — the annotation
+# above it is, and `check_appendix_a_annotation` below is what keeps the
+# disagreement on the record instead of erased.
+#
+# The two are checked separately, with distinct messages, because a red that
+# does not say WHICH of the two fell is worth half of one that does.
+#
+# Neither is wired into `collect_errors()`. Both pin a surface identified by
+# NAME in the real documents — one threat-model entry by its number, one
+# appendix by its title — while `collect_errors()` is exercised against minimal
+# fixtures that legitimately carry neither, and whose threat model holds a
+# single TM-01. Wiring them there would force every fixture to grow a TM-32 and
+# an appendix to stay clean, which would make the fixtures describe this pair of
+# checks rather than the structure they exist to test. `main()` calls them
+# directly, the same arrangement `check_standards_relationship()` and
+# `check_tm80_leaf_tense()` already use, and `test_main_exits_zero_on_the_real_docs`
+# is what keeps them running.
+#
+# The anchor forms are checked first and fail closed: they are what the verdict
+# is compared AGAINST, so a check that kept scoring the verdict after the body
+# stopped saying this would report on a rule that no longer exists.
+_PER_PERIOD_ANCHOR_FORMS: tuple[str, ...] = (
+    "bound the **forgery** exposure",
+    "do NOT bound the invalidation reach",
+)
+# What a maintained summary must say: both halves, the bound and its limit.
+# Requiring the pair is what makes this a comparison rather than a blocklist — a
+# rewrite that avoids the literal phrase below while still promising an
+# unqualified bound ("per-period keys limit the damage") fails on the missing
+# halves instead of slipping through.
+_PER_PERIOD_REQUIRED_HALVES: tuple[str, ...] = ("forgery", "invalidation reach")
+# The literal unscoped form, kept as its own check so the error can quote what
+# it found. `bound its forgery blast radius` (v0.2 §19.6 item 2) is scoped and
+# must not match, so the qualifier cannot sit between the verb and the noun.
+_PER_PERIOD_UNSCOPED_RE = re.compile(r"bounds?\s+(?:the|its)\s+blast\s+radius", re.IGNORECASE)
+_TM32_HEADING_RE = re.compile(r"^#### TM-32 ", re.MULTILINE)
+# Same rationale one heading level up: a duplicated '### 7.3' would let the
+# first, well-formed copy vouch for a second, drifted one.
+_V01_73_HEADING_RE = re.compile(r"^### 7\.3 ", re.MULTILINE)
+# The scan may not cross into the next entry. A TM-32 that loses its verdict
+# line would otherwise adopt TM-33's: green on a verdict that does not exist,
+# or a red naming the wrong entry.
+_TM32_VERDICT_RE = re.compile(
+    r"^#### TM-32 [^\n]*$(?:(?!^#### )[\s\S])*?^- \*\*Verdict:\*\*(?P<body>[^\n]*)$",
+    re.MULTILINE,
+)
+
+
+def check_tm32_compromise_scope(spec_v01: str, threat_model: str) -> list[str]:
+    """TM-32's verdict carries v0.1 §7.3's scope on the per-period key discipline."""
+    # Illustrative fences read exactly like the real heading; same rationale as
+    # collect_errors() and check_tm80_leaf_tense().
+    spec_v01 = _strip_fenced_blocks(spec_v01)
+    threat_model = _strip_fenced_blocks(threat_model)
+    section_headings = _V01_73_HEADING_RE.findall(spec_v01)
+    if len(section_headings) > 1:
+        return [
+            f"attest-v0.1.md: '### 7.3' appears {len(section_headings)} times; "
+            "the scope anchor would be whichever came first"
+        ]
+    section = re.search(r"^### 7\.3 [^\n]*$([\s\S]*?)(?=^### |^## |\Z)", spec_v01, re.MULTILINE)
+    if section is None:
+        return ["attest-v0.1.md: missing required heading '### 7.3'"]
+    missing_anchor = [form for form in _PER_PERIOD_ANCHOR_FORMS if form not in section.group(1)]
+    if missing_anchor:
+        return [
+            "attest-v0.1.md: §7.3 no longer scopes the per-period key discipline "
+            f"(missing {missing_anchor!r}); TM-32's verdict has nothing left to agree with"
+        ]
+
+    headings = _TM32_HEADING_RE.findall(threat_model)
+    if len(headings) > 1:
+        return [
+            f"attest-threat-model.md: TM-32 appears {len(headings)} times; "
+            "the verdict scanned would be whichever came first"
+        ]
+    match = _TM32_VERDICT_RE.search(threat_model)
+    if match is None:
+        return ["attest-threat-model.md: TM-32's verdict line is missing"]
+    verdict = match.group("body")
+
+    errors: list[str] = []
+    unscoped = _PER_PERIOD_UNSCOPED_RE.search(verdict)
+    if unscoped is not None:
+        errors.append(
+            "attest-threat-model.md: TM-32's verdict promises an unscoped bound "
+            f"({unscoped.group(0)!r}); v0.1 §7.3 bounds the forgery exposure only"
+        )
+    missing = [half for half in _PER_PERIOD_REQUIRED_HALVES if half not in verdict]
+    if missing:
+        errors.append(
+            "attest-threat-model.md: TM-32's verdict must name both halves of v0.1 §7.3's "
+            f"scope (missing {missing!r})"
+        )
+    return errors
+
+
+_V01_APPENDIX_A_HEADING = "## Appendix A — Threat model summary (non-normative)"
+# The annotation must carry the pointer (§7.3) and both halves of what §7.3
+# says, or it records that something is wrong without recording what.
+_V01_APPENDIX_A_ANNOTATION_FORMS: tuple[str, ...] = (
+    "Issuer key compromise",
+    "§7.3",
+    "forgery",
+    "invalidation reach",
+)
+# The phrase the annotation attributes to the row it annotates. Checking it
+# against the row is the second measurement, and it is about the annotation's
+# truth, not the row's: were the row ever corrected, the annotation would start
+# describing a sentence that is no longer there.
+_V01_APPENDIX_A_ANNOTATED_PHRASE = "blast radius"
+_V01_APPENDIX_A_ROW_RE = re.compile(r"^\| Issuer key compromise \|[^\n]*$", re.MULTILINE)
+
+
+def check_appendix_a_annotation(spec_v01: str) -> list[str]:
+    """Appendix A's superseded row is annotated, and the annotation is true of it."""
+    spec_v01 = _strip_fenced_blocks(spec_v01)
+    appendix = re.search(
+        rf"^{re.escape(_V01_APPENDIX_A_HEADING)}$([\s\S]*?)(?=^## |\Z)", spec_v01, re.MULTILINE
+    )
+    if appendix is None:
+        return [f"attest-v0.1.md: missing required heading {_V01_APPENDIX_A_HEADING!r}"]
+    body = appendix.group(1)
+
+    row_match = _V01_APPENDIX_A_ROW_RE.search(body)
+    if row_match is None:
+        return ["attest-v0.1.md: Appendix A's 'Issuer key compromise' row is missing"]
+    # Only the prose above the table can carry the annotation; the row itself
+    # names the phrase, so scanning the whole appendix would let the row stand
+    # in for the note about it.
+    notes = body[: row_match.start()]
+    notes = notes[: notes.index("| Threat | Answer |")] if "| Threat | Answer |" in notes else notes
+
+    errors: list[str] = []
+    missing = [form for form in _V01_APPENDIX_A_ANNOTATION_FORMS if form not in notes]
+    if missing:
+        errors.append(
+            "attest-v0.1.md: Appendix A's 'Issuer key compromise' row contradicts v0.1 §7.3 "
+            "and is kept verbatim, so the note above the table must record that it does "
+            f"(missing {missing!r})"
+        )
+    elif _V01_APPENDIX_A_ANNOTATED_PHRASE not in row_match.group(0):
+        errors.append(
+            "attest-v0.1.md: Appendix A's annotation attributes "
+            f"{_V01_APPENDIX_A_ANNOTATED_PHRASE!r} to a row that no longer says it; correct the "
+            "annotation or drop it, since an annotation that misdescribes its own row is "
+            "worse than none"
+        )
+    return errors
 
 
 def check_revision_logs(spec_v01: str, spec_v02: str) -> list[str]:
@@ -2829,6 +3062,7 @@ def collect_errors(
     errors += check_v02_chain_audit_literals(spec_v02)
     errors += check_v01_not_transferable_before_row(spec_v01)
     errors += [f"attest-versioning.md: {e}" for e in check_versioning_stage4_registries(versioning)]
+    errors += [f"attest-versioning.md: {e}" for e in check_versioning_anchor_registries(versioning)]
     errors += check_v02_stage4_preservation_pledge(spec_v02)
     errors += check_v01_publisher_id_row(spec_v01)
     errors += check_v01_preservation_pledge_row(spec_v01)
@@ -2891,6 +3125,129 @@ def check_tm80_leaf_tense() -> list[str]:
     return errors
 
 
+# README.md states how many attacks the catalog holds. Nothing derived that
+# number from the catalog, so it drifted: it read 78 while the catalog held 80,
+# and the two entries added in between were invisible to every gate. A count
+# written by hand in a public surface is a measurement claim like any other —
+# it needs the thing it claims to measure on the other side of a comparison,
+# or it is only as fresh as the last reader who remembered.
+_README_PATH = _REPO_ROOT / "README.md"
+_README_CATALOG_RE = re.compile(r"(\d+) attacks catalogued")
+
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _catalog_operative_text(text: str) -> str:
+    """Blank out fenced code blocks and HTML comments as ONE state machine,
+    for the two catalog-size call sites below (the README sentence and the
+    threat-model catalog it is checked against) -- not a general-purpose
+    replacement for `_strip_fenced_blocks()`/`_strip_xml_comments()`, whose
+    other call sites are untouched.
+
+    Two independent regex substitutions -- strip fences, then strip
+    comments, or vice versa -- let one kind of span be read by the OTHER
+    kind's rule: a fence character inside a comment could still close (or
+    open) a fence, and `<!--`/`-->` inside a fence could still toggle
+    comment state, because neither substitution knows the other span
+    exists. Tracked as one state machine, a marker of one kind is inert
+    while the other kind of span is open.
+
+    A fence's closing line must use the SAME delimiter character and be AT
+    LEAST as long as the opening run (CommonMark), with only trailing
+    whitespace after it -- a shorter inner run of the same character does
+    not close it, and an unclosed fence or comment excludes everything
+    through EOF rather than leaking back into operative text.
+
+    Preserves line count (each blanked line becomes empty) so nothing
+    downstream that reports positions shifts.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    fence_char: str | None = None
+    fence_close_re: re.Pattern[str] | None = None
+    in_comment = False
+    for line in lines:
+        if fence_char is not None:
+            assert fence_close_re is not None
+            if fence_close_re.match(line):
+                fence_char = None
+                fence_close_re = None
+            out.append("")
+            continue
+
+        remaining = line
+        if in_comment:
+            end = remaining.find("-->")
+            if end == -1:
+                out.append("")
+                continue
+            in_comment = False
+            remaining = remaining[end + 3 :]
+
+        # A fence can only open at the true start of a line; a line whose
+        # start was already consumed by a comment closing mid-line is not
+        # one (rare in practice -- no fixture here relies on it either way).
+        if remaining == line:
+            fence_open = _FENCE_OPEN_RE.match(remaining)
+            if fence_open:
+                fence_char = fence_open.group(1)[0]
+                fence_close_re = re.compile(
+                    rf"^ {{0,3}}{re.escape(fence_char)}{{{len(fence_open.group(1))},}}[ \t]*$"
+                )
+                out.append("")
+                continue
+
+        produced: list[str] = []
+        comment_start = remaining.find("<!--")
+        if comment_start == -1:
+            produced.append(remaining)
+        else:
+            produced.append(remaining[:comment_start])
+            after = remaining[comment_start + 4 :]
+            end = after.find("-->")
+            if end == -1:
+                in_comment = True
+            else:
+                produced.append(after[end + 3 :])
+        out.append("".join(produced))
+
+    return "\n".join(out)
+
+
+def check_readme_catalog_count() -> list[str]:
+    """README.md's catalog size equals the number of entries the catalog has.
+
+    Fail-closed on a missing sentence: a guard whose subject has been reworded
+    reports green for the wrong reason. Not wired into `collect_errors()` --
+    like `check_tm80_leaf_tense()` it reads the filesystem rather than
+    cross-referencing another document's parsed structure, so `main()` calls it.
+    """
+    # An illustrative fence -- or an XML comment -- reads exactly like the real
+    # sentence, so scanning them raw would let non-operative content satisfy this
+    # guard's own subject; README.md already carries fenced blocks. Same
+    # rationale as collect_errors(), applied to BOTH sides of the comparison.
+    readme = _catalog_operative_text(_README_PATH.read_text(encoding="utf-8"))
+    matches = _README_CATALOG_RE.findall(readme)
+    if not matches:
+        return [
+            "README.md: the sentence stating how many attacks the threat model catalogues "
+            f"is gone (pattern {_README_CATALOG_RE.pattern!r}); it is what ties that number "
+            "to the catalog"
+        ]
+    if len(matches) > 1:
+        return [f"README.md: {len(matches)} catalog-size claims; the check would read the first"]
+    # Illustrative fences and comments read exactly like the real entry; same
+    # rationale as collect_errors(), and the same rule as the README side above.
+    entries = len(parse_tm_ids(_catalog_operative_text(_THREAT_MODEL_PATH.read_text("utf-8"))))
+    claimed = int(matches[0])
+    if claimed != entries:
+        return [
+            f"README.md claims {claimed} attacks catalogued; attest-threat-model.md has "
+            f"{entries} entries"
+        ]
+    return []
+
+
 def main() -> int:
     threat_model = _THREAT_MODEL_PATH.read_text(encoding="utf-8")
     privacy = _PRIVACY_PATH.read_text(encoding="utf-8")
@@ -2907,6 +3264,9 @@ def main() -> int:
     errors += check_conformance_self_certification()
     errors += check_corpus_counts()
     errors += check_tm80_leaf_tense()
+    errors += check_readme_catalog_count()
+    errors += check_tm32_compromise_scope(spec_v01, threat_model)
+    errors += check_appendix_a_annotation(spec_v01)
     errors += check_coined_terms()
     errors += check_package_version_lockstep()
     for error in errors:

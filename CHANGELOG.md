@@ -6,6 +6,23 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `docs/trust/`: the reference log's trust material in the shape `attest verify
+  --log-keys/--anchor-policy` reads, and `tools/gen_trusted_log.py`, which derives
+  `site/src/trusted-log.ts` from it and refuses to generate from a policy that does not
+  derive from its raw block headers (`--check` refuses drift). The shipped anchor policy
+  is still empty: no Bitcoin block header is pinned, and every public sentence that says
+  so is now bound to that file by a test that fails in both directions.
+- `attest log ots-convert --block-headers` states the byte order it expects, and a merkle
+  root supplied in display order (the byte-reversed value `getblockheader` prints) is now
+  named as such in the conversion report instead of reported as a generic replay mismatch.
+
+### Fixed
+
+- `docs/incident-runbook.md` said nothing in the issuing path puts a receipt in a log;
+  `attest issue --log-dir` does, opt-in, since 0.9.4.
+
 ## [0.9.7] — 2026-09-10
 
 ### Security
@@ -143,6 +160,11 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `attest issue --log-dir DIR` appends the receipt's log entry to an initialised
+  transparency log in the same command that signs it, under an advisory lock on the log's
+  `config.json`; omitted, `issue` behaves byte-for-byte as before. `attest log prove
+  --receipt PATH` selects the entry by the receipt's own `core_sha256` instead of by
+  index. (Shipped in 0.9.4 with #136; this line was missing.)
 - `attest verify --reject-trust VALUE[,VALUE...]` refuses a receipt whose
   `trust` component is one of the named values by exiting 1, even when `ok` is
   true. `ok` never includes `trust` (v0.1 §11.1, conformance vector 14b), so an

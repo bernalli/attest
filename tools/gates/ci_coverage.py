@@ -70,6 +70,7 @@ COVERED: dict[str, str] = {
     "tools/importer_differential.py": "G-CI-PY",
     "demo.store_dies": "G-CI-PY",
     "demo.pledge_dies": "G-CI-PY",
+    "demo.witness_cosigns": "G-CI-PY",
     "tools/conformance_runner.py": "G-CI-PY",
     "conformance_adapter_ts.mjs": "G-CI-PY",
     "--subset v0.2": "G-CI-PY",

@@ -96,6 +96,19 @@ gate_run "python -m demo.pledge_dies" -- \
   env PYTHONPATH="$GATE_TREE" "$GATE_PY" -m demo.pledge_dies
 gate_expect_rc 0 "demo.pledge_dies: runs green through the migrated CLI"
 
+# The only demo that speaks HTTP: it serves the reference witness on a loopback
+# port and submits to it. Both preconditions are checked right here, the way
+# every other step in this gate declares its own -- a witness package that is
+# not installed, or a runner not permitted to listen, means this step could not
+# be MEASURED, which is neither green nor red.
+gate_need "'import attest_witness' resolves (demo.witness_cosigns serves one)" -- \
+  "$GATE_PY" -c "import attest_witness"
+gate_need "a loopback socket can be bound" -- \
+  "$GATE_PY" -c "import socket; s = socket.socket(); s.bind(('127.0.0.1', 0)); s.close()"
+gate_run "python -m demo.witness_cosigns" -- \
+  env PYTHONPATH="$GATE_TREE" "$GATE_PY" -m demo.witness_cosigns
+gate_expect_rc 0 "demo.witness_cosigns: the log head is cosigned and verifies as witnessed"
+
 # --- 4. conformance_runner.py, TS adapter, v0.2 subset ----------------------
 gate_need "node present (conformance TS adapter)" -- command -v node
 gate_need "verifiers/ts/dist/index.js present (conformance TS adapter)" -- test -f "$TS_DIST"

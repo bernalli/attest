@@ -107,6 +107,7 @@ jobs:
       # a shell — and a claim nothing executes decays quietly.
       - run: uv run --frozen python -m demo.store_dies
       - run: uv run --frozen python -m demo.pledge_dies
+      - run: uv run --frozen python -m demo.witness_cosigns
       # Builds the Internet-Draft snapshot source (ietf/) with the pinned,
       # inline-references-only xml2rfc v3 toolchain (ietf/README.md). uvx is
       # already available here via astral-sh/setup-uv above, so no extra
