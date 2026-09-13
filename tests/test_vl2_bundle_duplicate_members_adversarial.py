@@ -238,3 +238,31 @@ def test_import_valid_unique_members_and_reports_the_distinct_receipt_count(tmp_
 
     assert len(public_import.receipts) == 2
     assert len(private_import.receipts) == 2
+
+
+@pytest.mark.parametrize("broken", ["missing", "scalar"])
+def test_export_names_the_payload_guard_and_not_the_one_after_it(
+    tmp_path: Path, broken: str
+) -> None:
+    """The refusal names the absent payload, not the receipt_id read that follows.
+
+    Its sibling above asserts only that `BundleError` is raised. Both guards
+    raise `BundleError`, and a receipt with no object payload fails the very
+    next check too -- `payload.get("receipt_id")` is then `None`, which is not a
+    ULID -- so the sibling passes unchanged if the payload guard is replaced by
+    a silent `payload = {}` fallback. Measured: with that substitution the
+    message becomes "receipt payload has invalid receipt_id" and the sibling
+    stays green. Pinning the message is what distinguishes the two.
+    """
+    receipt = envelope(RECEIPT_A, bytes([1]) * 16)
+    if broken == "missing":
+        del receipt["payload"]
+    else:
+        receipt["payload"] = "not-an-object"
+    out_dir = tmp_path / broken
+    out_dir.mkdir()
+
+    with pytest.raises(bundle.BundleError, match="missing object member 'payload'"):
+        bundle.export([receipt], [key_manifest()], [], legal_texts(), out_dir, "receipts")
+
+    assert list(out_dir.iterdir()) == []

@@ -3,7 +3,7 @@
   "regenerate": "npm test --prefix <suite> -- --reporter=default --reporter=json --outputFile.json=/tmp/<suite>-tests.json && python3 tools/check_test_census.py <suite> --report /tmp/<suite>-tests.json --update",
   "suites": {
     "site": {
-      "total": 1026,
+      "total": 1028,
       "files": {
         "test/b64u.test.ts": 3,
         "test/bundle.test.ts": 218,
@@ -15,7 +15,7 @@
         "test/demo-wiring.test.ts": 15,
         "test/dev-server.test.ts": 6,
         "test/diagnostic-corpus.test.ts": 6,
-        "test/diagnostic-rendering-adversarial.test.ts": 25,
+        "test/diagnostic-rendering-adversarial.test.ts": 27,
         "test/diagnostic.test.ts": 38,
         "test/exhibits.test.ts": 21,
         "test/explain.test.ts": 44,
@@ -49,7 +49,7 @@
         "test/demo-wiring.test.ts": "44e8a68ab703f47288dc8ed79962dea9d7531677684548c3057dc92bc9c0742a",
         "test/dev-server.test.ts": "244acaeed4d1f56fc86560f1ec72a74010c0673c8f984de05b8f17fd12e83bd0",
         "test/diagnostic-corpus.test.ts": "921dc8428b0e75a8d9a65221ad203bac093097f5063730416ac71856a8a6956f",
-        "test/diagnostic-rendering-adversarial.test.ts": "63b4fd9c7e22845924da7bd087b888335a69f428f3d4c775ad69576c0316dda5",
+        "test/diagnostic-rendering-adversarial.test.ts": "eacde94e16d9390abb27372d5f82c7b3592b970802ae8206200ba8632f227494",
         "test/diagnostic.test.ts": "33a242893c25ba6f18ca2af3cfd8d190fb0c77acc507ee7e1ecfc0ba01f86112",
         "test/exhibits.test.ts": "a6d3ab82e24c3910268d4d7026c010f57b2222273640e02bd8efdc6fcaf99d4b",
         "test/explain.test.ts": "1e9f188dda537cf59102e5d5740b5eb905a2360bd4cae46e87bbb2adcf6e7bea",
