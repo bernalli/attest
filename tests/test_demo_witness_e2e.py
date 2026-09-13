@@ -290,6 +290,34 @@ def test_evidence_is_not_mutated_in_place() -> None:
     assert evidence == {"entry": {"type": "receipt"}, "checkpoint": SAMPLE_NOTE}
 
 
+def test_evidence_refuses_a_cosignature_the_verifier_would_not_count() -> None:
+    """The residual R1 closed: an epoch that resolves by name and lists the
+    right origin still has to pass `witness.evaluate_corroboration`, the same
+    call step 8 makes. Here the epoch is right and the origin is right, but
+    the policy pins a DIFFERENT key than the one `COSIGNATURE_LINES` was
+    signed with, so the verifier's own check would return `witnessed=False`
+    for this cosignature — and so must this one, with the type that says so."""
+    wrong_keys = keys.generate()
+    wrong_policy_bytes = witness.policy_bytes(
+        witness_cosigns._witness_policy_document(
+            keys.b64u(wrong_keys.pub),
+            log_origin="log.example",
+        )
+    )
+    evidence = {"entry": {"type": "receipt"}, "checkpoint": SAMPLE_NOTE}
+    merged = witness_client.cosigned_note(SAMPLE_NOTE, COSIGNATURE_LINES)
+
+    with pytest.raises(witness_client.CosignatureNotWitnessed) as raised:
+        witness_client.evidence_with_cosignature(
+            evidence,
+            merged,
+            witness_policy_epoch="bootstrap-1",
+            witness_policy_bytes=wrong_policy_bytes,
+        )
+
+    assert "witnessed=False" in str(raised.value)
+
+
 def test_evidence_refuses_a_cosigned_note_for_a_different_checkpoint() -> None:
     """The one thing "add a cosignature" must never be able to mean. A note
     for another tree — or another log — carries genuine witness signatures
