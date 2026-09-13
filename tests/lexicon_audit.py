@@ -247,4 +247,59 @@ AUDITED: Final[tuple[Occurrence, ...]] = (
             "the buyer or outgoing holder."
         ),
     ),
+    Occurrence(
+        path="docs/whitepaper.md",
+        sha256="25987d241785cafd2efb0a632bd4e2704f32114d4aa827bbef3681ea480be011",
+        excerpt=(
+            " delete purchased books from devices again except with the customer's consent, on "
+            "refund, under a court order, or to remove malware. Seventeen year"
+        ),
+        verdict="OTHER-SUBJECT",
+        reason=(
+            "The customer's consent named in a 2009 legal settlement over deleting purchased "
+            "books, inside the narrative of a real case — a different consent than what a "
+            "signature establishes in the transfer mechanism §17.3 renamed."
+        ),
+    ),
+    Occurrence(
+        path="docs/whitepaper.md",
+        sha256="537893d902e87e73f6bf929d21c3c2391723e1f1f3c693dc9ff80a4490b36ac1",
+        excerpt=(
+            "reimage (§17.1) — control of the key the issuer > recorded, never the consent of "
+            "the person, which is why the specification renamed the gate it > f"
+        ),
+        verdict="NEGATED",
+        reason=(
+            "Says the outgoing holder's authorization establishes control of the key the "
+            "issuer recorded, never the consent of the person — the negation the rename "
+            "exists to make explicit."
+        ),
+    ),
+    Occurrence(
+        path="docs/whitepaper.md",
+        sha256="7e01d0efdccec52e359be084fc2c06cbd7f616a4d60822fa3803f31f4b0c1520",
+        excerpt=(
+            'son, which is why the specification renamed the gate it > feeds from "consent '
+            'gate" to *key-authorization gate*, the old name having asserted what the >'
+        ),
+        verdict="DESCRIBES-THE-RENAME",
+        reason=(
+            "Names the retired term to record that §17.3 renamed the gate from it, and says "
+            "in the same sentence why the old name asserted what the mechanism does not "
+            "establish."
+        ),
+    ),
+    Occurrence(
+        path="docs/whitepaper.md",
+        sha256="bd02f4e1a6bf9edde335a489576621877a7ee5e9279dfdd4d6355739fedd62ea",
+        excerpt=(
+            "e same day; the settlement of $150,000 and the undertaking limited to consent, "
+            "refund, court order and malware are reported by Reuters, 30 Septembe"
+        ),
+        verdict="OTHER-SUBJECT",
+        reason=(
+            "The source note for the same 2009 settlement narrative above, reporting what a "
+            "news agency wrote about the undertaking — not what a signature establishes."
+        ),
+    ),
 )
