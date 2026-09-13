@@ -27,20 +27,25 @@ whatever is in front of it. And it retries nothing: a 409 carries the size
 the witness holds precisely so a caller can resynchronise, and deciding
 whether to is the caller's, not this module's.
 
-And it resolves an epoch only as far as a writer can. v0.2 s10.2 step 8
-resolves one in four steps, every one of them silent on failure: the
-identifier must be known to the policy, the epoch must list the checkpoint's
-origin, the epoch's window must cover the moment the cosignature claims, and
-the pin must have standing at that moment. `_require_resolvable_epoch` closes
-the first two, which are the two a client can decide without re-deriving a
-cosignature's key-id and timestamp — and re-deriving them here would make
-this module a second opinion about what a cosignature says, which is exactly
-the shape of check that certifies its own mistake. The other two remain
-silent, measured and not assumed: an epoch named correctly, listing the right
-origin, whose window closed in 2020 still verifies `ok: true`,
-`corroboration: "logged"`, `warnings: []`. Closing them wants a public
-"parse one cosignature blob" entry point in `attest.witness`, which is a
-change to the shipped core rather than to this demo.
+And it resolves an epoch the way v0.2 s10.2 step 8 itself does. Step 8
+resolves an epoch in four conditions, every one of them silent on failure:
+the identifier must be known to the policy, the epoch must list the
+checkpoint's origin, the epoch's window must cover the moment the
+cosignature claims, and the pin must have standing at that moment.
+`_require_resolvable_epoch` NAMES the first two — `UnknownPolicyEpoch` and
+`EpochDoesNotCoverLog` — because the policy document alone is enough to
+decide them and to say which failed. It does not re-derive the last two:
+a cosignature's key-id and timestamp live inside the cosignature blob
+itself, and reading them out here would make this module a second opinion
+about what a cosignature says, which is exactly the shape of check that
+certifies its own mistake. Instead it calls `witness.evaluate_corroboration`
+— the SAME function step 8 calls, on the same checkpoint, signatures and
+policy the verifier will hold — and raises `CosignatureNotWitnessed` when it
+comes back `witnessed=False`: an epoch named correctly, listing the right
+origin, whose window closed in 2020 fails there exactly as it fails inside
+the verifier. v0.2 s11.4 gives `evaluate_corroboration` no diagnostic beyond
+that boolean, so `CosignatureNotWitnessed` cannot say which either — only
+that the verifier will not count this cosignature.
 """
 
 from __future__ import annotations
@@ -95,6 +100,21 @@ class UnreadableWitnessPolicy(ValueError):
     """
 
 
+class CosignatureNotWitnessed(ValueError):
+    """The epoch resolves and covers this checkpoint's origin, and the
+    verifier's own `witness.evaluate_corroboration` still says `witnessed`
+    is `False` for this cosignature.
+
+    Deliberately NOT a `WitnessPolicyMismatch`: the two conditions that
+    family names have already passed by the time this raises. What remains
+    — the epoch's validity window has closed, the pin has no standing at the
+    cosignature's own timestamp, the signature does not verify, or the blob
+    is not a `0x04` Ed25519 cosignature at all — is exactly what v0.2 s11.4
+    keeps the verifier itself silent about: `evaluate_corroboration` returns
+    a bare `bool`, so this cannot say which either.
+    """
+
+
 def _require_resolvable_epoch(
     witness_policy_bytes: object, witness_policy_epoch: str, checkpoint_text: str
 ) -> None:
@@ -106,10 +126,21 @@ def _require_resolvable_epoch(
     does). Re-implementing the lookup here would make this a second opinion
     about what an epoch is; going through `witness` makes it the first one.
 
-    Two conditions are checked, and they are exactly the two that v0.2 s10.2
-    step 8 resolves BEFORE it ever looks at a signature — the two whose
-    failure s11.4 keeps silent, and so the two an operator can never learn
-    about from the verdict.
+    All four conditions v0.2 s10.2 step 8 resolves before it ever looks at a
+    signature are checked here, but only the first two are NAMED —
+    `UnknownPolicyEpoch` and `EpochDoesNotCoverLog` — because the policy
+    document alone is enough to diagnose them. The last two are answered by
+    calling `witness.evaluate_corroboration` itself, the SAME function step 8
+    calls, on the same checkpoint, signatures and policy the verifier will
+    hold: a `False` there raises `CosignatureNotWitnessed`, which — like the
+    verdict it reports — cannot say which of the two failed (v0.2 s11.4 gives
+    `evaluate_corroboration` no diagnostic beyond the boolean).
+
+    A note whose body is not a parseable checkpoint raises `tlog.TlogError`
+    from `parse_checkpoint` rather than any exception this function defines:
+    that is a malformed note, not a policy disagreement, and the verifier
+    will not read it either. It is a `ValueError` like everything else this
+    module raises, so a caller catching `ValueError` still holds.
     """
     if not isinstance(witness_policy_bytes, bytes):
         raise UnreadableWitnessPolicy(
@@ -134,13 +165,29 @@ def _require_resolvable_epoch(
             "this bundle would report `logged` and, by v0.2 s11.4, name no condition"
         )
 
-    origin = tlog.parse_checkpoint(checkpoint_text).origin
-    if origin not in epoch.log_origins:
+    checkpoint = tlog.parse_checkpoint(checkpoint_text)
+    if checkpoint.origin not in epoch.log_origins:
         covered = ", ".join(repr(listed) for listed in epoch.log_origins) or "no origin"
         raise EpochDoesNotCoverLog(
             f"epoch {witness_policy_epoch!r} does not list this checkpoint's origin "
-            f"{origin!r}; it covers {covered}, and an epoch that does not list an "
-            "origin corroborates nothing for it — silently"
+            f"{checkpoint.origin!r}; it covers {covered}, and an epoch that does not list "
+            "an origin corroborates nothing for it — silently"
+        )
+
+    verdict = witness.evaluate_corroboration(
+        checkpoint=checkpoint,
+        signatures=tlog.note_signatures(checkpoint_text),
+        policy=policy,
+        epoch_id=witness_policy_epoch,
+    )
+    if not verdict.witnessed:
+        raise CosignatureNotWitnessed(
+            f"epoch {witness_policy_epoch!r} resolves and lists this checkpoint's origin, "
+            "but witness.evaluate_corroboration — the same call the verifier will make — "
+            "still returns witnessed=False for this cosignature; its validity window may "
+            "have closed, its pin may have no standing at the cosignature's own timestamp, "
+            "the signature may not verify, or the blob may not be a `0x04` Ed25519 "
+            "cosignature at all, and v0.2 s11.4 gives no diagnostic beyond that boolean"
         )
 
 

@@ -258,13 +258,21 @@ name, and then against the epoch's `log_origins` — refusing with
 that means nothing. The argument has no default: an optional check would have
 put the silence back one step, which is the only place it could still hide.
 
-Two of step 8's four resolution conditions stay silent, and the demo says so
-rather than implying it closed them all: an epoch named correctly and listing
-the right origin, but whose validity window has closed, still verifies
-`ok: true` with `corroboration: "logged"` and no warning. Deciding that here
-means re-deriving a cosignature's key-id and timestamp, which would make the
-client a second opinion about what a cosignature says — see the note at the
-top of `witness_client.py`.
+All four of step 8's resolution conditions are checked, but only the first
+two get a NAME: an unknown epoch identifier raises `UnknownPolicyEpoch`, and
+one that does not list the checkpoint's origin raises `EpochDoesNotCoverLog`
+— the policy document alone is enough to say which of those two failed. The
+last two — a closed validity window, a pin with no standing at the
+cosignature's own timestamp — are not re-derived here: re-deriving a
+cosignature's key-id and timestamp would make the client a second opinion
+about what a cosignature says. Instead `evidence_with_cosignature` calls
+`witness.evaluate_corroboration` — the SAME function step 8 calls, on the
+same checkpoint, signatures and policy the verifier will hold — and raises
+`CosignatureNotWitnessed` when it comes back `witnessed=False`. v0.2 §11.4
+gives that function no diagnostic beyond the boolean, so
+`CosignatureNotWitnessed` cannot say which of the two failed either — only
+that the verifier will not count this cosignature. See the note at the top
+of `witness_client.py`.
 
 ## How to run them
 

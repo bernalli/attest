@@ -149,10 +149,35 @@ def test_evidence_refuses_an_epoch_that_names_nothing() -> None:
 
 # --- the note join: a cosignature is APPENDED, never substituted -------------
 
-COSIGNATURE_LINES = (
-    "— witness.example/w1 " + base64.b64encode(b"a" * 76).decode("ascii") + "\n"
-    "— witness.example/w1 " + base64.b64encode(b"b" * 76).decode("ascii") + "\n"
-)
+# A real Ed25519 keypair, used ONLY by the two tests below that must reach a
+# genuine `witnessed` verdict. Closing COMP-5's R1 residual means
+# `evidence_with_cosignature` now calls `witness.evaluate_corroboration` for
+# real (see `_require_resolvable_epoch`): a synthetic 76-byte blob no longer
+# reaches the updated evidence, it correctly raises `CosignatureNotWitnessed`
+# instead — so the two tests that assert on the updated evidence need a
+# cosignature the verifier's own check would actually count.
+_UNIT_WITNESS_KEYS = keys.generate()
+# Inside the fixed policy epoch's open window (`not_before` 2020-01-01,
+# `not_after` None) and comfortably below `MAX_COSIGNATURE_TIMESTAMP`.
+_UNIT_COSIGNATURE_TIMESTAMP = 1_700_000_000
+
+
+def _real_cosignature_line(name: str, note_bytes: bytes, signing: keys.SigningKeyPair) -> str:
+    """One genuine C2SP type-`0x04` cosignature line over `note_bytes`,
+    built the way `witness.evaluate_corroboration` will check it — key ID
+    via `witness.cosignature_key_id`, payload via `witness.cosignature_message`
+    — never through `attest_witness.cosign`, which would agree with a wrong
+    implementation as readily as a right one."""
+    key_id = witness.cosignature_key_id(name, signing.pub)
+    message = witness.cosignature_message(note_bytes, _UNIT_COSIGNATURE_TIMESTAMP)
+    signature = keys.sign(message, signing)
+    blob = key_id + _UNIT_COSIGNATURE_TIMESTAMP.to_bytes(8, "big") + signature
+    return f"— {name} {base64.b64encode(blob).decode('ascii')}\n"
+
+
+COSIGNATURE_LINES = _real_cosignature_line(
+    witness_cosigns.WITNESS_NAME, tlog.parse_checkpoint(SAMPLE_NOTE).note_bytes, _UNIT_WITNESS_KEYS
+) + ("— witness.example/w1 " + base64.b64encode(b"b" * 76).decode("ascii") + "\n")
 
 
 def test_splitting_a_note_keeps_the_body_the_signatures_commit_to() -> None:
@@ -214,10 +239,13 @@ OTHER_NOTE = SAMPLE_NOTE.replace("\n1\n", "\n2\n", 1)
 # The verifier's own trusted configuration, built by the demo's own builder so
 # these tests resolve epochs against the document shape the demo really writes
 # — not a second copy of it. `log_origin` is SAMPLE_NOTE's, because an epoch
-# that does not list a checkpoint's origin resolves to nothing for it.
+# that does not list a checkpoint's origin resolves to nothing for it. Pins
+# `_UNIT_WITNESS_KEYS`, the SAME keypair `COSIGNATURE_LINES` signs with above
+# — the pin and the cosignature have to name the same key for
+# `witness.evaluate_corroboration` to ever say `witnessed`.
 WITNESS_POLICY_BYTES = witness.policy_bytes(
     witness_cosigns._witness_policy_document(
-        base64.urlsafe_b64encode(b"w" * 32).rstrip(b"=").decode("ascii"),
+        keys.b64u(_UNIT_WITNESS_KEYS.pub),
         log_origin="log.example",
     )
 )
