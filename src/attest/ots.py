@@ -550,9 +550,19 @@ def convert_ots(
             continue
         assert accumulator is not None
         if not hmac.compare_digest(accumulator.hex(), header.merkle_root):
-            reason = (
-                f"operator header merkle_root does not match OTS replay at Bitcoin height {height}"
-            )
+            # An OTS Bitcoin path replays onto the header's own byte order; every node and
+            # explorer prints that field reversed, so this is the one mismatch worth naming.
+            if hmac.compare_digest(accumulator[::-1].hex(), header.merkle_root):
+                reason = (
+                    f"operator header merkle_root at Bitcoin height {height} is the byte-reversed "
+                    "OTS replay: it was supplied in display order (as getblockheader and block "
+                    "explorers print it); supply bytes 36-68 of the raw 80-byte header instead"
+                )
+            else:
+                reason = (
+                    "operator header merkle_root does not match OTS replay at Bitcoin "
+                    f"height {height}"
+                )
             report.append(
                 _skip_report(
                     path_index,
