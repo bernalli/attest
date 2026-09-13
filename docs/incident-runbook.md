@@ -219,8 +219,11 @@ lives in.
 Every receipt signed with the compromised key now fails verification, unless it
 qualifies for the rescue in the previous step: a verifier that checks anchors
 spares a receipt whose own signed core was anchored strictly before your
-compromise declaration was. Nothing in the issuing path puts a receipt in a log,
-so unless you built that evidence yourself, no receipt of yours has it and this
+compromise declaration was. Logging a receipt is not enough for that, and
+nothing in the issuing path even logs one by default: `attest issue --log-dir`
+does, opt-in, and `attest log append` does it afterwards. The rescue also needs
+a signed checkpoint covering that entry and an anchor dating it, both separate
+steps — so unless you built all of that, no receipt of yours qualifies and this
 is every one of them. For the rest it is not "shows a warning" — it fails. This
 is what a buyer sees after step 6:
 

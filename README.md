@@ -49,8 +49,9 @@ invalidates the receipts signed with that key. v0.2 defines a rescue for a
 receipt logged and anchored before the declaration, and both verifier
 implementations evaluate that evidence; what is missing sits upstream of them. A
 verifier looks for it only once it has been given trusted log keys and an anchor
-policy, and `attest issue --log-dir` appends a receipt's entry to the issuer's own
-log as it signs; the bridge does not. What changed is that deriving the entry no
+policy (for this project's own log, the files under `docs/trust/`), and `attest
+issue --log-dir` appends a receipt's entry to the issuer's own log as it signs;
+the bridge does not. What changed is that deriving the entry no
 longer means writing code — `attest log entry --type receipt` computes it from
 the signed envelope, always by rehashing the document rather than trusting a hash
 it declares, and `attest log append` takes it from there (or, with `issue
@@ -314,6 +315,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv -e '.[dev]'
 ```sh
 .venv/bin/python -m demo.store_dies
 .venv/bin/python -m demo.pledge_dies
+.venv/bin/python -m demo.witness_cosigns
 ```
 
 ```sh

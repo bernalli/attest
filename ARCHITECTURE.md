@@ -348,13 +348,19 @@ verifier.
   separately watches every network request the page makes while running every scenario and
   fails on a single one with a scheme other than `file:`. It is built, never committed
   (`dist/` is gitignored).
-- **`demo/`** holds two runnable, non-normative demonstrations, not test fixtures dressed up:
+- **`demo/`** holds three runnable, non-normative demonstrations, not test fixtures dressed up:
   `store_dies.py` issues a receipt, then deletes the issuing store's entire infrastructure,
   then proves the receipt still verifies; `pledge_dies.py` carries that further — a rights
   holder signs a preservation pledge, the store dies, the pledge fires, and a non-normative
   `custodian.py` archive gate hands the file back only to whoever proves possession of the
-  receipt's binding secret. `demo/README.md` is explicit that neither demo is part of the
-  protocol and that `custodian.py` is a reference, not a production gate.
+  receipt's binding secret; `witness_cosigns.py` closes the loop the other two rest on — a
+  receipt is issued into a transparency log, the log's head is submitted over real HTTP to
+  a reference witness that cosigns it, and the same receipt then verifies as
+  `corroboration: "witnessed"` where the identical evidence without those two signature
+  lines verifies as merely `"logged"`, with the witness refusing a fork of the head it
+  endorsed. Its submission client and the two joins it needs are `witness_client.py`.
+  `demo/README.md` is explicit that none of the three is part of the protocol and that
+  `custodian.py` and `witness_client.py` are references, not production components.
 - **`formal/attest.spthy`** is a Tamarin model of the wire protocol's trust, rotation,
   revocation, and hybrid-acceptance behavior: 45 lemmas (`grep -c '^lemma ' formal/attest.spthy`),
   gated by `tools/check_formal.py`, which pins every lemma **statement** by sha256 digest of

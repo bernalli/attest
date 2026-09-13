@@ -24,6 +24,7 @@ from attest import cli, tlog
 from tests.test_cli import (
     ISSUER,
     KID,
+    LOG_NAME,
     LOG_ORIGIN,
     CapSys,
     _anchor_policy_file,
@@ -1557,3 +1558,223 @@ def test_log_anchor_allows_out_outside_the_log_and_strings_that_merely_extend_an
     anchor_once(tmp_path / "outside-the-log.json")  # clean outside --dir
     anchor_once(log_dir / "checkpoint.bak")  # extends the checkpoint file's string
     anchor_once(log_dir / "tile-backup" / "out.json")  # extends the tile dir's string
+
+
+# --- refusals on a log that cannot be safely appended to --------------------
+
+
+def test_issue_log_dir_refuses_when_fcntl_is_unavailable(
+    tmp_path: Path, capsys: CapSys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where `fcntl` cannot be imported at all — a platform without it — the
+    append lock fails closed instead of appending unlocked.
+
+    This is a different refusal from the one
+    `test_log_append_refuses_when_flock_is_unsupported` pins. There the module
+    exists and `flock` raises, so the text comes from the operating system;
+    here the module is missing and the check happens before any file is
+    opened. Both exit 2, so only the message tells them apart.
+    """
+    log_dir = _log_init(tmp_path)
+    seed, _pub = _keygen(tmp_path, "issuer")
+    payload_path = _write_payload(tmp_path)
+    out = tmp_path / "envelope.json"
+    argv = _issue_argv(payload_path, seed, out, log_dir=log_dir)
+    before_listing = sorted(p.name for p in log_dir.iterdir())
+
+    monkeypatch.setattr(cli, "fcntl", None)
+    capsys.readouterr()
+    rc = cli.main(argv)
+    captured = capsys.readouterr()
+
+    assert rc == 2, captured.err
+    assert "cannot be locked on this platform (no fcntl.flock)" in captured.err
+    # Not the sibling case, where flock itself refuses.
+    assert "Operation not supported" not in captured.err
+    # The lock is taken before the entry is staged, so nothing was written at
+    # all: no envelope, no entry, not even a temporary file in the log.
+    assert not out.exists()
+    assert (log_dir / "entries.jsonl").read_text(encoding="utf-8") == ""
+    assert sorted(p.name for p in log_dir.iterdir()) == before_listing
+
+    # Positive control: with the module back, the identical command succeeds.
+    monkeypatch.undo()
+    capsys.readouterr()
+    rc_healthy = cli.main(argv)
+    assert rc_healthy == 0, capsys.readouterr().err
+    assert out.exists()
+
+
+def test_issue_log_dir_refuses_a_read_only_log_directory(tmp_path: Path, capsys: CapSys) -> None:
+    """A log directory the process cannot write to stops the append where the
+    entry is staged, which happens before the envelope is committed — so this
+    refusal leaves no receipt behind either.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory modes")
+
+    log_dir = _log_init(tmp_path)
+    seed, _pub = _keygen(tmp_path, "issuer")
+    payload_path = _write_payload(tmp_path)
+    out = tmp_path / "envelope.json"
+    argv = _issue_argv(payload_path, seed, out, log_dir=log_dir)
+    before_listing = sorted(p.name for p in log_dir.iterdir())
+
+    os.chmod(log_dir, 0o500)
+    try:
+        capsys.readouterr()
+        rc = cli.main(argv)
+        captured = capsys.readouterr()
+    finally:
+        os.chmod(log_dir, 0o700)
+
+    assert rc == 2, captured.err
+    assert "Permission denied" in captured.err
+    # The path it could not write is inside the log directory: that is what
+    # separates this from a permission error somewhere else in the command.
+    assert f"{log_dir}{os.sep}" in captured.err
+    # And it is not the "no log here" refusal, which exits 2 as well.
+    assert "is not an attest log" not in captured.err
+    assert not out.exists()
+    assert (log_dir / "entries.jsonl").read_text(encoding="utf-8") == ""
+    assert sorted(p.name for p in log_dir.iterdir()) == before_listing
+
+    # Positive control: writable again, the identical command succeeds.
+    capsys.readouterr()
+    rc_healthy = cli.main(argv)
+    assert rc_healthy == 0, capsys.readouterr().err
+    assert out.exists()
+
+
+def test_issue_log_dir_refuses_a_directory_with_entries_but_no_config(
+    tmp_path: Path, capsys: CapSys
+) -> None:
+    """An `entries.jsonl` on its own does not make a directory a log.
+
+    `_cmd_issue` reads the origin BEFORE it ever takes the append lock, so with
+    `config.json` absent this refusal fires first and `_log_append_lock` is
+    never reached on this path — measured with a probe on the lock, not inferred
+    from reading it. The lock's own yield-without-locking branch for a missing
+    `config.json` belongs to `log append`; nothing here exercises it. Either way
+    the directory is left exactly as it was found, down to the file listing.
+    """
+    log_dir = _log_init(tmp_path)
+    seed, _pub = _keygen(tmp_path, "issuer")
+    payload_path = _write_payload(tmp_path)
+    out = tmp_path / "envelope.json"
+    argv = _issue_argv(payload_path, seed, out, log_dir=log_dir)
+
+    config_path = log_dir / "config.json"
+    parked_config = tmp_path / "parked-config.json"
+    config_path.rename(parked_config)
+    assert (log_dir / "entries.jsonl").read_text(encoding="utf-8") == ""
+    before_listing = sorted(p.name for p in log_dir.iterdir())
+
+    capsys.readouterr()
+    rc = cli.main(argv)
+    captured = capsys.readouterr()
+
+    assert rc == 2, captured.err
+    assert "is not an attest log (missing" in captured.err
+    assert not out.exists()
+    # Nothing was opened or created: the refusal precedes the append entirely.
+    assert sorted(p.name for p in log_dir.iterdir()) == before_listing
+
+    # Positive control: the only thing that changed back is config.json.
+    parked_config.rename(config_path)
+    capsys.readouterr()
+    rc_healthy = cli.main(argv)
+    assert rc_healthy == 0, capsys.readouterr().err
+    assert out.exists()
+
+
+@pytest.mark.parametrize(
+    "lose_the_entries",
+    (
+        pytest.param(os.unlink, id="unlinked"),
+        pytest.param(lambda path: path.write_text("", encoding="utf-8"), id="emptied"),
+    ),
+)
+def test_issue_log_dir_after_entries_jsonl_is_lost_restarts_the_tree_and_sign_checkpoint_refuses(
+    tmp_path: Path, capsys: CapSys, lose_the_entries: Callable[[Path], None]
+) -> None:
+    """Pins what happens today, which is not an endorsement of it.
+
+    If a log that has already been signed loses `entries.jsonl`, the next append
+    does not notice: the entry reader treats an absent file and an empty one the
+    same way — as an empty history — so the tree silently restarts from zero.
+    Both members of that class are driven here, because the obvious fix for one
+    (refuse when the path does not exist) leaves the other exactly as it is, and
+    a pin on the unlinked case alone would go green over it. A corrupt or
+    truncated row is a different matter and already fails closed; only a history
+    that reads as empty gets this far. Nothing catches the loss until the next
+    `sign-checkpoint`, which compares the signed checkpoint against the now
+    shorter file and refuses. Whether the append itself ought to refuse first is
+    a separate question, left open.
+    """
+    log_dir = _log_init(tmp_path)
+    ed_seed, _ed_pub, mldsa_out = _keygen_hybrid(tmp_path, "log-signer")
+    seed, _pub = _keygen(tmp_path, "issuer")
+    sign_argv = [
+        "log",
+        "sign-checkpoint",
+        "--dir",
+        str(log_dir),
+        "--ed25519-key",
+        str(ed_seed),
+        "--mldsa-key",
+        str(mldsa_out),
+        "--name",
+        LOG_NAME,
+    ]
+
+    # Two DISTINCT payloads. The append deduplicates on the payload hash, so
+    # issuing the same one twice would leave a single entry and never build
+    # the two-entry checkpoint this scenario needs.
+    first = _write_payload(tmp_path, "first-payload.json")
+    second = _write_payload(
+        tmp_path, "second-payload.json", receipt_id="01J1V5B4M9Z8QWERTY12345699"
+    )
+
+    capsys.readouterr()
+    rc_first = cli.main(_issue_argv(first, seed, tmp_path / "first.json", log_dir=log_dir))
+    assert rc_first == 0, capsys.readouterr().err
+
+    capsys.readouterr()
+    rc_second = cli.main(_issue_argv(second, seed, tmp_path / "second.json", log_dir=log_dir))
+    second_report = json.loads(capsys.readouterr().out)
+    assert rc_second == 0
+    # If this fails, the two payloads have become equal and the rest of the
+    # test is measuring deduplication instead of the lost file.
+    assert second_report["log"]["duplicate"] is False
+    assert second_report["log"]["size"] == 2
+
+    # Positive control: on the healthy two-entry log this same command signs.
+    capsys.readouterr()
+    rc_sign_healthy = cli.main(sign_argv)
+    assert rc_sign_healthy == 0, capsys.readouterr().err
+
+    lose_the_entries(log_dir / "entries.jsonl")
+
+    third = _write_payload(tmp_path, "third-payload.json", receipt_id="01J1V5B4M9Z8QWERTY12345700")
+    capsys.readouterr()
+    rc_third = cli.main(_issue_argv(third, seed, tmp_path / "third.json", log_dir=log_dir))
+    third_report = json.loads(capsys.readouterr().out)
+
+    # The append succeeds, and counts from zero: the two signed entries are gone.
+    assert rc_third == 0
+    assert third_report["log"]["size"] == 1
+    assert third_report["log"]["leaf_index"] == 0
+
+    capsys.readouterr()
+    rc_sign = cli.main(sign_argv)
+    captured = capsys.readouterr()
+
+    assert rc_sign == 2, captured.err
+    assert (
+        "the log has shrunk: the prior signed checkpoint covers 2 entries but "
+        "entries.jsonl now has only 1"
+    ) in captured.err
+    # `log prove` has a near-identical sentence for its own check; this tail
+    # belongs only to that one, and must not be what we just read.
+    assert "again before proving" not in captured.err
