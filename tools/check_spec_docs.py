@@ -3134,6 +3134,85 @@ def check_tm80_leaf_tense() -> list[str]:
 _README_PATH = _REPO_ROOT / "README.md"
 _README_CATALOG_RE = re.compile(r"(\d+) attacks catalogued")
 
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _catalog_operative_text(text: str) -> str:
+    """Blank out fenced code blocks and HTML comments as ONE state machine,
+    for the two catalog-size call sites below (the README sentence and the
+    threat-model catalog it is checked against) -- not a general-purpose
+    replacement for `_strip_fenced_blocks()`/`_strip_xml_comments()`, whose
+    other call sites are untouched.
+
+    Two independent regex substitutions -- strip fences, then strip
+    comments, or vice versa -- let one kind of span be read by the OTHER
+    kind's rule: a fence character inside a comment could still close (or
+    open) a fence, and `<!--`/`-->` inside a fence could still toggle
+    comment state, because neither substitution knows the other span
+    exists. Tracked as one state machine, a marker of one kind is inert
+    while the other kind of span is open.
+
+    A fence's closing line must use the SAME delimiter character and be AT
+    LEAST as long as the opening run (CommonMark), with only trailing
+    whitespace after it -- a shorter inner run of the same character does
+    not close it, and an unclosed fence or comment excludes everything
+    through EOF rather than leaking back into operative text.
+
+    Preserves line count (each blanked line becomes empty) so nothing
+    downstream that reports positions shifts.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    fence_char: str | None = None
+    fence_close_re: re.Pattern[str] | None = None
+    in_comment = False
+    for line in lines:
+        if fence_char is not None:
+            assert fence_close_re is not None
+            if fence_close_re.match(line):
+                fence_char = None
+                fence_close_re = None
+            out.append("")
+            continue
+
+        remaining = line
+        if in_comment:
+            end = remaining.find("-->")
+            if end == -1:
+                out.append("")
+                continue
+            in_comment = False
+            remaining = remaining[end + 3 :]
+
+        # A fence can only open at the true start of a line; a line whose
+        # start was already consumed by a comment closing mid-line is not
+        # one (rare in practice -- no fixture here relies on it either way).
+        if remaining == line:
+            fence_open = _FENCE_OPEN_RE.match(remaining)
+            if fence_open:
+                fence_char = fence_open.group(1)[0]
+                fence_close_re = re.compile(
+                    rf"^ {{0,3}}{re.escape(fence_char)}{{{len(fence_open.group(1))},}}[ \t]*$"
+                )
+                out.append("")
+                continue
+
+        produced: list[str] = []
+        comment_start = remaining.find("<!--")
+        if comment_start == -1:
+            produced.append(remaining)
+        else:
+            produced.append(remaining[:comment_start])
+            after = remaining[comment_start + 4 :]
+            end = after.find("-->")
+            if end == -1:
+                in_comment = True
+            else:
+                produced.append(after[end + 3 :])
+        out.append("".join(produced))
+
+    return "\n".join(out)
+
 
 def check_readme_catalog_count() -> list[str]:
     """README.md's catalog size equals the number of entries the catalog has.
@@ -3147,7 +3226,7 @@ def check_readme_catalog_count() -> list[str]:
     # sentence, so scanning them raw would let non-operative content satisfy this
     # guard's own subject; README.md already carries fenced blocks. Same
     # rationale as collect_errors(), applied to BOTH sides of the comparison.
-    readme = _strip_xml_comments(_strip_fenced_blocks(_README_PATH.read_text(encoding="utf-8")))
+    readme = _catalog_operative_text(_README_PATH.read_text(encoding="utf-8"))
     matches = _README_CATALOG_RE.findall(readme)
     if not matches:
         return [
@@ -3157,9 +3236,9 @@ def check_readme_catalog_count() -> list[str]:
         ]
     if len(matches) > 1:
         return [f"README.md: {len(matches)} catalog-size claims; the check would read the first"]
-    # Illustrative fences read exactly like the real entry; same rationale as
-    # collect_errors().
-    entries = len(parse_tm_ids(_strip_fenced_blocks(_THREAT_MODEL_PATH.read_text("utf-8"))))
+    # Illustrative fences and comments read exactly like the real entry; same
+    # rationale as collect_errors(), and the same rule as the README side above.
+    entries = len(parse_tm_ids(_catalog_operative_text(_THREAT_MODEL_PATH.read_text("utf-8"))))
     claimed = int(matches[0])
     if claimed != entries:
         return [

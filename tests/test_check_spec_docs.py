@@ -4473,3 +4473,241 @@ def test_a_fenced_tm_entry_is_not_counted_as_a_catalog_entry(
     monkeypatch.setattr(check_spec_docs, "_THREAT_MODEL_PATH", with_fenced_entry)
 
     assert check_spec_docs.check_readme_catalog_count() == []
+
+
+# --- FID-9 giro 2: regression fixtures for the five re-review findings -------
+#
+# The giro-2 re-review found all five PATCHes from giro 1 applied verbatim,
+# and none of them protected: reverting each defect left the same 397 tests
+# green. These fixtures close that gap -- one per finding -- plus the
+# negative/positive suite the NEW-DEFECT (N1) PATCH prescribed for the
+# consolidated fence+comment helper it introduced.
+
+
+def test_an_html_comment_catalog_claim_cannot_stand_in_for_the_real_sentence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """HIGH 1's other half: an HTML comment reads exactly like the real
+    sentence, same as the fence case above -- the giro-2 re-review found
+    this side unprotected (removing only the comment strip on the README
+    side left all 397 tests green)."""
+    commented = tmp_path / "README.md"
+    commented.write_text(
+        "# attest\n\n<!--\n- **Threat model.** 81 attacks catalogued\n-->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", commented)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+def test_the_h13_rider_still_scopes_the_indistinguishable_claim() -> None:
+    """HIGH 2: the rider claimed NO instrument ever tells a legitimate
+    successor from a seizure -- false for a cooperative handover at the
+    same domain, which ordinary continuous rotation (v0.1 §7.3) makes
+    distinguishable. The fix narrows the claim to the case where the
+    predecessor can no longer sign. This is prose with no check function
+    behind it (the giro-2 re-review measured this directly: reverting the
+    claim left checker and all 397 tests green), so the fixture pins the
+    scoping qualifier attached to the claim it must qualify, and the
+    specific closing sentence the PATCH replaced -- both against the real,
+    committed document, since a copy in tmp_path would test nothing about
+    what ships."""
+    text = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+
+    assert (
+        "Where the predecessor can no longer sign, the benign case is "
+        "indistinguishable from the hostile one"
+    ) in text, "the qualifier that scopes the claim to the unsignable case is gone"
+    assert "does not exist in this revision." not in text, (
+        "the old, unqualified closing sentence the PATCH removed is back"
+    )
+
+
+def test_the_manifest_marking_restriction_is_stated_as_v0_2_section_19_5_states_it() -> None:
+    """MEDIUM 3: the entry claimed nothing restricts WHICH keys may publish a
+    compromise marking -- v0.2 §19.5 restricts it to still-active keys, in
+    the very parenthetical the entry paraphrased away. No check function
+    validates this prose; the fixture pins the false universal's absence
+    and the corrected sentence's presence, against the real document."""
+    text = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+
+    old = (
+        "Nothing in either specification restricts WHICH keys may publish a "
+        "compromise marking (v0.2 §19.5, TM-75), and this entry is the "
+        "identity-side instance of that gap."
+    )
+    assert old not in text, "the false universal MEDIUM 3 removed is back"
+    assert (
+        "v0.2 §19.5 places any FURTHER restriction on WHICH keys may publish "
+        "a manifest marking another key `compromised` out of scope"
+    ) in text, "the corrected, scoped restriction is gone"
+
+
+def test_verified_trust_label_is_not_said_to_carry_no_continuity_signal() -> None:
+    """MEDIUM 4: v0.1 §7.4 said no label in the spec speaks to continuity of
+    control -- but §7.4 itself defines `verified` as absent a discontinuous
+    rotation (§7.3), which is exactly such a label. No check function
+    validates this prose; the fixture pins the false universal's absence
+    and the corrected sentence's presence, against the real document."""
+    text = (SPEC_DIR / "attest-v0.1.md").read_text(encoding="utf-8")
+
+    old = (
+        "it does not say that this is the same party that controlled it "
+        "when any given receipt was signed, and no label in this "
+        "specification says so."
+    )
+    assert old not in text, "the false universal MEDIUM 4 removed is back"
+    assert (
+        "only the manifest-version chain of §7.3 speaks to that, and only "
+        "as far back as the verifier's own history reaches"
+    ) in text, "the corrected clause naming §7.3's chain is gone"
+
+
+def test_tm76_no_longer_claims_the_unsupported_comparison_to_tm81() -> None:
+    """LOW 5: TM-76 claimed its residual risk weighs more than the
+    issuer-side one -- unsupported once TM-81 documented an issuer-side
+    direction that invalidates an entire signed history. No check function
+    validates this prose; the fixture pins the false comparison's absence
+    and the corrected, sibling framing's presence, against the real
+    document."""
+    text = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+
+    assert "weighs more here than it does for issuers" not in text, (
+        "the unsupported comparison LOW 5 removed is back"
+    )
+    assert ("is not the lighter case this entry once called it") in text, (
+        "the corrected sibling framing (TM-76 vs TM-81) is gone"
+    )
+
+
+# --- N1 -- the new fence/comment guard on both catalog-size call sites -------
+#
+# check_readme_catalog_count() now runs both the README sentence and the
+# threat-model catalog through _catalog_operative_text(): a single state
+# machine (not two independent regex substitutions) that (a) requires a
+# fence's closing line to use the same delimiter character and be at least
+# as long as the opening run, (b) leaves an unclosed fence or comment
+# excluding everything to EOF, and (c) treats a marker of one kind as inert
+# while inside a span of the other kind.
+
+
+@pytest.mark.parametrize("marker", ["`", "~"])
+@pytest.mark.parametrize("width", [3, 4, 5, 8])
+def test_an_unclosed_fence_cannot_supply_the_readme_catalog_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, marker: str, width: int
+) -> None:
+    path = tmp_path / "README.md"
+    path.write_text(f"# attest\n\n{marker * width}\n81 attacks catalogued\n", encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("marker", ["`", "~"])
+@pytest.mark.parametrize("width", [4, 5, 8])
+def test_a_shorter_inner_fence_cannot_close_the_readme_catalog_fence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, marker: str, width: int
+) -> None:
+    """A shorter run of the SAME character does not close a fence
+    (CommonMark): a naive scan that treats any run of >=3 as a closer would
+    read the inner, shorter run as the close and expose the claim below it."""
+    path = tmp_path / "README.md"
+    path.write_text(
+        f"{marker * width}\n{marker * (width - 1)}\n81 attacks catalogued\n{marker * width}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("ending", ["-->\n", ""])
+def test_an_html_comment_readme_claim_cannot_supply_the_sentence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ending: str
+) -> None:
+    """Closed normally, or truncated to EOF: either way the sentence inside
+    stays hidden."""
+    path = tmp_path / "README.md"
+    path.write_text("# attest\n\n<!--\n81 attacks catalogued\n" + ending, encoding="utf-8")
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("is gone" in e for e in errors), errors
+
+
+def test_a_commented_out_tm81_is_not_counted_as_a_catalog_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The catalog side of the same property, for comments rather than
+    fences: TM-81 wrapped in an HTML comment must not be counted, and the
+    real README's claim of 81 then drifts against the now-80-entry catalog."""
+    real_tm = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+    start = real_tm.index("#### TM-81 —")
+    end = real_tm.index("\n## 5. Traceability", start)
+    commented = tmp_path / "attest-threat-model.md"
+    commented.write_text(
+        real_tm[:start] + "<!--\n" + real_tm[start:end] + "-->\n" + real_tm[end:],
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_THREAT_MODEL_PATH", commented)
+
+    errors = check_spec_docs.check_readme_catalog_count()
+
+    assert any("has 80 entries" in e for e in errors), errors
+
+
+def test_a_commented_sample_tm_entry_does_not_inflate_the_catalog_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other direction: an illustrative TM-99 wrapped in an HTML comment
+    must not be counted either -- the real README's claim of 81 stays
+    correct against the still-81-entry catalog."""
+    real_tm = (SPEC_DIR / "attest-threat-model.md").read_text(encoding="utf-8")
+    with_commented_sample = tmp_path / "attest-threat-model.md"
+    with_commented_sample.write_text(
+        real_tm + "\n<!--\n#### TM-99 — sample\n-->\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(check_spec_docs, "_THREAT_MODEL_PATH", with_commented_sample)
+
+    assert check_spec_docs.check_readme_catalog_count() == []
+
+
+def test_the_real_sentence_survives_next_to_a_fenced_example(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Positive control (PATCH item 5): a real claim plus a fenced example
+    naming a DIFFERENT count reads as exactly one claim, not two -- the
+    example is non-operative, not a second sentence competing with the
+    real one."""
+    path = tmp_path / "README.md"
+    path.write_text(
+        "# attest\n\n81 attacks catalogued.\n\nFor example:\n\n```\n99 attacks catalogued\n```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    assert check_spec_docs.check_readme_catalog_count() == []
+
+
+def test_the_real_sentence_survives_next_to_a_commented_example(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Positive control (PATCH item 5), the comment variant, and block order
+    reversed relative to the case above: the comment comes first, the real
+    sentence after -- order must not matter to the state machine."""
+    path = tmp_path / "README.md"
+    path.write_text(
+        "# attest\n\n<!-- 99 attacks catalogued -->\n\n81 attacks catalogued.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_spec_docs, "_README_PATH", path)
+
+    assert check_spec_docs.check_readme_catalog_count() == []
