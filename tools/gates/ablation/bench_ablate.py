@@ -25,6 +25,15 @@ a run whose expectation is wrong on purpose. Part B kills a holder for real and
 checks what the journal then allows. Every assertion is a named case appended to a
 list, and the count in the closing marker is derived from that list: the marker is
 what declares how much this bench measured, and a constant would declare nothing.
+
+Part C turns the same metre on the tool. Each of its mutants is applied to a *copy*
+of the tool's modules, and part A or part B is re-run against that copy: a mutant
+has to make the named cases fail, and nothing outside the set declared for it. Two
+things make that measurement mean what it says. The parts reach the tool only
+through a tool directory handed to them, so a run against a copy cannot silently
+measure the original; and the cases of those re-runs are collected in a bench of
+their own, because a failure part C *requires* is not a failure of this bench, and
+counting it as one would make this bench red exactly when it is working.
 """
 
 from __future__ import annotations
@@ -43,11 +52,26 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 SELFTEST = HERE / "selftest"
 
-ABLATE = HERE / "ablate.py"
-PROVE_SURVIVOR = HERE / "prove_survivor.py"
+#: The fixture generator is always the real one. Part C measures the tool, not the
+#: tree it works on, and a tree built by a mutated generator would no longer be the
+#: tree the parts were written against.
 MAKE_FIXTURE_TREE = SELFTEST / "make_fixture_tree.py"
-SPEC_MAIN = SELFTEST / "spec_fixture.json"
-SPEC_ST1 = SELFTEST / "spec_fixture_st1.json"
+
+#: The modules a copy of the tool has to carry. `ablate.py` and `prove_survivor.py`
+#: put their own directory on `sys.path`, and `ablate.py` puts it on the suite's
+#: `PYTHONPATH`, so a directory holding all of these runs its own code throughout
+#: rather than reaching back to the one it was copied from.
+TOOL_MODULES = (
+    "ablate.py",
+    "journal.py",
+    "classify.py",
+    "outcomes_plugin.py",
+    "prove_survivor.py",
+)
+
+#: The spec files the parts hand to the tool, copied beside the modules so that a
+#: copy is self-contained and a part run against it reads nothing of the original.
+TOOL_SPECS = ("spec_fixture.json", "spec_fixture_st1.json")
 
 JOURNAL_DIRNAME = ".ablation-in-flight"
 OWNER_FILENAME = "owner.json"
@@ -71,10 +95,175 @@ LEDGER_ORACLE_ID = "ST2-property-red"
 #: The value written into the target to put a record into a state no one recorded.
 UNKNOWN_STATE_TEXT = "VALUE = 5\n"
 
-#: Part C — the mutants of the tool itself — is not in this bench. The counts in
-#: the marker are derived from these, empty, so the marker says zero because zero
-#: were run, not because zero is written into the line.
-META_MUTANTS: tuple[str, ...] = ()
+
+@dataclass(frozen=True)
+class MetaMutant:
+    """One mutant of the tool itself, and where its damage has to show.
+
+    `edits` are applied to a copy of the tool, each one replacing the single
+    line-start occurrence of its anchor. `part` is the part of this bench re-run
+    against that copy. `named` are the cases that must fail, and `collateral` the
+    ones that are allowed to fail as well: a mutant is killed when the named set is
+    contained in what failed and what failed is contained in the two sets together.
+
+    The two sets are fixed here, before anything runs. Deciding after reading an
+    outcome which cases were "meant" would make every mutant killable.
+    """
+
+    ident: str
+    part: str
+    edits: tuple[tuple[str, str, str], ...]
+    named: frozenset[str]
+    collateral: frozenset[str] = frozenset()
+
+
+#: Part C. Each row lands on the file named in its edit, and is re-run against the
+#: part in its `part`. `MB10` carries `MB2`'s edit as well: with the write skipped,
+#: a `git_dirty_during` built from the path instead of from git still cannot hide
+#: the mutation that never landed, which is what the pair exists to show.
+META_MUTANTS: tuple[MetaMutant, ...] = (
+    MetaMutant(
+        "MB1-loop-skipped",
+        "A",
+        (("ablate.py", "    for mutant in mutants:", "    for mutant in []:"),),
+        frozenset({"A3", "A4"}),
+        frozenset({"A5", "A6", "A8"}),
+    ),
+    MetaMutant(
+        "MB2-write-skipped",
+        "A",
+        (
+            (
+                "journal.py",
+                "            _write_target(target, mutated, staging)",
+                "            pass",
+            ),
+        ),
+        frozenset({"A4"}),
+        frozenset({"A1", "A5", "A6", "A8"}),
+    ),
+    MetaMutant(
+        "MB3-suite-not-run",
+        "A",
+        (
+            (
+                "ablate.py",
+                "            mutated = _run_suite("
+                "tree, launcher, mutant, typecheck=typecheck, mutated=True)",
+                "            mutated = SuiteRun(\n"
+                "                baseline.outcomes,\n"
+                "                baseline.outcomes_path,\n"
+                "                secrets.token_hex(16),\n"
+                "                baseline.nonce_echoed,\n"
+                "            )",
+            ),
+        ),
+        frozenset({"A5"}),
+        frozenset({"A1", "A4", "A8"}),
+    ),
+    MetaMutant(
+        "MB4-expectations-ignored",
+        "A",
+        (("ablate.py", "    if mismatches:", "    if False:"),),
+        frozenset({"A8"}),
+    ),
+    MetaMutant(
+        "MB5-cache-kept",
+        "A",
+        (
+            (
+                "journal.py",
+                "    for dirpath, dirnames, _filenames in os.walk(tree):",
+                "    return\n    for dirpath, dirnames, _filenames in os.walk(tree):",
+            ),
+        ),
+        frozenset({"A8"}),
+        frozenset({"A1"}),
+    ),
+    MetaMutant(
+        "MB6-rejected-wipes",
+        "B",
+        (
+            (
+                "journal.py",
+                "            raise JournalBusy(_busy_message(self.journal_dir)) from None",
+                '            for _leftover in sorted(self.journal_dir.glob("*.json")):\n'
+                "                if _leftover.name != OWNER_FILENAME:\n"
+                "                    _leftover.unlink()\n"
+                "            raise JournalBusy(_busy_message(self.journal_dir)) from None",
+            ),
+        ),
+        # This edit lands on the refusal branch of the journal's acquisition, which is
+        # reached only by a process that enters that acquisition. `ablate.py` refuses an
+        # already-held journal at its own entry check and returns before ever reaching
+        # it, so B2 cannot observe this edit for any input at all; `prove_survivor.py`
+        # has no equivalent early check and does reach the branch. B3 is therefore the
+        # named case, and B4 follows from the records being gone by the time it runs.
+        frozenset({"B3"}),
+        frozenset({"B4"}),
+    ),
+    MetaMutant(
+        "MB7-owner-check-removed",
+        "B",
+        (("journal.py", "        os.kill(pid, 0)", "        return False"),),
+        frozenset({"B5"}),
+    ),
+    MetaMutant(
+        "MB8-unknown-state-accepted",
+        "B",
+        (
+            (
+                "journal.py",
+                "    raise UnknownState(",
+                "    _unused_json, _orig_of_record = _record_paths(journal_dir, name)\n"
+                "    target.write_bytes(_orig_of_record.read_bytes())\n"
+                "    clear_bytecode_caches(tree)\n"
+                "    _delete_record(journal_dir, name)\n"
+                '    return "restored"\n'
+                "    raise UnknownState(",
+            ),
+        ),
+        frozenset({"B6"}),
+    ),
+    MetaMutant(
+        "MB9-killed-elsewhere-removed",
+        "A",
+        (
+            (
+                "classify.py",
+                '    if verdict == "KILLED" and expect_red and not hit:',
+                "    if False:",
+            ),
+        ),
+        frozenset({"A8"}),
+        frozenset({"A1"}),
+    ),
+    MetaMutant(
+        "MB10-git-snapshot-faked",
+        "A",
+        (
+            (
+                "journal.py",
+                "            _write_target(target, mutated, staging)",
+                "            pass",
+            ),
+            (
+                "ablate.py",
+                "            git_dirty_during = _porcelain_during_mutation(tree)",
+                '            git_dirty_during = [" M " + mutant["file"]]',
+            ),
+        ),
+        frozenset({"A4"}),
+        frozenset({"A1", "A5", "A6", "A8"}),
+    ),
+    MetaMutant(
+        "MB11-nonce-not-passed",
+        "A",
+        (("ablate.py", '    env["ABLATION_NONCE"] = nonce', "    pass"),),
+        frozenset({"A5"}),
+        frozenset({"A1", "A4", "A6", "A8"}),
+    ),
+)
 
 #: A holder that takes the journal, lands one mutation and dies with it in hand.
 #: Written to a file and run as its own process: nothing of it may execute here.
@@ -101,6 +290,44 @@ _PROBE_SOURCE = '"""A probe that part B never reaches."""\n\nprint("probe")\n'
 
 
 @dataclass(frozen=True)
+class Tools:
+    """The directory a part takes the tool from, and every path derived from it.
+
+    Parts A and B reach the tool only through one of these, so the directory is the
+    single thing that decides which copy of the tool a part measures. Held as a
+    parameter rather than read from the module, because part C runs the same parts
+    against a mutated copy: a path pinned to this module would make those runs
+    measure the original while reporting on the copy.
+    """
+
+    root: Path
+
+    @property
+    def ablate(self) -> Path:
+        """The `ablate.py` of this directory."""
+        return self.root / "ablate.py"
+
+    @property
+    def prove_survivor(self) -> Path:
+        """The `prove_survivor.py` of this directory."""
+        return self.root / "prove_survivor.py"
+
+    @property
+    def spec_main(self) -> Path:
+        """The five-row fixture spec of this directory."""
+        return self.root / "selftest" / "spec_fixture.json"
+
+    @property
+    def spec_st1(self) -> Path:
+        """The one-row absent-anchor spec of this directory."""
+        return self.root / "selftest" / "spec_fixture_st1.json"
+
+
+#: The tool as it is committed: what the bench proper measures.
+REAL_TOOLS = Tools(HERE)
+
+
+@dataclass(frozen=True)
 class Case:
     """One named assertion of this bench and how it came out."""
 
@@ -112,20 +339,27 @@ class Case:
 class Bench:
     """The list of cases, and the marker derived from it."""
 
-    def __init__(self) -> None:
+    def __init__(self, label: str = "") -> None:
+        #: Printed in front of every line this bench emits. Part C runs the parts a
+        #: second time against a mutated copy, and those runs are *expected* to fail:
+        #: without a label their failures cannot be told apart in the log from this
+        #: bench's own, and a reader of a red gate cannot see which list a line came
+        #: from. The marker separates the counts; this separates the log.
+        self.label = label
         self.cases: list[Case] = []
         self.died_elsewhere: list[str] = []
+        self.meta_ran: list[str] = []
         self.applications_confirmed = 0
 
     def check(self, name: str, ok: bool, detail: str) -> bool:
         """Append a named case, print it, and report whether it held."""
         self.cases.append(Case(name, bool(ok), detail))
-        print(f"{'PASS' if ok else 'FAIL'}: {name} -- {detail}")
+        print(f"{self.label}{'PASS' if ok else 'FAIL'}: {name} -- {detail}")
         return bool(ok)
 
     def say(self, line: str) -> None:
         """Print a line of the bench's own log; it is not a case."""
-        print(f"[bench] {line}")
+        print(f"{self.label}[bench] {line}")
 
     @property
     def failures(self) -> int:
@@ -133,10 +367,15 @@ class Bench:
         return sum(1 for case in self.cases if not case.ok)
 
     def marker(self) -> str:
-        """The closing line, with every count derived from what was measured."""
+        """The closing line, with every count derived from what was measured.
+
+        `meta_mutants` counts the ones that were actually run, not the length of the
+        table: a part C that stopped early has to say a smaller number, and a zero
+        has to mean that none ran rather than that a zero was written here.
+        """
         return (
             f"ABLATION_BENCH cases={len(self.cases)} failures={self.failures} "
-            f"meta_mutants={len(META_MUTANTS)} meta_died_elsewhere={len(self.died_elsewhere)} "
+            f"meta_mutants={len(self.meta_ran)} meta_died_elsewhere={len(self.died_elsewhere)} "
             f"applications_confirmed={self.applications_confirmed}"
         )
 
@@ -305,24 +544,31 @@ def trace_problem(row: dict[str, Any], expected_dirty: list[str]) -> str | None:
     traces where three are required. Both are defects of the tool, and this says so
     instead of quietly picking whichever trace is present.
     """
-    if row["git_dirty_during"] != expected_dirty:
-        return f"git_dirty_during={row['git_dirty_during']!r}, expected {expected_dirty!r}"
-    typecheck = row["typecheck"]
-    nonce = row["nonce"]
+    if row.get("git_dirty_during") != expected_dirty:
+        return f"git_dirty_during={row.get('git_dirty_during')!r}, expected {expected_dirty!r}"
+    typecheck = row.get("typecheck")
+    nonce = row.get("nonce")
     if typecheck is not None and nonce is not None:
         return "carries a typecheck trace and a nonce trace; a row has exactly one third trace"
-    if typecheck is None and nonce is None:
-        return "carries neither a typecheck trace nor a nonce trace"
     if typecheck is not None:
-        if typecheck["tsc_returncode"] == 0:
-            return f"typecheck.tsc_returncode={typecheck['tsc_returncode']!r}, expected non-zero"
-        if not typecheck["form_codes"]:
+        if "tsc_returncode" not in typecheck:
+            return "typecheck carries no tsc_returncode; a stopped run is measured by that status"
+        if typecheck.get("tsc_returncode") == 0:
+            return (
+                f"typecheck.tsc_returncode={typecheck.get('tsc_returncode')!r}, expected non-zero"
+            )
+        if not typecheck.get("form_codes"):
             return "typecheck.form_codes is empty; a stopped run is measured by its codes"
         return None
-    if nonce["issued"] is None:
+    # Reached only with `typecheck` absent, so a missing nonce here is the
+    # neither-trace row. Checked in this order rather than up front so that the
+    # reads below are on a mapping that has been shown to be present.
+    if nonce is None:
+        return "carries neither a typecheck trace nor a nonce trace"
+    if nonce.get("issued") is None:
         return "nonce.issued is absent"
-    if nonce["echoed"] != nonce["issued"]:
-        return f"nonce echoed={nonce['echoed']!r}, issued={nonce['issued']!r}"
+    if nonce.get("echoed") != nonce.get("issued"):
+        return f"nonce echoed={nonce.get('echoed')!r}, issued={nonce.get('issued')!r}"
     return None
 
 
@@ -338,16 +584,20 @@ def forced_spec(source: Path, dest: Path, mutant_id: str, verdict: str) -> None:
 # --- part A: the positive run, on the real bench -----------------------------------------------
 
 
-def part_a(bench: Bench, workdir: Path) -> None:
-    """Run the fixture spec three ways and check what the results claim."""
+def part_a(bench: Bench, workdir: Path, tools: Tools) -> None:
+    """Run the fixture spec three ways and check what the results claim.
+
+    Every path to the tool comes from `tools`, so this runs against whichever copy
+    it names: the committed one for the bench proper, a mutated one for part C.
+    """
     tree = build_fixture_tree(workdir / "tree-a")
-    declared = spec_rows(SPEC_MAIN)
+    declared = spec_rows(tools.spec_main)
     target_of = {mutant["id"]: mutant["file"] for mutant in declared}
 
     main_out = workdir / "results.json"
     main_nonce = "bench-run-main"
     main = run_tool(
-        [str(ABLATE), str(SPEC_MAIN), "--tree", str(tree), "--out", str(main_out)],
+        [str(tools.ablate), str(tools.spec_main), "--tree", str(tree), "--out", str(main_out)],
         run_nonce=main_nonce,
     )
     bench.say(f"main run: rc={main.returncode}")
@@ -394,7 +644,18 @@ def part_a(bench: Bench, workdir: Path) -> None:
             f"{mutant_id}: traces hold" if problem is None else f"{mutant_id}: {problem}",
         )
 
-    oracle_row = next(m for m in declared if m["id"] == LEDGER_ORACLE_ID)
+    oracle_row = next((m for m in declared if m["id"] == LEDGER_ORACLE_ID), None)
+    if oracle_row is None:
+        bench.check("A6", False, f"{LEDGER_ORACLE_ID}: the spec no longer declares this row")
+        # Raised, not returned. Everything below this point -- A7, the absent-anchor
+        # run and both of its cases, A8, and the forced-expectation run -- would go
+        # unmeasured, and an observation that stopped early must never be read as a
+        # complete one: part C catches this and reports the mutant as stopped, so it
+        # cannot be called killed on a set of cases that were never run.
+        raise RuntimeError(
+            f"{LEDGER_ORACLE_ID}: the spec no longer declares this row, so part A "
+            f"cannot measure the cases that follow"
+        )
     committed = head_blob(tree, oracle_row["file"])
     mutated = replace_once_at_line_start(
         committed, oracle_row["old"].encode("utf-8"), oracle_row["new"].encode("utf-8")
@@ -414,8 +675,8 @@ def part_a(bench: Bench, workdir: Path) -> None:
     st1_nonce = "bench-run-st1"
     st1 = run_tool(
         [
-            str(ABLATE),
-            str(SPEC_ST1),
+            str(tools.ablate),
+            str(tools.spec_st1),
             "--tree",
             str(tree),
             "--skip-preflight",
@@ -466,10 +727,10 @@ def part_a(bench: Bench, workdir: Path) -> None:
     forced_path = workdir / "spec_forced.json"
     forced_out = workdir / "forced.json"
     forced_nonce = "bench-run-forced"
-    forced_spec(SPEC_MAIN, forced_path, LEDGER_ORACLE_ID, "SURVIVED")
+    forced_spec(tools.spec_main, forced_path, LEDGER_ORACLE_ID, "SURVIVED")
     forced = run_tool(
         [
-            str(ABLATE),
+            str(tools.ablate),
             str(forced_path),
             "--tree",
             str(tree),
@@ -516,13 +777,17 @@ def check_tree_is_clean(bench: Bench, tree: Path, when: str) -> None:
 # --- part B: a holder killed for real ----------------------------------------------------------
 
 
-def part_b(bench: Bench, workdir: Path) -> None:
-    """Kill a holder three times over, and check what the journal then allows."""
+def part_b(bench: Bench, workdir: Path, tools: Tools) -> None:
+    """Kill a holder three times over, and check what the journal then allows.
+
+    The holder imports `journal` from `tools.root`, and every refusal checked here
+    is the refusal of that copy: part C re-runs this against a mutated one.
+    """
     probe = workdir / "probe.py"
     probe.write_text(_PROBE_SOURCE, encoding="utf-8")
 
     # B1-B4 share one tree: each step is the state the previous one left.
-    tree = make_killed_tree(bench, workdir, "tree-b1", "VALUE = 0", "B1")
+    tree = make_killed_tree(bench, workdir, "tree-b1", "VALUE = 0", "B1", tools)
     target = tree / "sample.py"
     bench.check(
         "B1",
@@ -535,7 +800,7 @@ def part_b(bench: Bench, workdir: Path) -> None:
         f"the journal holds exactly the one record: {journal_records(tree)!r}",
     )
 
-    rerun = run_tool([str(ABLATE), str(SPEC_MAIN), "--tree", str(tree)])
+    rerun = run_tool([str(tools.ablate), str(tools.spec_main), "--tree", str(tree)])
     bench.say(f"run over a held journal: rc={rerun.returncode}")
     bench.check("B2", rerun.returncode == 8, f"an ordinary run is refused: rc={rerun.returncode}")
     bench.check(
@@ -548,8 +813,8 @@ def part_b(bench: Bench, workdir: Path) -> None:
 
     proved = run_tool(
         [
-            str(PROVE_SURVIVOR),
-            str(SPEC_MAIN),
+            str(tools.prove_survivor),
+            str(tools.spec_main),
             "ST6-inert",
             str(probe),
             "--tree",
@@ -566,7 +831,7 @@ def part_b(bench: Bench, workdir: Path) -> None:
         f"sample.py={target.read_text(encoding='utf-8')!r}",
     )
 
-    restored = run_tool([str(ABLATE), "--restore", "--tree", str(tree)])
+    restored = run_tool([str(tools.ablate), "--restore", "--tree", str(tree)])
     bench.say(f"restore: rc={restored.returncode}")
     bench.check(
         "B4",
@@ -590,13 +855,13 @@ def part_b(bench: Bench, workdir: Path) -> None:
     )
 
     # B5: a fresh tree, because the restore above emptied the first journal.
-    tree5 = make_killed_tree(bench, workdir, "tree-b5", "VALUE = 0", "B5")
+    tree5 = make_killed_tree(bench, workdir, "tree-b5", "VALUE = 0", "B5", tools)
     owner_path = tree5 / JOURNAL_DIRNAME / OWNER_FILENAME
     owner: dict[str, Any] = json.loads(owner_path.read_text(encoding="utf-8"))
     owner["pid"] = os.getpid()
     owner_path.write_text(json.dumps(owner), encoding="utf-8")
     bench.say(f"owner.json rewritten to name a live process: pid={os.getpid()}")
-    live = run_tool([str(ABLATE), "--restore", "--tree", str(tree5)])
+    live = run_tool([str(tools.ablate), "--restore", "--tree", str(tree5)])
     bench.check(
         "B5",
         live.returncode == 8,
@@ -611,10 +876,10 @@ def part_b(bench: Bench, workdir: Path) -> None:
     )
 
     # B6: a fresh tree again, and a target in a state no record accounts for.
-    tree6 = make_killed_tree(bench, workdir, "tree-b6", "VALUE = 0", "B6")
+    tree6 = make_killed_tree(bench, workdir, "tree-b6", "VALUE = 0", "B6", tools)
     (tree6 / "sample.py").write_text(UNKNOWN_STATE_TEXT, encoding="utf-8")
     bench.say(f"target put into a state no record names: {UNKNOWN_STATE_TEXT!r}")
-    unknown = run_tool([str(ABLATE), "--restore", "--tree", str(tree6)])
+    unknown = run_tool([str(tools.ablate), "--restore", "--tree", str(tree6)])
     bench.check(
         "B6",
         unknown.returncode == 9,
@@ -633,13 +898,15 @@ def part_b(bench: Bench, workdir: Path) -> None:
     )
 
 
-def make_killed_tree(bench: Bench, workdir: Path, name: str, new_text: str, case: str) -> Path:
+def make_killed_tree(
+    bench: Bench, workdir: Path, name: str, new_text: str, case: str, tools: Tools
+) -> Path:
     """A tree whose holder landed `new_text` and was killed, with the kill checked."""
     tree = build_fixture_tree(workdir / name)
     holder = workdir / "holder.py"
     if not holder.is_file():
         holder.write_text(_HOLDER_SOURCE, encoding="utf-8")
-    result = run_tool([str(holder), str(HERE), str(tree), "sample.py", "VALUE = 2", new_text])
+    result = run_tool([str(holder), str(tools.root), str(tree), "sample.py", "VALUE = 2", new_text])
     bench.say(
         f"in-flight holder on {name}: rc={result.returncode} record={result.stdout.strip()!r}"
     )
@@ -651,6 +918,101 @@ def make_killed_tree(bench: Bench, workdir: Path, name: str, new_text: str, case
     return tree
 
 
+# --- part C: the mutants of the tool itself ----------------------------------------------------
+
+
+def copy_tools(dest: Path) -> Tools:
+    """Copy the tool's modules and specs into `dest` and name it as a tool directory.
+
+    Every module is copied, not only the one a mutant lands on. `ablate.py` puts its
+    own directory first on `sys.path` and on the suite's `PYTHONPATH`, so a copy
+    carrying only some of them would import the rest from the original and the run
+    would measure a mixture of the two.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "selftest").mkdir(exist_ok=True)
+    for name in TOOL_MODULES:
+        shutil.copy2(HERE / name, dest / name)
+    for name in TOOL_SPECS:
+        shutil.copy2(SELFTEST / name, dest / "selftest" / name)
+    return Tools(dest)
+
+
+def apply_meta_edits(bench: Bench, mutant: MetaMutant, tools: Tools) -> str | None:
+    """Apply a meta-mutant's edits to a copy, or say why they could not be applied.
+
+    Each edit is logged with its file, its anchor and the hash of the copy before and
+    after, and the bytes are required to change: an edit that left the file as it was
+    would make the run below measure the tool rather than a mutant of it.
+    """
+    for module, anchor, replacement in mutant.edits:
+        path = tools.root / module
+        before = path.read_bytes()
+        try:
+            after = replace_once_at_line_start(
+                before, anchor.encode("utf-8"), replacement.encode("utf-8")
+            )
+        except ValueError as exc:
+            return f"{module}: {exc}"
+        if after == before:
+            return f"{module}: the anchor was replaced by itself, the bytes did not change"
+        path.write_bytes(after)
+        bench.say(
+            f"{mutant.ident}: {module} at anchor {anchor.strip()!r}: "
+            f"{sha256_hex(before)} -> {sha256_hex(after)}"
+        )
+    return None
+
+
+def part_c(bench: Bench, workdir: Path) -> None:
+    """Re-run a part against a mutated copy of the tool, once per meta-mutant.
+
+    The cases of those re-runs are the *observation* of a meta-mutant, not results of
+    this bench: they are collected in a separate bench, so a part C that works does
+    not raise this bench's failure count. What comes back here is one verdict per
+    meta-mutant, and the count of the ones that did not die where they had to.
+    """
+    for mutant in META_MUTANTS:
+        home = workdir / "meta" / mutant.ident
+        tools = copy_tools(home / "tool")
+        refusal = apply_meta_edits(bench, mutant, tools)
+        if refusal is not None:
+            print(f"META-MUTANT {mutant.ident}: anchor absent in copy -- {refusal}")
+            bench.died_elsewhere.append(mutant.ident)
+            continue
+
+        observed_bench = Bench(label=f"[{mutant.ident}] ")
+        run_dir = home / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        stopped = ""
+        try:
+            if mutant.part == "A":
+                part_a(observed_bench, run_dir, tools)
+            else:
+                part_b(observed_bench, run_dir, tools)
+        # Broad on purpose: a mutated tool can break a part in any way at all, and a
+        # part that stopped is reported as a mutant that was not measured, not as a
+        # crash of this bench.
+        except Exception as exc:
+            stopped = f"; the part stopped with {type(exc).__name__}: {exc}"
+        bench.meta_ran.append(mutant.ident)
+
+        observed = {case.name for case in observed_bench.cases if not case.ok}
+        allowed = mutant.named | mutant.collateral
+        # A part that stopped did not measure the cases after the point it stopped,
+        # so its observed set is not the whole of what this mutant did.
+        killed = not stopped and mutant.named <= observed and observed <= allowed
+        tail = (
+            f"expected {sorted(mutant.named)} (allowed {sorted(mutant.collateral)}), "
+            f"observed {sorted(observed)}{stopped}"
+        )
+        if killed:
+            print(f"META-MUTANT {mutant.ident} KILLED: {tail}")
+        else:
+            print(f"META-MUTANT {mutant.ident} DIED ELSEWHERE: {tail}")
+            bench.died_elsewhere.append(mutant.ident)
+
+
 # --- entry point --------------------------------------------------------------------------------
 
 
@@ -659,8 +1021,9 @@ def main() -> int:
     bench = Bench()
     workdir = Path(tempfile.mkdtemp(prefix="ablation-bench-"))
     try:
-        part_a(bench, workdir)
-        part_b(bench, workdir)
+        part_a(bench, workdir, REAL_TOOLS)
+        part_b(bench, workdir, REAL_TOOLS)
+        part_c(bench, workdir)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
     print(bench.marker())
