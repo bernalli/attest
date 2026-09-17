@@ -1,0 +1,16 @@
+{
+ "note": "Self-test of the bench on the synthetic fixture tree: an anchor that is not in the file. Item 0 refuses it, so this spec is run with --skip-preflight and an explicit --tree, which stands in for a file that changed between validation and application; the row must then read NOT_APPLIED, never SURVIVED.",
+ "launcher": ["{python}", "-m", "pytest"],
+ "mutants": [
+  {
+   "id": "ST1-anchor-absent",
+   "expect_verdict": "NOT_APPLIED",
+   "property": "BENCH: a replacement whose anchor is not in the file is an error, never an outcome",
+   "file": "sample.py",
+   "old": "VALUE = 99",
+   "new": "VALUE = 0",
+   "suite": ["test_sample.py"],
+   "expect_red": []
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+{
+ "note": "Self-test of the bench on the synthetic fixture tree built by make_fixture_tree.py, not of any real suite. Each row pins one way the bench must read a mutation: a property red, a form red, a red that lands only on sibling tests, a skip gained under the mutation, and bytes that change while nothing goes red. The absent-anchor row lives in spec_fixture_st1.json, because item 0 refuses an absent anchor and that row exists to be run with --skip-preflight.",
+ "launcher": ["{python}", "-m", "pytest"],
+ "mutants": [
+  {
+   "id": "ST2-property-red",
+   "expect_verdict": "KILLED",
+   "property": "BENCH: a mutation that reaches the property reads KILLED through the assertion of the named test; the rewrite keeps the length and the fixture ships a bytecode cache of the original, so the caches must be removed for the suite to see it",
+   "file": "sample.py",
+   "old": "VALUE = 2",
+   "new": "VALUE = 0",
+   "suite": ["test_sample.py"],
+   "expect_red": ["test_guard"]
+  },
+  {
+   "id": "ST3-form-red",
+   "expect_verdict": "BROKEN",
+   "property": "BENCH: a mutation that breaks a name reads BROKEN, never KILLED",
+   "file": "helper.py",
+   "old": "    return VALUE_NAME",
+   "new": "    return VALUE_NAME_TYPO",
+   "suite": ["test_sample.py"],
+   "expect_red": ["test_helper"]
+  },
+  {
+   "id": "ST4-sibling-only",
+   "expect_verdict": "KILLED_ELSEWHERE",
+   "property": "BENCH: reds that land only on tests the row does not name read KILLED_ELSEWHERE, not KILLED",
+   "file": "sample.py",
+   "old": "VALUE = 2",
+   "new": "VALUE = 3",
+   "suite": ["test_sample.py"],
+   "expect_red": ["test_unrelated"]
+  },
+  {
+   "id": "ST5-skip-under-mutation",
+   "expect_verdict": "BROKEN",
+   "property": "BENCH: a test skipped under the mutation that ran at baseline makes the run BROKEN, not a survivor",
+   "file": "sample.py",
+   "old": "VALUE = 2",
+   "new": "VALUE = 0",
+   "suite": ["test_sample.py::test_skips_when_mutated", "test_sample.py::test_unrelated"],
+   "expect_red": []
+  },
+  {
+   "id": "ST6-inert",
+   "expect_verdict": "SURVIVED",
+   "property": "BENCH: bytes that change while every test stays green read SURVIVED",
+   "file": "sample.py",
+   "old": "VALUE = 2",
+   "new": "VALUE = 2  # inert",
+   "suite": ["test_sample.py"],
+   "expect_red": []
+  }
+ ]
+}
