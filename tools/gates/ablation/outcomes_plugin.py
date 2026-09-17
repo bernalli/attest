@@ -66,6 +66,19 @@ def pytest_sessionfinish(session: Any, exitstatus: int) -> None:
     if not path:
         return
     failed = sorted(n for n, o in _calls.items() if o in ("failed", "error"))
+    # `os.environ.get` already distinguishes "absent" (None) from "present and
+    # empty" (""); a mutant that drops this read entirely produces None even
+    # when the caller set the variable, which is the red this key exists to
+    # nominate.
+    nonce = os.environ.get("ABLATION_NONCE")
+    # `list_name_plugin()` also lists every name blocked with `-p no:<name>`,
+    # paired with None instead of a plugin object: those were never loaded, so
+    # the filter is on the plugin, not on the name.
+    plugins_loaded = [
+        name
+        for name, plugin in session.config.pluginmanager.list_name_plugin()
+        if plugin is not None
+    ]
     payload = {
         "exitstatus": int(exitstatus),
         "collected_and_run": len(_calls),
@@ -75,6 +88,8 @@ def pytest_sessionfinish(session: Any, exitstatus: int) -> None:
         "failed": failed,
         "why": {n: _why.get(n, "unknown") for n in failed},
         "collect_errors": sorted(set(_collect_errors)),
+        "nonce": nonce,
+        "plugins_loaded": plugins_loaded,
     }
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1)
