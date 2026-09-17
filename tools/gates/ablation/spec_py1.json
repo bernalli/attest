@@ -1,0 +1,231 @@
+{
+ "mutants": [
+  {
+   "id": "VL2-P1-container-duplicate-name",
+   "property": "a container refuses a central directory that lists the same member name twice, in every member family and in the private archive too",
+   "file": "src/attest/container.py",
+   "old": "        if name in seen:\n            raise ContainerError(\"duplicate-name\", name)\n        seen.add(name)",
+   "new": "        seen.add(name)",
+   "suite": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py"
+   ],
+   "expect_red": [
+    "test_import_rejects_duplicate_receipt_members_with_different_physical_content",
+    "test_import_rejects_duplicate_names_in_nonreceipt_public_member_families",
+    "test_import_rejects_duplicate_salts_in_the_private_archive"
+   ]
+  },
+  {
+   "id": "VL2-P2-export-duplicate-receipt-id",
+   "property": "export refuses the whole write when two receipts share a receipt_id, before touching disk",
+   "file": "src/attest/bundle.py",
+   "old": "    if duplicate_ids:\n        raise BundleError(",
+   "new": "    if False and duplicate_ids:\n        raise BundleError(",
+   "suite": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py"
+   ],
+   "expect_red": [
+    "test_export_refuses_every_multiplicity_of_one_receipt_id_without_partial_files"
+   ]
+  },
+  {
+   "id": "VL2-P3-export-receipt-id-shape",
+   "property": "export refuses any receipt_id that is not the exact uppercase-ULID shape, so a case or normalization variant pair cannot both be exported",
+   "file": "src/attest/bundle.py",
+   "old": "        if not isinstance(receipt_id, str) or RECEIPT_ID_RE.fullmatch(receipt_id) is None:",
+   "new": "        if not isinstance(receipt_id, str):",
+   "suite": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py"
+   ],
+   "expect_red": [
+    "test_export_refuses_receipt_ids_that_are_not_ulids"
+   ]
+  },
+  {
+   "id": "VL2-P4-export-payload-is-object",
+   "property": "export refuses a receipt envelope whose payload is not an object (SUSPECTED VACUOUS: the next guard may catch the same inputs)",
+   "file": "src/attest/bundle.py",
+   "old": "        payload = envelope.get(\"payload\")\n        if not isinstance(payload, dict):\n            raise BundleError(\"receipt envelope missing object member 'payload'\")",
+   "new": "        payload = envelope.get(\"payload\")\n        if not isinstance(payload, dict):\n            payload = {}",
+   "suite": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py"
+   ],
+   "expect_red": [
+    "test_export_refuses_receipts_without_an_object_payload"
+   ]
+  },
+  {
+   "id": "VL2-P5-import-distinct-ids-not-overtight",
+   "property": "the uniqueness guards do NOT over-trigger: two genuinely distinct receipts import and are both reported",
+   "file": "src/attest/bundle.py",
+   "old": "                if receipt_id in seen_receipt_ids:",
+   "new": "                if len(seen_receipt_ids) >= 1:",
+   "suite": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py"
+   ],
+   "expect_red": [
+    "test_import_valid_unique_members_and_reports_the_distinct_receipt_count"
+   ],
+   "direction": "tightening"
+  },
+  {
+   "id": "VL34-P1-duplicate-kids-detection",
+   "property": "duplicate_kids detects a repeated string kid, which is what makes build/verify/continuity refuse an ambiguous manifest",
+   "file": "src/attest/manifests.py",
+   "old": "        if isinstance(kid, str):\n            if kid in seen:\n                dups.add(kid)\n            seen.add(kid)",
+   "new": "        if isinstance(kid, str):\n            seen.add(kid)",
+   "suite": [
+    "tests/test_vl34_issuance_guards_adversarial.py"
+   ],
+   "expect_red": [
+    "test_duplicate_kid_is_rejected_independently_of_order_or_status",
+    "test_three_duplicate_kids_fail_closed_without_position_selection",
+    "test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest",
+    "test_continuity_rejects_duplicates_in_either_manifest"
+   ]
+  },
+  {
+   "id": "VL34-P2-find-key-own-ambiguity-guard",
+   "property": "_find_key has its OWN ambiguity guard, independent of duplicate_kids: an ambiguous kid resolves to None rather than to a position",
+   "file": "src/attest/manifests.py",
+   "old": "            if found is not None:\n                return None\n            found = entry",
+   "new": "            found = entry",
+   "suite": [
+    "tests/test_vl34_issuance_guards_adversarial.py"
+   ],
+   "expect_red": [
+    "test_duplicate_kid_is_rejected_independently_of_order_or_status",
+    "test_three_duplicate_kids_fail_closed_without_position_selection",
+    "test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest"
+   ]
+  },
+  {
+   "id": "VL34-P3-rotation-keeps-an-active-key",
+   "property": "rotation refuses to leave a manifest with zero keys able to sign for continuity",
+   "file": "src/attest/manifests.py",
+   "old": "    if not any(_can_sign_for_continuity(e) for e in updated):",
+   "new": "    if False and not any(_can_sign_for_continuity(e) for e in updated):",
+   "suite": [
+    "tests/test_vl34_issuance_guards_adversarial.py"
+   ],
+   "expect_red": [
+    "test_rotation_cannot_remove_the_last_active_key_without_replacement",
+    "test_rotation_rejects_a_non_active_replacement_for_the_last_active_key",
+    "test_rotation_rejects_a_zero_active_predecessor_that_stays_zero_active",
+    "test_rotation_applies_duplicate_and_zero_active_guards_together"
+   ]
+  },
+  {
+   "id": "VL34-P4-non-dict-entries-ignored-not-crash",
+   "property": "a non-dict member of keys[] is silently ignored by every consumer and never raises",
+   "file": "src/attest/manifests.py",
+   "old": "        if not isinstance(entry, dict):\n            continue\n        kid = entry.get(\"kid\")",
+   "new": "        kid = entry.get(\"kid\")",
+   "suite": [
+    "tests/test_vl34_issuance_guards_adversarial.py"
+   ],
+   "expect_red": [
+    "test_non_dict_entries_fail_every_manifest_consumer"
+   ],
+   "property_red_is_crash": true
+  },
+  {
+   "id": "VL34-P5-kid-type-strictness",
+   "property": "only genuine string kids are compared, so Python's True == 1 cannot make two differently-typed kids look like a duplicate pair",
+   "file": "src/attest/manifests.py",
+   "old": "        if isinstance(kid, str):\n            if kid in seen:\n                dups.add(kid)\n            seen.add(kid)",
+   "new": "        if kid is not None:\n            if kid in seen:\n                dups.add(kid)\n            seen.add(kid)",
+   "suite": [
+    "tests/test_vl34_issuance_guards_adversarial.py"
+   ],
+   "expect_red": [
+    "test_non_string_kids_do_not_collide_through_python_equality"
+   ],
+   "property_red_is_crash": true
+  },
+  {
+   "id": "VL34-P6-rotation-appends-replacement",
+   "property": "rotation actually installs the supplied replacement key, so retiring the last active key succeeds when a replacement is given",
+   "file": "src/attest/manifests.py",
+   "old": "    if new_entry is not None:\n        updated.append(new_entry)",
+   "new": "    if new_entry is not None:\n        pass",
+   "suite": [
+    "tests/test_vl34_issuance_guards_adversarial.py"
+   ],
+   "expect_red": [
+    "test_rotation_can_retire_the_last_active_key_when_an_active_replacement_exists"
+   ],
+   "direction": "tightening",
+   "property_red_is_crash": true
+  },
+  {
+   "id": "VL34-P7-verify-refuses-ambiguous-issuer-manifest",
+   "property": "verify() itself refuses an issuer manifest with duplicate kids, reporting the duplicate",
+   "file": "src/attest/verify.py",
+   "old": "            dup_kids = manifests.duplicate_kids(issuer_manifest_keys)\n            if dup_kids:",
+   "new": "            dup_kids = manifests.duplicate_kids(issuer_manifest_keys)\n            if False and dup_kids:",
+   "suite": [
+    "tests/test_vl34_issuance_guards_adversarial.py"
+   ],
+   "expect_red": [
+    "test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest"
+   ]
+  },
+  {
+   "id": "VL5-P1-anchor-registered-vocabulary",
+   "property": "only a registered statement status (revoked/transferred) may drive the freshness anchor T",
+   "file": "src/attest/verify.py",
+   "old": "        if not isinstance(status, str) or status not in _ANCHOR_STATUSES:\n            continue",
+   "new": "        if not isinstance(status, str):\n            continue",
+   "suite": [
+    "tests/test_vl5_anchor_status_adversarial.py"
+   ],
+   "expect_red": [
+    "test_authenticated_unregistered_status_never_provides_a_freshness_anchor",
+    "test_matching_unregistered_status_is_silent_and_cannot_revoke",
+    "test_only_authenticated_registered_statement_statuses_determine_t"
+   ]
+  },
+  {
+   "id": "VL5-P2-anchor-status-type-guard",
+   "property": "an unhashable or non-string status cannot crash the anchor scan (a frozenset membership test raises on an unhashable value)",
+   "file": "src/attest/verify.py",
+   "old": "        if not isinstance(status, str) or status not in _ANCHOR_STATUSES:",
+   "new": "        if status not in _ANCHOR_STATUSES:",
+   "suite": [
+    "tests/test_vl5_anchor_status_adversarial.py"
+   ],
+   "expect_red": [
+    "test_authenticated_unregistered_status_never_provides_a_freshness_anchor",
+    "test_matching_unregistered_status_is_silent_and_cannot_revoke"
+   ],
+   "property_red_is_crash": true
+  },
+  {
+   "id": "VL5-P3-transferred-is-in-the-vocabulary",
+   "property": "the registered vocabulary includes transferred, not only revoked, so a genuine transferred record still anchors",
+   "file": "src/attest/verify.py",
+   "old": "_ANCHOR_STATUSES = frozenset({_RECORD_STATUS_REVOKED, _REVOCATION_TRANSFERRED})",
+   "new": "_ANCHOR_STATUSES = frozenset({_RECORD_STATUS_REVOKED})",
+   "suite": [
+    "tests/test_vl5_anchor_status_adversarial.py"
+   ],
+   "expect_red": [
+    "test_genuine_transferred_record_still_anchors"
+   ]
+  },
+  {
+   "id": "VL5-P4-anchor-is-order-independent-max",
+   "property": "T is the maximum over genuine statements, independent of the order the records arrive in",
+   "file": "src/attest/verify.py",
+   "old": "        try:\n            newer = parsed > best_dt\n        except TypeError:\n            continue  # incomparable naive/aware mix \u2014 skip, never crash",
+   "new": "        try:\n            newer = True\n        except TypeError:\n            continue  # incomparable naive/aware mix \u2014 skip, never crash",
+   "suite": [
+    "tests/test_vl5_anchor_status_adversarial.py"
+   ],
+   "expect_red": [
+    "test_only_authenticated_registered_statement_statuses_determine_t"
+   ]
+  }
+ ]
+}

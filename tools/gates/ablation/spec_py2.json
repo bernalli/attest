@@ -1,0 +1,284 @@
+{
+ "mutants": [
+  {
+   "id": "AU-S1-trust-material-door",
+   "property": "the KeyManifest brand check refuses a manifest snapshot that is not a real KeyManifest",
+   "file": "src/attest/trust_material.py",
+   "old": "    if type(manifest) is not KeyManifest:\n        return None\n    return manifest._data",
+   "new": "    if type(manifest) is not KeyManifest:\n        return manifest if isinstance(manifest, dict) else None\n    return manifest._data",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_verify_authorization_fails_closed_on_malformed_key_manifest"
+   ]
+  },
+  {
+   "id": "AU-S2-entry-for-issuer-string-lookup",
+   "property": "entry_for_issuer refuses a non-string lookup key rather than comparing it",
+   "file": "src/attest/authority.py",
+   "old": "        if not isinstance(document, dict) or not isinstance(issuer_id, str):\n            return None",
+   "new": "        if not isinstance(document, dict):\n            return None",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_entry_for_issuer_fails_closed_on_non_string_lookup_keys"
+   ]
+  },
+  {
+   "id": "AU-S3-entry-shape-gate-in-authorizes",
+   "property": "entry_authorizes_receipt validates the entry shape before reading anything out of it",
+   "file": "src/attest/authority.py",
+   "old": "        if not _valid_entry_shape(entry) or not isinstance(payload, dict):\n            return False",
+   "new": "        if not isinstance(payload, dict):\n            return False",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_entry_authorizes_receipt_fails_closed_on_hostile_entry_or_payload_types",
+    "test_entry_authorizes_receipt_never_raises_on_non_entry_inputs"
+   ]
+  },
+  {
+   "id": "AU-S4-closed-document-member-set",
+   "property": "the authorization document member set is closed at exactly five members",
+   "file": "src/attest/authority.py",
+   "old": "    if not isinstance(document, dict) or set(dict.keys(document)) != _AUTHORIZATION_MEMBERS:\n        return False",
+   "new": "    if not isinstance(document, dict):\n        return False",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_authorization_and_entry_members_are_closed_even_with_matching_signature",
+    "test_verify_authorization_never_raises_on_type_confusion_in_wire_fields"
+   ],
+   "property_red_is_crash": true
+  },
+  {
+   "id": "AU-S5-every-entry-passes-the-entry-shape",
+   "property": "every authorized_issuers entry must pass the closed entry-shape check for the document to be valid",
+   "file": "src/attest/authority.py",
+   "old": "    if not all(_valid_entry_shape(entry) for entry in entries):",
+   "new": "    if False and not all(_valid_entry_shape(entry) for entry in entries):",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_authorization_and_entry_members_are_closed_even_with_matching_signature"
+   ]
+  },
+  {
+   "id": "AU-P1-hybrid-and-rule",
+   "property": "a hybrid key entry demands BOTH signature legs, and a classical entry refuses a stray post-quantum leg",
+   "file": "src/attest/manifests.py",
+   "old": "    if is_hybrid_entry != has_mldsa_leg:\n        return False",
+   "new": "    if False and is_hybrid_entry != has_mldsa_leg:\n        return False",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_hybrid_authorization_requires_both_signature_legs",
+    "test_stray_pq_signature_leg_against_classical_key_fails_closed"
+   ]
+  },
+  {
+   "id": "AU-P2-hash-covers-signature",
+   "property": "authorization_hash is taken over the whole signed document, signature included",
+   "file": "src/attest/authority.py",
+   "old": "    return hashlib.sha256(canon.canonical_bytes(document)).hexdigest()",
+   "new": "    _body = {k: v for k, v in document.items() if k != \"signature\"}\n    return hashlib.sha256(canon.canonical_bytes(_body)).hexdigest()",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_authorization_hash_is_jcs_over_the_entire_signed_document"
+   ]
+  },
+  {
+   "id": "AU-P3-verify-composes-manifest-self-consistency",
+   "property": "verify_authorization also enforces the resolving key manifest's own self-consistency, not just the document signature",
+   "file": "src/attest/authority.py",
+   "old": "        return manifests._verify_key_manifest(key_manifest) and _verify_authorization_signature(\n            document, key_manifest\n        )",
+   "new": "        return _verify_authorization_signature(\n            document, key_manifest\n        )",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_verify_authorization_composes_key_manifest_self_consistency"
+   ]
+  },
+  {
+   "id": "AU-P4-retired-signer-refused",
+   "property": "a retired key entry can never authenticate a document, even reusing an active key's bytes",
+   "file": "src/attest/grant.py",
+   "old": "    if entry is None or dict.get(entry, \"status\") != _ACTIVE:\n        return False",
+   "new": "    if entry is None:\n        return False",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_authorization_signed_by_retired_key_is_rejected"
+   ]
+  },
+  {
+   "id": "AU-P5-version-is-safe-integer-not-bool",
+   "property": "authorization_version is a non-bool integer inside the I-JSON safe range",
+   "file": "src/attest/authority.py",
+   "old": "        isinstance(value, int)\n        and not isinstance(value, bool)\n        and 1 <= value <= grant._MAX_JCS_INTEGER",
+   "new": "        isinstance(value, int)\n        and 1 <= value <= grant._MAX_JCS_INTEGER + 1",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_authorization_version_boundaries_are_enforced_on_signed_documents",
+    "test_is_authorization_version_is_the_exact_safe_integer_predicate"
+   ]
+  },
+  {
+   "id": "AU-P6-issuers-strictly-ascending",
+   "property": "authorized_issuers must be strictly ascending by issuer_id, which is also what makes a duplicate impossible",
+   "file": "src/attest/grant.py",
+   "old": "    return all(values[i] < values[i + 1] for i in range(len(values) - 1))",
+   "new": "    return all(values[i] <= values[i + 1] for i in range(len(values) - 1))",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_authorized_issuers_must_be_strictly_ascending_by_code_point"
+   ]
+  },
+  {
+   "id": "AU-P7-issuers-ceiling-exact",
+   "property": "the authorized_issuers ceiling is exact at MAX_AUTHORIZED_ISSUERS",
+   "file": "src/attest/authority.py",
+   "old": "MAX_AUTHORIZED_ISSUERS = 4096",
+   "new": "MAX_AUTHORIZED_ISSUERS = 4097",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_authorized_issuers_ceiling_is_exact_on_signed_documents"
+   ]
+  },
+  {
+   "id": "AU-P8-entry-window-inclusive",
+   "property": "the receipt-time entry window is inclusive at both ends and never consults the verifier clock",
+   "file": "src/attest/authority.py",
+   "old": "        return issued <= transfer._parse_date(valid_to)",
+   "new": "        return issued < transfer._parse_date(valid_to)",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_entry_authorizes_receipt_uses_inclusive_receipt_time_window"
+   ]
+  },
+  {
+   "id": "AU-P9-open-ended-window",
+   "property": "valid_to null means an open-ended window",
+   "file": "src/attest/authority.py",
+   "old": "    valid_to = dict.get(entry, \"valid_to\")\n    if valid_to is None:\n        return True",
+   "new": "    valid_to = dict.get(entry, \"valid_to\")\n    if valid_to is None:\n        return False",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_entry_authorizes_receipt_allows_open_ended_window_after_valid_from",
+    "test_entry_authorizes_receipt_uses_inclusive_receipt_time_window"
+   ]
+  },
+  {
+   "id": "AU-P10-issue-permission-required",
+   "property": "authorization requires the issue permission specifically; delegate alone never authorizes",
+   "file": "src/attest/authority.py",
+   "old": "        if PERMISSION_ISSUE not in cast(list[Any], dict.get(entry, \"permissions\")):",
+   "new": "        if not cast(list[Any], dict.get(entry, \"permissions\")):",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone"
+   ]
+  },
+  {
+   "id": "AU-P11-vacuous-artifact-quantifier",
+   "property": "a hash-only scope covers nothing when the receipt lists no artifacts, instead of passing by vacuous quantification",
+   "file": "src/attest/grant.py",
+   "old": "        if not isinstance(artifacts, list) or not artifacts:",
+   "new": "        if not isinstance(artifacts, list):",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard"
+   ]
+  },
+  {
+   "id": "AU-P12-entry-for-issuer-refuses-duplicates",
+   "property": "entry_for_issuer refuses two entries sharing an issuer_id instead of taking the first",
+   "file": "src/attest/authority.py",
+   "old": "        return matches[0] if len(matches) == 1 else None",
+   "new": "        return matches[0] if matches else None",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_entry_for_issuer_refuses_duplicate_entries_instead_of_using_array_order",
+    "test_entry_for_issuer_returns_the_unique_matching_entry_only"
+   ]
+  },
+  {
+   "id": "AU-P13-successor-version-strictly-increases",
+   "property": "a successor authorization's version must strictly exceed its predecessor's",
+   "file": "src/attest/authority.py",
+   "old": "    if authorization_version <= cast(int, previous_version):",
+   "new": "    if authorization_version < cast(int, previous_version):",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_build_authorization_rejects_non_increasing_successor_version"
+   ]
+  },
+  {
+   "id": "AU-P14-entry-deletion-refused",
+   "property": "every predecessor entry must have a successor counterpart: deletion is refused",
+   "file": "src/attest/authority.py",
+   "old": "        if not successors:",
+   "new": "        if False and not successors:",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_build_authorization_rejects_entry_deletion"
+   ]
+  },
+  {
+   "id": "AU-P15-valid-from-immutable",
+   "property": "a shared entry's valid_from may not change between predecessor and successor",
+   "file": "src/attest/authority.py",
+   "old": "    if entry.get(\"valid_from\") != previous_entry.get(\"valid_from\"):",
+   "new": "    if False and entry.get(\"valid_from\") != previous_entry.get(\"valid_from\"):",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_build_authorization_rejects_valid_from_mutation_for_existing_entry"
+   ]
+  },
+  {
+   "id": "AU-P16-window-member-must-be-present",
+   "property": "an absent valid_from/valid_to member is refused rather than read as open-ended",
+   "file": "src/attest/authority.py",
+   "old": "        if missing:",
+   "new": "        if False and missing:",
+   "suite": [
+    "tests/test_authority_adversarial.py"
+   ],
+   "expect_red": [
+    "test_build_authorization_refuses_an_entry_that_omits_a_window_member"
+   ]
+  }
+ ]
+}

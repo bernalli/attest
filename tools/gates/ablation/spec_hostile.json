@@ -1,0 +1,70 @@
+{
+ "note": "The census claims this suite's only assertion (`verdict is not None`) is true for every input short of a crash, so whole properties cannot be falsified by it. Two mutants test that claim: remove the admission byte ceiling outright, and remove the nesting headroom.",
+ "unmeasured": {
+  "why": "Counted by the census, never ablated. 17 adversarial/hostile-named test files exist in this tree; 9 are ablated by the four spec_*.json here. These 8 are the remainder, and none of their properties has been measured. A prediction about them is not a measurement: two of five earlier predictions were wrong when measured.",
+  "suites": [
+   "verifiers/ts/test/authority-adversarial.test.ts",
+   "verifiers/ts/test/canon-depth-profile-adversarial.test.ts",
+   "verifiers/ts/test/compromise-adversarial.test.ts",
+   "verifiers/ts/test/vl3-duplicate-kid-adversarial.test.ts",
+   "verifiers/ts/test/vl5-anchor-status-adversarial.test.ts",
+   "tests/test_canon_depth_profile_adversarial.py",
+   "tests/test_compromise_adversarial.py",
+   "desktop/test/card-hostile.test.ts"
+  ]
+ },
+ "mutants": [
+  {
+   "id": "HOST-S1-admission-byte-ceiling",
+   "property": "an untrusted view member above the admission byte ceiling is refused",
+   "file": "src/attest/canon.py",
+   "old": "        if len(serialized) - 2 * nesting > MAX_ADMISSION_BYTES:",
+   "new": "        if False and len(serialized) - 2 * nesting > MAX_ADMISSION_BYTES:",
+   "suite": [
+    "tests/test_blind_hostile_evidence_views.py"
+   ],
+   "expect_red": [
+    "test_over_byte_ceiling_grant_view_returns",
+    "test_over_byte_ceiling_authority_view_returns"
+   ]
+  },
+  {
+   "id": "HOST-S2-view-nesting-headroom",
+   "property": "admission reserves nesting headroom so a reconstructed view is always itself canonicalizable",
+   "file": "src/attest/canon.py",
+   "old": "VIEW_ARRAY_ELEMENT_NESTING = 2",
+   "new": "VIEW_ARRAY_ELEMENT_NESTING = 0",
+   "suite": [
+    "tests/test_blind_hostile_evidence_views.py"
+   ],
+   "expect_red": []
+  },
+  {
+   "id": "HOST-P1-view-nesting-headroom-elsewhere",
+   "property": "same headroom, measured against the suite that does assert canonicalizability",
+   "file": "src/attest/canon.py",
+   "old": "VIEW_ARRAY_ELEMENT_NESTING = 2",
+   "new": "VIEW_ARRAY_ELEMENT_NESTING = 0",
+   "suite": [
+    "tests/test_hostile_view_content.py"
+   ],
+   "expect_red": [
+    "test_grant_view_reconstruction_always_canonicalizes",
+    "test_authority_view_reconstruction_always_canonicalizes"
+   ]
+  },
+  {
+   "id": "HOST-P2-collapsing-keys-refused",
+   "property": "two keys that collapse under own-data copy refuse the whole admission unit instead of letting insertion order pick a winner",
+   "file": "src/attest/canon.py",
+   "old": "        if len(copied) != dict.__len__(value):\n            raise ValueError(\"keys collapse under own-data copy\")",
+   "new": "        if False and len(copied) != dict.__len__(value):\n            raise ValueError(\"keys collapse under own-data copy\")",
+   "suite": [
+    "tests/test_hostile_view_content.py"
+   ],
+   "expect_red": [
+    "test_collapsing_keys_refuse_the_admission_unit_instead_of_reducing_it"
+   ]
+  }
+ ]
+}

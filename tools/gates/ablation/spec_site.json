@@ -1,0 +1,194 @@
+{
+ "mutants": [
+  {
+   "id": "SITE-S1-container-duplicate-name",
+   "property": "the container refuses a central directory that repeats a member name, in every member family",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/container.ts",
+   "old": "    if (seen.has(name)) throw new ContainerError('duplicate-name', name)",
+   "new": "    if (false && seen.has(name)) throw new ContainerError('duplicate-name', name)",
+   "suite": [
+    "test/vl6-duplicate-members-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "rejects two receipt entries with one name and different physical content",
+    "rejects a repeated manifest member even when its two physical entries are identical",
+    "rejects a repeated proof member instead of collapsing the central-directory pair"
+   ]
+  },
+  {
+   "id": "SITE-S2-token-character-class",
+   "property": "the wire-token shape admits only [a-z0-9_], so a sentence or an address can never render as unquoted page prose",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/diagnostic.ts",
+   "old": "const TOKEN_RE = new RegExp(`^[a-z0-9_]{1,${MAX_TOKEN_CHARS}}$`)",
+   "new": "const TOKEN_RE = new RegExp(`^[a-z0-9_ .@]{1,${MAX_TOKEN_CHARS}}$`)",
+   "suite": [
+    "test/diagnostic-rendering-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "pins the token-shape residual exactly as it was decided"
+   ]
+  },
+  {
+   "id": "SITE-P1-token-length-cap",
+   "property": "the token fast path is bounded by length, not only by shape",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/diagnostic.ts",
+   "old": "const MAX_TOKEN_CHARS = 64",
+   "new": "const MAX_TOKEN_CHARS = 100000",
+   "suite": [
+    "test/diagnostic-rendering-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "quotes a token-shaped string too long to be a token"
+   ]
+  },
+  {
+   "id": "SITE-P2-hostile-quote-char",
+   "property": "a quoted untrusted string cannot close the quote it is placed inside",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/untrusted-text.ts",
+   "old": "export const HOSTILE_IN_QUOTES = /[\"\\u201c\\u201d\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}]/u",
+   "new": "export const HOSTILE_IN_QUOTES = /[\\u201c\\u201d\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}]/u",
+   "suite": [
+    "test/unsigned-label-adversarial.test.ts",
+    "test/diagnostic-rendering-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "a member name cannot close the quote it is put inside",
+    "quotes an operand in a warning attributed to a row, and neutralizes its quote"
+   ]
+  },
+  {
+   "id": "SITE-P3-hostile-format-chars",
+   "property": "no Unicode format character reaches the surface a reader sees, so untrusted text cannot reorder or hide the words around it",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/untrusted-text.ts",
+   "old": "export const HOSTILE_IN_QUOTES = /[\"\\u201c\\u201d\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}]/u",
+   "new": "export const HOSTILE_IN_QUOTES = /[\"\\u201c\\u201d\\u0000-\\u001f\\u007f-\\u009f]/u",
+   "suite": [
+    "test/unsigned-label-adversarial.test.ts",
+    "test/diagnostic-rendering-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "a member name cannot reorder or hide the words around it",
+    "leaves no format character on the surface a reader sees"
+   ]
+  },
+  {
+   "id": "SITE-P4-quoted-member-clip",
+   "property": "a hostile member name quoted into a rejection message is clipped, so it cannot flood the message with prose",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/bundle.ts",
+   "old": "const MAX_QUOTED_MEMBER_CHARS = 60",
+   "new": "const MAX_QUOTED_MEMBER_CHARS = 600",
+   "suite": [
+    "test/unsigned-label-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "quotes and clips a hostile receipt member name",
+    "quotes a hostile manifest member name",
+    "quotes a hostile proof member name"
+   ]
+  },
+  {
+   "id": "SITE-P5-label-is-the-signed-id",
+   "property": "a bundle receipt is labelled by its signed receipt_id, never by the ZIP member name that carried it",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/bundle.ts",
+   "old": "      receipts.push({ receiptId, bytes: memberBytes })",
+   "new": "      receipts.push({ receiptId: name, bytes: memberBytes })",
+   "suite": [
+    "test/unsigned-label-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "labels a bundle receipt with the signed receipt_id, not the member name",
+    "keeps the forged name out of the rendered card, badge and heading alike",
+    "labels the sample by its signed id even when the member name says otherwise"
+   ]
+  },
+  {
+   "id": "SITE-P6-label-ulid-grammar",
+   "property": "a signed receipt_id that is not ULID-shaped is never shown as a label",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/intake.ts",
+   "old": "const RECEIPT_ID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/",
+   "new": "const RECEIPT_ID_RE = /^.*$/",
+   "suite": [
+    "test/unsigned-label-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "refuses a signed receipt_id that is a sentence rather than a ULID"
+   ]
+  },
+  {
+   "id": "SITE-P7-unrecognized-diagnostic-is-quoted",
+   "property": "an unrecognized diagnostic string is quoted whole rather than spoken as the page's own prose",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/diagnostic.ts",
+   "old": "  return { kind: 'opaque', operand: diagnostic }",
+   "new": "  return { kind: 'known-literal', text: diagnostic }",
+   "suite": [
+    "test/diagnostic-rendering-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "quotes a warning it does not recognize at all, instead of speaking it"
+   ]
+  },
+  {
+   "id": "SITE-P8-operand-clip",
+   "property": "an oversized operand is clipped in its citation and says so, while the raw quarantine keeps it whole",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/render.ts",
+   "old": "const MAX_DIAG_OPERAND_CHARS = 300",
+   "new": "const MAX_DIAG_OPERAND_CHARS = 5000",
+   "suite": [
+    "test/diagnostic-rendering-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "clips an operand that would flood the page, and says it clipped"
+   ]
+  },
+  {
+   "id": "SITE-P9-component-value-clip",
+   "property": "a component value shown beside a row name is length-bounded",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/render.ts",
+   "old": "const MAX_COMPONENT_VALUE_CHARS = 120",
+   "new": "const MAX_COMPONENT_VALUE_CHARS = 60000",
+   "suite": [
+    "test/diagnostic-rendering-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "clips a value that would flood the row"
+   ]
+  },
+  {
+   "id": "SITE-P10-warning-attribution-own-property",
+   "property": "warning attribution reads own properties only, so a warning naming an Object.prototype member is never swallowed",
+   "runner": "vitest",
+   "pkg": "site",
+   "file": "site/src/explain.ts",
+   "old": "  if (Object.hasOwn(EXACT, warning)) return EXACT[warning]",
+   "new": "  if (EXACT[warning]) return EXACT[warning]",
+   "suite": [
+    "test/diagnostic-rendering-adversarial.test.ts"
+   ],
+   "expect_red": [
+    "shows a warning whose text names a member of Object.prototype"
+   ]
+  }
+ ]
+}
