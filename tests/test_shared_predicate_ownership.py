@@ -418,6 +418,15 @@ def test_canonical_wire_text_is_rendered_only_where_it_is_pinned() -> None:
       or reject anything. Same category as `conformance_runner.py` above:
       tooling output, not a verdict path.
 
+    * `tools/gates/ablation/journal.py:311` (`_utc_now`) — renders the current
+      UTC time through `strftime` on `datetime.now(UTC)` for two fields of the
+      ablation journal: `started_utc` in `owner.json`, read back only as text
+      in the message that reports a journal already held, and `applied_utc` in
+      each mutation record. Reason *(i)* holds for both and is the only one
+      claimed: the argument is the clock, so the year is always four digits.
+      The journal does not import `attest.dates` because its restore runs while
+      the package's sources may still be mutated on disk.
+
     A second, UNRELATED grafia reaches the same canonical shape without ever
     calling `strftime`, and this guard cannot see it:
     `moment.replace(microsecond=0, tzinfo=None).isoformat() + "Z"`, written
@@ -467,6 +476,7 @@ def test_canonical_wire_text_is_rendered_only_where_it_is_pinned() -> None:
         "bridge/src/attest_bridge/itch_adapter.py": 3,
         "bridge/src/attest_bridge/signing.py": 1,
         "tools/conformance_runner.py": 1,
+        "tools/gates/ablation/journal.py": 1,
         "tools/gates/prove_composite_twins.py": 1,
         "tools/gates/run_t2_mutants.py": 1,
     }
