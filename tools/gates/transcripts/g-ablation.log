@@ -1,0 +1,465 @@
+=== GATE G-ABLATION ===
+tree:  wt-rel14v2
+head:  64434b1 on test/rel14-ablation-v2
+utc:   2026-09-18T09:07:05Z
+
+precondition ok: python interpreter present
+precondition ok: git present
+precondition ok: no stale ablation journal
+precondition ok: atomic exchange of two files on the tree's filesystem (journal._probe_exchange)
+precondition ok: a results directory outside the tree
+--- bench of the bench
+$ env -u ABLATION_BENCH_META_ONLY <tree>/.venv/bin/python <tree>/tools/gates/ablation/bench_ablate.py
+[bench] main run: rc=0
+PASS: A1 -- the main run exits 0: rc=0
+PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+PASS: A3 -- the run executed the expected ids in order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+PASS: A4 -- the main run confirms every attempt: applications_confirmed=5 applications_attempted=5
+PASS: A5 -- ST2-property-red: traces hold
+PASS: A5 -- ST3-form-red: traces hold
+PASS: A5 -- ST4-sibling-only: traces hold
+PASS: A5 -- ST5-skip-under-mutation: traces hold
+PASS: A5 -- ST6-inert: traces hold
+PASS: A6 -- ST2-property-red: ledger.sha_after='f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34' against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7', committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[bench] absent-anchor run: rc=0
+PASS: A1 -- the absent-anchor run exits 0: rc=0
+PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+PASS: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=1
+PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+PASS: A8 -- the main run meets every expectation: declared=5 failed=0 unmeasured=0
+PASS: A8 -- the absent-anchor run meets its one expectation: declared=1 failed=0 unmeasured=0
+[bench] forced-expectation run: rc=7
+PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+PASS: A8 -- a wrong expectation is refused: rc=7 expectations_failed=1 names the row=True
+PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+[bench] in-flight holder on tree-b1: rc=-9 record='01-sample.py'
+PASS: B1 -- the holder of tree-b1 died of SIGKILL, not of an exit: rc=-9
+PASS: B1 -- the mutation is on disk after the kill: sample.py='VALUE = 0\n'
+PASS: B1 -- the journal holds exactly the one record: ['01-sample.py']
+[bench] run over a held journal: rc=8
+PASS: B2 -- an ordinary run is refused: rc=8
+PASS: B2 -- the refused run touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[bench] survivor proof over a held journal: rc=8
+PASS: B3 -- the proof is refused: rc=8
+PASS: B3 -- the refused proof touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[bench] restore: rc=0
+PASS: B4 -- the restore replays the one record: rc=0 marker=True
+PASS: B4 -- the target is the committed bytes again: sha='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7' against HEAD:sample.py='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7'
+PASS: B4 -- the journal is gone and the tree is clean: journal_present=False status=[]
+[bench] in-flight holder on tree-b5: rc=-9 record='01-sample.py'
+PASS: B5 -- the holder of tree-b5 died of SIGKILL, not of an exit: rc=-9
+[bench] owner.json rewritten to name a live process: pid=3227830
+PASS: B5 -- a restore against a live owner is refused: rc=8
+PASS: B5 -- the refused restore touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[bench] in-flight holder on tree-b6: rc=-9 record='01-sample.py'
+PASS: B6 -- the holder of tree-b6 died of SIGKILL, not of an exit: rc=-9
+[bench] target put into a state no record names: 'VALUE = 5\n'
+PASS: B6 -- an unknown state is refused: rc=9
+PASS: B6 -- the record is kept: records=['01-sample.py']
+PASS: B6 -- the target was not touched: sample.py='VALUE = 5\n'
+[bench] MB1-loop-skipped: ablate.py at anchor 'for mutant in mutants:': 7aed877244245897f344efb0bdf11b053466cce034fd0bda2fa174c23e64ef77 -> a1f419559d9be3760145e9ae22e6685eb6639ff9702cbd24a4e26c5fd00cc386
+[MB1-loop-skipped] [bench] main run: rc=0
+[MB1-loop-skipped] PASS: A1 -- the main run exits 0: rc=0
+[MB1-loop-skipped] PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+[MB1-loop-skipped] FAIL: A3 -- the run executed the expected ids in order: []
+[MB1-loop-skipped] PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB1-loop-skipped] FAIL: A4 -- the main run confirms every attempt: applications_confirmed=0 applications_attempted=0
+[MB1-loop-skipped] FAIL: A5 -- ST2-property-red: no row in the results
+[MB1-loop-skipped] FAIL: A5 -- ST3-form-red: no row in the results
+[MB1-loop-skipped] FAIL: A5 -- ST4-sibling-only: no row in the results
+[MB1-loop-skipped] FAIL: A5 -- ST5-skip-under-mutation: no row in the results
+[MB1-loop-skipped] FAIL: A5 -- ST6-inert: no row in the results
+[MB1-loop-skipped] FAIL: A6 -- ST2-property-red: ledger.sha_after=None against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before=None, committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+[MB1-loop-skipped] PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[MB1-loop-skipped] [bench] absent-anchor run: rc=0
+[MB1-loop-skipped] PASS: A1 -- the absent-anchor run exits 0: rc=0
+[MB1-loop-skipped] PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+[MB1-loop-skipped] FAIL: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=0
+[MB1-loop-skipped] PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+[MB1-loop-skipped] FAIL: A8 -- the main run meets every expectation: declared=0 failed=0 unmeasured=0
+[MB1-loop-skipped] FAIL: A8 -- the absent-anchor run meets its one expectation: declared=0 failed=0 unmeasured=0
+[MB1-loop-skipped] [bench] forced-expectation run: rc=0
+[MB1-loop-skipped] PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+[MB1-loop-skipped] FAIL: A8 -- a wrong expectation is refused: rc=0 expectations_failed=0 names the row=False
+[MB1-loop-skipped] PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+META-MUTANT MB1-loop-skipped KILLED: expected ['A3', 'A4'] (allowed ['A5', 'A6', 'A8']), observed ['A3', 'A4', 'A5', 'A6', 'A8']
+[bench] MB2-write-skipped: journal.py at anchor '_write_target(target, mutated, staging)': 64e011cf7c36aaf7c23993c81bfbdb41cae0a7aa5667af2b7227d1e460d76f97 -> d9b9775e6d45276981b0728a743521a69c6b8567e195f5e725d8d9aa415f677a
+[MB2-write-skipped] [bench] main run: rc=7
+[MB2-write-skipped] FAIL: A1 -- the main run exits 0: rc=7
+[MB2-write-skipped] PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+[MB2-write-skipped] PASS: A3 -- the run executed the expected ids in order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB2-write-skipped] PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB2-write-skipped] FAIL: A4 -- the main run confirms every attempt: applications_confirmed=0 applications_attempted=5
+[MB2-write-skipped] FAIL: A5 -- ST2-property-red: git_dirty_during=None, expected [' M sample.py']
+[MB2-write-skipped] FAIL: A5 -- ST3-form-red: git_dirty_during=None, expected [' M helper.py']
+[MB2-write-skipped] FAIL: A5 -- ST4-sibling-only: git_dirty_during=None, expected [' M sample.py']
+[MB2-write-skipped] FAIL: A5 -- ST5-skip-under-mutation: git_dirty_during=None, expected [' M sample.py']
+[MB2-write-skipped] FAIL: A5 -- ST6-inert: git_dirty_during=None, expected [' M sample.py']
+[MB2-write-skipped] PASS: A6 -- ST2-property-red: ledger.sha_after='f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34' against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7', committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+[MB2-write-skipped] PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[MB2-write-skipped] [bench] absent-anchor run: rc=0
+[MB2-write-skipped] PASS: A1 -- the absent-anchor run exits 0: rc=0
+[MB2-write-skipped] PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+[MB2-write-skipped] PASS: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=1
+[MB2-write-skipped] PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+[MB2-write-skipped] FAIL: A8 -- the main run meets every expectation: declared=5 failed=5 unmeasured=0
+[MB2-write-skipped] PASS: A8 -- the absent-anchor run meets its one expectation: declared=1 failed=0 unmeasured=0
+[MB2-write-skipped] [bench] forced-expectation run: rc=7
+[MB2-write-skipped] PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+[MB2-write-skipped] PASS: A8 -- a wrong expectation is refused: rc=7 expectations_failed=1 names the row=True
+[MB2-write-skipped] PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+META-MUTANT MB2-write-skipped KILLED: expected ['A4'] (allowed ['A1', 'A5', 'A6', 'A8']), observed ['A1', 'A4', 'A5', 'A8']
+[bench] MB3-suite-not-run: ablate.py at anchor 'mutated = _run_suite(tree, launcher, mutant, typecheck=typecheck, mutated=True)': 7aed877244245897f344efb0bdf11b053466cce034fd0bda2fa174c23e64ef77 -> 9e3eb30fe7185cf1931e62a00b3a2a0a0fcaa8da4a4afc985f34422e10f0167d
+[MB3-suite-not-run] [bench] main run: rc=10
+[MB3-suite-not-run] FAIL: A1 -- the main run exits 0: rc=10
+[MB3-suite-not-run] PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+[MB3-suite-not-run] PASS: A3 -- the run executed the expected ids in order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB3-suite-not-run] PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB3-suite-not-run] FAIL: A4 -- the main run confirms every attempt: applications_confirmed=0 applications_attempted=5
+[MB3-suite-not-run] FAIL: A5 -- ST2-property-red: nonce echoed='818e18d488b03edf0b830a6dcd094932', issued='f11d40c7e1940a5716e4148427a7eb73'
+[MB3-suite-not-run] FAIL: A5 -- ST3-form-red: nonce echoed='818e18d488b03edf0b830a6dcd094932', issued='9ecd12d58ce3e2e8f817462e7df02b2a'
+[MB3-suite-not-run] FAIL: A5 -- ST4-sibling-only: nonce echoed='818e18d488b03edf0b830a6dcd094932', issued='0fbd21bad242b834a781336bd0974ebd'
+[MB3-suite-not-run] FAIL: A5 -- ST5-skip-under-mutation: nonce echoed='d799f836aa6dab4d7e23100faee0f034', issued='b33e6447926f134024c36a61969b8b5d'
+[MB3-suite-not-run] FAIL: A5 -- ST6-inert: nonce echoed='818e18d488b03edf0b830a6dcd094932', issued='ec1ed482602f17f4b2783c42f5bb280d'
+[MB3-suite-not-run] PASS: A6 -- ST2-property-red: ledger.sha_after='f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34' against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7', committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+[MB3-suite-not-run] PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[MB3-suite-not-run] [bench] absent-anchor run: rc=0
+[MB3-suite-not-run] PASS: A1 -- the absent-anchor run exits 0: rc=0
+[MB3-suite-not-run] PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+[MB3-suite-not-run] PASS: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=1
+[MB3-suite-not-run] PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+[MB3-suite-not-run] FAIL: A8 -- the main run meets every expectation: declared=5 failed=0 unmeasured=5
+[MB3-suite-not-run] PASS: A8 -- the absent-anchor run meets its one expectation: declared=1 failed=0 unmeasured=0
+[MB3-suite-not-run] [bench] forced-expectation run: rc=10
+[MB3-suite-not-run] PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+[MB3-suite-not-run] FAIL: A8 -- a wrong expectation is refused: rc=10 expectations_failed=0 names the row=False
+[MB3-suite-not-run] PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+META-MUTANT MB3-suite-not-run KILLED: expected ['A5'] (allowed ['A1', 'A4', 'A8']), observed ['A1', 'A4', 'A5', 'A8']
+[bench] MB4-expectations-ignored: ablate.py at anchor 'if mismatches:': 7aed877244245897f344efb0bdf11b053466cce034fd0bda2fa174c23e64ef77 -> 81628fbcb812e011eabbb1d0303c99ed79df894cd6fcede67d4f718ba0f2a300
+[MB4-expectations-ignored] [bench] main run: rc=0
+[MB4-expectations-ignored] PASS: A1 -- the main run exits 0: rc=0
+[MB4-expectations-ignored] PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+[MB4-expectations-ignored] PASS: A3 -- the run executed the expected ids in order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB4-expectations-ignored] PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB4-expectations-ignored] PASS: A4 -- the main run confirms every attempt: applications_confirmed=5 applications_attempted=5
+[MB4-expectations-ignored] PASS: A5 -- ST2-property-red: traces hold
+[MB4-expectations-ignored] PASS: A5 -- ST3-form-red: traces hold
+[MB4-expectations-ignored] PASS: A5 -- ST4-sibling-only: traces hold
+[MB4-expectations-ignored] PASS: A5 -- ST5-skip-under-mutation: traces hold
+[MB4-expectations-ignored] PASS: A5 -- ST6-inert: traces hold
+[MB4-expectations-ignored] PASS: A6 -- ST2-property-red: ledger.sha_after='f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34' against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7', committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+[MB4-expectations-ignored] PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[MB4-expectations-ignored] [bench] absent-anchor run: rc=0
+[MB4-expectations-ignored] PASS: A1 -- the absent-anchor run exits 0: rc=0
+[MB4-expectations-ignored] PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+[MB4-expectations-ignored] PASS: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=1
+[MB4-expectations-ignored] PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+[MB4-expectations-ignored] PASS: A8 -- the main run meets every expectation: declared=5 failed=0 unmeasured=0
+[MB4-expectations-ignored] PASS: A8 -- the absent-anchor run meets its one expectation: declared=1 failed=0 unmeasured=0
+[MB4-expectations-ignored] [bench] forced-expectation run: rc=0
+[MB4-expectations-ignored] PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+[MB4-expectations-ignored] FAIL: A8 -- a wrong expectation is refused: rc=0 expectations_failed=1 names the row=False
+[MB4-expectations-ignored] PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+META-MUTANT MB4-expectations-ignored KILLED: expected ['A8'] (allowed []), observed ['A8']
+[bench] MB5-cache-kept: journal.py at anchor 'for dirpath, dirnames, _filenames in os.walk(tree):': 64e011cf7c36aaf7c23993c81bfbdb41cae0a7aa5667af2b7227d1e460d76f97 -> 841353cb8487228653162b3ed1b67d3da51a01f1966a85fa52ccf3dfffc53fa4
+[MB5-cache-kept] [bench] main run: rc=7
+[MB5-cache-kept] FAIL: A1 -- the main run exits 0: rc=7
+[MB5-cache-kept] PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+[MB5-cache-kept] PASS: A3 -- the run executed the expected ids in order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB5-cache-kept] PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB5-cache-kept] PASS: A4 -- the main run confirms every attempt: applications_confirmed=5 applications_attempted=5
+[MB5-cache-kept] PASS: A5 -- ST2-property-red: traces hold
+[MB5-cache-kept] PASS: A5 -- ST3-form-red: traces hold
+[MB5-cache-kept] PASS: A5 -- ST4-sibling-only: traces hold
+[MB5-cache-kept] PASS: A5 -- ST5-skip-under-mutation: traces hold
+[MB5-cache-kept] PASS: A5 -- ST6-inert: traces hold
+[MB5-cache-kept] PASS: A6 -- ST2-property-red: ledger.sha_after='f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34' against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7', committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+[MB5-cache-kept] PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[MB5-cache-kept] [bench] absent-anchor run: rc=0
+[MB5-cache-kept] PASS: A1 -- the absent-anchor run exits 0: rc=0
+[MB5-cache-kept] PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+[MB5-cache-kept] PASS: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=1
+[MB5-cache-kept] PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+[MB5-cache-kept] FAIL: A8 -- the main run meets every expectation: declared=5 failed=3 unmeasured=0
+[MB5-cache-kept] PASS: A8 -- the absent-anchor run meets its one expectation: declared=1 failed=0 unmeasured=0
+[MB5-cache-kept] [bench] forced-expectation run: rc=0
+[MB5-cache-kept] PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+[MB5-cache-kept] FAIL: A8 -- a wrong expectation is refused: rc=0 expectations_failed=0 names the row=False
+[MB5-cache-kept] PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+META-MUTANT MB5-cache-kept KILLED: expected ['A8'] (allowed ['A1']), observed ['A1', 'A8']
+[bench] MB6-rejected-wipes: journal.py at anchor 'raise JournalBusy(_busy_message(self.journal_dir)) from None': 64e011cf7c36aaf7c23993c81bfbdb41cae0a7aa5667af2b7227d1e460d76f97 -> 1418e1c3c8e4ffaedfea9f63eb87baff20a466752a7e8adc09f00b24e0dd5dc9
+[MB6-rejected-wipes] [bench] in-flight holder on tree-b1: rc=-9 record='01-sample.py'
+[MB6-rejected-wipes] PASS: B1 -- the holder of tree-b1 died of SIGKILL, not of an exit: rc=-9
+[MB6-rejected-wipes] PASS: B1 -- the mutation is on disk after the kill: sample.py='VALUE = 0\n'
+[MB6-rejected-wipes] PASS: B1 -- the journal holds exactly the one record: ['01-sample.py']
+[MB6-rejected-wipes] [bench] run over a held journal: rc=8
+[MB6-rejected-wipes] PASS: B2 -- an ordinary run is refused: rc=8
+[MB6-rejected-wipes] PASS: B2 -- the refused run touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[MB6-rejected-wipes] [bench] survivor proof over a held journal: rc=8
+[MB6-rejected-wipes] PASS: B3 -- the proof is refused: rc=8
+[MB6-rejected-wipes] FAIL: B3 -- the refused proof touched nothing: records=[] sample.py='VALUE = 0\n'
+[MB6-rejected-wipes] [bench] restore: rc=9
+[MB6-rejected-wipes] FAIL: B4 -- the restore replays the one record: rc=9 marker=False
+[MB6-rejected-wipes] FAIL: B4 -- the target is the committed bytes again: sha='f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34' against HEAD:sample.py='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7'
+[MB6-rejected-wipes] FAIL: B4 -- the journal is gone and the tree is clean: journal_present=True status=[' M sample.py', '?? .ablation-in-flight/']
+[MB6-rejected-wipes] [bench] in-flight holder on tree-b5: rc=-9 record='01-sample.py'
+[MB6-rejected-wipes] PASS: B5 -- the holder of tree-b5 died of SIGKILL, not of an exit: rc=-9
+[MB6-rejected-wipes] [bench] owner.json rewritten to name a live process: pid=3227830
+[MB6-rejected-wipes] PASS: B5 -- a restore against a live owner is refused: rc=8
+[MB6-rejected-wipes] PASS: B5 -- the refused restore touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[MB6-rejected-wipes] [bench] in-flight holder on tree-b6: rc=-9 record='01-sample.py'
+[MB6-rejected-wipes] PASS: B6 -- the holder of tree-b6 died of SIGKILL, not of an exit: rc=-9
+[MB6-rejected-wipes] [bench] target put into a state no record names: 'VALUE = 5\n'
+[MB6-rejected-wipes] PASS: B6 -- an unknown state is refused: rc=9
+[MB6-rejected-wipes] PASS: B6 -- the record is kept: records=['01-sample.py']
+[MB6-rejected-wipes] PASS: B6 -- the target was not touched: sample.py='VALUE = 5\n'
+META-MUTANT MB6-rejected-wipes KILLED: expected ['B3'] (allowed ['B4']), observed ['B3', 'B4']
+[bench] MB7-owner-check-removed: journal.py at anchor 'os.kill(pid, 0)': 64e011cf7c36aaf7c23993c81bfbdb41cae0a7aa5667af2b7227d1e460d76f97 -> 5c15fbd1ed8ba4632a790ddcf749a8117c6c377420c0859cf07602a3448e580b
+[MB7-owner-check-removed] [bench] in-flight holder on tree-b1: rc=-9 record='01-sample.py'
+[MB7-owner-check-removed] PASS: B1 -- the holder of tree-b1 died of SIGKILL, not of an exit: rc=-9
+[MB7-owner-check-removed] PASS: B1 -- the mutation is on disk after the kill: sample.py='VALUE = 0\n'
+[MB7-owner-check-removed] PASS: B1 -- the journal holds exactly the one record: ['01-sample.py']
+[MB7-owner-check-removed] [bench] run over a held journal: rc=8
+[MB7-owner-check-removed] PASS: B2 -- an ordinary run is refused: rc=8
+[MB7-owner-check-removed] PASS: B2 -- the refused run touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[MB7-owner-check-removed] [bench] survivor proof over a held journal: rc=8
+[MB7-owner-check-removed] PASS: B3 -- the proof is refused: rc=8
+[MB7-owner-check-removed] PASS: B3 -- the refused proof touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[MB7-owner-check-removed] [bench] restore: rc=0
+[MB7-owner-check-removed] PASS: B4 -- the restore replays the one record: rc=0 marker=True
+[MB7-owner-check-removed] PASS: B4 -- the target is the committed bytes again: sha='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7' against HEAD:sample.py='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7'
+[MB7-owner-check-removed] PASS: B4 -- the journal is gone and the tree is clean: journal_present=False status=[]
+[MB7-owner-check-removed] [bench] in-flight holder on tree-b5: rc=-9 record='01-sample.py'
+[MB7-owner-check-removed] PASS: B5 -- the holder of tree-b5 died of SIGKILL, not of an exit: rc=-9
+[MB7-owner-check-removed] [bench] owner.json rewritten to name a live process: pid=3227830
+[MB7-owner-check-removed] FAIL: B5 -- a restore against a live owner is refused: rc=0
+[MB7-owner-check-removed] FAIL: B5 -- the refused restore touched nothing: records=[] sample.py='VALUE = 2\n'
+[MB7-owner-check-removed] [bench] in-flight holder on tree-b6: rc=-9 record='01-sample.py'
+[MB7-owner-check-removed] PASS: B6 -- the holder of tree-b6 died of SIGKILL, not of an exit: rc=-9
+[MB7-owner-check-removed] [bench] target put into a state no record names: 'VALUE = 5\n'
+[MB7-owner-check-removed] PASS: B6 -- an unknown state is refused: rc=9
+[MB7-owner-check-removed] PASS: B6 -- the record is kept: records=['01-sample.py']
+[MB7-owner-check-removed] PASS: B6 -- the target was not touched: sample.py='VALUE = 5\n'
+META-MUTANT MB7-owner-check-removed KILLED: expected ['B5'] (allowed []), observed ['B5']
+[bench] MB8-unknown-state-accepted: journal.py at anchor 'raise UnknownState(': 64e011cf7c36aaf7c23993c81bfbdb41cae0a7aa5667af2b7227d1e460d76f97 -> a08c54daf38d88a81fb8adb3038eb0d4ec93bb448975e691dce905feba4a7c4b
+[MB8-unknown-state-accepted] [bench] in-flight holder on tree-b1: rc=-9 record='01-sample.py'
+[MB8-unknown-state-accepted] PASS: B1 -- the holder of tree-b1 died of SIGKILL, not of an exit: rc=-9
+[MB8-unknown-state-accepted] PASS: B1 -- the mutation is on disk after the kill: sample.py='VALUE = 0\n'
+[MB8-unknown-state-accepted] PASS: B1 -- the journal holds exactly the one record: ['01-sample.py']
+[MB8-unknown-state-accepted] [bench] run over a held journal: rc=8
+[MB8-unknown-state-accepted] PASS: B2 -- an ordinary run is refused: rc=8
+[MB8-unknown-state-accepted] PASS: B2 -- the refused run touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[MB8-unknown-state-accepted] [bench] survivor proof over a held journal: rc=8
+[MB8-unknown-state-accepted] PASS: B3 -- the proof is refused: rc=8
+[MB8-unknown-state-accepted] PASS: B3 -- the refused proof touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[MB8-unknown-state-accepted] [bench] restore: rc=0
+[MB8-unknown-state-accepted] PASS: B4 -- the restore replays the one record: rc=0 marker=True
+[MB8-unknown-state-accepted] PASS: B4 -- the target is the committed bytes again: sha='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7' against HEAD:sample.py='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7'
+[MB8-unknown-state-accepted] PASS: B4 -- the journal is gone and the tree is clean: journal_present=False status=[]
+[MB8-unknown-state-accepted] [bench] in-flight holder on tree-b5: rc=-9 record='01-sample.py'
+[MB8-unknown-state-accepted] PASS: B5 -- the holder of tree-b5 died of SIGKILL, not of an exit: rc=-9
+[MB8-unknown-state-accepted] [bench] owner.json rewritten to name a live process: pid=3227830
+[MB8-unknown-state-accepted] PASS: B5 -- a restore against a live owner is refused: rc=8
+[MB8-unknown-state-accepted] PASS: B5 -- the refused restore touched nothing: records=['01-sample.py'] sample.py='VALUE = 0\n'
+[MB8-unknown-state-accepted] [bench] in-flight holder on tree-b6: rc=-9 record='01-sample.py'
+[MB8-unknown-state-accepted] PASS: B6 -- the holder of tree-b6 died of SIGKILL, not of an exit: rc=-9
+[MB8-unknown-state-accepted] [bench] target put into a state no record names: 'VALUE = 5\n'
+[MB8-unknown-state-accepted] FAIL: B6 -- an unknown state is refused: rc=0
+[MB8-unknown-state-accepted] FAIL: B6 -- the record is kept: records=[]
+[MB8-unknown-state-accepted] FAIL: B6 -- the target was not touched: sample.py='VALUE = 2\n'
+META-MUTANT MB8-unknown-state-accepted KILLED: expected ['B6'] (allowed []), observed ['B6']
+[bench] MB9-killed-elsewhere-removed: classify.py at anchor 'if verdict == "KILLED" and expect_red and not hit:': 4a4e180f0de7e45f47a484bfd885d8e0c7bdb9418028bbaf3f5d6c29705dc75d -> 2dca5ce3350faa36f4ccfc71e97c2d99244ffdc50c006dd67a4b39cd7c733f03
+[MB9-killed-elsewhere-removed] [bench] main run: rc=7
+[MB9-killed-elsewhere-removed] FAIL: A1 -- the main run exits 0: rc=7
+[MB9-killed-elsewhere-removed] PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+[MB9-killed-elsewhere-removed] PASS: A3 -- the run executed the expected ids in order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB9-killed-elsewhere-removed] PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB9-killed-elsewhere-removed] PASS: A4 -- the main run confirms every attempt: applications_confirmed=5 applications_attempted=5
+[MB9-killed-elsewhere-removed] PASS: A5 -- ST2-property-red: traces hold
+[MB9-killed-elsewhere-removed] PASS: A5 -- ST3-form-red: traces hold
+[MB9-killed-elsewhere-removed] PASS: A5 -- ST4-sibling-only: traces hold
+[MB9-killed-elsewhere-removed] PASS: A5 -- ST5-skip-under-mutation: traces hold
+[MB9-killed-elsewhere-removed] PASS: A5 -- ST6-inert: traces hold
+[MB9-killed-elsewhere-removed] PASS: A6 -- ST2-property-red: ledger.sha_after='f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34' against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7', committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+[MB9-killed-elsewhere-removed] PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[MB9-killed-elsewhere-removed] [bench] absent-anchor run: rc=0
+[MB9-killed-elsewhere-removed] PASS: A1 -- the absent-anchor run exits 0: rc=0
+[MB9-killed-elsewhere-removed] PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+[MB9-killed-elsewhere-removed] PASS: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=1
+[MB9-killed-elsewhere-removed] PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+[MB9-killed-elsewhere-removed] FAIL: A8 -- the main run meets every expectation: declared=5 failed=1 unmeasured=0
+[MB9-killed-elsewhere-removed] PASS: A8 -- the absent-anchor run meets its one expectation: declared=1 failed=0 unmeasured=0
+[MB9-killed-elsewhere-removed] [bench] forced-expectation run: rc=7
+[MB9-killed-elsewhere-removed] PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+[MB9-killed-elsewhere-removed] PASS: A8 -- a wrong expectation is refused: rc=7 expectations_failed=1 names the row=True
+[MB9-killed-elsewhere-removed] PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+META-MUTANT MB9-killed-elsewhere-removed KILLED: expected ['A8'] (allowed ['A1']), observed ['A1', 'A8']
+[bench] MB10-git-snapshot-faked: journal.py at anchor '_write_target(target, mutated, staging)': 64e011cf7c36aaf7c23993c81bfbdb41cae0a7aa5667af2b7227d1e460d76f97 -> d9b9775e6d45276981b0728a743521a69c6b8567e195f5e725d8d9aa415f677a
+[bench] MB10-git-snapshot-faked: ablate.py at anchor 'git_dirty_during = _porcelain_during_mutation(tree)': 7aed877244245897f344efb0bdf11b053466cce034fd0bda2fa174c23e64ef77 -> 1aea07440841adac9a12dea88fcdf7237486f8f8ec244d8582d33a3bcfa69761
+[MB10-git-snapshot-faked] [bench] main run: rc=7
+[MB10-git-snapshot-faked] FAIL: A1 -- the main run exits 0: rc=7
+[MB10-git-snapshot-faked] PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+[MB10-git-snapshot-faked] PASS: A3 -- the run executed the expected ids in order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB10-git-snapshot-faked] PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB10-git-snapshot-faked] FAIL: A4 -- the main run confirms every attempt: applications_confirmed=0 applications_attempted=5
+[MB10-git-snapshot-faked] FAIL: A5 -- ST2-property-red: git_dirty_during=None, expected [' M sample.py']
+[MB10-git-snapshot-faked] FAIL: A5 -- ST3-form-red: git_dirty_during=None, expected [' M helper.py']
+[MB10-git-snapshot-faked] FAIL: A5 -- ST4-sibling-only: git_dirty_during=None, expected [' M sample.py']
+[MB10-git-snapshot-faked] FAIL: A5 -- ST5-skip-under-mutation: git_dirty_during=None, expected [' M sample.py']
+[MB10-git-snapshot-faked] FAIL: A5 -- ST6-inert: git_dirty_during=None, expected [' M sample.py']
+[MB10-git-snapshot-faked] PASS: A6 -- ST2-property-red: ledger.sha_after='f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34' against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7', committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+[MB10-git-snapshot-faked] PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[MB10-git-snapshot-faked] [bench] absent-anchor run: rc=0
+[MB10-git-snapshot-faked] PASS: A1 -- the absent-anchor run exits 0: rc=0
+[MB10-git-snapshot-faked] PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+[MB10-git-snapshot-faked] PASS: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=1
+[MB10-git-snapshot-faked] PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+[MB10-git-snapshot-faked] FAIL: A8 -- the main run meets every expectation: declared=5 failed=5 unmeasured=0
+[MB10-git-snapshot-faked] PASS: A8 -- the absent-anchor run meets its one expectation: declared=1 failed=0 unmeasured=0
+[MB10-git-snapshot-faked] [bench] forced-expectation run: rc=7
+[MB10-git-snapshot-faked] PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+[MB10-git-snapshot-faked] PASS: A8 -- a wrong expectation is refused: rc=7 expectations_failed=1 names the row=True
+[MB10-git-snapshot-faked] PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+META-MUTANT MB10-git-snapshot-faked KILLED: expected ['A4'] (allowed ['A1', 'A5', 'A6', 'A8']), observed ['A1', 'A4', 'A5', 'A8']
+[bench] MB11-nonce-not-passed: ablate.py at anchor 'env["ABLATION_NONCE"] = nonce': 7aed877244245897f344efb0bdf11b053466cce034fd0bda2fa174c23e64ef77 -> 830685eda1f50c094fb0ff7f663600bb2910595bb572340c35a3b76024ba06cc
+[MB11-nonce-not-passed] [bench] main run: rc=10
+[MB11-nonce-not-passed] FAIL: A1 -- the main run exits 0: rc=10
+[MB11-nonce-not-passed] PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+[MB11-nonce-not-passed] PASS: A3 -- the run executed the expected ids in order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB11-nonce-not-passed] PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB11-nonce-not-passed] FAIL: A4 -- the main run confirms every attempt: applications_confirmed=0 applications_attempted=5
+[MB11-nonce-not-passed] FAIL: A5 -- ST2-property-red: git_dirty_during=None, expected [' M sample.py']
+[MB11-nonce-not-passed] FAIL: A5 -- ST3-form-red: git_dirty_during=None, expected [' M helper.py']
+[MB11-nonce-not-passed] FAIL: A5 -- ST4-sibling-only: git_dirty_during=None, expected [' M sample.py']
+[MB11-nonce-not-passed] FAIL: A5 -- ST5-skip-under-mutation: git_dirty_during=None, expected [' M sample.py']
+[MB11-nonce-not-passed] FAIL: A5 -- ST6-inert: git_dirty_during=None, expected [' M sample.py']
+[MB11-nonce-not-passed] FAIL: A6 -- ST2-property-red: ledger.sha_after=None against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before=None, committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+[MB11-nonce-not-passed] PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[MB11-nonce-not-passed] [bench] absent-anchor run: rc=10
+[MB11-nonce-not-passed] FAIL: A1 -- the absent-anchor run exits 0: rc=10
+[MB11-nonce-not-passed] PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+[MB11-nonce-not-passed] FAIL: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=0
+[MB11-nonce-not-passed] PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+[MB11-nonce-not-passed] FAIL: A8 -- the main run meets every expectation: declared=5 failed=0 unmeasured=5
+[MB11-nonce-not-passed] FAIL: A8 -- the absent-anchor run meets its one expectation: declared=1 failed=0 unmeasured=1
+[MB11-nonce-not-passed] [bench] forced-expectation run: rc=10
+[MB11-nonce-not-passed] PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+[MB11-nonce-not-passed] FAIL: A8 -- a wrong expectation is refused: rc=10 expectations_failed=0 names the row=False
+[MB11-nonce-not-passed] PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+META-MUTANT MB11-nonce-not-passed KILLED: expected ['A5'] (allowed ['A1', 'A4', 'A6', 'A8']), observed ['A1', 'A4', 'A5', 'A6', 'A8']
+ABLATION_BENCH cases=38 failures=0 meta_mutants=11 meta_died_elsewhere=0 applications_confirmed=5
+exit: 0
+ok: the bench and every meta-mutant hold (exit 0)
+ok: the bench declares how much it measured (marker /ABLATION_BENCH cases=[1-9][0-9]* failures=0 meta_mutants=1[1-9] meta_died_elsewhere=0 applications_confirmed=[1-9]/ present)
+--- integration selftest on the real tree
+$ <tree>/.venv/bin/python <tree>/tools/gates/ablation/ablate.py <tree>/tools/gates/ablation/selftest.json --tree <tree> --tolerate-dirty tools/gates/transcripts --out /tmp/tmp.JrEqFy82oH/selftest.json
+dirty tolerated: 1 line(s) under tools/gates/transcripts
+[mutant] ST2-property-red
+[restore] restored: src/attest/verify.py
+[mutant] ST3-form-red
+[restore] restored: src/attest/verify.py
+=== SUMMARY ===
+mutant_ids: ["ST2-property-red", "ST3-form-red"]
+applications_confirmed=2/2
+suite_runs=3
+n_mutants=2 killed=1 killed_elsewhere=0 survived=0 broken=1 not_applied=0 baseline_red=0 unmeasured=0
+ST2-property-red: KILLED (12/25 red)
+ST3-form-red: BROKEN (17/25 red)
+expectations: 2 declared, 2 met, 0 unmeasured
+results: written to /tmp/tmp.JrEqFy82oH/selftest.json
+exit: 0
+ok: the selftest meets its expectations (exit 0)
+ok: both mutations landed with their three traces (marker /^applications_confirmed=2/2$/ present)
+ok: both expectations were measured and met (marker /^expectations: 2 declared, 2 met,/ present)
+ok: the tolerated directory was read and declared (marker /^dirty tolerated: [0-9]+ line\(s\) under tools/gates/transcripts$/ present)
+--- absent-anchor selftest on the real tree
+$ <tree>/.venv/bin/python <tree>/tools/gates/ablation/ablate.py <tree>/tools/gates/ablation/selftest_st1.json --skip-preflight --tree <tree> --tolerate-dirty tools/gates/transcripts --out /tmp/tmp.JrEqFy82oH/selftest_st1.json
+dirty tolerated: 1 line(s) under tools/gates/transcripts
+[mutant] ST1-anchor-absent
+=== SUMMARY ===
+mutant_ids: ["ST1-anchor-absent"]
+applications_confirmed=0/1
+suite_runs=1
+n_mutants=1 killed=0 killed_elsewhere=0 survived=0 broken=0 not_applied=1 baseline_red=0 unmeasured=0
+ST1-anchor-absent: NOT_APPLIED -- src/attest/verify.py: anchor text occurs 0 times, need exactly 1
+expectations: 1 declared, 1 met, 0 unmeasured
+results: written to /tmp/tmp.JrEqFy82oH/selftest_st1.json
+exit: 0
+ok: the absent anchor reads as not applied (exit 0)
+ok: the row is counted as not applied (marker /(^| )not_applied=1( |$)/ present)
+ok: nothing landed (marker /^applications_confirmed=0/1$/ present)
+ok: its expectation was measured and met (marker /^expectations: 1 declared, 1 met,/ present)
+ok: the tolerated directory was read and declared (marker /^dirty tolerated: [0-9]+ line\(s\) under tools/gates/transcripts$/ present)
+--- integration selftest on the real tree, vitest side
+$ <tree>/.venv/bin/python <tree>/tools/gates/ablation/ablate.py <tree>/tools/gates/ablation/selftest-ts.json --tree <tree> --tolerate-dirty tools/gates/transcripts --out /tmp/tmp.JrEqFy82oH/selftest-ts.json
+dirty tolerated: 1 line(s) under tools/gates/transcripts
+[mutant] TS-ST2-property-red
+[restore] restored: verifiers/ts/src/revocation.ts
+[mutant] TS-ST3-type-break
+[restore] restored: verifiers/ts/src/revocation.ts
+=== SUMMARY ===
+mutant_ids: ["TS-ST2-property-red", "TS-ST3-type-break"]
+applications_confirmed=2/2
+suite_runs=2
+n_mutants=2 killed=1 killed_elsewhere=0 survived=0 broken=1 not_applied=0 baseline_red=0 unmeasured=0
+TS-ST2-property-red: KILLED (6/13 red)
+TS-ST3-type-break: BROKEN (0/0 red)
+expectations: 2 declared, 2 met, 0 unmeasured
+results: written to /tmp/tmp.JrEqFy82oH/selftest-ts.json
+exit: 0
+ok: the vitest selftest meets its expectations (exit 0)
+ok: both mutations landed with their three traces (marker /^applications_confirmed=2/2$/ present)
+ok: both expectations were measured and met (marker /^expectations: 2 declared, 2 met,/ present)
+ok: the tolerated directory was read and declared (marker /^dirty tolerated: [0-9]+ line\(s\) under tools/gates/transcripts$/ present)
+--- absent-anchor selftest on the real tree, vitest side
+$ <tree>/.venv/bin/python <tree>/tools/gates/ablation/ablate.py <tree>/tools/gates/ablation/selftest-ts_st1.json --skip-preflight --tree <tree> --tolerate-dirty tools/gates/transcripts --out /tmp/tmp.JrEqFy82oH/selftest-ts_st1.json
+dirty tolerated: 1 line(s) under tools/gates/transcripts
+[mutant] TS-ST1-anchor-absent
+=== SUMMARY ===
+mutant_ids: ["TS-ST1-anchor-absent"]
+applications_confirmed=0/1
+suite_runs=1
+n_mutants=1 killed=0 killed_elsewhere=0 survived=0 broken=0 not_applied=1 baseline_red=0 unmeasured=0
+TS-ST1-anchor-absent: NOT_APPLIED -- verifiers/ts/src/revocation.ts: anchor text occurs 0 times, need exactly 1
+expectations: 1 declared, 1 met, 0 unmeasured
+results: written to /tmp/tmp.JrEqFy82oH/selftest-ts_st1.json
+exit: 0
+ok: the absent anchor reads as not applied (exit 0)
+ok: the row is counted as not applied (marker /(^| )not_applied=1( |$)/ present)
+ok: nothing landed (marker /^applications_confirmed=0/1$/ present)
+ok: its expectation was measured and met (marker /^expectations: 1 declared, 1 met,/ present)
+ok: the tolerated directory was read and declared (marker /^dirty tolerated: [0-9]+ line\(s\) under tools/gates/transcripts$/ present)
+--- negative: a bench whose loop never runs is caught by name
+$ env ABLATION_BENCH_META_ONLY=MB1-loop-skipped <tree>/.venv/bin/python <tree>/tools/gates/ablation/bench_ablate.py
+[bench] MB1-loop-skipped: ablate.py at anchor 'for mutant in mutants:': 7aed877244245897f344efb0bdf11b053466cce034fd0bda2fa174c23e64ef77 -> a1f419559d9be3760145e9ae22e6685eb6639ff9702cbd24a4e26c5fd00cc386
+[MB1-loop-skipped] [bench] main run: rc=0
+[MB1-loop-skipped] PASS: A1 -- the main run exits 0: rc=0
+[MB1-loop-skipped] PASS: A2 -- the main results file was written by this run: exists=True nonce_of_run='bench-run-main' issued='bench-run-main'
+[MB1-loop-skipped] FAIL: A3 -- the run executed the expected ids in order: []
+[MB1-loop-skipped] PASS: A3 -- the spec still declares those ids in that order: ['ST2-property-red', 'ST3-form-red', 'ST4-sibling-only', 'ST5-skip-under-mutation', 'ST6-inert']
+[MB1-loop-skipped] FAIL: A4 -- the main run confirms every attempt: applications_confirmed=0 applications_attempted=0
+[MB1-loop-skipped] FAIL: A5 -- ST2-property-red: no row in the results
+[MB1-loop-skipped] FAIL: A5 -- ST3-form-red: no row in the results
+[MB1-loop-skipped] FAIL: A5 -- ST4-sibling-only: no row in the results
+[MB1-loop-skipped] FAIL: A5 -- ST5-skip-under-mutation: no row in the results
+[MB1-loop-skipped] FAIL: A5 -- ST6-inert: no row in the results
+[MB1-loop-skipped] FAIL: A6 -- ST2-property-red: ledger.sha_after=None against 'f40984649caa6bf7bc818863f0e210b68e3b00f16dfc99997f1bd226c34b9c34', recomputed from the committed blob (sha_before=None, committed='3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7')
+[MB1-loop-skipped] PASS: A7 -- after the main run the tree is clean and holds no journal: status=[] journal_present=False
+[MB1-loop-skipped] [bench] absent-anchor run: rc=0
+[MB1-loop-skipped] PASS: A1 -- the absent-anchor run exits 0: rc=0
+[MB1-loop-skipped] PASS: A2 -- the absent-anchor results file was written by this run: exists=True nonce_of_run='bench-run-st1' issued='bench-run-st1'
+[MB1-loop-skipped] FAIL: A4 -- the absent anchor lands nothing: applications_confirmed=0 not_applied=0
+[MB1-loop-skipped] PASS: A7 -- after the absent-anchor run the tree is clean and holds no journal: status=[] journal_present=False
+[MB1-loop-skipped] FAIL: A8 -- the main run meets every expectation: declared=0 failed=0 unmeasured=0
+[MB1-loop-skipped] FAIL: A8 -- the absent-anchor run meets its one expectation: declared=0 failed=0 unmeasured=0
+[MB1-loop-skipped] [bench] forced-expectation run: rc=0
+[MB1-loop-skipped] PASS: A2 -- the forced-expectation results file was written by this run: exists=True nonce_of_run='bench-run-forced' issued='bench-run-forced'
+[MB1-loop-skipped] FAIL: A8 -- a wrong expectation is refused: rc=0 expectations_failed=0 names the row=False
+[MB1-loop-skipped] PASS: A7 -- after the forced-expectation run the tree is clean and holds no journal: status=[] journal_present=False
+ABLATION_BENCH_META_ONLY id=MB1-loop-skipped copy_cases=21 copy_failures=12
+exit: 1
+ok: negative 'a bench whose loop never runs is caught by name' failed at the guarded path (exit 1)
+
+GATE G-ABLATION PASS property=the ablation bench proves it measured: ledger, git, nonce
