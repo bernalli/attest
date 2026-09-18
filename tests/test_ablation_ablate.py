@@ -27,6 +27,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -205,6 +206,8 @@ if mode == "stray-before-snapshot":
         (tree / "stray.txt").unlink()
     else:
         (tree / "stray.txt").write_text("left by the baseline run\\n")
+if mutated and mode == "non-log-appears":
+    (tree / "logs" / "stray.txt").write_text("not a transcript\\n")
 if mutated and mode == "break-index":
     (tree / ".git" / "index").write_bytes(b"not an index\\n")
 if mode.startswith("tolerated-"):
@@ -894,7 +897,8 @@ def test_the_entry_checks_run_in_their_order(tree: Path, tmp_path: Path, case: s
         args, code, marker = (
             [*base, "--tolerate-dirty", "."],
             3,
-            "ablate.py: error: --tolerate-dirty '.': resolves to the root of the tree",
+            f"ablate.py: error: --tolerate-dirty '.': {_PART_OF.format(tree=tree)}{tree} names "
+            "all of it",
         )
     elif case == "journal-before-item-0":
         journal_dir.mkdir()
@@ -1561,16 +1565,26 @@ def test_more_than_one_mutant_all_surviving_exits_11_and_prints_their_traces(
 # predicate under test answers.
 _TOLERATED = "logs"
 _TOLERATED_MARKER = "dirty tolerated: {n} line(s) under logs"
+_PART_OF = "must name a proper, non-empty part of what git status can list in {tree}, and "
 _ROOT_REASON = (
-    "resolves to the root of the tree {tree}, and tolerating the root would switch the "
-    "dirty-tree check off instead of narrowing it"
+    _PART_OF + "{tree} names all of it: it resolves to the root of the tree, so tolerating it "
+    "would switch the dirty-tree check off instead of narrowing it"
+)
+_NOTHING_REASON = (
+    _PART_OF + "{resolved} names none of it: no file tracked by git lies under it, so git "
+    "status never lists a line under it and tolerating it would change nothing"
 )
 
 
 def _tolerating_tree(tree: Path) -> Path:
-    """The fixture tree with `logs/` tracked, so git lists what changes there file by file."""
+    """The fixture tree with `logs/` tracked, so git lists what changes there file by file.
+
+    It holds only transcripts, as the content contract of a tolerated directory asks:
+    `mod.log` carries an anchor a mutant can name, the one file a mutant under a
+    tolerated directory can still have after the contract.
+    """
     (tree / _TOLERATED).mkdir()
-    _commit(tree, {"logs/kept.log": b"kept\n", "logs/mod.py": b"VALUE = 2\n"})
+    _commit(tree, {"logs/kept.log": b"kept\n", "logs/mod.log": b"VALUE = 2\n"})
     return tree
 
 
@@ -1583,12 +1597,7 @@ def _refusals(stderr: str) -> list[str]:
 
 
 _TOLERATE_ARGUMENT_REFUSALS = [
-    (
-        "empty",
-        "",
-        "an empty path names the root of the tree, and tolerating the root would switch "
-        "the dirty-tree check off instead of narrowing it",
-    ),
+    ("empty", "", _ROOT_REASON),
     ("dot", ".", _ROOT_REASON),
     ("dot-slash", "./", _ROOT_REASON),
     ("sub-dotdot", "logs/..", _ROOT_REASON),
@@ -1632,6 +1641,159 @@ def test_a_tolerate_dirty_argument_that_is_the_root_or_not_a_directory_of_the_tr
     assert "[mutant]" not in result.stdout
     assert not (tree / JOURNAL_DIRNAME).exists()
     assert _porcelain(tree) == porcelain
+
+
+# Directories under which git status never lists a line: nothing tracked lies under
+# them, so git prints them collapsed (`?? DIR/`) or not at all.
+_NOTHING_UNDER = [
+    ("git-directory", ".git"),
+    ("inside-the-git-directory", ".git/objects"),
+    ("journal", JOURNAL_DIRNAME),
+    ("inside-the-journal", f"{JOURNAL_DIRNAME}/sub"),
+    ("untracked", "fresh"),
+    ("ignored-as-a-directory", "ignored"),
+    ("gitlink", "sub"),
+]
+
+
+@pytest.mark.parametrize(
+    "given",
+    [given for _name, given in _NOTHING_UNDER],
+    ids=[name for name, _given in _NOTHING_UNDER],
+)
+def test_a_tolerate_dirty_argument_under_which_git_lists_nothing_exits_3(
+    tree: Path, tmp_path: Path, given: str
+) -> None:
+    _tolerating_tree(tree)
+    _commit(tree, {".gitignore": b"ignored/\n"})
+    (tree / "ignored").mkdir()
+    (tree / "ignored" / "x.log").write_text("ignored\n")
+    (tree / "fresh").mkdir()
+    (tree / "fresh" / "x.log").write_text("untracked\n")
+    head = _git(tree, "rev-parse", "HEAD").stdout.decode().strip()
+    (tree / "sub").mkdir()
+    _git(tree, "update-index", "--add", "--cacheinfo", f"160000,{head},sub")
+    _git(tree, "commit", "-m", "Add a gitlink")
+    if given.startswith(JOURNAL_DIRNAME):
+        (tree / given).mkdir(parents=True)
+    resolved = (tree / given).resolve()
+    porcelain = _porcelain(tree)
+
+    result = _ablate([str(_SPEC_FIXTURE), "--tree", str(tree), "--tolerate-dirty", given], tmp_path)
+
+    assert (result.returncode, result.stderr.splitlines()) == (
+        3,
+        [
+            f"ablate.py: error: --tolerate-dirty {given!r}: "
+            + _NOTHING_REASON.format(tree=tree, resolved=resolved)
+        ],
+    ), f"--tolerate-dirty {given!r} was not refused as naming nothing: {result.stderr}"
+    assert "[mutant]" not in result.stdout
+    assert _porcelain(tree) == porcelain
+
+
+@pytest.mark.parametrize("shape", ["transcripts", "ignored-with-a-tracked-file"])
+def test_a_directory_with_a_tracked_file_under_it_is_tolerated_whatever_git_ignores(
+    tree: Path, tmp_path: Path, shape: str
+) -> None:
+    if shape == "transcripts":
+        # The shape of tools/gates/transcripts: everything ignored but the logs and the
+        # ignore file itself, which are tracked.
+        (tree / "tr").mkdir()
+        (tree / "tr" / ".gitignore").write_text("*\n!.gitignore\n!*.log\n")
+        (tree / "tr" / "a.log").write_text("a\n")
+        _git(tree, "add", "tr/.gitignore", "tr/a.log")
+        _git(tree, "commit", "-m", "Add a transcripts-shaped directory")
+        (tree / "tr" / "new.log").write_text("new\n")
+        line = "?? tr/new.log"
+    else:
+        # Ignored as a directory, so new files there are never listed; but a tracked
+        # file there is, when it changes.
+        _commit(tree, {".gitignore": b"tr/\n"})
+        (tree / "tr").mkdir()
+        (tree / "tr" / "forced.log").write_text("forced\n")
+        _git(tree, "add", "-f", "tr/forced.log")
+        _git(tree, "commit", "-m", "Force-add a file under an ignored directory")
+        (tree / "tr" / "forced.log").write_text("forced, edited\n")
+        line = " M tr/forced.log"
+    assert _porcelain(tree) == f"{line}\n"
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+    out = tmp_path / "results.json"
+
+    result = _ablate(
+        [str(spec), "--tree", str(tree), "--tolerate-dirty", "tr", "--out", str(out)], tmp_path
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "dirty tolerated: 1 line(s) under tr" in result.stdout.splitlines()
+    assert json.loads(out.read_text())["dirty_tolerated"] == {"dirs": ["tr"], "lines": [line]}
+
+
+def test_a_tolerate_dirty_argument_is_refused_when_git_cannot_list_the_tracked_files(
+    tree: Path, tmp_path: Path
+) -> None:
+    _tolerating_tree(tree)
+    (tree / ".git" / "index").write_bytes(b"not an index\n")
+
+    result = _ablate(_tolerating(_SPEC_FIXTURE, tree), tmp_path)
+
+    assert (result.returncode, result.stderr.splitlines()) == (
+        3,
+        [
+            "ablate.py: error: --tolerate-dirty 'logs': "
+            + _PART_OF.format(tree=tree)
+            + f"{tree / 'logs'} names an unknown part of it: git cannot list the tracked "
+            "files of the tree, so whether any lies under it cannot be said"
+        ],
+    )
+    assert "[mutant]" not in result.stdout
+
+
+# A `git` that refuses the first `git -C <tree> status`, the one the content contract
+# reads on the arguments, and runs every other command.
+_GIT_WITHOUT_THE_FIRST_STATUS = """#!/bin/sh
+if [ "$3" = status ] && [ ! -e {seen} ]; then
+    : > {seen}
+    echo "fatal: status refused by the test" >&2
+    exit 128
+fi
+exec {git} "$@"
+"""
+
+
+def test_a_tolerate_dirty_argument_is_refused_when_git_cannot_list_the_status_of_the_tree(
+    tree: Path, tmp_path: Path
+) -> None:
+    # The tracked files are listed, so `logs` is a part of what git status can list, and
+    # only the content contract is left to refuse it. Read as an empty status, the file
+    # that is not a transcript would pass the contract and become a tolerated line.
+    _tolerating_tree(tree)
+    (tree / "logs" / "new.txt").write_text("not a transcript\n")
+    real_git = shutil.which("git")
+    assert real_git is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text(
+        _GIT_WITHOUT_THE_FIRST_STATUS.format(git=real_git, seen=tmp_path / "status-refused")
+    )
+    (bin_dir / "git").chmod(0o755)
+
+    result = _ablate(
+        _tolerating(_SPEC_FIXTURE, tree),
+        tmp_path,
+        {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+
+    assert (result.returncode, result.stderr.splitlines()) == (
+        3,
+        [
+            "ablate.py: error: --tolerate-dirty 'logs': logs breaks the contract of a "
+            "tolerated directory -- every file under it is a transcript, a .log, save its "
+            "own .gitignore: git cannot list the status of the tree, so what lies there "
+            "cannot be said"
+        ],
+    )
+    assert "[mutant]" not in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -1774,25 +1936,19 @@ def test_tolerate_dirty_arguments_that_resolve_to_one_directory_count_once(
         # A file, so git names it alone: a collapsed `?? logs2/` is refused before the
         # comparison of components is ever reached.
         ("logs2.log", "logs", "?? logs2.log"),
-        ("deep/x.log", "deep/inner", "?? deep/"),
-        ("logs/sp ace.log", "logs", '?? "logs/sp ace.log"'),
-        ("fresh/x.log", "fresh", "?? fresh/"),
-        ("logs/sub/x.log", "logs", "?? logs/sub/"),
+        # A line of a directory that contains the tolerated one (`?? deep/`), or of the
+        # tolerated one collapsed (`?? fresh/`), no longer arises here: a directory git
+        # would collapse holds no tracked file, so it is refused as an argument. A quoted
+        # or collapsed line UNDER the tolerated directory is not a `.log` line, so the
+        # content contract refuses it as an argument too (see its test). The unit test
+        # of `_split_tolerated` keeps all four lines refused.
     ],
-    ids=[
-        "outside",
-        "sibling-sharing-a-prefix",
-        "directory-containing-it",
-        "quoted-by-git",
-        "the-tolerated-directory-collapsed",
-        "a-directory-collapsed-inside-it",
-    ],
+    ids=["outside", "sibling-sharing-a-prefix"],
 )
 def test_with_tolerate_dirty_a_line_outside_the_directory_exits_5_naming_it(
     tree: Path, tmp_path: Path, dirt: str, tolerate: str, line: str
 ) -> None:
     _tolerating_tree(tree)
-    (tree / "deep" / "inner").mkdir(parents=True)
     (tree / dirt).parent.mkdir(parents=True, exist_ok=True)
     (tree / dirt).write_text("dirt\n")
     spec = _single_row_spec(tmp_path, "spec", "KILLED")
@@ -1813,10 +1969,11 @@ def test_with_tolerate_dirty_a_line_outside_the_directory_exits_5_naming_it(
     ("move", "line", "tolerated"),
     [
         (("logs/kept.log", "kept.log"), "R  logs/kept.log -> kept.log", False),
-        (("notes.txt", "logs/notes.txt"), "R  notes.txt -> logs/notes.txt", False),
+        # A rename INTO the directory of a file that is not a `.log` breaks the content
+        # contract before this check is reached: it is a case of the contract's test.
         (("logs/kept.log", "logs/moved.log"), "R  logs/kept.log -> logs/moved.log", True),
     ],
-    ids=["out-of-the-directory", "into-the-directory", "within-the-directory"],
+    ids=["out-of-the-directory", "within-the-directory"],
 )
 def test_a_rename_is_tolerated_only_when_both_of_its_paths_are(
     tree: Path, tmp_path: Path, move: tuple[str, str], line: str, tolerated: bool
@@ -1844,7 +2001,7 @@ def test_a_rename_is_tolerated_only_when_both_of_its_paths_are(
 
 
 @pytest.mark.parametrize("skip_preflight", [False, True], ids=["item-0", "skip-preflight"])
-@pytest.mark.parametrize("file", ["logs/mod.py", "lnk/mod.py"], ids=["as-written", "via-a-link"])
+@pytest.mark.parametrize("file", ["logs/mod.log", "lnk/mod.log"], ids=["as-written", "via-a-link"])
 def test_a_mutant_whose_file_lies_under_a_tolerated_directory_is_refused_by_item_0(
     tree: Path, tmp_path: Path, file: str, skip_preflight: bool
 ) -> None:
@@ -1866,7 +2023,7 @@ def test_a_mutant_whose_file_lies_under_a_tolerated_directory_is_refused_by_item
     ]
     spec_path = _write_spec(tmp_path / "spec.json", spec)
     # `_tree_state` reads every tracked path as a file, and the tracked link is a directory.
-    before = (_porcelain(tree), (tree / "logs" / "mod.py").read_bytes())
+    before = (_porcelain(tree), (tree / "logs" / "mod.log").read_bytes())
 
     result = _ablate(
         _tolerating(spec_path, tree, *(["--skip-preflight"] if skip_preflight else [])), tmp_path
@@ -1883,7 +2040,551 @@ def test_a_mutant_whose_file_lies_under_a_tolerated_directory_is_refused_by_item
     ) in result.stderr.splitlines()
     assert "[mutant]" not in result.stdout
     assert not (tree / JOURNAL_DIRNAME).exists()
-    assert (_porcelain(tree), (tree / "logs" / "mod.py").read_bytes()) == before
+    assert (_porcelain(tree), (tree / "logs" / "mod.log").read_bytes()) == before
+
+
+_RUNS_UNSEEN = (
+    "where the bench does not read git status in absolute terms, so what runs there would "
+    "not be seen"
+)
+
+# Each row: what the mutant runs, the tolerated directories, and the refusal the rule
+# asks for -- `None` when nothing it runs lies under a tolerated directory. A suite entry
+# is its path before `::`, relative to `pkg` for vitest, judged as written and resolved.
+_RUNS_UNDER_TOLERATED = [
+    ("suite-outside", {"suite": ["test_sample.py"]}, ("logs",), None),
+    (
+        "suite-under",
+        {"suite": ["logs/test_x.py"]},
+        ("logs",),
+        "key suite: logs/test_x.py (logs/test_x.py) lies under the tolerated directory logs",
+    ),
+    (
+        "suite-node-id-under",
+        {"suite": ["test_sample.py", "logs/test_x.py::test_a"]},
+        ("logs",),
+        "key suite: logs/test_x.py::test_a (logs/test_x.py) lies under the tolerated "
+        "directory logs",
+    ),
+    (
+        "suite-is-the-directory",
+        {"suite": ["logs"]},
+        ("logs",),
+        "key suite: logs (logs) contains the tolerated directory logs",
+    ),
+    (
+        "suite-is-the-root",
+        {"suite": ["."]},
+        ("logs",),
+        "key suite: . (.) contains the tolerated directory logs",
+    ),
+    (
+        "suite-is-empty",
+        {"suite": [""]},
+        ("logs",),
+        "key suite:  (.) contains the tolerated directory logs",
+    ),
+    (
+        "suite-contains-a-deeper-one",
+        {"suite": ["web"]},
+        ("web/logs",),
+        "key suite: web (web) contains the tolerated directory web/logs",
+    ),
+    (
+        "suite-via-a-link",
+        {"suite": ["lnk/test_x.py"]},
+        ("logs",),
+        "key suite: lnk/test_x.py (logs/test_x.py) lies under the tolerated directory logs",
+    ),
+    (
+        "suite-not-normalized",
+        {"suite": ["web/../logs/test_x.py"]},
+        ("logs",),
+        "key suite: web/../logs/test_x.py (logs/test_x.py) lies under the tolerated directory logs",
+    ),
+    (
+        "suite-absolute",
+        {"suite": ["<TREE>/logs/test_x.py"]},
+        ("logs",),
+        "key suite: <TREE>/logs/test_x.py (logs/test_x.py) lies under the tolerated directory logs",
+    ),
+    ("suite-sibling-sharing-a-prefix", {"suite": ["logs2/test_x.py"]}, ("logs",), None),
+    (
+        # A link under the tolerated directory that leads out of the tree: the runner
+        # opens it where it is written, so the written form is judged too.
+        "suite-through-a-link-leaving-the-tree",
+        {"suite": ["logs/away/test_x.py"]},
+        ("logs",),
+        "key suite: logs/away/test_x.py (logs/away/test_x.py) lies under the tolerated "
+        "directory logs",
+    ),
+    (
+        # The same link, written as an absolute path: its written form is judged too.
+        "suite-absolute-through-a-link-leaving-the-tree",
+        {"suite": ["<TREE>/logs/away/test_x.py"]},
+        ("logs",),
+        "key suite: <TREE>/logs/away/test_x.py (logs/away/test_x.py) lies under the "
+        "tolerated directory logs",
+    ),
+    # No vitest row: vitest reads the entries of a suite as substrings of file paths, not
+    # as paths, so the check does not judge them.
+    (
+        "plugin-module-under",
+        {"kind": "plugin", "plugin": "logs.plug", "suite": ["test_sample.py"]},
+        ("logs",),
+        "key plugin: logs.plug (logs/plug.py) lies under the tolerated directory logs",
+    ),
+    (
+        "plugin-package-under",
+        {"kind": "plugin", "plugin": "logs", "suite": ["test_sample.py"]},
+        ("logs",),
+        "key plugin: logs (logs/__init__.py) lies under the tolerated directory logs",
+    ),
+    (
+        "plugin-via-a-link",
+        {"kind": "plugin", "plugin": "lnk.plug", "suite": ["test_sample.py"]},
+        ("logs",),
+        "key plugin: lnk.plug (lnk/plug.py) lies under the tolerated directory logs",
+    ),
+    (
+        "plugin-outside",
+        {"kind": "plugin", "plugin": "sample", "suite": ["test_sample.py"]},
+        ("logs",),
+        None,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("row", "tolerated", "refusal"),
+    [(row, tolerated, refusal) for _name, row, tolerated, refusal in _RUNS_UNDER_TOLERATED],
+    ids=[name for name, _row, _tolerated, _refusal in _RUNS_UNDER_TOLERATED],
+)
+def test_nothing_a_mutant_runs_may_lie_under_a_tolerated_directory(
+    ablate_module: ModuleType,
+    tree: Path,
+    tmp_path: Path,
+    row: dict[str, Any],
+    tolerated: tuple[str, ...],
+    refusal: str | None,
+) -> None:
+    _tolerating_tree(tree)
+    (tree / "lnk").symlink_to("logs")
+    (tree / "logs" / "away").symlink_to(tmp_path)
+    mutant: dict[str, Any] = {
+        "id": "TD2",
+        "property": "something that runs where git status is not read in absolute terms",
+        "suite": [entry.replace("<TREE>", str(tree)) for entry in row["suite"]],
+        "expect_red": [],
+        **{key: value for key, value in row.items() if key != "suite"},
+    }
+    if mutant.get("kind", "source") == "source":
+        mutant.update(file="sample.py", old="VALUE = 2", new="VALUE = 0")
+    assert ablate_module._schema_problems(mutant, "TD2") == []
+
+    problems = ablate_module._tolerated_problems(mutant, "TD2", tree, tolerated)
+
+    expected = (
+        []
+        if refusal is None
+        else [f"item 0: mutant TD2: {refusal.replace('<TREE>', str(tree))}, {_RUNS_UNSEEN}"]
+    )
+    assert problems == expected
+
+
+@pytest.mark.parametrize("tree_checks", [True, False], ids=["item-0", "skip-preflight"])
+@pytest.mark.parametrize("what", ["suite", "plugin"])
+def test_item_0_refuses_a_suite_or_plugin_under_a_tolerated_directory_even_without_tree_checks(
+    ablate_module: ModuleType, tree: Path, what: str, tree_checks: bool
+) -> None:
+    # Called directly: through `main`, a directory where git tracks or lists a test file
+    # or a plugin module breaks the content contract as an argument, and item 0 is never
+    # reached. One that git ignores is reached: see the test after the open routes.
+    _tolerating_tree(tree)
+    spec = _fixture_spec()
+    row = dict(spec["mutants"][0])
+    if what == "suite":
+        row["suite"] = ["test_sample.py", "logs/test_x.py"]
+        refusal = (
+            "item 0: mutant ST2-property-red: key suite: logs/test_x.py (logs/test_x.py) lies "
+            f"under the tolerated directory logs, {_RUNS_UNSEEN}"
+        )
+    else:
+        for key in ("file", "old", "new"):
+            row.pop(key)
+        row.update(kind="plugin", plugin="logs.plug")
+        refusal = (
+            "item 0: mutant ST2-property-red: key plugin: logs.plug (logs/plug.py) lies under "
+            f"the tolerated directory logs, {_RUNS_UNSEEN}"
+        )
+    spec["mutants"] = [row]
+
+    _count, problems = ablate_module.item_zero(
+        spec, tree, tree_checks=tree_checks, tolerated=("logs",)
+    )
+
+    assert refusal in problems, problems
+
+
+# The routes to the suite and plugin checks that the content contract leaves open: the
+# refusal item 0 prints, reached through `main`.
+_OPEN_ROUTES = [
+    (
+        "suite-names-the-directory",
+        {"suite": ["test_sample.py", "logs"]},
+        [],
+        "key suite: logs (logs) contains the tolerated directory logs",
+    ),
+    (
+        "suite-is-the-root",
+        {"suite": ["."]},
+        [],
+        "key suite: . (.) contains the tolerated directory logs",
+    ),
+    (
+        "suite-names-a-log",
+        {"suite": ["test_sample.py", "logs/kept.log"]},
+        [],
+        "key suite: logs/kept.log (logs/kept.log) lies under the tolerated directory logs",
+    ),
+    (
+        "suite-names-a-missing-file",
+        {"suite": ["test_sample.py", "logs/test_gone.py"]},
+        [],
+        "key suite: logs/test_gone.py (logs/test_gone.py) lies under the tolerated directory logs",
+    ),
+    (
+        "plugin-module-missing",
+        {"kind": "plugin", "plugin": "logs.gone"},
+        ["--skip-preflight"],
+        "key plugin: logs.gone (logs/gone.py) lies under the tolerated directory logs",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("change", "extra", "refusal"),
+    [(change, extra, refusal) for _name, change, extra, refusal in _OPEN_ROUTES],
+    ids=[name for name, _change, _extra, _refusal in _OPEN_ROUTES],
+)
+def test_the_suite_and_plugin_checks_refuse_what_the_contract_leaves_open(
+    tree: Path, tmp_path: Path, change: dict[str, Any], extra: list[str], refusal: str
+) -> None:
+    _tolerating_tree(tree)
+    spec = _fixture_spec()
+    row = dict(spec["mutants"][0])
+    if change.get("kind") == "plugin":
+        for key in ("file", "old", "new"):
+            row.pop(key)
+    row.update(change)
+    spec["mutants"] = [row]
+    spec_path = _write_spec(tmp_path / "spec.json", spec)
+
+    result = _ablate(_tolerating(spec_path, tree, *extra), tmp_path)
+
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert (
+        f"item 0: mutant ST2-property-red: {refusal}, {_RUNS_UNSEEN}"
+    ) in result.stderr.splitlines()
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+
+
+@pytest.mark.parametrize("what", ["suite", "plugin"])
+def test_the_suite_and_plugin_checks_refuse_a_file_git_ignores_under_a_tolerated_directory(
+    tree: Path, tmp_path: Path, what: str
+) -> None:
+    # The content contract reads what git tracks and lists; an ignored file it never
+    # sees, so this route reaches item 0 through `main`.
+    _tolerating_tree(tree)
+    _commit(tree, {"logs/.gitignore": b"*\n!.gitignore\n!*.log\n"})
+    (tree / "logs" / "test_x.py").write_text("def test_x():\n    pass\n")
+    (tree / "logs" / "plug.py").write_text("")
+    assert _porcelain(tree) == ""
+    spec = _fixture_spec()
+    row = dict(spec["mutants"][0])
+    if what == "suite":
+        row["suite"] = ["test_sample.py", "logs/test_x.py"]
+        named = "key suite: logs/test_x.py (logs/test_x.py) lies under the tolerated directory logs"
+    else:
+        for key in ("file", "old", "new"):
+            row.pop(key)
+        row.update(kind="plugin", plugin="logs.plug")
+        named = "key plugin: logs.plug (logs/plug.py) lies under the tolerated directory logs"
+    spec["mutants"] = [row]
+
+    result = _ablate(_tolerating(_write_spec(tmp_path / "spec.json", spec), tree), tmp_path)
+
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert f"item 0: mutant ST2-property-red: {named}, {_RUNS_UNSEEN}" in result.stderr.splitlines()
+    assert "[mutant]" not in result.stdout
+
+
+# Each argument that breaks the content contract of a tolerated directory: how the tree
+# is made to break it, and what the refusal names.
+_CONTRACT_BREAKS = [
+    (
+        "tracked-not-a-log",
+        "commit logs/notes.txt",
+        "logs/notes.txt is tracked there and is not a .log",
+    ),
+    (
+        "tracked-gitignore-not-its-own",
+        "commit logs/sub/.gitignore",
+        "logs/sub/.gitignore is tracked there and is not a .log",
+    ),
+    (
+        "a-test-file-under-it",
+        "commit logs/test_x.py",
+        "logs/test_x.py is tracked there and is not a .log",
+    ),
+    (
+        "a-plugin-module-under-it",
+        "commit logs/plug.py",
+        "logs/plug.py is tracked there and is not a .log",
+    ),
+    (
+        "its-own-gitignore-modified",
+        "commit logs/.gitignore, then edit it",
+        "git status lists ' M logs/.gitignore' there, which does not name a .log",
+    ),
+    (
+        "untracked-not-a-log",
+        "write logs/new.txt",
+        "git status lists '?? logs/new.txt' there, which does not name a .log",
+    ),
+    (
+        "quoted-by-git",
+        "write logs/sp ace.log",
+        "git status lists '?? \"logs/sp ace.log\"' there, which does not name a .log",
+    ),
+    (
+        "a-directory-collapsed-inside-it",
+        "write logs/sub/x.log",
+        "git status lists '?? logs/sub/' there, which does not name a .log",
+    ),
+    (
+        "renamed-into-it",
+        # `git mv` stages the new path, so the listing of tracked files names it first.
+        "commit notes.txt, then git mv it to logs/notes.txt",
+        "logs/notes.txt is tracked there and is not a .log",
+    ),
+    (
+        # A link named like a transcript decides where a suite entry through it leads.
+        "a-tracked-link-named-like-a-transcript",
+        "commit logs/s.log as a link to the root",
+        "logs/s.log is tracked there and is a link or a directory, not a file",
+    ),
+    (
+        "an-untracked-link-named-like-a-transcript",
+        "link logs/s.log to the root",
+        "git status lists '?? logs/s.log' there, which names a link or a directory, not a file",
+    ),
+    (
+        "a-gitlink-named-like-a-transcript",
+        "commit logs/sub.log as a gitlink",
+        "logs/sub.log is tracked there and is a link or a directory, not a file",
+    ),
+]
+
+
+def _break_the_contract(tree: Path, how: str) -> None:
+    if how == "commit logs/.gitignore, then edit it":
+        _commit(tree, {"logs/.gitignore": b"*\n!.gitignore\n!*.log\n"})
+        (tree / "logs" / ".gitignore").write_text("*\n")
+    elif how == "commit notes.txt, then git mv it to logs/notes.txt":
+        _commit(tree, {"notes.txt": b"notes\n"})
+        _git(tree, "mv", "notes.txt", "logs/notes.txt")
+    elif how in ("commit logs/s.log as a link to the root", "link logs/s.log to the root"):
+        (tree / "logs" / "s.log").symlink_to("..")
+        if how.startswith("commit"):
+            _git(tree, "add", "logs/s.log")
+            _git(tree, "commit", "-m", "Add a link named like a transcript")
+    elif how == "commit logs/sub.log as a gitlink":
+        head = _git(tree, "rev-parse", "HEAD").stdout.decode().strip()
+        (tree / "logs" / "sub.log").mkdir()
+        _git(tree, "update-index", "--add", "--cacheinfo", f"160000,{head},logs/sub.log")
+        _git(tree, "commit", "-m", "Add a gitlink named like a transcript")
+    else:
+        verb, rel = how.split(" ", 1)
+        (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+        if verb == "commit":
+            _commit(tree, {rel: b"x\n"})
+        else:
+            (tree / rel).write_text("x\n")
+
+
+@pytest.mark.parametrize(
+    ("how", "broken"),
+    [(how, broken) for _name, how, broken in _CONTRACT_BREAKS],
+    ids=[name for name, _how, _broken in _CONTRACT_BREAKS],
+)
+def test_a_tolerated_directory_that_holds_anything_but_transcripts_is_refused_as_an_argument(
+    tree: Path, tmp_path: Path, how: str, broken: str
+) -> None:
+    _tolerating_tree(tree)
+    _break_the_contract(tree, how)
+    porcelain = _porcelain(tree)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+
+    result = _ablate(_tolerating(spec, tree, "--skip-preflight"), tmp_path)
+
+    assert (result.returncode, result.stderr.splitlines()) == (
+        3,
+        [
+            "ablate.py: error: --tolerate-dirty 'logs': logs breaks the contract of a "
+            "tolerated directory -- every file under it is a transcript, a .log, save its own "
+            f".gitignore: {broken}"
+        ],
+    ), f"{how} did not break the contract: exited {result.returncode}: {result.stderr}"
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+    assert _porcelain(tree) == porcelain
+
+
+def test_a_line_that_is_not_a_log_appearing_under_a_tolerated_directory_during_the_run_exits_6(
+    tree: Path, tmp_path: Path
+) -> None:
+    # The contract is read once, as an argument; afterwards a non-`.log` line under the
+    # directory is a tolerated line that appeared, which the comparison refuses.
+    _tolerating_tree(tree)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED", launcher=_launcher(tmp_path))
+
+    result = _ablate(
+        _tolerating(spec, tree), tmp_path, {"ABLATION_TEST_LAUNCHER_MODE": "non-log-appears"}
+    )
+
+    assert result.returncode == 6, result.stdout + result.stderr
+    refusals = _refusals(result.stderr)
+    assert len(refusals) == 1, refusals
+    assert "logs/stray.txt under tolerated directory logs: appeared '??'" in refusals[0]
+
+
+# A `git` that writes a file that is not a transcript under `logs/` before it answers
+# any `git -C <tree> status` but the first: the first is the content contract, read on
+# the arguments; the second is the tree read before the run, whose tolerated lines are
+# the reference.
+_GIT_WRITES_AFTER_THE_ARGUMENTS = """#!/bin/sh
+if [ "$3" = status ]; then
+    if [ -e {seen} ]; then
+        echo "written after the arguments" > {tree}/logs/late.txt
+    fi
+    : > {seen}
+fi
+exec {git} "$@"
+"""
+
+
+def test_a_line_that_is_not_a_log_appearing_after_the_arguments_and_before_the_run_exits_5(
+    tree: Path, tmp_path: Path
+) -> None:
+    _tolerating_tree(tree)
+    real_git = shutil.which("git")
+    assert real_git is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text(
+        _GIT_WRITES_AFTER_THE_ARGUMENTS.format(
+            git=real_git, seen=tmp_path / "status-answered", tree=tree
+        )
+    )
+    (bin_dir / "git").chmod(0o755)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+
+    result = _ablate(
+        _tolerating(spec, tree),
+        tmp_path,
+        {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 5, result.stdout + result.stderr
+    assert _refusals(result.stderr) == [
+        f"REFUSING: {tree} is dirty before the run under the tolerated directory logs "
+        "against its contract: git status lists '?? logs/late.txt' there, which does not "
+        "name a .log"
+    ]
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+
+
+# A launcher element under a tolerated directory: what the element is written as, and what
+# the refusal names -- `None` when it does not lie under one.
+_LAUNCHER_ELEMENTS = [
+    ("a-log-run-as-a-script", ["{python}", "logs/x.log"], "logs/x.log (logs/x.log)"),
+    ("absolute", ["{python}", "{tree}/logs/x.log"], "{tree}/logs/x.log (logs/x.log)"),
+    ("via-a-link", ["{python}", "lnk/x.log"], "lnk/x.log (logs/x.log)"),
+    ("the-default", ["uv", "run", "--directory", "{tree}", "--no-sync", "pytest"], None),
+    ("outside", ["{python}", "-m", "pytest"], None),
+]
+
+
+@pytest.mark.parametrize(
+    ("launcher", "named"),
+    [(launcher, named) for _name, launcher, named in _LAUNCHER_ELEMENTS],
+    ids=[name for name, _launcher, _named in _LAUNCHER_ELEMENTS],
+)
+def test_a_launcher_element_under_a_tolerated_directory_is_refused_by_item_0(
+    ablate_module: ModuleType, tree: Path, launcher: list[str], named: str | None
+) -> None:
+    _tolerating_tree(tree)
+    (tree / "lnk").symlink_to("logs")
+    spec = dict(_fixture_spec(), launcher=launcher)
+
+    for tree_checks in (True, False):
+        _count, problems = ablate_module.item_zero(
+            spec, tree, tree_checks=tree_checks, tolerated=("logs",)
+        )
+        launcher_problems = [line for line in problems if "key launcher:" in line]
+        expected = (
+            []
+            if named is None
+            else [
+                f"item 0: spec: key launcher: {named} lies under "
+                f"the tolerated directory logs, {_RUNS_UNSEEN}"
+            ]
+        )
+        assert launcher_problems == expected
+
+
+@pytest.mark.parametrize("checked", [True, False], ids=["with-the-check", "without-it"])
+def test_a_log_under_a_tolerated_directory_run_as_the_launcher_does_not_run(
+    tree: Path, tmp_path: Path, checked: bool
+) -> None:
+    # The concrete case: the contract admits a `.log`, and python runs a `.log` as a
+    # script. The `without-it` run proves the channel is real: no tolerance, same launcher,
+    # and the script runs.
+    marker = tmp_path / "the-log-ran"
+    (tree / "logs").mkdir()
+    _commit(
+        tree,
+        {
+            "logs/kept.log": b"kept\n",
+            "logs/x.log": (
+                "import pathlib, subprocess, sys\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n"
+                "sys.exit(subprocess.run([sys.executable, '-m', 'pytest', *sys.argv[1:]])"
+                ".returncode)\n"
+            ).encode(),
+        },
+    )
+    spec = _single_row_spec(tmp_path, "spec", "KILLED", launcher=["{python}", "logs/x.log"])
+    tolerance = ["--tolerate-dirty", "logs"] if checked else []
+
+    result = _ablate([str(spec), "--tree", str(tree), *tolerance], tmp_path)
+
+    if checked:
+        assert not marker.exists(), (
+            f"the .log ran as the launcher under a tolerated directory: exited "
+            f"{result.returncode}: {result.stdout}{result.stderr}"
+        )
+        assert result.returncode == 3, result.stdout + result.stderr
+        assert (
+            "item 0: spec: key launcher: logs/x.log (logs/x.log) lies under the tolerated "
+            f"directory logs, {_RUNS_UNSEEN}"
+        ) in result.stderr.splitlines()
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert marker.read_text() == "ran"
 
 
 # Each verse of a change under the tolerated directory, the state it starts from, and how
@@ -2024,14 +2725,41 @@ def test_with_tolerate_dirty_a_file_outside_the_directory_during_the_mutation_ex
     assert _porcelain(tree) == ""
 
 
+# A `git` that answers the first `git -C <tree> status` and refuses every later one, and
+# runs every other command. A broken index would fail the listing of tracked files too, and
+# the content contract reads the status once as an argument: either would stop the run
+# before the check this is meant to reach, the status taken before the run.
+_GIT_WITHOUT_STATUS = """#!/bin/sh
+if [ "$3" = status ]; then
+    if [ -e {seen} ]; then
+        echo "fatal: status refused by the test" >&2
+        exit 128
+    fi
+    : > {seen}
+fi
+exec {git} "$@"
+"""
+
+
 def test_with_tolerate_dirty_git_that_cannot_read_the_tree_before_the_run_exits_5(
     tree: Path, tmp_path: Path
 ) -> None:
     _tolerating_tree(tree)
-    (tree / ".git" / "index").write_bytes(b"not an index\n")
+    real_git = shutil.which("git")
+    assert real_git is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text(
+        _GIT_WITHOUT_STATUS.format(git=real_git, seen=tmp_path / "status-answered")
+    )
+    (bin_dir / "git").chmod(0o755)
     spec = _single_row_spec(tmp_path, "spec", "KILLED")
 
-    result = _ablate(_tolerating(spec, tree, "--skip-preflight"), tmp_path)
+    result = _ablate(
+        _tolerating(spec, tree),
+        tmp_path,
+        {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
 
     assert result.returncode == 5, result.stdout + result.stderr
     assert _refusals(result.stderr) == [

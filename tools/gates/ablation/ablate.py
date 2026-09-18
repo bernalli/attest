@@ -36,7 +36,8 @@ arguments, those of `--tolerate-dirty` included (exit 3); a journal directory al
 under the tree (exit 8 when it holds `owner.json`, 5 when it does not; it is never
 touched); the spec against its schema and against the tree ("item 0", exit 3); a
 `--only` that names an id not in the spec, or selects nothing (exit 4); a tree that is
-dirty before the run outside the tolerated directories (exit 5); and the acquisition
+dirty before the run outside the tolerated directories, or under them against their
+contract (exit 5); and the acquisition
 of the journal (exit 8 when another process wins it). Only then is anything mutated.
 `--preflight` takes the same checks up to item 0 and stops there.
 
@@ -47,18 +48,40 @@ reference, and the snapshot taken during each mutation and the one taken after t
 run must show exactly those lines there; a line that appeared, disappeared or changed
 its status is named with its path, its kind and the directory it lies under. A line
 git prints for a whole untracked directory (`?? DIR/`) is never tolerated: it stays
-the same whatever appears inside, so it could not be compared. An empty
-DIR, one that resolves to the root of the tree or outside it, and one that is not an
-existing directory are refused with exit 3, before anything else: a tolerance that can
-cover everything is a switch, not a tolerance. Item 0 refuses with exit 3 a mutant
-whose file lies under a tolerated directory, even with `--skip-preflight`. With the
+the same whatever appears inside, so it could not be compared. DIR must name a
+proper, non-empty part of what `git status` can list in the tree, or it is refused
+with exit 3, before anything else: not the root, which the empty DIR also names and
+which would tolerate everything -- a switch, not a tolerance -- and not a directory
+with no tracked file under it (`.git`, the journal, an untracked directory, an
+ignored one that holds no tracked file, a gitlink), under which git never lists a
+line, so tolerating it would do nothing in silence. DIR must also resolve inside the
+tree to an existing directory. And DIR must hold transcripts only, or it is refused
+with exit 3 in the same phase: every tracked file under it ends in `.log`, save the
+`.gitignore` directly in it, and every line `git status` prints under it names a
+`.log` -- a line git quoted or collapsed does not -- and none of those entries is a
+link or a directory: a link named like a transcript would decide where a path
+through it leads, a suite's included. The contract quantifies over what
+lives under DIR, a set one reads by looking at the directory, not over whatever might
+consume it. That is also where it ends: it binds what lives under DIR, not what reads
+DIR from outside, so a test elsewhere that reads a `.log` of DIR as data is out of its
+reach by construction. The contract is read again on the reference, the tolerated
+lines of the tree read before the run, which exits 5 when they break it; after
+that, a line that is not a `.log` appearing under DIR is a tolerated line that
+appeared, refused like any other. Item 0 refuses
+with exit 3, even with `--skip-preflight`, a launcher element that lies under a
+tolerated directory -- the contract admits a `.log`, and python runs a `.log` as a
+script -- and a mutant that would run something there: the file a source mutant
+changes (a `.log` the contract admits), the module a plugin mutant loads, and a pytest
+`suite` entry (its path before `::`) that lies under a tolerated directory or contains
+one. With the
 flag, stdout carries `dirty tolerated: <N> line(s) under <DIR>[, <DIR>...]` once the
 tree has been read before the run, N counting the reference lines, and `results.json`
 carries `dirty_tolerated`: the directories and the reference lines. The flag is
 refused with `--restore` and `--preflight`, which it would not change.
 
 Exit status, and no other: 0 everything verified; 3 invalid arguments or spec; 4
-nothing selected; 5 dirty before the run, outside the tolerated directories; 6 dirty
+nothing selected; 5 dirty before the run, outside the tolerated directories or under
+them against their contract; 6 dirty
 after it outside them, or under them with lines that are not those of the start of
 the run; 7 a declared `expect_verdict` not met; 8 the journal is held; 9 a journal
 record is in a state nobody wrote; 10 a mutation ran without its three traces; 11
@@ -85,6 +108,7 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
 import re
 import secrets
 import shutil
@@ -656,36 +680,164 @@ def _repeated_key_problems(raw: Any, repeated: _RepeatedKeys) -> list[str]:
     return problems
 
 
-def _tolerated_file_problem(
-    mutant: dict[str, Any], label: str, tree: Path, tolerated: Sequence[str]
-) -> str | None:
-    """Why a schema-valid source mutant's file lies under a tolerated directory, or `None`.
+def _tree_relative_forms(tree: Path, path: PurePosixPath) -> list[str]:
+    """The tree-relative forms of `path`, relative to `tree`: as written and as resolved.
 
-    The file is checked as written, when that is a normalized tree-relative path, and
-    once resolved against the tree, symbolic links included, because the journal
-    mutates the resolved file. Under a tolerated directory the bench no longer reads
-    `git status` in absolute terms, so a mutation there is one it has chosen not to see.
+    The written form is normalized lexically (`.` for the root), taken relative to the
+    tree when it is absolute, and dropped when it lies outside the tree; the resolved
+    one follows `..` and symbolic links on disk, and is dropped when it lands outside.
+    A path that is under a tolerated directory in either form is under it: git lists
+    the resolved file, a runner may open the written.
     """
-    if not tolerated or mutant.get("kind", "source") != "source":
-        return None
-    rel_path: str = mutant["file"]
-    directory = None
-    if _tree_relative_problem(rel_path) is None:
-        directory = _covering_dir(rel_path, tolerated)
-    if directory is None:
-        try:
-            resolved = (tree / rel_path).resolve()
-        except (OSError, RuntimeError, ValueError):
-            resolved = None
-        if resolved is not None and resolved.is_relative_to(tree):
-            directory = _covering_dir(resolved.relative_to(tree).as_posix(), tolerated)
-    if directory is None:
-        return None
-    return (
-        f"item 0: mutant {label}: key file: {rel_path} lies under the tolerated directory "
-        f"{directory}, where the bench does not read git status in absolute terms, so a "
-        "mutation there would not be seen"
+    forms: list[str] = []
+    lexical = posixpath.normpath(path.as_posix())
+    if path.is_absolute():
+        root = tree.as_posix()
+        if lexical == root or lexical.startswith(root.rstrip("/") + "/"):
+            forms.append(posixpath.relpath(lexical, root))
+    elif lexical != ".." and not lexical.startswith("../"):
+        forms.append(lexical)
+    try:
+        resolved = (tree / path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return forms
+    if resolved.is_relative_to(tree):
+        forms.append(resolved.relative_to(tree).as_posix())
+    return forms
+
+
+def _containing(path: str, dirs: Sequence[str]) -> str | None:
+    """The first of `dirs` that `path` is, or contains, component by component, or `None`."""
+    parts = PurePosixPath(path).parts
+    for directory in dirs:
+        if PurePosixPath(directory).parts[: len(parts)] == parts:
+            return directory
+    return None
+
+
+def _tolerated_problems(
+    mutant: dict[str, Any], label: str, tree: Path, tolerated: Sequence[str]
+) -> list[str]:
+    """Each thing of a schema-valid mutant that would run where git status is not absolute.
+
+    Under a tolerated directory the bench no longer reads `git status` in absolute
+    terms, so nothing that decides a verdict may live there: the file a source mutant
+    changes, the module a plugin mutant loads (`a.b` as `a/b.py` and as
+    `a/b/__init__.py`), and every entry of a pytest `suite` -- the path before `::` --
+    which is refused both when it lies under a tolerated directory and when it contains
+    one, since pytest given a directory collects what is below. Every path is judged as
+    written and as resolved on disk. The entries of a vitest suite are not judged: vitest
+    reads them as substrings of file paths, not as paths, so no path check describes
+    what they select.
+
+    The file check is reachable: a mutant may change a `.log` under a tolerated
+    directory, which the content contract of `_tolerated_dirs` admits. For the plugin
+    and suite checks the contract closes one route and leaves others open. Closed: a
+    plugin module or a test file that git tracks or lists under a tolerated directory,
+    since the contract admits there only `.log` files and its own `.gitignore`, so such
+    a directory is refused as an argument before item 0 runs -- that case is tested by
+    calling these checks directly, because through `main` it would prove the contract.
+    Open, and reached through `main`: a plugin module or a test file that git ignores
+    there, which the contract never sees; a suite entry that names the directory itself,
+    the root, a `.log`, or a path that does not exist there; and a plugin whose module
+    does not exist there (with `--skip-preflight`, which skips the module's existence).
+    """
+    if not tolerated:
+        return []
+    problems: list[str] = []
+    why = (
+        "where the bench does not read git status in absolute terms, so what runs there "
+        "would not be seen"
     )
+    if mutant.get("kind", "source") == "source":
+        rel_path: str = mutant["file"]
+        for form in _tree_relative_forms(tree, PurePosixPath(rel_path)):
+            directory = _covering_dir(form, tolerated)
+            if directory is not None:
+                problems.append(
+                    f"item 0: mutant {label}: key file: {rel_path} lies under the tolerated "
+                    f"directory {directory}, where the bench does not read git status in "
+                    "absolute terms, so a mutation there would not be seen"
+                )
+                break
+    else:
+        # A module git tracks or lists under a tolerated directory never reaches this
+        # through `main`: the content contract refuses the directory first. One git
+        # ignores does. See the docstring.
+        module = PurePosixPath(*mutant["plugin"].split("."))
+        for candidate in (module.with_suffix(".py"), module / "__init__.py"):
+            directory = next(
+                (
+                    found
+                    for form in _tree_relative_forms(tree, candidate)
+                    if (found := _covering_dir(form, tolerated)) is not None
+                ),
+                None,
+            )
+            if directory is not None:
+                problems.append(
+                    f"item 0: mutant {label}: key plugin: {mutant['plugin']} ({candidate}) "
+                    f"lies under the tolerated directory {directory}, {why}"
+                )
+                break
+    if mutant.get("runner", "pytest") != "pytest":
+        return problems
+    # A test file git tracks or lists under a tolerated directory never reaches this
+    # through `main`: the content contract refuses the directory first. One git ignores
+    # does. See the docstring.
+    for entry in mutant["suite"]:
+        path = PurePosixPath(entry.split("::", 1)[0])
+        for form in _tree_relative_forms(tree, path):
+            under = _covering_dir(form, tolerated)
+            contained = None if under is not None else _containing(form, tolerated)
+            if under is not None or contained is not None:
+                relation = (
+                    f"lies under the tolerated directory {under}"
+                    if under is not None
+                    else f"contains the tolerated directory {contained}"
+                )
+                problems.append(
+                    f"item 0: mutant {label}: key suite: {entry} ({form}) {relation}, {why}"
+                )
+                break
+    return problems
+
+
+def _launcher_problems(raw: Any, tree: Path, tolerated: Sequence[str]) -> list[str]:
+    """Each element of the spec's launcher that lies under a tolerated directory.
+
+    The launcher is what runs every pytest suite, from the root of the tree. Each
+    element, once `{tree}` and `{python}` are substituted, is judged whole as one path,
+    relative to the tree or absolute, as written and as resolved, and it is refused when
+    either form lies strictly under a tolerated directory D. That refuses `python D/x.log`,
+    which runs as a script a `.log` the content contract of `_tolerated_dirs` admits
+    under D, whether the path is written plainly, through `..`, as an absolute path or
+    through a link. It does not refuse a path named inside a longer element -- a command
+    string such as `sh -c "python D/x.log"`, an option such as `--opt=D/x.log` -- nor a
+    file the launcher's code reads instead of naming, such as `python -c` with code that
+    opens `D/x.log`, nor a module named by its dotted name, such as `-m D.x`, nor an
+    element that is D itself or contains it, the root included, which the default
+    launcher names as `--directory {tree}`. Such a launcher is not refused here: only the
+    content contract applies to what it reaches under D, and the contract admits `.log`
+    files there. A spec without a valid launcher is left to the schema.
+    """
+    if not tolerated or not isinstance(raw, dict):
+        return []
+    launcher = raw.get("launcher", list(DEFAULT_LAUNCHER))
+    if not _is_string_list(launcher):
+        return []
+    problems: list[str] = []
+    for element, argument in zip(launcher, _launcher_argv(launcher, tree), strict=True):
+        for form in _tree_relative_forms(tree, PurePosixPath(argument)):
+            directory = _covering_dir(form, tolerated)
+            if directory is not None:
+                problems.append(
+                    f"item 0: spec: key launcher: {element} ({form}) lies under the tolerated "
+                    f"directory {directory}, where the bench does not read git status in "
+                    "absolute terms, so what runs there would not be seen"
+                )
+                break
+    return problems
 
 
 def item_zero(
@@ -697,13 +849,15 @@ def item_zero(
     itself is unusable) and the key. With `tree_checks` false, the checks that read
     the tree -- a file tracked by git and UTF-8, an anchor present once at the
     start of a line, a plugin's file, a package's test tools -- are skipped; the
-    schema is checked either way, and so is a source mutant's file against the
-    directories in `tolerated`: `--skip-preflight` exists to skip the anchors, not the
-    refusal of a mutation where git status is no longer read in absolute terms.
+    schema is checked either way, and so is everything a run executes against the
+    directories in `tolerated` -- the launcher (see `_launcher_problems`), a mutant's
+    file, its plugin's module, its pytest suite entries (see `_tolerated_problems`):
+    `--skip-preflight` exists to skip the anchors, not the refusal of something that
+    runs where git status is no longer read in absolute terms.
     """
     if not isinstance(raw, dict):
         return 0, [f"item 0: spec: must be a JSON object, found {_type_name(raw)}"]
-    problems = _top_level_problems(raw)
+    problems = _top_level_problems(raw) + _launcher_problems(raw, tree, tolerated)
     mutants = raw.get("mutants")
     if not isinstance(mutants, list):
         return 0, problems
@@ -734,9 +888,7 @@ def item_zero(
             else:
                 first_index[identifier] = index
         if not row_problems:
-            tolerated_problem = _tolerated_file_problem(row, label, tree, tolerated)
-            if tolerated_problem is not None:
-                row_problems.append(tolerated_problem)
+            row_problems += _tolerated_problems(row, label, tree, tolerated)
             if tree_checks:
                 row_problems += _tree_problems(row, label, tree, tracked)
         problems += row_problems
@@ -1387,6 +1539,15 @@ def _dirty_before_refusal(
             f"REFUSING: {tree} is dirty before the run outside the tolerated directories "
             f"{list(tolerated)} (git status --porcelain --untracked-files=normal): {outside}"
         )
+    # The contract was read on the arguments; the reference is read later, so what
+    # appeared under a directory in between is held to the contract here.
+    for directory in tolerated:
+        broken = _contract_problem(directory, [], reference, tree)
+        if broken is not None:
+            return reference, (
+                f"REFUSING: {tree} is dirty before the run under the tolerated directory "
+                f"{directory} against its contract: {broken}"
+            )
     return reference, None
 
 
@@ -1635,8 +1796,8 @@ def _parser() -> _Parser:
         action="store_true",
         help=(
             "skip the checks of the spec against the tree's contents -- anchors, tracked "
-            "files, plugins, test tools; a file under a --tolerate-dirty directory is refused "
-            "anyway (requires --tree)"
+            "files, plugins, test tools; a launcher element, file, plugin module or suite "
+            "entry under a --tolerate-dirty directory is refused anyway (requires --tree)"
         ),
     )
     parser.add_argument(
@@ -1651,8 +1812,11 @@ def _parser() -> _Parser:
         help=(
             "a directory of the tree, relative to --tree, whose git status lines do not make "
             "the tree dirty as long as they stay exactly the lines of the start of the run; "
-            "repeatable; requires --tree; never the root or outside the tree; refused with "
-            "--restore and --preflight, where it would change nothing"
+            "repeatable; requires --tree; must name a proper, non-empty part of what git "
+            "status can list -- never the root, nor a directory with no tracked file under "
+            "it such as .git or an untracked one; must hold only .log files, save its own "
+            ".gitignore; no launcher element, plugin module or suite entry may lie under it; "
+            "refused with --restore and --preflight, where it would change nothing"
         ),
     )
     return parser
@@ -1690,36 +1854,145 @@ def _invocation_problem(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _tracked_files(tree: Path) -> list[str] | None:
+    """The paths `git ls-files` lists in `tree`, or `None` when git cannot list them."""
+    listing = _git(tree, "ls-files", "-z")
+    if listing.returncode != 0:
+        return None
+    return [name for name in listing.stdout.split("\0") if name]
+
+
+def _dirs_holding_tracked_files(tracked: Sequence[str] | None) -> set[tuple[str, ...]] | None:
+    """Every directory with a file of `tracked` strictly under it, or `None` with `tracked`.
+
+    Each directory is the tuple of its components; the root, `()`, is in the set when
+    anything is tracked. A gitlink is an entry of the index, not a directory holding
+    one, so it adds only its ancestors.
+    """
+    if tracked is None:
+        return None
+    holding: set[tuple[str, ...]] = set()
+    for name in tracked:
+        parts = PurePosixPath(name).parts
+        holding.update(parts[:depth] for depth in range(len(parts)))
+    return holding
+
+
+#: What a file under a tolerated directory must be: a transcript.
+_TRANSCRIPT_SUFFIX = ".log"
+
+
+def _contract_problem(
+    directory: str, tracked: Sequence[str], status: Sequence[str] | None, tree: Path
+) -> str | None:
+    """Why `directory` breaks the content contract of a tolerated directory, or `None`.
+
+    The contract: every file under the directory is a transcript -- its name ends in
+    `.log` -- save the `.gitignore` directly in it, and every line `git status` prints
+    under it names a `.log`. It quantifies over what lives under the directory, a set
+    one can read, instead of over whatever might consume it. A line under the directory
+    that cannot be read -- a path git quoted, a collapsed `?? DIR/sub/` -- is not a
+    `.log` line, so it breaks the contract. So does an entry that is a link or a
+    directory on disk, a gitlink's included, whatever its name: a link named like a
+    transcript decides where a path through it leads, and retargeting it is a change
+    the bench would tolerate. The reverse is out of its reach by
+    construction: it binds what lives under the directory, not what reads it from
+    outside, so a test elsewhere that reads a `.log` there as data is not bound by it.
+    """
+    prefix = PurePosixPath(directory).parts
+    own_ignore = f"{directory}/.gitignore"
+    for name in tracked:
+        parts = PurePosixPath(name).parts
+        if len(parts) > len(prefix) and parts[: len(prefix)] == prefix:
+            if name != own_ignore and not name.endswith(_TRANSCRIPT_SUFFIX):
+                return f"{name} is tracked there and is not a {_TRANSCRIPT_SUFFIX}"
+            if (tree / name).is_symlink() or (tree / name).is_dir():
+                return f"{name} is tracked there and is a link or a directory, not a file"
+    if status is None:
+        return "git cannot list the status of the tree, so what lies there cannot be said"
+    for line in status:
+        match = _STATUS_LINE.match(line)
+        if match is None:
+            continue
+        fields = match["field"].split(" -> ")
+        written = [field.lstrip('"').rstrip("/") for field in fields]
+        if not any(_covering_dir(field, [directory]) is not None for field in written):
+            continue
+        paths = _status_line_paths(line)
+        if paths is None or not all(
+            path.endswith(_TRANSCRIPT_SUFFIX)
+            for path in paths
+            if _covering_dir(path, [directory]) is not None
+        ):
+            return f"git status lists {line!r} there, which does not name a {_TRANSCRIPT_SUFFIX}"
+        if any(
+            (tree / path).is_symlink() or (tree / path).is_dir()
+            for path in paths
+            if _covering_dir(path, [directory]) is not None
+        ):
+            return f"git status lists {line!r} there, which names a link or a directory, not a file"
+    return None
+
+
+def _observable_part_problem(
+    relative: str, holding: set[tuple[str, ...]] | None
+) -> tuple[str, str] | None:
+    """Which side of "a proper, non-empty part of what git status can list" `relative` misses.
+
+    `relative` is an existing directory of the tree, relative to it. It names ALL of
+    what git status can list when it is the root. It names NONE of it when no tracked
+    file lies strictly under it: with `--untracked-files=normal` git lists the files of
+    a directory one by one only when something under it is tracked, and otherwise
+    prints the one collapsed line `?? DIR/` or nothing -- an untracked directory, one git
+    ignores with no tracked file in it, `.git`, the journal, a gitlink. An ignored
+    directory that does hold a tracked file is a part: git lists that file when it
+    changes. Returns the side and why, or `None`; with
+    `holding` `None`, git could not list the index and only the root can be judged, so
+    anything else is refused as an unknown part rather than guessed.
+    """
+    parts = PurePosixPath(relative).parts
+    if not parts:
+        return "all", (
+            "it resolves to the root of the tree, so tolerating it would switch the "
+            "dirty-tree check off instead of narrowing it"
+        )
+    if holding is None:
+        return "an unknown part", (
+            "git cannot list the tracked files of the tree, so whether any lies under it "
+            "cannot be said"
+        )
+    if parts not in holding:
+        return "none", (
+            "no file tracked by git lies under it, so git status never lists a line under "
+            "it and tolerating it would change nothing"
+        )
+    return None
+
+
 def _tolerated_dirs(given: Sequence[str], tree: Path) -> tuple[tuple[str, ...], list[str]]:
     """The directories `--tolerate-dirty` names, relative to `tree`, and why any cannot be one.
 
     Each argument is resolved against `tree`, with `..` and symbolic links resolved.
-    It is refused when it is empty or resolves to the root of the tree -- a tolerance
-    that can cover everything is a switch that turns the dirty-tree check off, not a
-    tolerance -- when it resolves outside the tree, and when it does not name an
-    existing directory. The root is checked first. Arguments that resolve to the same
-    directory count once, in the order of their first appearance.
+    It is refused when it resolves outside the tree, when it does not name an existing
+    directory, and when it does not name a proper, non-empty part of what `git status`
+    can list in the tree: the root, which the empty argument also names, would tolerate
+    everything -- a switch, not a tolerance -- and a directory with no tracked file
+    under it would tolerate nothing, which a flag must not do in silence. A directory
+    that passes is then held to the content contract (`_contract_problem`): transcripts
+    only. Arguments that resolve to the same directory count once, in the order of
+    their first appearance.
     """
     dirs: list[str] = []
     problems: list[str] = []
+    tracked = _tracked_files(tree) if given else None
+    holding = _dirs_holding_tracked_files(tracked)
+    status = _porcelain(tree) if given else None
     for raw in given:
         where = f"--tolerate-dirty {raw!r}"
-        if not raw:
-            problems.append(
-                f"{where}: an empty path names the root of the tree, and tolerating the root "
-                "would switch the dirty-tree check off instead of narrowing it"
-            )
-            continue
         try:
             resolved = (tree / raw).resolve()
         except (OSError, RuntimeError, ValueError) as exc:
             problems.append(f"{where}: cannot be resolved ({exc})")
-            continue
-        if resolved == tree:
-            problems.append(
-                f"{where}: resolves to the root of the tree {tree}, and tolerating the root "
-                "would switch the dirty-tree check off instead of narrowing it"
-            )
             continue
         if not resolved.is_relative_to(tree):
             problems.append(f"{where}: resolves to {resolved}, outside the tree {tree}")
@@ -1731,6 +2004,23 @@ def _tolerated_dirs(given: Sequence[str], tree: Path) -> tuple[tuple[str, ...], 
             problems.append(f"{where}: {resolved} is not a directory")
             continue
         relative = resolved.relative_to(tree).as_posix()
+        missed = _observable_part_problem(relative, holding)
+        if missed is not None:
+            side, why = missed
+            problems.append(
+                f"{where}: must name a proper, non-empty part of what git status can list in "
+                f"{tree}, and {resolved} names {side} of it: {why}"
+            )
+            continue
+        # A `None` listing is refused above, as an unknown part.
+        broken = _contract_problem(relative, tracked or [], status, tree)
+        if broken is not None:
+            problems.append(
+                f"{where}: {relative} breaks the contract of a tolerated directory -- every "
+                f"file under it is a transcript, a {_TRANSCRIPT_SUFFIX}, save its own "
+                f".gitignore: {broken}"
+            )
+            continue
         if relative not in dirs:
             dirs.append(relative)
     return tuple(dirs), problems
