@@ -179,7 +179,11 @@ sys.exit(ablate.main(sys.argv[4:]))
 """
 
 # A launcher standing in for `python -m pytest`, which misbehaves the way
-# ABLATION_TEST_LAUNCHER_MODE says, and only while `sample.py` holds `VALUE = 0`.
+# ABLATION_TEST_LAUNCHER_MODE says, only while `sample.py` holds `VALUE = 0` -- except the
+# modes `tolerated-<verse>-during`, which change `logs/` in the baseline run, before the
+# snapshot taken during the mutation, and undo the change in the mutated run, before the
+# snapshot taken after the run. The modes `tolerated-<verse>-after` change `logs/` in the
+# mutated run, after the snapshot taken during the mutation.
 _LAUNCHER = """
 import json, os, subprocess, sys
 from pathlib import Path
@@ -194,6 +198,23 @@ if mutated and mode == "concurrent-writer":
     (tree / "sample.py").write_bytes(b"VALUE = 5\\n")
 if mutated and mode == "stray-file":
     (tree / "stray.txt").write_text("left by the suite\\n")
+if mode.startswith("tolerated-"):
+    verse, when = mode[len("tolerated-"):].split("-")
+    logs = tree / "logs"
+    if (when == "after" and mutated) or (when == "during" and not mutated):
+        if verse == "appears":
+            (logs / "new.log").write_text("new\\n")
+        elif verse == "disappears":
+            (logs / "old.log").unlink()
+        else:
+            (logs / "kept.log").unlink()
+    elif when == "during" and mutated:
+        if verse == "appears":
+            (logs / "new.log").unlink()
+        elif verse == "disappears":
+            (logs / "old.log").write_text("old\\n")
+        else:
+            (logs / "kept.log").write_text("kept, edited\\n")
 code = subprocess.run([sys.executable, "-m", "pytest", *sys.argv[1:]], env=env).returncode
 if mutated and mode == "incoherent-outcomes":
     path = Path(os.environ["ABLATION_OUTCOMES"])
@@ -839,6 +860,7 @@ def test_preflight_takes_the_journal_check_before_item_0(
 
 _ORDER_CASES = [
     "arguments-before-journal",
+    "tolerate-dirty-argument-before-journal",
     "journal-before-item-0",
     "item-0-before-only",
     "only-before-dirty",
@@ -857,6 +879,14 @@ def test_the_entry_checks_run_in_their_order(tree: Path, tmp_path: Path, case: s
         journal_dir.mkdir()
         (journal_dir / "owner.json").write_text('{"pid": 1}\n')
         args, code, marker = [*base, "--bogus"], 3, "ablate.py: error: "
+    elif case == "tolerate-dirty-argument-before-journal":
+        journal_dir.mkdir()
+        (journal_dir / "owner.json").write_text('{"pid": 1}\n')
+        args, code, marker = (
+            [*base, "--tolerate-dirty", "."],
+            3,
+            "ablate.py: error: --tolerate-dirty '.': resolves to the root of the tree",
+        )
     elif case == "journal-before-item-0":
         journal_dir.mkdir()
         args, code, marker = (
@@ -1359,6 +1389,9 @@ def test_the_fixture_spec_confirms_five_applications_and_meets_its_expectations(
         < lines.index(f"{FIXTURE_IDS[0]}: KILLED (1/5 red)")
     )
     payload = json.loads(out.read_text())
+    # Without --tolerate-dirty nothing of it shows: no marker line, no field.
+    assert not [line for line in lines if line.startswith("dirty tolerated:")]
+    assert list(payload) == ["summary", "results"]
     summary = payload["summary"]
     assert summary["nonce_of_run"] == run_nonce
     assert summary["mutant_ids"] == FIXTURE_IDS
@@ -1511,3 +1544,429 @@ def test_more_than_one_mutant_all_surviving_exits_11_and_prints_their_traces(
         ]
         assert len(traces) == 1 and f'git_dirty_during=[" M {target}"]' in traces[0]
     assert _porcelain(tree) == ""
+
+
+# --- --tolerate-dirty -----------------------------------------------------------------------------
+
+# Every expected line below is written from the rule it pins, never from what the
+# predicate under test answers.
+_TOLERATED = "logs"
+_TOLERATED_MARKER = "dirty tolerated: {n} line(s) under logs"
+_ROOT_REASON = (
+    "resolves to the root of the tree {tree}, and tolerating the root would switch the "
+    "dirty-tree check off instead of narrowing it"
+)
+
+
+def _tolerating_tree(tree: Path) -> Path:
+    """The fixture tree with `logs/` tracked, so git lists what changes there file by file."""
+    (tree / _TOLERATED).mkdir()
+    _commit(tree, {"logs/kept.log": b"kept\n", "logs/mod.py": b"VALUE = 2\n"})
+    return tree
+
+
+def _tolerating(spec: Path, tree: Path, *extra: str) -> list[str]:
+    return [str(spec), "--tree", str(tree), "--tolerate-dirty", _TOLERATED, *extra]
+
+
+def _refusals(stderr: str) -> list[str]:
+    return [line for line in stderr.splitlines() if line.startswith("REFUSING")]
+
+
+_TOLERATE_ARGUMENT_REFUSALS = [
+    (
+        "empty",
+        "",
+        "an empty path names the root of the tree, and tolerating the root would switch "
+        "the dirty-tree check off instead of narrowing it",
+    ),
+    ("dot", ".", _ROOT_REASON),
+    ("dot-slash", "./", _ROOT_REASON),
+    ("sub-dotdot", "logs/..", _ROOT_REASON),
+    ("absolute-root", "<ROOT>", _ROOT_REASON),
+    ("link-to-root", "root-link", _ROOT_REASON),
+    ("dotdot", "..", "resolves to {parent}, outside the tree {tree}"),
+    ("absolute-outside", "<OUTSIDE>", "resolves to {outside}, outside the tree {tree}"),
+    ("link-outside", "out-link", "resolves to {outside}, outside the tree {tree}"),
+    ("absent", "no-such-dir", "{tree}/no-such-dir does not exist"),
+    ("not-a-directory", "sample.py", "{tree}/sample.py is not a directory"),
+]
+
+
+@pytest.mark.parametrize(
+    ("given", "reason"),
+    [(given, reason) for _name, given, reason in _TOLERATE_ARGUMENT_REFUSALS],
+    ids=[name for name, _given, _reason in _TOLERATE_ARGUMENT_REFUSALS],
+)
+def test_a_tolerate_dirty_argument_that_is_the_root_or_not_a_directory_of_the_tree_exits_3(
+    tree: Path, tmp_path: Path, given: str, reason: str
+) -> None:
+    _tolerating_tree(tree)
+    (tmp_path / "elsewhere").mkdir()
+    outside = (tmp_path / "elsewhere").resolve()
+    (tree / "root-link").symlink_to(tree)
+    (tree / "out-link").symlink_to(outside)
+    argument = given.replace("<ROOT>", str(tree)).replace("<OUTSIDE>", str(outside))
+    expected = f"ablate.py: error: --tolerate-dirty {argument!r}: " + reason.format(
+        tree=tree, parent=tree.parent, outside=outside
+    )
+    porcelain = _porcelain(tree)
+
+    result = _ablate(
+        [str(_SPEC_FIXTURE), "--tree", str(tree), "--tolerate-dirty", argument], tmp_path
+    )
+
+    assert (result.returncode, result.stderr.splitlines()) == (3, [expected]), (
+        f"--tolerate-dirty {argument!r} was not refused as an argument: exited "
+        f"{result.returncode}: {result.stderr}"
+    )
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+    assert _porcelain(tree) == porcelain
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (
+            ["SPEC", "--tolerate-dirty", "logs"],
+            "ablate.py: error: --tolerate-dirty is allowed only with an explicit --tree",
+        ),
+        (
+            ["--restore", "--tree", "TREE", "--tolerate-dirty", "logs"],
+            "ablate.py: error: --restore takes only --tree, found ['--tolerate-dirty']",
+        ),
+        (
+            ["SPEC", "--tree", "TREE", "--preflight", "--tolerate-dirty", "logs"],
+            "ablate.py: error: --tolerate-dirty has no effect with --preflight, which never "
+            "reads git status",
+        ),
+    ],
+    ids=["without-tree", "with-restore", "with-preflight"],
+)
+def test_tolerate_dirty_without_a_tree_or_where_it_changes_nothing_exits_3(
+    tree: Path, tmp_path: Path, args: list[str], message: str
+) -> None:
+    _tolerating_tree(tree)
+    concrete = [
+        str(_SPEC_FIXTURE) if arg == "SPEC" else str(tree) if arg == "TREE" else arg for arg in args
+    ]
+
+    result = _ablate(concrete, tmp_path)
+
+    assert (result.returncode, result.stderr.splitlines()) == (3, [message]), result.stderr
+    assert not (tree / JOURNAL_DIRNAME).exists()
+
+
+@pytest.mark.parametrize(
+    ("line", "tolerated"),
+    [
+        ("?? logs/new.log", True),
+        (" M logs/kept.log", True),
+        (" D logs/kept.log", True),
+        # An untracked directory git collapsed into one line, the tolerated one or one
+        # inside it: what appears inside would leave the line as it is, so it cannot be
+        # compared. And the tolerated directory named alone, as git names a submodule.
+        ("?? logs/", False),
+        ("?? logs/sub/", False),
+        (" M logs", False),
+        ("?? deep/inner/x.log", True),
+        ("R  logs/kept.log -> logs/moved.log", True),
+        ("?? logs2/x.log", False),
+        ("?? logs2/", False),
+        ("?? deep/", False),
+        ("?? sample.py", False),
+        ('?? "logs/sp ace.log"', False),
+        ("R  logs/kept.log -> kept.log", False),
+        ("R  notes.txt -> logs/notes.txt", False),
+        ("R  logs/kept.log", False),
+        ("?? logs/a -> logs/b", False),
+        ("?? logs/../sample.py", False),
+        ("X  logs/new.log", False),
+        ("??logs/new.log", False),
+    ],
+)
+def test_a_status_line_is_tolerated_only_when_every_path_it_names_lies_under_a_directory(
+    ablate_module: ModuleType, line: str, tolerated: bool
+) -> None:
+    split = ablate_module._split_tolerated([line], ("logs", "deep/inner"))
+
+    assert split == (([line], []) if tolerated else ([], [line])), (
+        f"{line!r} should be {'tolerated' if tolerated else 'refused'}"
+    )
+
+
+def test_without_tolerate_dirty_a_dirty_file_in_the_directory_exits_5_as_before(
+    tree: Path, tmp_path: Path
+) -> None:
+    _tolerating_tree(tree)
+    (tree / "logs" / "new.log").write_text("new\n")
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+
+    result = _ablate([str(spec), "--tree", str(tree)], tmp_path)
+
+    assert result.returncode == 5, result.stdout + result.stderr
+    assert result.stderr.splitlines() == [
+        f"REFUSING: {tree} is dirty before the run, or git cannot say "
+        "(git status --porcelain --untracked-files=normal): ['?? logs/new.log']"
+    ]
+    assert "dirty tolerated" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+
+
+@pytest.mark.parametrize("dirty", [True, False], ids=["one-line", "no-line"])
+def test_with_tolerate_dirty_a_dirty_file_in_the_directory_is_tolerated_and_declared(
+    tree: Path, tmp_path: Path, dirty: bool
+) -> None:
+    _tolerating_tree(tree)
+    if dirty:
+        (tree / "logs" / "new.log").write_text("new\n")
+    reference = ["?? logs/new.log"] if dirty else []
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+    out = tmp_path / "results.json"
+
+    result = _ablate(_tolerating(spec, tree, "--out", str(out)), tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    assert _TOLERATED_MARKER.format(n=len(reference)) in lines
+    assert "applications_confirmed=1/1" in lines
+    payload = json.loads(out.read_text())
+    assert list(payload) == ["summary", "dirty_tolerated", "results"]
+    assert payload["dirty_tolerated"] == {"dirs": ["logs"], "lines": reference}
+    row = payload["results"][0]
+    assert (row["verdict"], row["confirmed"], row["git_dirty_during"]) == (
+        "KILLED",
+        True,
+        [" M sample.py"],
+    )
+    assert _porcelain(tree) == "".join(f"{line}\n" for line in reference)
+
+
+def test_tolerate_dirty_arguments_that_resolve_to_one_directory_count_once(
+    tree: Path, tmp_path: Path
+) -> None:
+    _tolerating_tree(tree)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+    out = tmp_path / "results.json"
+    aliases = ["--tolerate-dirty", "logs/", "--tolerate-dirty", "./logs"]
+
+    result = _ablate(_tolerating(spec, tree, *aliases, "--out", str(out)), tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _TOLERATED_MARKER.format(n=0) in result.stdout.splitlines()
+    assert json.loads(out.read_text())["dirty_tolerated"]["dirs"] == ["logs"]
+
+
+@pytest.mark.parametrize(
+    ("dirt", "tolerate", "line"),
+    [
+        ("stray.txt", "logs", "?? stray.txt"),
+        # A file, so git names it alone: a collapsed `?? logs2/` is refused before the
+        # comparison of components is ever reached.
+        ("logs2.log", "logs", "?? logs2.log"),
+        ("deep/x.log", "deep/inner", "?? deep/"),
+        ("logs/sp ace.log", "logs", '?? "logs/sp ace.log"'),
+        ("fresh/x.log", "fresh", "?? fresh/"),
+        ("logs/sub/x.log", "logs", "?? logs/sub/"),
+    ],
+    ids=[
+        "outside",
+        "sibling-sharing-a-prefix",
+        "directory-containing-it",
+        "quoted-by-git",
+        "the-tolerated-directory-collapsed",
+        "a-directory-collapsed-inside-it",
+    ],
+)
+def test_with_tolerate_dirty_a_line_outside_the_directory_exits_5_naming_it(
+    tree: Path, tmp_path: Path, dirt: str, tolerate: str, line: str
+) -> None:
+    _tolerating_tree(tree)
+    (tree / "deep" / "inner").mkdir(parents=True)
+    (tree / dirt).parent.mkdir(parents=True, exist_ok=True)
+    (tree / dirt).write_text("dirt\n")
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+
+    result = _ablate([str(spec), "--tree", str(tree), "--tolerate-dirty", tolerate], tmp_path)
+
+    assert result.returncode == 5, result.stdout + result.stderr
+    assert _refusals(result.stderr) == [
+        f"REFUSING: {tree} is dirty before the run outside the tolerated directories "
+        f"[{tolerate!r}] (git status --porcelain --untracked-files=normal): [{line!r}]"
+    ]
+    assert f"dirty tolerated: 0 line(s) under {tolerate}" in result.stdout.splitlines()
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+
+
+@pytest.mark.parametrize(
+    ("move", "line", "tolerated"),
+    [
+        (("logs/kept.log", "kept.log"), "R  logs/kept.log -> kept.log", False),
+        (("notes.txt", "logs/notes.txt"), "R  notes.txt -> logs/notes.txt", False),
+        (("logs/kept.log", "logs/moved.log"), "R  logs/kept.log -> logs/moved.log", True),
+    ],
+    ids=["out-of-the-directory", "into-the-directory", "within-the-directory"],
+)
+def test_a_rename_is_tolerated_only_when_both_of_its_paths_are(
+    tree: Path, tmp_path: Path, move: tuple[str, str], line: str, tolerated: bool
+) -> None:
+    _tolerating_tree(tree)
+    _commit(tree, {"notes.txt": b"notes\n"})
+    _git(tree, "mv", *move)
+    assert _porcelain(tree) == f"{line}\n"
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+    out = tmp_path / "results.json"
+
+    result = _ablate(_tolerating(spec, tree, "--out", str(out)), tmp_path)
+
+    if tolerated:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _TOLERATED_MARKER.format(n=1) in result.stdout.splitlines()
+        assert json.loads(out.read_text())["dirty_tolerated"]["lines"] == [line]
+    else:
+        assert result.returncode == 5, result.stdout + result.stderr
+        assert _refusals(result.stderr) == [
+            f"REFUSING: {tree} is dirty before the run outside the tolerated directories "
+            f"['logs'] (git status --porcelain --untracked-files=normal): [{line!r}]"
+        ]
+        assert not out.exists()
+
+
+@pytest.mark.parametrize("skip_preflight", [False, True], ids=["item-0", "skip-preflight"])
+@pytest.mark.parametrize("file", ["logs/mod.py", "lnk/mod.py"], ids=["as-written", "via-a-link"])
+def test_a_mutant_whose_file_lies_under_a_tolerated_directory_is_refused_by_item_0(
+    tree: Path, tmp_path: Path, file: str, skip_preflight: bool
+) -> None:
+    _tolerating_tree(tree)
+    (tree / "lnk").symlink_to("logs")
+    _git(tree, "add", "lnk")
+    _git(tree, "commit", "-m", "Add a link to the tolerated directory")
+    spec = _fixture_spec()
+    spec["mutants"] = [
+        {
+            "id": "TD1-under-tolerated",
+            "property": "a mutation where the bench no longer reads git status in absolute terms",
+            "file": file,
+            "old": "VALUE = 2",
+            "new": "VALUE = 0",
+            "suite": ["test_sample.py"],
+            "expect_red": [],
+        }
+    ]
+    spec_path = _write_spec(tmp_path / "spec.json", spec)
+    # `_tree_state` reads every tracked path as a file, and the tracked link is a directory.
+    before = (_porcelain(tree), (tree / "logs" / "mod.py").read_bytes())
+
+    result = _ablate(
+        _tolerating(spec_path, tree, *(["--skip-preflight"] if skip_preflight else [])), tmp_path
+    )
+
+    assert result.returncode == 3, (
+        f"{file} under the tolerated directory was not refused by item 0: exited "
+        f"{result.returncode}: {result.stdout}{result.stderr}"
+    )
+    assert (
+        f"item 0: mutant TD1-under-tolerated: key file: {file} lies under the tolerated "
+        "directory logs, where the bench does not read git status in absolute terms, so a "
+        "mutation there would not be seen"
+    ) in result.stderr.splitlines()
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+    assert (_porcelain(tree), (tree / "logs" / "mod.py").read_bytes()) == before
+
+
+# Each verse of a change under the tolerated directory, the state it starts from, and how
+# the refusal names it: path, kind, and the directory it lies under.
+_TOLERATED_VERSES = [
+    ("appears", None, "logs/new.log under tolerated directory logs: appeared '??'"),
+    (
+        "disappears",
+        ("logs/old.log", "old\n"),
+        "logs/old.log under tolerated directory logs: disappeared '??'",
+    ),
+    (
+        "changes",
+        ("logs/kept.log", "kept, edited\n"),
+        "logs/kept.log under tolerated directory logs: changed ' M'->' D'",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("verse", "start", "change"),
+    _TOLERATED_VERSES,
+    ids=[verse for verse, _start, _change in _TOLERATED_VERSES],
+)
+def test_a_tolerated_line_that_changes_during_the_run_exits_6_naming_path_and_kind(
+    tree: Path, tmp_path: Path, verse: str, start: tuple[str, str] | None, change: str
+) -> None:
+    _tolerating_tree(tree)
+    if start is not None:
+        (tree / start[0]).write_text(start[1])
+    reference = _porcelain(tree)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED", launcher=_launcher(tmp_path))
+    out = tmp_path / "results.json"
+
+    result = _ablate(
+        _tolerating(spec, tree, "--out", str(out)),
+        tmp_path,
+        {"ABLATION_TEST_LAUNCHER_MODE": f"tolerated-{verse}-after"},
+    )
+
+    assert result.returncode == 6, (
+        f"a tolerated line that {verse} during the run exited {result.returncode}: "
+        f"{result.stdout}{result.stderr}"
+    )
+    refusals = _refusals(result.stderr)
+    assert len(refusals) == 1, refusals
+    assert refusals[0].startswith(
+        f"REFUSING: {tree} is dirty after the run under the tolerated directories ['logs'], "
+        "whose lines are not those of the start of the run: "
+    ), refusals
+    assert change in refusals[0], f"the refusal deciding exit 6 does not name {change!r}"
+    assert _porcelain(tree) != reference
+    row = json.loads(out.read_text())["results"][0]
+    # The change came after the snapshot taken during the mutation: the row stands.
+    assert (row["verdict"], row["confirmed"]) == ("KILLED", True)
+
+
+@pytest.mark.parametrize(
+    ("verse", "start", "change"),
+    _TOLERATED_VERSES,
+    ids=[verse for verse, _start, _change in _TOLERATED_VERSES],
+)
+def test_a_tolerated_line_changed_before_the_mutation_snapshot_leaves_the_row_unmeasured(
+    tree: Path, tmp_path: Path, verse: str, start: tuple[str, str] | None, change: str
+) -> None:
+    _tolerating_tree(tree)
+    if start is not None:
+        (tree / start[0]).write_text(start[1])
+    reference = _porcelain(tree)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED", launcher=_launcher(tmp_path))
+
+    result = _ablate(
+        _tolerating(spec, tree),
+        tmp_path,
+        {"ABLATION_TEST_LAUNCHER_MODE": f"tolerated-{verse}-during"},
+    )
+
+    assert result.returncode == 10, (
+        f"a tolerated line that {verse} before the mutation snapshot exited "
+        f"{result.returncode}: {result.stdout}{result.stderr}"
+    )
+    refusals = _refusals(result.stderr)
+    assert len(refusals) == 1 and refusals[0].startswith("REFUSING TO CERTIFY: "), refusals
+    assert (
+        "the git trace of ST2-property-red failed on the tolerated directories, not on its "
+        "mutation, because their lines are not those of the start of the run: "
+    ) in refusals[0], refusals
+    assert change in refusals[0], f"the refusal deciding exit 10 does not name {change!r}"
+    row_lines = [
+        line for line in result.stdout.splitlines() if line.startswith("ST2-property-red:")
+    ]
+    assert len(row_lines) == 1 and row_lines[0].startswith("ST2-property-red: UNMEASURED -- ")
+    assert change in row_lines[0]
+    # The mutated run undid the change: the tree after the run is the tree before it.
+    assert _porcelain(tree) == reference

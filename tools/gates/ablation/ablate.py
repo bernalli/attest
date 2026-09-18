@@ -10,7 +10,9 @@ applied it and other than the classification:
   re-read of the target that confirmed the mutated bytes are on disk;
 * git: `git status --porcelain --untracked-files=normal`, taken after that re-read
   and before the suite, must name exactly the mutated file (and nothing, for a
-  mutant that loads a pytest plugin instead of changing a file);
+  mutant that loads a pytest plugin instead of changing a file) outside the
+  directories named by `--tolerate-dirty`, and must show under them exactly the
+  lines it showed there before the run;
 * the nonce: every suite run gets a fresh random nonce in its environment, and the
   outcome record it is classified from must carry that same nonce back. A vitest
   run that `tsc` stops before vitest runs echoes no nonce; for that row, and only
@@ -26,24 +28,46 @@ and it is compared with the number of mutations that had to land: a mismatch exi
 Usage:
     ablate.py <spec.json> [--tree PATH] [--only ID[,ID...]] [--out results.json]
                           [--no-typecheck] [--preflight] [--skip-preflight]
+                          [--tolerate-dirty DIR [--tolerate-dirty DIR ...]]
     ablate.py --restore [--tree PATH]
 
 `ablate.py <spec.json>` checks, in this order and with nothing in between: the
-arguments (exit 3); a journal directory already under the tree (exit 8 when it holds
-`owner.json`, 5 when it does not; it is never touched); the spec against its schema
-and against the tree ("item 0", exit 3); a `--only` that names an id not in the spec,
-or selects nothing (exit 4); a tree that is dirty before the run (exit 5); and the
-acquisition of the journal (exit 8 when another process wins it). Only then is
-anything mutated. `--preflight` takes the same checks up to item 0 and stops there.
+arguments, those of `--tolerate-dirty` included (exit 3); a journal directory already
+under the tree (exit 8 when it holds `owner.json`, 5 when it does not; it is never
+touched); the spec against its schema and against the tree ("item 0", exit 3); a
+`--only` that names an id not in the spec, or selects nothing (exit 4); a tree that is
+dirty before the run outside the tolerated directories (exit 5); and the acquisition
+of the journal (exit 8 when another process wins it). Only then is anything mutated.
+`--preflight` takes the same checks up to item 0 and stops there.
+
+`--tolerate-dirty DIR`, repeatable and only with an explicit `--tree`, names a
+directory of the tree whose `git status` lines do not make the tree dirty. They are
+not ignored: the lines under the tolerated directories before the run are the
+reference, and the snapshot taken during each mutation and the one taken after the
+run must show exactly those lines there; a line that appeared, disappeared or changed
+its status is named with its path, its kind and the directory it lies under. A line
+git prints for a whole untracked directory (`?? DIR/`) is never tolerated: it stays
+the same whatever appears inside, so it could not be compared. An empty
+DIR, one that resolves to the root of the tree or outside it, and one that is not an
+existing directory are refused with exit 3, before anything else: a tolerance that can
+cover everything is a switch, not a tolerance. Item 0 refuses with exit 3 a mutant
+whose file lies under a tolerated directory, even with `--skip-preflight`. With the
+flag, stdout carries `dirty tolerated: <N> line(s) under <DIR>[, <DIR>...]` once the
+tree has been read before the run, N counting the reference lines, and `results.json`
+carries `dirty_tolerated`: the directories and the reference lines. The flag is
+refused with `--restore` and `--preflight`, which it would not change.
 
 Exit status, and no other: 0 everything verified; 3 invalid arguments or spec; 4
-nothing selected; 5 dirty before the run; 6 dirty after it; 7 a declared
-`expect_verdict` not met; 8 the journal is held; 9 a journal record is in a state
-nobody wrote; 10 a mutation ran without its three traces; 11 more than one mutant
-and every one of them survived; 12 a filesystem of the tree cannot exchange two
-files atomically. An exit decided by the journal (8, 9, 12) wins over 6, 7, 10 and
-11, and 9 wins over 12 wherever either appears in the chain of errors. After the
-run the checks are evaluated in the order 6, 7, 10, 11.
+nothing selected; 5 dirty before the run, outside the tolerated directories; 6 dirty
+after it outside them, or under them with lines that are not those of the start of
+the run; 7 a declared `expect_verdict` not met; 8 the journal is held; 9 a journal
+record is in a state nobody wrote; 10 a mutation ran without its three traces; 11
+more than one mutant and every one of them survived; 12 a filesystem of the tree
+cannot exchange two files atomically. An exit decided by the journal (8, 9, 12) wins
+over 6, 7, 10 and 11, and 9 wins over 12 wherever either appears in the chain of
+errors. After the run the checks are evaluated in the order 6, 7, 10, 11. When 6 or
+10 comes from the tolerated directories, the refusal that decides it names the path,
+the kind of change and the tolerated directory.
 
 `results.json` is written only when `--out` names it; without `--out` no file is
 written, and the summary on stdout says so. When a journal refusal stops the run
@@ -121,6 +145,8 @@ _RUNNERS = ("pytest", "vitest")
 _MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 #: The `git status` line of the journal directory while it holds anything.
 _JOURNAL_STATUS_LINE = f"?? {journal.JOURNAL_DIRNAME}/"
+#: A line of `git status --porcelain` (format v1): two status codes, a space, the path field.
+_STATUS_LINE = re.compile(r"^(?P<xy>[ MTADRCU?!]{2}) (?P<field>\S.*)$")
 _VITEST_REPORT = re.compile(r"^vitest-outcomes-(?P<nonce>[0-9a-f]{32})\.json$")
 #: A diagnostic of `tsc --pretty false` that rejects the source, such as
 #: `src/revocation.ts(480,11): error TS2322: ...`. A configuration or invocation failure
@@ -182,11 +208,15 @@ class _Progress:
 
     An id is added when its mutant is started, a row when the mutant is finished; the
     mutant in progress when a journal refusal stops the run is tried and has no row.
+    `tolerated_changes` holds, for each row whose git trace failed because the lines
+    under the tolerated directories were not those of the start of the run, its id
+    and the changes, so the refusal that decides the exit can name that cause.
     """
 
     tried: list[str] = field(default_factory=list)
     rows: list[dict[str, Any]] = field(default_factory=list)
     runs: list[SuiteRun] = field(default_factory=list)
+    tolerated_changes: list[tuple[str, list[str]]] = field(default_factory=list)
 
 
 # --- git and the tree ------------------------------------------------------------------------
@@ -224,6 +254,111 @@ def _porcelain_during_mutation(tree: Path) -> list[str] | None:
     if lines is None:
         return None
     return [line for line in lines if line != _JOURNAL_STATUS_LINE]
+
+
+def _status_line_paths(line: str) -> list[str] | None:
+    """The tree-relative paths one line of `git status --porcelain` names, or `None`.
+
+    A rename or copy line (`R` or `C` in its status, `old -> new`) names two paths,
+    every other line one. A line this does not know how to read -- a path git quoted
+    (it quotes a space, a quote, a control character and, unless `core.quotePath` is
+    off, every byte above 0x7f), a separator where it does not belong, a path that is
+    not normalized -- gives `None`, so the caller refuses it rather than guessing what
+    it names. So does an untracked directory git collapsed into one line (`?? dir/`):
+    files can appear in it or leave it while that line stays the same, so it could
+    never be compared with the line of the start of the run.
+    """
+    match = _STATUS_LINE.match(line)
+    if match is None or '"' in match["field"]:
+        return None
+    rename = "R" in match["xy"] or "C" in match["xy"]
+    parts = match["field"].split(" -> ") if rename else [match["field"]]
+    if len(parts) != (2 if rename else 1):
+        return None
+    paths: list[str] = []
+    for part in parts:
+        if part.endswith("/") or " " in part or _tree_relative_problem(part) is not None:
+            return None
+        paths.append(part)
+    return paths
+
+
+def _covering_dir(path: str, dirs: Sequence[str]) -> str | None:
+    """The first of `dirs` that `path` lies strictly under, component by component, or `None`.
+
+    `tools/gates/transcripts` covers `tools/gates/transcripts/x.log`, and neither
+    `tools/gates/transcripts2/x.log` nor `tools/`, which contains it, nor the directory
+    itself: a line that names the tolerated directory alone -- a submodule there, say --
+    says nothing about which of the files in it changed.
+    """
+    parts = PurePosixPath(path).parts
+    for directory in dirs:
+        prefix = PurePosixPath(directory).parts
+        if len(parts) > len(prefix) and parts[: len(prefix)] == prefix:
+            return directory
+    return None
+
+
+def _split_tolerated(lines: Sequence[str], dirs: Sequence[str]) -> tuple[list[str], list[str]]:
+    """`lines` split into the tolerated ones and the rest, each in its order.
+
+    A line is tolerated when it can be read and every path it names -- both, for a
+    rename -- lies under one of `dirs`. With no `dirs`, nothing is tolerated.
+    """
+    tolerated: list[str] = []
+    outside: list[str] = []
+    for line in lines:
+        paths = _status_line_paths(line) if dirs else None
+        if paths is not None and all(_covering_dir(path, dirs) is not None for path in paths):
+            tolerated.append(line)
+        else:
+            outside.append(line)
+    return tolerated, outside
+
+
+def _tolerated_changes(
+    reference: Sequence[str], current: Sequence[str], dirs: Sequence[str]
+) -> list[str]:
+    """Each way the tolerated lines of a snapshot differ from those of the start of the run.
+
+    Lines are compared by the path field they carry. A path only `current` has
+    `appeared`, one only `reference` has `disappeared`, and one whose status codes
+    differ `changed <before>-><after>`; each change names the path and the tolerated
+    directory it lies under. Both arguments must be tolerated lines of `dirs`.
+    """
+
+    covering: dict[str, set[str]] = {}
+
+    def by_path(lines: Sequence[str]) -> dict[str, list[str]]:
+        grouped: dict[str, list[str]] = {}
+        for line in lines:
+            grouped.setdefault(line[3:], []).append(line[:2])
+            covering.setdefault(line[3:], set()).update(
+                directory
+                for path in _status_line_paths(line) or []
+                if (directory := _covering_dir(path, dirs)) is not None
+            )
+        return {path_field: sorted(codes) for path_field, codes in grouped.items()}
+
+    def codes(of: list[str]) -> str:
+        return ",".join(repr(code) for code in of)
+
+    before, after = by_path(reference), by_path(current)
+    changes: list[str] = []
+    for path_field in sorted(before.keys() | after.keys()):
+        old, new = before.get(path_field), after.get(path_field)
+        if old == new:
+            continue
+        under = sorted(covering[path_field])
+        noun = "directory" if len(under) == 1 else "directories"
+        if old is None:
+            kind = f"appeared {codes(new or [])}"
+        elif new is None:
+            kind = f"disappeared {codes(old)}"
+        else:
+            kind = f"changed {codes(old)}->{codes(new)}"
+        changes.append(f"{path_field} under tolerated {noun} {', '.join(under)}: {kind}")
+    return changes
 
 
 def _resolve_tree(given: str | None) -> tuple[Path | None, str]:
@@ -518,14 +653,50 @@ def _repeated_key_problems(raw: Any, repeated: _RepeatedKeys) -> list[str]:
     return problems
 
 
-def item_zero(raw: Any, tree: Path, *, tree_checks: bool) -> tuple[int, list[str]]:
+def _tolerated_file_problem(
+    mutant: dict[str, Any], label: str, tree: Path, tolerated: Sequence[str]
+) -> str | None:
+    """Why a schema-valid source mutant's file lies under a tolerated directory, or `None`.
+
+    The file is checked as written, when that is a normalized tree-relative path, and
+    once resolved against the tree, symbolic links included, because the journal
+    mutates the resolved file. Under a tolerated directory the bench no longer reads
+    `git status` in absolute terms, so a mutation there is one it has chosen not to see.
+    """
+    if not tolerated or mutant.get("kind", "source") != "source":
+        return None
+    rel_path: str = mutant["file"]
+    directory = None
+    if _tree_relative_problem(rel_path) is None:
+        directory = _covering_dir(rel_path, tolerated)
+    if directory is None:
+        try:
+            resolved = (tree / rel_path).resolve()
+        except (OSError, RuntimeError, ValueError):
+            resolved = None
+        if resolved is not None and resolved.is_relative_to(tree):
+            directory = _covering_dir(resolved.relative_to(tree).as_posix(), tolerated)
+    if directory is None:
+        return None
+    return (
+        f"item 0: mutant {label}: key file: {rel_path} lies under the tolerated directory "
+        f"{directory}, where the bench does not read git status in absolute terms, so a "
+        "mutation there would not be seen"
+    )
+
+
+def item_zero(
+    raw: Any, tree: Path, *, tree_checks: bool, tolerated: Sequence[str] = ()
+) -> tuple[int, list[str]]:
     """Validate a parsed spec; return how many mutants it declares and every violation.
 
     Every violation names the mutant (its id, or `mutants[<index>]` when the id
     itself is unusable) and the key. With `tree_checks` false, the checks that read
     the tree -- a file tracked by git and UTF-8, an anchor present once at the
     start of a line, a plugin's file, a package's test tools -- are skipped; the
-    schema is checked either way.
+    schema is checked either way, and so is a source mutant's file against the
+    directories in `tolerated`: `--skip-preflight` exists to skip the anchors, not the
+    refusal of a mutation where git status is no longer read in absolute terms.
     """
     if not isinstance(raw, dict):
         return 0, [f"item 0: spec: must be a JSON object, found {_type_name(raw)}"]
@@ -559,8 +730,12 @@ def item_zero(raw: Any, tree: Path, *, tree_checks: bool) -> tuple[int, list[str
                 )
             else:
                 first_index[identifier] = index
-        if tree_checks and not row_problems:
-            row_problems += _tree_problems(row, label, tree, tracked)
+        if not row_problems:
+            tolerated_problem = _tolerated_file_problem(row, label, tree, tolerated)
+            if tolerated_problem is not None:
+                row_problems.append(tolerated_problem)
+            if tree_checks:
+                row_problems += _tree_problems(row, label, tree, tracked)
         problems += row_problems
     return len(mutants), problems
 
@@ -916,12 +1091,19 @@ def _run_mutants(
     progress: _Progress,
     *,
     typecheck: bool,
+    tolerated: Sequence[str] = (),
+    reference: Sequence[str] = (),
 ) -> None:
     """Measure every mutant inside the held journal, recording into `progress` as it goes.
 
     `progress` is filled while the run advances, so a journal refusal that stops the
     run midway still leaves the ids tried and the rows completed for the caller to
     report.
+
+    The git trace of a row is read outside the `tolerated` directories, where it must
+    name exactly the mutated file, and inside them, where it must show exactly the
+    `reference` lines taken before the run; either failure leaves the row unmeasured.
+    The row's `git_dirty_during` keeps the lines outside the tolerated directories.
     """
     rows = progress.rows
     runs = progress.runs
@@ -1009,11 +1191,23 @@ def _run_mutants(
                     f"plugin: {label}: {mutant['plugin']} is not in the plugins_loaded of "
                     f"{mutated.outcomes_path}"
                 )
+        tolerated_changes: list[str] = []
+        if tolerated and git_dirty_during is not None:
+            tolerated_during, git_dirty_during = _split_tolerated(git_dirty_during, tolerated)
+            tolerated_changes = _tolerated_changes(reference, tolerated_during, tolerated)
         if git_dirty_during != expected_git:
+            outside = f" outside the tolerated directories {list(tolerated)}" if tolerated else ""
             problems.append(
-                f"git_dirty_during: {label}: git status showed {git_dirty_during}, "
+                f"git_dirty_during: {label}: git status showed {git_dirty_during}{outside}, "
                 f"expected {expected_git}"
             )
+        if tolerated_changes:
+            problems.append(
+                f"git_dirty_during: {label}: the git trace does not hold, because the lines "
+                "under the tolerated directories are not those of the start of the run: "
+                + "; ".join(tolerated_changes)
+            )
+            progress.tolerated_changes.append((mutant_id, tolerated_changes))
         problems += _measurement_problems(mutated, label)
         row["git_dirty_during"] = git_dirty_during
         if mutated.typecheck is not None:
@@ -1164,8 +1358,86 @@ def _preflight(spec_path: Path, tree: Path) -> int:
     return EXIT_INVALID if problems else EXIT_OK
 
 
-def _run(args: argparse.Namespace, tree: Path, argv: Sequence[str]) -> int:
-    """`ablate.py <spec>`: the entry checks in their order, the run, the summary and the exit."""
+def _dirty_before_refusal(
+    tree: Path, dirty_before: list[str] | None, tolerated: Sequence[str]
+) -> tuple[list[str], str | None]:
+    """The reference lines under the tolerated directories, and the refusal of exit 5 or `None`.
+
+    Without tolerated directories the reference is empty and any line refuses, in the
+    words the bench has always used. With them, only the lines outside refuse.
+    """
+    if not tolerated:
+        if dirty_before is None or dirty_before:
+            return [], (
+                f"REFUSING: {tree} is dirty before the run, or git cannot say "
+                f"(git status --porcelain --untracked-files=normal): {dirty_before}"
+            )
+        return [], None
+    if dirty_before is None:
+        return [], (
+            f"REFUSING: git cannot say whether {tree} is dirty before the run "
+            f"(git status --porcelain --untracked-files=normal): {dirty_before}"
+        )
+    reference, outside = _split_tolerated(dirty_before, tolerated)
+    if outside:
+        return reference, (
+            f"REFUSING: {tree} is dirty before the run outside the tolerated directories "
+            f"{list(tolerated)} (git status --porcelain --untracked-files=normal): {outside}"
+        )
+    return reference, None
+
+
+def _dirty_after_refusals(
+    tree: Path,
+    dirty_after: list[str] | None,
+    tolerated: Sequence[str],
+    reference: Sequence[str],
+) -> list[str]:
+    """The refusals of exit 6, one per cause, or none when the tree is as it has to be.
+
+    Outside the tolerated directories the tree must be clean; inside them it must show
+    exactly the `reference` lines, and a line that appeared, disappeared or changed its
+    status there is named with its path, its kind and the directory it lies under.
+    """
+    if not tolerated:
+        if dirty_after is None or dirty_after:
+            return [
+                f"REFUSING: {tree} is dirty after the run, or git cannot say: {dirty_after} -- "
+                "a restore failed somewhere, and no verdict above can be trusted"
+            ]
+        return []
+    if dirty_after is None:
+        return [
+            f"REFUSING: git cannot say whether {tree} is dirty after the run: {dirty_after} -- "
+            "no verdict above can be trusted"
+        ]
+    tolerated_after, outside = _split_tolerated(dirty_after, tolerated)
+    refusals: list[str] = []
+    if outside:
+        refusals.append(
+            f"REFUSING: {tree} is dirty after the run outside the tolerated directories "
+            f"{list(tolerated)}: {outside} -- a restore failed somewhere, and no verdict above "
+            "can be trusted"
+        )
+    changes = _tolerated_changes(reference, tolerated_after, tolerated)
+    if changes:
+        refusals.append(
+            f"REFUSING: {tree} is dirty after the run under the tolerated directories "
+            f"{list(tolerated)}, whose lines are not those of the start of the run: "
+            + "; ".join(changes)
+            + " -- the tolerated lines are compared, not ignored, and no verdict above can be "
+            "trusted"
+        )
+    return refusals
+
+
+def _run(
+    args: argparse.Namespace, tree: Path, argv: Sequence[str], tolerated: Sequence[str] = ()
+) -> int:
+    """`ablate.py <spec>`: the entry checks in their order, the run, the summary and the exit.
+
+    `tolerated` holds the directories `--tolerate-dirty` named, relative to the tree.
+    """
     entry_exit = _journal_entry_check(tree)
     if entry_exit is not None:
         return entry_exit
@@ -1175,7 +1447,7 @@ def _run(args: argparse.Namespace, tree: Path, argv: Sequence[str]) -> int:
     count, problems = (
         (0, load_problems)
         if load_problems
-        else item_zero(raw, tree, tree_checks=not args.skip_preflight)
+        else item_zero(raw, tree, tree_checks=not args.skip_preflight, tolerated=tolerated)
     )
     problems = [*_repeated_key_problems(raw, repeated), *problems]
     if problems:
@@ -1196,25 +1468,35 @@ def _run(args: argparse.Namespace, tree: Path, argv: Sequence[str]) -> int:
         return EXIT_NOTHING_SELECTED
 
     dirty_before = _porcelain(tree)
-    if dirty_before is None or dirty_before:
-        print(
-            f"REFUSING: {tree} is dirty before the run, or git cannot say "
-            f"(git status --porcelain --untracked-files=normal): {dirty_before}",
-            file=sys.stderr,
-        )
+    reference, dirty_refusal = _dirty_before_refusal(tree, dirty_before, tolerated)
+    if tolerated and dirty_before is not None:
+        # A marker of what was filtered, not of an outcome: printed whatever follows.
+        print(f"dirty tolerated: {len(reference)} line(s) under {', '.join(tolerated)}")
+    if dirty_refusal is not None:
+        print(dirty_refusal, file=sys.stderr)
         return EXIT_DIRTY_BEFORE
 
     launcher: list[str] = raw.get("launcher", list(DEFAULT_LAUNCHER))
     progress = _Progress()
     try:
         with journal.journal_owner(tree, ["ablate.py", *argv]) as owner:
-            _run_mutants(owner, tree, launcher, mutants, progress, typecheck=not args.no_typecheck)
+            _run_mutants(
+                owner,
+                tree,
+                launcher,
+                mutants,
+                progress,
+                typecheck=not args.no_typecheck,
+                tolerated=tolerated,
+                reference=reference,
+            )
     except journal.JournalError as exc:
         if _journal_exit_code(_journal_refusals(exc)) is not None:
             _print_partial_summary(tree, progress)
         raise
     rows, runs = progress.rows, progress.runs
     tree_dirty_after = _porcelain(tree)
+    dirty_after_refusals = _dirty_after_refusals(tree, tree_dirty_after, tolerated, reference)
 
     confirmed = sum(1 for row in rows if row["confirmed"])
     attempted = sum(1 for row in rows if row["verdict"] != "BASELINE_RED")
@@ -1278,18 +1560,18 @@ def _run(args: argparse.Namespace, tree: Path, argv: Sequence[str]) -> int:
         )
     if args.out is not None:
         out_path = Path(args.out)
-        payload = {"summary": summary, "results": rows}
+        payload: dict[str, Any] = {"summary": summary}
+        if tolerated:
+            payload["dirty_tolerated"] = {"dirs": list(tolerated), "lines": list(reference)}
+        payload["results"] = rows
         out_path.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
         print(f"results: written to {out_path}")
     else:
         print("results: not written (no --out given); this summary is the only record of the run")
 
-    if tree_dirty_after is None or tree_dirty_after:
-        print(
-            f"REFUSING: {tree} is dirty after the run, or git cannot say: {tree_dirty_after} -- "
-            "a restore failed somewhere, and no verdict above can be trusted",
-            file=sys.stderr,
-        )
+    if dirty_after_refusals:
+        for refusal in dirty_after_refusals:
+            print(refusal, file=sys.stderr)
         return EXIT_DIRTY_AFTER
     if mismatches:
         for mutant_id, want, got in mismatches:
@@ -1299,10 +1581,16 @@ def _run(args: argparse.Namespace, tree: Path, argv: Sequence[str]) -> int:
             )
         return EXIT_EXPECTATION_NOT_MET
     if confirmed != attempted - not_applied:
+        cause = "".join(
+            f"; the git trace of {mutant_id} failed on the tolerated directories, not on its "
+            "mutation, because their lines are not those of the start of the run: "
+            + "; ".join(changes)
+            for mutant_id, changes in progress.tolerated_changes
+        )
         print(
             f"REFUSING TO CERTIFY: applications_confirmed={confirmed}, but "
             f"{attempted - not_applied} mutations had to land with their three traces; the "
-            "hypothesis to falsify first is the bench, not the suite",
+            f"hypothesis to falsify first is the bench, not the suite{cause}",
             file=sys.stderr,
         )
         for row in rows:
@@ -1342,12 +1630,27 @@ def _parser() -> _Parser:
     parser.add_argument(
         "--skip-preflight",
         action="store_true",
-        help="skip the checks of the spec against the tree (requires --tree)",
+        help=(
+            "skip the checks of the spec against the tree's contents -- anchors, tracked "
+            "files, plugins, test tools; a file under a --tolerate-dirty directory is refused "
+            "anyway (requires --tree)"
+        ),
     )
     parser.add_argument(
         "--restore",
         action="store_true",
         help="put back what a killed run left in the journal, then exit",
+    )
+    parser.add_argument(
+        "--tolerate-dirty",
+        action="append",
+        metavar="DIR",
+        help=(
+            "a directory of the tree, relative to --tree, whose git status lines do not make "
+            "the tree dirty as long as they stay exactly the lines of the start of the run; "
+            "repeatable; requires --tree; never the root or outside the tree; refused with "
+            "--restore and --preflight, where it would change nothing"
+        ),
     )
     return parser
 
@@ -1364,6 +1667,7 @@ def _invocation_problem(args: argparse.Namespace) -> str | None:
                 ("--no-typecheck", args.no_typecheck or None),
                 ("--preflight", args.preflight or None),
                 ("--skip-preflight", args.skip_preflight or None),
+                ("--tolerate-dirty", args.tolerate_dirty),
             )
             if value is not None
         ]
@@ -1376,7 +1680,57 @@ def _invocation_problem(args: argparse.Namespace) -> str | None:
         return "--preflight and --skip-preflight exclude each other"
     if args.skip_preflight and args.tree is None:
         return "--skip-preflight is allowed only with an explicit --tree"
+    if args.tolerate_dirty is not None and args.preflight:
+        return "--tolerate-dirty has no effect with --preflight, which never reads git status"
+    if args.tolerate_dirty is not None and args.tree is None:
+        return "--tolerate-dirty is allowed only with an explicit --tree"
     return None
+
+
+def _tolerated_dirs(given: Sequence[str], tree: Path) -> tuple[tuple[str, ...], list[str]]:
+    """The directories `--tolerate-dirty` names, relative to `tree`, and why any cannot be one.
+
+    Each argument is resolved against `tree`, with `..` and symbolic links resolved.
+    It is refused when it is empty or resolves to the root of the tree -- a tolerance
+    that can cover everything is a switch that turns the dirty-tree check off, not a
+    tolerance -- when it resolves outside the tree, and when it does not name an
+    existing directory. The root is checked first. Arguments that resolve to the same
+    directory count once, in the order of their first appearance.
+    """
+    dirs: list[str] = []
+    problems: list[str] = []
+    for raw in given:
+        where = f"--tolerate-dirty {raw!r}"
+        if not raw:
+            problems.append(
+                f"{where}: an empty path names the root of the tree, and tolerating the root "
+                "would switch the dirty-tree check off instead of narrowing it"
+            )
+            continue
+        try:
+            resolved = (tree / raw).resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            problems.append(f"{where}: cannot be resolved ({exc})")
+            continue
+        if resolved == tree:
+            problems.append(
+                f"{where}: resolves to the root of the tree {tree}, and tolerating the root "
+                "would switch the dirty-tree check off instead of narrowing it"
+            )
+            continue
+        if not resolved.is_relative_to(tree):
+            problems.append(f"{where}: resolves to {resolved}, outside the tree {tree}")
+            continue
+        if not resolved.exists():
+            problems.append(f"{where}: {resolved} does not exist")
+            continue
+        if not resolved.is_dir():
+            problems.append(f"{where}: {resolved} is not a directory")
+            continue
+        relative = resolved.relative_to(tree).as_posix()
+        if relative not in dirs:
+            dirs.append(relative)
+    return tuple(dirs), problems
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1395,12 +1749,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if tree is None:
         print(f"ablate.py: error: {reason}", file=sys.stderr)
         return EXIT_INVALID
+    tolerated, tolerance_problems = _tolerated_dirs(args.tolerate_dirty or [], tree)
+    if tolerance_problems:
+        for tolerance_problem in tolerance_problems:
+            print(f"ablate.py: error: {tolerance_problem}", file=sys.stderr)
+        return EXIT_INVALID
     try:
         if args.restore:
             return _restore(tree)
         if args.preflight:
             return _preflight(Path(args.spec), tree)
-        return _run(args, tree, arguments)
+        return _run(args, tree, arguments, tolerated)
     except journal.JournalError as exc:
         refusals = _journal_refusals(exc)
         code = _journal_exit_code(refusals)
