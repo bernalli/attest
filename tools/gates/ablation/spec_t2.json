@@ -1,0 +1,62 @@
+{
+  "note": "The four T2 mutants, carried into the bench. Each row aims at trust_material.py and declares the tests whose red proves the property, so a red that comes from somewhere else is not read as a kill. T2D is applied through a plugin rather than by editing the source.",
+  "mutants": [
+    {
+      "id": "T2A-brand-check-dict",
+      "property": "the brand check accepts a plain dict carrying the five member names",
+      "file": "src/attest/trust_material.py",
+      "old": "    if type(store) is not TrustStore:\n        return None",
+      "new": "    if type(store) is not TrustStore:\n        if type(store) is dict and set(store) == set(_StoreData._fields):\n            return _StoreData(**store)\n        return None",
+      "suite": [
+        "tests/test_trust_store_boundary.py::test_verify_answers_a_verdict_for_anything_but_a_snapshot",
+        "tests/test_trust_store_boundary.py::test_the_evaluators_raise_for_anything_but_a_snapshot"
+      ],
+      "expect_red": [
+        "test_verify_answers_a_verdict_for_anything_but_a_snapshot",
+        "test_the_evaluators_raise_for_anything_but_a_snapshot"
+      ]
+    },
+    {
+      "id": "T2B-chain-first-member-dropped",
+      "property": "the first member of every chain is dropped at admission",
+      "file": "src/attest/trust_material.py",
+      "old": "        fields[name] = value\n\n    return _StoreFields(**fields)",
+      "new": "        fields[name] = value\n    chains = fields.get(\"chains\")\n    if chains:\n        fields[\"chains\"] = {\n            key: members[1:] if isinstance(members, list) else members\n            for key, members in chains.items()\n        }\n\n    return _StoreFields(**fields)",
+      "suite": [
+        "tests/test_trust_material_parse.py",
+        "tests/test_trust_store_boundary.py"
+      ],
+      "expect_red": [
+        "test_an_unreadable_chain_is_refused_not_deleted"
+      ]
+    },
+    {
+      "id": "T2C-data-aliasing",
+      "property": "KeyManifest.data() hands back its own tree instead of a fresh parse (aliasing)",
+      "file": "src/attest/trust_material.py",
+      "old": "        to end.\n        \"\"\"\n        return cast(dict[str, Any], canon.loads_strict(self._canonical))",
+      "new": "        to end.\n        \"\"\"\n        return self._data",
+      "suite": [
+        "tests/test_trust_material_parse.py"
+      ],
+      "expect_red": [
+        "test_mutating_a_held_manifest_changes_neither_it_nor_the_store"
+      ]
+    },
+    {
+      "id": "T2D-provenance-remapped",
+      "property": "every provenance entry is remapped to tls at the boundary",
+      "kind": "plugin",
+      "plugin": "tools.gates.mutant_d_plugin",
+      "suite": [
+        "tests/test_vectors.py::test_vector_matches_spec_intended_result[28-transparency/a-logged-trust-unchanged]",
+        "tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/q-tofu-publisher]",
+        "tests/test_vectors.py::test_vector_matches_spec_intended_result[37-preservation-pledge/x-trust-not-borrowed-from-signer]",
+        "tests/test_vectors.py::test_vector_matches_spec_intended_result[43-publisher-authority/o-tofu-authorized]"
+      ],
+      "expect_red": [
+        "test_vector_matches_spec_intended_result"
+      ]
+    }
+  ]
+}
