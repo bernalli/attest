@@ -1519,7 +1519,10 @@ def _dirty_before_refusal(
     """The reference lines under the tolerated directories, and the refusal of exit 5 or `None`.
 
     Without tolerated directories the reference is empty and any line refuses, in the
-    words the bench has always used. With them, only the lines outside refuse.
+    words the bench has always used. With them, the lines outside refuse, and so does a
+    reference line that breaks the content contract of its directory
+    (`_contract_problem`): the contract was read on the arguments, and what appeared
+    under a directory since then is held to it here.
     """
     if not tolerated:
         if dirty_before is None or dirty_before:
@@ -1882,6 +1885,19 @@ def _dirs_holding_tracked_files(tracked: Sequence[str] | None) -> set[tuple[str,
 _TRANSCRIPT_SUFFIX = ".log"
 
 
+def _link_or_directory(path: Path) -> bool | None:
+    """Whether `path` is a link or a directory on disk, or `None` when that cannot be read.
+
+    `Path.is_symlink` and `Path.is_dir` raise on an error other than a missing entry --
+    a parent directory the bench may not search, say -- and an entry that cannot be read
+    cannot be said to be a file.
+    """
+    try:
+        return path.is_symlink() or path.is_dir()
+    except OSError:
+        return None
+
+
 def _contract_problem(
     directory: str, tracked: Sequence[str], status: Sequence[str] | None, tree: Path
 ) -> str | None:
@@ -1895,7 +1911,8 @@ def _contract_problem(
     `.log` line, so it breaks the contract. So does an entry that is a link or a
     directory on disk, a gitlink's included, whatever its name: a link named like a
     transcript decides where a path through it leads, and retargeting it is a change
-    the bench would tolerate. The reverse is out of its reach by
+    the bench would tolerate. An entry whose kind on disk cannot be read breaks it too,
+    since it cannot be said to be a file. The reverse is out of its reach by
     construction: it binds what lives under the directory, not what reads it from
     outside, so a test elsewhere that reads a `.log` there as data is not bound by it.
     """
@@ -1906,7 +1923,10 @@ def _contract_problem(
         if len(parts) > len(prefix) and parts[: len(prefix)] == prefix:
             if name != own_ignore and not name.endswith(_TRANSCRIPT_SUFFIX):
                 return f"{name} is tracked there and is not a {_TRANSCRIPT_SUFFIX}"
-            if (tree / name).is_symlink() or (tree / name).is_dir():
+            link_or_dir = _link_or_directory(tree / name)
+            if link_or_dir is None:
+                return f"{name} is tracked there and what it is on disk cannot be read"
+            if link_or_dir:
                 return f"{name} is tracked there and is a link or a directory, not a file"
     if status is None:
         return "git cannot list the status of the tree, so what lies there cannot be said"
@@ -1925,11 +1945,14 @@ def _contract_problem(
             if _covering_dir(path, [directory]) is not None
         ):
             return f"git status lists {line!r} there, which does not name a {_TRANSCRIPT_SUFFIX}"
-        if any(
-            (tree / path).is_symlink() or (tree / path).is_dir()
+        links_or_dirs = [
+            _link_or_directory(tree / path)
             for path in paths
             if _covering_dir(path, [directory]) is not None
-        ):
+        ]
+        if None in links_or_dirs:
+            return f"git status lists {line!r} there, and what it names on disk cannot be read"
+        if any(links_or_dirs):
             return f"git status lists {line!r} there, which names a link or a directory, not a file"
     return None
 

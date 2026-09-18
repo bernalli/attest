@@ -2108,6 +2108,14 @@ _RUNS_UNDER_TOLERATED = [
         ("logs",),
         "key suite: <TREE>/logs/test_x.py (logs/test_x.py) lies under the tolerated directory logs",
     ),
+    (
+        # An absolute path through a link outside the directory into it: its written form
+        # lies outside, so only its resolved form can refuse it.
+        "suite-absolute-via-a-link",
+        {"suite": ["<TREE>/lnk/test_x.py"]},
+        ("logs",),
+        "key suite: <TREE>/lnk/test_x.py (logs/test_x.py) lies under the tolerated directory logs",
+    ),
     ("suite-sibling-sharing-a-prefix", {"suite": ["logs2/test_x.py"]}, ("logs",), None),
     (
         # A link under the tolerated directory that leads out of the tree: the runner
@@ -2445,8 +2453,9 @@ def test_a_tolerated_directory_that_holds_anything_but_transcripts_is_refused_as
 def test_a_line_that_is_not_a_log_appearing_under_a_tolerated_directory_during_the_run_exits_6(
     tree: Path, tmp_path: Path
 ) -> None:
-    # The contract is read once, as an argument; afterwards a non-`.log` line under the
-    # directory is a tolerated line that appeared, which the comparison refuses.
+    # The contract is read on the arguments and again on the reference, the tree read
+    # before the run; afterwards a non-`.log` line under the directory is a tolerated line
+    # that appeared, which the comparison refuses.
     _tolerating_tree(tree)
     spec = _single_row_spec(tmp_path, "spec", "KILLED", launcher=_launcher(tmp_path))
 
@@ -2507,12 +2516,95 @@ def test_a_line_that_is_not_a_log_appearing_after_the_arguments_and_before_the_r
     assert not (tree / JOURNAL_DIRNAME).exists()
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a directory whatever its mode")
+def test_a_tracked_entry_whose_kind_on_disk_cannot_be_read_breaks_the_contract(
+    tree: Path, tmp_path: Path
+) -> None:
+    # git lists no line for it, only a warning; the bench cannot say it is a file.
+    _tolerating_tree(tree)
+    (tree / "logs" / "priv").mkdir()
+    _commit(tree, {"logs/priv/x.log": b"x\n"})
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+    (tree / "logs" / "priv").chmod(0)
+    try:
+        result = _ablate(_tolerating(spec, tree), tmp_path)
+    finally:
+        (tree / "logs" / "priv").chmod(0o755)
+
+    assert (result.returncode, result.stderr.splitlines()) == (
+        3,
+        [
+            "ablate.py: error: --tolerate-dirty 'logs': logs breaks the contract of a "
+            "tolerated directory -- every file under it is a transcript, a .log, save its own "
+            ".gitignore: logs/priv/x.log is tracked there and what it is on disk cannot be read"
+        ],
+    )
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+
+
+# A `git` that, after it answers any `git -C <tree> status` but the first, takes away the
+# right to search `logs/priv`: the tree read before the run lists a line there whose kind on
+# disk then cannot be read.
+_GIT_HIDES_AFTER_THE_ARGUMENTS = """#!/bin/sh
+{git} "$@"
+code=$?
+if [ "$3" = status ]; then
+    if [ -e {seen} ]; then
+        chmod 0 {tree}/logs/priv
+    fi
+    : > {seen}
+fi
+exit $code
+"""
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a directory whatever its mode")
+def test_a_reference_line_whose_kind_on_disk_cannot_be_read_exits_5(
+    tree: Path, tmp_path: Path
+) -> None:
+    _tolerating_tree(tree)
+    (tree / "logs" / "priv").mkdir()
+    _commit(tree, {"logs/priv/x.log": b"x\n"})
+    (tree / "logs" / "priv" / "x.log").write_text("changed\n")
+    real_git = shutil.which("git")
+    assert real_git is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text(
+        _GIT_HIDES_AFTER_THE_ARGUMENTS.format(
+            git=real_git, seen=tmp_path / "status-answered", tree=tree
+        )
+    )
+    (bin_dir / "git").chmod(0o755)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+    try:
+        result = _ablate(
+            _tolerating(spec, tree),
+            tmp_path,
+            {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+        )
+    finally:
+        (tree / "logs" / "priv").chmod(0o755)
+
+    assert result.returncode == 5, result.stdout + result.stderr
+    assert _refusals(result.stderr) == [
+        f"REFUSING: {tree} is dirty before the run under the tolerated directory logs "
+        "against its contract: git status lists ' M logs/priv/x.log' there, and what it "
+        "names on disk cannot be read"
+    ]
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+
+
 # A launcher element under a tolerated directory: what the element is written as, and what
 # the refusal names -- `None` when it does not lie under one.
 _LAUNCHER_ELEMENTS = [
     ("a-log-run-as-a-script", ["{python}", "logs/x.log"], "logs/x.log (logs/x.log)"),
     ("absolute", ["{python}", "{tree}/logs/x.log"], "{tree}/logs/x.log (logs/x.log)"),
     ("via-a-link", ["{python}", "lnk/x.log"], "lnk/x.log (logs/x.log)"),
+    # Absolute and through a link into the directory: only the resolved form refuses it.
+    ("absolute-via-a-link", ["{python}", "{tree}/lnk/x.log"], "{tree}/lnk/x.log (logs/x.log)"),
     ("the-default", ["uv", "run", "--directory", "{tree}", "--no-sync", "pytest"], None),
     ("outside", ["{python}", "-m", "pytest"], None),
 ]
