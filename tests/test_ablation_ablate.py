@@ -1788,9 +1788,9 @@ def test_a_tolerate_dirty_argument_is_refused_when_git_cannot_list_the_status_of
         3,
         [
             "ablate.py: error: --tolerate-dirty 'logs': logs breaks the contract of a "
-            "tolerated directory -- every file under it is a transcript, a .log, save its "
-            "own .gitignore: git cannot list the status of the tree, so what lies there "
-            "cannot be said"
+            "tolerated directory -- every file git tracks or lists under it is a transcript, "
+            "a .log, save its own .gitignore: git cannot list the status of the tree, so "
+            "what lies there cannot be said"
         ],
     )
     assert "[mutant]" not in result.stdout
@@ -2427,7 +2427,7 @@ def _break_the_contract(tree: Path, how: str) -> None:
     [(how, broken) for _name, how, broken in _CONTRACT_BREAKS],
     ids=[name for name, _how, _broken in _CONTRACT_BREAKS],
 )
-def test_a_tolerated_directory_that_holds_anything_but_transcripts_is_refused_as_an_argument(
+def test_a_tolerated_directory_where_git_sees_anything_but_transcripts_is_refused_as_an_argument(
     tree: Path, tmp_path: Path, how: str, broken: str
 ) -> None:
     _tolerating_tree(tree)
@@ -2441,8 +2441,8 @@ def test_a_tolerated_directory_that_holds_anything_but_transcripts_is_refused_as
         3,
         [
             "ablate.py: error: --tolerate-dirty 'logs': logs breaks the contract of a "
-            "tolerated directory -- every file under it is a transcript, a .log, save its own "
-            f".gitignore: {broken}"
+            "tolerated directory -- every file git tracks or lists under it is a transcript, "
+            f"a .log, save its own .gitignore: {broken}"
         ],
     ), f"{how} did not break the contract: exited {result.returncode}: {result.stderr}"
     assert "[mutant]" not in result.stdout
@@ -2535,8 +2535,9 @@ def test_a_tracked_entry_whose_kind_on_disk_cannot_be_read_breaks_the_contract(
         3,
         [
             "ablate.py: error: --tolerate-dirty 'logs': logs breaks the contract of a "
-            "tolerated directory -- every file under it is a transcript, a .log, save its own "
-            ".gitignore: logs/priv/x.log is tracked there and what it is on disk cannot be read"
+            "tolerated directory -- every file git tracks or lists under it is a transcript, "
+            "a .log, save its own .gitignore: logs/priv/x.log is tracked there and what it is "
+            "on disk cannot be read"
         ],
     )
     assert "[mutant]" not in result.stdout
@@ -2876,4 +2877,71 @@ def test_with_tolerate_dirty_git_that_cannot_read_the_tree_after_the_run_exits_6
     assert _refusals(result.stderr) == [
         f"REFUSING: git cannot say whether {tree} is dirty after the run: None -- no verdict "
         "above can be trusted"
+    ]
+
+
+# A `git` that refuses every `status` and runs every other command. The subcommand is
+# recognized by its value among all the arguments, not by its position, so an option
+# added in front of it cannot make the refusal stop landing. Without --tolerate-dirty
+# nothing reads the status before the check this is meant to reach, so no first call
+# has to be let through.
+_GIT_WITH_NO_STATUS = """#!/bin/sh
+for arg in "$@"; do
+    if [ "$arg" = status ]; then
+        echo "fatal: status refused by the test" >&2
+        exit 128
+    fi
+done
+exec {git} "$@"
+"""
+
+
+def test_without_tolerate_dirty_git_that_cannot_read_the_tree_before_the_run_exits_5(
+    tree: Path, tmp_path: Path
+) -> None:
+    # The twin of the case with --tolerate-dirty above, on the same tree: without the flag
+    # the refusal is the one that also names a dirty tree, and it must still read an
+    # answer git could not give as a refusal, not as a clean tree.
+    _tolerating_tree(tree)
+    real_git = shutil.which("git")
+    assert real_git is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text(_GIT_WITH_NO_STATUS.format(git=real_git))
+    (bin_dir / "git").chmod(0o755)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+
+    result = _ablate(
+        [str(spec), "--tree", str(tree)],
+        tmp_path,
+        {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 5, result.stdout + result.stderr
+    assert _refusals(result.stderr) == [
+        f"REFUSING: {tree} is dirty before the run, or git cannot say "
+        "(git status --porcelain --untracked-files=normal): None"
+    ]
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+
+
+def test_without_tolerate_dirty_git_that_cannot_read_the_tree_after_the_run_exits_6(
+    tree: Path, tmp_path: Path
+) -> None:
+    # The twin of the case with --tolerate-dirty above: the launcher breaks the index in
+    # the mutated run, so the status taken after the run cannot be read.
+    _tolerating_tree(tree)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED", launcher=_launcher(tmp_path))
+
+    result = _ablate(
+        [str(spec), "--tree", str(tree)],
+        tmp_path,
+        {"ABLATION_TEST_LAUNCHER_MODE": "break-index"},
+    )
+
+    assert result.returncode == 6, result.stdout + result.stderr
+    assert _refusals(result.stderr) == [
+        f"REFUSING: {tree} is dirty after the run, or git cannot say: None -- a restore "
+        "failed somewhere, and no verdict above can be trusted"
     ]

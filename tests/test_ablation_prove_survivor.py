@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -531,6 +532,39 @@ def test_a_probe_that_is_not_a_file_is_refused_before_the_journal_is_taken(
     assert "is not a file" in result.stderr
     assert not (fixture_tree / _JOURNAL_DIRNAME).exists()
     assert _porcelain(fixture_tree) == ""
+
+
+def test_a_probe_that_is_not_a_file_is_refused_before_a_held_journal_can_refuse_it(
+    fixture_tree: Path, tmp_path: Path
+) -> None:
+    """P16, the order: the probe is refused before the journal is asked for, not after.
+
+    The case above cannot tell the two orders apart: with no journal under the tree
+    the prover takes it, refuses the probe, and gives it back clean, so a check moved
+    after the acquisition exits 4 as well. Here the journal is already held, and names
+    this process as its owner, which is alive for as long as the prover runs. A check
+    that comes first refuses the probe (4); one that comes after never runs, because
+    the acquisition refuses first (8).
+    """
+    journal_dir = fixture_tree / _JOURNAL_DIRNAME
+    journal_dir.mkdir()
+    (journal_dir / "owner.json").write_text(
+        json.dumps({"pid": os.getpid(), "started_utc": "2026-01-01T00:00:00Z", "argv": []}),
+        encoding="utf-8",
+    )
+    journal_before = {entry.name: entry.read_bytes() for entry in sorted(journal_dir.iterdir())}
+    target_before = _sha256(fixture_tree / "sample.py")
+
+    result = _run_prover_argv(
+        [str(_SPEC), _POTENT_MUTANT, str(tmp_path / "absent.py"), "--tree", str(fixture_tree)]
+    )
+
+    assert result.returncode == 4, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "is not a file" in result.stderr
+    assert {
+        entry.name: entry.read_bytes() for entry in sorted(journal_dir.iterdir())
+    } == journal_before
+    assert _sha256(fixture_tree / "sample.py") == target_before
 
 
 def test_a_bad_invocation_never_exits_with_the_reading_of_a_broken_probe(tmp_path: Path) -> None:

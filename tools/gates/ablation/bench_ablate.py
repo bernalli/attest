@@ -285,6 +285,28 @@ META_MUTANTS: tuple[MetaMutant, ...] = (
         frozenset({"A5"}),
         frozenset({"A1", "A4", "A6", "A8"}),
     ),
+    MetaMutant(
+        "MB12-early-refusal-wipes",
+        "B",
+        (
+            (
+                "ablate.py",
+                "            return journal.EXIT_JOURNAL_BUSY",
+                '            for _leftover in sorted(journal_dir.glob("*.json")):\n'
+                "                if _leftover.name != journal.OWNER_FILENAME:\n"
+                "                    _leftover.unlink()\n"
+                "            return journal.EXIT_JOURNAL_BUSY",
+            ),
+        ),
+        # MB6's edit, carried to the other refusal of a held journal: this one lands on
+        # the branch of `ablate.py`'s own entry check that refuses a journal holding
+        # `owner.json`, which answers before the acquisition MB6 damages is ever reached.
+        # B2 runs `ablate.py` over a held journal and requires that the refused run
+        # touched nothing, so B2 is the named case. B3 and B4 follow from the records
+        # being gone by the time they run.
+        frozenset({"B2"}),
+        frozenset({"B3", "B4"}),
+    ),
 )
 
 #: A holder that takes the journal, lands one mutation and dies with it in hand.

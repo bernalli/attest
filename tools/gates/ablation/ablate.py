@@ -55,16 +55,23 @@ which would tolerate everything -- a switch, not a tolerance -- and not a direct
 with no tracked file under it (`.git`, the journal, an untracked directory, an
 ignored one that holds no tracked file, a gitlink), under which git never lists a
 line, so tolerating it would do nothing in silence. DIR must also resolve inside the
-tree to an existing directory. And DIR must hold transcripts only, or it is refused
-with exit 3 in the same phase: every tracked file under it ends in `.log`, save the
-`.gitignore` directly in it, and every line `git status` prints under it names a
-`.log` -- a line git quoted or collapsed does not -- and none of those entries is a
-link or a directory: a link named like a transcript would decide where a path
-through it leads, a suite's included. The contract quantifies over what
-lives under DIR, a set one reads by looking at the directory, not over whatever might
-consume it. That is also where it ends: it binds what lives under DIR, not what reads
+tree to an existing directory. And what git sees of DIR must be transcripts only, or
+it is refused with exit 3 in the same phase: every tracked file under it ends in
+`.log`, save the `.gitignore` directly in it, and every line `git status` prints under
+it names a `.log` -- a line git quoted or collapsed does not -- and none of those
+entries is a link or a directory: a link named like a transcript would decide where a
+path through it leads, a suite's included. The contract quantifies over those two
+sets, the tracked files under DIR and the lines `git status` prints under it, not over
+the directory as it is on disk: an entry git ignores under DIR is in neither, so it is
+outside the contract whatever it holds. It binds what lives under DIR, not what reads
 DIR from outside, so a test elsewhere that reads a `.log` of DIR as data is out of its
-reach by construction. The contract is read again on the reference, the tolerated
+reach by construction. And it governs what this tool tolerates during its own run, not
+what other tools can reach under DIR: a pytest started with its working directory
+inside DIR collects from there and runs what it finds, ignored files included, and the
+contract does not prevent it. A run of this tool does not start pytest that way: it
+starts it on the tree, with the selectors the spec names, and item 0 refuses a suite,
+a plugin, a launcher element or a mutated file under DIR (below). The contract is read
+again on the reference, the tolerated
 lines of the tree read before the run, which exits 5 when they break it; after
 that, a line that is not a `.log` appearing under DIR is a tolerated line that
 appeared, refused like any other. Item 0 refuses
@@ -1903,10 +1910,11 @@ def _contract_problem(
 ) -> str | None:
     """Why `directory` breaks the content contract of a tolerated directory, or `None`.
 
-    The contract: every file under the directory is a transcript -- its name ends in
-    `.log` -- save the `.gitignore` directly in it, and every line `git status` prints
-    under it names a `.log`. It quantifies over what lives under the directory, a set
-    one can read, instead of over whatever might consume it. A line under the directory
+    The contract: every tracked file under the directory is a transcript -- its name
+    ends in `.log` -- save the `.gitignore` directly in it, and every line `git status`
+    prints under it names a `.log`. It quantifies over those two sets, `tracked` and
+    `status`, not over the directory as it is on disk: an entry git ignores there is in
+    neither, so it is outside the contract whatever it holds. A line under the directory
     that cannot be read -- a path git quoted, a collapsed `?? DIR/sub/` -- is not a
     `.log` line, so it breaks the contract. So does an entry that is a link or a
     directory on disk, a gitlink's included, whatever its name: a link named like a
@@ -1915,6 +1923,10 @@ def _contract_problem(
     since it cannot be said to be a file. The reverse is out of its reach by
     construction: it binds what lives under the directory, not what reads it from
     outside, so a test elsewhere that reads a `.log` there as data is not bound by it.
+    Nor does it bind what other tools can reach under the directory: it governs what
+    this tool tolerates during its own run, and a pytest started with its working
+    directory inside the directory would run what it finds there, ignored files
+    included.
     """
     prefix = PurePosixPath(directory).parts
     own_ignore = f"{directory}/.gitignore"
@@ -2040,8 +2052,8 @@ def _tolerated_dirs(given: Sequence[str], tree: Path) -> tuple[tuple[str, ...], 
         if broken is not None:
             problems.append(
                 f"{where}: {relative} breaks the contract of a tolerated directory -- every "
-                f"file under it is a transcript, a {_TRANSCRIPT_SUFFIX}, save its own "
-                f".gitignore: {broken}"
+                f"file git tracks or lists under it is a transcript, a {_TRANSCRIPT_SUFFIX}, "
+                f"save its own .gitignore: {broken}"
             )
             continue
         if relative not in dirs:

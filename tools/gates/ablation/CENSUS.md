@@ -50,7 +50,8 @@ and the fixtures in `39fe3c2` were written for them. The seven are eight rows to
 seven read `KILLED_ELSEWHERE` and one, HOST-S2, still reads `SURVIVED`.
 
 **Why 9 ablated and not 17.** Seventeen tracked test files carry `adversarial` or
-`hostile` in their name; the four specs here ablate nine of them. The eight unmeasured suites are listed in spec_hostile.json's unmeasured field; that list contains no mutation anchors or proposed edits.
+`hostile` in their name; the four specs of the table above ablate nine of them, and
+`spec_t2.json` none. The eight unmeasured suites are listed in spec_hostile.json's unmeasured field; that list contains no mutation anchors or proposed edits.
 Five of the eight are in `verifiers/ts` (`authority`, `canon-depth-profile`,
 `compromise`, `vl3-duplicate-kid`, `vl5-anchor-status`), two are Python
 (`test_canon_depth_profile_adversarial.py`, `test_compromise_adversarial.py`) and one

@@ -14,10 +14,10 @@
 # directory, because run-all.sh opens this gate's transcript there before the gate
 # starts: without it the tree is dirty on entry and ablate.py refuses with 5. The
 # directory is not ignored, it is compared: its lines of `git status` at the start
-# of a run must be the same during and after it. And it must hold transcripts only
-# (ablate.py's contract for a tolerated directory), which is why nothing this gate
-# hands to ablate.py -- a spec, a launcher, a suite -- lives under it, and why the
-# gate never reads a .log of that directory as data.
+# of a run must be the same during and after it. And what git tracks or lists under
+# it must be transcripts only (ablate.py's contract for a tolerated directory), which
+# is why nothing this gate hands to ablate.py -- a spec, a launcher, a suite -- lives
+# under it, and why the gate never reads a .log of that directory as data.
 #
 # The results files go to a scratch directory outside the tree: a file written next
 # to a tracked spec would dirty the tree the next run checks. The gate is not wired
@@ -68,9 +68,9 @@ trap cleanup EXIT
 # refuses with 5 and names it. An empty leftover does not show there, and ablate.py
 # does not name it.
 #
-# Returns 0 when the probe exchanged; 78 when the journal refused with
-# `ExchangeUnavailable`, or no directory could be created under the tree; any other
-# status when the probe broke in a way the journal does not classify.
+# Returns 0 when the journal's probe returned without refusing; 78 when the journal
+# refused with `ExchangeUnavailable`, or no directory could be created under the tree;
+# any other status when the probe broke in a way the journal does not classify.
 exchange_probe() {
   local out rc
   # mktemp's own complaint is discarded, as gate_need discarded it: it names the tree
