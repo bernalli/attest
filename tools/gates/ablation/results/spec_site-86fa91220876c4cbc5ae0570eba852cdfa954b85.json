@@ -1,0 +1,691 @@
+{
+ "summary": {
+  "n_mutants": 12,
+  "killed": 11,
+  "killed_elsewhere": 1,
+  "survived": 0,
+  "broken": 0,
+  "not_applied": 0,
+  "baseline_red": 0,
+  "unmeasured": 0,
+  "mutant_ids": [
+   "SITE-S1-container-duplicate-name",
+   "SITE-S2-token-character-class",
+   "SITE-P1-token-length-cap",
+   "SITE-P2-hostile-quote-char",
+   "SITE-P3-hostile-format-chars",
+   "SITE-P4-quoted-member-clip",
+   "SITE-P5-label-is-the-signed-id",
+   "SITE-P6-label-ulid-grammar",
+   "SITE-P7-unrecognized-diagnostic-is-quoted",
+   "SITE-P8-operand-clip",
+   "SITE-P9-component-value-clip",
+   "SITE-P10-warning-attribution-own-property"
+  ],
+  "applications_confirmed": 12,
+  "applications_attempted": 12,
+  "suite_runs": 16,
+  "expectations_declared": 0,
+  "expectations_failed": 0,
+  "expectations_unmeasured": 0,
+  "tree_dirty_after_run": [],
+  "nonce_of_run": null
+ },
+ "results": [
+  {
+   "id": "SITE-S1-container-duplicate-name",
+   "property": "the container refuses a central directory that repeats a member name, in every member family",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "2/4 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "01-site__src__container.ts",
+    "sha_before": "35ed065d9b47f9c57cf2e5c96c854dbc7385619316de84bdb2047ef01fa2ef09",
+    "sha_after": "c4f8ccda9c7f5358d58ae19d0cc6f6e94f1eeefb20cadd4600732b21e72bd47f",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/container.ts"
+   ],
+   "nonce": {
+    "issued": "3569a9be39b3e6316fc06ca00f258dba",
+    "echoed": "3569a9be39b3e6316fc06ca00f258dba"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "63f0142ddc9c860446f3f288bfb96453",
+    "echoed": "63f0142ddc9c860446f3f288bfb96453"
+   },
+   "named_reds": {
+    "rejects a repeated manifest member even when its two physical entries are identical": {
+     "parseBundle duplicate central-directory members rejects a repeated manifest member even when its two physical entries are identical": "AssertionError"
+    },
+    "rejects a repeated proof member instead of collapsing the central-directory pair": {
+     "parseBundle duplicate central-directory members rejects a repeated proof member instead of collapsing the central-directory pair": "AssertionError"
+    }
+   },
+   "file": "site/src/container.ts",
+   "n_collected": 4,
+   "n_failed": 2,
+   "baseline_collected": 4,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "rejects a repeated manifest member even when its two physical entries are identical",
+    "rejects a repeated proof member instead of collapsing the central-directory pair"
+   ],
+   "expected_red_that_stayed_GREEN": [
+    "rejects two receipt entries with one name and different physical content"
+   ],
+   "collateral_red": [],
+   "failed": [
+    "parseBundle duplicate central-directory members rejects a repeated manifest member even when its two physical entries are identical",
+    "parseBundle duplicate central-directory members rejects a repeated proof member instead of collapsing the central-directory pair"
+   ]
+  },
+  {
+   "id": "SITE-S2-token-character-class",
+   "property": "the wire-token shape admits only [a-z0-9_], so a sentence or an address can never render as unquoted page prose",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED_ELSEWHERE",
+   "why": "2/27 red, but none of the tests this property names went red: ['pins the token-shape residual exactly as it was decided']. The suite noticed the mutation somewhere else, which says nothing about whether this guard is covered by the tests whose names claim it.",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "02-site__src__diagnostic.ts",
+    "sha_before": "9d206d195dc68859ad35acd3a8bdfe04f47c968374a62ddc0133fd5fda7906d9",
+    "sha_after": "e6f28e816f828d66e92e104d7bf229be5666d0958f3a84c73f2eb092d92ad922",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/diagnostic.ts"
+   ],
+   "nonce": {
+    "issued": "b4982c10a538fe41c412fa964f15acd5",
+    "echoed": "b4982c10a538fe41c412fa964f15acd5"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "4fd374d6dad2cc25a0ca723d2c6883e9",
+    "echoed": "4fd374d6dad2cc25a0ca723d2c6883e9"
+   },
+   "named_reds": {},
+   "file": "site/src/diagnostic.ts",
+   "n_collected": 27,
+   "n_failed": 2,
+   "baseline_collected": 27,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [],
+   "expected_red_that_stayed_GREEN": [
+    "pins the token-shape residual exactly as it was decided"
+   ],
+   "collateral_red": [
+    "a wire token is bounded like every other untrusted string quotes a lowercase string carrying a dot and an @, which let it spell an address",
+    "a wire token is bounded like every other untrusted string quotes a lowercase string carrying a space, which lets a token spell a sentence"
+   ],
+   "failed": [
+    "a wire token is bounded like every other untrusted string quotes a lowercase string carrying a dot and an @, which let it spell an address",
+    "a wire token is bounded like every other untrusted string quotes a lowercase string carrying a space, which lets a token spell a sentence"
+   ]
+  },
+  {
+   "id": "SITE-P1-token-length-cap",
+   "property": "the token fast path is bounded by length, not only by shape",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/27 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "03-site__src__diagnostic.ts",
+    "sha_before": "9d206d195dc68859ad35acd3a8bdfe04f47c968374a62ddc0133fd5fda7906d9",
+    "sha_after": "96ba8d935ec20c0fefb93e5b6a43ea6d328f3e5cb6dedb733d06d69b040d53d7",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/diagnostic.ts"
+   ],
+   "nonce": {
+    "issued": "e28f999d79dd370a43e6056151181cd7",
+    "echoed": "e28f999d79dd370a43e6056151181cd7"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "4fd374d6dad2cc25a0ca723d2c6883e9",
+    "echoed": "4fd374d6dad2cc25a0ca723d2c6883e9"
+   },
+   "named_reds": {
+    "quotes a token-shaped string too long to be a token": {
+     "a wire token is bounded like every other untrusted string quotes a token-shaped string too long to be a token": "AssertionError"
+    }
+   },
+   "file": "site/src/diagnostic.ts",
+   "n_collected": 27,
+   "n_failed": 1,
+   "baseline_collected": 27,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "quotes a token-shaped string too long to be a token"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "a wire token is bounded like every other untrusted string quotes a token-shaped string too long to be a token"
+   ]
+  },
+  {
+   "id": "SITE-P2-hostile-quote-char",
+   "property": "a quoted untrusted string cannot close the quote it is placed inside",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "2/42 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "04-site__src__untrusted-text.ts",
+    "sha_before": "6e8a4a017bb39be1474c938059dd16c4c0e88446b047d750ccd587fe7b7f1e3e",
+    "sha_after": "6d2c1992a74793bba91c2635a6c6cf40092305c1f3abd2f878a13deb607e4b38",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/untrusted-text.ts"
+   ],
+   "nonce": {
+    "issued": "3a27f83fcaeea85cf86104cffdde2a2c",
+    "echoed": "3a27f83fcaeea85cf86104cffdde2a2c"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "f3a29822dac704fc8b92ad1ee8b689be",
+    "echoed": "f3a29822dac704fc8b92ad1ee8b689be"
+   },
+   "named_reds": {
+    "a member name cannot close the quote it is put inside": {
+     "a quoted name is a boundary only if it cannot end the quote a member name cannot close the quote it is put inside": "AssertionError"
+    },
+    "quotes an operand in a warning attributed to a row, and neutralizes its quote": {
+     "a library-composed diagnostic is rendered as data, never as the page\u2019s prose quotes an operand in a warning attributed to a row, and neutralizes its quote": "AssertionError"
+    }
+   },
+   "file": "site/src/untrusted-text.ts",
+   "n_collected": 42,
+   "n_failed": 2,
+   "baseline_collected": 42,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "a member name cannot close the quote it is put inside",
+    "quotes an operand in a warning attributed to a row, and neutralizes its quote"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "a library-composed diagnostic is rendered as data, never as the page\u2019s prose quotes an operand in a warning attributed to a row, and neutralizes its quote",
+    "a quoted name is a boundary only if it cannot end the quote a member name cannot close the quote it is put inside"
+   ]
+  },
+  {
+   "id": "SITE-P3-hostile-format-chars",
+   "property": "no Unicode format character reaches the surface a reader sees, so untrusted text cannot reorder or hide the words around it",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "3/42 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "05-site__src__untrusted-text.ts",
+    "sha_before": "6e8a4a017bb39be1474c938059dd16c4c0e88446b047d750ccd587fe7b7f1e3e",
+    "sha_after": "5718bb43d95845ea65b804f7ad12a2658e31a0b172952bf720bf742dc42dd2d4",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/untrusted-text.ts"
+   ],
+   "nonce": {
+    "issued": "ab943f0cb6d88f011bfb31fa361d867c",
+    "echoed": "ab943f0cb6d88f011bfb31fa361d867c"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "f3a29822dac704fc8b92ad1ee8b689be",
+    "echoed": "f3a29822dac704fc8b92ad1ee8b689be"
+   },
+   "named_reds": {
+    "a member name cannot reorder or hide the words around it": {
+     "a quoted name is a boundary only if it cannot end the quote a member name cannot reorder or hide the words around it": "AssertionError"
+    },
+    "leaves no format character on the surface a reader sees": {
+     "a library-composed diagnostic is rendered as data, never as the page\u2019s prose leaves no format character on the surface a reader sees": "AssertionError"
+    }
+   },
+   "file": "site/src/untrusted-text.ts",
+   "n_collected": 42,
+   "n_failed": 3,
+   "baseline_collected": 42,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "a member name cannot reorder or hide the words around it",
+    "leaves no format character on the surface a reader sees"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [
+    "a component value is untrusted text too leaves no format character in the value beside the row name"
+   ],
+   "failed": [
+    "a component value is untrusted text too leaves no format character in the value beside the row name",
+    "a library-composed diagnostic is rendered as data, never as the page\u2019s prose leaves no format character on the surface a reader sees",
+    "a quoted name is a boundary only if it cannot end the quote a member name cannot reorder or hide the words around it"
+   ]
+  },
+  {
+   "id": "SITE-P4-quoted-member-clip",
+   "property": "a hostile member name quoted into a rejection message is clipped, so it cannot flood the message with prose",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "3/15 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "06-site__src__bundle.ts",
+    "sha_before": "2d98843898c8f7e1e714503ddf867424511e574260022161dee4d32897c279ca",
+    "sha_after": "faf70de48e358cc51ce9c9e309115c0f552f4e4e041b106f0ef6acaa6b0d0212",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/bundle.ts"
+   ],
+   "nonce": {
+    "issued": "cce072a3282780a02ecb9b4d14ec4d58",
+    "echoed": "cce072a3282780a02ecb9b4d14ec4d58"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "6e32ac1342085907024bacc16f6e6967",
+    "echoed": "6e32ac1342085907024bacc16f6e6967"
+   },
+   "named_reds": {
+    "quotes and clips a hostile receipt member name": {
+     "a rejection message quotes a member name, it does not speak it quotes and clips a hostile receipt member name": "AssertionError"
+    },
+    "quotes a hostile manifest member name": {
+     "a rejection message quotes a member name, it does not speak it quotes a hostile manifest member name": "AssertionError"
+    },
+    "quotes a hostile proof member name": {
+     "a rejection message quotes a member name, it does not speak it quotes a hostile proof member name": "AssertionError"
+    }
+   },
+   "file": "site/src/bundle.ts",
+   "n_collected": 15,
+   "n_failed": 3,
+   "baseline_collected": 15,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "quotes a hostile manifest member name",
+    "quotes a hostile proof member name",
+    "quotes and clips a hostile receipt member name"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "a rejection message quotes a member name, it does not speak it quotes a hostile manifest member name",
+    "a rejection message quotes a member name, it does not speak it quotes a hostile proof member name",
+    "a rejection message quotes a member name, it does not speak it quotes and clips a hostile receipt member name"
+   ]
+  },
+  {
+   "id": "SITE-P5-label-is-the-signed-id",
+   "property": "a bundle receipt is labelled by its signed receipt_id, never by the ZIP member name that carried it",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "5/15 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "07-site__src__bundle.ts",
+    "sha_before": "2d98843898c8f7e1e714503ddf867424511e574260022161dee4d32897c279ca",
+    "sha_after": "33c056db08ea10a57530afccaeef8ecae25cfae7d37e6eee18852bcec9752f5c",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/bundle.ts"
+   ],
+   "nonce": {
+    "issued": "e41d798227b369c46ddd52fbbc1b28e9",
+    "echoed": "e41d798227b369c46ddd52fbbc1b28e9"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "6e32ac1342085907024bacc16f6e6967",
+    "echoed": "6e32ac1342085907024bacc16f6e6967"
+   },
+   "named_reds": {
+    "labels a bundle receipt with the signed receipt_id, not the member name": {
+     "a ZIP member name never becomes a label labels a bundle receipt with the signed receipt_id, not the member name": "AssertionError"
+    },
+    "keeps the forged name out of the rendered card, badge and heading alike": {
+     "a ZIP member name never becomes a label keeps the forged name out of the rendered card, badge and heading alike": "AssertionError"
+    },
+    "labels the sample by its signed id even when the member name says otherwise": {
+     "the attack, mounted on the bundle the site actually serves labels the sample by its signed id even when the member name says otherwise": "AssertionError"
+    }
+   },
+   "file": "site/src/bundle.ts",
+   "n_collected": 15,
+   "n_failed": 5,
+   "baseline_collected": 15,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "keeps the forged name out of the rendered card, badge and heading alike",
+    "labels a bundle receipt with the signed receipt_id, not the member name",
+    "labels the sample by its signed id even when the member name says otherwise"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [
+    "a ZIP member name never becomes a label does not put the member name in the notice about a salted receipt",
+    "a ZIP member name never becomes a label keeps it out of the failure card too, which renders a label of its own"
+   ],
+   "failed": [
+    "a ZIP member name never becomes a label does not put the member name in the notice about a salted receipt",
+    "a ZIP member name never becomes a label keeps it out of the failure card too, which renders a label of its own",
+    "a ZIP member name never becomes a label keeps the forged name out of the rendered card, badge and heading alike",
+    "a ZIP member name never becomes a label labels a bundle receipt with the signed receipt_id, not the member name",
+    "the attack, mounted on the bundle the site actually serves labels the sample by its signed id even when the member name says otherwise"
+   ]
+  },
+  {
+   "id": "SITE-P6-label-ulid-grammar",
+   "property": "a signed receipt_id that is not ULID-shaped is never shown as a label",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/15 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "08-site__src__intake.ts",
+    "sha_before": "8feed81850996b1a30542b24cc99ff523a3bd6b2b91946c7fe401c20d0c09880",
+    "sha_after": "9c7bbc2131f6bbb814773efcffd00cfb40da5efb7dca7c2883cfb5b927c48964",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/intake.ts"
+   ],
+   "nonce": {
+    "issued": "82d0f73605f95d8aa90d77522a74106f",
+    "echoed": "82d0f73605f95d8aa90d77522a74106f"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "6e32ac1342085907024bacc16f6e6967",
+    "echoed": "6e32ac1342085907024bacc16f6e6967"
+   },
+   "named_reds": {
+    "refuses a signed receipt_id that is a sentence rather than a ULID": {
+     "the ULID grammar is what makes a label safe to show refuses a signed receipt_id that is a sentence rather than a ULID": "AssertionError"
+    }
+   },
+   "file": "site/src/intake.ts",
+   "n_collected": 15,
+   "n_failed": 1,
+   "baseline_collected": 15,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "refuses a signed receipt_id that is a sentence rather than a ULID"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "the ULID grammar is what makes a label safe to show refuses a signed receipt_id that is a sentence rather than a ULID"
+   ]
+  },
+  {
+   "id": "SITE-P7-unrecognized-diagnostic-is-quoted",
+   "property": "an unrecognized diagnostic string is quoted whole rather than spoken as the page's own prose",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "4/27 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "09-site__src__diagnostic.ts",
+    "sha_before": "9d206d195dc68859ad35acd3a8bdfe04f47c968374a62ddc0133fd5fda7906d9",
+    "sha_after": "be34c5eb0b90a27e53da7cc93513ce8217311876556e149c14ab4ecec62f857f",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/diagnostic.ts"
+   ],
+   "nonce": {
+    "issued": "8f77fca288b022a8353d00d24a32c7ec",
+    "echoed": "8f77fca288b022a8353d00d24a32c7ec"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "4fd374d6dad2cc25a0ca723d2c6883e9",
+    "echoed": "4fd374d6dad2cc25a0ca723d2c6883e9"
+   },
+   "named_reds": {
+    "quotes a warning it does not recognize at all, instead of speaking it": {
+     "a library-composed diagnostic is rendered as data, never as the page\u2019s prose quotes a warning it does not recognize at all, instead of speaking it": "AssertionError"
+    }
+   },
+   "file": "site/src/diagnostic.ts",
+   "n_collected": 27,
+   "n_failed": 4,
+   "baseline_collected": 27,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "quotes a warning it does not recognize at all, instead of speaking it"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [
+    "a wire token is bounded like every other untrusted string quotes a lowercase string carrying a dot and an @, which let it spell an address",
+    "a wire token is bounded like every other untrusted string quotes a lowercase string carrying a space, which lets a token spell a sentence",
+    "a wire token is bounded like every other untrusted string quotes a token-shaped string too long to be a token"
+   ],
+   "failed": [
+    "a library-composed diagnostic is rendered as data, never as the page\u2019s prose quotes a warning it does not recognize at all, instead of speaking it",
+    "a wire token is bounded like every other untrusted string quotes a lowercase string carrying a dot and an @, which let it spell an address",
+    "a wire token is bounded like every other untrusted string quotes a lowercase string carrying a space, which lets a token spell a sentence",
+    "a wire token is bounded like every other untrusted string quotes a token-shaped string too long to be a token"
+   ]
+  },
+  {
+   "id": "SITE-P8-operand-clip",
+   "property": "an oversized operand is clipped in its citation and says so, while the raw quarantine keeps it whole",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "2/27 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "10-site__src__render.ts",
+    "sha_before": "0e73fedc3d49d3a3542a36cb22565aa968025d6d97e82d4c039d91ea89b26e9e",
+    "sha_after": "c0529f8884fe0e2fd1a6edff2368af7ba55c856a2fc8b4e28b56d91716400a9d",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/render.ts"
+   ],
+   "nonce": {
+    "issued": "51e38e786654b7a27f7f728b4f561d90",
+    "echoed": "51e38e786654b7a27f7f728b4f561d90"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "4fd374d6dad2cc25a0ca723d2c6883e9",
+    "echoed": "4fd374d6dad2cc25a0ca723d2c6883e9"
+   },
+   "named_reds": {
+    "clips an operand that would flood the page, and says it clipped": {
+     "a library-composed diagnostic is rendered as data, never as the page\u2019s prose clips an operand that would flood the page, and says it clipped": "AssertionError"
+    }
+   },
+   "file": "site/src/render.ts",
+   "n_collected": 27,
+   "n_failed": 2,
+   "baseline_collected": 27,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "clips an operand that would flood the page, and says it clipped"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [
+    "a wire token is bounded like every other untrusted string quotes a token-shaped string too long to be a token"
+   ],
+   "failed": [
+    "a library-composed diagnostic is rendered as data, never as the page\u2019s prose clips an operand that would flood the page, and says it clipped",
+    "a wire token is bounded like every other untrusted string quotes a token-shaped string too long to be a token"
+   ]
+  },
+  {
+   "id": "SITE-P9-component-value-clip",
+   "property": "a component value shown beside a row name is length-bounded",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/27 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "11-site__src__render.ts",
+    "sha_before": "0e73fedc3d49d3a3542a36cb22565aa968025d6d97e82d4c039d91ea89b26e9e",
+    "sha_after": "7c5bbec37a4d83bdc10fcb1373971658dc726829972601e11e36fe4c85fc94a5",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/render.ts"
+   ],
+   "nonce": {
+    "issued": "466bd2c5ad1d4f4746a165a7883117f6",
+    "echoed": "466bd2c5ad1d4f4746a165a7883117f6"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "4fd374d6dad2cc25a0ca723d2c6883e9",
+    "echoed": "4fd374d6dad2cc25a0ca723d2c6883e9"
+   },
+   "named_reds": {
+    "clips a value that would flood the row": {
+     "a component value is untrusted text too clips a value that would flood the row": "AssertionError"
+    }
+   },
+   "file": "site/src/render.ts",
+   "n_collected": 27,
+   "n_failed": 1,
+   "baseline_collected": 27,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "clips a value that would flood the row"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "a component value is untrusted text too clips a value that would flood the row"
+   ]
+  },
+  {
+   "id": "SITE-P10-warning-attribution-own-property",
+   "property": "warning attribution reads own properties only, so a warning naming an Object.prototype member is never swallowed",
+   "kind": "source",
+   "runner": "vitest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/27 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "12-site__src__explain.ts",
+    "sha_before": "6e52a79e2271e37847e10bc4da94164eb4eb401d494351858c4fa6dbf9b70ff2",
+    "sha_after": "23b437d350cb9b3a6e21f93895f4908b6ac5be4abbb5de6274c3d2faac4f55a9",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M site/src/explain.ts"
+   ],
+   "nonce": {
+    "issued": "3e632f5a5c08511ddc5654634867d662",
+    "echoed": "3e632f5a5c08511ddc5654634867d662"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "4fd374d6dad2cc25a0ca723d2c6883e9",
+    "echoed": "4fd374d6dad2cc25a0ca723d2c6883e9"
+   },
+   "named_reds": {
+    "shows a warning whose text names a member of Object.prototype": {
+     "attribution never makes a warning disappear shows a warning whose text names a member of Object.prototype": "AssertionError"
+    }
+   },
+   "file": "site/src/explain.ts",
+   "n_collected": 27,
+   "n_failed": 1,
+   "baseline_collected": 27,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "shows a warning whose text names a member of Object.prototype"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "attribution never makes a warning disappear shows a warning whose text names a member of Object.prototype"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,944 @@
+{
+ "summary": {
+  "n_mutants": 16,
+  "killed": 14,
+  "killed_elsewhere": 2,
+  "survived": 0,
+  "broken": 0,
+  "not_applied": 0,
+  "baseline_red": 0,
+  "unmeasured": 0,
+  "mutant_ids": [
+   "VL2-P1-container-duplicate-name",
+   "VL2-P2-export-duplicate-receipt-id",
+   "VL2-P3-export-receipt-id-shape",
+   "VL2-P4-export-payload-is-object",
+   "VL2-P5-import-distinct-ids-not-overtight",
+   "VL34-P1-duplicate-kids-detection",
+   "VL34-P2-find-key-own-ambiguity-guard",
+   "VL34-P3-rotation-keeps-an-active-key",
+   "VL34-P4-non-dict-entries-ignored-not-crash",
+   "VL34-P5-kid-type-strictness",
+   "VL34-P6-rotation-appends-replacement",
+   "VL34-P7-verify-refuses-ambiguous-issuer-manifest",
+   "VL5-P1-anchor-registered-vocabulary",
+   "VL5-P2-anchor-status-type-guard",
+   "VL5-P3-transferred-is-in-the-vocabulary",
+   "VL5-P4-anchor-is-order-independent-max"
+  ],
+  "applications_confirmed": 16,
+  "applications_attempted": 16,
+  "suite_runs": 19,
+  "expectations_declared": 0,
+  "expectations_failed": 0,
+  "expectations_unmeasured": 0,
+  "tree_dirty_after_run": [],
+  "nonce_of_run": null
+ },
+ "results": [
+  {
+   "id": "VL2-P1-container-duplicate-name",
+   "property": "a container refuses a central directory that lists the same member name twice, in every member family and in the private archive too",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "4/13 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "01-src__attest__container.py",
+    "sha_before": "929ab9f9ec93375366123a61fc1166ee36f85da8fed063abc2bbadff664df681",
+    "sha_after": "c5b4f2e87da732ab91a88d22cd53680ac04ba5235e17ebd2dcacb876b6778a45",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/container.py"
+   ],
+   "nonce": {
+    "issued": "6bf1dc138269fbc228c41b2704080dba",
+    "echoed": "6bf1dc138269fbc228c41b2704080dba"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "b3b6be55d8ffd9ab519b6b7c7311b18d",
+    "echoed": "b3b6be55d8ffd9ab519b6b7c7311b18d"
+   },
+   "named_reds": {
+    "test_import_rejects_duplicate_receipt_members_with_different_physical_content": {
+     "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_rejects_duplicate_receipt_members_with_different_physical_content": "Failed"
+    },
+    "test_import_rejects_duplicate_names_in_nonreceipt_public_member_families": {
+     "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_rejects_duplicate_names_in_nonreceipt_public_member_families[manifests/]": "Failed",
+     "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_rejects_duplicate_names_in_nonreceipt_public_member_families[proofs/]": "Failed"
+    },
+    "test_import_rejects_duplicate_salts_in_the_private_archive": {
+     "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_rejects_duplicate_salts_in_the_private_archive": "Failed"
+    }
+   },
+   "file": "src/attest/container.py",
+   "n_collected": 13,
+   "n_failed": 4,
+   "baseline_collected": 13,
+   "red_kinds": [
+    "Failed"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_import_rejects_duplicate_names_in_nonreceipt_public_member_families",
+    "test_import_rejects_duplicate_receipt_members_with_different_physical_content",
+    "test_import_rejects_duplicate_salts_in_the_private_archive"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_rejects_duplicate_names_in_nonreceipt_public_member_families[manifests/]",
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_rejects_duplicate_names_in_nonreceipt_public_member_families[proofs/]",
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_rejects_duplicate_receipt_members_with_different_physical_content",
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_rejects_duplicate_salts_in_the_private_archive"
+   ]
+  },
+  {
+   "id": "VL2-P2-export-duplicate-receipt-id",
+   "property": "export refuses the whole write when two receipts share a receipt_id, before touching disk",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "2/13 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "02-src__attest__bundle.py",
+    "sha_before": "aafc85aad878fd18902160e46e10d3d24d3ec125ac842902d1127bffe51351b3",
+    "sha_after": "8f018ced16d80df93b2899a19cb2fb68da98ab278dee4a718494a88b95ffea72",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/bundle.py"
+   ],
+   "nonce": {
+    "issued": "8f8407a06e86112fbe775b1988e99831",
+    "echoed": "8f8407a06e86112fbe775b1988e99831"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "b3b6be55d8ffd9ab519b6b7c7311b18d",
+    "echoed": "b3b6be55d8ffd9ab519b6b7c7311b18d"
+   },
+   "named_reds": {
+    "test_export_refuses_every_multiplicity_of_one_receipt_id_without_partial_files": {
+     "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_refuses_every_multiplicity_of_one_receipt_id_without_partial_files[2]": "Failed",
+     "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_refuses_every_multiplicity_of_one_receipt_id_without_partial_files[3]": "Failed"
+    }
+   },
+   "file": "src/attest/bundle.py",
+   "n_collected": 13,
+   "n_failed": 2,
+   "baseline_collected": 13,
+   "red_kinds": [
+    "Failed"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_export_refuses_every_multiplicity_of_one_receipt_id_without_partial_files"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_refuses_every_multiplicity_of_one_receipt_id_without_partial_files[2]",
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_refuses_every_multiplicity_of_one_receipt_id_without_partial_files[3]"
+   ]
+  },
+  {
+   "id": "VL2-P3-export-receipt-id-shape",
+   "property": "export refuses any receipt_id that is not the exact uppercase-ULID shape, so a case or normalization variant pair cannot both be exported",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "2/13 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "03-src__attest__bundle.py",
+    "sha_before": "aafc85aad878fd18902160e46e10d3d24d3ec125ac842902d1127bffe51351b3",
+    "sha_after": "38a85033c8d6bf9be23b520d6d78f3350efe7eac2370401131ec4a3949531180",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/bundle.py"
+   ],
+   "nonce": {
+    "issued": "99792576f011f8b9e4960e0da8c74010",
+    "echoed": "99792576f011f8b9e4960e0da8c74010"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "b3b6be55d8ffd9ab519b6b7c7311b18d",
+    "echoed": "b3b6be55d8ffd9ab519b6b7c7311b18d"
+   },
+   "named_reds": {
+    "test_export_refuses_receipt_ids_that_are_not_ulids": {
+     "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_refuses_receipt_ids_that_are_not_ulids[01HZX0000000000000000000AA-01hzx0000000000000000000aa]": "Failed",
+     "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_refuses_receipt_ids_that_are_not_ulids[r\\xe9ceipt-re\\u0301ceipt]": "Failed"
+    }
+   },
+   "file": "src/attest/bundle.py",
+   "n_collected": 13,
+   "n_failed": 2,
+   "baseline_collected": 13,
+   "red_kinds": [
+    "Failed"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_export_refuses_receipt_ids_that_are_not_ulids"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_refuses_receipt_ids_that_are_not_ulids[01HZX0000000000000000000AA-01hzx0000000000000000000aa]",
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_refuses_receipt_ids_that_are_not_ulids[r\\xe9ceipt-re\\u0301ceipt]"
+   ]
+  },
+  {
+   "id": "VL2-P4-export-payload-is-object",
+   "property": "export refuses a receipt envelope whose payload is not an object (SUSPECTED VACUOUS: the next guard may catch the same inputs)",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED_ELSEWHERE",
+   "why": "2/13 red, but none of the tests this property names went red: ['test_export_refuses_receipts_without_an_object_payload']. The suite noticed the mutation somewhere else, which says nothing about whether this guard is covered by the tests whose names claim it.",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "04-src__attest__bundle.py",
+    "sha_before": "aafc85aad878fd18902160e46e10d3d24d3ec125ac842902d1127bffe51351b3",
+    "sha_after": "3c7122389b9706a7236eb0ede97f2f84ee47f58a6c1ff66c7fb7cddc5a87f773",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/bundle.py"
+   ],
+   "nonce": {
+    "issued": "50c741d274d6bc36ee867e162f9db8be",
+    "echoed": "50c741d274d6bc36ee867e162f9db8be"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "b3b6be55d8ffd9ab519b6b7c7311b18d",
+    "echoed": "b3b6be55d8ffd9ab519b6b7c7311b18d"
+   },
+   "named_reds": {},
+   "file": "src/attest/bundle.py",
+   "n_collected": 13,
+   "n_failed": 2,
+   "baseline_collected": 13,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [],
+   "expected_red_that_stayed_GREEN": [
+    "test_export_refuses_receipts_without_an_object_payload"
+   ],
+   "collateral_red": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_names_the_payload_guard_and_not_the_one_after_it[missing]",
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_names_the_payload_guard_and_not_the_one_after_it[scalar]"
+   ],
+   "failed": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_names_the_payload_guard_and_not_the_one_after_it[missing]",
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_export_names_the_payload_guard_and_not_the_one_after_it[scalar]"
+   ]
+  },
+  {
+   "id": "VL2-P5-import-distinct-ids-not-overtight",
+   "property": "the uniqueness guards do NOT over-trigger: two genuinely distinct receipts import and are both reported",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/13 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "05-src__attest__bundle.py",
+    "sha_before": "aafc85aad878fd18902160e46e10d3d24d3ec125ac842902d1127bffe51351b3",
+    "sha_after": "d8c14015da2bc0ca7685efdab788dc60d3cda817583ab8c76ac7ac49bee54b9f",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/bundle.py"
+   ],
+   "nonce": {
+    "issued": "f2b858fd12e3bad5ffdee37b0fa5af0d",
+    "echoed": "f2b858fd12e3bad5ffdee37b0fa5af0d"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "b3b6be55d8ffd9ab519b6b7c7311b18d",
+    "echoed": "b3b6be55d8ffd9ab519b6b7c7311b18d"
+   },
+   "named_reds": {
+    "test_import_valid_unique_members_and_reports_the_distinct_receipt_count": {
+     "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_valid_unique_members_and_reports_the_distinct_receipt_count": "attest.bundle.BundleError: bundle lists receipt_id '01HZX000"
+    }
+   },
+   "file": "src/attest/bundle.py",
+   "n_collected": 13,
+   "n_failed": 1,
+   "baseline_collected": 13,
+   "red_kinds": [
+    "attest.bundle.BundleError: bundle lists receipt_id '01HZX000"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_import_valid_unique_members_and_reports_the_distinct_receipt_count"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl2_bundle_duplicate_members_adversarial.py::test_import_valid_unique_members_and_reports_the_distinct_receipt_count"
+   ]
+  },
+  {
+   "id": "VL34-P1-duplicate-kids-detection",
+   "property": "duplicate_kids detects a repeated string kid, which is what makes build/verify/continuity refuse an ambiguous manifest",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "6/19 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "06-src__attest__manifests.py",
+    "sha_before": "d1c83e1078791d1a8a953dd6d5996059212221aaf0848aea3d8a47f0f5b92c76",
+    "sha_after": "dd15b888181119e5b1e1c295861001965c6930243e891d98317c85613a442e9f",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/manifests.py"
+   ],
+   "nonce": {
+    "issued": "8b55f4f3168b2419f37cf21568db07cd",
+    "echoed": "8b55f4f3168b2419f37cf21568db07cd"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "a4ae467418bcc98d87da4aee1142bb75",
+    "echoed": "a4ae467418bcc98d87da4aee1142bb75"
+   },
+   "named_reds": {
+    "test_duplicate_kid_is_rejected_independently_of_order_or_status": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[active-active]": "Failed",
+     "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[active-retired]": "Failed",
+     "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[retired-active]": "Failed"
+    },
+    "test_three_duplicate_kids_fail_closed_without_position_selection": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_three_duplicate_kids_fail_closed_without_position_selection": "Failed"
+    },
+    "test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest": "Failed"
+    },
+    "test_continuity_rejects_duplicates_in_either_manifest": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_continuity_rejects_duplicates_in_either_manifest": "AssertionError"
+    }
+   },
+   "file": "src/attest/manifests.py",
+   "n_collected": 19,
+   "n_failed": 6,
+   "baseline_collected": 19,
+   "red_kinds": [
+    "AssertionError",
+    "Failed"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_continuity_rejects_duplicates_in_either_manifest",
+    "test_duplicate_kid_is_rejected_independently_of_order_or_status",
+    "test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest",
+    "test_three_duplicate_kids_fail_closed_without_position_selection"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl34_issuance_guards_adversarial.py::test_continuity_rejects_duplicates_in_either_manifest",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[active-active]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[active-retired]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[retired-active]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_three_duplicate_kids_fail_closed_without_position_selection"
+   ]
+  },
+  {
+   "id": "VL34-P2-find-key-own-ambiguity-guard",
+   "property": "_find_key has its OWN ambiguity guard, independent of duplicate_kids: an ambiguous kid resolves to None rather than to a position",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "5/19 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "07-src__attest__manifests.py",
+    "sha_before": "d1c83e1078791d1a8a953dd6d5996059212221aaf0848aea3d8a47f0f5b92c76",
+    "sha_after": "4b49607084854c68a7bc7be5124b6a896a8c41dfbc846c064076ad8c82e4f305",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/manifests.py"
+   ],
+   "nonce": {
+    "issued": "a33275ab56e9fe703d57b1b5cb8253f2",
+    "echoed": "a33275ab56e9fe703d57b1b5cb8253f2"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "a4ae467418bcc98d87da4aee1142bb75",
+    "echoed": "a4ae467418bcc98d87da4aee1142bb75"
+   },
+   "named_reds": {
+    "test_duplicate_kid_is_rejected_independently_of_order_or_status": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[active-active]": "AssertionError",
+     "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[active-retired]": "AssertionError",
+     "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[retired-active]": "AssertionError"
+    },
+    "test_three_duplicate_kids_fail_closed_without_position_selection": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_three_duplicate_kids_fail_closed_without_position_selection": "AssertionError"
+    },
+    "test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest": "AssertionError"
+    }
+   },
+   "file": "src/attest/manifests.py",
+   "n_collected": 19,
+   "n_failed": 5,
+   "baseline_collected": 19,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_duplicate_kid_is_rejected_independently_of_order_or_status",
+    "test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest",
+    "test_three_duplicate_kids_fail_closed_without_position_selection"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[active-active]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[active-retired]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_kid_is_rejected_independently_of_order_or_status[retired-active]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_three_duplicate_kids_fail_closed_without_position_selection"
+   ]
+  },
+  {
+   "id": "VL34-P3-rotation-keeps-an-active-key",
+   "property": "rotation refuses to leave a manifest with zero keys able to sign for continuity",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "4/19 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "08-src__attest__manifests.py",
+    "sha_before": "d1c83e1078791d1a8a953dd6d5996059212221aaf0848aea3d8a47f0f5b92c76",
+    "sha_after": "e06f1cdd0d266869b5b6eb5ffabf9941d1ae9125be76247f359c8c6fe1b62691",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/manifests.py"
+   ],
+   "nonce": {
+    "issued": "83e869026f00828c62ffa4c0fafe0e5b",
+    "echoed": "83e869026f00828c62ffa4c0fafe0e5b"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "a4ae467418bcc98d87da4aee1142bb75",
+    "echoed": "a4ae467418bcc98d87da4aee1142bb75"
+   },
+   "named_reds": {
+    "test_rotation_cannot_remove_the_last_active_key_without_replacement": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_cannot_remove_the_last_active_key_without_replacement[retire]": "Failed"
+    },
+    "test_rotation_rejects_a_non_active_replacement_for_the_last_active_key": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_rejects_a_non_active_replacement_for_the_last_active_key[compromised]": "Failed",
+     "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_rejects_a_non_active_replacement_for_the_last_active_key[retired]": "Failed"
+    },
+    "test_rotation_rejects_a_zero_active_predecessor_that_stays_zero_active": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_rejects_a_zero_active_predecessor_that_stays_zero_active": "Failed"
+    }
+   },
+   "file": "src/attest/manifests.py",
+   "n_collected": 19,
+   "n_failed": 4,
+   "baseline_collected": 19,
+   "red_kinds": [
+    "Failed"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_rotation_cannot_remove_the_last_active_key_without_replacement",
+    "test_rotation_rejects_a_non_active_replacement_for_the_last_active_key",
+    "test_rotation_rejects_a_zero_active_predecessor_that_stays_zero_active"
+   ],
+   "expected_red_that_stayed_GREEN": [
+    "test_rotation_applies_duplicate_and_zero_active_guards_together"
+   ],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_cannot_remove_the_last_active_key_without_replacement[retire]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_rejects_a_non_active_replacement_for_the_last_active_key[compromised]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_rejects_a_non_active_replacement_for_the_last_active_key[retired]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_rejects_a_zero_active_predecessor_that_stays_zero_active"
+   ]
+  },
+  {
+   "id": "VL34-P4-non-dict-entries-ignored-not-crash",
+   "property": "a non-dict member of keys[] is silently ignored by every consumer and never raises",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "3/19 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "09-src__attest__manifests.py",
+    "sha_before": "d1c83e1078791d1a8a953dd6d5996059212221aaf0848aea3d8a47f0f5b92c76",
+    "sha_after": "91405b947dd387c60756a69f43f62f75b139e10bac5d38fe998d816178c0be06",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/manifests.py"
+   ],
+   "nonce": {
+    "issued": "b4d5e705734e3be92cce54431f1089a3",
+    "echoed": "b4d5e705734e3be92cce54431f1089a3"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "a4ae467418bcc98d87da4aee1142bb75",
+    "echoed": "a4ae467418bcc98d87da4aee1142bb75"
+   },
+   "named_reds": {
+    "test_non_dict_entries_fail_every_manifest_consumer": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_non_dict_entries_fail_every_manifest_consumer[None]": "AttributeError",
+     "tests/test_vl34_issuance_guards_adversarial.py::test_non_dict_entries_fail_every_manifest_consumer[invalid_entry1]": "AttributeError",
+     "tests/test_vl34_issuance_guards_adversarial.py::test_non_dict_entries_fail_every_manifest_consumer[not-a-key-entry]": "AttributeError"
+    }
+   },
+   "file": "src/attest/manifests.py",
+   "n_collected": 19,
+   "n_failed": 3,
+   "baseline_collected": 19,
+   "red_kinds": [
+    "AttributeError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_non_dict_entries_fail_every_manifest_consumer"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl34_issuance_guards_adversarial.py::test_non_dict_entries_fail_every_manifest_consumer[None]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_non_dict_entries_fail_every_manifest_consumer[invalid_entry1]",
+    "tests/test_vl34_issuance_guards_adversarial.py::test_non_dict_entries_fail_every_manifest_consumer[not-a-key-entry]"
+   ]
+  },
+  {
+   "id": "VL34-P5-kid-type-strictness",
+   "property": "only genuine string kids are compared, so Python's True == 1 cannot make two differently-typed kids look like a duplicate pair",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/19 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "10-src__attest__manifests.py",
+    "sha_before": "d1c83e1078791d1a8a953dd6d5996059212221aaf0848aea3d8a47f0f5b92c76",
+    "sha_after": "44568be4419f46dfc6a57428a3c9831aa362df37152e6b072f6bfe5923c3bf67",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/manifests.py"
+   ],
+   "nonce": {
+    "issued": "374acc52a0594e99764e02499a666313",
+    "echoed": "374acc52a0594e99764e02499a666313"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "a4ae467418bcc98d87da4aee1142bb75",
+    "echoed": "a4ae467418bcc98d87da4aee1142bb75"
+   },
+   "named_reds": {
+    "test_non_string_kids_do_not_collide_through_python_equality": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_non_string_kids_do_not_collide_through_python_equality": "AttributeError"
+    }
+   },
+   "file": "src/attest/manifests.py",
+   "n_collected": 19,
+   "n_failed": 1,
+   "baseline_collected": 19,
+   "red_kinds": [
+    "AttributeError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_non_string_kids_do_not_collide_through_python_equality"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl34_issuance_guards_adversarial.py::test_non_string_kids_do_not_collide_through_python_equality"
+   ]
+  },
+  {
+   "id": "VL34-P6-rotation-appends-replacement",
+   "property": "rotation actually installs the supplied replacement key, so retiring the last active key succeeds when a replacement is given",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/19 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "11-src__attest__manifests.py",
+    "sha_before": "d1c83e1078791d1a8a953dd6d5996059212221aaf0848aea3d8a47f0f5b92c76",
+    "sha_after": "b3a6edc4936d2be0b764b8afe9bcca6b657c31eccc2f7b460aa701b5b887fb89",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/manifests.py"
+   ],
+   "nonce": {
+    "issued": "5dbedbc9a07cf4cd5dd5380decdafd59",
+    "echoed": "5dbedbc9a07cf4cd5dd5380decdafd59"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "a4ae467418bcc98d87da4aee1142bb75",
+    "echoed": "a4ae467418bcc98d87da4aee1142bb75"
+   },
+   "named_reds": {
+    "test_rotation_can_retire_the_last_active_key_when_an_active_replacement_exists": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_can_retire_the_last_active_key_when_an_active_replacement_exists": "ValueError"
+    }
+   },
+   "file": "src/attest/manifests.py",
+   "n_collected": 19,
+   "n_failed": 1,
+   "baseline_collected": 19,
+   "red_kinds": [
+    "ValueError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_rotation_can_retire_the_last_active_key_when_an_active_replacement_exists"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl34_issuance_guards_adversarial.py::test_rotation_can_retire_the_last_active_key_when_an_active_replacement_exists"
+   ]
+  },
+  {
+   "id": "VL34-P7-verify-refuses-ambiguous-issuer-manifest",
+   "property": "verify() itself refuses an issuer manifest with duplicate kids, reporting the duplicate",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/19 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "12-src__attest__verify.py",
+    "sha_before": "b93f48398192c67b25429a75626382d39a2872de5d3aa5c1a07655af0b91e313",
+    "sha_after": "3ef6f9bc5f11b54c13c736c0d0a5b633039a0f4ebe1eca26269e41a5b0f2add1",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/verify.py"
+   ],
+   "nonce": {
+    "issued": "b2311660d516a4516384af6f7c781ef8",
+    "echoed": "b2311660d516a4516384af6f7c781ef8"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "a4ae467418bcc98d87da4aee1142bb75",
+    "echoed": "a4ae467418bcc98d87da4aee1142bb75"
+   },
+   "named_reds": {
+    "test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest": {
+     "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest": "AssertionError"
+    }
+   },
+   "file": "src/attest/verify.py",
+   "n_collected": 19,
+   "n_failed": 1,
+   "baseline_collected": 19,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl34_issuance_guards_adversarial.py::test_duplicate_unrelated_to_signer_invalidates_the_whole_manifest"
+   ]
+  },
+  {
+   "id": "VL5-P1-anchor-registered-vocabulary",
+   "property": "only a registered statement status (revoked/transferred) may drive the freshness anchor T",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "12/25 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "13-src__attest__verify.py",
+    "sha_before": "b93f48398192c67b25429a75626382d39a2872de5d3aa5c1a07655af0b91e313",
+    "sha_after": "4027852ea867ec5902412eade61619ec4926580dfa24aec07fd3e9a011164f0a",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/verify.py"
+   ],
+   "nonce": {
+    "issued": "f13b8ae535e3b547193f02e2685352c6",
+    "echoed": "f13b8ae535e3b547193f02e2685352c6"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "e3501f547e1a88fc0fb4053439a34055",
+    "echoed": "e3501f547e1a88fc0fb4053439a34055"
+   },
+   "named_reds": {
+    "test_authenticated_unregistered_status_never_provides_a_freshness_anchor": {
+     "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[Revoked]": "AssertionError",
+     "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[revoke]": "AssertionError",
+     "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[revoked ]": "AssertionError",
+     "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[transferred_pending]": "AssertionError"
+    },
+    "test_matching_unregistered_status_is_silent_and_cannot_revoke": {
+     "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[Revoked]": "AssertionError",
+     "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[revoke]": "AssertionError",
+     "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[revoked ]": "AssertionError",
+     "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[transferred_pending]": "AssertionError"
+    },
+    "test_only_authenticated_registered_statement_statuses_determine_t": {
+     "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[False-revoked]": "AssertionError",
+     "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[False-transferred]": "AssertionError",
+     "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[True-revoked]": "AssertionError",
+     "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[True-transferred]": "AssertionError"
+    }
+   },
+   "file": "src/attest/verify.py",
+   "n_collected": 25,
+   "n_failed": 12,
+   "baseline_collected": 25,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_authenticated_unregistered_status_never_provides_a_freshness_anchor",
+    "test_matching_unregistered_status_is_silent_and_cannot_revoke",
+    "test_only_authenticated_registered_statement_statuses_determine_t"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[Revoked]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[revoke]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[revoked ]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[transferred_pending]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[Revoked]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[revoke]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[revoked ]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[transferred_pending]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[False-revoked]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[False-transferred]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[True-revoked]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[True-transferred]"
+   ]
+  },
+  {
+   "id": "VL5-P2-anchor-status-type-guard",
+   "property": "an unhashable or non-string status cannot crash the anchor scan (a frozenset membership test raises on an unhashable value)",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "2/25 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "14-src__attest__verify.py",
+    "sha_before": "b93f48398192c67b25429a75626382d39a2872de5d3aa5c1a07655af0b91e313",
+    "sha_after": "b1b76a1045f05450567b6c33cb3c86c7c20a11184207c62c861606fcaa485d5d",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/verify.py"
+   ],
+   "nonce": {
+    "issued": "00e0188a0f3de79e0499d2b8a167c662",
+    "echoed": "00e0188a0f3de79e0499d2b8a167c662"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "e3501f547e1a88fc0fb4053439a34055",
+    "echoed": "e3501f547e1a88fc0fb4053439a34055"
+   },
+   "named_reds": {
+    "test_authenticated_unregistered_status_never_provides_a_freshness_anchor": {
+     "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[status7]": "TypeError"
+    },
+    "test_matching_unregistered_status_is_silent_and_cannot_revoke": {
+     "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[status7]": "TypeError"
+    }
+   },
+   "file": "src/attest/verify.py",
+   "n_collected": 25,
+   "n_failed": 2,
+   "baseline_collected": 25,
+   "red_kinds": [
+    "TypeError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_authenticated_unregistered_status_never_provides_a_freshness_anchor",
+    "test_matching_unregistered_status_is_silent_and_cannot_revoke"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_vl5_anchor_status_adversarial.py::test_authenticated_unregistered_status_never_provides_a_freshness_anchor[status7]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_matching_unregistered_status_is_silent_and_cannot_revoke[status7]"
+   ]
+  },
+  {
+   "id": "VL5-P3-transferred-is-in-the-vocabulary",
+   "property": "the registered vocabulary includes transferred, not only revoked, so a genuine transferred record still anchors",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "3/25 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "15-src__attest__verify.py",
+    "sha_before": "b93f48398192c67b25429a75626382d39a2872de5d3aa5c1a07655af0b91e313",
+    "sha_after": "cb420862351cea889fea220d6171d0b0fb87aa4c34af46f4d8c4ad417eaca7fd",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/verify.py"
+   ],
+   "nonce": {
+    "issued": "15846116b6af8e2f07ce55262d69b46d",
+    "echoed": "15846116b6af8e2f07ce55262d69b46d"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "e3501f547e1a88fc0fb4053439a34055",
+    "echoed": "e3501f547e1a88fc0fb4053439a34055"
+   },
+   "named_reds": {
+    "test_genuine_transferred_record_still_anchors": {
+     "tests/test_vl5_anchor_status_adversarial.py::test_genuine_transferred_record_still_anchors": "AssertionError"
+    }
+   },
+   "file": "src/attest/verify.py",
+   "n_collected": 25,
+   "n_failed": 3,
+   "baseline_collected": 25,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_genuine_transferred_record_still_anchors"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [
+    "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[False-transferred]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[True-transferred]"
+   ],
+   "failed": [
+    "tests/test_vl5_anchor_status_adversarial.py::test_genuine_transferred_record_still_anchors",
+    "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[False-transferred]",
+    "tests/test_vl5_anchor_status_adversarial.py::test_only_authenticated_registered_statement_statuses_determine_t[True-transferred]"
+   ]
+  },
+  {
+   "id": "VL5-P4-anchor-is-order-independent-max",
+   "property": "T is the maximum over genuine statements, independent of the order the records arrive in",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED_ELSEWHERE",
+   "why": "1/25 red, but none of the tests this property names went red: ['test_only_authenticated_registered_statement_statuses_determine_t']. The suite noticed the mutation somewhere else, which says nothing about whether this guard is covered by the tests whose names claim it.",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "16-src__attest__verify.py",
+    "sha_before": "b93f48398192c67b25429a75626382d39a2872de5d3aa5c1a07655af0b91e313",
+    "sha_after": "4252878fe55e5468dd703ee9ecc906cce45ff99de0b704717ef2c6710ce92b4b",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/verify.py"
+   ],
+   "nonce": {
+    "issued": "8541db7212e83cc4d86ae0daeba8ca3e",
+    "echoed": "8541db7212e83cc4d86ae0daeba8ca3e"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "e3501f547e1a88fc0fb4053439a34055",
+    "echoed": "e3501f547e1a88fc0fb4053439a34055"
+   },
+   "named_reds": {},
+   "file": "src/attest/verify.py",
+   "n_collected": 25,
+   "n_failed": 1,
+   "baseline_collected": 25,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [],
+   "expected_red_that_stayed_GREEN": [
+    "test_only_authenticated_registered_statement_statuses_determine_t"
+   ],
+   "collateral_red": [
+    "tests/test_vl5_anchor_status_adversarial.py::test_t_is_the_later_of_two_genuine_statements[True]"
+   ],
+   "failed": [
+    "tests/test_vl5_anchor_status_adversarial.py::test_t_is_the_later_of_two_genuine_statements[True]"
+   ]
+  }
+ ]
+}

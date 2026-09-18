@@ -1,0 +1,216 @@
+{
+ "summary": {
+  "n_mutants": 4,
+  "killed": 1,
+  "killed_elsewhere": 2,
+  "survived": 1,
+  "broken": 0,
+  "not_applied": 0,
+  "baseline_red": 0,
+  "unmeasured": 0,
+  "mutant_ids": [
+   "HOST-S1-admission-byte-ceiling",
+   "HOST-S2-view-nesting-headroom",
+   "HOST-P1-view-nesting-headroom-elsewhere",
+   "HOST-P2-collapsing-keys-refused"
+  ],
+  "applications_confirmed": 4,
+  "applications_attempted": 4,
+  "suite_runs": 6,
+  "expectations_declared": 0,
+  "expectations_failed": 0,
+  "expectations_unmeasured": 0,
+  "tree_dirty_after_run": [],
+  "nonce_of_run": null
+ },
+ "results": [
+  {
+   "id": "HOST-S1-admission-byte-ceiling",
+   "property": "an untrusted view member above the admission byte ceiling is refused",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED_ELSEWHERE",
+   "why": "1/55 red, but none of the tests this property names went red: ['test_over_byte_ceiling_authority_view_returns', 'test_over_byte_ceiling_grant_view_returns']. The suite noticed the mutation somewhere else, which says nothing about whether this guard is covered by the tests whose names claim it.",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "01-src__attest__canon.py",
+    "sha_before": "760291ee8d1bc37fad6d31fdb7e4f4945e6ad60cc193fb84e4b5c2cb6b50da2a",
+    "sha_after": "3a5b2c8ac3de05f37cdd5c81930198945f8b2890c641f9d8d4fcc20120ecb946",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/canon.py"
+   ],
+   "nonce": {
+    "issued": "7cd745d4afb0b06756daf1bf42dc88b5",
+    "echoed": "7cd745d4afb0b06756daf1bf42dc88b5"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "ba62daa87ffc250e33ea8f1207b338ee",
+    "echoed": "ba62daa87ffc250e33ea8f1207b338ee"
+   },
+   "named_reds": {},
+   "file": "src/attest/canon.py",
+   "n_collected": 55,
+   "n_failed": 1,
+   "baseline_collected": 55,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [],
+   "expected_red_that_stayed_GREEN": [
+    "test_over_byte_ceiling_authority_view_returns",
+    "test_over_byte_ceiling_grant_view_returns"
+   ],
+   "collateral_red": [
+    "tests/test_blind_hostile_evidence_views.py::test_the_admission_byte_ceiling_actually_refuses_an_oversized_member"
+   ],
+   "failed": [
+    "tests/test_blind_hostile_evidence_views.py::test_the_admission_byte_ceiling_actually_refuses_an_oversized_member"
+   ]
+  },
+  {
+   "id": "HOST-S2-view-nesting-headroom",
+   "property": "admission reserves nesting headroom so a reconstructed view is always itself canonicalizable",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "SURVIVED",
+   "why": "mutation landed and every test stayed green",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "02-src__attest__canon.py",
+    "sha_before": "760291ee8d1bc37fad6d31fdb7e4f4945e6ad60cc193fb84e4b5c2cb6b50da2a",
+    "sha_after": "5a224df92c5b5929e1888f7558b840015e59d6abd9e31deaf43ea427d5ade72a",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/canon.py"
+   ],
+   "nonce": {
+    "issued": "1ad2ecb3af88e448bfa97727d8c8159e",
+    "echoed": "1ad2ecb3af88e448bfa97727d8c8159e"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "ba62daa87ffc250e33ea8f1207b338ee",
+    "echoed": "ba62daa87ffc250e33ea8f1207b338ee"
+   },
+   "named_reds": {},
+   "file": "src/attest/canon.py",
+   "n_collected": 55,
+   "n_failed": 0,
+   "baseline_collected": 55,
+   "red_kinds": [],
+   "form_reds": [],
+   "expected_red_that_fired": [],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": []
+  },
+  {
+   "id": "HOST-P1-view-nesting-headroom-elsewhere",
+   "property": "same headroom, measured against the suite that does assert canonicalizability",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED_ELSEWHERE",
+   "why": "1/97 red, but none of the tests this property names went red: ['test_authority_view_reconstruction_always_canonicalizes', 'test_grant_view_reconstruction_always_canonicalizes']. The suite noticed the mutation somewhere else, which says nothing about whether this guard is covered by the tests whose names claim it.",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "03-src__attest__canon.py",
+    "sha_before": "760291ee8d1bc37fad6d31fdb7e4f4945e6ad60cc193fb84e4b5c2cb6b50da2a",
+    "sha_after": "5a224df92c5b5929e1888f7558b840015e59d6abd9e31deaf43ea427d5ade72a",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/canon.py"
+   ],
+   "nonce": {
+    "issued": "85da0a246a64af0d91fff68b95dbd657",
+    "echoed": "85da0a246a64af0d91fff68b95dbd657"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "b7bbd86790a7a01d827e09e1119d775f",
+    "echoed": "b7bbd86790a7a01d827e09e1119d775f"
+   },
+   "named_reds": {},
+   "file": "src/attest/canon.py",
+   "n_collected": 97,
+   "n_failed": 1,
+   "baseline_collected": 97,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [],
+   "expected_red_that_stayed_GREEN": [
+    "test_authority_view_reconstruction_always_canonicalizes",
+    "test_grant_view_reconstruction_always_canonicalizes"
+   ],
+   "collateral_red": [
+    "tests/test_hostile_view_content.py::test_admission_reserves_the_nesting_a_reconstructed_view_costs"
+   ],
+   "failed": [
+    "tests/test_hostile_view_content.py::test_admission_reserves_the_nesting_a_reconstructed_view_costs"
+   ]
+  },
+  {
+   "id": "HOST-P2-collapsing-keys-refused",
+   "property": "two keys that collapse under own-data copy refuse the whole admission unit instead of letting insertion order pick a winner",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/97 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "04-src__attest__canon.py",
+    "sha_before": "760291ee8d1bc37fad6d31fdb7e4f4945e6ad60cc193fb84e4b5c2cb6b50da2a",
+    "sha_after": "2e1d3d5494450f3feceaf9bdffffbfd0e4039ccef91f32f7a7e49b9f2c7880fd",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/canon.py"
+   ],
+   "nonce": {
+    "issued": "bc51884d4a563dadedfe4c614be38bbe",
+    "echoed": "bc51884d4a563dadedfe4c614be38bbe"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "b7bbd86790a7a01d827e09e1119d775f",
+    "echoed": "b7bbd86790a7a01d827e09e1119d775f"
+   },
+   "named_reds": {
+    "test_collapsing_keys_refuse_the_admission_unit_instead_of_reducing_it": {
+     "tests/test_hostile_view_content.py::test_collapsing_keys_refuse_the_admission_unit_instead_of_reducing_it": "AssertionError"
+    }
+   },
+   "file": "src/attest/canon.py",
+   "n_collected": 97,
+   "n_failed": 1,
+   "baseline_collected": 97,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_collapsing_keys_refuse_the_admission_unit_instead_of_reducing_it"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_hostile_view_content.py::test_collapsing_keys_refuse_the_admission_unit_instead_of_reducing_it"
+   ]
+  }
+ ]
+}

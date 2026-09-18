@@ -338,11 +338,12 @@ def test_canonical_wire_text_is_rendered_only_where_it_is_pinned() -> None:
     written after it, which is how the first four copies of this defect were
     born unwatched.
 
-    Nine files render `strftime`-shaped text today. They fall into four
-    groups, and the two reasons below are NOT interchangeable — writing the
-    fail-closed reason for a site whose product a verifier never re-reads is
-    the same mistake C-6 made the other way round, just with the roles
-    reversed:
+    Eleven files render `strftime`-shaped text today, the keys of `renderers`
+    below, through fifteen calls. The calls fall into seven groups (`cli.py`
+    has calls in two of them), and the two reasons below are NOT
+    interchangeable — writing the fail-closed reason for a site whose product
+    a verifier never re-reads is the same mistake C-6 made the other way
+    round, just with the roles reversed:
 
     * `src/attest/issue.py` (`_now_iso`) and `src/attest/transparency.py`
       (`_iso8601`) — the core's own two survivors, unchanged from before this

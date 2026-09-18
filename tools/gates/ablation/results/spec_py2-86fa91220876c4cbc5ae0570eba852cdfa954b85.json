@@ -1,0 +1,1179 @@
+{
+ "summary": {
+  "n_mutants": 21,
+  "killed": 19,
+  "killed_elsewhere": 2,
+  "survived": 0,
+  "broken": 0,
+  "not_applied": 0,
+  "baseline_red": 0,
+  "unmeasured": 0,
+  "mutant_ids": [
+   "AU-S1-trust-material-door",
+   "AU-S2-entry-for-issuer-string-lookup",
+   "AU-S3-entry-shape-gate-in-authorizes",
+   "AU-S4-closed-document-member-set",
+   "AU-S5-every-entry-passes-the-entry-shape",
+   "AU-P1-hybrid-and-rule",
+   "AU-P2-hash-covers-signature",
+   "AU-P3-verify-composes-manifest-self-consistency",
+   "AU-P4-retired-signer-refused",
+   "AU-P5-version-is-safe-integer-not-bool",
+   "AU-P6-issuers-strictly-ascending",
+   "AU-P7-issuers-ceiling-exact",
+   "AU-P8-entry-window-inclusive",
+   "AU-P9-open-ended-window",
+   "AU-P10-issue-permission-required",
+   "AU-P11-vacuous-artifact-quantifier",
+   "AU-P12-entry-for-issuer-refuses-duplicates",
+   "AU-P13-successor-version-strictly-increases",
+   "AU-P14-entry-deletion-refused",
+   "AU-P15-valid-from-immutable",
+   "AU-P16-window-member-must-be-present"
+  ],
+  "applications_confirmed": 21,
+  "applications_attempted": 21,
+  "suite_runs": 22,
+  "expectations_declared": 0,
+  "expectations_failed": 0,
+  "expectations_unmeasured": 0,
+  "tree_dirty_after_run": [],
+  "nonce_of_run": null
+ },
+ "results": [
+  {
+   "id": "AU-S1-trust-material-door",
+   "property": "the KeyManifest brand check refuses a manifest snapshot that is not a real KeyManifest",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED_ELSEWHERE",
+   "why": "1/166 red, but none of the tests this property names went red: ['test_verify_authorization_fails_closed_on_malformed_key_manifest']. The suite noticed the mutation somewhere else, which says nothing about whether this guard is covered by the tests whose names claim it.",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "01-src__attest__trust_material.py",
+    "sha_before": "596d4662e366ea3476e0dd1adc1cafa5e0a28743768278276ab3b1e358269925",
+    "sha_after": "c1923e4abe390f49c5ed001fab92c507a6e5fe6133d84852504e24149a2e95c3",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/trust_material.py"
+   ],
+   "nonce": {
+    "issued": "a3e769d108f4fc0d2e6293d0d65379de",
+    "echoed": "a3e769d108f4fc0d2e6293d0d65379de"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {},
+   "file": "src/attest/trust_material.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [],
+   "expected_red_that_stayed_GREEN": [
+    "test_verify_authorization_fails_closed_on_malformed_key_manifest"
+   ],
+   "collateral_red": [
+    "tests/test_authority_adversarial.py::test_an_unbranded_manifest_dict_is_refused_even_when_it_would_otherwise_verify"
+   ],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_an_unbranded_manifest_dict_is_refused_even_when_it_would_otherwise_verify"
+   ]
+  },
+  {
+   "id": "AU-S2-entry-for-issuer-string-lookup",
+   "property": "entry_for_issuer refuses a non-string lookup key rather than comparing it",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED_ELSEWHERE",
+   "why": "1/166 red, but none of the tests this property names went red: ['test_entry_for_issuer_fails_closed_on_non_string_lookup_keys']. The suite noticed the mutation somewhere else, which says nothing about whether this guard is covered by the tests whose names claim it.",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "02-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "3e7affede08559d9691faba39024b2ddf8ccff9f742a3f7fce6cb4c7c326c34b",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "ead3f22809962150b8193afe73de6b70",
+    "echoed": "ead3f22809962150b8193afe73de6b70"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {},
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [],
+   "expected_red_that_stayed_GREEN": [
+    "test_entry_for_issuer_fails_closed_on_non_string_lookup_keys"
+   ],
+   "collateral_red": [
+    "tests/test_authority_adversarial.py::test_entry_for_issuer_refuses_a_lookup_key_that_merely_claims_equality"
+   ],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_entry_for_issuer_refuses_a_lookup_key_that_merely_claims_equality"
+   ]
+  },
+  {
+   "id": "AU-S3-entry-shape-gate-in-authorizes",
+   "property": "entry_authorizes_receipt validates the entry shape before reading anything out of it",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "03-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "4b330d403dbc3f08a6de057b2e59035bbe72c10009bfd99ccf166bd42333cbf2",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "7395dea4fd5b1c0db6d4aeb4951c01eb",
+    "echoed": "7395dea4fd5b1c0db6d4aeb4951c01eb"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_entry_authorizes_receipt_fails_closed_on_hostile_entry_or_payload_types": {
+     "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_fails_closed_on_hostile_entry_or_payload_types[entry_overrides4-payload_overrides4]": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_entry_authorizes_receipt_fails_closed_on_hostile_entry_or_payload_types"
+   ],
+   "expected_red_that_stayed_GREEN": [
+    "test_entry_authorizes_receipt_never_raises_on_non_entry_inputs"
+   ],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_fails_closed_on_hostile_entry_or_payload_types[entry_overrides4-payload_overrides4]"
+   ]
+  },
+  {
+   "id": "AU-S4-closed-document-member-set",
+   "property": "the authorization document member set is closed at exactly five members",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "04-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "6b5f184910855a21b20b264401b5e8d011ac96e9ed67cd7b7fe2553495b1941b",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "f9e49b485ea93e68a2e7d4f0c4a1d488",
+    "echoed": "f9e49b485ea93e68a2e7d4f0c4a1d488"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_authorization_and_entry_members_are_closed_even_with_matching_signature": {
+     "tests/test_authority_adversarial.py::test_authorization_and_entry_members_are_closed_even_with_matching_signature[<lambda>0]": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_authorization_and_entry_members_are_closed_even_with_matching_signature"
+   ],
+   "expected_red_that_stayed_GREEN": [
+    "test_verify_authorization_never_raises_on_type_confusion_in_wire_fields"
+   ],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_authorization_and_entry_members_are_closed_even_with_matching_signature[<lambda>0]"
+   ]
+  },
+  {
+   "id": "AU-S5-every-entry-passes-the-entry-shape",
+   "property": "every authorized_issuers entry must pass the closed entry-shape check for the document to be valid",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "17/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "05-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "5c8fb18ca5f6da32d97c92bf66bcea02449f9081a494a6ea0f09ae1867f9f7f3",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "97501d23206dc7375ac62d85014a8e05",
+    "echoed": "97501d23206dc7375ac62d85014a8e05"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_authorization_and_entry_members_are_closed_even_with_matching_signature": {
+     "tests/test_authority_adversarial.py::test_authorization_and_entry_members_are_closed_even_with_matching_signature[<lambda>2]": "AssertionError",
+     "tests/test_authority_adversarial.py::test_authorization_and_entry_members_are_closed_even_with_matching_signature[<lambda>3]": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 17,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_authorization_and_entry_members_are_closed_even_with_matching_signature"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path10-]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path11-2026-02-30T00:00:00Z]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path12-]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path13-]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path14-C008C2F0B61CA762648E168E5D7EEA3D7A164B6E075DBAA7041EDB8ECBAEC2A3]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path8-]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path9-2026-02-30T00:00:00Z]",
+    "tests/test_authority_adversarial.py::test_permission_vocabulary_is_open_but_still_code_point_sorted",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions0]",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions1]",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions2]",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions3]",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions4]",
+    "tests/test_authority_adversarial.py::test_semantically_absurd_entry_window_does_not_authenticate",
+    "tests/test_authority_adversarial.py::test_verify_authorization_never_raises_on_type_confusion_in_wire_fields"
+   ],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_authorization_and_entry_members_are_closed_even_with_matching_signature[<lambda>2]",
+    "tests/test_authority_adversarial.py::test_authorization_and_entry_members_are_closed_even_with_matching_signature[<lambda>3]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path10-]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path11-2026-02-30T00:00:00Z]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path12-]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path13-]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path14-C008C2F0B61CA762648E168E5D7EEA3D7A164B6E075DBAA7041EDB8ECBAEC2A3]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path8-]",
+    "tests/test_authority_adversarial.py::test_empty_case_and_semantically_invalid_strings_are_shape_errors[path9-2026-02-30T00:00:00Z]",
+    "tests/test_authority_adversarial.py::test_permission_vocabulary_is_open_but_still_code_point_sorted",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions0]",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions1]",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions2]",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions3]",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions4]",
+    "tests/test_authority_adversarial.py::test_semantically_absurd_entry_window_does_not_authenticate",
+    "tests/test_authority_adversarial.py::test_verify_authorization_never_raises_on_type_confusion_in_wire_fields"
+   ]
+  },
+  {
+   "id": "AU-P1-hybrid-and-rule",
+   "property": "a hybrid key entry demands BOTH signature legs, and a classical entry refuses a stray post-quantum leg",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "06-src__attest__manifests.py",
+    "sha_before": "d1c83e1078791d1a8a953dd6d5996059212221aaf0848aea3d8a47f0f5b92c76",
+    "sha_after": "049be7b1e55314b21e712b9f1d3cb69623efebfbc9c3ce1987d612bb2a4b7c54",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/manifests.py"
+   ],
+   "nonce": {
+    "issued": "908d32d7b7e5691e6964b6ad6df89ffc",
+    "echoed": "908d32d7b7e5691e6964b6ad6df89ffc"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_stray_pq_signature_leg_against_classical_key_fails_closed": {
+     "tests/test_authority_adversarial.py::test_stray_pq_signature_leg_against_classical_key_fails_closed": "AssertionError"
+    }
+   },
+   "file": "src/attest/manifests.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_stray_pq_signature_leg_against_classical_key_fails_closed"
+   ],
+   "expected_red_that_stayed_GREEN": [
+    "test_hybrid_authorization_requires_both_signature_legs"
+   ],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_stray_pq_signature_leg_against_classical_key_fails_closed"
+   ]
+  },
+  {
+   "id": "AU-P2-hash-covers-signature",
+   "property": "authorization_hash is taken over the whole signed document, signature included",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "07-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "f652799eb6978cf4fe2473c81470e078aa65ff72d5e470ccaf2c1899af32a2d6",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "b3b8b1d2db8d93560c19302910ff794e",
+    "echoed": "b3b8b1d2db8d93560c19302910ff794e"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_authorization_hash_is_jcs_over_the_entire_signed_document": {
+     "tests/test_authority_adversarial.py::test_authorization_hash_is_jcs_over_the_entire_signed_document": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_authorization_hash_is_jcs_over_the_entire_signed_document"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_authorization_hash_is_jcs_over_the_entire_signed_document"
+   ]
+  },
+  {
+   "id": "AU-P3-verify-composes-manifest-self-consistency",
+   "property": "verify_authorization also enforces the resolving key manifest's own self-consistency, not just the document signature",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "08-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "bd7faa5897f3e8bd8d99876860b464d11b7aba7803ed596e63e6037b30028941",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "a45315b31d7a0e5355affc63d01e57ab",
+    "echoed": "a45315b31d7a0e5355affc63d01e57ab"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_verify_authorization_composes_key_manifest_self_consistency": {
+     "tests/test_authority_adversarial.py::test_verify_authorization_composes_key_manifest_self_consistency": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_verify_authorization_composes_key_manifest_self_consistency"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_verify_authorization_composes_key_manifest_self_consistency"
+   ]
+  },
+  {
+   "id": "AU-P4-retired-signer-refused",
+   "property": "a retired key entry can never authenticate a document, even reusing an active key's bytes",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "09-src__attest__grant.py",
+    "sha_before": "9eac490f5c392b6f24c768e234f6d1c3e248d344004f51333e31350a332b6bde",
+    "sha_after": "7bf97a177b2731d19a12bc630cf43e127eb8c362db9a23270303019a65c3f803",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/grant.py"
+   ],
+   "nonce": {
+    "issued": "60beecdf4b7d5217f22dc4943f80d6cf",
+    "echoed": "60beecdf4b7d5217f22dc4943f80d6cf"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_authorization_signed_by_retired_key_is_rejected": {
+     "tests/test_authority_adversarial.py::test_authorization_signed_by_retired_key_is_rejected": "AssertionError"
+    }
+   },
+   "file": "src/attest/grant.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_authorization_signed_by_retired_key_is_rejected"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_authorization_signed_by_retired_key_is_rejected"
+   ]
+  },
+  {
+   "id": "AU-P5-version-is-safe-integer-not-bool",
+   "property": "authorization_version is a non-bool integer inside the I-JSON safe range",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "4/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "10-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "b4b6c4f7eb9837b8e025ea6fed262bc4c5c749f83ddfb5a7cdfc39f76aff0067",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "192cf4e8063454df6a0b3cf190f2f638",
+    "echoed": "192cf4e8063454df6a0b3cf190f2f638"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_authorization_version_boundaries_are_enforced_on_signed_documents": {
+     "tests/test_authority_adversarial.py::test_authorization_version_boundaries_are_enforced_on_signed_documents[True-False]": "AssertionError"
+    },
+    "test_is_authorization_version_is_the_exact_safe_integer_predicate": {
+     "tests/test_authority_adversarial.py::test_is_authorization_version_is_the_exact_safe_integer_predicate[9007199254740992]": "AssertionError",
+     "tests/test_authority_adversarial.py::test_is_authorization_version_is_the_exact_safe_integer_predicate[True]": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 4,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_authorization_version_boundaries_are_enforced_on_signed_documents",
+    "test_is_authorization_version_is_the_exact_safe_integer_predicate"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [
+    "tests/test_authority_adversarial.py::test_verify_authorization_never_raises_on_type_confusion_in_wire_fields"
+   ],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_authorization_version_boundaries_are_enforced_on_signed_documents[True-False]",
+    "tests/test_authority_adversarial.py::test_is_authorization_version_is_the_exact_safe_integer_predicate[9007199254740992]",
+    "tests/test_authority_adversarial.py::test_is_authorization_version_is_the_exact_safe_integer_predicate[True]",
+    "tests/test_authority_adversarial.py::test_verify_authorization_never_raises_on_type_confusion_in_wire_fields"
+   ]
+  },
+  {
+   "id": "AU-P6-issuers-strictly-ascending",
+   "property": "authorized_issuers must be strictly ascending by issuer_id, which is also what makes a duplicate impossible",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "3/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "11-src__attest__grant.py",
+    "sha_before": "9eac490f5c392b6f24c768e234f6d1c3e248d344004f51333e31350a332b6bde",
+    "sha_after": "09e25761feaedbfd79a7bb0306105b092d226514a1cc39a92cfdb8106e4d84b7",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/grant.py"
+   ],
+   "nonce": {
+    "issued": "9f03d1630733fb72e2db6219d541dc4d",
+    "echoed": "9f03d1630733fb72e2db6219d541dc4d"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_authorized_issuers_must_be_strictly_ascending_by_code_point": {
+     "tests/test_authority_adversarial.py::test_authorized_issuers_must_be_strictly_ascending_by_code_point[issuers0]": "AssertionError",
+     "tests/test_authority_adversarial.py::test_authorized_issuers_must_be_strictly_ascending_by_code_point[issuers1]": "AssertionError"
+    }
+   },
+   "file": "src/attest/grant.py",
+   "n_collected": 166,
+   "n_failed": 3,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_authorized_issuers_must_be_strictly_ascending_by_code_point"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions1]"
+   ],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_authorized_issuers_must_be_strictly_ascending_by_code_point[issuers0]",
+    "tests/test_authority_adversarial.py::test_authorized_issuers_must_be_strictly_ascending_by_code_point[issuers1]",
+    "tests/test_authority_adversarial.py::test_permissions_must_be_non_empty_sorted_duplicate_free_strings[permissions1]"
+   ]
+  },
+  {
+   "id": "AU-P7-issuers-ceiling-exact",
+   "property": "the authorized_issuers ceiling is exact at MAX_AUTHORIZED_ISSUERS",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "12-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "62114627ec213fbc6ba85376d7b486c5fc3fcf64ed4c221395dff231402bf4d3",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "e8963ddca98b171996cd0395ffdca7d6",
+    "echoed": "e8963ddca98b171996cd0395ffdca7d6"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_authorized_issuers_ceiling_is_exact_on_signed_documents": {
+     "tests/test_authority_adversarial.py::test_authorized_issuers_ceiling_is_exact_on_signed_documents[4097-False]": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_authorized_issuers_ceiling_is_exact_on_signed_documents"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_authorized_issuers_ceiling_is_exact_on_signed_documents[4097-False]"
+   ]
+  },
+  {
+   "id": "AU-P8-entry-window-inclusive",
+   "property": "the receipt-time entry window is inclusive at both ends and never consults the verifier clock",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "13-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "2f4fafa6628520276512731b13f83b82437826fe9bae65f588a9e926406da420",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "dbd97d2c18bb7af7c0f3662a913b1895",
+    "echoed": "dbd97d2c18bb7af7c0f3662a913b1895"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_entry_authorizes_receipt_uses_inclusive_receipt_time_window": {
+     "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_uses_inclusive_receipt_time_window[2026-05-01T00:00:00Z-True]": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_entry_authorizes_receipt_uses_inclusive_receipt_time_window"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_uses_inclusive_receipt_time_window[2026-05-01T00:00:00Z-True]"
+   ]
+  },
+  {
+   "id": "AU-P9-open-ended-window",
+   "property": "valid_to null means an open-ended window",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "6/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "14-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "b58cdd37423582347ec0e04afeeea23e45fd5fa71f0a8bae2a4ddf0b0ab0b872",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "e3723301456bd2a1e28de134f03f1532",
+    "echoed": "e3723301456bd2a1e28de134f03f1532"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_entry_authorizes_receipt_allows_open_ended_window_after_valid_from": {
+     "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_allows_open_ended_window_after_valid_from": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 6,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_entry_authorizes_receipt_allows_open_ended_window_after_valid_from"
+   ],
+   "expected_red_that_stayed_GREEN": [
+    "test_entry_authorizes_receipt_uses_inclusive_receipt_time_window"
+   ],
+   "collateral_red": [
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard[None-payload_overrides0-True]",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard[scope1-payload_overrides1-True]",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard[scope2-payload_overrides2-True]",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone[permissions0-True]",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone[permissions2-True]"
+   ],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_allows_open_ended_window_after_valid_from",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard[None-payload_overrides0-True]",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard[scope1-payload_overrides1-True]",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard[scope2-payload_overrides2-True]",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone[permissions0-True]",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone[permissions2-True]"
+   ]
+  },
+  {
+   "id": "AU-P10-issue-permission-required",
+   "property": "authorization requires the issue permission specifically; delegate alone never authorizes",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "2/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "15-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "c64ed25a7de4a1434f88df3fdfe38d3608e66d53a226b28d2f7cf8828c65f10a",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "ae86f413509d627349d7cd03d80e02c7",
+    "echoed": "ae86f413509d627349d7cd03d80e02c7"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone": {
+     "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone[permissions1-False]": "AssertionError",
+     "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone[permissions3-False]": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 2,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone[permissions1-False]",
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_requires_issue_and_never_honors_delegate_alone[permissions3-False]"
+   ]
+  },
+  {
+   "id": "AU-P11-vacuous-artifact-quantifier",
+   "property": "a hash-only scope covers nothing when the receipt lists no artifacts, instead of passing by vacuous quantification",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "16-src__attest__grant.py",
+    "sha_before": "9eac490f5c392b6f24c768e234f6d1c3e248d344004f51333e31350a332b6bde",
+    "sha_after": "6e5b5a4af84d3c5d6d622d061184f2fde4c8cb3feeabfece5afa0826c6fc751d",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/grant.py"
+   ],
+   "nonce": {
+    "issued": "f75858ee5eed73a0d233437ee1e831f9",
+    "echoed": "f75858ee5eed73a0d233437ee1e831f9"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard": {
+     "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard[scope4-payload_overrides4-False]": "AssertionError"
+    }
+   },
+   "file": "src/attest/grant.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_entry_authorizes_receipt_applies_scope_and_vacuous_artifact_guard[scope4-payload_overrides4-False]"
+   ]
+  },
+  {
+   "id": "AU-P12-entry-for-issuer-refuses-duplicates",
+   "property": "entry_for_issuer refuses two entries sharing an issuer_id instead of taking the first",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "17-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "3d18bc3764e0499382cb22a5f320195337874fe0827c7827f6f1f11674d0745d",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "d64b97e402ee84d2647f28c780686346",
+    "echoed": "d64b97e402ee84d2647f28c780686346"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_entry_for_issuer_refuses_duplicate_entries_instead_of_using_array_order": {
+     "tests/test_authority_adversarial.py::test_entry_for_issuer_refuses_duplicate_entries_instead_of_using_array_order": "AssertionError"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_entry_for_issuer_refuses_duplicate_entries_instead_of_using_array_order"
+   ],
+   "expected_red_that_stayed_GREEN": [
+    "test_entry_for_issuer_returns_the_unique_matching_entry_only"
+   ],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_entry_for_issuer_refuses_duplicate_entries_instead_of_using_array_order"
+   ]
+  },
+  {
+   "id": "AU-P13-successor-version-strictly-increases",
+   "property": "a successor authorization's version must strictly exceed its predecessor's",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "2/166 red; 1 of them crashed rather than asserted (check they are meant to)",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "18-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "1cfdfc9c6d7a5d4fac17afa8bab8eeecde599cdc235b47df8ae87ee24a4bf4e1",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "7d74f65fad9dc99de7949db638f93948",
+    "echoed": "7d74f65fad9dc99de7949db638f93948"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_build_authorization_rejects_non_increasing_successor_version": {
+     "tests/test_authority_adversarial.py::test_build_authorization_rejects_non_increasing_successor_version[2]": "Failed"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 2,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AttributeError",
+    "Failed"
+   ],
+   "form_reds": [
+    "tests/test_authority_adversarial.py::test_previous_violation_is_detected_before_signature_attempt"
+   ],
+   "expected_red_that_fired": [
+    "test_build_authorization_rejects_non_increasing_successor_version"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [
+    "tests/test_authority_adversarial.py::test_previous_violation_is_detected_before_signature_attempt"
+   ],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_build_authorization_rejects_non_increasing_successor_version[2]",
+    "tests/test_authority_adversarial.py::test_previous_violation_is_detected_before_signature_attempt"
+   ]
+  },
+  {
+   "id": "AU-P14-entry-deletion-refused",
+   "property": "every predecessor entry must have a successor counterpart: deletion is refused",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "3/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "19-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "58c8f9065f66ff0098a758eea0b439b37a13d2c4013de131bd89320ed61374b6",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "90c38d9c1c43e9993492607beebdb5b8",
+    "echoed": "90c38d9c1c43e9993492607beebdb5b8"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_build_authorization_rejects_entry_deletion": {
+     "tests/test_authority_adversarial.py::test_build_authorization_rejects_entry_deletion[successor_entries0]": "Failed",
+     "tests/test_authority_adversarial.py::test_build_authorization_rejects_entry_deletion[successor_entries1]": "Failed",
+     "tests/test_authority_adversarial.py::test_build_authorization_rejects_entry_deletion[successor_entries2]": "Failed"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 3,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "Failed"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_build_authorization_rejects_entry_deletion"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_build_authorization_rejects_entry_deletion[successor_entries0]",
+    "tests/test_authority_adversarial.py::test_build_authorization_rejects_entry_deletion[successor_entries1]",
+    "tests/test_authority_adversarial.py::test_build_authorization_rejects_entry_deletion[successor_entries2]"
+   ]
+  },
+  {
+   "id": "AU-P15-valid-from-immutable",
+   "property": "a shared entry's valid_from may not change between predecessor and successor",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "1/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "20-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "0e0e6fb2ed523ac3068677fe94acece23d720abc5ec7f86cd8a3dd992b674e27",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "59c0a43239108d5112f1900339787e72",
+    "echoed": "59c0a43239108d5112f1900339787e72"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_build_authorization_rejects_valid_from_mutation_for_existing_entry": {
+     "tests/test_authority_adversarial.py::test_build_authorization_rejects_valid_from_mutation_for_existing_entry": "Failed"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 1,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "Failed"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_build_authorization_rejects_valid_from_mutation_for_existing_entry"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_build_authorization_rejects_valid_from_mutation_for_existing_entry"
+   ]
+  },
+  {
+   "id": "AU-P16-window-member-must-be-present",
+   "property": "an absent valid_from/valid_to member is refused rather than read as open-ended",
+   "kind": "source",
+   "runner": "pytest",
+   "expect_verdict": null,
+   "verdict": "KILLED",
+   "why": "4/166 red",
+   "confirmed": true,
+   "unmeasured": [],
+   "ledger": {
+    "record": "21-src__attest__authority.py",
+    "sha_before": "ee8226a097ca2f64dfcb58a175ac66cd4cd778b3112e9472913dc314d0da7b70",
+    "sha_after": "5bd3fbacb75c32732646c60b34e73e3509b0b4c8603fd82a322266c4eb96a93f",
+    "confirmed_on_disk": true
+   },
+   "git_dirty_during": [
+    " M src/attest/authority.py"
+   ],
+   "nonce": {
+    "issued": "c6c1325d0d31bd59e66f09c6b447da46",
+    "echoed": "c6c1325d0d31bd59e66f09c6b447da46"
+   },
+   "typecheck": null,
+   "baseline_nonce": {
+    "issued": "23dbb4e8c64ec1b9ccf89940c0316d14",
+    "echoed": "23dbb4e8c64ec1b9ccf89940c0316d14"
+   },
+   "named_reds": {
+    "test_build_authorization_refuses_an_entry_that_omits_a_window_member": {
+     "tests/test_authority_adversarial.py::test_build_authorization_refuses_an_entry_that_omits_a_window_member[previous-valid_from]": "AssertionError",
+     "tests/test_authority_adversarial.py::test_build_authorization_refuses_an_entry_that_omits_a_window_member[previous-valid_to]": "Failed",
+     "tests/test_authority_adversarial.py::test_build_authorization_refuses_an_entry_that_omits_a_window_member[successor-valid_from]": "AssertionError",
+     "tests/test_authority_adversarial.py::test_build_authorization_refuses_an_entry_that_omits_a_window_member[successor-valid_to]": "Failed"
+    }
+   },
+   "file": "src/attest/authority.py",
+   "n_collected": 166,
+   "n_failed": 4,
+   "baseline_collected": 166,
+   "red_kinds": [
+    "AssertionError",
+    "Failed"
+   ],
+   "form_reds": [],
+   "expected_red_that_fired": [
+    "test_build_authorization_refuses_an_entry_that_omits_a_window_member"
+   ],
+   "expected_red_that_stayed_GREEN": [],
+   "collateral_red": [],
+   "failed": [
+    "tests/test_authority_adversarial.py::test_build_authorization_refuses_an_entry_that_omits_a_window_member[previous-valid_from]",
+    "tests/test_authority_adversarial.py::test_build_authorization_refuses_an_entry_that_omits_a_window_member[previous-valid_to]",
+    "tests/test_authority_adversarial.py::test_build_authorization_refuses_an_entry_that_omits_a_window_member[successor-valid_from]",
+    "tests/test_authority_adversarial.py::test_build_authorization_refuses_an_entry_that_omits_a_window_member[successor-valid_to]"
+   ]
+  }
+ ]
+}
