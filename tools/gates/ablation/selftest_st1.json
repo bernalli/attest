@@ -1,0 +1,15 @@
+{
+ "note": "Self-test of the bench on the real tree: an anchor that is not in the file. Item 0 refuses it, so this spec is run with --skip-preflight and an explicit --tree, which stands in for a file that changed between validation and application; the row must then read NOT_APPLIED, never SURVIVED. The rows that do land are in selftest.json. Expected: ST1=NOT_APPLIED.",
+ "mutants": [
+  {
+   "id": "ST1-anchor-absent",
+   "expect_verdict": "NOT_APPLIED",
+   "property": "BENCH: a replacement whose anchor is not in the file must be a hard error, never SURVIVED",
+   "file": "src/attest/verify.py",
+   "old": "if not isinstance(status, str) or status not in _ANCHOR_STATUSES_THAT_DO_NOT_EXIST:",
+   "new": "if not isinstance(status, str):",
+   "suite": ["tests/test_vl5_anchor_status_adversarial.py"],
+   "expect_red": []
+  }
+ ]
+}

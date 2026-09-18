@@ -34,6 +34,20 @@ through a tool directory handed to them, so a run against a copy cannot silently
 measure the original; and the cases of those re-runs are collected in a bench of
 their own, because a failure part C *requires* is not a failure of this bench, and
 counting it as one would make this bench red exactly when it is working.
+
+`ABLATION_BENCH_META_ONLY=<id>` narrows a run to one row of part C: that meta-mutant
+alone is applied to a copy of the tool, exactly as part C applies it, the part the
+row belongs to is re-run against the copy, and the copy's cases are printed with
+their label. It exists for a negative control, which needs a run that fails for a
+named reason, and it is not a run of this bench: it never prints the
+`ABLATION_BENCH` marker, which a partial run must not be able to satisfy, but a line
+of its own, `ABLATION_BENCH_META_ONLY id=<id> copy_cases=<n> copy_failures=<m>`.
+It exits 1 when, and only when, the copy has a failing case; 0 when it has none, the
+part ran to its end and at least one case was checked; 2 when the variable is empty or
+names no row, because a selection that selects nothing is not a green run; and 3 when
+the row was not measured -- its edit did not land on the copy, refused as part C
+refuses it, the part stopped before any case failed, or it checked no case at all.
+Without the variable the bench runs as the paragraphs above describe.
 """
 
 from __future__ import annotations
@@ -94,6 +108,14 @@ LEDGER_ORACLE_ID = "ST2-property-red"
 
 #: The value written into the target to put a record into a state no one recorded.
 UNKNOWN_STATE_TEXT = "VALUE = 5\n"
+
+#: The variable that narrows a run to one meta-mutant; see the module docstring.
+META_ONLY_VARIABLE = "ABLATION_BENCH_META_ONLY"
+
+#: Exit statuses of a narrowed run. `1` is the only one that says the copy was caught.
+EXIT_META_ONLY_CAUGHT = 1
+EXIT_META_ONLY_REFUSED = 2
+EXIT_META_ONLY_UNMEASURED = 3
 
 
 @dataclass(frozen=True)
@@ -964,6 +986,63 @@ def apply_meta_edits(bench: Bench, mutant: MetaMutant, tools: Tools) -> str | No
     return None
 
 
+@dataclass(frozen=True)
+class MetaObservation:
+    """What one meta-mutant did to a copy of the tool.
+
+    `refusal` says why its edits could not be applied to the copy; nothing ran then,
+    and `cases` is empty. Otherwise `cases` are the cases of the part re-run against
+    the copy, in the order they were checked, and `stopped` is empty unless the part
+    raised before its end, in which case it says with what: the cases after that
+    point were never run, so `cases` is not the whole of what the mutant did.
+    """
+
+    refusal: str | None
+    cases: tuple[Case, ...]
+    stopped: str
+
+    @property
+    def failed(self) -> frozenset[str]:
+        """The names of the copy's cases that did not hold."""
+        return frozenset(case.name for case in self.cases if not case.ok)
+
+
+def anchor_absent_line(mutant: MetaMutant, refusal: str) -> str:
+    """The refusal printed for a meta-mutant whose edits did not land on the copy."""
+    return f"META-MUTANT {mutant.ident}: anchor absent in copy -- {refusal}"
+
+
+def observe_meta_mutant(bench: Bench, mutant: MetaMutant, home: Path) -> MetaObservation:
+    """Apply one meta-mutant to a fresh copy of the tool under `home`, and re-run its part.
+
+    The one path from a meta-mutant to its observation: part C takes it for every row,
+    and a narrowed run for the single row it selects, so the two cannot come to apply
+    or observe a meta-mutant in different ways. The copy's cases are collected in a
+    bench of their own, labelled with the mutant, and never in `bench`, which only
+    logs the edits.
+    """
+    tools = copy_tools(home / "tool")
+    refusal = apply_meta_edits(bench, mutant, tools)
+    if refusal is not None:
+        return MetaObservation(refusal, (), "")
+
+    observed_bench = Bench(label=f"[{mutant.ident}] ")
+    run_dir = home / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    stopped = ""
+    try:
+        if mutant.part == "A":
+            part_a(observed_bench, run_dir, tools)
+        else:
+            part_b(observed_bench, run_dir, tools)
+    # Broad on purpose: a mutated tool can break a part in any way at all, and a
+    # part that stopped is reported as a mutant that was not measured, not as a
+    # crash of this bench.
+    except Exception as exc:
+        stopped = f"the part stopped with {type(exc).__name__}: {exc}"
+    return MetaObservation(None, tuple(observed_bench.cases), stopped)
+
+
 def part_c(bench: Bench, workdir: Path) -> None:
     """Re-run a part against a mutated copy of the tool, once per meta-mutant.
 
@@ -973,32 +1052,16 @@ def part_c(bench: Bench, workdir: Path) -> None:
     meta-mutant, and the count of the ones that did not die where they had to.
     """
     for mutant in META_MUTANTS:
-        home = workdir / "meta" / mutant.ident
-        tools = copy_tools(home / "tool")
-        refusal = apply_meta_edits(bench, mutant, tools)
-        if refusal is not None:
-            print(f"META-MUTANT {mutant.ident}: anchor absent in copy -- {refusal}")
+        observation = observe_meta_mutant(bench, mutant, workdir / "meta" / mutant.ident)
+        if observation.refusal is not None:
+            print(anchor_absent_line(mutant, observation.refusal))
             bench.died_elsewhere.append(mutant.ident)
             continue
-
-        observed_bench = Bench(label=f"[{mutant.ident}] ")
-        run_dir = home / "run"
-        run_dir.mkdir(parents=True, exist_ok=True)
-        stopped = ""
-        try:
-            if mutant.part == "A":
-                part_a(observed_bench, run_dir, tools)
-            else:
-                part_b(observed_bench, run_dir, tools)
-        # Broad on purpose: a mutated tool can break a part in any way at all, and a
-        # part that stopped is reported as a mutant that was not measured, not as a
-        # crash of this bench.
-        except Exception as exc:
-            stopped = f"; the part stopped with {type(exc).__name__}: {exc}"
         bench.meta_ran.append(mutant.ident)
 
-        observed = {case.name for case in observed_bench.cases if not case.ok}
+        observed = observation.failed
         allowed = mutant.named | mutant.collateral
+        stopped = f"; {observation.stopped}" if observation.stopped else ""
         # A part that stopped did not measure the cases after the point it stopped,
         # so its observed set is not the whole of what this mutant did.
         killed = not stopped and mutant.named <= observed and observed <= allowed
@@ -1013,11 +1076,66 @@ def part_c(bench: Bench, workdir: Path) -> None:
             bench.died_elsewhere.append(mutant.ident)
 
 
+# --- a narrowed run: one meta-mutant, for a negative control -------------------------------------
+
+
+def meta_only(selected: str) -> int:
+    """Run the one meta-mutant `selected` names, and print what its copy did.
+
+    Exit status as the module docstring states it. A copy with a failing case exits 1
+    even when its part stopped afterwards, because the failure was observed; a copy
+    with none exits 0 only when its part ran to its end and checked at least one case,
+    since a part that stopped early, or checked nothing, has not shown that nothing
+    fails.
+    """
+    mutant = next((row for row in META_MUTANTS if row.ident == selected), None)
+    if mutant is None:
+        valid = ", ".join(row.ident for row in META_MUTANTS)
+        print(
+            f"REFUSING: {META_ONLY_VARIABLE}={selected!r} selects no meta-mutant; a selection "
+            f"that selects nothing is not a green run. Valid ids: {valid}",
+            file=sys.stderr,
+        )
+        return EXIT_META_ONLY_REFUSED
+
+    bench = Bench()
+    workdir = Path(tempfile.mkdtemp(prefix="ablation-bench-"))
+    try:
+        observation = observe_meta_mutant(bench, mutant, workdir / "meta" / mutant.ident)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    if observation.refusal is not None:
+        print(anchor_absent_line(mutant, observation.refusal))
+    elif observation.stopped:
+        print(
+            f"META-MUTANT {mutant.ident}: {observation.stopped}; the cases after that point "
+            f"were not run"
+        )
+    failures = sum(1 for case in observation.cases if not case.ok)
+    print(
+        f"{META_ONLY_VARIABLE} id={mutant.ident} copy_cases={len(observation.cases)} "
+        f"copy_failures={failures}"
+    )
+    if failures:
+        return EXIT_META_ONLY_CAUGHT
+    if observation.refusal is not None or observation.stopped or not observation.cases:
+        return EXIT_META_ONLY_UNMEASURED
+    return 0
+
+
 # --- entry point --------------------------------------------------------------------------------
 
 
 def main() -> int:
-    """Run both parts against fresh trees and print the marker; 0 only if nothing failed."""
+    """Run parts A, B and C against fresh trees and print the marker; 0 only if nothing failed.
+
+    With `ABLATION_BENCH_META_ONLY` in the environment, set even to the empty string,
+    the run is the narrowed one instead (`meta_only`), and none of the above happens.
+    """
+    selected = os.environ.get(META_ONLY_VARIABLE)
+    if selected is not None:
+        return meta_only(selected)
     bench = Bench()
     workdir = Path(tempfile.mkdtemp(prefix="ablation-bench-"))
     try:

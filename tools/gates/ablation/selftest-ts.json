@@ -1,25 +1,14 @@
 {
- "note": "Self-test of the vitest side. TS-ST3 is the important one: a type-INVALID mutation that vitest happily runs green. Without the tsc gate it would read SURVIVED. Expected: TS-ST1=NOT_APPLIED, TS-ST2=KILLED, TS-ST3=BROKEN.",
+ "note": "Self-test of the vitest side. TS-ST3 is the important one: a type-INVALID mutation that vitest happily runs green. Without the tsc gate it would read SURVIVED. Expected: TS-ST2=KILLED, TS-ST3=BROKEN. The mutation that never lands, TS-ST1, is in selftest-ts_st1.json: item 0 refuses an anchor that is not in the file, so that row runs on its own with --skip-preflight, and a spec that goes through item 0 cannot carry it.",
  "mutants": [
-  {
-   "id": "TS-ST1-anchor-absent",
-   "expect_verdict": "NOT_APPLIED",
-   "property": "BENCH: an anchor that is not in the file must be a hard error, never SURVIVED",
-   "runner": "vitest", "pkg": "verifiers/ts",
-   "file": "verifiers/ts/src/revocation.ts",
-   "old": "if (status !== 'revoked' && status !== NO_SUCH_CONSTANT) return",
-   "new": "if (typeof status !== 'string') return",
-   "suite": ["test/vl5-anchor-status-adversarial.test.ts"],
-   "expect_red": []
-  },
   {
    "id": "TS-ST2-property-red",
    "expect_verdict": "KILLED",
    "property": "BENCH: a real property mutation must read as KILLED via an assertion, on the named tests",
    "runner": "vitest", "pkg": "verifiers/ts",
    "file": "verifiers/ts/src/revocation.ts",
-   "old": "if (status !== 'revoked' && status !== REVOCATION_TRANSFERRED) return",
-   "new": "if (typeof status !== 'string') return",
+   "old": "    if (status !== 'revoked' && status !== REVOCATION_TRANSFERRED) return",
+   "new": "    if (typeof status !== 'string') return",
    "suite": ["test/vl5-anchor-status-adversarial.test.ts"],
    "expect_red": ["unregistered status"]
   },
@@ -29,8 +18,8 @@
    "property": "BENCH: a type-INVALID mutation vitest runs green must read as BROKEN, not SURVIVED",
    "runner": "vitest", "pkg": "verifiers/ts",
    "file": "verifiers/ts/src/revocation.ts",
-   "old": "const status = o['status']",
-   "new": "const status: number = o['status']",
+   "old": "    const status = o['status']",
+   "new": "    const status: number = o['status']",
    "suite": ["test/vl5-anchor-status-adversarial.test.ts"],
    "expect_red": []
   }
