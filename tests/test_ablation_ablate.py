@@ -1788,9 +1788,9 @@ def test_a_tolerate_dirty_argument_is_refused_when_git_cannot_list_the_status_of
         3,
         [
             "ablate.py: error: --tolerate-dirty 'logs': logs breaks the contract of a "
-            "tolerated directory -- every file git tracks or lists under it is a transcript, "
-            "a .log, save its own .gitignore: git cannot list the status of the tree, so "
-            "what lies there cannot be said"
+            "tolerated directory -- every file git tracks under it is a transcript, a .log, "
+            "save its own .gitignore, and every line git status prints under it names one: "
+            "git cannot list the status of the tree, so what lies there cannot be said"
         ],
     )
     assert "[mutant]" not in result.stdout
@@ -2441,8 +2441,9 @@ def test_a_tolerated_directory_where_git_sees_anything_but_transcripts_is_refuse
         3,
         [
             "ablate.py: error: --tolerate-dirty 'logs': logs breaks the contract of a "
-            "tolerated directory -- every file git tracks or lists under it is a transcript, "
-            f"a .log, save its own .gitignore: {broken}"
+            "tolerated directory -- every file git tracks under it is a transcript, a .log, "
+            "save its own .gitignore, and every line git status prints under it names one: "
+            f"{broken}"
         ],
     ), f"{how} did not break the contract: exited {result.returncode}: {result.stderr}"
     assert "[mutant]" not in result.stdout
@@ -2535,9 +2536,9 @@ def test_a_tracked_entry_whose_kind_on_disk_cannot_be_read_breaks_the_contract(
         3,
         [
             "ablate.py: error: --tolerate-dirty 'logs': logs breaks the contract of a "
-            "tolerated directory -- every file git tracks or lists under it is a transcript, "
-            "a .log, save its own .gitignore: logs/priv/x.log is tracked there and what it is "
-            "on disk cannot be read"
+            "tolerated directory -- every file git tracks under it is a transcript, a .log, "
+            "save its own .gitignore, and every line git status prints under it names one: "
+            "logs/priv/x.log is tracked there and what it is on disk cannot be read"
         ],
     )
     assert "[mutant]" not in result.stdout

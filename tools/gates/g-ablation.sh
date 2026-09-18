@@ -14,10 +14,11 @@
 # directory, because run-all.sh opens this gate's transcript there before the gate
 # starts: without it the tree is dirty on entry and ablate.py refuses with 5. The
 # directory is not ignored, it is compared: its lines of `git status` at the start
-# of a run must be the same during and after it. And what git tracks or lists under
-# it must be transcripts only (ablate.py's contract for a tolerated directory), which
-# is why nothing this gate hands to ablate.py -- a spec, a launcher, a suite -- lives
-# under it, and why the gate never reads a .log of that directory as data.
+# of a run must be the same during and after it. And what git tracks under it must
+# be transcripts, save its own .gitignore, and every line git status prints under it
+# must name one (ablate.py's contract for a tolerated directory), which is why
+# nothing this gate hands to ablate.py -- a spec, a launcher, a suite -- lives under
+# it, and why the gate never reads a .log of that directory as data.
 #
 # The results files go to a scratch directory outside the tree: a file written next
 # to a tracked spec would dirty the tree the next run checks. The gate is not wired
@@ -138,7 +139,7 @@ gate_need "a results directory outside the tree" -- results_dir_outside_tree
 gate_run "bench of the bench" -- \
   env -u ABLATION_BENCH_META_ONLY "$GATE_PY" "$ABLATION/bench_ablate.py"
 gate_expect_rc 0 "the bench and every meta-mutant hold"
-gate_expect_marker 'ABLATION_BENCH cases=[1-9][0-9]* failures=0 meta_mutants=1[1-9] meta_died_elsewhere=0 applications_confirmed=[1-9]' \
+gate_expect_marker 'ABLATION_BENCH cases=[1-9][0-9]* failures=0 meta_mutants=1[2-9] meta_died_elsewhere=0 applications_confirmed=[1-9]' \
   "the bench declares how much it measured"
 
 # Anchored to the line: unanchored, `=2/2` would also match `=2/20`, and `not_applied=1`

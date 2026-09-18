@@ -3,8 +3,8 @@
 from attest import canon
 
 
-def build(n):
-    v = "leaf"
+def build(n: int) -> object:
+    v: object = "leaf"
     for _ in range(n):
         v = [v]
     return v

@@ -1,6 +1,7 @@
 """Two GENUINE statements at different times: does T take the max, or the last?"""
 
 import json
+from typing import Any
 
 from attest import issue, keys, manifests, revocation, verify
 from tests.helpers import make_payload, store
@@ -13,7 +14,7 @@ manifest = manifests.build_key_manifest(ISSUER, 1, "2026-01-01T00:00:00Z", entri
 ts = store({ISSUER: manifest}, {ISSUER: "tls"})
 
 
-def rec(rid, when):
+def rec(rid: str, when: str) -> dict[str, Any]:
     return revocation.build_record(rid, "revoked", when, KP, KID)
 
 

@@ -4,10 +4,10 @@ from attest import authority
 
 
 class LiesAboutEquality:
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         return True
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return 0
 
 

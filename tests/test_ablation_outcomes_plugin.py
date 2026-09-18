@@ -86,7 +86,9 @@ def _run_fixture_pytest(
         f"the plugin did not write {outcomes_path}\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     with outcomes_path.open(encoding="utf-8") as fh:
-        return json.load(fh)
+        payload = json.load(fh)
+    assert isinstance(payload, dict), f"the plugin wrote {payload!r}, not an object"
+    return payload
 
 
 def test_nonce_key_carries_the_ablation_nonce_env_var(tmp_path: Path) -> None:

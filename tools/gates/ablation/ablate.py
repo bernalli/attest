@@ -2052,8 +2052,8 @@ def _tolerated_dirs(given: Sequence[str], tree: Path) -> tuple[tuple[str, ...], 
         if broken is not None:
             problems.append(
                 f"{where}: {relative} breaks the contract of a tolerated directory -- every "
-                f"file git tracks or lists under it is a transcript, a {_TRANSCRIPT_SUFFIX}, "
-                f"save its own .gitignore: {broken}"
+                f"file git tracks under it is a transcript, a {_TRANSCRIPT_SUFFIX}, save its "
+                f"own .gitignore, and every line git status prints under it names one: {broken}"
             )
             continue
         if relative not in dirs:
