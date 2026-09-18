@@ -73,7 +73,10 @@ the kind of change and the tolerated directory.
 written, and the summary on stdout says so. When a journal refusal stops the run
 midway, no results file is written either, and stdout carries a partial summary: the
 ids tried up to the stop, `applications_confirmed/applications_attempted`, and the
-records left in the journal.
+records left in the journal. With `--tolerate-dirty`, `summary.tree_dirty_after_run`
+is still every line of `git status` after the run, the tolerated ones included, so it
+is not empty on a run that exits 0 whenever `dirty_tolerated.lines` is not; each row's
+`git_dirty_during` holds only the lines outside the tolerated directories.
 """
 
 from __future__ import annotations

@@ -183,7 +183,9 @@ sys.exit(ablate.main(sys.argv[4:]))
 # modes `tolerated-<verse>-during`, which change `logs/` in the baseline run, before the
 # snapshot taken during the mutation, and undo the change in the mutated run, before the
 # snapshot taken after the run. The modes `tolerated-<verse>-after` change `logs/` in the
-# mutated run, after the snapshot taken during the mutation.
+# mutated run, after the snapshot taken during the mutation. The mode `stray-before-snapshot`
+# leaves `stray.txt` in the baseline run, before the snapshot taken during the mutation, and
+# removes it in the mutated run; `break-index` makes `git status` fail after the mutated run.
 _LAUNCHER = """
 import json, os, subprocess, sys
 from pathlib import Path
@@ -198,6 +200,13 @@ if mutated and mode == "concurrent-writer":
     (tree / "sample.py").write_bytes(b"VALUE = 5\\n")
 if mutated and mode == "stray-file":
     (tree / "stray.txt").write_text("left by the suite\\n")
+if mode == "stray-before-snapshot":
+    if mutated:
+        (tree / "stray.txt").unlink()
+    else:
+        (tree / "stray.txt").write_text("left by the baseline run\\n")
+if mutated and mode == "break-index":
+    (tree / ".git" / "index").write_bytes(b"not an index\\n")
 if mode.startswith("tolerated-"):
     verse, when = mode[len("tolerated-"):].split("-")
     logs = tree / "logs"
@@ -1970,3 +1979,81 @@ def test_a_tolerated_line_changed_before_the_mutation_snapshot_leaves_the_row_un
     assert change in row_lines[0]
     # The mutated run undid the change: the tree after the run is the tree before it.
     assert _porcelain(tree) == reference
+
+
+def test_with_tolerate_dirty_a_file_left_outside_the_directory_after_the_run_exits_6(
+    tree: Path, tmp_path: Path
+) -> None:
+    _tolerating_tree(tree)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED", launcher=_launcher(tmp_path))
+
+    result = _ablate(
+        _tolerating(spec, tree), tmp_path, {"ABLATION_TEST_LAUNCHER_MODE": "stray-file"}
+    )
+
+    assert result.returncode == 6, result.stdout + result.stderr
+    assert _refusals(result.stderr) == [
+        f"REFUSING: {tree} is dirty after the run outside the tolerated directories "
+        "['logs']: ['?? stray.txt'] -- a restore failed somewhere, and no verdict above can "
+        "be trusted"
+    ]
+
+
+def test_with_tolerate_dirty_a_file_outside_the_directory_during_the_mutation_exits_10(
+    tree: Path, tmp_path: Path
+) -> None:
+    _tolerating_tree(tree)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED", launcher=_launcher(tmp_path))
+
+    result = _ablate(
+        _tolerating(spec, tree),
+        tmp_path,
+        {"ABLATION_TEST_LAUNCHER_MODE": "stray-before-snapshot"},
+    )
+
+    assert result.returncode == 10, result.stdout + result.stderr
+    row_lines = [
+        line for line in result.stdout.splitlines() if line.startswith("ST2-property-red:")
+    ]
+    assert len(row_lines) == 1 and row_lines[0].startswith("ST2-property-red: UNMEASURED -- ")
+    assert (
+        "git_dirty_during: ST2-property-red mutated: git status showed "
+        "[' M sample.py', '?? stray.txt'] outside the tolerated directories ['logs'], "
+        "expected [' M sample.py']"
+    ) in row_lines[0]
+    assert _porcelain(tree) == ""
+
+
+def test_with_tolerate_dirty_git_that_cannot_read_the_tree_before_the_run_exits_5(
+    tree: Path, tmp_path: Path
+) -> None:
+    _tolerating_tree(tree)
+    (tree / ".git" / "index").write_bytes(b"not an index\n")
+    spec = _single_row_spec(tmp_path, "spec", "KILLED")
+
+    result = _ablate(_tolerating(spec, tree, "--skip-preflight"), tmp_path)
+
+    assert result.returncode == 5, result.stdout + result.stderr
+    assert _refusals(result.stderr) == [
+        f"REFUSING: git cannot say whether {tree} is dirty before the run "
+        "(git status --porcelain --untracked-files=normal): None"
+    ]
+    assert "[mutant]" not in result.stdout
+    assert not (tree / JOURNAL_DIRNAME).exists()
+
+
+def test_with_tolerate_dirty_git_that_cannot_read_the_tree_after_the_run_exits_6(
+    tree: Path, tmp_path: Path
+) -> None:
+    _tolerating_tree(tree)
+    spec = _single_row_spec(tmp_path, "spec", "KILLED", launcher=_launcher(tmp_path))
+
+    result = _ablate(
+        _tolerating(spec, tree), tmp_path, {"ABLATION_TEST_LAUNCHER_MODE": "break-index"}
+    )
+
+    assert result.returncode == 6, result.stdout + result.stderr
+    assert _refusals(result.stderr) == [
+        f"REFUSING: git cannot say whether {tree} is dirty after the run: None -- no verdict "
+        "above can be trusted"
+    ]
