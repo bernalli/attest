@@ -406,12 +406,11 @@ def test_canonical_wire_text_is_rendered_only_where_it_is_pinned() -> None:
       `tools/gen_vectors.py`, already pinned in the parser guard above; not a
       verdict path.
 
-    * `tools/gates/prove_composite_twins.py:219` and
-      `tools/gates/run_t2_mutants.py:175` — each renders ONE header line of the
+    * `tools/gates/prove_composite_twins.py:219` — renders ONE header line of the
       transcript its gate writes ("recorded <T>"), through `time.strftime` on
       `time.gmtime()`. Reason *(i)* holds and is the only one claimed: the
       argument is the clock, so the year is always four digits and the padding
-      defect is unreachable. Reason *(ii)* is FALSE for both and is not
+      defect is unreachable. Reason *(ii)* is FALSE for it and is not
       claimed — nothing in this repository parses a transcript header back, so
       the string is never re-derived through `parse_strict_utc`. A divergent
       renderer here misdates a gate transcript a person reads; it cannot admit
@@ -478,7 +477,6 @@ def test_canonical_wire_text_is_rendered_only_where_it_is_pinned() -> None:
         "tools/conformance_runner.py": 1,
         "tools/gates/ablation/journal.py": 1,
         "tools/gates/prove_composite_twins.py": 1,
-        "tools/gates/run_t2_mutants.py": 1,
     }
     found = {
         path.relative_to(REPO_ROOT).as_posix(): calls

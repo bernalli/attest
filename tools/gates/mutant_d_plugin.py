@@ -12,9 +12,9 @@ with `AttributeError` before a single test runs.
 That is worth naming, because it is a class and not an accident: a measuring
 instrument bound at import time to the very symbol the work is scheduled to
 remove. The defect is one of ORDER — the instrument was built before the thing
-it measures — so the transcript from before the flip (`mutant-t2d.log`) does
-NOT certify the system after it. This mutant is re-run after the flip, and its
-transcript takes a new tag.
+it measures — so the transcript taken before the flip did NOT certify the
+system after it. This mutant is re-run after the flip by the ablation bench,
+which records its outcome in that run's `results.json`.
 
 WHAT THE MUTANT PROVES, AND ON WHICH FIXTURE
 

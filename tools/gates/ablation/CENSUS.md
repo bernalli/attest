@@ -42,7 +42,7 @@ building the bench:
 The fourth is the one worth carrying elsewhere. Bytecode is invalidated by source
 **mtime and size**, so a constant replaced by one of the *same length* — `2` for
 `0`, `4096` for `4097` — can leave a cache the interpreter still trusts after the
-restore. `tools/gates/run_t2_mutants.py` already guards this (`.touch()` plus a
+restore. `tools/gates/run_t2_mutants.py` guarded this before it was removed (`.touch()` plus a
 cache sweep, with a comment naming it); this bench did not, and paid for it. The
 symptom was a fixture failing on a clean tree for a reason that could not be read
 off the source.
@@ -181,7 +181,11 @@ be canonicalized in the reconstructed view** — precisely the state the headroo
 exists to prevent, reached while the test that names it passes.
 Fixture: `test_admission_reserves_the_nesting_a_reconstructed_view_costs`.
 
-## The other thing in the perimeter: `tools/gates/run_t2_mutants.py`
+## The other thing in the perimeter: `tools/gates/run_t2_mutants.py` (REMOVED)
+
+This section is history. The runner and its four transcripts were removed when
+the four T2 mutants migrated into `spec_t2.json`; the commands below no longer
+run, and are kept because the failure mode they record is the point.
 
 The mandate names this gate, and it had the failure mode the mandate warns about.
 `main()` took its tags from `argv` and filtered the table; a tag matching no
@@ -195,17 +199,18 @@ summary: {}
 EXIT=0
 ```
 
-Fixed: the selection is validated before any work starts, an empty
-selection aborts, and the run prints how many mutants it applied out of how many
-exist — a count taken from the loop that ran, not derived from the status it is
-about to return, so the two can disagree and be seen to. `bench_run_t2_selection.py`
-checks it without applying a mutant, and was itself ablated: with the validation
-removed it reports three failures and exits non-zero.
+Fixed at the time: the selection was validated before any work started, an empty
+selection aborted, and the run printed how many mutants it applied out of how many
+existed — a count taken from the loop that ran, not derived from the status it was
+about to return, so the two could disagree and be seen to. `bench_run_t2_selection.py`
+(REMOVED before the runner) checked it without applying a mutant, and was itself
+ablated: with the validation removed it reported three failures and exited
+non-zero.
 
-Two adjacent facts, measured and left alone as out of scope: this gate is **not
-wired into CI** (`run-all.sh` discovers `g-*.sh`, and this is a `.py`), and the
-four committed transcripts under `tools/gates/transcripts/` are **read by
-nothing** — no code in the tree compares a fresh run against them.
+Two adjacent facts, measured at the time and left alone as out of scope: that
+gate was **not wired into CI** (`run-all.sh` discovers `g-*.sh`, and it was a
+`.py`), and its four committed transcripts under `tools/gates/transcripts/` were
+**read by nothing** — no code in the tree compared a fresh run against them.
 
 ## Next
 
@@ -216,5 +221,3 @@ nothing** — no code in the tree compares a fresh run against them.
   is unchanged beyond the one fixture. Its ten uses cannot fail for any input
   that does not raise; the five `_Lying*` variants in each parametrize list are
   unfalsifiable by construction.
-- `run_t2_mutants.py` is still outside CI, and its transcripts are still compared
-  against nothing.
