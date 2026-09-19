@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import _strptime
+import _strptime  # type: ignore[import-not-found]
 import hashlib
 import json
 import re
@@ -10,8 +10,8 @@ import unicodedata
 from datetime import datetime
 from functools import cache
 from itertools import product
-from re import _compiler as _re_compiler
-from re import _parser as _re_parser
+from re import _compiler as _re_compiler  # type: ignore[attr-defined]
+from re import _parser as _re_parser  # type: ignore[attr-defined]
 from typing import Any
 
 from attest.keys import b64u
@@ -422,6 +422,6 @@ class ForgedStr:
 
     __slots__ = ()
 
-    @property
-    def __class__(self) -> type:  # type: ignore[override]
+    @property  # type: ignore[misc]
+    def __class__(self) -> type:
         return str

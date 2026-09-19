@@ -1,0 +1,30 @@
+{
+ "note": "Self-test of the bench, not of the suites. Proves the bench distinguishes a property red from a form red. Expected: ST2=KILLED, ST3=BROKEN. The mutation that never lands, ST1, is in selftest_st1.json: item 0 refuses an anchor that is not in the file, so that row runs on its own with --skip-preflight, and a spec that goes through item 0 cannot carry it.",
+ "mutants": [
+  {
+   "id": "ST2-property-red",
+   "expect_verdict": "KILLED",
+   "property": "BENCH: a real property mutation must read as KILLED, via AssertionError, on the named tests",
+   "file": "src/attest/verify.py",
+   "old": "        if not isinstance(status, str) or status not in _ANCHOR_STATUSES:\n            continue",
+   "new": "        if not isinstance(status, str):\n            continue",
+   "suite": ["tests/test_vl5_anchor_status_adversarial.py"],
+   "expect_red": [
+    "test_authenticated_unregistered_status_never_provides_a_freshness_anchor",
+    "test_only_authenticated_registered_statement_statuses_determine_t"
+   ]
+  },
+  {
+   "id": "ST3-form-red",
+   "expect_verdict": "BROKEN",
+   "property": "BENCH: a mutation that breaks a NAME must read as BROKEN, never as KILLED",
+   "file": "src/attest/verify.py",
+   "old": "        if not isinstance(status, str) or status not in _ANCHOR_STATUSES:\n            continue",
+   "new": "        if not isinstance(status, str) or status not in _ANCHOR_STATUSES_TYPO:\n            continue",
+   "suite": ["tests/test_vl5_anchor_status_adversarial.py"],
+   "expect_red": [
+    "test_authenticated_unregistered_status_never_provides_a_freshness_anchor"
+   ]
+  }
+ ]
+}

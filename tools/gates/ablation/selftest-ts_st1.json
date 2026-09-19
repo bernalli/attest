@@ -1,0 +1,16 @@
+{
+ "note": "Self-test of the vitest side on the real tree: an anchor that is not in the file. Item 0 refuses it, so this spec is run with --skip-preflight and an explicit --tree, which stands in for a file that changed between validation and application; the row must then read NOT_APPLIED, never SURVIVED. The rows that do land are in selftest-ts.json. Expected: TS-ST1=NOT_APPLIED.",
+ "mutants": [
+  {
+   "id": "TS-ST1-anchor-absent",
+   "expect_verdict": "NOT_APPLIED",
+   "property": "BENCH: an anchor that is not in the file must be a hard error, never SURVIVED",
+   "runner": "vitest", "pkg": "verifiers/ts",
+   "file": "verifiers/ts/src/revocation.ts",
+   "old": "if (status !== 'revoked' && status !== NO_SUCH_CONSTANT) return",
+   "new": "if (typeof status !== 'string') return",
+   "suite": ["test/vl5-anchor-status-adversarial.test.ts"],
+   "expect_red": []
+  }
+ ]
+}

@@ -18,13 +18,15 @@ defaults:
 jobs:
   python:
     # BEFORE CHANGING HOW THIS JOB RUNS — a `container:`, a self-hosted runner,
-    # a different image — read this. Thirteen tests in the suite skip on
-    # properties of the machine that nothing here declares: one needs the
-    # process NOT to be root (root bypasses the file permissions it checks),
+    # a different image — read this. Sixteen tests in the suite skip on two
+    # properties of the machine that nothing here declares: four need the
+    # process NOT to be root (root bypasses the file permissions they check),
     # and twelve need a filesystem with hardlinks and symlinks. A hosted
-    # ubuntu-latest runner gives both. A container image runs as root by
-    # default, which alone removes the first; an overlay or a restricted mount
-    # removes the other twelve. None of them turns red when that happens —
+    # ubuntu-latest runner gives both. Two more, one needing Linux procfs
+    # (/proc/self/mem must exist) and one needing os.mkfifo, skip on properties
+    # of the machine this count leaves out. A container image runs as root by
+    # default, which alone removes the first four; an overlay or a restricted
+    # mount removes the other twelve. None of them turns red when that happens —
     # the suite's total simply drops. So measure the number of skips before
     # and after any such change, and do not read the green as unchanged
     # coverage. These are not the prerequisites `ATTEST_CI_REQUIRED` covers:
