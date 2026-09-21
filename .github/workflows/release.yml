@@ -33,7 +33,7 @@ defaults:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -85,7 +85,7 @@ jobs:
         #    exist for one of the three, and the installed binaries are checked
         #    against digests recorded when these versions were reviewed instead.
         #
-        # ubuntu-latest is linux/amd64; on any other architecture the binary
+        # ubuntu-24.04 is linux/amd64; on any other architecture the binary
         # check fails closed rather than trusting whatever was downloaded.
         # Update all six digests in the same commit that moves a version, and
         # say so in the message.
@@ -282,7 +282,7 @@ jobs:
     # Its own job, not a step inside `build`: that job reinstalls verifiers/ts with
     # --omit=dev halfway through, and a build that depends on the leftovers of
     # someone else's node_modules is a build that breaks on a day nobody touched it.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -336,7 +336,7 @@ jobs:
     # A defect in the tagged workflow or divergent bytes requires the next patch.
     # A half-created GitHub Release still needs manual deletion before resuming.
     needs: [build, desktop]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: pypi
     permissions:
       id-token: write
@@ -557,7 +557,7 @@ jobs:
 
   npm:
     needs: [build, desktop, pypi]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: npm
     permissions:
       id-token: write
@@ -755,7 +755,7 @@ jobs:
 
   github-release:
     needs: [pypi, npm, desktop]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
