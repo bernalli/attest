@@ -22,7 +22,7 @@ jobs:
     # properties of the machine that nothing here declares: four need the
     # process NOT to be root (root bypasses the file permissions they check),
     # and twelve need a filesystem with hardlinks and symlinks. A hosted
-    # ubuntu-latest runner gives both. Two more, one needing Linux procfs
+    # ubuntu-24.04 runner gives both. Two more, one needing Linux procfs
     # (/proc/self/mem must exist) and one needing os.mkfifo, skip on properties
     # of the machine this count leaves out. A container image runs as root by
     # default, which alone removes the first four; an overlay or a restricted
@@ -31,7 +31,7 @@ jobs:
     # and after any such change, and do not read the green as unchanged
     # coverage. These are not the prerequisites `ATTEST_CI_REQUIRED` covers:
     # those a job can install, these it cannot.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -129,7 +129,7 @@ jobs:
           test -s "$RUNNER_TEMP/draft-martinalli-open-purchase-receipts-00.txt"
 
   supply-chain:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -235,7 +235,7 @@ jobs:
     # the full lemma list and is truncated by GitHub at 100 chars — useless as
     # a required-status-check context. Branch protection pins these names.
     name: formal (${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       # fail-fast off so a red run reports every failing shard, not only the
       # first; each shard remains an independent hard failure.
