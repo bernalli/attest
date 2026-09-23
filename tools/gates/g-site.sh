@@ -9,7 +9,7 @@
 #
 # The census comparison happens TWICE on purpose. tools/check_test_census.py already ties
 # disk/run/census together (file-by-file counts, pending/todo, a new file registered), and
-# this gate runs it and demands 0. But the mandate for this gate additionally asks for the
+# this gate runs it and demands 0. It additionally checks the
 # invariant expressed with this repo's own generic primitive (gate_expect_same_set) so the
 # property that matters most here — "the file the census names is the file the run reports,
 # nothing more, nothing less" — is visible without reading check_test_census.py's source.

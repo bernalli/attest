@@ -158,7 +158,7 @@ describe('verifyAnchor: positive round trip', () => {
 })
 
 // --------------------------------------------------------------------------
-// Negatives from the brief's Step 1 list.
+// Negative cases for anchor verification.
 // --------------------------------------------------------------------------
 
 describe('verifyAnchor: ots proof negatives', () => {

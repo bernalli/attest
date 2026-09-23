@@ -1,4 +1,4 @@
-"""Regression tests for the 2026-07-13 review SHOULD-FIX batch (test-first).
+"""Regression tests for the 2026-07-13 review SHOULD-FIX batch.
 
 (#20 entry-count preflight is intentionally deferred — the 100k-entry cap
 already bounds it post-open.)

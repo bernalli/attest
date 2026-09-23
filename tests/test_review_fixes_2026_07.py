@@ -1,7 +1,6 @@
 """Regression tests for the 2026-07-13 security-review must-fix batch.
 
-Each test pins the *fixed* behaviour; written test-first (they fail against the
-pre-fix code).
+Each test pins the fixed behaviour and fails against the pre-fix code.
 """
 
 from __future__ import annotations

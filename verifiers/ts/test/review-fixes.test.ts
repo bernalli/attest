@@ -1,5 +1,5 @@
 // Regression tests for the 2026-07-13 security-review must-fix batch (TS side).
-// Written test-first; each pins the fixed behaviour.
+// Each test pins the fixed behaviour.
 import { describe, it, expect } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519'
 import { loadsStrict, canonicalBytes, JsonObject } from '../src/canon.js'

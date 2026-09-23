@@ -1,6 +1,6 @@
 """Tests for attest.cli — the operator-facing command surface (design §10).
 
-`cli.main([...])` is driven directly (no subprocess), per Task 14's brief.
+`cli.main([...])` is driven directly (no subprocess).
 Every verb is a thin wrapper around a single library call, so these tests
 exercise CLI plumbing (argument parsing, file I/O, exit codes) rather than
 re-testing crypto/schema logic already covered by the library's own suite.

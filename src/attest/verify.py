@@ -399,7 +399,7 @@ def _content_warnings(payload: dict[str, Any]) -> list[str]:
     """Non-fatal, payload-content warnings — independent of the crypto pipeline.
 
     Unknown top-level fields are compared against the schema's top-level
-    `properties` keys only (top level is enough for v0.1, per brief).
+    `properties` keys only, as specified by v0.1 section 11.2.
     """
     found: list[str] = []
 

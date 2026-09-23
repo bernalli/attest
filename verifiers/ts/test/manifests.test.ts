@@ -39,7 +39,7 @@ const seed3 = Uint8Array.from({ length: 32 }, () => 9)
 const pub3 = b64uEncode(ed25519.getPublicKey(seed3))
 const kid3 = `${ISSUER}/keys/2025-06#ed25519-3`
 
-// v1: single active key (kid1), open-ended validity — the brief's base fixture.
+// v1: single active key (kid1), open-ended validity.
 const v1 = signManifest(
   {
     issuer: ISSUER,

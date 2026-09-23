@@ -4,7 +4,7 @@ Every verb wraps a single library call 1:1: no domain logic (schema rules,
 crypto, revocation classification, bundle packaging...) lives here, only
 argument parsing, file I/O, and JSON in/out. Stdlib only.
 
-Conventions (per Task 14 brief):
+Conventions:
   - `--help` text per verb (argparse default).
   - Primary/status output is JSON on stdout; errors go to stderr.
   - Exit codes: 0 = ok, 1 = verification-failed (a `verify`/`check-artifact`

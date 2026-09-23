@@ -10,7 +10,7 @@ import { canonicalBytes, loadsStrict, sha256Hex } from 'attest-verifier'
 /**
  * The artifact, opened the way a buyer opens it: a `file://` URL, no server anywhere.
  *
- * Every scenario carries the request collectors. The mandate's requirement is not "we
+ * Every scenario carries the request collectors. The security requirement is not "we
  * did not notice a request", it is that the app be UNABLE to make one — so the
  * collectors run on all of them, valid and invalid alike, and a single non-`file:`
  * request fails whichever test provoked it.
@@ -59,7 +59,7 @@ test('the collectors every scenario rests on are not blind', async ({ page }) =>
   // would therefore fail on Firefox for a reason that has nothing to do with the app.
   //
   // What both engines DO report, measured the same way, is a request that leaves the
-  // file:// scheme — which is the only thing the mandate asks about. So liveness is
+  // file:// scheme — the event these collectors must detect. So liveness is
   // proven by provoking one: a page with no policy that reaches for a host under the
   // reserved .invalid domain. If this test ever passes silently, every "zero foreign
   // requests" assertion in this file has stopped meaning anything.
