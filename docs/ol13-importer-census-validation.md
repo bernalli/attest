@@ -1,6 +1,6 @@
 # OL-13: executed importer census — author validation
 
-Base: `2d295ae`. Worktree: `wt-ol13/.codex-wt/3033201`; branch: `fix/ol13-importer-census`.
+Base: `2d295ae`. Branch: `fix/ol13-importer-census`.
 
 This is execution evidence from the implementation slot, not an independent review or merge approval. The first mandate and the second-round approvals govern this change. The study was read in full after checking SHA-256 `07e2cb2d8163337c5263badfb6eb5ad11bf63346b8ec7bb80a595819e6a5340a`.
 

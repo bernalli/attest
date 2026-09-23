@@ -24,7 +24,7 @@ interface Traffic {
   sockets: string[]
 }
 
-// Every scenario carries the same collectors: the mandate's local-only requirement is
+// Every scenario carries the same collectors: the local-only requirement is
 // not "we did not notice a request", it is "no request left the file:// scheme".
 function watch(page: Page): Traffic {
   const traffic: Traffic = { foreign: [], sockets: [] }

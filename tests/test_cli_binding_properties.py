@@ -99,12 +99,9 @@ def corpus_sig_b64u() -> str:
 def test_binding_is_a_verb_the_cli_lists() -> None:
     """The cheapest guard against a whole class of hollow test.
 
-    `argparse` exits 2 for a verb it does not know, which is also the exit code
-    of a legitimate refusal — so a refusal test written before the verb exists
-    can be GREEN against nothing at all, and stay green once the verb arrives
-    without ever having changed what it measures. Two of the tests in this file
-    were exactly that when first written. Asserting the verb is PRESENT costs
-    one line and cannot be satisfied by its absence.
+    `argparse` exits 2 for an unknown verb, which is also the exit code
+    of a legitimate refusal. Requiring the verb in `--help` prevents its
+    absence from satisfying refusal tests through that shared exit code.
     """
     rc, captured = run(["--help"])
     assert rc == 0

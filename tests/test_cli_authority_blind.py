@@ -1,21 +1,11 @@
-"""BLIND adversarial bench for the `authority issue` CLI verb and
+"""Adversarial tests for the `authority issue` CLI verb and
 `verify --authority-view` (v0.2 §20, the publisher-authority rail).
 
-This file was written against the CONTRACT for Task 10, and against
-`docs/spec/attest-v0.2.md` §20 directly — never against the implementation of
-`src/attest/cli.py` or against the other rail-convention test files the
-implementing front is writing, which this file's author never opened. Every
-fixture that signs a document calls the two public `attest.authority`
-primitives (`build_authorization`, `authorization_hash`) directly; every
-convention for driving the CLI (argv shape for `keygen`/`manifest init`/
-`issue`/`verify`, `cli.main(...)` return codes, `capsys`-based JSON capture)
-is copied from `tests/test_cli_grant.py`, which is the sibling rail this
-brief authorizes reading.
-
-The tests are expected to be RED until the CLI wiring lands: `authority` is
-not yet a `cli.main` subcommand and `verify` does not yet accept
-`--authority-view`. That is the point of a blind bench — it falsifies the
-contract, not the (absent) implementation.
+The tests exercise the contract in `docs/spec/attest-v0.2.md` §20.
+Signing fixtures call the public `attest.authority` primitives
+(`build_authorization`, `authorization_hash`) directly.
+CLI invocation and output capture follow `tests/test_cli_grant.py`:
+argv lists, `cli.main(...)` return codes, and `capsys`-based JSON capture.
 """
 
 from __future__ import annotations
@@ -636,7 +626,7 @@ def test_a_live_window_closure_is_accepted_iff_within_the_two_bounds(
 def test_every_successor_violation_is_a_bilateral_refusal(
     tmp_path: Path, capsys: CapSys, mutate: str, expect_substring: str
 ) -> None:
-    """Bilateral per the brief: BOTH the call is a usage error (exit 2, with
+    """Require BOTH a usage error (exit 2, with
     the builder's own ValueError text surfaced) AND no output file lands on
     disk — a half-written non-conforming successor is as bad as a silently
     accepted one."""

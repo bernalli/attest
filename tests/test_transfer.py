@@ -461,8 +461,7 @@ def test_record_hash_covers_signature_member() -> None:
 
 
 # --- record_logged_standing (mirrors verify._revocation_deadline_satisfied's
-# untrusted-evidence confinement; not in the brief's illustrative test list
-# but required by TDD discipline for a new, security-relevant function) -----
+# untrusted-evidence confinement) ------------------------------------------
 
 _TRANSFER_LOG_ORIGIN = "transfer-log.attest.example/2026"
 _TRANSFER_LOG_NAME = "attest-transfer-log-1"

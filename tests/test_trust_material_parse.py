@@ -1,8 +1,8 @@
-"""The serialized entry to the verifier's local trust material (front F6, T1).
+"""The serialized entry to the verifier's local trust material.
 
-Written BEFORE `src/attest/trust_material.py` grows `TrustStore.from_bytes` /
-`KeyManifest.from_bytes`, so what is pinned here is what the boundary MUST do,
-not what some implementation happens to do.
+These tests specify the boundary requirements for `TrustStore.from_bytes`
+and `KeyManifest.from_bytes` using independent input generators and
+acceptance checks.
 
 WHAT THIS FILE MEASURES
 -----------------------

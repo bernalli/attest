@@ -165,7 +165,7 @@ ULID_TIMESTAMP_MS = 1751464200000
 ULID_RANDOMNESS = bytes(range(10))
 RECEIPT_ID = ulid.generate(timestamp_ms=ULID_TIMESTAMP_MS, randomness=ULID_RANDOMNESS)
 # datetime.fromtimestamp(ULID_TIMESTAMP_MS / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-# hardcoded rather than computed at generation time per the determinism brief
+# hardcoded rather than computed at generation time for deterministic output
 # (fixed inputs only, no runtime clock/timezone dependency).
 ISSUED_AT = "2025-07-02T13:50:00Z"
 

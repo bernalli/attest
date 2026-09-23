@@ -11,7 +11,7 @@ export default defineConfig({
     // `modulePreload: false` removes vite's preload POLYFILL, which is not optional
     // decoration here: it ships a `fetch(i.href, s)` that walks the document for
     // `<link rel=modulepreload>` elements. This artifact has none — the whole bundle is
-    // inlined — so the call could never fire, but the mandate is that the app be UNABLE
+    // inlined — so the call could never fire, but the app must be UNABLE
     // to make a request, and a `fetch(` in the shipped bytes is not that. The inliner's
     // scanner refuses the build over it, which is how it was found.
     modulePreload: false,

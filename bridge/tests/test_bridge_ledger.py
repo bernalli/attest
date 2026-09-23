@@ -4,7 +4,7 @@ Contract: the Ledger is NOT part of the trust model, but the
 `receipts` table stores issued envelopes verbatim (carrying `delivery.salt`), so
 the database file is a SECRET — must be 0600 on disk. Timestamps are always
 caller-supplied RFC3339 strings; the Ledger never reads a clock. Each behavior
-below gets its own test per the brief's Step 1 enumeration.
+below is tested independently.
 """
 
 from __future__ import annotations

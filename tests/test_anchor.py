@@ -2,7 +2,7 @@
 
 The positive fixture builds a synthetic OTS op-chain forward by hand: start
 from `SHA256(note_bytes)`, append a sibling, hash, prepend a prefix, hash
-again — the exact op sequence the task brief specifies — then pins the
+again, then pins the
 resulting root as a `PinnedHeader` and asserts `verify_anchor` recognizes it.
 Every other test is a controlled mutation of that one working fixture, so a
 single assertion isolates exactly one failure mode.
@@ -50,7 +50,7 @@ def _evidence(proofs: Sequence[object], note_bytes: bytes = NOTE_BYTES) -> dict[
 def _working_chain(note_bytes: bytes = NOTE_BYTES) -> tuple[list[list[str]], str]:
     """Build the op-chain forward and return `(ops, header_merkle_root)`.
 
-    Sequence per the brief: append sibling, sha256, prepend prefix, sha256.
+    Sequence: append sibling, sha256, prepend prefix, sha256.
     Computed independently of `anchor.py` (plain `hashlib` calls) so the test
     pins the real algorithm rather than round-tripping the module's own logic.
     """
@@ -152,7 +152,7 @@ def test_verify_anchor_rejects_evidence_checkpoint_for_different_note() -> None:
 
 
 # --------------------------------------------------------------------------
-# Negatives from the brief's Step 1 list.
+# Negative cases for anchor verification.
 # --------------------------------------------------------------------------
 
 

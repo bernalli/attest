@@ -1214,9 +1214,9 @@ lemma sanity_multihop_advance_compromise:
    & #c1 < #c2"
 
 /* ---------------------------------------------------------------------------
-   TASK 5 -- HYBRID v0.2 SANITY (exists-trace). TDD RED FIRST: added before the
-   v0.2 issuance/acceptance rules exist, so it MUST be FALSIFIED on the first run
-   (no rule emits Accept_v02 yet); after the rules are added it turns verified.
+   HYBRID v0.2 SANITY (exists-trace).
+   Checks that the v0.2 issuance and acceptance rules admit an honest
+   acceptance trace containing Accept_v02.
    --------------------------------------------------------------------------- */
 /* Honest hybrid (v0.2) acceptance: a verifier that VERIFIED-trusts a manifest
    `mid` carrying an 'active HYBRID key (HybridActiveIn) accepts, via the dual-
@@ -1433,10 +1433,9 @@ lemma old_key_powerless:
    ==> UnverifiedRotation(V, I) @ #c"
 
 /* ---------------------------------------------------------------------------
-   TASK 4 -- REVOCATION SANITY (exists-trace) -- TDD RED FIRST
-   These are added BEFORE any revocation rule exists: both must be FALSIFIED
-   (no rule emits RevocationHonored / RevocationIgnored yet). After the rules
-   are added they must turn verified.
+   REVOCATION SANITY (exists-trace).
+   Checks reachability of both revocation outcomes:
+   RevocationHonored and RevocationIgnored.
    --------------------------------------------------------------------------- */
 /* Anchored honest HONOR witness (T3 anchored-witness lesson -- the bare
    `Ex V rid #h. RevocationHonored` form wanders past the plain-prover budget).

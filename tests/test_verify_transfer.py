@@ -5,8 +5,7 @@ extension.
 Fixtures build a real transfer record (`transfer.build_record` +
 `transfer.sign_authorization`) and a real single/two-leaf transparency log
 (mirrors `tests/test_transparency.py`'s hand-built-tree style and
-`tests/test_transfer.py`'s own `record_logged_standing` fixtures — both read
-first, per the task brief).
+`tests/test_transfer.py`'s own `record_logged_standing` fixtures).
 """
 
 from __future__ import annotations
