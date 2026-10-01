@@ -3363,6 +3363,18 @@ def verify(
         if status == _STATUS_RETIRED:
             warnings.append(f"key {kid} is retired")
 
+        # --- Hybrid AND rule, v0.1 side (v0.2 §13 side-document rule applied
+        # to receipts): a key entry that carries `pub_ml_dsa_65` is a hybrid
+        # key, and the reference issuer refuses to sign v0.1 with one
+        # (`issue.issue`). `attest_version` is signed, but by the FORGER: an
+        # attacker who breaks Ed25519 alone does not strip a v0.2 leg, they mint
+        # a fresh "0.1" receipt under the hybrid kid. Without this refusal the
+        # PQ leg protects nothing that a v0.1 receipt can say.
+        if "pub_ml_dsa_65" in entry:
+            return _invalid(
+                f"key entry for kid {kid!r} is hybrid; a v0.1 receipt cannot verify under it"
+            )
+
         # --- Step 4: Ed25519.verify(JCS(payload), sig, pub) under the pinned
         # ruleset. canon.canonical_bytes(payload) is the only signature input.
         try:

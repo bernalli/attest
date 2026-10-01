@@ -265,3 +265,45 @@ describe('v0.2 hybrid verification', () => {
     expect(result.warnings).toContain('mixed_keyset_active_ed_only_sibling')
   })
 })
+
+describe('v0.1 receipt under a hybrid key entry', () => {
+  // Downgrade by VERSION CHOICE: whoever forges Ed25519 alone picks "0.1".
+  // Mirrors tests/test_verify_hybrid.py::test_v01_receipt_under_hybrid_key_invalid.
+  const v01Envelope = () => {
+    const payload = basePayload('0.1')
+    const sig = ed25519.sign(canonicalBytes(payload), edSeed)
+    return { payload, signatures: [parse({ kid: KID, alg: 'Ed25519', sig: b64uEncode(sig) })] }
+  }
+  it('is refused', () => {
+    const result = verify(envelopeBytes(v01Envelope()), trustStore(hybridManifest()))
+    expect(result.signature).toBe('invalid')
+    expect(result.errors).toEqual([`key entry for kid '${KID}' is hybrid; a v0.1 receipt cannot verify under it`])
+  })
+  it('still verifies under an Ed25519-only entry (control)', () => {
+    const result = verify(envelopeBytes(v01Envelope()), trustStore(nonHybridManifest()))
+    expect(result.signature).toBe('valid')
+  })
+})
+
+describe('object-typed envelope fields are refusals, never exceptions', () => {
+  // loadsStrict builds null-prototype objects and String() on one throws, so
+  // pyRepr used to turn these three into an exception out of verify() where
+  // the Python reference returns `invalid` with the dict's repr.
+  const base = () => {
+    const payload = basePayload('0.1') as Record<string, JsonValue>
+    const sig = ed25519.sign(canonicalBytes(payload as JsonObject), edSeed)
+    return { payload, signatures: [{ kid: KID, alg: 'Ed25519', sig: b64uEncode(sig) } as Record<string, JsonValue>] }
+  }
+  it.each([
+    ['alg', (e: ReturnType<typeof base>) => { e.signatures[0]!['alg'] = { a: 1n } as unknown as JsonValue }, "unsupported signature algorithm: {'a': 1}"],
+    ['attest_version', (e: ReturnType<typeof base>) => { e.payload['attest_version'] = {} as JsonValue }, 'unsupported attest_version: {}'],
+    ['issued_at', (e: ReturnType<typeof base>) => { e.payload['issued_at'] = [{}] as JsonValue }, 'issued_at [{}] outside key validity window'],
+  ])('%s', (_name, mutate, message) => {
+    const e = base()
+    mutate(e)
+    const bytes = enc(JSON.stringify(e, (_k, v) => (typeof v === 'bigint' ? Number(v) : v)))
+    const result = verify(bytes, trustStore(nonHybridManifest()))
+    expect(result.signature).toBe('invalid')
+    expect(result.errors).toEqual([message])
+  })
+})

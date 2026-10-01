@@ -250,3 +250,30 @@ def test_mixed_keyset_warning_present_on_tampered_mldsa_leg() -> None:
     assert result.signature == "invalid"
     assert result.errors == ("ML-DSA-65 signature verification failed",)
     assert "mixed_keyset_active_ed_only_sibling" in result.warnings
+
+
+def test_v01_receipt_under_hybrid_key_invalid() -> None:
+    # Downgrade by VERSION CHOICE, not by stripping: whoever can forge Ed25519
+    # alone mints a fresh "0.1" receipt under the hybrid kid. The reference
+    # issuer never produces one (`issue.issue` refuses), so the verifier
+    # refusing it costs nothing legitimate.
+    payload = make_payload()
+    assert payload["attest_version"] == "0.1"
+    envelope = {
+        "payload": payload,
+        "signatures": [
+            {
+                "kid": KID,
+                "alg": "Ed25519",
+                "sig": keys.b64u(keys.sign(canon.canonical_bytes(payload), _HK.ed)),
+            }
+        ],
+    }
+    result = verify.verify(_to_bytes(envelope), _trust_store(_hybrid_manifest()))
+    assert result.signature == "invalid"
+    assert result.errors == (
+        f"key entry for kid {KID!r} is hybrid; a v0.1 receipt cannot verify under it",
+    )
+    # Control: the identical receipt under the Ed25519-only entry still verifies.
+    control = verify.verify(_to_bytes(envelope), _trust_store(_non_hybrid_manifest()))
+    assert control.signature == "valid"

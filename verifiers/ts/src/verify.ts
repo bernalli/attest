@@ -39,7 +39,7 @@ import {
   ERR, WARN, unsupportedAttestVersion, signaturesCount, unsupportedSigAlg, noTrustedManifest,
   noKeyInManifest, keyCompromised, compromiseViewOverflow, keyRetired, issuedAtOutsideWindow,
   malformedKeyMaterial,
-  malformedSigMaterial, unknownField, unknownEol, keyEntryNotHybrid, pyRepr, codePointLength,
+  malformedSigMaterial, unknownField, unknownEol, keyEntryNotHybrid, keyEntryHybridV01, pyRepr, codePointLength,
   VERIFY_TRANSPARENCY_WARN, COMPROMISE_WARN, manifestExceedsKeys, manifestDuplicateKids,
   manifestNotSelfConsistent,
 } from './messages.js'
@@ -1389,6 +1389,11 @@ export function verify(
     const issuedAt = payload['issued_at']
     if (typeof issuedAt !== 'string' || !withinValidity(issuedAt, entry)) return invalid(issuedAtOutsideWindow(issuedAt))
     if (!compromisedRescued && status === 'retired') warnings.push(keyRetired(kid))
+
+    // Hybrid AND rule, v0.1 side (mirrors verify.py): a hybrid key entry never
+    // verifies an Ed25519-only receipt -- a forger who breaks Ed25519 alone picks
+    // attest_version "0.1" themselves, so the signed version field does not help.
+    if ('pub_ml_dsa_65' in entry) return invalid(keyEntryHybridV01(kid))
 
     // Step 4 — signature
     let pub: Uint8Array, sig: Uint8Array
