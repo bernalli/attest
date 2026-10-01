@@ -52,11 +52,15 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.21"
+          # "auto" already skips tag pushes; stated so it cannot drift.
+          enable-cache: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: verifiers/ts/package-lock.json
+          # No dependency cache in this workflow. A cache entry written by any job
+          # on main is readable from a tag push, and this job builds the bytes
+          # that get published: every install here starts from the registry.
+          package-manager-cache: false
       - name: Install syft, grype, grant (pinned by installer digest)
         # These three binaries ARE the SBOM, vulnerability and license gate of the
         # release: everything downstream trusts them to refuse. They were fetched
@@ -294,11 +298,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            verifiers/ts/package-lock.json
-            site/package-lock.json
-            desktop/package-lock.json
+          # No dependency cache in this workflow. A cache entry written by any job
+          # on main is readable from a tag push, and this job builds the bytes
+          # that get published: every install here starts from the registry.
+          package-manager-cache: false
       - run: npm ci --prefix verifiers/ts
       - run: npm run build --prefix verifiers/ts
       # The desktop build typechecks ../site/src along with its own sources, so the
@@ -568,6 +571,7 @@ jobs:
           # (docs.npmjs.com/trusted-publishers); Node 20 fails even with npm upgraded.
           node-version: 22.14.0
           registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
       - name: Upgrade npm to a Trusted-Publishing-capable version (>=11.5.1)
         run: |
           npm install -g npm@11.18.0
