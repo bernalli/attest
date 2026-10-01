@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519'
+import { sha512 } from '@noble/hashes/sha2'
+import { concatBytes } from '@noble/curves/utils.js'
 import { verifyStrict, Ed25519LengthError } from '../src/ed25519.js'
 
 const L = 2n ** 252n + 27742317777372353535851937790883648493n
@@ -56,5 +58,47 @@ describe('verifyStrict', () => {
   it('throws on wrong lengths', () => {
     expect(() => verifyStrict(msg, sig.slice(0, 63), pub)).toThrow(Ed25519LengthError)
     expect(() => verifyStrict(msg, sig, pub.slice(0, 31))).toThrow(/public key must be 32 bytes/)
+  })
+})
+
+// Signer-crafted signatures that pass noble's COFACTORED check (even with
+// zip215:false) but fail the spec's pinned cofactorless ruleset -- and
+// libsodium, i.e. Python keys.verify_strict. Each needs the secret scalar.
+describe('verifyStrict is cofactorless (libsodium parity)', () => {
+  const P = ed25519.Point
+  const a = ed25519.utils.getExtendedPublicKey(seed).scalar
+  const T8 = P.fromHex('c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a')
+  const kOf = (R: Uint8Array, A: Uint8Array) => leToNumber(sha512(concatBytes(R, A, msg))) % L
+  const mod = (n: bigint) => ((n % L) + L) % L
+  const sigOf = (R: Uint8Array, S: bigint) => concatBytes(R, numberToLE(mod(S), 32))
+
+  it('rejects a small-order R with S = k*a (cofactored-valid)', () => {
+    for (let i = 0; i < 8; i++) {
+      const R = (i === 0 ? P.ZERO : T8.multiplyUnsafe(BigInt(i))).toBytes()
+      const forged = sigOf(R, kOf(R, pub) * a)
+      expect(ed25519.verify(forged, msg, pub, { zip215: false })).toBe(true) // the old call
+      expect(verifyStrict(msg, forged, pub)).toBe(false)
+    }
+  })
+  it('rejects a mixed-order R = rB + T8', () => {
+    const r = 123456789n
+    const R = P.BASE.multiply(r).add(T8).toBytes()
+    const forged = sigOf(R, r + kOf(R, pub) * a)
+    expect(ed25519.verify(forged, msg, pub, { zip215: false })).toBe(true)
+    expect(verifyStrict(msg, forged, pub)).toBe(false)
+  })
+  it('rejects a mixed-order A = aB + T8 whenever k is not 0 mod 8', () => {
+    const A = P.BASE.multiply(a).add(T8).toBytes()
+    let r = 1n, R: Uint8Array, k: bigint
+    do { r++; R = P.BASE.multiply(r).toBytes(); k = kOf(R, A) } while (k % 8n === 0n)
+    const forged = sigOf(R, r + k * a)
+    expect(ed25519.verify(forged, msg, A, { zip215: false })).toBe(true)
+    expect(verifyStrict(msg, forged, A)).toBe(false)
+  })
+  it('still accepts honest signatures over arbitrary messages', () => {
+    for (let n = 0; n < 16; n++) {
+      const m = Uint8Array.from({ length: n * 7 }, (_, i) => (i * 31 + n) & 0xff)
+      expect(verifyStrict(m, ed25519.sign(m, seed), pub)).toBe(true)
+    }
   })
 })
