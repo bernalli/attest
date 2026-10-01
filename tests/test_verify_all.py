@@ -108,10 +108,6 @@ EARLY_STEP = "npm run build --prefix verifiers/ts"
 #: compares every shard with this file.
 PROVISIONING: tuple[tuple[str, str], ...] = (
     (
-        r"^curl -sSfL \"https://raw\.githubusercontent\.com/anchore/",
-        "installs syft/grype/grant; verify-all uses whatever is on PATH",
-    ),
-    (
         r"^curl -fsSL -o (maude\.zip|tamarin\.tar\.gz) ",
         "downloads the prover toolchain; verify-all uses whatever is on PATH",
     ),
@@ -255,6 +251,28 @@ def _effective_shell(document: dict[str, Any], spec: dict[str, Any], step: dict[
     return _declared_shell(spec) or _declared_shell(document)
 
 
+#: The scanner install step is provisioning as a WHOLE STEP, not line by line:
+#: it is a shell function plus checks, and none of its lines verifies the
+#: project. It is exempt only while it is byte-identical (script and env) to
+#: the release workflow's pinned install, which `tests/test_workflow_hardening.py`
+#: also asserts; any other step that installs the scanners is compared like
+#: every other command.
+_RELEASE_SCANNER_INSTALL = next(
+    step
+    for step in yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )["jobs"]["build"]["steps"]
+    if str(step.get("name", "")).startswith("Install syft, grype, grant")
+)
+
+
+def _is_pinned_scanner_install(step: dict[str, Any]) -> bool:
+    return (
+        step.get("run") == _RELEASE_SCANNER_INSTALL["run"]
+        and step.get("env") == _RELEASE_SCANNER_INSTALL["env"]
+    )
+
+
 def _workflow_commands() -> list[tuple[str, str, dict[str, Any]]]:
     """(origin, command, env) for every `run:` line of the two workflows.
 
@@ -270,7 +288,7 @@ def _workflow_commands() -> list[tuple[str, str, dict[str, Any]]]:
         for job, spec in document["jobs"].items():
             job_env = spec.get("env") or {}
             for index, step in enumerate(spec.get("steps", [])):
-                if "run" not in step:
+                if "run" not in step or _is_pinned_scanner_install(step):
                     continue
                 inherited = {**workflow_env, **job_env, **(step.get("env") or {})}
                 for command in _logical_lines(step["run"]):
