@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
@@ -39,6 +41,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
@@ -103,6 +107,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
@@ -141,16 +147,68 @@ jobs:
       # and licence policy as the supply-chain job. These steps generate an
       # SBOM and check vulnerability severity and licence policy; they do not
       # compare the dependency set with another package or an earlier revision.
-      - name: Install syft, grype, grant (pinned)
+      - name: Install syft, grype, grant (pinned by installer digest)
+        # Byte-identical (run + env) to the step of the same name in release.yml,
+        # which explains both pins; tests/test_workflow_hardening.py keeps the
+        # copies identical, so the refusal tests in
+        # tests/test_release_workflow_steps.py cover this step too. Move a
+        # version or a digest in all three workflows in the same commit.
         env:
           SYFT_VERSION: v1.46.0
           GRYPE_VERSION: v0.115.0
           GRANT_VERSION: v0.6.8
+          SYFT_INSTALLER_SHA256: 8a277b4b4dc21809ecd9a0e4926f4d7319affc6451a607fdeb3e5e1fbd9bc573
+          GRYPE_INSTALLER_SHA256: 8646f06a90b10ca64992c1809b4aa00c44e30b4f551f63c309b0b0ab66873556
+          GRANT_INSTALLER_SHA256: 084c7de5bb7a28b79b37cd19ade5839a38dc0b93b291958b2ae113b2ab3de642
+          SYFT_BINARY_SHA256: 574df1a0862ff88ad933be214e81069e35b17618a13e019f8f1c84fe063222a2
+          GRYPE_BINARY_SHA256: 05ffd2c28a607e48fb2269d9aac5b3d53e8a51bbac501946644745eae2119907
+          GRANT_BINARY_SHA256: 3e669be258a2b79544cd478287c103fce25a763af85b27ab93a02b129e837837
         run: |
-          curl -sSfL "https://raw.githubusercontent.com/anchore/syft/${SYFT_VERSION}/install.sh"  | sh -s -- -b "$HOME/.local/bin" "${SYFT_VERSION}"
-          curl -sSfL "https://raw.githubusercontent.com/anchore/grype/${GRYPE_VERSION}/install.sh" | sh -s -- -b "$HOME/.local/bin" "${GRYPE_VERSION}"
-          curl -sSfL "https://raw.githubusercontent.com/anchore/grant/${GRANT_VERSION}/install.sh" | sh -s -- -b "$HOME/.local/bin" "${GRANT_VERSION}"
+          install_pinned() {
+            local name="$1" version="$2" want="$3" installer
+            installer="$(mktemp)"
+            # Downloaded to a file, not piped: a pipe cannot be checksummed
+            # before it is executed, which is the whole point of this step.
+            curl -sSfL "https://raw.githubusercontent.com/anchore/${name}/${version}/install.sh" -o "$installer"
+            echo "${want}  ${installer}" | sha256sum -c -
+            # DOWNLOAD_TAG_INSTALL_SCRIPT defaults to true in all three
+            # installers, and under that default the pin above buys nothing:
+            # the verified script's FIRST act is to fetch install.sh again from
+            # https://get.anchore.io/<tool>/<tag>/install.sh -- a
+            # Cloudflare-fronted origin that is not GitHub and that no digest
+            # here covers -- pipe it into `sh`, and exit with its status. The
+            # bytes that would actually run are whatever that host served, so
+            # the checksum would have verified a script that never did the
+            # work, and `curl | sh` would be back one level down. Setting it
+            # false makes the script we fetched at the tag and checksummed do
+            # the install itself; the installer's own reason for re-fetching
+            # ("use the install.sh associated with the tagged release") is
+            # already satisfied, because that is exactly the file above.
+            DOWNLOAD_TAG_INSTALL_SCRIPT=false sh "$installer" -b "$HOME/.local/bin" "${version}"
+            rm -f "$installer"
+          }
+          install_pinned syft "$SYFT_VERSION" "$SYFT_INSTALLER_SHA256"
+          install_pinned grype "$GRYPE_VERSION" "$GRYPE_INSTALLER_SHA256"
+          install_pinned grant "$GRANT_VERSION" "$GRANT_INSTALLER_SHA256"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # $GITHUB_PATH only applies to LATER steps, so this step checks by path.
+          # An installer that exits 0 without leaving a binary would otherwise be
+          # discovered by the scan step, as a "command not found" that reads like
+          # a different failure.
+          for tool in syft grype grant; do
+            test -x "$HOME/.local/bin/$tool" || { echo "installer for $tool exited 0 but left no executable"; exit 1; }
+          done
+          # Link 2 of the comment above: what the installers themselves cannot
+          # tell us, because they verify the download against a file fetched
+          # beside it.
+          binary_sums="$(mktemp)"
+          {
+            echo "${SYFT_BINARY_SHA256}  ${HOME}/.local/bin/syft"
+            echo "${GRYPE_BINARY_SHA256}  ${HOME}/.local/bin/grype"
+            echo "${GRANT_BINARY_SHA256}  ${HOME}/.local/bin/grant"
+          } > "$binary_sums"
+          sha256sum -c "$binary_sums"
+          rm -f "$binary_sums"
       - name: SBOM, vulnerability and licence gate for desktop
         run: |
           npm ci --omit=dev --prefix desktop
