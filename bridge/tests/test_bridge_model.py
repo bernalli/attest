@@ -54,14 +54,14 @@ def test_decode_buyer_pubkey_malformed_rejects(bad: str) -> None:
 
 
 def test_decode_buyer_pubkey_rejects_non_canonical_alphabet_decoding_to_32_bytes() -> None:
-    # `keys.b64u_decode` silently drops out-of-alphabet chars, so a valid 32-byte
-    # key with injected "!" still decodes to 32 bytes and would pass a length-only
-    # gate. gate #1 must reject it via the canonical round-trip check (security review).
+    # `keys.b64u_decode` used to silently drop out-of-alphabet chars, so a valid
+    # 32-byte key with injected "!" decoded to 32 bytes and would have passed a
+    # length-only gate. The decoder now refuses it itself (one grammar shared with
+    # the TS verifier); gate #1 must still reject it either way (security review).
     valid = keys.b64u(bytes(range(32)))
     injected = valid[:4] + "!!!!" + valid[4:]
-    assert (
-        len(keys.b64u_decode(injected)) == 32
-    )  # sanity: permissive decoder accepts it back to 32B
+    with pytest.raises(ValueError):
+        keys.b64u_decode(injected)
     with pytest.raises(PurchaseRejected):
         decode_buyer_pubkey(injected)
 

@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from attest import keys
@@ -52,3 +54,30 @@ def test_b64u_roundtrip_no_padding() -> None:
     s = keys.b64u(data)
     assert "=" not in s
     assert keys.b64u_decode(s) == data
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda s: s[:10] + "!!!!" + s[10:],  # used to be DROPPED by urlsafe_b64decode
+        lambda s: s[:10] + "    " + s[10:],
+        lambda s: s[:10] + "\n\n" + s[10:],
+        lambda s: s + "====",
+        lambda s: s[:8] + "==" + s[8:],
+        lambda s: s[:10] + "é" + s[10:],
+    ],
+)
+def test_b64u_decode_rejects_outside_shared_grammar(mutate: Any) -> None:
+    s = keys.b64u(bytes(range(64)))
+    with pytest.raises(ValueError):
+        keys.b64u_decode(mutate(s))
+
+
+def test_b64u_decode_keeps_vector_22_leniency() -> None:
+    raw = bytes(range(64))
+    s = keys.b64u(raw)
+    assert keys.b64u_decode(s + "==") == raw
+    assert keys.b64u_decode(s.replace("-", "+").replace("_", "/")) == raw
+    assert keys.b64u_decode(s[:-1] + chr(ord(s[-1]) + 1)) == raw
+    with pytest.raises(TypeError):
+        keys.b64u_decode(b"AAAA")  # type: ignore[arg-type]
