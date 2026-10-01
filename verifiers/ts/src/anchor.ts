@@ -104,7 +104,6 @@ export const MAX_OPS_PER_PROOF_ = MAX_OPS_PER_PROOF
 export const MAX_OP_HEX_LEN_ = MAX_OP_HEX_LEN
 export const MAX_TOTAL_OP_HEX_LEN_ = MAX_TOTAL_OP_HEX_LEN
 export const MAX_CHECKPOINT_TEXT_LEN_ = MAX_CHECKPOINT_TEXT_LEN
-export const MAX_RENDERABLE_UNIX_TIME_ = MAX_RENDERABLE_UNIX_TIME
 
 export class AnchorError extends Error {}
 
