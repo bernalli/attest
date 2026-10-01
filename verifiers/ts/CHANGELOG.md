@@ -6,6 +6,35 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.8] — 2026-10-01
+
+### Security
+
+- **Ed25519 verification is now cofactorless, as the specification and libsodium
+  require.** `verifyStrict` relied on `@noble/curves` with `{ zip215: false }`, which
+  rejects non-canonical encodings and a small-order public key but still checks the
+  cofactored equation `[8](R + kA - SB) = 0` and never tests `R` for small order. A
+  signer holding the secret key could produce signatures (small-order or mixed-order `R`
+  or `A`) that this package reported valid and the Python reference reported invalid.
+  `verifyStrict` now decodes `A` and `R` canonically, rejects small order for either, and
+  compares `[S]B - [k]A` with `R` byte for byte.
+- **A hybrid key verified receipts signed by Ed25519 alone.** Same defect and fix as
+  `attest-receipts` 0.9.8: a key entry carrying `pub_ml_dsa_65` now refuses a v0.1
+  receipt.
+- **base64url decoding now follows the same grammar as the Python reference.** `atob`
+  skipped ASCII whitespace, which Python never accepted, while Python silently dropped
+  characters this package rejected; anyone could edit a receipt's unsigned signature
+  string into one only one verifier accepted. Both now accept exactly the three lenient
+  forms vector group 22 pins and nothing else.
+
+### Fixed
+
+- Object-typed `alg`, `attest_version` or `issued_at` values made `verify()` throw
+  instead of returning `invalid` with the same message as the Python reference.
+- Stripping whitespace from a buyer identifier used a regular expression that ran in
+  quadratic time on a long whitespace run (100,000 spaces took about 12 seconds); it is
+  now a linear scan.
+
 ## [0.9.7] — 2026-09-10
 
 No change to this package's published code. Released to keep the two packages' version
