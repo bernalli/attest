@@ -42,3 +42,13 @@ playwright-report/
 # `log append` and the signing ceremony, never a published artifact. Every
 # other file under site/public/log/ is committed and served.
 site/public/log/checkpoint.candidate
+
+# Credentials. Signing seeds are written by `attest keygen` (the docs name them
+# *.seed); none of these belongs in a commit or in the sdist, which hatchling
+# builds from every file not ignored here.
+*.seed
+*.pem
+*.key
+.npmrc
+.pypirc
+.netrc
