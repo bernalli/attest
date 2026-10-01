@@ -6,8 +6,18 @@ const LABEL_CHALLENGE = 'Attest-binding-challenge-v1'
 const SCRYPT = { N: 32768, r: 8, p: 1, dkLen: 32 } as const // fixed, never configurable
 const IDENTIFIER_TYPES = new Set(['issuer-account', 'email'])
 
+// Index scan, not a regex: /[ \t\n\r]+$/ backtracks quadratically on a long
+// whitespace run that is not at the end (100k spaces took 12 s).
+function isAsciiWs(c: number): boolean {
+  return c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d
+}
+
 function stripAsciiWs(s: string): string {
-  return s.replace(/^[ \t\n\r]+/, '').replace(/[ \t\n\r]+$/, '')
+  let start = 0
+  let end = s.length
+  while (start < end && isAsciiWs(s.charCodeAt(start))) start++
+  while (end > start && isAsciiWs(s.charCodeAt(end - 1))) end--
+  return s.slice(start, end)
 }
 
 export function normalizeIdentifier(identifier: string, identifierType: string): string {
