@@ -16,3 +16,26 @@ describe('b64u', () => {
     expect(s).toMatch(/^[A-Za-z0-9_-]+$/)
   })
 })
+
+// One decode grammar with Python keys.b64u_decode: vector 22's three lenient
+// forms, nothing else. atob alone skipped ASCII whitespace (Python did not)
+// while Python dropped characters atob rejects.
+describe('b64uDecode shared grammar', () => {
+  const raw = Uint8Array.from({ length: 64 }, (_, i) => i)
+  const s = b64uEncode(raw)
+  it.each([
+    ['junk inside', s.slice(0, 10) + '!!!!' + s.slice(10)],
+    ['spaces inside', s.slice(0, 10) + '    ' + s.slice(10)],
+    ['newlines inside', s.slice(0, 10) + '\n\n' + s.slice(10)],
+    ['excess padding', s + '===='],
+    ['padding mid-string', s.slice(0, 8) + '==' + s.slice(8)],
+    ['non-ASCII', s.slice(0, 10) + 'é' + s.slice(10)],
+  ])('rejects %s', (_name, input) => {
+    expect(() => b64uDecode(input)).toThrow()
+  })
+  it('keeps the vector-22 leniency', () => {
+    expect([...b64uDecode(s + '==')]).toEqual([...raw])
+    expect([...b64uDecode(s.replace(/-/g, '+').replace(/_/g, '/'))]).toEqual([...raw])
+    expect([...b64uDecode(s.slice(0, -1) + String.fromCharCode(s.charCodeAt(s.length - 1) + 1))]).toEqual([...raw])
+  })
+})

@@ -6,6 +6,27 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.8] — 2026-10-01
+
+### Security
+
+- **A hybrid key verified receipts signed by Ed25519 alone.** A key entry that carries
+  `pub_ml_dsa_65` is a hybrid key, and the reference issuer never signs a v0.1 receipt
+  with one, but the verifier did not refuse such a receipt: whoever could forge Ed25519
+  alone could mint an `attest_version: "0.1"` receipt under the hybrid key id and have it
+  verify, so the ML-DSA-65 half protected nothing a v0.1 receipt can say. The signed
+  `attest_version` does not help, because the forger chooses it. A hybrid key entry now
+  refuses a v0.1 receipt with `key entry for kid … is hybrid; a v0.1 receipt cannot verify
+  under it`, the same AND rule every side document already applied. `attest-verifier`
+  0.9.8 carries the same fix.
+- **The two reference verifiers decoded base64url differently.** `b64u_decode` silently
+  dropped characters outside the alphabet, while `attest-verifier` skipped ASCII
+  whitespace and rejected everything else. The signature string sits outside the signed
+  payload, so anyone, without any key, could edit a receipt into one that only one of
+  the two verifiers accepted. Both now share one grammar that keeps exactly the three
+  lenient forms vector group 22 pins (`=` padding, the `+/` alphabet, non-zero trailing
+  bits) and nothing else; every key-file read already strips surrounding whitespace.
+
 ### Added
 
 - `docs/trust/`: the reference log's trust material in the shape `attest verify

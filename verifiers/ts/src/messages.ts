@@ -8,6 +8,14 @@ export function pyRepr(x: unknown): string {
   if (x === null || x === undefined) return 'None'
   if (typeof x === 'boolean') return x ? 'True' : 'False'
   if (Array.isArray(x)) return `[${x.map(pyRepr).join(', ')}]`
+  // A parsed JSON object is null-prototype (loadsStrict), and String() on one
+  // THROWS -- which turned a hostile `alg`/`attest_version`/`issued_at` object
+  // into an exception out of verify() where Python returns `invalid`. Render
+  // it the way Python's dict repr does instead.
+  if (typeof x === 'object') {
+    const o = x as Record<string, unknown>
+    return `{${Object.keys(o).map((k) => `${pyRepr(k)}: ${pyRepr(o[k])}`).join(', ')}}`
+  }
   return String(x)
 }
 
@@ -167,6 +175,7 @@ export const issuedAtOutsideWindow = (issuedAt: unknown) => `issued_at ${pyRepr(
 export const malformedKeyMaterial = (msg: string) => `malformed key material: ${msg}`
 export const malformedSigMaterial = (msg: string) => `malformed signature material: ${msg}`
 export const keyEntryNotHybrid = (kid: string) => `key entry for kid ${pyRepr(kid)} has no ML-DSA-65 public key`
+export const keyEntryHybridV01 = (kid: string) => `key entry for kid ${pyRepr(kid)} is hybrid; a v0.1 receipt cannot verify under it`
 
 // canon (CanonError messages)
 export const duplicateKey = (k: string) => `duplicate object key: ${pyRepr(k)}`

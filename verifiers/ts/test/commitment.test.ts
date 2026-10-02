@@ -36,3 +36,17 @@ describe('commitment', () => {
     expect(normalizeIdentifier('a b', 'issuer-account')).toBe('a b')
   })
 })
+
+describe('normalizeIdentifier on a long whitespace run', () => {
+  it('strips in linear time, not by a backtracking regex', () => {
+    const inner = ' '.repeat(200_000)
+    const start = performance.now()
+    expect(normalizeIdentifier(`a${inner}b`, 'email')).toBe(`a${inner}b`)
+    expect(normalizeIdentifier(`${inner}a${inner}`, 'email')).toBe('a')
+    expect(performance.now() - start).toBeLessThan(1000)
+  })
+  it('strips exactly the four ASCII whitespace characters', () => {
+    expect(normalizeIdentifier(' \t\r\nA@B.c\n\r\t ', 'email')).toBe('a@b.c')
+    expect(normalizeIdentifier(' a@b.c ', 'email')).toBe(' a@b.c ')
+  })
+})
