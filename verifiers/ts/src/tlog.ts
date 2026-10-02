@@ -412,11 +412,7 @@ const MAX_ROOT_B64_LEN = 44
 // tests reading `tlog._MAX_NOTE_LINES` etc. directly via module attribute
 // access — TS has no leading-underscore privacy, so these are exported
 // plainly but are NOT part of the package's public index.ts surface).
-export const MAX_NOTE_LINES_ = MAX_NOTE_LINES
 export const MAX_NOTE_TEXT_LEN_ = MAX_NOTE_TEXT_LEN
-export const MAX_NOTE_SIGNATURES_ = MAX_NOTE_SIGNATURES
-export const MAX_SIG_B64_LEN_ = MAX_SIG_B64_LEN
-export const MAX_ROOT_B64_LEN_ = MAX_ROOT_B64_LEN
 export const MAX_ENTRY_SCALAR_LEN_ = MAX_ENTRY_SCALAR_LEN
 
 /** Bound an untrusted string's repr for an error message — slice BEFORE
