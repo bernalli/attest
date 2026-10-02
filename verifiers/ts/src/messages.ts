@@ -8,6 +8,14 @@ export function pyRepr(x: unknown): string {
   if (x === null || x === undefined) return 'None'
   if (typeof x === 'boolean') return x ? 'True' : 'False'
   if (Array.isArray(x)) return `[${x.map(pyRepr).join(', ')}]`
+  // A parsed JSON object is null-prototype (loadsStrict), and String() on one
+  // THROWS -- which turned a hostile `alg`/`attest_version`/`issued_at` object
+  // into an exception out of verify() where Python returns `invalid`. Render
+  // it the way Python's dict repr does instead.
+  if (typeof x === 'object') {
+    const o = x as Record<string, unknown>
+    return `{${Object.keys(o).map((k) => `${pyRepr(k)}: ${pyRepr(o[k])}`).join(', ')}}`
+  }
   return String(x)
 }
 
@@ -154,15 +162,6 @@ export const WARN = {
 export const unsupportedAttestVersion = (v: unknown) => `unsupported attest_version: ${pyRepr(v)}`
 export const signaturesCount = (n: number) => `signatures must contain exactly one entry, got ${n}`
 export const unsupportedSigAlg = (alg: unknown) => `unsupported signature algorithm: ${pyRepr(alg)}`
-// Python parity: verify.py's `_ERR_TRUST_STORE_UNREADABLE`. Byte-identical on
-// purpose — a caller comparing the two verifiers' errors must not see a
-// difference where there is none. It names the member that ACTUALLY failed:
-// the earlier wording said "its manifests" whatever had failed, which sent an
-// embedder whose artifact manifests were malformed to debug their key
-// manifests. A refusal that accuses the wrong thing is worse than a vague one.
-export const trustStoreUnreadable = (member: string | null) =>
-  `trust store could not be materialized: ${member === null ? 'the store' : pyRepr(member)} is not readable as data`
-
 export const manifestNotSelfConsistent = (issuer: string) =>
   `issuer manifest for ${pyRepr(issuer)} is not self-consistent: its own signature does not verify`
 
@@ -176,11 +175,11 @@ export const issuedAtOutsideWindow = (issuedAt: unknown) => `issued_at ${pyRepr(
 export const malformedKeyMaterial = (msg: string) => `malformed key material: ${msg}`
 export const malformedSigMaterial = (msg: string) => `malformed signature material: ${msg}`
 export const keyEntryNotHybrid = (kid: string) => `key entry for kid ${pyRepr(kid)} has no ML-DSA-65 public key`
+export const keyEntryHybridV01 = (kid: string) => `key entry for kid ${pyRepr(kid)} is hybrid; a v0.1 receipt cannot verify under it`
 
 // canon (CanonError messages)
 export const duplicateKey = (k: string) => `duplicate object key: ${pyRepr(k)}`
 export const intOutOfRange = (n: bigint) => `integer out of I-JSON safe range: ${n.toString()}`
-export const nonStringKey = (k: unknown) => `non-string object key: ${pyRepr(k)}`
 export const notUtf8 = (msg: string) => `input is not valid UTF-8: ${msg}`
 export const invalidJson = (msg: string) => `invalid JSON: ${msg}`
 

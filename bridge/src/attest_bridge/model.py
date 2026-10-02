@@ -95,10 +95,10 @@ def decode_buyer_pubkey(value: str | None) -> bytes | None:
         raise PurchaseRejected(f"buyer pubkey is not valid base64url: {exc}") from exc
     if len(raw) != _ED25519_PUBKEY_LEN:
         raise PurchaseRejected(f"buyer pubkey must be {_ED25519_PUBKEY_LEN} bytes, got {len(raw)}")
-    # `keys.b64u_decode` (base64.urlsafe_b64decode, validate=False) silently drops
-    # out-of-alphabet characters, so a canonical 32-byte key with injected junk
-    # (e.g. "!") decodes back to 32 bytes and would pass the length gate. Require a
-    # strict canonical round-trip so gate #1 fails closed on any non-canonical input.
+    # `keys.b64u_decode` accepts vector 22's lenient forms (padding, `+/`, non-zero
+    # trailing bits), each of which still decodes to 32 bytes and would pass the
+    # length gate. Require a strict canonical round-trip so gate #1 fails closed
+    # on any non-canonical input.
     if keys.b64u(raw) != text:
         raise PurchaseRejected("buyer pubkey is not canonical base64url")
     return raw

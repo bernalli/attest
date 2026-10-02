@@ -407,7 +407,13 @@ def test_unknown_header_segments_never_change_the_verdict(
 
 
 @settings(max_examples=50)
-@given(timestamp=st.text().filter(lambda value: not (value.isascii() and value.isdigit())))
+@given(
+    # `;` ends the header field: "0;" would put a valid `ts=0` and an empty
+    # field in the header, which is a different case from a malformed timestamp.
+    timestamp=st.text().filter(
+        lambda value: ";" not in value and not (value.isascii() and value.isdigit())
+    )
+)
 def test_ts_that_is_not_an_ascii_digit_run_is_always_rejected(timestamp: str) -> None:
     with pytest.raises(PaddleSignatureError, match="malformed timestamp"):
         verify_paddle_signature(b"{}", f"ts={timestamp};h1={'0' * 64}", _WEBHOOK_SECRET, now=_T)

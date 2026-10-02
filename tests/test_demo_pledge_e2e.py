@@ -1469,6 +1469,7 @@ def test_an_answer_to_a_neighbours_challenge_in_a_shared_directory_is_refused(
     assert decision.reason == "redemption_proof_invalid"
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a file whatever its mode")
 def test_an_unreadable_archive_copy_is_a_verdict_not_a_crash(world: World, tmp_path: Path) -> None:
     """The archive's own storage is environment, not requester input — but
     the module's invariant is absolute: refusals are verdicts, never
