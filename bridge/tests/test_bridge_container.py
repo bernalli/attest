@@ -32,6 +32,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _BRIDGE_ROOT = Path(__file__).resolve().parents[1]
 _DOCKERFILE = _BRIDGE_ROOT / "deploy" / "Dockerfile"
 _ENTRYPOINT = _BRIDGE_ROOT / "deploy" / "docker-entrypoint.sh"
@@ -122,6 +124,7 @@ def test_the_entrypoint_hands_every_materialized_secret_to_that_account() -> Non
     )
 
 
+@pytest.mark.skipif(os.getuid() == 0, reason="describes the non-root branch of the entrypoint")
 def test_an_already_unprivileged_container_execs_the_server_directly(tmp_path: Path) -> None:
     """Run the real entrypoint: no privilege drop when there is none to drop.
 
