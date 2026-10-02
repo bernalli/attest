@@ -221,10 +221,12 @@ prohibition, artifact-manifest currency, anchor profile v2, logged revocation
 deadlines), Stage 3 issuer-mediated transfer, Stage 4 preservation pledge, the
 time-boxed compromise rescue, and publisher authorization. (A v0.1-only verifier is
 required to reject v0.2 envelopes, so it is measured against the 67-leaf
-subset.) There are also two end-to-end demos: one deletes a store's entire
-infrastructure mid-lifecycle and proves the receipt still verifies, and one
+subset.) There are also three end-to-end demos: one deletes a store's entire
+infrastructure mid-lifecycle and proves the receipt still verifies, one
 carries that a step further — a rights holder's preservation pledge fires and
-an archive hands the file back, but only against the receipt.
+an archive hands the file back, but only against the receipt — and one has an
+independent witness cosign the log's head, so a verifier can tell a head
+somebody observed from a head nobody did.
 
 The published packages ship all of v0.2: Stages 1 and 2 (hybrid signatures;
 transparency and anchoring), Stage 3 issuer-mediated transfer (§17), Stage 4

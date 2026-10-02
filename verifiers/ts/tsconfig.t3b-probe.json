@@ -2,11 +2,11 @@
 // src/, and Vitest transpiles test/ without typechecking it, so a type error in a
 // test needs a separate check: tools/check_verifier_test_types.py runs this probe.
 //
-// Measured 2026-09-09 on fix/verifiers-test-census (ff2198f):
+// First measured 2026-09-09 on fix/verifiers-test-census (ff2198f) at 57 diagnostics;
+// the debt was paid down to zero in #158, so
 // ./verifiers/ts/node_modules/.bin/tsc -p verifiers/ts/tsconfig.t3b-probe.json
-// reports 57 diagnostics and exits 2. The committed verifier-test-types-census.json
-// pins the per-file counts and total; both increases and decreases require action.
-// Existing diagnostics already fix the exit status, so counts are the observable.
+// now reports 0 diagnostics. The committed verifier-test-types-census.json pins the
+// per-file counts and total; both increases and decreases require action.
 //
 // The caller checks --listFiles against disk before allowing --update, and prints
 // the number of test files actually compiled. This closes C-215 without requiring
