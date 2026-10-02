@@ -72,8 +72,6 @@ export const CORROBORATION_LOGGED = 'logged'
 // branch still settles on NONE or LOGGED.
 export const CORROBORATION_WITNESSED = 'witnessed'
 
-export const MAX_PROOF_LEN_ = MAX_PROOF_LEN
-
 export class TransparencyError extends Error {}
 
 export interface TransparencyResult {
