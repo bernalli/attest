@@ -49,13 +49,18 @@ function parseObject(r: Reader): JsonObject {
   r.i++ // {
   const obj: JsonObject = Object.create(null)
   const seen = new Set<string>()
+  // A repeated member name is judged when the object CLOSES, never on
+  // arrival: the Python reference's `json.loads` hands an object's pairs to its
+  // duplicate check only at `}`, so a float, a nested object's own duplicate or
+  // broken syntax met before that brace is what both cores must name.
+  let duplicate: string | undefined
   r.ws()
   if (r.s[r.i] === '}') { r.i++; r.depth--; return obj }
   for (;;) {
     r.ws()
     if (r.s[r.i] !== '"') r.err('expected object key')
     const key = parseString(r)
-    if (seen.has(key)) throw new CanonError(duplicateKey(key))
+    if (duplicate === undefined && seen.has(key)) duplicate = key
     seen.add(key)
     r.ws()
     if (r.s[r.i] !== ':') r.err("expected ':'")
@@ -64,7 +69,10 @@ function parseObject(r: Reader): JsonObject {
     r.ws()
     const d = r.s[r.i]
     if (d === ',') { r.i++; continue }
-    if (d === '}') { r.i++; r.depth--; return obj }
+    if (d === '}') {
+      if (duplicate !== undefined) throw new CanonError(duplicateKey(duplicate))
+      r.i++; r.depth--; return obj
+    }
     r.err("expected ',' or '}'")
   }
 }
