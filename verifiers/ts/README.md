@@ -77,24 +77,33 @@ verification behaves exactly as before, offline and log-free.
 
 `compromiseView` is the v0.2 §19 channel for key-manifest compromise declarations. Each claim is `{ manifest, evidence }`, where `manifest` is the issuer key manifest declaring the signing `kid` compromised and `evidence` is that manifest's transparency proof. Authenticated declarations make `compromised` absorbing even if the trusted manifest later re-lists the key as active; a Stage-2-capable verifier can still accept a receipt whose own `transparency` claim proves the receipt was anchored strictly before the earliest anchored compromise declaration. A declaration with no anchored time cannot invalidate an anchored receipt, and a receipt with no anchored receipt claim is not rescued.
 
-`envelopeBytes` is the raw receipt envelope bytes exactly as received (this package parses them itself with a strict, duplicate-key-rejecting JSON reader — never pre-parse with `JSON.parse` and re-stringify, or you'll silently paper over malformed input the reference parser is required to reject). `trustStore` is `{ manifests: Record<string, JsonObject>, provenance: Record<string, string>, chains?: Record<string, JsonObject[]> }` — the issuer key manifests you trust, how you obtained each issuer's manifest (`"tls"` or otherwise), and optionally each issuer's manifest history for rotation-continuity checking.
+`envelopeBytes` is the raw receipt envelope bytes exactly as received (this package parses them itself with a strict, duplicate-key-rejecting JSON reader — never pre-parse with `JSON.parse` and re-stringify, or you'll silently paper over malformed input the reference parser is required to reject). `trustStore` is a `TrustStore`, and the only way to get one is `parseTrustStore(bytes)`: pass it the raw bytes (a `Uint8Array`, such as a Node `Buffer`) of a JSON trust-store document
 
-**Gotcha:** any JSON object you build yourself and pass in as part of `trustStore` or `revocationView` (manifests, revocation records) must represent JSON integers as `bigint`, not `number` — this package's canonical serializer (used internally to re-verify manifest and revocation-record signatures) only accepts `bigint` for integers, by design, to avoid IEEE-754 precision loss on large values. Plain `JSON.parse` gives you `number` and will make those internal self-verify checks fail silently. Parse such data with the exported `loadsStrict()` instead (it returns the same bigint-typed `JsonObject`/`JsonValue` that `verify()` uses internally), or convert integer fields to `bigint` by hand.
+```json
+{
+  "manifests":  { "<issuer id>": { ...that issuer's signed key manifest... } },
+  "provenance": { "<issuer id>": "tls" },
+  "chains": { "<issuer id>": [ ...manifest history, oldest first, ending with the trusted manifest... ] },
+  "artifact_manifests": { ... },
+  "artifact_manifest_chains": { ... }
+}
+```
+
+where `manifests` and `provenance` are required and the last three members are optional. `manifests` holds the issuer key manifests you trust (the file `attest manifest init` or `attest manifest rotate` writes, one per issuer), `provenance` records how you obtained each one (`"tls"` starts trust resolution at `"verified"`, any other value at `"unauthenticated_tofu"`), and `chains` is each issuer's manifest history for rotation-continuity checking. `parseTrustStore` parses the bytes itself with the same strict reader `verify()` uses, and throws `TrustMaterialError` when the document is not admissible (not bytes, not strict JSON, an unknown member, a member of the wrong shape). `verify()` accepts nothing else: a plain object with the same members, including one built from `JSON.parse` or `loadsStrict` output, is rejected with the error "trust store must be a parsed snapshot produced by this library; a live object is not accepted", and `isOk()` is `false`.
+
+**Gotcha:** any JSON you build yourself and pass in as `revocationView` (revocation records) must represent JSON integers as `bigint`, not `number`. This package's canonical serializer (used internally to re-verify revocation-record signatures) only accepts `bigint` for integers, by design, to avoid IEEE-754 precision loss on large values. Plain `JSON.parse` gives you `number` and will make those internal self-verify checks fail silently. Parse such data with the exported `loadsStrict()` instead (it returns the same bigint-typed `JsonObject`/`JsonValue` that `verify()` uses internally), or convert integer fields to `bigint` by hand. The trust store does not have this problem, because `parseTrustStore` reads the bytes itself.
 
 ### Node usage
 
 ```ts
 import { readFileSync } from 'node:fs'
-import { verify, isOk, loadsStrict } from 'attest-verifier'
+import { verify, isOk, parseTrustStore } from 'attest-verifier'
 
 const envelopeBytes = readFileSync('./receipt.attest.json')
-const trustData = loadsStrict(readFileSync('./issuer-manifests.json')) as any
+// Throws TrustMaterialError if the document is not an admissible trust store.
+const store = parseTrustStore(readFileSync('./issuer-manifests.json'))
 
-const result = verify(envelopeBytes, {
-  manifests: trustData.manifests,
-  provenance: trustData.provenance,
-  chains: trustData.chains ?? {},
-})
+const result = verify(envelopeBytes, store)
 
 if (isOk(result)) {
   console.log('valid receipt, trust:', result.trust)
@@ -103,22 +112,35 @@ if (isOk(result)) {
 }
 ```
 
+To try it end to end with the Python reference CLI (`pip install attest-receipts`), issue a receipt and wrap its manifest in a trust-store document (`payload.json` can be the payload of [vector 01](https://github.com/bernalli/attest/blob/main/docs/spec/vectors/01-valid-minimal/payload.json)):
+
+```sh
+KID='store.example.com/keys/2025-01#ed25519-1'
+attest keygen --seed-out key.seed --pub-out key.pub
+attest manifest init --issuer store.example.com --kid "$KID" --seed key.seed \
+  --valid-from 2025-01-01T00:00:00Z --issued-at 2025-01-01T00:00:00Z --out manifest.json
+attest issue --payload payload.json --seed key.seed --kid "$KID" --out receipt.attest.json
+jq -n --slurpfile m manifest.json \
+  '{manifests: {"store.example.com": $m[0]}, provenance: {"store.example.com": "tls"}}' \
+  > issuer-manifests.json
+```
+
+Running the snippet above as an ES module (`verify.mjs`) then prints `valid receipt, trust: verified`.
+
 ### Browser usage
 
 Nothing in `src/` touches `node:*` APIs — base64 uses `btoa`/`atob`, crypto is pure-JS `@noble/*` — so the same build runs unmodified in a browser or any other Web-API runtime:
 
 ```html
 <script type="module">
-  import { verify, isOk, loadsStrict } from 'https://esm.sh/attest-verifier'
+  import { verify, isOk, parseTrustStore } from 'https://esm.sh/attest-verifier'
 
-  const envelopeBytes = new Uint8Array(await (await fetch('/receipt.attest.json')).arrayBuffer())
-  const trustData = loadsStrict(new Uint8Array(await (await fetch('/issuer-manifests.json')).arrayBuffer()))
+  const fetchBytes = async (url) => new Uint8Array(await (await fetch(url)).arrayBuffer())
+  const envelopeBytes = await fetchBytes('/receipt.attest.json')
+  // Throws TrustMaterialError if the document is not an admissible trust store.
+  const store = parseTrustStore(await fetchBytes('/issuer-manifests.json'))
 
-  const result = verify(envelopeBytes, {
-    manifests: trustData.manifests,
-    provenance: trustData.provenance,
-    chains: trustData.chains ?? {},
-  })
+  const result = verify(envelopeBytes, store)
 
   document.body.textContent = isOk(result) ? 'valid' : `rejected: ${result.errors.join(', ')}`
 </script>
