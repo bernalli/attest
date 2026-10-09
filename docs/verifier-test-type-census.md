@@ -1,7 +1,7 @@
-# Censimento dei tipi nei test del verificatore
+# Census of type errors in the verifier tests
 
-Validazione dell'implementazione; l'approvazione di merge resta una review separata.
-La base e' `fix/verifiers-test-census`, verificata prima di modificare i file:
+Validation of the implementation; merge approval remains a separate review.
+The base is `fix/verifiers-test-census`, verified before modifying the files:
 
 ```sh
 git rev-parse HEAD fix/verifiers-test-census origin/fix/verifiers-test-census
@@ -13,55 +13,55 @@ ff2198f038606abe1eb98f05f11b5a35ae59d880
 ff2198f038606abe1eb98f05f11b5a35ae59d880
 ```
 
-## Contratto
+## Contract
 
-`tools/check_verifier_test_types.py` esegue il probe e confronta il risultato con
-`tools/verifier-test-types-census.json`. Riusa dal precedente `check_test_census.py`
-la scoperta dei test su disco, l'ammissione JSON stretta e la lettura/scrittura del
-formato `suites -> verifiers/ts -> total, files`. Registra anche i file senza
-errori. Per-file e totale devono coincidere in entrambi i versi: una riduzione
-nomina il file e richiede `--update` quanto un aumento richiede un intervento.
+`tools/check_verifier_test_types.py` runs the probe and compares the result with
+`tools/verifier-test-types-census.json`. From the earlier `check_test_census.py` it reuses
+the discovery of tests on disk, the strict JSON admission and the reading/writing of the
+`suites -> verifiers/ts -> total, files` format. It also records files without
+errors. Per-file and total counts must match in both directions: a decrease
+names the file and requires `--update` just as an increase requires a fix.
 
-La scelta di non pinnare i codici e' motivata anche nel docstring: conserva il
-formato del precedente e ammette riclassificazioni della diagnostica senza
-confonderle con una variazione del debito. Il limite e' esplicito: sostituire una
-diagnostica con un'altra nello stesso file, conservandone il conteggio, e' fuori
-copertura. Una compensazione fra file diversi invece fallisce.
+The choice not to pin the codes is also justified in the docstring: it keeps the
+format of the earlier tool and allows diagnostics to be reclassified without
+mistaking that for a change in the debt. The limit is explicit: replacing one
+diagnostic with another in the same file, keeping its count, is outside
+coverage. A compensation across different files, on the other hand, fails.
 
-Il marcatore `MEASURED: ... test file(s) compiled by the verifier probe` deriva da
-`--listFiles` nella stessa esecuzione che produce le diagnostiche. Non deriva dal
-censimento o dal numero di errori. `--update` confronta disco e compilazione prima
-di scrivere: i file nuovi completi sono ammessi, un file presente ma non compilato
-impedisce l'aggiornamento. Una cancellazione intenzionale dal disco puo' essere
-registrata esplicitamente, come nel precedente.
+The marker `MEASURED: ... test file(s) compiled by the verifier probe` comes from
+`--listFiles` in the same run that produces the diagnostics. It does not come from the
+census or from the number of errors. `--update` compares disk and compilation before
+writing: complete new files are admitted, a file that is present but not compiled
+prevents the update. An intentional deletion from disk can be
+recorded explicitly, as in the earlier tool.
 
-| Uscita | Significato |
+| Exit | Meaning |
 | --- | --- |
-| `0` | Censimento corrispondente, aggiornamento completo riuscito, oppure selftest passato. |
-| `1` | Differenza dal censimento, censimento assente/invalido, aggiornamento rifiutato, oppure selftest fallito. |
-| `2` | Misura impossibile: output vuoto/illeggibile, processo non avviabile, timeout, stato incoerente, nessun test compilato o diagnostiche esterne al perimetro. Anche argparse usa questa uscita per argomenti invalidi. |
-| `78` | Precondizione assente: `node_modules`, `tsc` o `node` sul PATH. |
+| `0` | Census matches, complete update succeeded, or selftest passed. |
+| `1` | Difference from the census, census missing/invalid, update refused, or selftest failed. |
+| `2` | Measurement impossible: empty/unreadable output, process cannot be started, timeout, inconsistent state, no test compiled, or diagnostics outside the perimeter. argparse also uses this exit for invalid arguments. |
+| `78` | Missing precondition: `node_modules`, `tsc` or `node` on the PATH. |
 
-Il pin committato viene ammesso prima delle precondizioni: cancellarlo resta una
-violazione del censimento. Un eseguibile presente ma non avviabile e' una misura
-impossibile, distinta da un eseguibile assente. Nessun caso non misurato stampa
-un successo; quando la lista restituisce soltanto sorgenti, il marcatore espone
-che nessun file di test e' stato compilato e il comando fallisce.
+The committed pin is admitted before the preconditions: deleting it remains a
+census violation. An executable that is present but cannot be started is an impossible
+measurement, distinct from a missing executable. No unmeasured case prints
+a success; when the list returns only sources, the marker shows
+that no test file was compiled and the command fails.
 
-Il comando normale occupa la riga immediatamente successiva al build del
-verificatore nel job `test` di `pages.yml`; segue `--selftest`. Entrambe le
-invocazioni sono replicate nello stesso job di `tools/verify-all.sh`.
+The normal command occupies the line immediately after the verifier
+build in the `test` job of `pages.yml`; `--selftest` follows. Both
+invocations are replicated in the same job of `tools/verify-all.sh`.
 
-## Misura iniziale e verde
+## Initial measurement and green
 
-Le dipendenze sono state installate dal lockfile con:
+The dependencies were installed from the lockfile with:
 
 ```sh
 npm ci --prefix verifiers/ts --cache /tmp/attest-type-census-npm-cache --no-audit --no-fund --fetch-retries=0
 ```
 
-Prima di scrivere codice e' stato eseguito il comando richiesto, raccolto da
-`subprocess.run` per contare separatamente le righe e la somma per codice:
+Before writing code the requested command was run, collected through
+`subprocess.run` to count the lines and the per-code sum separately:
 
 ```sh
 python3 - <<'PYBASE'
@@ -79,7 +79,7 @@ print(result.stdout)
 PYBASE
 ```
 
-Estratto dell'output, prima delle diagnostiche individuali:
+Excerpt of the output, before the individual diagnostics:
 
 ```text
 $ ./verifiers/ts/node_modules/.bin/tsc -p verifiers/ts/tsconfig.t3b-probe.json
@@ -92,7 +92,7 @@ TS2740: 13
 sum by code: 57
 ```
 
-Un ulteriore conteggio sullo stesso probe con la lista di compilazione:
+A further count on the same probe with the compilation list:
 
 ```sh
 ./verifiers/ts/node_modules/.bin/tsc -p verifiers/ts/tsconfig.t3b-probe.json --listFiles --pretty false --noEmit --incremental false > /tmp/attest-type-census-baseline.txt
@@ -103,8 +103,8 @@ rg -c 'error TS' /tmp/attest-type-census-baseline.txt
 57
 ```
 
-Creazione del pin e verifica; quest'ultima e' stata ripetuta sull'albero
-ripristinato dopo le iniezioni:
+Creation of the pin and verification; the latter was repeated on the tree
+restored after the injections:
 
 ```sh
 python3 tools/check_verifier_test_types.py --update
@@ -118,17 +118,17 @@ MEASURED: 55 test file(s) compiled by the verifier probe
 verifiers/ts: 57 diagnostic(s) -- matches the census
 ```
 
-## Rossi richiesti, eseguiti
+## Required reds, executed
 
-I comandi seguenti usano il programma riportato nella sezione di riproduzione.
-Ogni iniezione ai test parte da una copia di backup e la ripristina in `finally`,
-verificando l'identita' dei byte. Il programma misura anche il probe grezzo e
-confronta le intestazioni delle diagnostiche prima e dopo: un solo errore aggiunto
-o rimosso, con compilazione ancora funzionante. Non usa `git checkout`.
+The following commands use the program given in the reproduction section.
+Each injection into the tests starts from a backup copy and restores it in `finally`,
+verifying that the bytes are identical. The program also measures the raw probe and
+compares the diagnostic headers before and after: exactly one error added
+or removed, with compilation still working. It does not use `git checkout`.
 
-### R1: una diagnostica aggiunta
+### R1: one diagnostic added
 
-Aggiunta in coda a `verifiers/ts/test/canon-parse.test.ts`:
+Appended to the end of `verifiers/ts/test/canon-parse.test.ts`:
 `const typeCensusRegression: string = 1;`.
 
 ```sh
@@ -148,11 +148,11 @@ added: verifiers/ts/test/canon-parse.test.ts(55,7): error TS2322: Type 'number' 
 restored from backup: byte-identical
 ```
 
-### R2: una diagnostica tolta
+### R2: one diagnostic removed
 
-Sostituzione temporanea di `expect(v['t'].length).toBe(5)` con
-`expect(v['t']?.length).toBe(5)`: accesso protetto al valore possibilmente assente,
-con la stessa aspettativa del test. La diagnostica rimossa e' nominata nell'output.
+Temporary replacement of `expect(v['t'].length).toBe(5)` with
+`expect(v['t']?.length).toBe(5)`: guarded access to the possibly absent value,
+with the same test expectation. The removed diagnostic is named in the output.
 
 ```sh
 python3 /tmp/attest-type-census-evidence/red_checks.py R2
@@ -171,9 +171,9 @@ removed: verifiers/ts/test/canon-parse.test.ts(31,12): error TS2532: Object is p
 restored from backup: byte-identical
 ```
 
-### R3: precondizione assente
+### R3: missing precondition
 
-Il percorso alternativo di `tsc` e' verificato assente prima dell'invocazione.
+The alternative `tsc` path is verified to be absent before the invocation.
 
 ```sh
 python3 /tmp/attest-type-census-evidence/red_checks.py R3
@@ -185,11 +185,11 @@ unable to measure: missing prerequisite tsc executable: /tmp/attest-type-census-
 gate rc: 78
 ```
 
-### Aggiornamento rifiutato su un'assenza reale
+### Update refused on a real absence
 
-Il probe esclude temporaneamente `test/dates.test.ts`, un test senza diagnostiche.
-Il file resta sul disco. L'aggiornamento usa una copia del censimento e ne verifica
-i byte dopo il rifiuto; il tsconfig viene ripristinato dalla sua copia di backup.
+The probe temporarily excludes `test/dates.test.ts`, a test without diagnostics.
+The file stays on disk. The update uses a copy of the census and verifies its
+bytes after the refusal; the tsconfig is restored from its backup copy.
 
 ```sh
 python3 /tmp/attest-type-census-evidence/update_absence.py
@@ -205,7 +205,7 @@ census bytes changed: False
 probe config restored from backup: byte-identical
 ```
 
-## Selftest e disattivazioni singole
+## Selftest and single disablements
 
 ```sh
 python3 tools/check_verifier_test_types.py --selftest
@@ -225,12 +225,12 @@ python3 tools/check_verifier_test_types.py --selftest
 selftest: 10/10
 ```
 
-La prova seguente ricompila in memoria la funzione `compare` reale, rimuovendo
-ogni volta soltanto la proprieta' nominata. I restanti confronti e il selftest
-rimangono gli originali. Ogni sostituzione deve trovare un solo punto nel sorgente;
-un errore di sintassi non conta come difetto intercettato. Il test pretende che
-il riepilogo perda casi nominati, anche se altri controlli fanno ancora fallire
-lo stesso ingresso. Nessun interruttore di disattivazione e' esposto dal gate.
+The following check recompiles the real `compare` function in memory, removing
+only the named property each time. The remaining comparisons and the selftest
+stay the originals. Each replacement must find exactly one spot in the source;
+a syntax error does not count as a caught defect. The test requires that
+the summary loses named cases, even if other checks still make
+the same input fail. No disablement switch is exposed by the gate.
 
 ```sh
 .venv/bin/pytest -q -s tests/tools/test_verifier_test_types.py -k selftest_loses_cases
@@ -249,9 +249,9 @@ disabled nonempty: selftest: 10/10 -> selftest: 9/10; exit 1
 8 passed, 26 deselected in 0.23s
 ```
 
-## Altre verifiche eseguite
+## Other checks run
 
-Preparazione dell'ambiente Python dal lockfile:
+Preparation of the Python environment from the lockfile:
 
 ```sh
 UV_CACHE_DIR=/tmp/attest-type-census-uv-cache uv sync --locked --extra dev --all-packages
@@ -261,16 +261,16 @@ UV_CACHE_DIR=/tmp/attest-type-census-uv-cache uv sync --locked --extra dev --all
 .venv/bin/pytest -q tests/tools/test_verifier_test_types.py tests/tools/test_test_census.py tests/test_verify_all.py
 ```
 
-Riepilogo verbatim:
+Verbatim summary:
 
 ```text
 284 passed, 50 skipped in 6.54s
 ```
 
-Gli skip provengono dalle esclusioni `provisioning` previste in
-`tests/test_verify_all.py`; i test di parita' dei comandi eseguiti passano.
-I test nuovi esercitano inoltre ammissione dell'output, precondizioni, aggiornamento
-in entrambi i versi, rifiuto senza scrittura e uso effettivo del pin nel chiamante.
+The skips come from the `provisioning` exclusions expected in
+`tests/test_verify_all.py`; the parity tests for the commands that were run pass.
+The new tests also exercise output admission, preconditions, update
+in both directions, refusal without writing, and actual use of the pin in the caller.
 
 ```sh
 npm run build --prefix verifiers/ts
@@ -286,7 +286,7 @@ npm test --prefix verifiers/ts -- --reporter=default --reporter=json --outputFil
 python3 tools/check_test_census.py verifiers/ts --report /tmp/attest-type-census-evidence/verifier-tests.json
 ```
 
-Riepilogo della suite e output del censimento precedente:
+Suite summary and output of the earlier census:
 
 ```text
  Test Files  55 passed (55)
@@ -307,37 +307,37 @@ All checks passed!
 232 files already formatted
 ```
 
-Gli ultimi comandi non producono output e riescono. I test TypeScript sono
-ripristinati; nessuna correzione permanente del debito fa parte della modifica.
+The last commands produce no output and succeed. The TypeScript tests are
+restored; no permanent fix of the debt is part of the change.
 
-## quello che so io e non e' scritto altrove
+## What I know that is not written elsewhere
 
-- La prima installazione in sandbox ha fallito per DNS `EAI_AGAIN`; anche il
-  download Python ha incontrato il DNS bloccato. Le installazioni dai lockfile
-  sono riuscite con accesso di rete. Non era un risultato rosso del prodotto.
-- Le righe indentate di TypeScript spiegano la diagnostica precedente: contarle
-  come errori gonfierebbe il pin. Il parser ammette queste continuazioni solo dopo
-  un'intestazione valida, forza output senza colori e rifiuta righe sconosciute.
-- La lista di compilazione include librerie, sorgenti e helper. Il marcatore
-  seleziona i veri nomi di test con la stessa regola del censimento Vitest; le
-  diagnostiche su helper o sorgenti non vengono ignorate o assorbite dal debito
-  dei test, ma impediscono di accettare la misura o aggiornare il pin.
-- Un test sano escluso non cambia il numero di errori. La prova sull'aggiornamento
-  usa proprio questo caso per evitare che il confronto dei totali nasconda un
-  buco nel controllo di presenza.
-- Il report JSON di Vitest compare a fine esecuzione. Un primo consumo locale
-  anticipato ha trovato il file ancora assente; la lettura dopo il completamento
-  e' riuscita. Il cablaggio CI e locale conserva l'ordine sequenziale.
-- I casi sintetici della disattivazione conservano gli ingressi del confronto;
-  cercano il messaggio specifico della proprieta' rimossa. Accontentarsi di un
-  qualsiasi rosso lascerebbe passare una guardia mutilata, perche' il totale puo'
-  ancora accorgersi di un cambiamento che il confronto per-file non nomina piu'.
+- The first installation in the sandbox failed with DNS `EAI_AGAIN`; the
+  Python download also hit the blocked DNS. The installations from the lockfiles
+  succeeded with network access. It was not a red result of the product.
+- TypeScript's indented lines explain the preceding diagnostic: counting them
+  as errors would inflate the pin. The parser admits these continuations only after
+  a valid header, forces output without colours and rejects unknown lines.
+- The compilation list includes libraries, sources and helpers. The marker
+  selects the real test names with the same rule as the Vitest census;
+  diagnostics on helpers or sources are not ignored or absorbed into the test
+  debt, but prevent accepting the measurement or updating the pin.
+- An excluded healthy test does not change the number of errors. The update check
+  uses exactly this case to prevent the comparison of totals from hiding a
+  hole in the presence check.
+- Vitest's JSON report appears at the end of the run. A first, premature local
+  read found the file still absent; the read after completion
+  succeeded. The CI and local wiring keeps the sequential order.
+- The synthetic disablement cases keep the inputs of the comparison;
+  they look for the specific message of the removed property. Settling for
+  any red would let a mutilated guard pass, because the total can
+  still notice a change that the per-file comparison no longer names.
 
-## Riproduzione dei controlli reali
+## Reproducing the real checks
 
-Da root del repository, con dipendenze installate, preparare i programmi seguenti.
-I backup preesistenti vengono rifiutati per non sovrascrivere una copia precedente.
-Le aspettative sono quelle della base riportata in apertura.
+From the repository root, with dependencies installed, prepare the following programs.
+Pre-existing backups are refused so as not to overwrite an earlier copy.
+The expectations are those of the base given at the top.
 
 ```sh
 mkdir -p /tmp/attest-type-census-evidence
