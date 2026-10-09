@@ -12,7 +12,7 @@ two independent implementations of that algorithm, intended to agree on canonica
 and protocol-defined verdicts within the specified resource limits: a Python reference
 implementation (`src/attest/`) that both issues and verifies receipts, and a TypeScript
 verifier (`verifiers/ts/`) that only ever reads them. A shared, language-neutral
-conformance corpus (`docs/spec/vectors/`, 47 groups, 227 leaf test cases — counted with
+conformance corpus (`docs/spec/vectors/`, 47 groups, 231 leaf test cases — counted with
 `find docs/spec/vectors -name expected.json | wc -l`) is the contract both cores are held
 to; a set of differential tools (`tools/*_differential.py`) additionally compares selected
 observable outcomes on generated inputs, with scope and permitted differences defined
@@ -32,7 +32,7 @@ model (`docs/spec/attest-threat-model.md`).
 | `docs/spec/attest-v0.2.md` | Additive delta: hybrid signatures, transparency/anchoring, issuer-mediated transfer, the preservation pledge, the compromise rescue, publisher authority. | Yes |
 | `docs/spec/attest-versioning.md` | The upgrade policy both specs above answer to: how an extension may be added, the eternal-verifiability guarantee, the algorithm lifecycle. | Yes |
 | `docs/spec/schema/attest-receipt.schema.json` | JSON Schema for the receipt payload, used by `validate.py` for the schema dimension of verification. | Yes |
-| `docs/spec/vectors/` | The conformance corpus: 47 groups, 227 leaves, each with fixed inputs and expected assertions under the corpus's matching rules. Generated, not hand-edited (see below). | Yes (as a corpus) |
+| `docs/spec/vectors/` | The conformance corpus: 47 groups, 231 leaves, each with fixed inputs and expected assertions under the corpus's matching rules. Generated, not hand-edited (see below). | Yes (as a corpus) |
 | `docs/spec/attest-threat-model.md` | Living companion: attacks catalogued against the two specs, each mitigated or recorded out of scope. | Non-normative but maintained |
 | `docs/spec/attest-privacy.md` | Field-by-field privacy classification and GDPR annex. | Non-normative |
 | `docs/spec/attest-transfer-economics.md`, `docs/spec/attest-standards-relationship.md` | Market/legal context for transfer; boundary against adjacent standards (VC, eIDAS, JOSE/COSE, C2PA, SCITT, RATS). | Non-normative |
@@ -110,7 +110,7 @@ and the gap is visible in the file lists, not just stated in prose.
 Two mechanisms hold the cores to the same answers:
 
 - **The conformance corpus** (`docs/spec/vectors/`) is the *specification*-level contract:
-  each of 227 leaves supplies inputs and assertions for a `VerificationResult`,
+  each of 231 leaves supplies inputs and assertions for a `VerificationResult`,
   `ChainAuditResult`, witness quorum result, or redemption result.
   Receipt-result matching combines exact fields, fields checked only when present in
   `expected.json`, and `errors_contains`/`warnings_contains` substring checks; extra
@@ -118,8 +118,8 @@ Two mechanisms hold the cores to the same answers:
   Passing therefore establishes those assertions, not identity of the complete output.
   `docs/conformance.md` describes the public runner:
   `tools/conformance_runner.py --adapter '<cmd> {leaf}' --subset v0.1|v0.2`.
-  A v0.1-only verifier is measured against 67 leaves (63 base-group leaves plus
-  `35i`, `37s`, `41f`, and `41v`); v0.2 uses all 227. One mismatch fails the subset.
+  A v0.1-only verifier is measured against 70 leaves (66 base-group leaves plus
+  `35i`, `37s`, `41f`, and `41v`); v0.2 uses all 231. One mismatch fails the subset.
   Separately, the Python and TypeScript conformance suites compare canonical payload
   bytes against `canonical.json` wherever supplied; the public runner does not perform
   that direct byte comparison.

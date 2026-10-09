@@ -1,4 +1,4 @@
-<!-- @whitepaper-sync v0.1-rev=20 v0.2-rev=16 package=0.9.8 -->
+<!-- @whitepaper-sync v0.1-rev=21 v0.2-rev=17 package=0.9.8 -->
 # Own what you buy
 
 *A whitepaper on durable digital possession: the seller signs a receipt, you hold the file, anyone
@@ -591,7 +591,9 @@ from here the second list is short enough to hold in mind.
 > `issuer` must equal it; (3) key checks — the key is present, its status is not `compromised`
 > (unconditional for a verifier that cannot evaluate log evidence; the v0.2 §19 cutoff applies only
 > to one that can), `issued_at` lies inside the key's validity window, and a `retired` key continues
-> with a warning; (4) the Ed25519 signature over the canonical payload; (5) the JSON Schema; (6)
+> with a warning, and a verifier that knows the hybrid profile refuses a hybrid key entry, whose
+> post-quantum half a v0.1 receipt would bypass (v0.2 §13.2); (4) the Ed25519 signature over the
+> canonical payload, under the cofactorless rule v0.1 §10 spells out; (5) the JSON Schema; (6)
 > revocation, only if a view was supplied; (7) binding, only if a disclosure was supplied. The
 > result is five components with fixed literals (v0.1 §11.1): `signature` valid/invalid; `schema`
 > valid/invalid/not_checked; `revocation` unknown, `not_revoked_as_of:<T>`, revoked,
