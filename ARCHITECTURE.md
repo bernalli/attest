@@ -131,6 +131,14 @@ Two mechanisms hold the cores to the same answers:
   floors. `tools/trust_material_differential.py` compares admission, refusal classes,
   blamed members and ordered results, not complete diagnostic text, and explicitly
   accounts for a declared M7/M8 difference on a 4,301-digit integer token.
+  `tools/verify_differential.py` compares receipt verification itself on seeded single
+  mutations of valid v0.1 and v0.2 receipts (base64url spellings, Ed25519 torsion and
+  non-canonical encodings, type confusion, version, alg and kid swaps, JSON text tricks,
+  sizes at the envelope ceiling): the verdict, every enumerated result member and the
+  error and warning strings, except JSON parser diagnostics, schema violation wording and
+  the quoting of non-printable characters; a throw is a finding on either side, and a
+  v0.1 receipt under a hybrid key must be refused by both. `pytest` runs 1,500 cases
+  with seed 20261009.
   `tools/witness_parity_cases.py` supplies shared witness cases to its Python and
   TypeScript consumers; `tools/gen_container_corpus.py` generates container fixtures
   and seeded mutations. The `test` job in `pages.yml` runs
