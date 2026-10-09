@@ -48,6 +48,9 @@ model (`docs/spec/attest-threat-model.md`).
 | `tools/` | Generators, differential/parity checkers, and CI-support scripts shared by every component above. | — |
 | `tests/` | The Python reference implementation's test suite, plus the hostile-container corpus (`tests/container-corpus/`, generated). | — |
 
+Which of these components are published, and what status each carries, is stated in
+`README.md`'s [Stability](README.md#stability) section.
+
 ## The wire format: envelope, canonicalization, signing
 
 A receipt on the wire is a JSON **envelope**: a signed `payload` object (issuer, buyer
