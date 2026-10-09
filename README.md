@@ -391,6 +391,37 @@ Eight pieces of work go beyond what a test suite can show. All of them are on
   report and a self-certification claim; the recorded pass counts live in that
   document and must be updated only from a fresh runner report.
 
+## Stability
+
+This repository holds many components, and they are not equal promises. The
+contract is the specification; the two published packages implement it; the
+rest serves it, measures it or demonstrates it. Each status below is the one the
+repository itself records: in the spec's own status line, in package metadata,
+in the release workflow, or in the component's own README.
+
+| Component | What it is | Status |
+| --- | --- | --- |
+| [`docs/spec/attest-v0.1.md`](docs/spec/attest-v0.1.md), [`docs/spec/attest-v0.2.md`](docs/spec/attest-v0.2.md) | The receipt format and verification algorithm; v0.2 is an additive delta on v0.1 | Normative. Changed only by amendment under the versioning policy: by addition, never by replacement, and no amendment may make a receipt that conformed when issued unverifiable |
+| [`docs/spec/attest-versioning.md`](docs/spec/attest-versioning.md) | The upgrade policy and extension registries both specifications answer to | Normative |
+| [`docs/spec/vectors/`](docs/spec/vectors/) | The conformance corpus every implementation is measured against | Normative as a corpus; generated, not hand-edited |
+| `attest-receipts` ([`src/attest/`](src/attest/)) | Python reference implementation: issues and verifies, provides the `attest` command | Published on PyPI. Classified `Development Status :: 4 - Beta`; versioned under Semantic Versioning per [`CHANGELOG.md`](CHANGELOG.md) |
+| `attest-verifier` ([`verifiers/ts/`](verifiers/ts/README.md)) | Independent TypeScript verifier; verification only | Published on npm; versioned under Semantic Versioning per [`verifiers/ts/CHANGELOG.md`](verifiers/ts/CHANGELOG.md) |
+| [`site/`](site/) | The browser verifier | Deployed from `main` as <https://attest-receipts.org/>; not a package |
+| [`desktop/`](desktop/README.md) | The same verifier as one offline HTML file | Attached to each GitHub Release as `attest-verifier.html` with its `.sha256`; built, never committed; not on any package registry |
+| [`bridge/`](bridge/README.md) | The merchant-run service that turns a paid order into a signed receipt | Not published (`Private :: Do Not Upload`); install from a checkout with `pip install ./bridge` |
+| [`witness/`](witness/README.md) | The reference transparency-log witness for v0.2 §11.4 | A reference implementation for operators; never published. Independent witness operators are still outstanding (v0.2 §15 item 1) |
+| [`demo/`](demo/README.md) | Three end-to-end demonstrations | Not part of the protocol; `custodian.py` and `witness_client.py` are non-normative references, not production components |
+| [`formal/`](formal/README.md) | Tamarin model of the wire protocol | Verification evidence, gated in CI; each theorem states its own scope |
+| [`ietf/`](ietf/README.md) | Internet-Draft snapshot of the specification | Not normative: it mirrors a pinned revision and is behind the specification in this repository; no formal standing in the standards process |
+| `tools/`, `tests/` | Generators, checkers and test suites | Internal to this repository; not shipped |
+
+Both packages are at a 0.x version, and Semantic Versioning, which their
+changelogs say they follow, does not treat a 0.x public API as stable. The
+package version and the wire format are different things: what stays verifiable
+across releases is a receipt's bytes, under the policy above. And, as stated
+earlier, no store issues attest receipts in production yet, and there are no
+external reviews.
+
 ## Install, demos and tests
 
 Install the reference implementation from PyPI (the distribution is named
