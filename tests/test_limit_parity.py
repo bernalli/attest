@@ -151,7 +151,7 @@ def _python_string_literals() -> set[str]:
     import ast
 
     out: set[str] = set()
-    for path in (TS_SRC.parents[2] / "src" / "attest").glob("*.py"):
+    for path in (TS_SRC.parents[2] / "src" / "attest").rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 out.add(node.value)
