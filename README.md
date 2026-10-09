@@ -1,27 +1,58 @@
 <img src="https://raw.githubusercontent.com/bernalli/attest/main/logo/banner.png" alt="attest">
 
-**Own what you buy.** The seller signs a receipt, you hold the file, anyone can
-verify it offline — even after the store is gone.
+attest is an open format for signed purchase receipts. The seller signs a small
+JSON file, the buyer keeps it, and anyone can check its signature offline
+against the seller's published key material. This repository contains the
+specification, the Python reference implementation (`attest-receipts` on PyPI,
+issue and verify), and an independent TypeScript verifier (`attest-verifier`
+on npm, verification only).
 
 > Looking for the CI step that signs build artifacts? That is
 > [`actions/attest`](https://github.com/actions/attest), an unrelated project. This attest is about
 > what you buy, not what you build.
 
-## Quickstart
+## Why it exists
 
-attest is an open format for signed purchase receipts: the seller signs a small
-JSON receipt with a key it publishes, the buyer keeps the file, and anyone can
-check it offline against that key. This repository holds the specification, the
-Python reference implementation (issue and verify) and an independent TypeScript
-verifier (verify only).
+A receipt held only in a store account depends on that store remaining
+available. attest puts the signed record in the buyer's hands: keep the receipt
+and the issuer's key material, and checking what the seller signed does not
+require the seller to stay online. There is no central attest authority,
+account, registry or phone-home needed for verification.
+
+A receipt is evidence of a license grant, not a backup of the content or proof
+of the payment transaction. It cannot recover a file you never downloaded,
+remove DRM, make an unwilling seller sign, or grant a general resale right.
+attest is not a content host, index, marketplace, blockchain, NFT product or
+payment instrument. Revocation and key-compromise evidence can still make a
+receipt invalid; being able to verify its bytes does not mean it stays valid.
+
+No store issues attest receipts in production yet, and there are no external reviews.
+
+To see a receipt before using the terminal, open the
+[browser verifier](https://attest-receipts.org/) and try the built-in sample
+or drop an `.attest` bundle, the format for sharing receipts and their supporting material;
+verification runs client-side. If someone sent you a receipt, the
+[buyer introduction](https://attest-receipts.org/start-here.html) explains it
+without a terminal. The [FAQ](docs/faq.md) covers what a receipt can and cannot
+prove.
+
+## Quickstart: issue and verify a receipt
+
+Use Python 3.12 or newer. In an empty directory, create and activate a virtual
+environment, then install the reference implementation:
 
 ```sh
-pip install attest-receipts   # Python 3.12+, provides the `attest` command
-npm install attest-verifier   # Node 20.19+, verification only
+python3 -m venv .venv
+. .venv/bin/activate
+pip install attest-receipts
 ```
 
-Play the seller: create a signing key and the key manifest a store would publish
-at `https://<its domain>/.well-known/attest.json`.
+The distribution is `attest-receipts`; the Python import package and command
+are both `attest`. The commands below use a POSIX shell.
+
+Create a signing key and the key manifest a store would publish at
+`https://<its domain>/.well-known/attest.json`. This example uses a fictional
+store and creates a v0.1 receipt; it does not contact that domain.
 
 ```sh
 attest keygen --seed-out issuer.seed --pub-out issuer.pub
@@ -73,13 +104,56 @@ attest verify --trust-dir trust receipt.json
 
 `attest verify` prints the full result and exits 0; among its fields are
 `"ok": true`, `"signature": "valid"` and `"trust": "unauthenticated_tofu"`.
-That last value is honest rather than an error: the manifest came from a local
-directory, not from the store's own domain over TLS, and `ok` never includes
-`trust`, so read it alongside `ok`. Edit the title inside `receipt.json` and the
-same command reports `"signature": "invalid"` and exits 1.
+The trust result means the manifest came from a local directory, not from the
+store's own domain over TLS, and `ok` never includes `trust`, so read it alongside
+`ok`. Changing the title inside `receipt.json` makes the same command report
+`"signature": "invalid"` and exit 1. Keep the original for the examples below.
 
-The same receipt in TypeScript, with the npm package. Save as `verify.mjs` next
-to the files above and run `node verify.mjs`:
+## Reading a verification result
+
+Verification reports separate results for the signature, schema, trust,
+revocation and buyer binding. Without authenticated revocation material,
+revocation is `unknown`; an offline check cannot discover a later revocation
+that you have not supplied. Buyer binding proves possession of issuer-recorded
+material through a salt disclosure or a key challenge, not the buyer's identity
+or participation in the purchase.
+
+`ok` excludes `trust` (v0.1 §11.1, conformance vector 14b). If your policy must
+reject particular trust results, `attest verify --reject-trust` takes a
+comma-separated list of exact values, not a threshold. For example, adding
+`--reject-trust unverified_rotation` rejects discontinuous rotation histories.
+Rejecting `unauthenticated_tofu` rejects every receipt verified through this
+CLI's local `--trust-dir`, including the quickstart receipt.
+
+A known signing-key compromise normally invalidates receipts signed with that
+key; a later manifest cannot undo a compromise already observed by the verifier.
+Both verifiers implement v0.2 §19's rescue for receipts with qualifying
+logged and anchored evidence predating the compromise. Unlogged receipts have
+no such protection. Evaluation requires trusted log keys and an anchor policy,
+plus the receipt's evidence; the project's log configuration is in
+[docs/trust/](docs/trust/README.md).
+
+`attest issue --log-dir` appends the receipt's entry to the issuer's log while
+signing. For an existing receipt, `attest log entry --type receipt` derives the
+entry by rehashing the signed document, then `attest log append` adds it. The
+log commands can produce an inclusion proof under a signed checkpoint, by
+receipt or index. An operator must still obtain an external timestamp and
+supply the evidence and matching trusted keys and anchors to a capable verifier.
+The bridge does not automate logging or anchoring, and the browser and desktop
+currently pin no block headers.
+Logging corroborates existence; it does not authenticate an unsigned receipt
+or upgrade `trust`.
+
+## Verify the same receipt in TypeScript
+
+With Node 20.19 or newer, install the verification-only package:
+
+```sh
+npm install attest-verifier
+```
+
+Save this as `verify.mjs` beside the quickstart files, then run
+`node verify.mjs` against the unchanged receipt:
 
 ```js
 import { readFileSync } from 'node:fs'
@@ -99,297 +173,39 @@ console.log(isOk(result) ? 'valid' : 'rejected', result.trust, result.errors)
 
 It prints `valid unauthenticated_tofu []`.
 
-Where to go next: the normative specification is
-[`docs/spec/attest-v0.1.md`](docs/spec/attest-v0.1.md) with its additive delta
-[`docs/spec/attest-v0.2.md`](docs/spec/attest-v0.2.md);
-[`docs/conformance.md`](docs/conformance.md) explains how an implementation is
-measured against the [conformance vectors](docs/spec/vectors/);
-[`verifiers/ts/README.md`](verifiers/ts/README.md) documents the TypeScript API;
-and [`bridge/`](bridge/README.md) turns a real paid order into a signed receipt.
-The rest of this page covers [why attest exists](#why-attest-exists),
-[what it is](#what-attest-is), [its status](#status) and
-[installing from a checkout, the demos and the tests](#install-demos-and-tests).
+See the [TypeScript README](verifiers/ts/README.md) for the full API and browser
+usage.
 
-## Why attest exists
+## Specification and conformance
 
-You don't own your movies. Not your games, your music or your ebooks either. You
-clicked "buy", you paid real money, and what you got is a permission slip that
-lives on someone else's server and can be revoked at any moment. The store folds,
-an algorithm flags your account, a licensing deal expires — and a library you
-spent years paying for evaporates. Nobody broke into your house. One click on a
-machine you'll never see, and it's gone.
+The package version and wire format are separate. Receipts declare
+`attest_version` as `"0.1"` or `"0.2"`; the specifications and
+[JSON Schema](docs/spec/schema/attest-receipt.schema.json) define those formats.
 
-None of this was ever a secret: it's in the terms of service nobody reads. But
-with physical media all but gone, the fine print is starting to bite. Sony
-mailed account holders a copy of its terms this August; the UK software terms
-say it outright, in clause 4: "The Software is licenced to you, not sold."
-Users across Europe and the UK had already been told what that means in
-practice. PlayStation's own video-content terms say it plainly: "From
-September 1, 2026, due to our content licensing agreements, you will no longer
-be able to access your previously purchased content from Studio Canal, and it
-will be removed from your video library." Films people had paid for —
-*Terminator 2*, *Total Recall*, *Paddington* — gone, because a licensing deal
-expired; the notice lists 551 titles by name. No refund was offered,
-and it was the second time with the same supplier: purchased StudioCanal
-content was removed once before, in August 2022, and that removal was
-never reversed. Who gives me back the money I paid for those movies? Who
-decides whether I keep watching what I legitimately bought? Today the
-answer is: they do. And Sony is no exception. Weeks earlier, Xbox had pulled
-three games not just from the store but from the libraries of everyone who'd
-bought them. Microsoft shut its ebook store in 2019: refunds went out, and every
-book it had ever sold stopped opening anyway. Amazon once deleted *1984*, of all
-titles, straight off people's Kindles. When Yahoo closed its music store in 2008
-it switched off the DRM servers, and songs people had paid for stopped working on
-any new device. Different store, different medium, same click.
+- [v0.1](docs/spec/attest-v0.1.md) defines the signed envelope, restricted JSON
+  canonicalization, pinned Ed25519 rules, issuer key and artifact manifests,
+  rotation and compromise handling, revocation classes, buyer binding and
+  layered offline verification.
+- [v0.2](docs/spec/attest-v0.2.md) is the additive delta implemented by both
+  packages: hybrid Ed25519 + ML-DSA-65 signatures (Stage 1), transparency and
+  timestamp anchoring (Stage 2), issuer-mediated transfer (Stage 3, §17),
+  preservation pledges (Stage 4, §18), time-boxed compromise rescue (§19), and
+  publisher authority (§20). v0.1 defines no transfer; v0.2 transfer depends on
+  the issuer, rather than granting a general resale right.
+- [Versioning](docs/spec/attest-versioning.md) governs additive amendments,
+  the `active` / `deprecated` / `unsafe` algorithm lifecycle, and the
+  signature-suite, payload-field, revocation-class, log-entry-type and
+  transfer-type registries. Deprecation may change the result classification,
+  never the ability to verify the bytes of a receipt that conformed when issued.
 
-Digital was supposed to set content free. A handful of stores sell honest,
-DRM-free files; everywhere else it got rebuilt into an instrument of control.
-attest is the counterattack. It can't win back the libraries already lost;
-nothing can. But it's built so the next purchase doesn't end the same way: every
-future purchase gets the one thing every physical purchase always had, a piece
-that's yours — on your own disk, cryptographically provable, out of reach of
-anyone's click. "Forever" holds against the store disappearing, not against a
-live store declaring its own signing key compromised: that declaration
-invalidates the receipts signed with that key. v0.2 defines a rescue for a
-receipt logged and anchored before the declaration, and both verifier
-implementations evaluate that evidence; what is missing sits upstream of them. A
-verifier looks for it only once it has been given trusted log keys and an anchor
-policy (for this project's own log, the files under `docs/trust/`), and `attest
-issue --log-dir` appends a receipt's entry to the issuer's own log as it signs;
-the bridge does not. What changed is that deriving the entry no
-longer means writing code — `attest log entry --type receipt` computes it from
-the signed envelope, always by rehashing the document rather than trusting a hash
-it declares, and `attest log append` takes it from there (or, with `issue
---log-dir`, both in the one command). The log commands can produce an inclusion
-proof under a signed checkpoint, by receipt or by index. An operator must still
-obtain an external timestamp and supply the evidence and matching trusted log
-keys and anchors to a capable verifier. A receipt with qualifying anchored
-standing can be rescued; an unlogged one cannot. The bridge does not automate
-these steps, and `attest issue` automates only the logging half, and the browser
-and desktop currently pin no block headers. And `ok` never includes `trust`
-(v0.1 §11.1, conformance vector 14b):
-a verifier that must refuse a receipt reached through a discontinuous key
-rotation has to name that level itself, with `attest verify --reject-trust`,
-which takes the exact values to refuse rather than a threshold. Here's how:
-
-## What attest is
-
-When you buy something digital, the seller signs a receipt and hands it to you.
-That's the whole mechanism. The receipt is a small file: keep it on a disk, in
-cloud storage, in a backup — anywhere you keep files that matter. Anyone can
-check it's genuine with free tools, offline, no account needed. If the store
-closes tomorrow, the receipt still verifies twenty years from now. It's the part
-of your purchase that survives the store.
-
-This works today wherever files are sold without DRM: GOG-style stores, itch.io,
-independent publishers selling directly. A seller could start signing this
-afternoon, without asking anyone's permission. Buy there, download, and keep the
-file next to the receipt: content plus proof, both in your hands. No store does
-it yet. The standard, two implementations and the conformance suite exist; the
-first pilot doesn't.
-
-Closed platforms are the second track. In the EU a trader selling at a distance
-already has to confirm the contract on a durable medium — Article 8(7) of the
-Consumer Rights Directive (2011/83/EU, 25 October 2011) — and that confirmation
-has to carry the information Article 6(1) lists. Article 2(10) defines the medium
-as one that stores information addressed personally to the consumer, keeps it
-accessible for as long as it's needed, and reproduces it unchanged. Today that's
-the receipt email in your inbox. attest is not that confirmation, and the law
-asks for nothing a machine can verify: a receipt carries only part of what
-Article 6(1) lists, signed. What attest offers is a format that confirmation
-could include or travel in — one you keep, that anyone can check unchanged,
-still valid when the seller is no longer around to ask. That gives regulators a
-concrete format to point to, and the standard is built for exactly that.
-
-Where this goes: receipts you can pass on to someone else where the rights
-holder allows it; transfer authority that can outlive the original seller, the
-hardest open problem on the roadmap; records witnessed by independent parties,
-so nobody can quietly rewrite them; and publishers signing a pledge, today, that
-if they ever shut down, their content becomes redistributable and your receipt
-preserves exactly what the seller signed. Owning digital things the way you own
-physical ones. That's the destination. The receipt is the first brick.
-
-One thing a receipt is not, and this matters: it is not a backup. If a store dies
-and you never downloaded the DRM-free file, no signature can conjure it back off
-a dead server. What survives is the proof — see the
-[FAQ](docs/faq.md) for exactly what that's worth in each case.
-
-There is a way to change that answer, and it now runs rather than being planned:
-a rights holder can sign a preservation pledge when they sell, and once that
-pledge fires, an archive holding its own copy can hand the file to whoever
-proves possession of the private key named in the receipt — and to nobody else.
-`python -m demo.pledge_dies` does exactly that, end to end, on your machine.
-What is missing is not the mechanism: it is a publisher who has signed one, an
-archive that holds anything, and prose written by a lawyer instead of the
-placeholder the demo carries. The archive gate the demo runs against is a
-non-normative reference, not a production gate; it names the three things it
-does not do in [`demo/README.md`](demo/README.md).
-
-`attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
-only) are independent Python and TypeScript implementations. Their published
-self-certification claims are recorded in [`docs/conformance.md`](docs/conformance.md);
-the corpus now contains 231 leaves, and a release may claim the §20-expanded corpus
-only once both implementations reproduce all 231. **Try it in your browser:**
-<https://attest-receipts.org/> — drop a `.attest` bundle (or the built-in
-sample) and watch it verify entirely client-side. Be clear about the status: no
-store issues attest receipts in production yet, and there are no external reviews.
-The package version and the wire format are different things — receipts declare
-`attest_version` 0.1 or 0.2, and old receipts keep verifying under every later
-release, by design.
-
-**If you sell digital files, this is the part that concerns you:** signing
-receipts costs one small self-hosted service next to your existing checkout, and
-what your customer ends up holding is a receipt file on their own disk — one
-that verifies offline, with no account and no server, and keeps verifying after
-your shop is gone. Two packages, and only one of them is published:
-`attest-receipts` is on PyPI and gives you the `attest` command;
-`attest-bridge`, the service that turns a paid order into a signed receipt, is
-not published — its package metadata is marked `Private :: Do Not Upload` — so
-never run `pip install attest-bridge`: that name could resolve to something
-unrelated. You clone this repository and install from the checkout with
-`pip install ./bridge`, which pulls in `attest-receipts` as a dependency; both
-need Python 3.12 or newer. Start with [`bridge/`](bridge/README.md), or tell me
-what would stop you: [GitHub Discussions](https://github.com/bernalli/attest/discussions)
-or `bernalli@proton.me`. A first seller is worth more to this project than
-another feature.
-
-## Start here
-
-Depending on why you landed on this page:
-
-- **Someone sent you a receipt file and you have no idea what it is.** Read
-  [Start here](https://attest-receipts.org/start-here.html). Plain language, no
-  terminal, and it does not assume you have heard of any of this before.
-- **You want to see whether it actually works.** Open the
-  [verifier](https://attest-receipts.org/) and drop the built-in sample on it.
-  It takes about thirty seconds, installs nothing, and you can disconnect from the
-  network first — that is the whole point of the thing.
-- **You want to know whether any of this concerns you.** Read the
-  [FAQ](docs/faq.md). It answers the questions a sceptical person asks first,
-  including the ones where the answer is no.
-- **You want the standard.**
-  [`docs/spec/attest-v0.1.md`](docs/spec/attest-v0.1.md) is the normative
-  specification, [`attest-v0.2.md`](docs/spec/attest-v0.2.md) the additive delta,
-  and [`docs/spec/vectors/`](docs/spec/vectors/) the conformance corpus every
-  implementation is measured against.
-- **You'd be on the verifying end** — a marketplace, a successor honouring old
-  purchases, an archive: anyone who will one day have to decide whether a receipt
-  is genuine with no seller left to ask. [Discussions](https://github.com/bernalli/attest/discussions)
-  is where to say what you'd need from the format.
-
-## How it works, for humans
-
-At checkout, the store signs a receipt and hands the buyer an `.attest` bundle —
-a small file the buyer keeps anywhere: disk, cloud, USB, wherever. There is no
-account to keep alive and nothing to sync. Later, anyone with a verifier — a
-friend, a marketplace, the buyer themself — can check that bundle's signature
-offline against the issuer's published key material and confirm it is genuine;
-whether it has since been revoked is only as good as the status material that
-verifier has, and with none it reports revocation as unknown rather than
-guessing. If a presenter needs to prove possession of the receipt's binding
-secret, they can disclose a salt or answer a key challenge. This identifies
-possession of issuer-recorded material, not the buyer.
-Nothing in this loop requires a server: there is no central attest authority, no
-registry that must exist, and no phone-home — a verifier needs only the receipt
-bytes, the issuer's key material, and, optionally, a revocation feed.
-
-## What it is / is not
-
-attest is a normative specification for a signed receipt envelope, a restricted
-JSON canonicalization profile, a pinned Ed25519 signing/verification ruleset,
-issuer key/artifact manifests with rotation and compromise handling — including a
-compromise that is absorbing for whoever has seen it, and time-boxed against
-anchored evidence rather than retroactive without limit — a layered
-offline verification algorithm, revocation-by-class semantics, and buyer-binding
-proof — plus a Python reference implementation and an independent TypeScript
-verifier.
-
-It is **not** a DRM-stripping tool, a content host, an index of content, a
-marketplace, a general resale right (v0.1 defines no transfer at all; v0.2 §17
-adds it only where the issuer mediates it), a blockchain or NFT product, or a
-payment instrument. A receipt is evidence of a license grant, not the artifact
-itself and not the transaction that paid for it.
-
-None of this bypasses an unwilling seller: a receipt is issuer-signed, and
-attest cannot conjure a valid one out of a store that refuses to sign. A seller
-that never issues receipts leaves nothing for a later gate to check, and no
-amount of protocol fixes that.
-
-## Status
-
-Spec v0.1 is complete and v0.2 is specified, with two independent
-implementations — a Python reference implementation and a TypeScript verifier —
-measured by the shared conformance corpus, now 231 leaves across 47 groups: 70
-of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
-transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
-prohibition, artifact-manifest currency, anchor profile v2, logged revocation
-deadlines), Stage 3 issuer-mediated transfer, Stage 4 preservation pledge, the
-time-boxed compromise rescue, and publisher authorization. (A v0.1-only verifier is
-required to reject v0.2 envelopes, so it is measured against the 70-leaf
-subset.) There are also three end-to-end demos: one deletes a store's entire
-infrastructure mid-lifecycle and proves the receipt still verifies, one
-carries that a step further — a rights holder's preservation pledge fires and
-an archive hands the file back, but only against the receipt — and one has an
-independent witness cosign the log's head, so a verifier can tell a head
-somebody observed from a head nobody did.
-
-The published packages ship all of v0.2: Stages 1 and 2 (hybrid signatures;
-transparency and anchoring), Stage 3 issuer-mediated transfer (§17), Stage 4
-the preservation pledge (§18), the time-boxed compromise rescue (§19) and
-publisher authority (§20).
-
-Eight pieces of work go beyond what a test suite can show. All of them are on
-`main`, and they are linked here rather than left invisible:
-
-- **[Formal verification](formal/attest.spthy).** A Tamarin model of the wire
-  protocol: machine-checked theorems that acceptance implies an issuer signature,
-  that a rotation is accepted only when the previous active key signed it or it
-  carries an explicit compromise flag, and that the reason a revoked key is
-  rejected cannot itself be forged — soundness, not liveness
-  — plus attack exhibits proved *reachable* rather than argued in prose, plus
-  negative controls that must falsify. Each theorem states its own scope in the
-  theory file; nothing is claimed more broadly there than the prover checked, and
-  a CI checker pins those statements so the claims cannot drift from the proofs.
-- **[Threat model](docs/spec/attest-threat-model.md).** 81 attacks catalogued
-  across the whole receipt lifecycle, each either mitigated or recorded as out of
-  scope with a reason, a traceability matrix, and the protocol gaps the exercise
-  found left tracked in the open instead of quietly fixed.
-- **[Incident runbook](docs/incident-runbook.md).** What an issuer does the day a
-  signing key is stolen or lost, in a shopkeeper's language rather than a
-  cryptographer's: why the two cases call for opposite messages to buyers, why
-  securing the domain comes before rotating a stolen key, how to back up the seed,
-  and what one signing key per period can and cannot protect. Read before it is
-  needed, not during.
-- **[Privacy considerations](docs/spec/attest-privacy.md).** Every field
-  classified by what it reveals to which observer, twenty testable privacy claims,
-  and a GDPR annex covering what a receipt deliberately does not record.
-- **[Transfer economics](docs/spec/attest-transfer-economics.md)**
-  (non-normative). The market and legal context behind Stage 3's transfer profile
-  — resale velocity, the issuer-royalty incentive, and the CJEU case law
-  (*UsedSoft*, *Tom Kabinet*) that makes transfer issuer-mediated rather than a
-  general resale right.
-- **Internet-Draft.** A snapshot-profile mirror of this specification was
-  submitted to the IETF Datatracker on 2026-08-06 and accepted as an individual
-  submission (Informational, expires 2027-02-07) — it declares that it mirrors
-  v0.1 revision 5 and v0.2 revision 6, so the specification in this repository,
-  not the draft, remains normative, and the published snapshot is several
-  amendments behind it. On the Datatracker that first submission is filed as
-  `draft-martinalli-open-purchase-receipts-00`. The
-  [XML source](ietf/draft-martinalli-open-purchase-receipts.xml) lives here under
-  the maintainer's current handle and builds clean to txt/html in CI; the next
-  revision will go out under that name, declaring the first as the document it
-  replaces. Being an I-D means the
-  document exists and can be cited as work in progress, nothing more: it is not
-  endorsed by the IETF and has no formal standing in the standards process.
-- **[Standards-relationship annex](docs/spec/attest-standards-relationship.md).**
-  Documents attest's boundary against every adjacent standard people compare it to
-  — W3C Verifiable Credentials, eIDAS 2.0/the EUDI Wallet, JOSE/JWS and COSE, RFC
-  8785 (JCS), C2PA, SCITT/RFC 9943, and RATS (RFC 9334) — so each comparison is
-  answered once instead of re-argued per issue.
-- **[Conformance program](docs/conformance.md).** One documented command, run with
-  a third party's own adapter against the vector corpus, produces a pass/fail
-  report and a self-certification claim; the recorded pass counts live in that
-  document and must be updated only from a fresh runner report.
+The [conformance corpus](docs/spec/vectors/) contains 231 leaves across 47
+groups. The v0.1 subset has 70 leaves; a v0.1-only verifier must reject v0.2
+envelopes. The full corpus also covers mixed-keyset prohibition, artifact-manifest
+currency, anchor profile v2 and logged revocation deadlines.
+[Conformance instructions and recorded self-certification claims](docs/conformance.md)
+explain how to run a third-party adapter and produce a pass/fail report. A release
+may claim the full corpus only when both implementations reproduce every leaf;
+published claims must be updated from a fresh runner report.
 
 ## Stability
 
@@ -413,7 +229,7 @@ in the release workflow, or in the component's own README.
 | [`demo/`](demo/README.md) | Three end-to-end demonstrations | Not part of the protocol; `custodian.py` and `witness_client.py` are non-normative references, not production components |
 | [`formal/`](formal/README.md) | Tamarin model of the wire protocol | Verification evidence, gated in CI; each theorem states its own scope |
 | [`ietf/`](ietf/README.md) | Internet-Draft snapshot of the specification | Not normative: it mirrors a pinned revision and is behind the specification in this repository; no formal standing in the standards process |
-| `tools/`, `tests/` | Generators, checkers and test suites | Internal to this repository; not shipped |
+| `tools/`, `tests/` | Generators, checkers and test suites | Internal development material, included in the Python source distribution; not installed by the Python wheel or shipped in the npm package |
 
 Both packages are at a 0.x version, and Semantic Versioning, which their
 changelogs say they follow, does not treat a 0.x public API as stable. The
@@ -422,33 +238,71 @@ across releases is a receipt's bytes, under the policy above. And, as stated
 earlier, no store issues attest receipts in production yet, and there are no
 external reviews.
 
-## Install, demos and tests
+## Sellers, archives and witness operators
 
-Install the reference implementation from PyPI (the distribution is named
-`attest-receipts`; the import package and the CLI are both `attest`):
+For a service that turns paid orders into signed receipts, start with the
+[merchant bridge](bridge/README.md). It requires Python 3.12 or newer and is
+installed from a repository checkout:
 
 ```sh
-pip install attest-receipts
-attest --help
+pip install ./bridge
 ```
 
-The TypeScript verifier is on npm as
-[`attest-verifier`](https://www.npmjs.com/package/attest-verifier):
+This installs `attest-receipts` as a dependency. Do not run
+`pip install attest-bridge`: that distribution is not published, and the name
+could resolve to something unrelated.
+
+A preservation pledge lets a rights holder authorize an archive that holds a
+copy to deliver it when the pledge activates, subject to proof of possession
+of the private key named in the receipt. The [pledge demo](demo/README.md)
+runs this end to end. A production publisher, an archive service and final
+license prose are still missing; the demo uses placeholder prose and a
+non-normative archive gate whose production gaps are documented there.
+
+The [reference witness](witness/README.md) cosigns log checkpoints so a verifier
+can tell that another observer saw that head. A witness does not by itself
+establish independent protection against split views.
+
+Sellers, marketplaces, successor services and archives can describe what they
+need from the format in [Discussions](https://github.com/bernalli/attest/discussions)
+or by email at `bernalli@proton.me`.
+
+## Supporting documents
+
+- [Formal verification](formal/README.md): the Tamarin model, property-to-lemma
+  map, theorem scopes, reachable attack exhibits and negative controls. CI pins
+  theorem statements. These are scoped soundness results, not liveness claims.
+- [Threat model](docs/spec/attest-threat-model.md): 81 attacks catalogued across
+  the receipt lifecycle, mitigations or explicit out-of-scope reasons,
+  traceability and tracked gaps. It analyzes the specification rather than
+  imposing protocol requirements of its own.
+- [Incident runbook](docs/incident-runbook.md): stolen versus lost signing keys,
+  securing the domain, seed backups and the limits of using a key per period.
+- [Privacy considerations](docs/spec/attest-privacy.md): field and observer
+  analysis, testable privacy claims and a GDPR annex.
+- [Transfer economics](docs/spec/attest-transfer-economics.md): non-normative
+  market and legal context for issuer-mediated resale.
+- [Standards relationships](docs/spec/attest-standards-relationship.md):
+  non-normative comparisons with W3C Verifiable Credentials, eIDAS 2.0 / EUDI
+  Wallet, JOSE/JWS, COSE, RFC 8785 (JCS), C2PA, SCITT (RFC 9943) and RATS
+  (RFC 9334).
+- [Internet-Draft](ietf/README.md): submission record and XML build instructions.
+  The snapshot mirrors v0.1 revision 5 and v0.2 revision 6 and is behind the
+  repository specification. It is work in progress, not IETF endorsement or a
+  normative replacement for the repository specification.
+
+## Develop and run the demos
+
+From a checkout, install the Python implementation and development dependencies:
 
 ```sh
-npm install attest-verifier
-```
-
-Or work from a checkout of this repo:
-
-```sh
-uv venv --python 3.12 .venv && uv pip install --python .venv -e '.[dev]'
-# or: pip install -e .
-```
-
-```sh
+uv venv --python 3.12 .venv
+uv pip install --python .venv -e '.[dev]'
 .venv/bin/attest --help
 ```
+
+The [three demos](demo/README.md) check receipt survival after a store disappears,
+archive delivery under an activated preservation pledge, and witness cosigning:
 
 ```sh
 .venv/bin/python -m demo.store_dies
@@ -456,77 +310,19 @@ uv venv --python 3.12 .venv && uv pip install --python .venv -e '.[dev]'
 .venv/bin/python -m demo.witness_cosigns
 ```
 
+Run the Python and TypeScript suites:
+
 ```sh
 .venv/bin/pytest --cov=attest --cov-report=term-missing
-```
-
-and a TypeScript verifier quickstart:
-
-```sh
 cd verifiers/ts && npm install && npm test
 ```
 
-See [demo/README.md](demo/README.md) for what each step of the demos proves, and
-[docs/spec/attest-v0.1.md](docs/spec/attest-v0.1.md) plus its companion
-[JSON Schema](docs/spec/schema/attest-receipt.schema.json) for the normative
-specification. [docs/spec/vectors/](docs/spec/vectors/) holds the conformance
-corpus every implementation is checked against.
+## Future directions
 
-For merchants who'd rather not hand-sign anything, see [bridge/README.md](bridge/README.md).
+These are non-normative, undated directions, not commitments. Preservation
+pledges already belong to the specification and run in the demo above.
 
-For anyone wanting to run a witness — the component that cosigns a log's
-checkpoints so a verifier can tell that somebody else saw the same tree — see
-[witness/README.md](witness/README.md). Like the bridge, it is a reference
-implementation for operators and is not published to any package registry.
-
-[docs/spec/attest-v0.2.md](docs/spec/attest-v0.2.md) is an additive delta
-specification defining the v0.2 hybrid Ed25519+ML-DSA-65 signature profile
-(post-quantum-resistant receipts, `attest_version: "0.2"`); v0.1 receipts
-remain verifiable forever; later compromise declarations or applicable revocation
-records can still make them invalid. That profile was Stage 1; Stage 2 — issuer
-key transparency and timestamp anchoring, where a log corroborates a receipt's
-existence without ever being able to make an unsigned receipt look authentic —
-is specified in the same document. Stage 3 — issuer-mediated transfer, giving
-`license.transferable` its first real meaning, layered on top of the Stage 2 log
-— is specified there too (§17); business economics around resale are
-deliberately out of protocol and live in the non-normative
-[transfer-economics annex](docs/spec/attest-transfer-economics.md).
-
-[docs/spec/attest-versioning.md](docs/spec/attest-versioning.md) is the
-normative upgrade policy governing both specifications above: the additive
-pattern new extensions must follow, the eternal-verifiability guarantee
-(deprecation may degrade how a conforming receipt's result is classified,
-never the ability to verify its bytes — verifiable forever is not valid
-forever), the three-state algorithm lifecycle (`active` / `deprecated` /
-`unsafe`), the amendment procedure, and the signature-suite, payload-field,
-revocation-class, log-entry-type, and transfer-type registries.
-
-[docs/spec/attest-threat-model.md](docs/spec/attest-threat-model.md) is the
-maintained threat model behind the two specifications above — a living
-normative companion that analyzes their mechanisms rather than imposing
-requirements of its own — and
-[docs/spec/attest-privacy.md](docs/spec/attest-privacy.md) is its
-privacy-considerations sibling.
-
-The core protocol properties are machine-checked in Tamarin: [formal/](formal/)
-holds the model, the property↔lemma↔spec map, and the honest scope of what is
-and is not proved, gated in CI by a statement-pinning checker.
-
-[docs/spec/attest-standards-relationship.md](docs/spec/attest-standards-relationship.md)
-(non-normative) is the boundary annex: in terms an expert in each standard
-would accept, it states attest's relationship to W3C Verifiable Credentials,
-eIDAS 2.0/the EUDI Wallet, JOSE/JWS and COSE, RFC 8785 (JCS), C2PA, SCITT
-(RFC 9943), and RATS (RFC 9334) — including what a future bridge to one of
-them could look like, where one exists.
-
-## Roadmap / north star
-
-Non-normative, and deliberately undated — these are directions, not commitments:
-
-The preservation pledge described under "What attest is" is not listed here: it
-already runs end to end (`python -m demo.pledge_dies`) and is part of the
-standard, not a future direction. What follows is genuinely speculative.
-
+- Transfer authority that can outlive the original seller remains an open problem.
 - **Evidence capture for non-cooperating stores.** A research track into
   TLS-session-proof techniques (the zkTLS/TLSNotary class) that could let a buyer
   capture their own evidence of a purchase from a store that never signs anything,
@@ -560,6 +356,3 @@ TypeScript suites green.
 everything else, or email `bernalli@proton.me`.
 Security issues follow a different path — see [`SECURITY.md`](SECURITY.md), and
 do not open a public issue for a vulnerability.
-
-Skeptical about any of this? [docs/faq.md](docs/faq.md) answers the first
-questions a reasonable person asks.
