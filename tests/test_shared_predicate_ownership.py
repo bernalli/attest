@@ -555,8 +555,12 @@ def _canonicality_predicates() -> list[tuple[str, object]]:
                         out.append((f"{name}.{attribute}", value))
         return out
 
-    for info in pkgutil.iter_modules(attest.__path__):
-        module = importlib.import_module(f"attest.{info.name}")
+    # Walk subpackages too: `attest.verify` is a package whose functions are
+    # defined in its submodules, and the `__module__` filter below would skip
+    # every one of them if only the top level were visited.
+    for info in pkgutil.walk_packages(attest.__path__, attest.__name__ + "."):
+        module = importlib.import_module(info.name)
+        relative = info.name.removeprefix(attest.__name__ + ".")
         for name, obj in candidates(module):
             if not inspect.isfunction(obj) or obj.__module__ != module.__name__:
                 continue
@@ -584,7 +588,7 @@ def _canonicality_predicates() -> list[tuple[str, object]]:
             if all(v is True for v in verdicts[: len(yes)]) and all(
                 v is False for v in verdicts[len(yes) :]
             ):
-                found.append((f"{info.name}.{name}", obj))
+                found.append((f"{relative}.{name}", obj))
     return found
 
 
