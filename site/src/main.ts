@@ -60,6 +60,8 @@ export function initApp(doc: Document): AppHandle {
   const bindingSalt = byId<HTMLInputElement>('binding-salt')
   const bindingApply = byId<HTMLButtonElement>('binding-apply')
   const loadSampleBtn = byId<HTMLButtonElement>('load-sample')
+  const trySampleBtn = byId<HTMLButtonElement>('try-sample')
+  const checkPanel = byId<HTMLElement>('check')
   const clearFeedsBtn = byId<HTMLButtonElement>('clear-feeds')
   const results = byId<HTMLElement>('results')
   const bench = byId<HTMLElement>('bench')
@@ -413,6 +415,16 @@ export function initApp(doc: Document): AppHandle {
       clearJobs()
       results.replaceChildren(message(doc, 'Could not load the sample bundle from this deployment.'))
     })
+  })
+  // The hero's call to action is the same gesture as "Load the sample", made
+  // from the top of the page. It brings the verifier into view and presses
+  // that button, so loading the sample has one code path and not two: the
+  // verdict, the bench and every failure branch above are the button's own.
+  trySampleBtn.addEventListener('click', () => {
+    const reduceMotion = doc.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? true
+    checkPanel.scrollIntoView?.({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
+    checkPanel.focus({ preventScroll: true })
+    loadSampleBtn.click()
   })
   // Replaying two receipts against a pinned log takes long enough to be felt,
   // and it is synchronous: without yielding first the button would appear
