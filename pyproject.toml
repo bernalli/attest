@@ -81,6 +81,11 @@ ignore = ["S101"]  # assert in tests
 # for the linter's benefit would be bytes charged to buyers. Scoped to this one
 # file so long lines anywhere else still fail the gate.
 "src/attest/buyer_surface.py" = ["E501"]
+# `attest.verify` is a package whose `__init__` is a facade: every name the
+# former single-module `verify.py` defined or imported is re-exported from it,
+# so `attest.verify.<name>` keeps resolving to the same object. Those imports
+# exist to be re-exported, not used. (The matching mypy override is below.)
+"src/attest/verify/__init__.py" = ["F401"]
 "tools/gen_buyer_pages.py" = ["E501"]
 
 [tool.mypy]
@@ -97,6 +102,13 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "pqcrypto.*"
 ignore_missing_imports = true
+
+# The `attest.verify` facade re-exports what its sibling modules define,
+# private names included (`views`, `cli` and the tests read them through
+# `attest.verify`). See the matching ruff per-file ignore above.
+[[tool.mypy.overrides]]
+module = "attest.verify"
+implicit_reexport = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "bridge/tests", "witness/tests"]
