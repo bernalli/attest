@@ -156,3 +156,47 @@ def test_comparison_keeps_verdicts_and_parity_messages_exact() -> None:
     assert verdict(["duplicate object key: 'a'"]) != verdict(["invalid JSON: x"])
     crash = {"verdict": "crash", "error": "TypeError: x"}
     assert differential.comparable(crash) == crash
+
+
+# A repeated payload member paired with a second defect read before the
+# payload's closing brace. Both cores refuse every one of these; what this pins
+# is that they name the SAME defect, which the generated families reach only
+# by chance.
+_COMBINED_DUPLICATE_DEFECTS = {
+    "repeat-carries-float": ('"attest_version":1.5', "floats are not allowed"),
+    "repeat-carries-nested-float": ('"attest_version":{"a":[1.5]}', "floats are not allowed"),
+    "repeat-carries-own-duplicate": (
+        '"attest_version":{"b":1,"b":2}',
+        "duplicate object key: 'b'",
+    ),
+    "repeat-carries-over-range-int": (
+        '"attest_version":9007199254740992',
+        "duplicate object key: 'attest_version'",
+    ),
+    "repeat-then-later-float": ('"attest_version":"0.1","zz":1.5', "floats are not allowed"),
+}
+
+
+def test_the_two_verifiers_name_the_same_defect_beside_a_duplicate_member() -> None:
+    missing = differential._prerequisite_missing()
+    if missing is not None:
+        message = f"duplicate-member parity not measured: {missing}"
+        if ci_prerequisites_required():
+            pytest.fail(message)
+        pytest.skip(message)
+    bases = differential.build_bases()
+    stores = {name: differential.store_bytes(doc) for name, doc in bases.manifests.items()}
+    cases = []
+    for name, (extra, _) in _COMBINED_DUPLICATE_DEFECTS.items():
+
+        def spell(payload: object, extra: str = extra) -> str:
+            return differential.emit(payload, (), None)[:-1] + "," + extra + "}"
+
+        text = differential.emit(bases.env01, ("payload",), spell)
+        cases.append(differential.Case(name, "json", name, text.encode(), "ed"))
+    for case, ts in zip(cases, differential.ts_verdicts(cases, stores), strict=True):
+        py = differential.python_verdict(case.envelope, stores[case.store])
+        assert py["verdict"] == "invalid", (case.id, py)
+        assert differential.comparable(py) == differential.comparable(ts), (case.id, py, ts)
+        expected = _COMBINED_DUPLICATE_DEFECTS[case.id][1]
+        assert any(expected in error for error in py["result"]["errors"]), (case.id, py)

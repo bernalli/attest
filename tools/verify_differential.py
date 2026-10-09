@@ -644,8 +644,6 @@ TYPE_VALUES: tuple[tuple[str, Any], ...] = (
     ("NUL string", "\x00"),
     ("space", " "),
 )
-#: The TYPE_VALUES the attest-JCS profile admits (no float, no integer past 2^53 - 1).
-PROFILE_VALUES = tuple((n, v) for n, v in TYPE_VALUES if n not in ("float", "int 2^53"))
 
 
 def gen_type(rng: random.Random, b: Bases) -> list[tuple[str, str, bytes, str]]:
@@ -860,10 +858,10 @@ def gen_json(rng: random.Random, b: Bases) -> list[tuple[str, str, bytes, str]]:
         path = rng.choice(objects)
         node = get_path(env, path)
         key = rng.choice(list(node))
-        # A value the profile admits, so the duplicate is the case's ONE defect:
-        # a float or an out-of-range integer would be a second one, and which
-        # of two defects a parser names first is its own business.
-        alt = rng.choice(PROFILE_VALUES)[1] if rng.random() < 0.5 else node[key]
+        # Any value, the profile's own refusals included: both parsers judge an
+        # object's member names when it closes, so a float in the repeated
+        # member is named ahead of the duplicate on both sides.
+        alt = rng.choice(TYPE_VALUES)[1] if rng.random() < 0.5 else node[key]
         first = rng.random() < 0.5
 
         def dup(o: Any) -> str:
