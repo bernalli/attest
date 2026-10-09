@@ -1,4 +1,4 @@
-# OL-18: censimento dei tipi nei test del verificatore
+# Censimento dei tipi nei test del verificatore
 
 Validazione dell'implementazione; l'approvazione di merge resta una review separata.
 La base e' `fix/verifiers-test-census`, verificata prima di modificare i file:
@@ -57,7 +57,7 @@ invocazioni sono replicate nello stesso job di `tools/verify-all.sh`.
 Le dipendenze sono state installate dal lockfile con:
 
 ```sh
-npm ci --prefix verifiers/ts --cache /tmp/attest-ol18-npm-cache --no-audit --no-fund --fetch-retries=0
+npm ci --prefix verifiers/ts --cache /tmp/attest-type-census-npm-cache --no-audit --no-fund --fetch-retries=0
 ```
 
 Prima di scrivere codice e' stato eseguito il comando richiesto, raccolto da
@@ -95,8 +95,8 @@ sum by code: 57
 Un ulteriore conteggio sullo stesso probe con la lista di compilazione:
 
 ```sh
-./verifiers/ts/node_modules/.bin/tsc -p verifiers/ts/tsconfig.t3b-probe.json --listFiles --pretty false --noEmit --incremental false > /tmp/attest-ol18-baseline.txt
-rg -c 'error TS' /tmp/attest-ol18-baseline.txt
+./verifiers/ts/node_modules/.bin/tsc -p verifiers/ts/tsconfig.t3b-probe.json --listFiles --pretty false --noEmit --incremental false > /tmp/attest-type-census-baseline.txt
+rg -c 'error TS' /tmp/attest-type-census-baseline.txt
 ```
 
 ```text
@@ -129,10 +129,10 @@ o rimosso, con compilazione ancora funzionante. Non usa `git checkout`.
 ### R1: una diagnostica aggiunta
 
 Aggiunta in coda a `verifiers/ts/test/canon-parse.test.ts`:
-`const ol18TypeRegression: string = 1;`.
+`const typeCensusRegression: string = 1;`.
 
 ```sh
-python3 /tmp/attest-ol18-evidence/red_checks.py R1
+python3 /tmp/attest-type-census-evidence/red_checks.py R1
 ```
 
 ```text
@@ -155,7 +155,7 @@ Sostituzione temporanea di `expect(v['t'].length).toBe(5)` con
 con la stessa aspettativa del test. La diagnostica rimossa e' nominata nell'output.
 
 ```sh
-python3 /tmp/attest-ol18-evidence/red_checks.py R2
+python3 /tmp/attest-type-census-evidence/red_checks.py R2
 ```
 
 ```text
@@ -176,12 +176,12 @@ restored from backup: byte-identical
 Il percorso alternativo di `tsc` e' verificato assente prima dell'invocazione.
 
 ```sh
-python3 /tmp/attest-ol18-evidence/red_checks.py R3
+python3 /tmp/attest-type-census-evidence/red_checks.py R3
 ```
 
 ```text
-$ python3 tools/check_verifier_test_types.py --tsc /tmp/attest-ol18-evidence/missing-tsc
-unable to measure: missing prerequisite tsc executable: /tmp/attest-ol18-evidence/missing-tsc; install Node.js and run npm ci --prefix verifiers/ts
+$ python3 tools/check_verifier_test_types.py --tsc /tmp/attest-type-census-evidence/missing-tsc
+unable to measure: missing prerequisite tsc executable: /tmp/attest-type-census-evidence/missing-tsc; install Node.js and run npm ci --prefix verifiers/ts
 gate rc: 78
 ```
 
@@ -192,11 +192,11 @@ Il file resta sul disco. L'aggiornamento usa una copia del censimento e ne verif
 i byte dopo il rifiuto; il tsconfig viene ripristinato dalla sua copia di backup.
 
 ```sh
-python3 /tmp/attest-ol18-evidence/update_absence.py
+python3 /tmp/attest-type-census-evidence/update_absence.py
 ```
 
 ```text
-$ python3 tools/check_verifier_test_types.py --census /tmp/attest-ol18-evidence/update-census.json --update
+$ python3 tools/check_verifier_test_types.py --census /tmp/attest-type-census-evidence/update-census.json --update
 MEASURED: 54 test file(s) compiled by the verifier probe
 refusing to update the census:
 verifiers/ts: test/dates.test.ts is on disk but was NOT compiled by the probe.
@@ -254,7 +254,7 @@ disabled nonempty: selftest: 10/10 -> selftest: 9/10; exit 1
 Preparazione dell'ambiente Python dal lockfile:
 
 ```sh
-UV_CACHE_DIR=/tmp/attest-ol18-uv-cache uv sync --locked --extra dev --all-packages
+UV_CACHE_DIR=/tmp/attest-type-census-uv-cache uv sync --locked --extra dev --all-packages
 ```
 
 ```sh
@@ -282,8 +282,8 @@ npm run build --prefix verifiers/ts
 ```
 
 ```sh
-npm test --prefix verifiers/ts -- --reporter=default --reporter=json --outputFile.json=/tmp/attest-ol18-evidence/verifier-tests.json
-python3 tools/check_test_census.py verifiers/ts --report /tmp/attest-ol18-evidence/verifier-tests.json
+npm test --prefix verifiers/ts -- --reporter=default --reporter=json --outputFile.json=/tmp/attest-type-census-evidence/verifier-tests.json
+python3 tools/check_test_census.py verifiers/ts --report /tmp/attest-type-census-evidence/verifier-tests.json
 ```
 
 Riepilogo della suite e output del censimento precedente:
@@ -340,8 +340,8 @@ I backup preesistenti vengono rifiutati per non sovrascrivere una copia preceden
 Le aspettative sono quelle della base riportata in apertura.
 
 ```sh
-mkdir -p /tmp/attest-ol18-evidence
-cat > /tmp/attest-ol18-evidence/red_checks.py <<'PY'
+mkdir -p /tmp/attest-type-census-evidence
+cat > /tmp/attest-type-census-evidence/red_checks.py <<'PY'
 from collections import Counter
 from pathlib import Path
 import shutil
@@ -349,7 +349,7 @@ import subprocess
 import sys
 
 label = sys.argv[1]
-evidence = Path('/tmp/attest-ol18-evidence')
+evidence = Path('/tmp/attest-type-census-evidence')
 target = Path('verifiers/ts/test/canon-parse.test.ts')
 backup = evidence / f'{label}-canon-parse.test.ts.backup'
 gate = ['python3', 'tools/check_verifier_test_types.py']
@@ -382,7 +382,7 @@ assert baseline.returncode == 2 and sum(headers(baseline.stdout).values()) == 57
 try:
     original = target.read_text()
     if label == 'R1':
-        target.write_text(original + '\nconst ol18TypeRegression: string = 1;\n')
+        target.write_text(original + '\nconst typeCensusRegression: string = 1;\n')
     else:
         old = "expect(v['t'].length).toBe(5)"
         assert original.count(old) == 1
@@ -412,13 +412,13 @@ finally:
     assert target.read_bytes() == backup.read_bytes()
     print('restored from backup: byte-identical')
 PY
-cat > /tmp/attest-ol18-evidence/update_absence.py <<'PY'
+cat > /tmp/attest-type-census-evidence/update_absence.py <<'PY'
 from pathlib import Path
 import shutil
 import subprocess
 
 config = Path('verifiers/ts/tsconfig.t3b-probe.json')
-evidence = Path('/tmp/attest-ol18-evidence')
+evidence = Path('/tmp/attest-type-census-evidence')
 backup = evidence / 'probe-config.backup'
 pin = evidence / 'update-census.json'
 assert not backup.exists()
