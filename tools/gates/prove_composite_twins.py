@@ -87,7 +87,7 @@ REGRESSIONS: tuple[Regression, ...] = (
     ),
     Regression(
         twin="authority._verify_authorization",
-        file="src/attest/verify/__init__.py",
+        file="src/attest/verify/publisher_authority.py",
         old="authority_module._verify_authorization(",
         new="authority_module.verify_authorization(",
         tests=("tests/test_evaluate_authority.py",),
