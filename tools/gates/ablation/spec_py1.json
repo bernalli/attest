@@ -161,7 +161,7 @@
   {
    "id": "VL34-P7-verify-refuses-ambiguous-issuer-manifest",
    "property": "verify() itself refuses an issuer manifest with duplicate kids, reporting the duplicate",
-   "file": "src/attest/verify/__init__.py",
+   "file": "src/attest/verify/pipeline.py",
    "old": "            dup_kids = manifests.duplicate_kids(issuer_manifest_keys)\n            if dup_kids:",
    "new": "            dup_kids = manifests.duplicate_kids(issuer_manifest_keys)\n            if False and dup_kids:",
    "suite": [
