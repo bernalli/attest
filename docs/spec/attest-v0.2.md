@@ -2,7 +2,7 @@
 
 - **Status**: Normative, v0.2 (Stage 1, Stage 2, Stage 3, AND Stage 4 — see §1 Scope; Stage 2b witness federation: wire format and verification rules shipped in rev 7, §9.2/§10.1/§11.4, independent operators still outstanding, §15 item 1)
 - **Date**: 2026-07-18
-- **Grounding**: this document is grounded in the reference implementation in `src/attest/` (`verify.py`, `pq.py`, `manifests.py`, `tlog.py`, `anchor.py`, `transparency.py`, `bundle.py`, `cli.py`, `revocation.py`) and the conformance vectors in [`docs/spec/vectors/26-hybrid/`](vectors/26-hybrid/) and [`docs/spec/vectors/28-transparency/`](vectors/28-transparency/). It introduces no design decision not already present in the shipped implementation and its conformance corpus (repo rule: spec-follows-implementation).
+- **Grounding**: this document is grounded in the reference implementation in `src/attest/` (`verify/`, `pq.py`, `manifests.py`, `tlog.py`, `anchor.py`, `transparency.py`, `bundle.py`, `cli.py`, `revocation.py`) and the conformance vectors in [`docs/spec/vectors/26-hybrid/`](vectors/26-hybrid/) and [`docs/spec/vectors/28-transparency/`](vectors/28-transparency/). It introduces no design decision not already present in the shipped implementation and its conformance corpus (repo rule: spec-follows-implementation).
 - **Companion artifacts**: [`docs/spec/attest-v0.1.md`](attest-v0.1.md) (the base specification this document extends — read together, never in isolation); conformance vectors — [`docs/spec/vectors/26-hybrid/`](vectors/26-hybrid/), [`docs/spec/vectors/28-transparency/`](vectors/28-transparency/), and [`docs/spec/vectors/README.md`](vectors/README.md) (per-group vector index).
 
 This document uses the same conformance language as v0.1 §1 (RFC 2119/RFC 8174 key words, non-normative notes carry no conformance weight).
@@ -83,7 +83,7 @@ A hybrid receipt and its manifest total roughly 13–14 KB (about 6 KB for the e
 
 A v0.2-capable verifier executes v0.1 §11's algorithm with the hybrid path substituted for §11 steps 1 and 4 whenever `payload.attest_version == "0.2"`; steps 0 (preconditions), 2 (issuer binding), 3 (key checks), 5 (schema), 6 (revocation), and 7 (binding) are unchanged from v0.1 and are not restated here. Every step below fails closed: any rejection sets `signature: "invalid"` and short-circuits (v0.1 §11's short-circuit rule applies unchanged — `revocation` and `binding` take their stub values `"unknown"`/`"not_checked"`, and `schema` takes `"not_checked"`, whenever a step upstream of schema validation rejects). This is **AND semantics**: both legs must independently verify, or the receipt is invalid.
 
-The reference implementation (`src/attest/verify.py`) executes these checks in exactly this order:
+The reference implementation (`src/attest/verify/pipeline.py`) executes these checks in exactly this order:
 
 1. **Signature count.** `signatures` MUST have length exactly 2. Otherwise: `hybrid envelope requires exactly two signatures`.
 2. **Signature-block structure.** Both entries MUST be objects. Otherwise: `malformed signature block`.
@@ -374,7 +374,7 @@ A `key-manifest` claim that reaches `logged` or better additionally sets `manife
 
 If the claimed manifest's own `manifest_version` is greater than 1, `corroboration` is only honored (left at `logged`) when the verifier's OWN trust store independently holds a validated, gapless rotation chain from version 1 through that manifest (`_rotation_chain_verified` — deliberately STRICTER than the `trust: "unverified_rotation"` continuity check of v0.1 §7.3/v0.2 §4, which tolerates an absent chain as "nothing to validate"). Absent that chain, `corroboration` is forced back down to `none` with the warning `corroboration_requires_rotation_chain` (conformance vector 28h) — the log merely saying "this manifest existed" is not proof of a legitimate rotation history, only of publication; a verifier that has not independently validated every intermediate version cannot corroborate that the presented manifest is the legitimate head of its issuer's key history.
 
-The transparency/corroboration verdict for a receipt is resolved BEFORE that receipt's own pass/fail verdict is known, and independently of it (`verify.py`'s `_evaluate_transparency_claim` runs unconditionally, early). This is deliberate: it is what lets conformance vector 28i demonstrate that a receipt rejected outright for a compromised signing key (`signature: "invalid"`, `ok: false`) still honestly reports `transparency: "logged"`/`corroboration: "logged"` for its own genuinely-logged evidence — logged-only corroboration can never rescue an otherwise-invalid receipt, because it was never given the chance to; the ONE standing that can — and only against the compromised-key rejection specifically — is the receipt's own `anchored_before:<T_r>`, under §19's rule.
+The transparency/corroboration verdict for a receipt is resolved BEFORE that receipt's own pass/fail verdict is known, and independently of it (`attest.verify`'s `_evaluate_transparency_claim` runs unconditionally, early). This is deliberate: it is what lets conformance vector 28i demonstrate that a receipt rejected outright for a compromised signing key (`signature: "invalid"`, `ok: false`) still honestly reports `transparency: "logged"`/`corroboration: "logged"` for its own genuinely-logged evidence — logged-only corroboration can never rescue an otherwise-invalid receipt, because it was never given the chance to; the ONE standing that can — and only against the compromised-key rejection specifically — is the receipt's own `anchored_before:<T_r>`, under §19's rule.
 
 ## 11. Anchoring: `AnchorPolicy`, OTS, RFC 3161, and the CRQC horizon
 
@@ -512,7 +512,7 @@ The Stage 2 evidence-parsing modules already enforced fixed structural bounds on
 | Inclusion/consistency proof length | 64 hashes | `transparency.py` (`_MAX_PROOF_LEN`) |
 | Checkpoint note text length | 500,000 chars | `tlog.py` (`_MAX_NOTE_TEXT_LEN`) |
 | Checkpoint signature-line count | 64 | `tlog.py` (`_MAX_NOTE_SIGNATURES`) |
-| Serialized `transparency` / `revocation_evidence` bundle length | 10,000,000 Unicode code points (§6.3, whole-bundle unit) | `verify.py` (`_MAX_TRANSPARENCY_EVIDENCE_LEN`, defined as `canon.MAX_ADMISSION_BYTES`) |
+| Serialized `transparency` / `revocation_evidence` bundle length | 10,000,000 Unicode code points (§6.3, whole-bundle unit) | `verify/constants.py` (`_MAX_TRANSPARENCY_EVIDENCE_LEN`, defined as `canon.MAX_ADMISSION_BYTES`) |
 
 None of these values changed and no vector distinguishes pre/post behavior for this specific norming — the reference implementation and TypeScript verifier enforced the same values with the same measurement units immediately before this revision.
 

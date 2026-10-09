@@ -1,8 +1,9 @@
 """`verify()`: the section 6 steps 0-7 orchestration over one receipt.
 
-Every decision this function delegates lives in a sibling module of
-`attest.verify`; what stays here is the ORDER of the checks, which is itself
-normative (verdicts and messages depend on which refusal fires first).
+Every stage this function delegates lives in a sibling module of
+`attest.verify`. What stays here is the ORDER of the checks, which is itself
+normative (verdicts and messages depend on which refusal fires first), and
+the envelope, issuer-binding, key and signature checks made inline.
 """
 
 from __future__ import annotations

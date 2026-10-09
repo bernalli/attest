@@ -86,9 +86,9 @@ export const AUDITED_COPY: readonly AuditRow[] = [
     excerpt: '… The spec reserves a stronger level, “verified”, for keys fetched over TLS …; no attest tool published today performs that fetch',
     token: 'can ',
     claimAbout: 'EVERY attest tool. A negative claim — this is the row gate G1 watches, corrected upstream before this branch was rebased onto it.',
-    command: 'grep -rn _PROVENANCE_TLS src/attest/  # 3 hits: one declaration, two comparisons, no assignment. grep -rnE \'requests|httpx|urllib|urlopen|XMLHttpRequest|node-fetch|axios\' src/ verifiers/ts/src/  # no match: neither implementation contains an HTTP client',
+    command: 'grep -rn _PROVENANCE_TLS src/attest/  # 6 hits: one declaration, two comparisons, three imports (the attest.verify package re-exports it), no assignment. grep -rnE \'requests|httpx|urllib|urlopen|XMLHttpRequest|node-fetch|axios\' src/ verifiers/ts/src/  # no match: neither implementation contains an HTTP client',
     verdict: 'TRUE',
-    audited: '2026-09-01',
+    audited: '2026-10-09',
   },
   {
     module: 'explain',
@@ -179,9 +179,9 @@ export const AUDITED_COPY: readonly AuditRow[] = [
     excerpt: '… the CLI can present a key-manifest claim when an issuer publishes one (spec §10.4)',
     token: 'can ',
     claimAbout: 'The attest CLI, transparency claim of type key-manifest.',
-    command: 'grep -c _CLAIM_TYPE_KEY_MANIFEST src/attest/verify.py  # 5; grep -n \'"--transparency"\' src/attest/cli.py  # the flag that carries the claim',
+    command: 'grep -rn --include=\'*.py\' _CLAIM_TYPE_KEY_MANIFEST src/attest/verify/  # 8: one declaration, four uses, three imports; grep -n \'"--transparency"\' src/attest/cli.py  # the flag that carries the claim',
     verdict: 'TRUE',
-    audited: '2026-09-01',
+    audited: '2026-10-09',
   },
   {
     module: 'explain',

@@ -2690,7 +2690,7 @@ def gen_22_b64u_decoder_parity() -> None:
 
 def gen_23_revocation_refund_window() -> None:
     """A `revocability: "refund_window"` receipt with `revocation_window_days
-    = REFUND_WINDOW_DAYS` (14): per verify.py:359-367 a revocation record is
+    = REFUND_WINDOW_DAYS` (14): per verify/revocation_status.py:115-124 a revocation record is
     effective iff `revoked_at <= issued_at + revocation_window_days`, i.e.
     ISSUED_AT 2025-07-02 -> window end 2025-07-16. (a) REVOKED_INSIDE_WINDOW_AT
     (2025-07-10) is inside the window -> effective, `revocation: "revoked"`,

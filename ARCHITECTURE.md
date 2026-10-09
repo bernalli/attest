@@ -190,14 +190,28 @@ does not establish that the supplied trust material is authentic or correctly co
 
 ## The verification pipeline
 
-`verify()` (`verify.py`, `verifiers/ts/src/verify.ts`) implements attest-v0.1.md §6, "steps
-0-7," and the module docstring states the pipeline invariant plainly: `canon.loads_strict`
+`verify()` (`src/attest/verify/pipeline.py`, `verifiers/ts/src/verify.ts`) implements
+attest-v0.1.md §6, "steps 0-7," and the package docstring (`src/attest/verify/__init__.py`)
+states the pipeline invariant plainly: `canon.loads_strict`
 parses the raw envelope bytes exactly once (step 0), and every later step operates on that
 one parsed object — never on the raw bytes again, never on a re-serialization of it. Steps 6
 (revocation) and 7 (binding) run only once the receipt already has a valid signature *and* a
 valid schema; an already-invalid receipt keeps `revocation: "unknown"` and
 `binding: "not_checked"` rather than getting a verdict computed against material that was
 never trustworthy to begin with.
+
+`attest.verify` is a package split by concern, and its `__init__` re-exports every name, so
+`attest.verify.<name>` is the import path for all of it. `pipeline.py` holds `verify()`
+itself: the ordered steps, with the envelope, issuer, key and signature checks made inline.
+What it calls lives in sibling modules: `constants.py` (result values, wire
+warning literals, ceilings), `results.py` (`TrustStore`, `Disclosure`,
+`VerificationResult`), `helpers.py`, `content.py` and `chains.py` (shared predicates, content
+warnings, chain continuity and the trust ladder), `evidence.py` (the §18.4 admission
+boundary for caller evidence rails), `transparency_claims.py` (Stage 2), `compromise.py`
+(§19's anchored cutoff), `transfer_backing.py` and `revocation_status.py` (step 6 and
+Stage 3), `binding.py` (step 7), `grants.py` (Stage 4) and `publisher_authority.py`
+(Stage 5). They are listed here in dependency order: each imports only from modules named
+before it, and only the package `__init__` imports `pipeline.py`.
 
 The result is a `VerificationResult` dataclass whose own docstring states the design
 principle: "each dimension of trust is reported independently so a caller can degrade
