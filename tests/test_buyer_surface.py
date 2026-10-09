@@ -56,10 +56,10 @@ EXPECTED_PAGE_CSP = (
 )
 EXPECTED_NAV = (
     ("start-here.html", "Start here"),
-    ("faq.html", "FAQ"),
     ("for-sellers.html", "For sellers"),
+    ("faq.html", "FAQ"),
     ("https://github.com/bernalli/attest/tree/main/docs/spec", "Specification"),
-    ("https://github.com/bernalli/attest", "Source"),
+    ("https://github.com/bernalli/attest", "GitHub"),
 )
 
 
@@ -962,20 +962,40 @@ def test_every_generated_page_wears_the_same_chrome(path: Path) -> None:
     assert '<nav aria-label="Elsewhere">' in page
 
 
-def test_every_paper_text_colour_clears_wcag_aa_on_every_declared_ground() -> None:
-    """The contrast argument is in a comment; this is what holds it up.
+def _skin_tokens(scheme: str) -> str:
+    """The declarations a scheme resolves its colours from.
 
-    Every ground these pages paint is flat — that is itself the decision, taken
-    because the home page's texture layers make the worst case a thing you have
-    to know the geometry to compute. Flat grounds can be composited exactly, so
-    the claim can be a test rather than a paragraph somebody has to re-derive
-    after changing a hex value.
+    Light reads the skin's first `:root` block. Dark reads the block under
+    `prefers-color-scheme: dark`, which must redeclare every colour the light
+    block declares: a token it forgot would silently keep its light value and
+    put dark ink on a dark ground.
     """
     css = gen_buyer_pages._PAPER_CSS
+    light = re.search(r":root\{([^}]+)\}", css)
+    assert light is not None
+    if scheme == "light":
+        return light.group(1)
+    dark = re.search(r"@media\(prefers-color-scheme:dark\)\{:root\{([^}]+)\}", css)
+    assert dark is not None, "the skin declares no dark scheme"
+    return dark.group(1)
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_every_paper_text_colour_clears_wcag_aa_on_every_declared_ground(scheme: str) -> None:
+    """The contrast argument is in a comment; this is what holds it up.
+
+    Every ground these pages paint is flat, and each tinted ground is one rgba
+    overlay on the page colour. Flat grounds can be composited exactly, so the
+    claim can be a test rather than a paragraph somebody has to re-derive after
+    changing a hex value — and it is made for both schemes the skin declares,
+    because the same overlay lands on a very different page colour in each.
+    """
+    css = gen_buyer_pages._PAPER_CSS
+    tokens = _skin_tokens(scheme)
 
     def variable(name: str) -> tuple[float, ...]:
-        match = re.search(rf"{re.escape(name)}:#([0-9a-fA-F]{{6}})", css)
-        assert match is not None, name
+        match = re.search(rf"{re.escape(name)}:#([0-9a-fA-F]{{6}})", tokens)
+        assert match is not None, f"{name} ({scheme})"
         value = match.group(1)
         return tuple(int(value[index : index + 2], 16) / 255 for index in (0, 2, 4))
 
@@ -1007,23 +1027,41 @@ def test_every_paper_text_colour_clears_wcag_aa_on_every_declared_ground() -> No
         return (lighter + 0.05) / (darker + 0.05)
 
     paper = variable("--paper")
-    grounds = [paper]
+    grounds = [paper, variable("--paper-card"), variable("--band")]
     for selector in ("code", ".warning", ".standing"):
         overlay, alpha = rgba(selector)
         grounds.append(composite(overlay, paper, alpha))
 
     text_colours = {
         name: variable(name)
-        for name in ("--ink", "--ink-2", "--ink-3", "--ink-label", "--bordeaux", "--bordeaux-deep")
+        for name in (
+            "--ink",
+            "--ink-2",
+            "--ink-3",
+            "--ink-label",
+            "--bordeaux",
+            "--bordeaux-deep",
+            "--warn-ink",
+        )
     }
     for name, foreground in text_colours.items():
         for ground in grounds:
-            assert contrast(foreground, ground) >= 4.5, name
+            assert contrast(foreground, ground) >= 4.5, f"{name} ({scheme})"
 
-    # The one place the palette is used inverted: paper on the ink button, and
-    # on the bordeaux it turns when hovered.
-    assert contrast(paper, variable("--ink")) >= 4.5
-    assert contrast(paper, variable("--bordeaux")) >= 4.5
+    # The places the palette is used inverted: the call-to-action button, in
+    # its resting and hovered colours, and the mark in the warning's heading.
+    on_accent = variable("--on-accent")
+    assert contrast(on_accent, variable("--bordeaux")) >= 4.5
+    assert contrast(on_accent, variable("--bordeaux-deep")) >= 4.5
+    assert contrast(paper, variable("--warn-ink")) >= 4.5
+
+
+def test_the_dark_scheme_redeclares_every_colour_the_light_one_declares() -> None:
+    """A colour the dark block forgets keeps its light value on a dark page."""
+    colour = re.compile(r"(--[a-z0-9-]+):#[0-9a-fA-F]{6}")
+    light = set(colour.findall(_skin_tokens("light")))
+    dark = set(colour.findall(_skin_tokens("dark")))
+    assert light - dark == set()
 
 
 def test_no_bundle_name_can_put_markup_in_the_styled_warning() -> None:
