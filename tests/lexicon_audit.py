@@ -228,7 +228,7 @@ AUDITED: Final[tuple[Occurrence, ...]] = (
         ),
     ),
     Occurrence(
-        path="src/attest/verify.py",
+        path="src/attest/verify/transfer_backing.py",
         sha256="f3f301fe717a3d5e38ebdda8abadee4eadd2d27d0a513f4af0b74a25314ca868",
         excerpt="controls the key the issuer recorded in the OLD receipt, w",
         verdict="NEGATED",

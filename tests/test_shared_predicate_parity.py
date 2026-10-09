@@ -176,7 +176,9 @@ def test_no_typescript_module_restates_the_receipt_id_pattern() -> None:
 def test_the_unrepresentable_window_error_is_byte_identical_across_cores() -> None:
     """Conformance vectors substring-match this literal, so a paraphrase on one
     side is a divergence even when both cores reach the same verdict."""
-    python_source = (REPO_ROOT / "src" / "attest" / "verify.py").read_text(encoding="utf-8")
+    python_source = (REPO_ROOT / "src" / "attest" / "verify" / "revocation_status.py").read_text(
+        encoding="utf-8"
+    )
     assert f'"{EXPECTED_UNREPRESENTABLE_ERROR}"' in python_source
     declared = _sole_ts_declaration(
         r"export const REFUND_WINDOW_UNREPRESENTABLE = '(.+)'", "messages.ts"

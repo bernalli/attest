@@ -43,7 +43,7 @@ OWNER RESOLUTION, AND WHY IT IS NOT JUST A NAME
 A call is only recognised if it has the shape `<owner-name>.<port-name>(...)`,
 which two review probes broke without touching a single port call: importing
 an owner under an alias (`from attest import manifests as manifests_mod`,
-the exact pattern `src/attest/verify.py` already uses for `grant`/`authority`
+the exact pattern `src/attest/verify/` already uses for `grant`/`authority`
 to dodge a local-name collision), and importing a port function directly
 (`from attest.manifests import verify_key_manifest`). Both make the call a
 different AST shape -- an Attribute whose value is not a bare OWNERS name, or
@@ -93,7 +93,7 @@ def _owner_aliases(tree: ast.Module) -> dict[str, str]:
     """Local names, in THIS file, that stand in for one of OWNERS.
 
     See the module docstring: this is not a hypothetical shape, it is the one
-    `src/attest/verify.py` already uses for `grant`/`authority`/`transparency`.
+    `src/attest/verify/` already uses for `grant`/`authority`/`transparency`.
     """
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
