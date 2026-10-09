@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { zipSync } from 'fflate'
-import { sha256Hex } from 'attest-verifier'
+import { sha256Hex, loadsStrict, canonicalBytes } from 'attest-verifier'
+import type { JsonObject } from 'attest-verifier'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const VECTORS = join(HERE, '..', '..', 'docs', 'spec', 'vectors')
@@ -93,8 +94,12 @@ test('salt disclosure proves the sample binding', async ({ page }) => {
   await page.goto('/')
   await page.click('#load-sample')
   await expect(page.locator('.verdict strong')).toHaveText(/Receipt verifies/)
-  // The binding form is open on the page: the document shows what it asks for
-  // rather than hiding it behind a disclosure triangle.
+  // The binding form is an expert control, folded under "Advanced checks" so a
+  // newcomer meets the dropzone first. It must still be one click away and work
+  // from there, with the inputs the sample loader filled in while it was shut.
+  await expect(page.locator('#binding-apply')).toBeHidden()
+  await page.click('details.advanced > summary')
+  await expect(page.locator('#binding-salt')).not.toHaveValue('')
   await page.click('#binding-apply') // inputs were prefilled by the sample loader
   await expect(page.locator('.component-value', { hasText: 'proven' })).toBeVisible()
 })
@@ -144,3 +149,75 @@ test('the page never talks to a non-same-origin host', async ({ page, baseURL })
     'requests to a host that is not the one serving this page',
   ).toEqual([])
 })
+
+test('the hero button loads the sample and brings its verdict into view', async ({ page }) => {
+  await page.goto('/')
+  await page.click('#try-sample')
+  const verdict = page.locator(VERDICT).first()
+  await expect(verdict).toHaveText(/Receipt verifies/)
+  await expect(page.locator('#bench')).toBeVisible()
+  // The reader is taken to the verifier rather than left at the top of the page
+  // wondering whether anything happened.
+  await expect(page.locator('#check')).toBeInViewport()
+})
+
+test('advanced checks stay shut until asked for, and the feeds still clear from there', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('#clear-feeds')).toBeHidden()
+  await page.click('details.advanced > summary')
+  await expect(page.locator('#clear-feeds')).toBeVisible()
+  await page.click('#load-sample')
+  await expect(page.locator(VERDICT).first()).toHaveText(/Receipt verifies/)
+  await page.setInputFiles('#file-input', {
+    name: 'revocation-view.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('[]'),
+  })
+  await expect(page.locator('#results .rails')).toContainText('Revocation feed: 0 records')
+  await page.click('#clear-feeds')
+  await expect(page.locator('#results .rails')).toContainText('no revocation feed loaded')
+})
+
+test('a receipt with no key manifest reveals the manifest prompt outside the folded controls', async ({
+  page,
+}) => {
+  const dir = join(VECTORS, '01-valid-minimal')
+  await page.goto('/')
+  await page.setInputFiles('#file-input', {
+    name: 'bare.attest.json',
+    mimeType: 'application/json',
+    buffer: readFileSync(join(dir, 'envelope.json')),
+  })
+  // Visible with "Advanced checks" still shut: the page asks for a manifest in
+  // a box the reader can actually see.
+  await expect(page.locator('details.advanced')).not.toHaveAttribute('open', '')
+  await expect(page.locator('#manifest-zone')).toBeVisible()
+  const all = loadsStrict(new Uint8Array(readFileSync(join(dir, 'manifests.json')))) as JsonObject
+  const manifests = all.manifests as JsonObject
+  await page.setInputFiles('#manifest-input', {
+    name: 'manifest.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(canonicalBytes(manifests[Object.keys(manifests)[0]] as JsonObject)),
+  })
+  await expect(page.locator(VERDICT).first()).toHaveText(/Receipt verifies/)
+  await expect(page.locator('#manifest-zone')).toBeHidden()
+})
+
+for (const width of [360, 390, 1280]) {
+  test(`no page scrolls sideways at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    for (const path of ['/', '/start-here.html', '/faq.html', '/for-sellers.html', '/what-is-this.html']) {
+      await page.goto(path)
+      const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
+      expect(scrollWidth, path).toBeLessThanOrEqual(width)
+    }
+    await page.goto('/')
+    await page.click('#load-sample')
+    await expect(page.locator(VERDICT).first()).toHaveText(/Receipt verifies/)
+    await page.click('details.advanced > summary')
+    const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
+    expect(scrollWidth, 'home page with a verdict and the advanced checks open').toBeLessThanOrEqual(width)
+  })
+}
