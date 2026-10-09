@@ -3,7 +3,7 @@
   "regenerate": "npm test --prefix <suite> -- --reporter=default --reporter=json --outputFile.json=/tmp/<suite>-tests.json && python3 tools/check_test_census.py <suite> --report /tmp/<suite>-tests.json --update",
   "suites": {
     "site": {
-      "total": 1028,
+      "total": 1033,
       "files": {
         "test/b64u.test.ts": 3,
         "test/bundle.test.ts": 218,
@@ -12,7 +12,7 @@
         "test/container-properties.test.ts": 6,
         "test/container.test.ts": 15,
         "test/deflate.test.ts": 9,
-        "test/demo-wiring.test.ts": 15,
+        "test/demo-wiring.test.ts": 20,
         "test/dev-server.test.ts": 6,
         "test/diagnostic-corpus.test.ts": 6,
         "test/diagnostic-rendering-adversarial.test.ts": 27,
@@ -46,7 +46,7 @@
         "test/container-properties.test.ts": "256f572567122c734de13305b820277588a97bd23bf668e92d11e3298b43cc1d",
         "test/container.test.ts": "5e7dc75bbb9bb69d8108dff237be5a9241e1db2a98c5ff40e698f29861aa09f3",
         "test/deflate.test.ts": "df1e7104f2582ab66ffb4667b47d607bcbd451a30ea68766e8722448fdaf2eb9",
-        "test/demo-wiring.test.ts": "44e8a68ab703f47288dc8ed79962dea9d7531677684548c3057dc92bc9c0742a",
+        "test/demo-wiring.test.ts": "76795bd90683961e3f91dc7ee20a0d4d70fc5e5cecbb062eb9fd479ac0929b66",
         "test/dev-server.test.ts": "244acaeed4d1f56fc86560f1ec72a74010c0673c8f984de05b8f17fd12e83bd0",
         "test/diagnostic-corpus.test.ts": "921dc8428b0e75a8d9a65221ad203bac093097f5063730416ac71856a8a6956f",
         "test/diagnostic-rendering-adversarial.test.ts": "eacde94e16d9390abb27372d5f82c7b3592b970802ae8206200ba8632f227494",

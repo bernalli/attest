@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { zipSync } from 'fflate'
-import { sha256Hex } from 'attest-verifier'
+import { sha256Hex, loadsStrict, canonicalBytes } from 'attest-verifier'
+import type { JsonObject } from 'attest-verifier'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const VECTORS = join(HERE, '..', '..', 'docs', 'spec', 'vectors')
@@ -148,3 +149,75 @@ test('the page never talks to a non-same-origin host', async ({ page, baseURL })
     'requests to a host that is not the one serving this page',
   ).toEqual([])
 })
+
+test('the hero button loads the sample and brings its verdict into view', async ({ page }) => {
+  await page.goto('/')
+  await page.click('#try-sample')
+  const verdict = page.locator(VERDICT).first()
+  await expect(verdict).toHaveText(/Receipt verifies/)
+  await expect(page.locator('#bench')).toBeVisible()
+  // The reader is taken to the verifier rather than left at the top of the page
+  // wondering whether anything happened.
+  await expect(page.locator('#check')).toBeInViewport()
+})
+
+test('advanced checks stay shut until asked for, and the feeds still clear from there', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('#clear-feeds')).toBeHidden()
+  await page.click('details.advanced > summary')
+  await expect(page.locator('#clear-feeds')).toBeVisible()
+  await page.click('#load-sample')
+  await expect(page.locator(VERDICT).first()).toHaveText(/Receipt verifies/)
+  await page.setInputFiles('#file-input', {
+    name: 'revocation-view.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('[]'),
+  })
+  await expect(page.locator('#results .rails')).toContainText('Revocation feed: 0 records')
+  await page.click('#clear-feeds')
+  await expect(page.locator('#results .rails')).toContainText('no revocation feed loaded')
+})
+
+test('a receipt with no key manifest reveals the manifest prompt outside the folded controls', async ({
+  page,
+}) => {
+  const dir = join(VECTORS, '01-valid-minimal')
+  await page.goto('/')
+  await page.setInputFiles('#file-input', {
+    name: 'bare.attest.json',
+    mimeType: 'application/json',
+    buffer: readFileSync(join(dir, 'envelope.json')),
+  })
+  // Visible with "Advanced checks" still shut: the page asks for a manifest in
+  // a box the reader can actually see.
+  await expect(page.locator('details.advanced')).not.toHaveAttribute('open', '')
+  await expect(page.locator('#manifest-zone')).toBeVisible()
+  const all = loadsStrict(new Uint8Array(readFileSync(join(dir, 'manifests.json')))) as JsonObject
+  const manifests = all.manifests as JsonObject
+  await page.setInputFiles('#manifest-input', {
+    name: 'manifest.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(canonicalBytes(manifests[Object.keys(manifests)[0]] as JsonObject)),
+  })
+  await expect(page.locator(VERDICT).first()).toHaveText(/Receipt verifies/)
+  await expect(page.locator('#manifest-zone')).toBeHidden()
+})
+
+for (const width of [360, 390, 1280]) {
+  test(`no page scrolls sideways at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    for (const path of ['/', '/start-here.html', '/faq.html', '/for-sellers.html', '/what-is-this.html']) {
+      await page.goto(path)
+      const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
+      expect(scrollWidth, path).toBeLessThanOrEqual(width)
+    }
+    await page.goto('/')
+    await page.click('#load-sample')
+    await expect(page.locator(VERDICT).first()).toHaveText(/Receipt verifies/)
+    await page.click('details.advanced > summary')
+    const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
+    expect(scrollWidth, 'home page with a verdict and the advanced checks open').toBeLessThanOrEqual(width)
+  })
+}
