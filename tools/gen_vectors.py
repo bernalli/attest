@@ -2229,16 +2229,139 @@ def gen_19_rotation_substituted_key() -> None:
     )
 
 
-# --- vector 20: sig-canonicity (three sub-cases) ------------------------------
+# --- Ed25519 group arithmetic (vector 20d-20f only) ---------------------------
+#
+# Leaves 20d-20f are signatures a key HOLDER crafts on purpose: they satisfy
+# the cofactored verification equation [8](R + [k]A - [S]B) == 0 but not the
+# cofactorless one v0.1 §10 pins ([S]B - [k]A encodes to R byte for byte), or
+# they carry a small-order R. No signing library emits them, so the generator
+# does the group arithmetic itself, from the issuer's fixed seed. Affine
+# coordinates and a modular inverse per addition: slow, obviously correct, and
+# exercised only a handful of times per run. `_ed_sign_parts` reproduces
+# `keys.sign` byte for byte (asserted in `gen_20_sig_canonicity`), which is
+# what licenses trusting the rest of it.
+
+_ED_P = 2**255 - 19
+_ED_D = -121665 * pow(121666, -1, _ED_P) % _ED_P
+_ED_SQRT_M1 = pow(2, (_ED_P - 1) // 4, _ED_P)
+_ED_IDENTITY = (0, 1)
+#: A point of order exactly 8 (from the well-known small-order list).
+ORDER_8_POINT = bytes.fromhex("c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a")
+
+
+def _ed_add(p: tuple[int, int], q: tuple[int, int]) -> tuple[int, int]:
+    (x1, y1), (x2, y2) = p, q
+    t = _ED_D * x1 * x2 * y1 * y2 % _ED_P
+    x3 = (x1 * y2 + x2 * y1) * pow(1 + t, -1, _ED_P) % _ED_P
+    y3 = (y1 * y2 + x1 * x2) * pow(1 - t, -1, _ED_P) % _ED_P
+    return (x3, y3)
+
+
+def _ed_mul(n: int, p: tuple[int, int]) -> tuple[int, int]:
+    result = _ED_IDENTITY
+    while n:
+        if n & 1:
+            result = _ed_add(result, p)
+        p = _ed_add(p, p)
+        n >>= 1
+    return result
+
+
+def _ed_neg(p: tuple[int, int]) -> tuple[int, int]:
+    return ((-p[0]) % _ED_P, p[1])
+
+
+def _ed_encode(p: tuple[int, int]) -> bytes:
+    x, y = p
+    return (y | ((x & 1) << 255)).to_bytes(32, "little")
+
+
+def _ed_decode(data: bytes) -> tuple[int, int]:
+    """RFC 8032 §5.1.3 decoding, canonical encodings only (y < p, no -0)."""
+    n = int.from_bytes(data, "little")
+    sign, y = n >> 255, n & ((1 << 255) - 1)
+    if y >= _ED_P:
+        raise ValueError("non-canonical y")
+    u, v = (y * y - 1) % _ED_P, (_ED_D * y * y + 1) % _ED_P
+    x = u * pow(v, 3, _ED_P) * pow(u * pow(v, 7, _ED_P), (_ED_P - 5) // 8, _ED_P) % _ED_P
+    if v * x * x % _ED_P == (-u) % _ED_P:
+        x = x * _ED_SQRT_M1 % _ED_P
+    if v * x * x % _ED_P != u:
+        raise ValueError("not a curve point")
+    if x == 0 and sign:
+        raise ValueError("negative zero")
+    if x & 1 != sign:
+        x = _ED_P - x
+    return (x, y)
+
+
+_ED_BASE = _ed_decode((4 * pow(5, -1, _ED_P) % _ED_P).to_bytes(32, "little"))
+
+
+def _ed_hash_scalar(*parts: bytes) -> int:
+    return int.from_bytes(hashlib.sha512(b"".join(parts)).digest(), "little") % keys.L
+
+
+def _ed_secret(kp: keys.SigningKeyPair) -> tuple[int, bytes]:
+    """RFC 8032 §5.1.5: the clamped secret scalar `a` and the nonce prefix."""
+    h = hashlib.sha512(kp.seed).digest()
+    a = int.from_bytes(h[:32], "little")
+    a &= (1 << 254) - 8
+    a |= 1 << 254
+    return a, h[32:]
+
+
+def _ed_sign_parts(msg: bytes, kp: keys.SigningKeyPair) -> tuple[int, bytes]:
+    """The honest RFC 8032 signature's nonce `r` and its 64 bytes."""
+    a, prefix = _ed_secret(kp)
+    r = _ed_hash_scalar(prefix, msg)
+    r_bytes = _ed_encode(_ed_mul(r, _ED_BASE))
+    s = (r + _ed_hash_scalar(r_bytes, kp.pub, msg) * a) % keys.L
+    return r, r_bytes + s.to_bytes(32, "little")
+
+
+def _ed_sign_with_r(msg: bytes, kp: keys.SigningKeyPair, r_bytes: bytes, r: int) -> bytes:
+    """A signature whose R is `r_bytes` and whose S is `r + k*a`, k = H(R||A||M).
+
+    `r` is the discrete log of R's prime-order component (0 when R is
+    small-order). The result satisfies [S]B - [k]A == [r]B, so it passes the
+    cofactored equation whenever R - [r]B is a torsion point, and passes the
+    cofactorless byte comparison only when R == [r]B exactly."""
+    a, _ = _ed_secret(kp)
+    s = (r + _ed_hash_scalar(r_bytes, kp.pub, msg) * a) % keys.L
+    return r_bytes + s.to_bytes(32, "little")
+
+
+def _ed_equations(msg: bytes, sig: bytes, pub: bytes) -> tuple[bool, bool]:
+    """(cofactored, cofactorless) verdicts of the bare equations, no other checks."""
+    r_point, a_point = _ed_decode(sig[:32]), _ed_decode(pub)
+    s = int.from_bytes(sig[32:], "little")
+    k = _ed_hash_scalar(sig[:32], pub, msg)
+    r_check = _ed_add(_ed_mul(s, _ED_BASE), _ed_neg(_ed_mul(k, a_point)))
+    residue = _ed_add(r_point, _ed_neg(r_check))
+    return _ed_mul(8, residue) == _ED_IDENTITY, _ed_encode(r_check) == sig[:32]
+
+
+# --- vector 20: sig-canonicity (six sub-cases) --------------------------------
 
 
 def gen_20_sig_canonicity() -> None:
-    """Ed25519 pinned-ruleset edges (design §4): S must satisfy S < L
+    """Ed25519 pinned-ruleset edges (v0.1 §10): S must satisfy S < L
     (vector 08 already pins S+L; sub-case a pins the exact boundary S == L),
     and small-order A (signer pubkey) / small-order R (signature prefix) must
-    be rejected — libsodium rejects both natively, @noble does with
-    zip215:false (verifiers/ts/src/ed25519.ts). The identity element is used
-    as the canonical small-order point."""
+    be rejected — libsodium rejects both natively, and
+    verifiers/ts/src/ed25519.ts checks both explicitly. The identity element
+    is used as the canonical small-order point in b and c.
+
+    Sub-cases d-f are crafted by the key HOLDER (the generator does the group
+    arithmetic from the issuer's own seed, above), so S is a genuine function
+    of the issuer's secret and the cofactored equation [8](R + [k]A - [S]B) == 0
+    holds for all three. Only the cofactorless rule rejects them: (d) R of
+    order 8, (e) R = honest R + an order-8 point (mixed order, not itself
+    small-order), (f) R = identity, for which even the cofactorless EQUATION
+    holds byte for byte and only the small-order-R refusal is left. A verifier
+    that evaluates the cofactored equation (as `attest-verifier` before 0.9.8
+    did) accepts every one of them while libsodium rejects them."""
     payload = issue.build_payload(**_base_payload_kwargs())
     _assert_schema_valid(payload)
     envelope = issue.issue(payload, ISSUER_KP, ISSUER_KID)
@@ -2301,6 +2424,41 @@ def gen_20_sig_canonicity() -> None:
         trust=trust,
         expected=rejected,
     )
+
+    # (d)-(f): holder-crafted signatures that only the cofactored equation
+    # accepts. The arithmetic is checked against the real signer first.
+    msg = canon.canonical_bytes(payload)
+    honest_r, honest_sig = _ed_sign_parts(msg, ISSUER_KP)
+    assert honest_sig == original_sig, "generator Ed25519 arithmetic diverges from libsodium"
+    torsion = _ed_decode(ORDER_8_POINT)
+    assert _ed_mul(8, torsion) == _ED_IDENTITY and _ed_mul(4, torsion) != _ED_IDENTITY
+    mixed_r = _ed_encode(_ed_add(_ed_mul(honest_r, _ED_BASE), torsion))
+    crafted = {
+        # (d) R of order 8, S = k*a: [S]B - [k]A is the identity, not R.
+        "d-small-order-r-cofactored-only": _ed_sign_with_r(msg, ISSUER_KP, ORDER_8_POINT, 0),
+        # (e) R = [r]B + T8 (mixed order, NOT small-order), S = r + k*a.
+        "e-mixed-order-r-cofactored-only": _ed_sign_with_r(msg, ISSUER_KP, mixed_r, honest_r),
+        # (f) R = identity, S = k*a: [S]B - [k]A encodes to R exactly.
+        "f-identity-r-equation-holds": _ed_sign_with_r(msg, ISSUER_KP, SMALL_ORDER_POINT, 0),
+    }
+    expected_equations = {
+        "d-small-order-r-cofactored-only": (True, False),
+        "e-mixed-order-r-cofactored-only": (True, False),
+        "f-identity-r-equation-holds": (True, True),
+    }
+    for leaf, sig in crafted.items():
+        assert _ed_equations(msg, sig, ISSUER_KP.pub) == expected_equations[leaf], leaf
+        assert not keys.verify_strict(msg, sig, ISSUER_KP.pub), leaf
+        crafted_envelope = copy.deepcopy(envelope)
+        crafted_envelope["signatures"][0]["sig"] = keys.b64u(sig)
+        write_vector(
+            f"20-sig-canonicity/{leaf}",
+            payload=None,
+            envelope=crafted_envelope,
+            envelope_raw=None,
+            trust=trust,
+            expected=rejected,
+        )
 
 
 def _nested_list(levels: int) -> Any:
@@ -2987,6 +3145,35 @@ def gen_26_hybrid() -> None:
         envelope_raw=None,
         trust=trust_h,
         expected=expected_h,
+    )
+
+    # (i) the v0.1 side of the AND rule (v0.2 §13): an `attest_version: "0.1"`
+    # receipt carrying one genuine Ed25519 signature under a kid whose entry
+    # is hybrid. The forger who breaks Ed25519 alone picks "0.1" themselves,
+    # so the signed version field protects nothing: the key entry must refuse.
+    # The reference issuer never signs this shape with a hybrid key; the
+    # Ed25519 leg is therefore produced with `keys.sign` directly.
+    payload_i = issue.build_payload(**_base_payload_kwargs())
+    assert payload_i["attest_version"] == "0.1"
+    _assert_schema_valid(payload_i)
+    canonical_i = canon.canonical_bytes(payload_i)
+    sig_i = keys.sign(canonical_i, ISSUER_KP)
+    assert keys.verify_strict(canonical_i, sig_i, ISSUER_KP.pub)
+    envelope_i = {
+        "payload": payload_i,
+        "signatures": [{"kid": ISSUER_KID, "alg": "Ed25519", "sig": keys.b64u(sig_i)}],
+    }
+    expected_i = dict(invalid_hybrid_base)
+    expected_i["errors"] = [
+        f"key entry for kid {ISSUER_KID!r} is hybrid; a v0.1 receipt cannot verify under it"
+    ]
+    write_vector(
+        "26-hybrid/i-v01-receipt-under-hybrid-key",
+        payload=payload_i,
+        envelope=envelope_i,
+        envelope_raw=None,
+        trust=hybrid_trust,
+        expected=expected_i,
     )
 
 
