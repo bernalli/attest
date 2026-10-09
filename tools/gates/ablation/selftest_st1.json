@@ -5,7 +5,7 @@
    "id": "ST1-anchor-absent",
    "expect_verdict": "NOT_APPLIED",
    "property": "BENCH: a replacement whose anchor is not in the file must be a hard error, never SURVIVED",
-   "file": "src/attest/verify.py",
+   "file": "src/attest/verify/revocation_status.py",
    "old": "if not isinstance(status, str) or status not in _ANCHOR_STATUSES_THAT_DO_NOT_EXIST:",
    "new": "if not isinstance(status, str):",
    "suite": ["tests/test_vl5_anchor_status_adversarial.py"],
