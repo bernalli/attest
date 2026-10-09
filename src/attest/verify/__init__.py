@@ -47,6 +47,12 @@ from attest import (
 from attest import grant as grant_module
 from attest import transparency as transparency_module
 from attest.dates import parse_strict_utc
+from attest.verify.chains import (
+    _artifact_chain_continuous,
+    _chain_continuous,
+    _grant_trust_ladder,
+    _rotation_chain_verified,
+)
 from attest.verify.constants import (
     _ALG,
     _ANCHOR_STATUSES,
@@ -137,6 +143,15 @@ from attest.verify.constants import (
     _WARN_TRANSPARENCY_CLAIM_UNRESOLVABLE,
     _WARN_TRANSPARENCY_CONFIG_MISSING,
 )
+from attest.verify.content import _content_warnings
+from attest.verify.helpers import (
+    _append_warning_once,
+    _member_equals,
+    _own_member,
+    _parse_date,
+    _parse_iso,
+    _within_validity,
+)
 from attest.verify.results import Disclosure, TrustStore, VerificationResult
 
 
@@ -146,113 +161,6 @@ class _CompromiseClaim:
     evidence: object
     signer_kid: str
     vouching_signers: tuple[dict[str, Any], ...]
-
-
-# The strict wire shape is owned by `attest.dates`, for the whole package.
-# TEMPORARY name: the call sites below still say `_parse_date`.
-_parse_date = parse_strict_utc
-
-
-def _within_validity(issued_at: str, entry: dict[str, Any]) -> bool:
-    """Fail closed on any malformed or missing date. `parse_strict_utc` refuses
-    both what `strptime` cannot parse and what it would parse WRONGLY (non-ASCII
-    digits, unpadded fields, lowercase `t`/`z`): a bound that is not the
-    canonical spelling of an instant never resurrects a receipt into validity,
-    and never lets one core accept a window the other rejects."""
-    try:
-        issued = _parse_date(issued_at)
-        valid_from = _parse_date(entry["valid_from"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    if issued < valid_from:
-        return False
-    valid_to = entry.get("valid_to")
-    if valid_to is None:
-        return True
-    try:
-        return issued <= _parse_date(valid_to)
-    except (TypeError, ValueError):
-        return False
-
-
-def _content_warnings(payload: dict[str, Any]) -> list[str]:
-    """Non-fatal, payload-content warnings — independent of the crypto pipeline.
-
-    Unknown top-level fields are compared against the schema's top-level
-    `properties` keys only, as specified by v0.1 section 11.2.
-    """
-    found: list[str] = []
-
-    known_top_level = set(validate.SCHEMA.get("properties", {}))
-    for key in payload:
-        if key not in known_top_level:
-            found.append(f"unknown payload field: {key!r}")
-
-    license_block = payload.get("license")
-    if isinstance(license_block, dict) and license_block.get("drm") == "drm-bound":
-        found.append("license.drm is drm-bound (design vector 18)")
-
-    survivability = payload.get("survivability")
-    if isinstance(survivability, dict):
-        eol = survivability.get("end_of_life")
-        # `x not in <frozenset>` RAISES on an unhashable x, and the payload is
-        # untrusted wire data: a signed receipt carrying
-        # `survivability.end_of_life: {}` crashed verify() with a TypeError.
-        # Only a string can ever be a registered value, so the type check is
-        # also the guard — and it restores parity with verify.ts, which has
-        # always written this as `typeof eol !== 'string' || !KNOWN_EOL.has(eol)`.
-        if not isinstance(eol, str) or eol not in _KNOWN_EOL_VALUES:
-            found.append(f"unknown survivability.end_of_life value: {eol!r}")
-
-    return found
-
-
-def _chain_continuous(chain: list[dict[str, Any]]) -> bool:
-    """True iff every consecutive pair in `chain` passes `manifests.check_continuity`.
-
-    A chain of fewer than 2 entries has nothing to validate (no recorded
-    history, or a single trusted root with no successor yet) and is treated
-    as continuous — this is what keeps a `TrustStore` with no `chains` entry
-    for an issuer behaving exactly like Task 8.
-    """
-    if len(chain) < 2:
-        return True
-    return all(manifests._check_continuity(chain[i], chain[i + 1]) for i in range(len(chain) - 1))
-
-
-def _artifact_chain_continuous(chain: list[dict[str, Any]]) -> bool:
-    """True iff every consecutive pair in `chain` passes
-    `manifests.check_artifact_continuity` — the artifact-manifest analog of
-    `_chain_continuous` (G2/G3, attest-versioning.md rev 4)."""
-    if len(chain) < 2:
-        return True
-    return all(
-        manifests.check_artifact_continuity(chain[i], chain[i + 1]) for i in range(len(chain) - 1)
-    )
-
-
-def _rotation_chain_verified(
-    chain: list[dict[str, Any]] | None, manifest: dict[str, Any] | None
-) -> bool:
-    """True iff `chain` is a validated, gapless rotation history from
-    manifest_version 1 through `manifest` itself, held in the verifier's OWN
-    trust store (design fix 6).
-
-    Deliberately STRICTER than `_chain_continuous`'s use for `trust`: an
-    ABSENT chain is fine for `trust` (Task-8 behavior — nothing to validate)
-    but is NOT fine here. Corroborating a rotated key-manifest requires the
-    verifier to already hold every intermediate version itself; the log
-    merely saying "this manifest existed" is not proof of a legitimate
-    rotation history, only of publication. `trust` semantics are untouched
-    by this function — it feeds `corroboration` only.
-    """
-    if not chain or manifest is None:
-        return False
-    if chain[-1] != manifest:
-        return False
-    if chain[0].get("manifest_version") != 1:
-        return False
-    return _chain_continuous(chain)
 
 
 def _validated_transparency_entry(candidate: dict[str, Any]) -> dict[str, Any] | None:
@@ -495,11 +403,6 @@ def _evaluate_transparency_claim(
             _MANIFEST_FRESHNESS_NOT_CHECKED,
             None,
         )
-
-
-def _append_warning_once(warnings: list[str], warning: str) -> None:
-    if warning not in warnings:
-        warnings.append(warning)
 
 
 # §18.4's admission boundary has exactly ONE spelling, in `canon` — the leaf
@@ -995,18 +898,6 @@ def _resolve_key_status(
     if authenticated_claims:
         return _STATUS_COMPROMISED
     return trusted_entry.get("status")
-
-
-def _parse_iso(value: object) -> datetime | None:
-    """Fail-closed ISO-8601 parse for revocation timestamps — `None` on any
-    non-str or unparseable input, never raises. `datetime.fromisoformat`
-    handles the `Z` suffix directly on Python 3.12."""
-    if not isinstance(value, str):
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
 
 
 def _max_revoked_at(view: list[dict[str, Any]]) -> str | None:
@@ -1794,19 +1685,6 @@ def _pledge_or_none(payload: object) -> dict[str, Any] | None:
     return pledge
 
 
-def _grant_trust_ladder(store: trust_material._StoreData, domain: str, manifest: object) -> str:
-    """§18.5's ladder for the PUBLISHER's manifest — v0.1 §11.1's discipline
-    for `trust`, applied verbatim to a different domain and reported ONLY in
-    `grant_trust`. The receipt's own `trust` component is untouched: it remains
-    a statement about the issuer, and a publisher the verifier happens to know
-    less well must never downgrade it."""
-    level = _TRUST_VERIFIED if store.provenance.get(domain) == _PROVENANCE_TLS else _TRUST_TOFU
-    chain = store.chains.get(domain)
-    if chain and (not _chain_continuous(chain) or chain[-1] != manifest):
-        return _TRUST_UNVERIFIED_ROTATION
-    return level
-
-
 def _fixed_date_reached(
     evidence: object,
     effective: dict[str, Any],
@@ -2207,27 +2085,6 @@ class AuthorityVerdict:
     publisher_authority: str
     publisher_authority_trust: str
     warnings: tuple[str, ...] = ()
-
-
-def _own_member(document: object, member: str) -> object:
-    return dict.get(document, member) if isinstance(document, dict) else None
-
-
-def _member_equals(document: object, member: str, expected: object) -> bool:
-    """`_own_member` plus the comparison, fail-closed.
-
-    An own-item read defeats an overridden `get`, but it hands back whatever
-    the member holds — and a `str` subclass that refuses to be compared
-    canonicalizes, signs and authenticates exactly like the string it shadows,
-    so it survives to the binding checks that run AFTER authentication. This
-    is the `__eq__` trigger `authority.entry_for_issuer` names as the reason
-    an own-item read still needs an enclosing guard. A value that will not
-    compare is not equal to anything: every binding this decides fails closed.
-    """
-    try:
-        return isinstance(document, dict) and bool(dict.get(document, member) == expected)
-    except Exception:
-        return False
 
 
 def _authorization_hash_or_none(candidate: object, warnings: list[str]) -> str | None:
