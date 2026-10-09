@@ -7,6 +7,111 @@ verify it offline — even after the store is gone.
 > [`actions/attest`](https://github.com/actions/attest), an unrelated project. This attest is about
 > what you buy, not what you build.
 
+## Quickstart
+
+attest is an open format for signed purchase receipts: the seller signs a small
+JSON receipt with a key it publishes, the buyer keeps the file, and anyone can
+check it offline against that key. This repository holds the specification, the
+Python reference implementation (issue and verify) and an independent TypeScript
+verifier (verify only).
+
+```sh
+pip install attest-receipts   # Python 3.12+, provides the `attest` command
+npm install attest-verifier   # Node 20.19+, verification only
+```
+
+Play the seller: create a signing key and the key manifest a store would publish
+at `https://<its domain>/.well-known/attest.json`.
+
+```sh
+attest keygen --seed-out issuer.seed --pub-out issuer.pub
+mkdir trust
+attest manifest init --issuer store.example.com \
+  --kid 'store.example.com/keys/2026-10#ed25519-1' --seed issuer.seed \
+  --valid-from 2026-10-01T00:00:00Z --issued-at 2026-10-01T00:00:00Z \
+  --out trust/store.example.com.json
+```
+
+Describe the purchase. Save this as `make_payload.py`:
+
+```python
+import hashlib
+import json
+import os
+from pathlib import Path
+
+from attest.issue import build_payload
+from attest.keys import b64u
+
+salt = os.urandom(16)  # buyer-binding secret, delivered inside the receipt
+payload = build_payload(
+    issuer_id="store.example.com",
+    display_name="Example Store",
+    buyer_identifier="buyer@example.com",
+    buyer_identifier_type="email",
+    buyer_salt=salt,
+    title="Example Game",
+    publisher="Example Publisher",
+    identifiers={"issuer_sku": "EXG-001"},
+    artifact_series="store.example.com/works/EXG-001",
+    terms_uri="https://store.example.com/terms/standard-v1",
+    legal_text_sha256=hashlib.sha256(b"Example licence text").hexdigest(),
+)
+Path("payload.json").write_text(json.dumps(payload, indent=2))
+Path("buyer.salt").write_text(b64u(salt))
+```
+
+Then sign the receipt and verify it, offline:
+
+```sh
+python make_payload.py
+attest issue --payload payload.json --seed issuer.seed \
+  --kid 'store.example.com/keys/2026-10#ed25519-1' --salt buyer.salt \
+  --out receipt.json
+attest verify --trust-dir trust receipt.json
+```
+
+`attest verify` prints the full result and exits 0; among its fields are
+`"ok": true`, `"signature": "valid"` and `"trust": "unauthenticated_tofu"`.
+That last value is honest rather than an error: the manifest came from a local
+directory, not from the store's own domain over TLS, and `ok` never includes
+`trust`, so read it alongside `ok`. Edit the title inside `receipt.json` and the
+same command reports `"signature": "invalid"` and exits 1.
+
+The same receipt in TypeScript, with the npm package. Save as `verify.mjs` next
+to the files above and run `node verify.mjs`:
+
+```js
+import { readFileSync } from 'node:fs'
+import { verify, isOk, parseTrustStore } from 'attest-verifier'
+
+// Trust material enters as bytes. "bundle" = a manifest you were handed;
+// only a manifest fetched from the issuer's own domain over TLS is "tls".
+const manifest = readFileSync('trust/store.example.com.json', 'utf8')
+const store = parseTrustStore(new TextEncoder().encode(
+  `{"manifests":{"store.example.com":${manifest}},` +
+  `"provenance":{"store.example.com":"bundle"}}`,
+))
+
+const result = verify(readFileSync('receipt.json'), store)
+console.log(isOk(result) ? 'valid' : 'rejected', result.trust, result.errors)
+```
+
+It prints `valid unauthenticated_tofu []`.
+
+Where to go next: the normative specification is
+[`docs/spec/attest-v0.1.md`](docs/spec/attest-v0.1.md) with its additive delta
+[`docs/spec/attest-v0.2.md`](docs/spec/attest-v0.2.md);
+[`docs/conformance.md`](docs/conformance.md) explains how an implementation is
+measured against the [conformance vectors](docs/spec/vectors/);
+[`verifiers/ts/README.md`](verifiers/ts/README.md) documents the TypeScript API;
+and [`bridge/`](bridge/README.md) turns a real paid order into a signed receipt.
+The rest of this page covers [why attest exists](#why-attest-exists),
+[what it is](#what-attest-is), [its status](#status) and
+[installing from a checkout, the demos and the tests](#install-demos-and-tests).
+
+## Why attest exists
+
 You don't own your movies. Not your games, your music or your ebooks either. You
 clicked "buy", you paid real money, and what you got is a permission slip that
 lives on someone else's server and can be revoked at any moment. The store folds,
@@ -123,8 +228,8 @@ does not do in [`demo/README.md`](demo/README.md).
 `attest-receipts` on PyPI (issue and verify) and `attest-verifier` on npm (verify
 only) are independent Python and TypeScript implementations. Their published
 self-certification claims are recorded in [`docs/conformance.md`](docs/conformance.md);
-the corpus now contains 227 leaves, and a release may claim the §20-expanded corpus
-only once both implementations reproduce all 227. **Try it in your browser:**
+the corpus now contains 231 leaves, and a release may claim the §20-expanded corpus
+only once both implementations reproduce all 231. **Try it in your browser:**
 <https://attest-receipts.org/> — drop a `.attest` bundle (or the built-in
 sample) and watch it verify entirely client-side. Be clear about the status: no
 store issues attest receipts in production yet, and there are no external reviews.
@@ -214,13 +319,13 @@ amount of protocol fixes that.
 
 Spec v0.1 is complete and v0.2 is specified, with two independent
 implementations — a Python reference implementation and a TypeScript verifier —
-measured by the shared conformance corpus, now 227 leaves across 47 groups: 67
+measured by the shared conformance corpus, now 231 leaves across 47 groups: 70
 of them the v0.1 corpus, the rest exercising v0.2's hybrid signature profile,
 transparency/anchoring behaviour, the upgrade-policy hardening (mixed-keyset
 prohibition, artifact-manifest currency, anchor profile v2, logged revocation
 deadlines), Stage 3 issuer-mediated transfer, Stage 4 preservation pledge, the
 time-boxed compromise rescue, and publisher authorization. (A v0.1-only verifier is
-required to reject v0.2 envelopes, so it is measured against the 67-leaf
+required to reject v0.2 envelopes, so it is measured against the 70-leaf
 subset.) There are also three end-to-end demos: one deletes a store's entire
 infrastructure mid-lifecycle and proves the receipt still verifies, one
 carries that a step further — a rights holder's preservation pledge fires and
@@ -286,7 +391,7 @@ Eight pieces of work go beyond what a test suite can show. All of them are on
   report and a self-certification claim; the recorded pass counts live in that
   document and must be updated only from a fresh runner report.
 
-## Quickstart
+## Install, demos and tests
 
 Install the reference implementation from PyPI (the distribution is named
 `attest-receipts`; the import package and the CLI are both `attest`):
@@ -417,7 +522,7 @@ mark, which has not happened. Conformance claims follow the self-certification
 process in [docs/conformance.md](docs/conformance.md).
 
 **Contributing.** See [`CONTRIBUTING.md`](CONTRIBUTING.md). Implementation pull
-requests must pass all 227 conformance vector leaves and keep both the Python and
+requests must pass all 231 conformance vector leaves and keep both the Python and
 TypeScript suites green.
 
 **Contact.** Use GitHub Issues for technical bugs, GitHub Discussions for
