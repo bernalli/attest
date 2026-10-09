@@ -101,7 +101,7 @@
       }
     },
     "verifiers/ts": {
-      "total": 2278,
+      "total": 2280,
       "files": {
         "test/anchor-seeded.test.ts": 73,
         "test/anchor.test.ts": 96,
@@ -115,7 +115,7 @@
         "test/c57-findkey-type-guard.test.ts": 7,
         "test/canon-admission-ceiling.test.ts": 2,
         "test/canon-depth-profile-adversarial.test.ts": 23,
-        "test/canon-parse.test.ts": 11,
+        "test/canon-parse.test.ts": 13,
         "test/canon-serialize.test.ts": 16,
         "test/class-instance-divergence.test.ts": 11,
         "test/commitment.test.ts": 9,
@@ -173,7 +173,7 @@
         "test/c57-findkey-type-guard.test.ts": "ee1ed7730f04fa36a7bda14f1cd858ffc10fc91717970a4161d0abca2e1ce993",
         "test/canon-admission-ceiling.test.ts": "64fab0cf340366ef4b588284f7df27d433187b6646a125702d9c75dfd17b4e95",
         "test/canon-depth-profile-adversarial.test.ts": "8b3b331c5272b767ac9dd27890555d9d2263397924074e022f9b2168273da695",
-        "test/canon-parse.test.ts": "9488248a23406ad6febe4a8ecf3c14d8129ca1b6e32abe3de3523b178494df0b",
+        "test/canon-parse.test.ts": "aca9bcc7cc07b8b9c444f4bcb9d929f1a3592a2982fcba6de2aa47a481ed56e8",
         "test/canon-serialize.test.ts": "83aca5ccfbf5ea242d9a26cc8c0779f98951676b7b53b56adb14f13bf94bdd5d",
         "test/class-instance-divergence.test.ts": "9e571dab16f1470d69b06bbe8b090e3a060b2afe8741922550ae6fb58369b81e",
         "test/commitment.test.ts": "2d9d705adc2ccee5bc7cb744cf2cecababa2911614f72847d5f386c14d7d95c4",

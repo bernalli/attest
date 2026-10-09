@@ -107,6 +107,29 @@ def test_loads_strict_rejects_duplicates() -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (b'{"a":1,"a":1.5}', "floats are not allowed in the attest-JCS profile"),
+        (b'{"x":{"a":1,"a":1.5}}', "floats are not allowed in the attest-JCS profile"),
+        (b'{"a":1,"a":[1.5]}', "floats are not allowed in the attest-JCS profile"),
+        (b'{"a":1,"a":2,"b":1.5}', "floats are not allowed in the attest-JCS profile"),
+        (b'{"a":1,"a":{"b":1,"b":2}}', "duplicate object key: 'b'"),
+        (b'{"a":1,"a":2,"b":1,"b":2}', "duplicate object key: 'a'"),
+    ],
+)
+def test_loads_strict_judges_member_names_when_the_object_closes(text: bytes, message: str) -> None:
+    """A defect read before an object's closing brace is named ahead of its duplicate.
+
+    `json.loads` hands an object's pairs to the duplicate check only at `}`.
+    The TypeScript parser defers its own check to the same point, so both cores
+    name the same defect; `canon-parse.test.ts` pins the twin.
+    """
+    with pytest.raises(canon.CanonError) as refused:
+        canon.loads_strict(text)
+    assert str(refused.value) == message
+
+
+@pytest.mark.parametrize(
     "payload",
     [
         pytest.param({_CollidingString("dup"): "a", "dup": "b"}, id="top-level"),
