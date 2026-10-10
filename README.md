@@ -135,7 +135,10 @@ CLI's local `--trust-dir`, including the quickstart receipt.
 A known signing-key compromise normally invalidates receipts signed with that
 key; a later manifest cannot undo a compromise already observed by the verifier.
 Both verifiers implement v0.2 §19's rescue for receipts with qualifying
-logged and anchored evidence predating the compromise. Unlogged receipts have
+anchored evidence: either no qualifying anchored compromise cutoff is established,
+or the receipt's anchored time is strictly earlier than the earliest such cutoff.
+The cutoff dates a compromise declaration, not the key theft; forgeries anchored
+between the theft and that cutoff can also be rescued (§19.6). Unlogged receipts have
 no such protection. Evaluation requires trusted log keys and an anchor policy,
 plus the receipt's evidence; the project's log configuration is in
 [docs/trust/](docs/trust/README.md).
@@ -300,11 +303,11 @@ or by email at `bernalli@proton.me`.
 
 ## Develop and run the demos
 
-From a checkout, install the Python implementation and development dependencies:
+From a checkout, install all Python workspace packages and development dependencies:
 
 ```sh
 uv venv --python 3.12 .venv
-uv pip install --python .venv -e '.[dev]'
+uv sync --locked --extra dev --all-packages
 .venv/bin/attest --help
 ```
 
