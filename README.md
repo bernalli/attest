@@ -1,8 +1,10 @@
 <img src="https://raw.githubusercontent.com/bernalli/attest/main/logo/banner.png" alt="attest">
 
-attest is an open format for signed purchase receipts. The seller signs a small
-JSON file, the buyer keeps it, and anyone can check its signature offline
-against the seller's published key material. This repository contains the
+**Own what you buy.** The seller signs a receipt, you hold the file, anyone can verify it offline — even after the store is gone.
+
+attest is an open format for signed purchase receipts. Each receipt is a small
+JSON file whose signature is checked against the seller's published key material.
+This repository contains the
 specification, the Python reference implementation (`attest-receipts` on PyPI,
 issue and verify), and an independent TypeScript verifier (`attest-verifier`
 on npm, verification only).
@@ -18,6 +20,11 @@ available. attest puts the signed record in the buyer's hands: keep the receipt
 and the issuer's key material, and checking what the seller signed does not
 require the seller to stay online. There is no central attest authority,
 account, registry or phone-home needed for verification.
+
+The [whitepaper](docs/whitepaper.md) documents concrete cases of stores removing
+purchased content or ending access to it. It also examines the EU legal context,
+including durable-medium requirements for contract confirmation and why an attest
+receipt alone is not that confirmation.
 
 A receipt is evidence of a license grant, not a backup of the content or proof
 of the payment transaction. It cannot recover a file you never downloaded,
