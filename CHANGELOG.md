@@ -6,6 +6,19 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Conformance leaves for the two 0.9.8 verifier fixes, which shipped without any.
+  `20-sig-canonicity/d`–`f` are Ed25519 signatures crafted by the holder of the issuer's
+  key that pass the cofactored equation and fail the cofactorless rule (an `R` of order
+  8, a mixed-order `R`, the identity as `R`); `attest-verifier` before 0.9.8 accepted all
+  three. `26-hybrid/i` is a v0.1 receipt, genuinely Ed25519-signed, under a hybrid key
+  entry; both verifiers before 0.9.8 accepted it. The corpus grows from 227 to 231
+  leaves and the v0.1 subset from 67 to 70.
+- `attest-v0.1.md` rev 21 states §10's Ed25519 rule as an explicit cofactorless algorithm
+  instead of deferring to the pinned library, and `attest-v0.2.md` rev 17 adds §13.2: a
+  hybrid key entry never verifies a v0.1 receipt.
+
 ## [0.9.8] — 2026-10-01
 
 ### Security

@@ -6,6 +6,35 @@ describe('loadsStrict', () => {
   it('rejects duplicate object members', () => {
     expect(() => loadsStrict(enc('{"a":1,"a":2}'))).toThrow(/duplicate object key/)
   })
+  // The Python reference judges an object's member names when the object
+  // CLOSES (`json.loads` hands the pairs to its hook at `}`), so any defect
+  // met before that brace -- a float in the repeated member, a later member's
+  // float, a duplicate inside a nested object, broken syntax -- is the one it
+  // names. This parser reports the same one, or the two cores refuse the same
+  // bytes for different stated reasons.
+  it('names a defect read before the closing brace ahead of a duplicate member', () => {
+    for (const text of [
+      '{"a":1,"a":1.5}',
+      '{"x":{"a":1,"a":1.5}}',
+      '{"a":1,"a":[1.5]}',
+      '{"a":1,"a":2,"b":1.5}',
+    ]) {
+      expect(() => loadsStrict(enc(text)), text).toThrow(
+        /^floats are not allowed in the attest-JCS profile$/,
+      )
+    }
+    expect(() => loadsStrict(enc('{"a":1,"a":{"b":1,"b":2}}'))).toThrow(
+      /^duplicate object key: 'b'$/,
+    )
+    expect(() => loadsStrict(enc('{"a":1,"a":2 x}'))).toThrow(/^invalid JSON: /)
+    expect(() => loadsStrict(enc('{"a":1,"a":2'))).toThrow(/^invalid JSON: /)
+  })
+  it('names the first duplicated member of a well-formed object', () => {
+    expect(() => loadsStrict(enc('{"a":1,"a":2,"b":1,"b":2}'))).toThrow(
+      /^duplicate object key: 'a'$/,
+    )
+    expect(() => loadsStrict(enc('{"x":{"a":1,"a":2}}'))).toThrow(/^duplicate object key: 'a'$/)
+  })
   it('preserves integers beyond 2^53 as bigint (no rejection at parse)', () => {
     const v = loadsStrict(enc('{"n":9007199254740992}')) as Record<string, bigint>
     expect(v['n']).toBe(9007199254740992n)

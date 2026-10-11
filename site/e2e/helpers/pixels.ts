@@ -5,12 +5,12 @@ import { inflateSync } from 'node:zlib'
 // dependency on this repo opens the SBOM and licence gates for both published
 // packages — a disproportionate price for unfiltering five scanline types.
 //
-// It exists because this site's contrast cannot be judged from the stylesheet.
-// The paper is a fixed texture of five composited layers, so the colour under
-// a glyph depends on where that glyph happens to sit in the viewport, and two
-// independent measurements of the same variable already disagreed — one
-// composited every layer at full alpha, the other argued that point is
-// unreachable. Neither looked at a rendered pixel. This does.
+// It exists because this site's contrast is judged on rendered pixels rather
+// than read off the stylesheet: which ground sits under a glyph — page, card,
+// tinted band, code chip, filled button — is a fact about the layout. An
+// earlier, textured version of the page made the point the hard way: two
+// independent models of the same variable disagreed, and neither had looked
+// at a rendered pixel. This does.
 
 export interface Bitmap {
   width: number

@@ -73,21 +73,21 @@ class Regression:
 REGRESSIONS: tuple[Regression, ...] = (
     Regression(
         twin="grant._verify_grant",
-        file="src/attest/verify.py",
+        file="src/attest/verify/grants.py",
         old="grant_module._verify_grant(floor, manifest)",
         new="grant_module.verify_grant(floor, manifest)",
         tests=("tests/test_evaluate_grant.py",),
     ),
     Regression(
         twin="grant._verify_declaration",
-        file="src/attest/verify.py",
+        file="src/attest/verify/grants.py",
         old="grant_module._verify_declaration(declaration, declaration_manifest)",
         new="grant_module.verify_declaration(declaration, declaration_manifest)",
         tests=("tests/test_evaluate_grant.py",),
     ),
     Regression(
         twin="authority._verify_authorization",
-        file="src/attest/verify.py",
+        file="src/attest/verify/publisher_authority.py",
         old="authority_module._verify_authorization(",
         new="authority_module.verify_authorization(",
         tests=("tests/test_evaluate_authority.py",),

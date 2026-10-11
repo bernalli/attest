@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce OL-13 controls, one isolated process at a time.
+"""Reproduce the importer-census controls, one isolated process at a time.
 
 Mutations affect only this process's module. Every end-to-end probe invokes the
 real main(), generators, browser adapter, Python importer and committed census.
@@ -139,7 +139,7 @@ def main() -> int:
     if args.disable:
         return disable_guard(args.disable)
     inject(args.mutant)
-    with tempfile.TemporaryDirectory(prefix="ol13-probe-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="importer-census-probe-") as tmp:
         path = Path(tmp) / "importer-census.json"
         shutil.copyfile(d.DEFAULT_CENSUS, path)
         before = path.read_bytes()

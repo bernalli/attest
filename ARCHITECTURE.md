@@ -12,7 +12,7 @@ two independent implementations of that algorithm, intended to agree on canonica
 and protocol-defined verdicts within the specified resource limits: a Python reference
 implementation (`src/attest/`) that both issues and verifies receipts, and a TypeScript
 verifier (`verifiers/ts/`) that only ever reads them. A shared, language-neutral
-conformance corpus (`docs/spec/vectors/`, 47 groups, 227 leaf test cases — counted with
+conformance corpus (`docs/spec/vectors/`, 47 groups, 231 leaf test cases — counted with
 `find docs/spec/vectors -name expected.json | wc -l`) is the contract both cores are held
 to; a set of differential tools (`tools/*_differential.py`) additionally compares selected
 observable outcomes on generated inputs, with scope and permitted differences defined
@@ -32,7 +32,7 @@ model (`docs/spec/attest-threat-model.md`).
 | `docs/spec/attest-v0.2.md` | Additive delta: hybrid signatures, transparency/anchoring, issuer-mediated transfer, the preservation pledge, the compromise rescue, publisher authority. | Yes |
 | `docs/spec/attest-versioning.md` | The upgrade policy both specs above answer to: how an extension may be added, the eternal-verifiability guarantee, the algorithm lifecycle. | Yes |
 | `docs/spec/schema/attest-receipt.schema.json` | JSON Schema for the receipt payload, used by `validate.py` for the schema dimension of verification. | Yes |
-| `docs/spec/vectors/` | The conformance corpus: 47 groups, 227 leaves, each with fixed inputs and expected assertions under the corpus's matching rules. Generated, not hand-edited (see below). | Yes (as a corpus) |
+| `docs/spec/vectors/` | The conformance corpus: 47 groups, 231 leaves, each with fixed inputs and expected assertions under the corpus's matching rules. Generated, not hand-edited (see below). | Yes (as a corpus) |
 | `docs/spec/attest-threat-model.md` | Living companion: attacks catalogued against the two specs, each mitigated or recorded out of scope. | Non-normative but maintained |
 | `docs/spec/attest-privacy.md` | Field-by-field privacy classification and GDPR annex. | Non-normative |
 | `docs/spec/attest-transfer-economics.md`, `docs/spec/attest-standards-relationship.md` | Market/legal context for transfer; boundary against adjacent standards (VC, eIDAS, JOSE/COSE, C2PA, SCITT, RATS). | Non-normative |
@@ -47,6 +47,9 @@ model (`docs/spec/attest-threat-model.md`).
 | `ietf/` | Internet-Draft snapshot mirroring a pinned revision of the specs, built with a pinned xml2rfc toolchain. | — |
 | `tools/` | Generators, differential/parity checkers, and CI-support scripts shared by every component above. | — |
 | `tests/` | The Python reference implementation's test suite, plus the hostile-container corpus (`tests/container-corpus/`, generated). | — |
+
+Which of these components are published, and what status each carries, is stated in
+`README.md`'s [Stability](README.md#stability) section.
 
 ## The wire format: envelope, canonicalization, signing
 
@@ -110,7 +113,7 @@ and the gap is visible in the file lists, not just stated in prose.
 Two mechanisms hold the cores to the same answers:
 
 - **The conformance corpus** (`docs/spec/vectors/`) is the *specification*-level contract:
-  each of 227 leaves supplies inputs and assertions for a `VerificationResult`,
+  each of 231 leaves supplies inputs and assertions for a `VerificationResult`,
   `ChainAuditResult`, witness quorum result, or redemption result.
   Receipt-result matching combines exact fields, fields checked only when present in
   `expected.json`, and `errors_contains`/`warnings_contains` substring checks; extra
@@ -118,8 +121,8 @@ Two mechanisms hold the cores to the same answers:
   Passing therefore establishes those assertions, not identity of the complete output.
   `docs/conformance.md` describes the public runner:
   `tools/conformance_runner.py --adapter '<cmd> {leaf}' --subset v0.1|v0.2`.
-  A v0.1-only verifier is measured against 67 leaves (63 base-group leaves plus
-  `35i`, `37s`, `41f`, and `41v`); v0.2 uses all 227. One mismatch fails the subset.
+  A v0.1-only verifier is measured against 70 leaves (66 base-group leaves plus
+  `35i`, `37s`, `41f`, and `41v`); v0.2 uses all 231. One mismatch fails the subset.
   Separately, the Python and TypeScript conformance suites compare canonical payload
   bytes against `canonical.json` wherever supplied; the public runner does not perform
   that direct byte comparison.
@@ -131,6 +134,14 @@ Two mechanisms hold the cores to the same answers:
   floors. `tools/trust_material_differential.py` compares admission, refusal classes,
   blamed members and ordered results, not complete diagnostic text, and explicitly
   accounts for a declared M7/M8 difference on a 4,301-digit integer token.
+  `tools/verify_differential.py` compares receipt verification itself on seeded single
+  mutations of valid v0.1 and v0.2 receipts (base64url spellings, Ed25519 torsion and
+  non-canonical encodings, type confusion, version, alg and kid swaps, JSON text tricks,
+  sizes at the envelope ceiling): the verdict, every enumerated result member and the
+  error and warning strings, except JSON parser diagnostics, schema violation wording and
+  the quoting of non-printable characters; a throw is a finding on either side, and a
+  v0.1 receipt under a hybrid key must be refused by both. `pytest` runs 1,500 cases
+  with seed 20261009.
   `tools/witness_parity_cases.py` supplies shared witness cases to its Python and
   TypeScript consumers; `tools/gen_container_corpus.py` generates container fixtures
   and seeded mutations. The `test` job in `pages.yml` runs
@@ -182,14 +193,28 @@ does not establish that the supplied trust material is authentic or correctly co
 
 ## The verification pipeline
 
-`verify()` (`verify.py`, `verifiers/ts/src/verify.ts`) implements attest-v0.1.md §6, "steps
-0-7," and the module docstring states the pipeline invariant plainly: `canon.loads_strict`
+`verify()` (`src/attest/verify/pipeline.py`, `verifiers/ts/src/verify.ts`) implements
+attest-v0.1.md §6, "steps 0-7," and the package docstring (`src/attest/verify/__init__.py`)
+states the pipeline invariant plainly: `canon.loads_strict`
 parses the raw envelope bytes exactly once (step 0), and every later step operates on that
 one parsed object — never on the raw bytes again, never on a re-serialization of it. Steps 6
 (revocation) and 7 (binding) run only once the receipt already has a valid signature *and* a
 valid schema; an already-invalid receipt keeps `revocation: "unknown"` and
 `binding: "not_checked"` rather than getting a verdict computed against material that was
 never trustworthy to begin with.
+
+`attest.verify` is a package split by concern, and its `__init__` re-exports every name, so
+`attest.verify.<name>` is the import path for all of it. `pipeline.py` holds `verify()`
+itself: the ordered steps, with the envelope, issuer, key and signature checks made inline.
+What it calls lives in sibling modules: `constants.py` (result values, wire
+warning literals, ceilings), `results.py` (`TrustStore`, `Disclosure`,
+`VerificationResult`), `helpers.py`, `content.py` and `chains.py` (shared predicates, content
+warnings, chain continuity and the trust ladder), `evidence.py` (the §18.4 admission
+boundary for caller evidence rails), `transparency_claims.py` (Stage 2), `compromise.py`
+(§19's anchored cutoff), `transfer_backing.py` and `revocation_status.py` (step 6 and
+Stage 3), `binding.py` (step 7), `grants.py` (Stage 4) and `publisher_authority.py`
+(Stage 5). They are listed here in dependency order: each imports only from modules named
+before it, and only the package `__init__` imports `pipeline.py`.
 
 The result is a `VerificationResult` dataclass whose own docstring states the design
 principle: "each dimension of trust is reported independently so a caller can degrade

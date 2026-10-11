@@ -161,7 +161,7 @@
   {
    "id": "VL34-P7-verify-refuses-ambiguous-issuer-manifest",
    "property": "verify() itself refuses an issuer manifest with duplicate kids, reporting the duplicate",
-   "file": "src/attest/verify.py",
+   "file": "src/attest/verify/pipeline.py",
    "old": "            dup_kids = manifests.duplicate_kids(issuer_manifest_keys)\n            if dup_kids:",
    "new": "            dup_kids = manifests.duplicate_kids(issuer_manifest_keys)\n            if False and dup_kids:",
    "suite": [
@@ -174,7 +174,7 @@
   {
    "id": "VL5-P1-anchor-registered-vocabulary",
    "property": "only a registered statement status (revoked/transferred) may drive the freshness anchor T",
-   "file": "src/attest/verify.py",
+   "file": "src/attest/verify/revocation_status.py",
    "old": "        if not isinstance(status, str) or status not in _ANCHOR_STATUSES:\n            continue",
    "new": "        if not isinstance(status, str):\n            continue",
    "suite": [
@@ -189,7 +189,7 @@
   {
    "id": "VL5-P2-anchor-status-type-guard",
    "property": "an unhashable or non-string status cannot crash the anchor scan (a frozenset membership test raises on an unhashable value)",
-   "file": "src/attest/verify.py",
+   "file": "src/attest/verify/revocation_status.py",
    "old": "        if not isinstance(status, str) or status not in _ANCHOR_STATUSES:",
    "new": "        if status not in _ANCHOR_STATUSES:",
    "suite": [
@@ -204,7 +204,7 @@
   {
    "id": "VL5-P3-transferred-is-in-the-vocabulary",
    "property": "the registered vocabulary includes transferred, not only revoked, so a genuine transferred record still anchors",
-   "file": "src/attest/verify.py",
+   "file": "src/attest/verify/constants.py",
    "old": "_ANCHOR_STATUSES = frozenset({_RECORD_STATUS_REVOKED, _REVOCATION_TRANSFERRED})",
    "new": "_ANCHOR_STATUSES = frozenset({_RECORD_STATUS_REVOKED})",
    "suite": [
@@ -217,7 +217,7 @@
   {
    "id": "VL5-P4-anchor-is-order-independent-max",
    "property": "T is the maximum over genuine statements, independent of the order the records arrive in",
-   "file": "src/attest/verify.py",
+   "file": "src/attest/verify/revocation_status.py",
    "old": "        try:\n            newer = parsed > best_dt\n        except TypeError:\n            continue  # incomparable naive/aware mix \u2014 skip, never crash",
    "new": "        try:\n            newer = True\n        except TypeError:\n            continue  # incomparable naive/aware mix \u2014 skip, never crash",
    "suite": [

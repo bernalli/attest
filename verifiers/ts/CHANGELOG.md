@@ -6,6 +6,15 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A JSON object that repeats a member name and also carries a second defect before its
+  closing brace (a float in the repeated member, a later float, a nested object's own
+  duplicate) was refused with `duplicate object key`, where the Python reference names
+  the other defect. The duplicate is now reported when the object closes, as the
+  reference does, so both cores give the same reason. No verdict changes: every such
+  input was and is refused.
+
 ## [0.9.8] — 2026-10-01
 
 ### Security

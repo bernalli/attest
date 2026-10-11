@@ -399,7 +399,7 @@ def key_manifest_log_entry(manifest: dict[str, Any]) -> dict[str, Any]:
     `{"type", "issuer", "manifest_version", "manifest_sha256"}` where
     `manifest_sha256 = SHA-256(JCS(manifest))` over the ENTIRE manifest,
     signature member included — the same canonical form `verify.py` recomputes
-    when it checks a compromise claim (`verify.py:1131-1138`).
+    when it checks a compromise claim (`verify/compromise.py:305-316`).
     """
     return _key_manifest_log_entry(_own_object(manifest, "key manifest"))
 
@@ -663,7 +663,7 @@ def _preflight_trust_material(trusted_manifest: dict[str, Any], chain: list[Any]
     """Refuse ambiguous or inauthentic trust material before classifying (regola 0-bis).
 
     Composed here, from the three PUBLIC helpers of `manifests.py`, in the same
-    order `verify()`'s own preflight uses (`verify.py:2895-2955`): the `keys[]`
+    order `verify()`'s own preflight uses (`verify/pipeline.py:360-422`): the `keys[]`
     ceiling, `duplicate_kids` on the head, `manifest_signature_is_authentic` on
     the head, then `duplicate_kids` on every chain member.
 

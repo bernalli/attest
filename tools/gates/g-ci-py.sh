@@ -196,7 +196,7 @@ gate_expect_marker '^[0-9]+ archives fed to both importers at their own defaults
 # The archive count above cannot tell 462 from 1: MEASURED (2026-09-09) every
 # assertion in this block passes identically on `--families baseline`, which
 # feeds ONE archive. The tally check does not close it either -- it compares
-# each road against IMPORTER_ARCHIVES, so it is self-relative. OL-13 added the
+# each road against IMPORTER_ARCHIVES, so it is self-relative. The importer census added the
 # grandeur that is neither the exit code nor the archive count: WHICH census
 # the run compared itself against, computed from argv rather than from the
 # comparison. Measured orthogonal to the exit code in both directions -- the

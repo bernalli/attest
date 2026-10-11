@@ -1135,7 +1135,9 @@ def meta_closure_violations() -> list[str]:
     }
 
     violations: list[str] = []
-    for info in pkgutil.iter_modules(attest.__path__, attest.__name__ + "."):
+    # Subpackages included: `attest.verify` defines its functions in its
+    # submodules, which the `__module__` filter below would otherwise skip.
+    for info in pkgutil.walk_packages(attest.__path__, attest.__name__ + "."):
         module = importlib.import_module(info.name)
         stem = info.name.rsplit(".", 1)[-1]
         for name, func in inspect.getmembers(module, inspect.isfunction):

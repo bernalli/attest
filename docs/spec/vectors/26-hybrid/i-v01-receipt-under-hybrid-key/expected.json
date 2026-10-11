@@ -1,0 +1,12 @@
+{
+  "binding": "not_checked",
+  "errors": [
+    "key entry for kid 'store.example.com/keys/2025-01#ed25519-1' is hybrid; a v0.1 receipt cannot verify under it"
+  ],
+  "ok": false,
+  "revocation": "unknown",
+  "schema": "not_checked",
+  "signature": "invalid",
+  "trust": "verified",
+  "warnings": []
+}

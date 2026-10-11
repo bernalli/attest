@@ -75,6 +75,52 @@ describe('the bench opens on a receipt, and never before one', () => {
   })
 })
 
+describe('the hero’s button is the sample button, pressed from the top of the page', () => {
+  it('loads the sample and opens the bench, exactly as “Load the sample” does', async () => {
+    servingSample()
+    el('try-sample').click()
+    await vi.waitFor(() => expect(text('results')).toContain('Receipt verifies'))
+    expect(el('bench').hidden).toBe(false)
+  })
+
+  it('takes the reader to the verifier, where the verdict appears', () => {
+    servingSample()
+    const scrolled = vi.fn()
+    el('check').scrollIntoView = scrolled
+    el('try-sample').click()
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    expect(document.activeElement).toBe(el('check'))
+  })
+
+  it('fails the way the sample button fails, because it is the same code path', async () => {
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('offline')))
+    el('try-sample').click()
+    await vi.waitFor(() => expect(text('results')).toMatch(/could not load the sample/i))
+    expect(el('bench').hidden).toBe(true)
+  })
+})
+
+describe('the expert controls are folded away, and nothing the page reveals is', () => {
+  const advanced = (): HTMLDetailsElement => document.querySelector('details.advanced')!
+
+  it('keeps the evidence feeds and the binding proof under “Advanced checks”', () => {
+    expect(advanced()).toBeInstanceOf(HTMLDetailsElement)
+    expect(advanced().open).toBe(false)
+    for (const id of ['clear-feeds', 'binding-identifier', 'binding-type', 'binding-salt', 'binding-apply']) {
+      expect(advanced().contains(el(id)), id).toBe(true)
+    }
+  })
+
+  it('leaves the manifest prompt, the bench and the verdict outside it', () => {
+    // These three are unhidden by the script when a receipt calls for them. A
+    // shut <details> around any of them would hide what the script just showed,
+    // and the reader would be told to drop a manifest into a box they cannot see.
+    for (const id of ['manifest-zone', 'bench', 'results', 'dropzone', 'load-sample']) {
+      expect(advanced().contains(el(id)), id).toBe(false)
+    }
+  })
+})
+
 describe('breaking the receipt moves the verdict, and says why', () => {
   beforeEach(async () => {
     servingSample()

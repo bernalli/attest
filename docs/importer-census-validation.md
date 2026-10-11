@@ -1,4 +1,4 @@
-# OL-13: executed importer census — author validation
+# Executed importer census — author validation
 
 Base: `2d295ae`. Branch: `fix/ol13-importer-census`.
 
@@ -25,7 +25,7 @@ Exit contract: **0** agreement and matching census (or validated additive update
 
 ## End-to-end property mutants
 
-Every command below runs in a fresh process in this worktree. Mutations preserve the corpus schema and leave the importers executable. Each default mutant produces exactly two `CENSUS:` diagnostics, no `CENSUS SCHEMA` error, zero importer divergences and exit 3. The report excerpts below are copied from the actual command output. Full local transcripts are in `/tmp/ol13-evidence/`.
+Every command below runs in a fresh process in this worktree. Mutations preserve the corpus schema and leave the importers executable. Each default mutant produces exactly two `CENSUS:` diagnostics, no `CENSUS SCHEMA` error, zero importer divergences and exit 3. The report excerpts below are copied from the actual command output. Full local transcripts are in `/tmp/importer-census-evidence/`.
 
 ### leaf: PROPERTY, not schema
 
@@ -205,10 +205,10 @@ These 15 sensitivity probes also run as parametrized pytest cases. Schema tests 
 Environment prepared in this worktree only:
 
 ```sh
-UV_CACHE_DIR=/tmp/ol13-uv-cache uv sync --all-packages --all-extras
-npm ci --prefix verifiers/ts --cache /tmp/ol13-npm-cache --no-audit --no-fund
+UV_CACHE_DIR=/tmp/importer-census-uv-cache uv sync --all-packages --all-extras
+npm ci --prefix verifiers/ts --cache /tmp/importer-census-npm-cache --no-audit --no-fund
 npm run build --prefix verifiers/ts
-npm ci --prefix site --cache /tmp/ol13-npm-cache --no-audit --no-fund
+npm ci --prefix site --cache /tmp/importer-census-npm-cache --no-audit --no-fund
 ```
 
 The bare CI command and the existing local gate were both executed successfully:
@@ -253,10 +253,10 @@ All four segments ran sequentially as blocking subprocesses, never two at once, 
 
 ```sh
 .venv/bin/python -m pytest --collect-only -q
-.venv/bin/python -m pytest -q -ra --junitxml=/tmp/ol13-evidence/ah.xml tests/test_anchor.py tests/test_anchor_seeded.py tests/test_assert_artifacts.py tests/test_authority.py tests/test_authority_adversarial.py tests/test_blind_audit_chain_admission.py tests/test_blind_canon_admission.py tests/test_blind_evidence_sinks.py tests/test_blind_hostile_evidence_views.py tests/test_blind_revocation_admission.py tests/test_bundle.py tests/test_buyer_surface.py tests/test_canon.py tests/test_canon_depth_profile_adversarial.py tests/test_check_spec_docs.py tests/test_ci_required.py tests/test_cli.py tests/test_cli_authority.py tests/test_cli_authority_blind.py tests/test_cli_binding_properties.py tests/test_cli_grant.py tests/test_cli_issue_log_dir.py tests/test_cli_overwrite.py tests/test_cli_revoke_properties.py tests/test_cli_views_builder_properties.py tests/test_cli_views_properties.py tests/test_commitment.py tests/test_compromise_adversarial.py tests/test_compromise_retraction_provenance.py tests/test_container.py tests/test_container_corpus.py tests/test_container_differential_smoke.py tests/test_dates.py tests/test_deflate.py tests/test_demo_e2e.py tests/test_demo_pledge_e2e.py tests/test_evaluate_authority.py tests/test_evaluate_authority_blind.py tests/test_evaluate_grant.py tests/test_gen_container_corpus.py tests/test_gen_site_sample.py tests/test_gen_vectors.py tests/test_gen_vectors_helpers.py tests/test_grant.py tests/test_hostile_view_content.py
-.venv/bin/python -m pytest -q -ra --junitxml=/tmp/ol13-evidence/iz.xml tests/test_issue.py tests/test_issue_hybrid.py tests/test_keys.py tests/test_lexicon_guard.py tests/test_manifest_mutation_properties.py tests/test_manifests.py tests/test_manifests_hybrid.py tests/test_nonstring_kid_resolution.py tests/test_offer_projection_order_independence.py tests/test_ots.py tests/test_ots_convert.py tests/test_ots_corpus_parity.py tests/test_pq.py tests/test_release_workflow_steps.py tests/test_review_fixes_2026_07.py tests/test_review_shouldfix_2026_07.py tests/test_revocation.py tests/test_revocation_view_bound.py tests/test_schema.py tests/test_sdist_build.py tests/test_shared_predicate_artifact_mutations.py tests/test_shared_predicate_ownership.py tests/test_shared_predicate_ownership_mutations.py tests/test_shared_predicate_parity.py tests/test_sibling_hybrid_sidedocs.py tests/test_smoke.py tests/test_tlog.py tests/test_transfer.py tests/test_transparency.py tests/test_trust_material_messages.py tests/test_trust_material_parse.py tests/test_trust_store_boundary.py tests/test_trusted_manifest_gate.py tests/test_vectors.py tests/test_verify.py tests/test_verify_all.py tests/test_verify_all_runtime.py tests/test_verify_compromise.py tests/test_verify_hybrid.py tests/test_verify_transfer.py tests/test_version_parity.py tests/test_views.py tests/test_views_properties.py tests/test_vl2_bundle_duplicate_members_adversarial.py tests/test_vl34_issuance_guards_adversarial.py tests/test_vl5_anchor_status_adversarial.py tests/test_witness.py tests/test_witness_cosignature.py tests/test_witness_quorum.py
-.venv/bin/python -m pytest -q -ra --junitxml=/tmp/ol13-evidence/sub.xml tests/tools
-.venv/bin/python -m pytest -q -ra --junitxml=/tmp/ol13-evidence/bw.xml bridge/tests witness/tests
+.venv/bin/python -m pytest -q -ra --junitxml=/tmp/importer-census-evidence/ah.xml tests/test_anchor.py tests/test_anchor_seeded.py tests/test_assert_artifacts.py tests/test_authority.py tests/test_authority_adversarial.py tests/test_blind_audit_chain_admission.py tests/test_blind_canon_admission.py tests/test_blind_evidence_sinks.py tests/test_blind_hostile_evidence_views.py tests/test_blind_revocation_admission.py tests/test_bundle.py tests/test_buyer_surface.py tests/test_canon.py tests/test_canon_depth_profile_adversarial.py tests/test_check_spec_docs.py tests/test_ci_required.py tests/test_cli.py tests/test_cli_authority.py tests/test_cli_authority_blind.py tests/test_cli_binding_properties.py tests/test_cli_grant.py tests/test_cli_issue_log_dir.py tests/test_cli_overwrite.py tests/test_cli_revoke_properties.py tests/test_cli_views_builder_properties.py tests/test_cli_views_properties.py tests/test_commitment.py tests/test_compromise_adversarial.py tests/test_compromise_retraction_provenance.py tests/test_container.py tests/test_container_corpus.py tests/test_container_differential_smoke.py tests/test_dates.py tests/test_deflate.py tests/test_demo_e2e.py tests/test_demo_pledge_e2e.py tests/test_evaluate_authority.py tests/test_evaluate_authority_blind.py tests/test_evaluate_grant.py tests/test_gen_container_corpus.py tests/test_gen_site_sample.py tests/test_gen_vectors.py tests/test_gen_vectors_helpers.py tests/test_grant.py tests/test_hostile_view_content.py
+.venv/bin/python -m pytest -q -ra --junitxml=/tmp/importer-census-evidence/iz.xml tests/test_issue.py tests/test_issue_hybrid.py tests/test_keys.py tests/test_lexicon_guard.py tests/test_manifest_mutation_properties.py tests/test_manifests.py tests/test_manifests_hybrid.py tests/test_nonstring_kid_resolution.py tests/test_offer_projection_order_independence.py tests/test_ots.py tests/test_ots_convert.py tests/test_ots_corpus_parity.py tests/test_pq.py tests/test_release_workflow_steps.py tests/test_review_fixes_2026_07.py tests/test_review_shouldfix_2026_07.py tests/test_revocation.py tests/test_revocation_view_bound.py tests/test_schema.py tests/test_sdist_build.py tests/test_shared_predicate_artifact_mutations.py tests/test_shared_predicate_ownership.py tests/test_shared_predicate_ownership_mutations.py tests/test_shared_predicate_parity.py tests/test_sibling_hybrid_sidedocs.py tests/test_smoke.py tests/test_tlog.py tests/test_transfer.py tests/test_transparency.py tests/test_trust_material_messages.py tests/test_trust_material_parse.py tests/test_trust_store_boundary.py tests/test_trusted_manifest_gate.py tests/test_vectors.py tests/test_verify.py tests/test_verify_all.py tests/test_verify_all_runtime.py tests/test_verify_compromise.py tests/test_verify_hybrid.py tests/test_verify_transfer.py tests/test_version_parity.py tests/test_views.py tests/test_views_properties.py tests/test_vl2_bundle_duplicate_members_adversarial.py tests/test_vl34_issuance_guards_adversarial.py tests/test_vl5_anchor_status_adversarial.py tests/test_witness.py tests/test_witness_cosignature.py tests/test_witness_quorum.py
+.venv/bin/python -m pytest -q -ra --junitxml=/tmp/importer-census-evidence/sub.xml tests/tools
+.venv/bin/python -m pytest -q -ra --junitxml=/tmp/importer-census-evidence/bw.xml bridge/tests witness/tests
 ```
 
 | Segment | Cases | Passed | Skipped | Xfail | Exit |
@@ -268,7 +268,7 @@ All four segments ran sequentially as blocking subprocesses, never two at once, 
 
 **7123 segment cases = 7123 collected**, with no overlap between segment case identities. Totals: **7067 passed, 55 skipped, 1 xfailed; zero failures or errors**.
 
-The initial collection was 7,075. The increase of 48 is accounted for by 45 new OL-13 pytest cases (4 prerequisite cases and 41 census/sensitivity cases) plus 3 cases dynamically derived by the existing workflow-parity tests from the new CI step. Parameter IDs containing generated UUIDs change between collections; they do not change their file counts.
+The initial collection was 7,075. The increase of 48 is accounted for by 45 new importer-census pytest cases (4 prerequisite cases and 41 census/sensitivity cases) plus 3 cases dynamically derived by the existing workflow-parity tests from the new CI step. Parameter IDs containing generated UUIDs change between collections; they do not change their file counts.
 
 Skipped cases are explicit existing exclusions: 50 provisioning checks in `test_verify_all.py` and 5 bridge documentation checks for pages without a check-config summary. The xfail is the existing chameleon-refund revocation case in `test_blind_revocation_admission.py`. No missing browser prerequisite was excused by a skip.
 

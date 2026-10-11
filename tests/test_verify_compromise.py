@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from attest import anchor, canon, issue, keys, manifests, pq, tlog, verify
+from attest.verify import pipeline as verify_pipeline
 from tests.helpers import make_payload, store
 
 ISSUER = "store.example.com"
@@ -466,7 +467,8 @@ def test_unparseable_receipt_anchor_time_does_not_rescue(
     def fake_evaluate(*_args: object, **_kwargs: object) -> tuple[str, str, str, str]:
         return "anchored_before:not-a-date", "logged", "not_checked", "receipt"
 
-    monkeypatch.setattr(verify, "_evaluate_transparency_claim", fake_evaluate)
+    # Patched where `verify()` looks it up: the pipeline module's own binding.
+    monkeypatch.setattr(verify_pipeline, "_evaluate_transparency_claim", fake_evaluate)
 
     result = verify.verify(
         _verify_bytes(_receipt()),
