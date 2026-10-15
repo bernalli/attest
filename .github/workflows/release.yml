@@ -267,7 +267,7 @@ jobs:
           # Same idiom as the desktop job: prove the file we ship is one that
           # `sha256sum -c` accepts, here, rather than downstream.
           sha256sum -c gated-artifacts.sha256
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-and-sboms
           # Default is `warn`: nothing found is a warning and the step stays
@@ -319,7 +319,7 @@ jobs:
           cd desktop/dist
           sha256sum attest-verifier.html | tee attest-verifier.html.sha256
           sha256sum -c attest-verifier.html.sha256
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-verifier
           # Catches only a wholly empty upload (the key is aggregate). Both files
